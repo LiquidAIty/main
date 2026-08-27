@@ -847,6 +847,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                 return [
                     {"grant_id": "graphiti.add_memory"},
                     {"grant_id": "card.load_graph_references"},
+                    {"grant_id": "engraphis.index_repo"},
                 ]
             if "ag_catalog.cypher" in self.last_query:
                 return [{"value": json.dumps({"conversationId": "conversation-one"})}]
@@ -2163,6 +2164,9 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         def execute(self, statement, *_args):
             sql.append(statement)
 
+        def fetchone(self):
+            return {"available": True}
+
     class Connection:
         def __enter__(self):
             return self
@@ -2242,6 +2246,8 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             }]
         if "-[:VIEWED]->" in query:
             return []
+        if "-[:READ]->" in query:
+            return [{"run_id": "run-one", "authority": "CodeGraph", "native_id": "pkg.materialized"}]
         if "PRODUCED_ARTIFACT" in query:
             return [{
                 "run_id": "run-one",
@@ -2265,14 +2271,18 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "limit": 5,
     })
 
-    assert sql == ["SET TRANSACTION READ ONLY"]
+    assert sql[0] == "SET TRANSACTION READ ONLY"
+    assert len(sql) == 2 and "SELECT EXISTS" in sql[1] and "ag_catalog.ag_label" in sql[1]
+    assert result["telemetry"]["materializedNativeReferencesAvailable"] is True
     assert result["authority"] == "postgresql-age-agentgraph"
     assert result["projectId"] == "project-one"
     assert result["scope"] == {
         "readScope": "project-deck",
         "projectWideRequested": False,
         "conversationId": "conversation-one",
-        "conversationFilterAvailable": False,
+        "cardId": None,
+        "runId": None,
+        "conversationFilterAvailable": True,
     }
     assert result["cards"][0]["cardId"] == "card-one"
     assert result["relationships"][0]["edgeType"] == "flow"
@@ -2280,6 +2290,13 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "runId": "run-one",
         "correlationId": "correlation-one",
         "state": "completed",
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "conversationId": "",
+        "rootRunId": "run-one",
+        "nativeChildId": None,
+        "startedAt": None,
+        "lastAttentionAt": None,
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
         "parentRunIds": [],
@@ -2306,6 +2323,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         }],
         "nativeReferences": [{"authority": "KnowGraph", "nativeId": "episode:one"}],
         "viewedNativeReferences": [],
+        "materializedNativeReferences": [{"authority": "CodeGraph", "nativeId": "pkg.materialized"}],
         "artifacts": [{
             "artifactId": "artifact-one",
             "artifactKind": "report",

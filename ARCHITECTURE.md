@@ -110,6 +110,34 @@ in `apps/python-models`; any later fork edit must be registered in
 from current registered owners and is discovered dynamically. A fixed numeric catalog promise is not an
 architecture contract.
 
+The literal `LiquidAIty.idd` separates publication/access policy from native MCP side-effect annotations.
+Engraphis `export_code_graph`, `index_repo`, `search_code`, `code_path`, and `code_impact` are private
+operator declarations, excluded from public tools, shared reads and effective Card action allocation.
+Historical saved grants and ThinkGraph data remain unchanged. CBM is the only product CodeGraph owner.
+This changes the previous 71-tool public catalog to 66; cached GPT tool descriptors need reissue/refresh.
+
+Graph attention reuses AGE `USED_TOOL` events, `USED` native references and materialized `READ` edges.
+The external-Main mapping is designed to establish an idempotent AGE observation Run under its existing
+Main Card/conversation; no model runtime is launched. Missing persistence is explicitly reported in
+the execution receipt. `agentgraph.inspect` does not observe itself; queries apply exact Run, Card,
+conversation and Project/Deck scope before limits, and only event-backed completed calls count.
+The existing attention endpoint also streams the same `session`/`native_attention` records for all
+runtime surfaces. Card selection requests its current direct Run, excludes native-child observations,
+and clears when dormant/finished. It introduces no Card-face payload, graph store or event bus.
+Graphiti's existing queue retains observation identity; its public SDK completion result resolves the
+same pending event with actual UUIDs. Queue acceptance is not rendered as a completed graph write.
+Where native CBM declares a JSON output format, the host advertises and uses that default for structured
+attention IDs. Explicit format choices are preserved; non-structured results do not fabricate attention.
+
+Current proof boundary: the coordinated runtime reached the 66-tool catalog, but live external attention
+failed because AGE 1.6 rejects `ON CREATE SET`. The source now uses `SET`/`coalesce`; that correction and
+chronological SSE replay still require a later authorized coordinated restart and live readback. The
+new materialization read also exposed `permission denied for table _ag_label_vertex`. Migration 022
+does not declare/grant the existing producer's `READ` label. Inspection now checks native label metadata
+before attempting that optional query and explicitly reports materialization availability; no database
+grants were changed. First materialized-read/schema readiness remains unproven. Do not call this
+attention path live-ready until its persistence, retained-event inspection and SSE readback all pass.
+
 Backend routes containing `/api/coder/mcp-bridge/` are retained transport names used by the official
 Python MCP host to reach server-owned Card, conversation, Run, and persistence operations. They are not
 a second MCP server and do not represent the removed Coder runtime. Rename only with a versioned caller
@@ -356,17 +384,31 @@ and may add new values to that child process without replacing inherited or stoc
 LiquidAIty's external `apps/hermes-liquidaity-plugin` package loads through stock Hermes
 `hermes_agent.plugins` entry-point discovery. It resolves the already-persisted native-root to
 saved-Card Run/revision/grant correlation over strict loopback, asks the existing signer for one
-expiring Card bearer, and adds only `LIQUIDAITY_CARD_BEARER`; canonical startup and every
+expiring Card bearer, and adds `LIQUIDAITY_CARD_BEARER` plus a non-secret `HERMES_MCP_SERVERS` template;
+canonical startup and every
 backend-launched Hermes boundary remove the host-only signing secret first. Hermes' normal MCP
-`${ENV_VAR}` header interpolation consumes the bearer, while model OAuth and ordinary workers without
-the enabled provider remain unchanged. Focused proof and rollback are registered in
+`${ENV_VAR}` header interpolation can consume the bearer when a native worker MCP connection is
+configured. Main/Coder do not depend on a static profile entry for their application MCP connection:
+`buildHermesOfficialMcpServer` and `buildHermesHostSessionProjection` supply authenticated `mcpServers`
+through `AcpProcess.configureHostSession` to native `_session/configure_host`. Native registration is
+process-local. The separate Kanban path persists task identity through the LiquidAIty ACP bridge;
+the gateway's default spawn passes the plugin-provided bearer environment to a fresh profile CLI
+process, but does not copy the parent ACP server configuration. The plugin reconstructs exactly one
+required loopback MCP configuration using the existing backend URL and the child's bearer placeholder.
+Native config loading merges it once, rejects conflicts and missing interpolation, and the existing
+pre-agent discovery gate requires that connection before constructing the worker. No config file is
+written. Bearer/configuration/interpolation have provider-free contract proof; actual live worker
+execution remains a separate explicitly authorized acceptance test. Model OAuth and ordinary workers without the
+enabled provider remain unchanged. Focused proof and rollback are registered in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 Current authorization limits: internal Card tokens have a 12-hour lifetime, and the MCP host admits
 IDD-declared read operations in addition to explicit Card grants. Kanban worker tokens use the saved
 root Run identity but do not require the separate live ACP execution-context check. A native claim is
-validated when the bearer is issued; immediate per-worker revocation is not implemented. Do not describe
-this as strict assigned-tools-only access or automatic revocation at Run completion. Tightening this
+validated when the bearer is issued; immediate per-worker revocation is not implemented.
+Signed native task/attempt IDs are observation metadata, not additional permissions; they distinguish
+worker graph events from direct root-Card materialization without creating another worker identity.
+Do not describe this as strict assigned-tools-only access or automatic revocation at Run completion. Tightening this
 existing policy is a separate compatibility decision, not a plugin-discovery repair.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.

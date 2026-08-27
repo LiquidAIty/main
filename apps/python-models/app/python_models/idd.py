@@ -277,6 +277,9 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
                 raise IddValidationError("idd_tool_declaration_name_invalid")
             canonical_id = name_prefix + native_name
             access = tool.get("access", default_access)
+            tool_publication = tool.get("publication", publication)
+            if tool_publication not in {"external-mcp", "private-runtime", "private-admin"}:
+                raise IddValidationError("idd_tool_publication_invalid")
             if access not in {"read", "write"}:
                 raise IddValidationError("idd_tool_access_invalid")
             required_kind = tool.get("requiredCallerRuntimeKind")
@@ -298,6 +301,12 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
                     raise IddValidationError("idd_tool_declaration_kind_conflict")
                 if current["access"] != access:
                     raise IddValidationError("idd_tool_access_conflict")
+                if current["publication"] != tool_publication:
+                    # Shared native/private implementations may publish one
+                    # public tool, but an operator-only declaration stays private.
+                    if "private-admin" in {current["publication"], tool_publication}:
+                        raise IddValidationError("idd_tool_publication_conflict")
+                    current["publication"] = "external-mcp"
                 current_requirement = (
                     current.get("requiredCallerRuntimeKind"),
                     current.get("requiredCallerRuntimeMode"),
@@ -323,6 +332,7 @@ def _declared_tool_references() -> dict[str, dict[str, Any]]:
                 "shortDescription": tool.get("description", ""),
                 "availability": "disabled",
                 "access": access,
+                "publication": tool_publication,
                 "contracts": [],
             }
             if required_kind is not None:
@@ -348,16 +358,15 @@ def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
 
 def external_mcp_tool_ids() -> frozenset[str]:
     """Return the literal IDD identities published through the external MCP."""
-    groups = load_input_data_dictionary().get("toolGroups")
-    if not isinstance(groups, list):
-        raise IddValidationError("idd_tool_groups_invalid")
     return frozenset(
-        str(group["namePrefix"]) + str(tool["name"])
-        for group in groups
-        if isinstance(group, dict) and group.get("publication") == "external-mcp"
-        for tool in group.get("tools", [])
-        if isinstance(tool, dict)
+        name for name, reference in _declared_tool_references().items()
+        if reference["publication"] == "external-mcp"
     )
+
+
+def tool_publication(name: str) -> str | None:
+    reference = _declared_tool_references().get(name)
+    return reference["publication"] if reference else None
 
 
 def tool_access(name: str) -> str | None:
@@ -370,14 +379,14 @@ def tool_access(name: str) -> str | None:
 def readable_tool_ids() -> frozenset[str]:
     return frozenset(
         name for name, reference in _declared_tool_references().items()
-        if reference["access"] == "read"
+        if reference["access"] == "read" and reference["publication"] != "private-admin"
     )
 
 
 def writable_tool_ids() -> frozenset[str]:
     return frozenset(
         name for name, reference in _declared_tool_references().items()
-        if reference["access"] == "write"
+        if reference["access"] == "write" and reference["publication"] != "private-admin"
     )
 
 
@@ -453,15 +462,12 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
         if reference is None:
             raise IddValidationError(f"idd_tool_discovery_undeclared:{canonical_id}")
         read_only_hint = annotations.get("readOnlyHint") if annotations is not None else None
-        if read_only_hint is not None and (
-            not isinstance(read_only_hint, bool)
-            or read_only_hint is not (reference["access"] == "read")
-        ):
-            raise IddValidationError(f"idd_tool_access_contract_conflict:{canonical_id}")
+        if read_only_hint is not None and not isinstance(read_only_hint, bool):
+            raise IddValidationError(f"idd_tool_annotations_invalid:{canonical_id}")
         if source_id not in reference["sourceIds"]:
             reference["sourceIds"].append(source_id)
         reference["contracts"].append(contract)
-        if available:
+        if available and reference["publication"] != "private-admin":
             reference["availability"] = "available"
     return [
         deepcopy(validate_record("tool-catalog-reference", references[key]))

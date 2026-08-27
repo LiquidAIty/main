@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import nullcontext
 from typing import Optional
@@ -13,6 +14,9 @@ _mcp_discovery_thread: Optional[threading.Thread] = None
 
 def _has_configured_mcp_servers() -> bool:
     """Cheap config probe so non-MCP users avoid importing the MCP stack."""
+    # LIQUIDAITY VENDOR PATCH: process-only configuration needs no profile YAML.
+    if "HERMES_MCP_SERVERS" in os.environ:
+        return True
     try:
         from hermes_cli.config import read_raw_config
 
@@ -252,6 +256,15 @@ def ensure_mcp_discovery_before_agent_build(
     Failures are swallowed so a broken MCP config never aborts agent
     construction — the agent runs without MCP tools, same as before.
     """
+    # LIQUIDAITY VENDOR PATCH: required process MCP must resolve and connect
+    # before native agent construction. Unconfigured upstream users keep the
+    # existing best-effort startup, timeout, and discovery owner unchanged.
+    required_servers = {}
+    if "HERMES_MCP_SERVERS" in os.environ:
+        from tools.mcp_tool import _load_mcp_config, process_mcp_servers
+
+        required_servers = process_mcp_servers()
+        _load_mcp_config()
     try:
         start_background_mcp_discovery(
             logger=logger,
@@ -259,7 +272,15 @@ def ensure_mcp_discovery_before_agent_build(
         )
         wait_for_mcp_discovery(timeout=timeout, single_query=single_query)
     except Exception:
+        if required_servers:
+            raise RuntimeError("process_mcp_discovery_failed") from None
         logger.debug(
             "MCP discovery readiness check failed before agent build",
             exc_info=True,
         )
+    if required_servers:
+        from tools.mcp_tool import get_mcp_status
+
+        connected = {entry["name"] for entry in get_mcp_status() if entry.get("connected")}
+        if not set(required_servers).issubset(connected):
+            raise RuntimeError("process_mcp_required_connection_unavailable")

@@ -89,6 +89,7 @@ from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.idd import (
     external_mcp_tool_ids,
     readable_tool_ids,
+    tool_publication,
     tool_access,
 )
 from mcp.server import Server
@@ -164,6 +165,9 @@ _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
 _ACTIVE_AUTHENTICATED_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "active_authenticated_mcp_context", default=None
 )
+_ACTIVE_GRAPHITI_ATTENTION: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_graphiti_attention", default=None
+)
 _GRAPHITI_PROVIDER_HEALTH_LOCK = threading.Lock()
 _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
     "last_success": None,
@@ -176,7 +180,8 @@ _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode"}
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
-    {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools"}
+    {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
+     "nativeChildId", "nativeRunId"}
 )
 
 
@@ -196,6 +201,8 @@ def _configured_tool_allowlist() -> frozenset[str] | None:
 
 
 def _tool_is_allowed(name: str) -> bool:
+    if tool_publication(name) == "private-admin":
+        return False
     allowlist = _configured_tool_allowlist()
     return allowlist is None or name in allowlist
 
@@ -677,6 +684,8 @@ def _authenticated_main_context() -> dict[str, Any] | None:
             "callerRuntimeMode": internal.get("callerRuntimeMode"),
             "principalKind": internal.get("kind"),
             "grantedTools": internal.get("grantedTools", []),
+            "nativeChildId": internal.get("nativeChildId"),
+            "nativeRunId": internal.get("nativeRunId"),
         }
     else:
         context = claims.get("main") if isinstance(claims, dict) else None
@@ -863,6 +872,15 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
+        if provider == "cbm":
+            schema = copy.deepcopy(payload.get("inputSchema") or {})
+            format_schema = schema.get("properties", {}).get("format", {})
+            if "json" in format_schema.get("enum", []):
+                format_schema["default"] = "json"
+                payload["inputSchema"] = schema
+                payload["description"] = (payload.get("description") or "") + (
+                    " LiquidAIty defaults to native JSON for exact attention IDs; an explicit format is preserved."
+                )
         if provider == "graphiti" and native_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -905,14 +923,14 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
 
 
 def _bind_idd_access(tool: Tool) -> Tool:
-    """Publish the literal IDD access plane as standard MCP annotations."""
+    """Keep authorization metadata separate from native side-effect hints."""
     access = tool_access(tool.name)
     if access is None:
         raise RuntimeError(f"mcp_tool_missing_idd_access:{tool.name}")
     payload = tool.model_dump(by_alias=True, exclude_none=True)
-    annotations = dict(payload.get("annotations") or {})
-    annotations["readOnlyHint"] = access == "read"
-    payload["annotations"] = annotations
+    meta = dict(payload.get("_meta") or {})
+    meta["liquidaityAccess"] = access
+    payload["_meta"] = meta
     return Tool.model_validate(payload)
 
 
@@ -1166,6 +1184,7 @@ async def _ensure_native_graphiti_service() -> None:
             native.graphiti_client = await native.graphiti_service.get_client()
             native.semaphore = native.graphiti_service.semaphore
             await native.queue_service.initialize(native.graphiti_client)
+            _instrument_graphiti_attention(native.graphiti_client, native.queue_service)
             llm_provider = _graphiti_provider_settings(native.config.llm)
             embedder_provider = _graphiti_provider_settings(native.config.embedder)
             _instrument_graphiti_provider_client(
@@ -1249,14 +1268,119 @@ async def _call_native_graphiti(name: str, arguments: dict[str, Any]):
         raise RuntimeError("native_graphiti_initialization_timeout") from error
     if _NATIVE_GRAPHITI_MODULE is None:
         raise RuntimeError("native_graphiti_not_initialized")
+    observation: dict[str, Any] | None = (
+        {"context": _authenticated_main_context(), "event": None}
+        if name == "add_memory" else None
+    )
+    token = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
     try:
-        result = await asyncio.wait_for(
-            _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments),
-            timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
-        )
-    except TimeoutError as error:
-        raise RuntimeError(f"native_graphiti_timeout:{name}") from error
-    return _normalize_graphiti_result(result)
+        try:
+            result = await asyncio.wait_for(
+                _NATIVE_GRAPHITI_MODULE.mcp.call_tool(name, arguments),
+                timeout=_NATIVE_TOOL_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as error:
+            raise RuntimeError(f"native_graphiti_timeout:{name}") from error
+        result = _normalize_graphiti_result(result)
+        if observation and observation.get("event") and isinstance(result, CallToolResult):
+            result.meta = {**(result.meta or {}), "nativeAttention": observation["event"]}
+        return result
+    finally:
+        _ACTIVE_GRAPHITI_ATTENTION.reset(token)
+
+
+async def _persist_native_attention(event: dict[str, Any], context: dict[str, Any] | None) -> bool:
+    from app.python_models.card_domain import observe_native_attention
+
+    options = {}
+    if (context and not context.get("principalKind")
+            and str(context.get("parentRunId") or "").startswith("external-main:")):
+        options["external_context"] = context
+    try:
+        written = await asyncio.to_thread(observe_native_attention, event, **options)
+    except Exception:
+        # Observation cannot turn a completed native write into a retryable
+        # tool failure. Surface the missing AGE evidence separately.
+        written = False
+    event.pop("persisted", None)
+    if not written:
+        event["persisted"] = False
+    _trace("native_attention_observed", tool_name=event["toolName"],
+           result_category="age_observed" if written else "age_observation_failed", completed=True)
+    return written
+
+
+def _instrument_graphiti_attention(client: Any, queue: Any) -> None:
+    """Observe public native queue/SDK completion without owning their lifecycle.
+
+    The existing queue retains the request's observation alongside its own
+    process function. Native add_episode results, not inferred graph queries or
+    model prose, resolve the same pending AGE event with concrete IDs.
+    """
+    if getattr(queue, "_liquidaity_attention_bound", False):
+        return
+    enqueue = queue.add_episode_task
+    add_episode = client.add_episode
+
+    async def observed_add_episode(*args: Any, **kwargs: Any) -> Any:
+        result = await add_episode(*args, **kwargs)
+        observation = _ACTIVE_GRAPHITI_ATTENTION.get()
+        if observation and observation.get("event"):
+            from app.python_models.native_attention import build_native_attention_event
+
+            payload = {
+                "phase": "completed",
+                "episodes": [{"uuid": getattr(getattr(result, "episode", None), "uuid", None)}],
+                "nodes": [{"uuid": getattr(node, "uuid", None)} for node in (getattr(result, "nodes", None) or [])],
+                "edges": [{"uuid": getattr(edge, "uuid", None),
+                           "source_node_uuid": getattr(edge, "source_node_uuid", None),
+                           "target_node_uuid": getattr(edge, "target_node_uuid", None),
+                           "name": getattr(edge, "name", None)} for edge in (getattr(result, "edges", None) or [])],
+            }
+            event = build_native_attention_event("graphiti.add_memory", payload, observation["context"])
+            if event is not None:
+                event["eventId"] = observation["event"]["eventId"]
+                observation["event"] = event
+                await _persist_native_attention(event, observation["context"])
+        return result
+
+    async def observed_enqueue(group_id: str, process_func: Any) -> int:
+        observation = _ACTIVE_GRAPHITI_ATTENTION.get()
+        if not observation:
+            return await enqueue(group_id, process_func)
+        from app.python_models.native_attention import build_native_attention_event
+
+        event = build_native_attention_event("graphiti.add_memory", {"phase": "pending"}, observation["context"])
+        observation["event"] = event
+        if event:
+            await _persist_native_attention(event, observation["context"])
+
+        async def failed() -> None:
+            if observation.get("event"):
+                failure = {**observation["event"], "phase": "failed",
+                           "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+                observation["event"] = failure
+                await _persist_native_attention(failure, observation["context"])
+
+        async def observed_process() -> None:
+            current = _ACTIVE_GRAPHITI_ATTENTION.set(observation)
+            try:
+                await process_func()
+            except BaseException:
+                await failed()
+                raise
+            finally:
+                _ACTIVE_GRAPHITI_ATTENTION.reset(current)
+
+        try:
+            return await enqueue(group_id, observed_process)
+        except BaseException:
+            await failed()
+            raise
+
+    client.add_episode = observed_add_episode
+    queue.add_episode_task = observed_enqueue
+    queue._liquidaity_attention_bound = True
 
 
 def _normalize_graphiti_result(result: Any) -> Any:
@@ -1666,7 +1790,13 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     client = _NATIVE_CBM_CLIENT
     if client is None:
         raise RuntimeError("native_cbm_client_unavailable")
-    return client.call_tool(name, arguments)
+    native_arguments = dict(arguments)
+    native_tool = next((tool for tool in (_NATIVE_CBM_TOOLS or ()) if tool.name == name), None)
+    format_schema = (native_tool.inputSchema.get("properties", {}).get("format", {})
+                     if native_tool is not None else {})
+    if "format" not in native_arguments and "json" in format_schema.get("enum", []):
+        native_arguments["format"] = "json"
+    return client.call_tool(name, native_arguments)
 
 
 def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
@@ -2155,7 +2285,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
                 "Card relationships plus available run, native-reference attention, lineage, "
-                "tool, and artifact telemetry. runId selects one current Run. The retired "
+                "tool, and artifact telemetry. runId selects one exact Run; otherwise the "
+                "authenticated conversation is selected. cardId filters its direct Runs. "
+                "projectWide reads across the authenticated Project, before limits. The retired "
                 "assignmentId field is accepted only to report honestly that it is no longer "
                 "a current AgentGraph identity. No prompt or model input is returned."
             ),
@@ -2163,6 +2295,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "runId": {"type": "string"},
+                    "cardId": {"type": "string"},
                     "assignmentId": {"type": "string"},
                     "limit": {
                         "type": "integer",
@@ -2537,7 +2670,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
         _complete_catalog_family("graphiti")
     for provider, native_tools in native_catalogs.items():
         tools.extend(_namespace_native_tools(provider, native_tools))
-    tools = [_bind_idd_access(tool) for tool in tools]
+    tools = [_bind_idd_access(tool) for tool in tools
+             if tool_publication(tool.name) != "private-admin"]
     if allowlist is not None:
         tools = [tool for tool in tools if tool.name in allowlist]
     names = [tool.name for tool in tools]
@@ -2749,7 +2883,8 @@ async def list_tools() -> list[Tool]:
             str(value).strip() for value in grants or [] if str(value).strip()
         } if isinstance(grants, list) else set()
         readable = readable_tool_ids()
-        return [tool for tool in tools if tool.name in readable or tool.name in allowed]
+        return [tool for tool in tools if tool_publication(tool.name) != "private-admin"
+                and (tool.name in readable or tool.name in allowed)]
     try:
         tools = await _materialize_complete_catalog()
     except Exception as error:
@@ -2875,6 +3010,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "deckId",
         "conversationId",
         "runId",
+        "cardId",
         "assignmentId",
         "limit",
         "projectWide",
@@ -3064,6 +3200,9 @@ async def _dispatch_tool(
                 raise ValueError(f"caller_identity_rejected: {','.join(supplied_identity)}")
             for field in ("projectId", "deckId", "conversationId"):
                 if field in allowed:
+                    if (name == "agentgraph.inspect" and field == "conversationId"
+                            and (args.get("runId") or args.get("projectWide") is True)):
+                        continue
                     args[field] = str(context[field])
             if name in {"write_mag_one_instructions", "card.load_graph_references"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
@@ -3330,26 +3469,28 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         if result_category == "success":
             from app.python_models.native_attention import build_native_attention_event
 
-            native_attention = build_native_attention_event(
-                name,
-                result,
-                _authenticated_main_context(),
+            attention_context = _authenticated_main_context()
+            native_attention = (
+                (result.meta or {}).get("nativeAttention")
+                if name == "graphiti.add_memory" and isinstance(result, CallToolResult) else None
             )
+            already_observed = native_attention is not None
+            native_arguments = dict(arguments or {})
+            if name == "graphiti.clear_graph" and attention_context:
+                native_arguments["group_ids"] = [graphiti_project_group_id(str(attention_context["projectId"]))]
+            if native_attention is None:
+                native_attention = build_native_attention_event(
+                    name, result, attention_context, arguments=native_arguments,
+                )
             if native_attention is not None:
-                from app.python_models.card_domain import observe_native_attention
-
-                telemetry_written = await asyncio.to_thread(
-                    observe_native_attention,
-                    native_attention,
-                )
-                _trace(
-                    "native_attention_observed",
-                    tool_name=native_attention["toolName"],
-                    result_category=(
-                        "age_observed" if telemetry_written else "mcp_meta_only"
-                    ),
-                    completed=True,
-                )
+                telemetry_written = (native_attention.get("persisted") is not False
+                                     if already_observed else
+                                     await _persist_native_attention(native_attention, attention_context))
+                if not telemetry_written:
+                    # The native operation already happened. Report observation
+                    # failure separately, never invite a duplicate write retry.
+                    native_attention["persisted"] = False
+                    receipt["attentionFailureCode"] = "native_attention_persistence_failed"
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed" if result_category == "tool_error" else "completed"
         receipt["failureCode"] = (

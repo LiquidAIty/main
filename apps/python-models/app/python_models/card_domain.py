@@ -21,6 +21,7 @@ from app.python_models.idd import (
     load_input_data_dictionary,
     materialize_tool_catalog,
     readable_tool_ids,
+    writable_tool_ids,
     tool_access,
     validate_record,
 )
@@ -646,11 +647,14 @@ def load_deck(project_ref: str, deck_id: str) -> dict[str, Any]:
         return _load_deck_with_cursor(cursor, project_ref, deck_id)
 
 
-def observe_native_attention(event: dict[str, Any]) -> bool:
-    """Observe one proven MCP native-reference result on the existing Run in AGE.
+def observe_native_attention(
+    event: dict[str, Any], *, external_context: dict[str, Any] | None = None,
+) -> bool:
+    """Observe one proven MCP result on its Run in AGE.
 
     This is deliberately fail-open for the tool caller: AGE observation never owns
     dispatch.  Missing or mismatched Run/Card identity produces no graph write.
+    Authenticated external Main may establish its observation-only Run here.
     """
     project_id = str(event.get("projectId") or "").strip()
     deck_id = str(event.get("deckId") or "").strip()
@@ -662,6 +666,8 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
     operation = str(event.get("operation") or "").strip()
     timestamp = str(event.get("timestamp") or "").strip()
     result_hash = str(event.get("resultHash") or "").strip()
+    phase = str(event.get("phase") or "completed")
+    change = str(event.get("change") or operation)
     node_ids = [
         str(value).strip() for value in event.get("nativeNodeIds") or []
         if str(value).strip()
@@ -696,10 +702,56 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
         for native_kind, native_ids in (("node", node_ids), ("edge", edge_ids))
         for native_id in native_ids
     ]
-    if not references:
+    if not references and not (operation == "write" and (
+        phase in {"pending", "failed"} or change == "clear" and event.get("scopeGroupIds")
+        or tool_name == "graphiti.add_memory" and phase == "completed"
+    )):
         return False
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            # External Main has a server-owned grant/conversation identity, not a
+            # locally launched model Run. Establish only its AGE observation
+            # identity; do not launch a runtime or change saved Card/Run data.
+            if external_context is not None:
+                grant_id = run_id.removeprefix("external-main:")
+                if (
+                    not run_id.startswith("external-main:") or not grant_id
+                    or external_context.get("principalKind")
+                    or external_context.get("projectId") != project_id
+                    or external_context.get("deckId") != deck_id
+                    or external_context.get("mainCardId") != card_id
+                    or external_context.get("parentRunId") != run_id
+                    or external_context.get("conversationId") != f"external-mcp:{grant_id}"
+                    or event.get("conversationId") != external_context.get("conversationId")
+                ):
+                    return False
+                established = _age_rows(
+                    cursor,
+                    """
+                    MATCH (card:Card {
+                      projectId: $projectId, deckId: $deckId, cardId: $cardId
+                    })
+                    MERGE (run:Run {runId: $runId})
+                    WITH run, card
+                    WHERE (run.projectId IS NULL OR run.projectId=$projectId)
+                      AND (run.deckId IS NULL OR run.deckId=$deckId)
+                      AND (run.conversationId IS NULL OR run.conversationId=$conversationId)
+                    SET run.projectId=$projectId, run.deckId=$deckId,
+                        run.conversationId=$conversationId,
+                        run.rootRunId=coalesce(run.rootRunId, $runId),
+                        run.state=coalesce(run.state, 'observing'),
+                        run.runtimeKind=coalesce(run.runtimeKind, 'external-mcp'),
+                        run.startedAt=coalesce(run.startedAt, $timestamp)
+                    MERGE (run)-[:EXECUTED_BY]->(card)
+                    RETURN run.runId
+                    """,
+                    {"projectId": project_id, "deckId": deck_id, "cardId": card_id,
+                     "runId": run_id, "conversationId": event["conversationId"],
+                     "timestamp": timestamp},
+                    "run_id agtype",
+                )
+                if len(established) != 1:
+                    return False
             matched = _age_rows(
                 cursor,
                 """
@@ -710,7 +762,8 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                 })
                 MERGE (tool:Tool {toolId: $toolName})
                 MERGE (run)-[used:USED_TOOL {eventId: $eventId}]->(tool)
-                SET used.timestamp=$timestamp,
+                SET run.lastAttentionAt=$timestamp,
+                    used.timestamp=$timestamp,
                     used.projectId=$projectId,
                     used.deckId=$deckId,
                     used.conversationId=$conversationId,
@@ -718,6 +771,9 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                     used.authority=$authority,
                     used.operation=$operation,
                     used.toolName=$toolName,
+                    used.phase=$phase, used.change=$change,
+                    used.nativeChildId=$nativeChildId, used.nativeRunId=$nativeRunId,
+                    used.scopeGroupIds=$scopeGroupIds,
                     used.nativeNodeIds=$nativeNodeIds,
                     used.nativeEdgeIds=$nativeEdgeIds,
                     used.nativeEdges=$nativeEdges,
@@ -736,6 +792,10 @@ def observe_native_attention(event: dict[str, Any]) -> bool:
                     "authority": authority,
                     "operation": operation,
                     "toolName": tool_name,
+                    "phase": phase, "change": change,
+                    "nativeChildId": event.get("nativeChildId"),
+                    "nativeRunId": event.get("nativeRunId"),
+                    "scopeGroupIds": event.get("scopeGroupIds") or [],
                     "nativeNodeIds": node_ids,
                     "nativeEdgeIds": edge_ids,
                     "nativeEdges": native_edges,
@@ -880,6 +940,10 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     run_id = str(payload.get("runId") or "").strip()
+    card_id = str(payload.get("cardId") or "").strip()
+    conversation_id = str(payload.get("conversationId") or "").strip()
+    project_wide = payload.get("projectWide") is True
+    direct_only = payload.get("directOnly") is True
     assignment_id = str(payload.get("assignmentId") or "").strip()
     raw_limit = payload.get("limit", 20)
     if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 1 <= raw_limit <= 50:
@@ -892,19 +956,28 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
             cursor.execute("SET TRANSACTION READ ONLY")
             loaded = _load_deck_with_cursor(cursor, project_ref, deck_id)
             project_id = loaded["projectId"]
-            run_filter = "AND run.runId = $runId" if run_id else ""
+            run_filter = " ".join(
+                clause for enabled, clause in (
+                    (bool(run_id), "AND run.runId = $runId"),
+                    (bool(card_id), "AND card.cardId = $cardId"),
+                    (bool(conversation_id), "AND run.conversationId = $conversationId"),
+                    (direct_only, "AND (run.nativeChildId IS NULL OR run.nativeChildId = '')"),
+                ) if enabled
+            )
+            owner_scope = "projectId: $projectId" + ("" if project_wide else ", deckId: $deckId")
             run_rows = _age_rows(
                 cursor,
                 f"""
-                MATCH (run:Run {{projectId: $projectId, deckId: $deckId}})
+                MATCH (run:Run {{{owner_scope}}})
                       -[:EXECUTED_BY]->
-                      (card:Card {{projectId: $projectId, deckId: $deckId}})
+                      (card:Card {{{owner_scope}}})
                 WHERE true {run_filter}
                 RETURN properties(run), card.cardId
-                ORDER BY run.runId DESC
+                ORDER BY {"run.startedAt DESC, run.lastAttentionAt DESC" if direct_only else "run.lastAttentionAt DESC, run.startedAt DESC"}, run.runId DESC
                 LIMIT {limit}
                 """,
-                {"projectId": project_id, "deckId": deck_id, "runId": run_id},
+                {"projectId": project_id, "deckId": deck_id, "runId": run_id,
+                 "cardId": card_id, "conversationId": conversation_id},
                 "run agtype, card_id agtype",
             )
             runs: dict[str, dict[str, Any]] = {}
@@ -917,6 +990,13 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "runId": current_run_id,
                     "correlationId": str(properties.get("correlationId") or ""),
                     "state": str(properties.get("state") or "unknown"),
+                    "projectId": project_id,
+                    "deckId": str(properties.get("deckId") or deck_id),
+                    "conversationId": str(properties.get("conversationId") or ""),
+                    "rootRunId": str(properties.get("rootRunId") or current_run_id),
+                    "nativeChildId": str(properties.get("nativeChildId") or "") or None,
+                    "startedAt": str(properties.get("startedAt") or "") or None,
+                    "lastAttentionAt": str(properties.get("lastAttentionAt") or "") or None,
                     "cardId": str(row.get("card_id") or ""),
                     "assignedFromCardIds": [],
                     "parentRunIds": [],
@@ -927,11 +1007,25 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "attentionEvents": [],
                     "nativeReferences": [],
                     "viewedNativeReferences": [],
+                    "materializedNativeReferences": [],
                     "artifacts": [],
                 }
 
             run_ids = list(runs)
+            materialized_label_exists = False
             if run_ids:
+                # READ was not declared by the relational-domain migration.
+                # AGE can fall back to its restricted base-label scan for an
+                # unknown label. Inspect label metadata first, never broaden
+                # database grants or manufacture materialization observations.
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM ag_catalog.ag_label AS label
+                        JOIN ag_catalog.ag_graph AS graph ON graph.graphid=label.graph
+                        WHERE graph.name='agentgraph' AND label.name='READ' AND label.kind='e'
+                    ) AS available
+                """)
+                materialized_label_exists = bool((cursor.fetchone() or {}).get("available"))
                 telemetry_queries = {
                     "assignments": (
                         """
@@ -958,7 +1052,10 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
                               -[edge:USED_TOOL]->(tool:Tool)
                         WHERE run.runId IN $runIds
+                          AND edge.eventId IS NOT NULL AND edge.eventId <> ''
+                          AND ($directOnly = false OR edge.nativeChildId IS NULL OR edge.nativeChildId = '')
                         RETURN run.runId, tool.toolId, properties(edge)
+                        ORDER BY edge.timestamp DESC
                         """,
                         "run_id agtype, tool_id agtype, event agtype",
                     ),
@@ -967,6 +1064,9 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
                               -[edge:USED_TOOL]->(:Tool)
                         WHERE run.runId IN $runIds
+                          AND edge.eventId IS NOT NULL AND edge.eventId <> ''
+                          AND (edge.phase IS NULL OR edge.phase = 'completed')
+                          AND ($directOnly = false OR edge.nativeChildId IS NULL OR edge.nativeChildId = '')
                         RETURN run.runId, edge.operation, count(edge)
                         """,
                         "run_id agtype, operation agtype, event_count agtype",
@@ -989,6 +1089,15 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         """,
                         "run_id agtype, authority agtype, native_id agtype",
                     ),
+                    "materialized": (
+                        """
+                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                              -[:READ]->(native:NativeReference)
+                        WHERE run.runId IN $runIds
+                        RETURN run.runId, native.authority, native.nativeId
+                        """,
+                        "run_id agtype, authority agtype, native_id agtype",
+                    ),
                     "artifacts": (
                         """
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
@@ -1002,16 +1111,20 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 telemetry = {
                     name: _age_rows(
                         cursor,
-                        query + f"\nLIMIT {edge_limit}",
+                        query.replace("projectId: $projectId, deckId: $deckId", owner_scope)
+                        + f"\nLIMIT {edge_limit}",
                         {
                             "projectId": project_id,
                             "deckId": deck_id,
                             "runIds": run_ids,
+                            "directOnly": direct_only,
                         },
                         columns,
                     )
                     for name, (query, columns) in telemetry_queries.items()
+                    if name != "materialized" or materialized_label_exists
                 }
+                telemetry.setdefault("materialized", [])
                 for row in telemetry["assignments"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
@@ -1029,10 +1142,10 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
                         tool_id = str(row.get("tool_id") or "")
-                        if tool_id and tool_id not in item["usedTools"]:
-                            item["usedTools"].append(tool_id)
                         event = row.get("event")
                         if isinstance(event, dict) and str(event.get("eventId") or "").strip():
+                            if tool_id and tool_id not in item["usedTools"]:
+                                item["usedTools"].append(tool_id)
                             item["attentionEvents"].append({
                                 "eventId": str(event.get("eventId") or ""),
                                 "timestamp": str(event.get("timestamp") or ""),
@@ -1052,6 +1165,9 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                                 ],
                                 "resultHash": str(event.get("resultHash") or ""),
                                 "truncated": event.get("truncated") is True,
+                                **{key: event[key] for key in (
+                                    "phase", "change", "nativeChildId", "nativeRunId", "scopeGroupIds",
+                                ) if event.get(key) is not None},
                             })
                 for row in telemetry["tool_totals"]:
                     item = runs.get(str(row.get("run_id") or ""))
@@ -1063,6 +1179,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 for telemetry_name, output_name in (
                     ("used", "nativeReferences"),
                     ("viewed", "viewedNativeReferences"),
+                    ("materialized", "materializedNativeReferences"),
                 ):
                     for row in telemetry[telemetry_name]:
                         item = runs.get(str(row.get("run_id") or ""))
@@ -1117,10 +1234,12 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
         "projectId": project_id,
         "deckId": deck_id,
         "scope": {
-            "readScope": "project-deck",
-            "projectWideRequested": payload.get("projectWide") is True,
-            "conversationId": str(payload.get("conversationId") or ""),
-            "conversationFilterAvailable": False,
+            "readScope": "project" if project_wide else "project-deck",
+            "projectWideRequested": project_wide,
+            "conversationId": conversation_id,
+            "cardId": card_id or None,
+            "runId": run_id or None,
+            "conversationFilterAvailable": True,
         },
         "cards": cards,
         "relationships": relationships,
@@ -1130,6 +1249,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
             "usedNativeReferences": True,
             "viewedNativeReferences": True,
             "nativeAttentionEvents": True,
+            "materializedNativeReferencesAvailable": materialized_label_exists,
             "artifacts": True,
             "rawIdfStored": False,
         },
@@ -1957,7 +2077,7 @@ def _prepare_invocation(
     unknown_tools = [name for name in effective_tools if name not in by_id]
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
-    write_tools = [name for name in effective_tools if tool_access(name) == "write"]
+    write_tools = [name for name in effective_tools if name in writable_tool_ids()]
     call_config["enabledTools"] = write_tools
     tool_definitions = [by_id[name] for name in write_tools]
     for delegate in direct_card_targets:
@@ -1969,7 +2089,7 @@ def _prepare_invocation(
                 f"configured_tool_unknown:{unknown_delegate_tools[0]}"
             )
         delegate["tools"] = [
-            name for name in delegate["tools"] if tool_access(name) == "write"
+            name for name in delegate["tools"] if name in writable_tool_ids()
         ]
     return {
         "ok": True,
@@ -2954,7 +3074,7 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
     if not conversation_id:
         raise CardDomainError("hermes_kanban_card_run_conversation_not_found")
 
-    effective_tools = sorted({*readable_tool_ids(), *saved_tool_grants})
+    effective_tools = sorted(readable_tool_ids() | (set(saved_tool_grants) & writable_tool_ids()))
     return {
         "ok": True,
         "context": {
@@ -3127,6 +3247,7 @@ def _observe_run_start(
                 MERGE (run:Run {runId: $runId})
                 SET run.projectId=$projectId, run.deckId=$deckId,
                     run.correlationId=$correlationId, run.state='running',
+                    run.startedAt=$startedAt,
                     run.nativeChildId=$nativeChildId,
                     run.nativeProfileId=$nativeProfileId,
                     run.conversationId=$conversationId,
@@ -3141,6 +3262,7 @@ def _observe_run_start(
                     "projectId": prepared["projectId"],
                     "deckId": prepared["deckId"],
                     "correlationId": correlation_id,
+                    "startedAt": datetime.now(timezone.utc).isoformat(),
                     "cardId": identity["cardId"],
                     "nativeChildId": str(payload.get("nativeChildId") or "").strip() or None,
                     "nativeProfileId": (

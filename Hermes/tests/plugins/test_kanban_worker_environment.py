@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 
 import pytest
 
@@ -154,3 +155,36 @@ def test_default_spawn_without_provider_preserves_stock_lane(monkeypatch, tmp_pa
     assert kb._default_spawn(_task(), str(workspace)) == 4243
     assert "SCOPED_VALUE" not in captured["env"]
     assert captured["env"]["HERMES_KANBAN_TASK"] == "t_worker"
+
+
+def test_default_spawn_validates_process_mcp_before_launch_and_keeps_native_toolsets(monkeypatch, tmp_path):
+    from hermes_cli import plugins
+    from tools.mcp_tool import process_mcp_servers
+
+    root = tmp_path / ".hermes"
+    (root / "profiles" / "worker-profile").mkdir(parents=True)
+    root.joinpath("config.yaml").write_text("{}\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    monkeypatch.setattr(kb, "_resolve_hermes_argv", lambda: ["hermes"])
+    monkeypatch.setattr(kb, "_resolve_worker_cli_toolsets", lambda _: ["hermes-cli"])
+    provided = {"SCOPED_VALUE": "test-value", "HERMES_MCP_SERVERS": json.dumps({
+        "host-tools": {"url": "http://127.0.0.1:8765/mcp", "headers": {"Authorization": "Bearer ${SCOPED_VALUE}"}},
+    })}
+    monkeypatch.setattr(plugins, "resolve_kanban_worker_environment", lambda _: provided)
+    captured = {}
+
+    def spawn(cmd, **kwargs):
+        captured.update(cmd=cmd, env=kwargs["env"])
+        return type("Process", (), {"pid": 1234})()
+
+    monkeypatch.setattr(subprocess, "Popen", spawn)
+    kb._default_spawn(_task(), str(workspace))
+    assert process_mcp_servers(captured["env"])["host-tools"]["headers"]["Authorization"] == "Bearer test-value"
+    assert captured["cmd"][captured["cmd"].index("--toolsets") + 1] == "hermes-cli,mcp-host-tools"
+    captured.clear()
+    del provided["SCOPED_VALUE"]
+    with pytest.raises(ValueError, match="MCP environment value missing"):
+        kb._default_spawn(_task(), str(workspace))
+    assert captured == {}

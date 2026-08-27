@@ -175,7 +175,13 @@ def _extract_codegraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[st
         return _all_values(records, "qualified_name", "qn", "file_path", "file"), []
     if tool_name == "cbm.trace_path":
         records = [*_records(payload, "callers", "callees"), *table_records]
-        return _all_values(records, "qualified_name", "qn", "file_path", "file"), []
+        for key in ("callers", "callees"):
+            if isinstance(payload.get(key), dict):
+                records.extend(_tabular_records(payload[key]))
+        nodes = _all_values(records, "qualified_name", "qn", "file_path", "file")
+        if _text(payload.get("function")):
+            nodes.insert(0, _text(payload["function"]))
+        return nodes, []
     if tool_name == "cbm.search_code":
         records = [*_records(payload, "results"), *table_records]
         raw_matches = payload.get("raw_matches")
@@ -231,8 +237,9 @@ def _extract_knowgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[st
             edges.append(edge_id)
     elif tool_name == "graphiti.get_episodes":
         nodes.extend(_values(_records(payload, "episodes"), "uuid"))
-    elif tool_name in {"graphiti.get_episode_entities", "graphiti.add_triplet"}:
+    elif tool_name in {"graphiti.get_episode_entities", "graphiti.add_triplet", "graphiti.add_memory"}:
         native_edges = _records(payload, "edges", "facts")
+        nodes.extend(_values(_records(payload, "episodes"), "uuid"))
         nodes.extend(_values(_records(payload, "nodes", "entities"), "uuid"))
         nodes.extend(_values(native_edges, "source_node_uuid"))
         nodes.extend(_values(native_edges, "target_node_uuid"))
@@ -246,7 +253,7 @@ def _extract_knowgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[st
 
 
 def _extract_knowgraph_edges(tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-    if tool_name in {"graphiti.search_memory_facts", "graphiti.get_episode_entities", "graphiti.add_triplet"}:
+    if tool_name in {"graphiti.search_memory_facts", "graphiti.get_episode_entities", "graphiti.add_triplet", "graphiti.add_memory"}:
         return _edge_references(_records(payload, "facts", "edges", "relationships"))
     if tool_name == "graphiti.get_entity_edge":
         reference = _edge_reference(payload)
@@ -265,16 +272,6 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
         "records",
     )
     nodes = _values(records, "id", "memory_id")
-    if tool_name == "engraphis.search_code":
-        nodes.extend(_values(_records(payload, "symbols"), "fqname"))
-    elif tool_name == "engraphis.code_path":
-        for item in payload.get("path") or []:
-            if isinstance(item, dict):
-                value = _text(item.get("fqname") or item.get("id") or item.get("name"))
-            else:
-                value = _text(item)
-            if value:
-                nodes.append(value)
     top_id = _text(payload.get("id") or payload.get("memory_id"))
     if top_id:
         nodes.insert(0, top_id)
@@ -296,22 +293,8 @@ def _extract_thinkgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[
     return [reference] if reference else []
 
 
-def _extract_agentgraph(_tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
-    nodes = _values(_records(payload, "cards"), "cardId")
-    nodes.extend(_values(_records(payload, "runs"), "runId"))
-    edges = _values(_records(payload, "relationships"), "id")
-    return nodes, edges
-
-
-def _extract_agentgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-    return _edge_references(_records(payload, "relationships"))
-
-
 def _contracts() -> dict[str, NativeAttentionContract]:
     contracts: dict[str, NativeAttentionContract] = {
-        "agentgraph.inspect": NativeAttentionContract(
-            "agentgraph", "read", _extract_agentgraph, _extract_agentgraph_edges
-        ),
         "cbm.search_graph": NativeAttentionContract("codegraph", "read", _extract_codegraph),
         "cbm.trace_path": NativeAttentionContract("codegraph", "read", _extract_codegraph),
         "cbm.search_code": NativeAttentionContract("codegraph", "read", _extract_codegraph),
@@ -330,6 +313,10 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "graphiti.get_episodes": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
         "graphiti.get_episode_entities": NativeAttentionContract("knowgraph", "read", _extract_knowgraph, _extract_knowgraph_edges),
         "graphiti.add_triplet": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.add_memory": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
+        "graphiti.delete_entity_edge": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+        "graphiti.delete_episode": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
+        "graphiti.clear_graph": NativeAttentionContract("knowgraph", "write", _extract_knowgraph),
         "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
         "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
     }
@@ -342,10 +329,6 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "engraphis.timeline",
         "engraphis.recall_proactive",
         "engraphis.proactive_context",
-        "engraphis.search_code",
-        "engraphis.code_path",
-        "engraphis.code_impact",
-        "engraphis.export_code_graph",
     ):
         contracts[name] = NativeAttentionContract(
             "thinkgraph", "read", _extract_thinkgraph, _extract_thinkgraph_edges
@@ -396,6 +379,8 @@ def _decoded(value: Any) -> Any:
 
 def _result_payloads(result: Any) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
+    if isinstance(result, dict):
+        return [result]
     if isinstance(result, CallToolResult):
         structured = result.structuredContent
         if isinstance(structured, dict):
@@ -432,20 +417,50 @@ def build_native_attention_event(
     tool_name: str,
     result: Any,
     context: dict[str, Any] | None,
+    *,
+    arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     canonical_name = canonical_native_tool_name(tool_name)
     contract = NATIVE_ATTENTION_CONTRACTS.get(canonical_name or "")
     if contract is None:
         return None
+    payloads = _result_payloads(result)
+    if (isinstance(result, CallToolResult) and result.isError) or any(
+        payload.get("error") or payload.get("ok") is False for payload in payloads
+    ):
+        return None
+    phase = "completed"
+    change = "read" if contract.operation == "read" else "write"
+    scope_group_ids: list[str] = []
     node_ids: list[str] = []
     edge_ids: list[str] = []
     edge_references: list[dict[str, Any]] = []
-    for payload in _result_payloads(result):
+    for payload in payloads:
         nodes, edges = contract.extractor(canonical_name or "", payload)
         node_ids.extend(nodes)
         edge_ids.extend(edges)
         if contract.edge_extractor is not None:
             edge_references.extend(contract.edge_extractor(canonical_name or "", payload))
+    if canonical_name == "graphiti.add_memory":
+        change = "create"
+        # Native queue acceptance is not a write. Only the actual SDK
+        # completion result supplies concrete entity/edge identities.
+        phase = next((payload["phase"] for payload in payloads
+                      if payload.get("phase") in {"pending", "completed", "failed"}), "completed")
+    elif canonical_name in {"graphiti.delete_entity_edge", "graphiti.delete_episode"}:
+        change = "delete"
+        native_id = _text((arguments or {}).get("uuid"))
+        # The validated native call succeeded for this exact requested UUID.
+        if not payloads or not native_id:
+            return None
+        (edge_ids if canonical_name == "graphiti.delete_entity_edge" else node_ids).append(native_id)
+    elif canonical_name == "graphiti.clear_graph":
+        change = "clear"
+        groups = (arguments or {}).get("group_ids")
+        scope_group_ids = [groups] if isinstance(groups, str) else groups if isinstance(groups, list) else []
+        scope_group_ids = [_text(value) for value in scope_group_ids if _text(value)][:128]
+        if not payloads or not scope_group_ids:
+            return None
     native_node_ids, nodes_truncated = _dedupe_and_cap(
         node_ids, NATIVE_ATTENTION_NODE_LIMIT
     )
@@ -470,7 +485,11 @@ def build_native_attention_event(
         NATIVE_ATTENTION_EDGE_LIMIT,
     )
     edges_truncated = edges_truncated or edge_id_refs_truncated
-    if not native_node_ids and not native_edge_ids:
+    completed_without_ids = canonical_name == "graphiti.add_memory" and any(
+        payload.get("phase") == "completed" for payload in payloads
+    )
+    if (not native_node_ids and not native_edge_ids and phase not in {"pending", "failed"}
+            and change != "clear" and not completed_without_ids):
         return None
     normalized_references = {
         "nativeNodeIds": native_node_ids,
@@ -492,6 +511,11 @@ def build_native_attention_event(
         "conversationId": _text(identity.get("conversationId")) or None,
         "runId": _text(identity.get("parentRunId")) or None,
         "cardId": _text(identity.get("mainCardId")) or None,
+        **({"nativeChildId": _text(identity["nativeChildId"])} if identity.get("nativeChildId") else {}),
+        **({"nativeRunId": _text(identity["nativeRunId"])} if identity.get("nativeRunId") else {}),
+        "phase": phase,
+        "change": change,
+        **({"scopeGroupIds": scope_group_ids} if scope_group_ids else {}),
         **normalized,
         "resultHash": sha256(
             json.dumps(

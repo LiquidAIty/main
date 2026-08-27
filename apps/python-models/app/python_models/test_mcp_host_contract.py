@@ -300,6 +300,8 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "main",
         "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "nativeChildId": "native-task-one",
+        "nativeRunId": "native-attempt-one",
     }
     token = jwt.encode({
         "iss": "liquidaity-runtime",
@@ -338,9 +340,19 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerRuntimeMode": "main",
         "principalKind": "card-runtime",
         "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "nativeChildId": "native-task-one",
+        "nativeRunId": "native-attempt-one",
     }
     assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
     assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+    from app.python_models.native_attention import build_native_attention_event
+    event = build_native_attention_event("cbm.search_graph", {
+        "results": [{"qualified_name": "pkg.actual"}],
+    }, mcp_host._authenticated_main_context())
+    assert event["runId"] == "run-1"
+    assert event["cardId"] == "card-main"
+    assert event["nativeChildId"] == "native-task-one"
+    assert event["nativeRunId"] == "native-attempt-one"
 
 
 def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
@@ -979,9 +991,13 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "limit": 5,
             "projectId": "project-1",
             "deckId": "deck_builder",
-            "conversationId": "external-mcp:grant-1",
         },
     )
+    asyncio.run(mcp_host._dispatch_tool("agentgraph.inspect", {"limit": 5}))
+    assert calls[-1][1] == {"limit": 5, "projectId": "project-1", "deckId": "deck_builder",
+                            "conversationId": "external-mcp:grant-1"}
+    asyncio.run(mcp_host._dispatch_tool("agentgraph.inspect", {"projectWide": True, "limit": 5}))
+    assert calls[-1][1] == {"projectWide": True, "limit": 5, "projectId": "project-1", "deckId": "deck_builder"}
 
     proposed = asyncio.run(
         mcp_host._dispatch_tool(
@@ -1275,6 +1291,65 @@ def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
     }
 
 
+@pytest.mark.parametrize("name", ["engraphis.recall", "engraphis.recall_context", "engraphis.proactive_context", "engraphis.check_update"])
+def test_idd_read_access_does_not_overwrite_native_side_effect_annotations(name):
+    import mcp_host
+
+    native = mcp_host.Tool(name=name, inputSchema={"type": "object"},
+                          annotations={"readOnlyHint": False, "destructiveHint": False})
+    bound = mcp_host._bind_idd_access(native)
+    assert bound.annotations == native.annotations
+    assert bound.meta["liquidaityAccess"] == "read"
+
+
+def test_operator_code_tools_are_not_callable_even_with_a_retained_card_grant(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    admin = {f"engraphis.{name}" for name in (
+        "export_code_graph", "index_repo", "search_code", "code_path", "code_impact",
+    )}
+    principal = {"kind": "card-runtime", "grantedTools": [*admin, "graphiti.add_memory"]}
+    for caller in (principal, None):
+        monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: caller)
+        assert all(mcp_host._request_tool_is_allowed(name) is False for name in admin)
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+    assert mcp_host._request_tool_is_allowed("cbm.search_graph") is True
+    assert mcp_host._request_tool_is_allowed("graphiti.add_memory") is True
+    assert mcp_host._request_tool_is_allowed("graphiti.clear_graph") is False
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(
+        mcp_host.Tool(name=name, inputSchema={"type": "object"})
+        for name in [*admin, "cbm.search_graph", "graphiti.add_memory"]
+    ))
+    assert {tool.name for tool in asyncio.run(mcp_host.list_tools())} == {"cbm.search_graph", "graphiti.add_memory"}
+
+
+def test_cbm_structured_default_uses_one_native_call_and_preserves_explicit_format(monkeypatch):
+    import mcp_host
+
+    calls = []
+    native = mcp_host.Tool(name="search_graph", description="Native search", inputSchema={
+        "type": "object", "properties": {"format": {"type": "string", "enum": ["tree", "json"]}},
+    })
+    result = mcp_host.CallToolResult(content=[], structuredContent={"total": 0, "groups": []})
+    monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_TOOLS", (native,))
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_CLIENT", SimpleNamespace(
+        call_tool=lambda name, args: calls.append((name, args)) or result,
+    ))
+    arguments = {"project": "canonical"}
+    assert mcp_host._call_native_cbm("search_graph", arguments) is result
+    assert arguments == {"project": "canonical"}
+    assert calls == [("search_graph", {"project": "canonical", "format": "json"})]
+    mcp_host._call_native_cbm("search_graph", {**arguments, "format": "tree"})
+    assert calls[-1][1]["format"] == "tree"
+    advertised = mcp_host._namespace_native_tools("cbm", [native])[0]
+    assert advertised.inputSchema["properties"]["format"]["default"] == "json"
+    assert "default" not in native.inputSchema["properties"]["format"]
+
+
 def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     import asyncio
     import mcp_host
@@ -1371,7 +1446,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name
         assert "card.load_graph_references" in by_name
-        assert len(by_name) == 71
+        assert len(by_name) == 66
         assert "coder.status" not in by_name
         assert all(
             tool.inputSchema.get("additionalProperties") is False
@@ -1407,8 +1482,8 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
     external_ids = {
         group["namePrefix"] + tool["name"]
         for group in groups
-        if group["publication"] == "external-mcp"
         for tool in group["tools"]
+        if tool.get("publication", group["publication"]) == "external-mcp"
     }
     private_ids = {
         group["namePrefix"] + tool["name"]
@@ -1509,7 +1584,6 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
         "cbm.ingest_traces",
         "cbm.manage_adr",
         "engraphis.check_update",
-        "engraphis.index_repo",
         "engraphis.ingest_postgres_schema",
         "graphiti.clear_graph",
     }.issubset(published_names)
@@ -3049,8 +3123,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
     assert by_name["cbm.search_graph"].inputSchema == native_cbm_tools[0].inputSchema
-    assert by_name["cbm.search_graph"].annotations.readOnlyHint is True
-    assert by_name["graphiti.search_nodes"].annotations.readOnlyHint is True
+    assert by_name["cbm.search_graph"].annotations == native_cbm_tools[0].annotations
+    assert by_name["graphiti.search_nodes"].annotations == native_graphiti_tools[1].annotations
+    assert by_name["cbm.search_graph"].meta["liquidaityAccess"] == "read"
 
     active_scopes[:] = ["main"]
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}

@@ -220,3 +220,48 @@ def test_result_hash_is_stable_for_the_same_normalized_reference_set() -> None:
     assert first is not None and second is not None
     assert first["resultHash"] == second["resultHash"]
     assert first["eventId"] != second["eventId"]
+
+
+def test_self_inspection_and_engraphis_code_projection_never_create_attention():
+    for tool in ("agentgraph.inspect", "engraphis.export_code_graph", "engraphis.search_code",
+                 "engraphis.code_path", "engraphis.code_impact"):
+        assert native_attention.build_native_attention_event(tool, _result({
+            "cards": [{"cardId": "card-one"}], "runs": [{"runId": "run-one"}],
+            "id": "not-a-memory", "symbols": [{"fqname": "not-cbm"}],
+        }), None) is None
+
+
+def test_graphiti_pending_completion_and_deletion_contracts_never_invent_ids():
+    pending = native_attention.build_native_attention_event("graphiti.add_memory", {"phase": "pending"}, None)
+    assert pending["phase"] == "pending"
+    assert pending["nativeNodeIds"] == pending["nativeEdgeIds"] == []
+    # Queue acknowledgements alone cannot claim any completed graph write.
+    assert native_attention.build_native_attention_event("graphiti.add_memory", _result({"message": "queued"}), None) is None
+    completed = native_attention.build_native_attention_event("graphiti.add_memory", {
+        "phase": "completed", "episodes": [{"uuid": "episode-one"}],
+        "nodes": [{"uuid": "node-one"}], "edges": [],
+    }, None)
+    assert completed["nativeNodeIds"] == ["episode-one", "node-one"]
+    assert completed["phase"] == "completed"
+    for name, node_ids, edge_ids in (("delete_episode", ["native-uuid"], []),
+                                    ("delete_entity_edge", [], ["native-uuid"])):
+        event = native_attention.build_native_attention_event(f"graphiti.{name}", _result({"message": "deleted"}),
+                                                             None, arguments={"uuid": "native-uuid"})
+        assert event["change"] == "delete"
+        assert event["nativeNodeIds"] == node_ids and event["nativeEdgeIds"] == edge_ids
+        assert native_attention.build_native_attention_event(f"graphiti.{name}", _result({"error": "not found"}),
+                                                            None, arguments={"uuid": "native-uuid"}) is None
+        assert native_attention.build_native_attention_event(f"graphiti.{name}", _result({"message": "deleted"}), None) is None
+    cleared = native_attention.build_native_attention_event("graphiti.clear_graph", _result({"message": "cleared"}),
+                                                           None, arguments={"group_ids": ["project-group"]})
+    assert cleared["change"] == "clear" and cleared["scopeGroupIds"] == ["project-group"]
+    assert cleared["nativeNodeIds"] == cleared["nativeEdgeIds"] == []
+
+
+def test_current_native_cbm_trace_json_keeps_nested_qualified_ids():
+    event = native_attention.build_native_attention_event("cbm.trace_path", {
+        "function": "pkg.target", "callers": {"cols": ["name", "hop"],
+            "groups": [{"qn_prefix": "pkg", "rows": [["caller", 1]]}]},
+    }, None)
+    assert event["nativeNodeIds"] == ["pkg.target", "pkg.caller"]
+    assert event["nativeEdges"] == []

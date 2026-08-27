@@ -355,12 +355,14 @@ required = []
 
 [[toolGroups.tools]]
 name = "code_impact"
+publication = "private-admin"
 description = "Read impact for changed files in project reasoning."
 parameters = ["as_of", "changed_files", "known_at", "repo", "valid_at", "workspace"]
 required = ["changed_files", "repo", "workspace"]
 
 [[toolGroups.tools]]
 name = "code_path"
+publication = "private-admin"
 description = "Read a bounded source-to-target code path."
 parameters = ["as_of", "known_at", "max_depth", "repo", "source", "target", "valid_at", "workspace"]
 required = ["repo", "source", "target", "workspace"]
@@ -394,6 +396,7 @@ required = ["session_id"]
 
 [[toolGroups.tools]]
 name = "export_code_graph"
+publication = "private-admin"
 description = "Export bounded repository structure into project reasoning."
 parameters = ["as_of", "known_at", "repo", "valid_at", "workspace"]
 required = ["repo", "workspace"]
@@ -413,6 +416,7 @@ required = ["memory_id", "workspace"]
 
 [[toolGroups.tools]]
 name = "index_repo"
+publication = "private-admin"
 access = "write"
 description = "Index repository content into project reasoning."
 parameters = ["languages"]
@@ -506,6 +510,7 @@ required = ["content"]
 [[toolGroups.tools]]
 name = "search_code"
 description = "Search indexed code through project reasoning."
+publication = "private-admin"
 parameters = ["as_of", "known_at", "limit", "query", "repo", "valid_at", "workspace"]
 required = ["query", "repo", "workspace"]
 
@@ -1099,6 +1104,12 @@ values = ["read", "write"]
 name = "contracts"
 type = "object-array"
 required = true
+
+[[records.fields]]
+name = "publication"
+type = "string"
+required = false
+values = ["external-mcp", "private-runtime", "private-admin"]
 
 [[records.fields]]
 name = "requiredCallerRuntimeKind"

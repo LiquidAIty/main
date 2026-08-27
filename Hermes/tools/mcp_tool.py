@@ -5608,7 +5608,7 @@ def _interrupted_call_result() -> str:
 # Config loading
 # ---------------------------------------------------------------------------
 
-def _interpolate_env_vars(value):
+def _interpolate_env_vars(value, *, environ=None, required=False):
     """Recursively resolve ``${VAR}`` placeholders.
 
     Both ``${VAR}`` and Cursor-style ``${env:VAR}`` are accepted — the
@@ -5631,13 +5631,51 @@ def _interpolate_env_vars(value):
             if ctx is not None:
                 return ctx
             name = _env_ref_name(m.group(1))
+            # LIQUIDAITY VENDOR PATCH: a host-supplied process configuration
+            # resolves only its child's environment, never another profile's
+            # secret scope. Ordinary native configuration retains its behavior.
+            if environ is not None:
+                resolved = environ.get(name)
+                if required and (not isinstance(resolved, str) or not resolved.strip()):
+                    raise ValueError(f"MCP environment value missing: {name}")
+                return resolved or m.group(0)
             return _get_secret(name, m.group(0)) or m.group(0)
         return _ENV_VAR_PATTERN.sub(_replace, value)
     if isinstance(value, dict):
-        return {k: _interpolate_env_vars(v) for k, v in value.items()}
+        return {k: _interpolate_env_vars(v, environ=environ, required=required) for k, v in value.items()}
     if isinstance(value, list):
-        return [_interpolate_env_vars(v) for v in value]
+        return [_interpolate_env_vars(v, environ=environ, required=required) for v in value]
     return value
+
+
+def process_mcp_servers(environ=None) -> Dict[str, dict]:
+    """Resolve optional, non-persistent host MCP configuration for this process."""
+    # LIQUIDAITY VENDOR PATCH: generic complement to the pre-spawn environment
+    # provider. No Card identity, bearer issuer, file write, or connection here.
+    environment = os.environ if environ is None else environ
+    raw = environment.get("HERMES_MCP_SERVERS")
+    if raw is None:
+        return {}
+    try:
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > 65536:
+            raise ValueError()
+        servers = json.loads(raw)
+        if not isinstance(servers, dict) or not 1 <= len(servers) <= 16:
+            raise ValueError()
+        for name, config in servers.items():
+            if (
+                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name)
+                or not isinstance(config, dict)
+                or not isinstance(config.get("url") or config.get("command"), str)
+                or config.get("enabled") is False
+            ):
+                raise ValueError()
+    except (ValueError, TypeError):
+        raise ValueError("process_mcp_configuration_invalid") from None
+    resolved = _interpolate_env_vars(servers, environ=environment, required=True)
+    if set(_filter_suspicious_mcp_servers(resolved)) != set(resolved):
+        raise ValueError("process_mcp_configuration_rejected")
+    return resolved
 
 
 # (server_name, dotted key path) pairs already warned about — see
@@ -5729,11 +5767,16 @@ def _load_mcp_config() -> Dict[str, dict]:
     ``${ENV_VAR}`` placeholders in string values are resolved from
     ``os.environ`` (which includes ``~/.hermes/.env`` loaded at startup).
     """
+    # Validate before the stock fail-soft path. A required host configuration
+    # must not silently become an unconfigured worker or leak its raw JSON.
+    process_servers = process_mcp_servers()
     try:
         from hermes_cli.config import load_config
         from utils import env_var_enabled as _env_enabled
 
         if _env_enabled("HERMES_SAFE_MODE"):
+            if process_servers:
+                raise ValueError("process_mcp_unavailable_in_safe_mode")
             return {}
         config = load_config()
         servers = config.get("mcp_servers")
@@ -5766,8 +5809,19 @@ def _load_mcp_config() -> Dict[str, dict]:
                 safe_servers[name] = dict(cfg)
         except Exception:
             logger.debug("Failed to load portable MCP servers", exc_info=True)
+        for name, cfg in process_servers.items():
+            if name in safe_servers and safe_servers[name] != cfg:
+                raise ValueError("process_mcp_configuration_conflict")
+            if cfg.get("url") and any(
+                other != name and existing.get("url") == cfg["url"]
+                for other, existing in safe_servers.items()
+            ):
+                raise ValueError("process_mcp_duplicate_connection")
+            safe_servers[name] = cfg
         return safe_servers
     except Exception as exc:
+        if process_servers:
+            raise ValueError("process_mcp_configuration_unavailable") from None
         logger.debug("Failed to load MCP config: %s", exc)
         return {}
 

@@ -26,7 +26,7 @@ afterEach(async () => {
 });
 
 describe('internal Hermes Kanban worker bearer route', () => {
-  it('returns only the issued bearer over a loopback socket', async () => {
+  it('returns the issued bearer and canonical MCP URL over a loopback socket', async () => {
     const issue = vi.fn(async () => ({ bearer: 'b'.repeat(96), context: {} as never }));
     const app = express();
     app.use(express.json());
@@ -39,7 +39,9 @@ describe('internal Hermes Kanban worker bearer route', () => {
       body: JSON.stringify({ taskId: 't_worker' }),
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, bearer: 'b'.repeat(96) });
+    expect(await response.json()).toEqual({
+      ok: true, bearer: 'b'.repeat(96), mcpUrl: 'http://127.0.0.1:8765/mcp',
+    });
     expect(issue).toHaveBeenCalledOnce();
   });
 

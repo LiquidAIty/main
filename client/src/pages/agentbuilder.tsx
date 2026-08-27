@@ -398,36 +398,29 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: activeProject,
     deckId: BUILDER_DECK_ID,
     conversationId,
+    selectedCardId,
   });
   useEffect(() => {
     if (!activeProject) return undefined;
-    const controller = new AbortController();
     const params = new URLSearchParams({
       projectId: activeProject,
       deckId: BUILDER_DECK_ID,
-      conversationId,
+      stream: 'true',
+      ...(selectedCardId ? { cardId: selectedCardId } : {}),
     });
-    void fetch(`/api/coder/main/session/attention?${params.toString()}`, {
-      credentials: 'include',
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !Array.isArray(payload?.events)) {
-          throw new Error(String(payload?.error || `native_attention_http_${response.status}`));
-        }
-        graphAttention.restoreAttentionEvents(payload.events.map((event: Record<string, unknown>) => ({
-          ...event,
-          kind: 'native_attention' as const,
-        })));
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
-        }
-      });
-    return () => controller.abort();
-  }, [activeProject, conversationId, graphAttention.restoreAttentionEvents]);
+    const stream = new EventSource(`/api/coder/main/session/attention?${params.toString()}`, { withCredentials: true });
+    stream.addEventListener('session', (event) => {
+      graphAttention.observeAttentionSession(JSON.parse((event as MessageEvent).data));
+    });
+    stream.addEventListener('native_attention', (event) => {
+      graphAttention.observeAttentionEvent(JSON.parse((event as MessageEvent).data));
+    });
+    stream.onerror = (error) => {
+      stream.close();
+      console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
+    };
+    return () => stream.close();
+  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession]);
   const handleUseAttentionNode = useCallback((
     authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
     node: GraphProjectionNode,

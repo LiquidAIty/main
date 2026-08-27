@@ -5,6 +5,7 @@ import {
   type HermesKanbanWorkerIdentity,
 } from '../hermes/kanbanWorkerBearer';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
+import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
 
 type IssueBearer = typeof issueHermesKanbanWorkerBearer;
 
@@ -20,7 +21,7 @@ export function createInternalHermesKanbanRouter(
       const { bearer } = await issueBearer({
         identity: (req.body || {}) as Partial<HermesKanbanWorkerIdentity>,
       });
-      return res.json({ ok: true, bearer });
+      return res.json({ ok: true, bearer, mcpUrl: resolveInternalMcpUrl() });
     } catch (error) {
       if (error instanceof HermesKanbanWorkerNotCorrelatedError) {
         return res.status(404).json({
@@ -46,4 +47,3 @@ export function createInternalHermesKanbanRouter(
 }
 
 export default createInternalHermesKanbanRouter();
-

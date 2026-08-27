@@ -67,12 +67,26 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
         "savedWriteTools": ["worldsignals.command"],
         "legacyReadableSelections": ["worldsignals.capabilities"],
         "unknownConfiguredTools": [],
+        "unavailableConfiguredTools": [],
     }
     assert "worldsignals.capabilities" in result["effectiveReadTools"]
     assert all("prompt" not in card for card in result["cards"])
     assert result["wires"] == [
         {"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}
     ]
+
+
+def test_canvas_keeps_saved_admin_grant_but_never_allocates_it(fake_backend, monkeypatch):
+    monkeypatch.setitem(DECK["nodes"][0]["runtimeOptions"], "tools", [
+        "engraphis.index_repo", "worldsignals.command",
+    ])
+    result = asyncio.run(cp.canvas_inspect({"projectId": "p", "deckId": "d"}))
+    card = result["cards"][0]
+    assert card["tools"] == ["worldsignals.command"]
+    assert card["savedWriteTools"] == ["engraphis.index_repo", "worldsignals.command"]
+    assert card["unavailableConfiguredTools"] == ["engraphis.index_repo"]
+    assert "engraphis.export_code_graph" not in result["effectiveReadTools"]
+    assert fake_backend == {}  # inspection never rewrites the saved grant
 
 
 @pytest.mark.parametrize(

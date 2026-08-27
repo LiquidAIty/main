@@ -12,6 +12,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Mapping
 
 
@@ -75,7 +76,31 @@ def _worker_environment(context) -> Mapping[str, str] | None:
         or any(character.isspace() for character in bearer)
     ):
         raise RuntimeError("liquidaity_card_bearer_lookup_response_invalid")
-    return {"LIQUIDAITY_CARD_BEARER": bearer}
+    mcp_url = decoded.get("mcpUrl")
+    try:
+        address = urlsplit(mcp_url) if isinstance(mcp_url, str) else None
+        if (
+            address is None
+            or address.scheme != "http"
+            or address.hostname not in {"127.0.0.1", "localhost"}
+            or address.path != "/mcp"
+            or address.username or address.password or address.query or address.fragment
+        ):
+            raise ValueError()
+    except ValueError:
+        raise RuntimeError("liquidaity_card_mcp_url_invalid") from None
+    # The native child resolves this template against its own environment.
+    # Neither a profile file nor a second credential/connection owner is created.
+    return {
+        "LIQUIDAITY_CARD_BEARER": bearer,
+        "HERMES_MCP_SERVERS": json.dumps({
+            "liquidaity-card": {
+                "url": mcp_url,
+                "headers": {"Authorization": "Bearer ${LIQUIDAITY_CARD_BEARER}"},
+                "lazy": False,
+            },
+        }, separators=(",", ":")),
+    }
 
 
 def register(ctx) -> None:

@@ -191,7 +191,7 @@ async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
 
 async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "deckId")
-    from app.python_models.idd import readable_tool_ids, tool_access
+    from app.python_models.idd import readable_tool_ids, tool_access, writable_tool_ids, tool_publication
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
@@ -215,8 +215,10 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
             "runtime": node.get("runtime"),
             # Backward-compatible field now means exactly what the Card Tools
             # tab means: durable write/effect assignments.
-            "tools": saved_writes,
+            "tools": [name for name in saved_writes if name in writable_tool_ids()],
             "savedWriteTools": saved_writes,
+            "unavailableConfiguredTools": [name for name in configured_tools
+                                           if tool_publication(name) == "private-admin"],
             "legacyReadableSelections": [
                 name for name in configured_tools if tool_access(name) == "read"
             ],
@@ -399,9 +401,9 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ControlPlaneError("card_create_tools_must_be_string_list")
     normalized_tools = list(dict.fromkeys(name.strip() for name in tools))
-    from app.python_models.idd import tool_access
+    from app.python_models.idd import writable_tool_ids
 
-    invalid_tools = [name for name in normalized_tools if tool_access(name) != "write"]
+    invalid_tools = [name for name in normalized_tools if name not in writable_tool_ids()]
     if invalid_tools:
         raise ControlPlaneError(
             f"card_create_tools_must_be_write_operations:{invalid_tools[0]}"
@@ -509,10 +511,10 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ControlPlaneError("card_update_tools_must_be_string_list")
     if "tools" in updates:
-        from app.python_models.idd import tool_access
+        from app.python_models.idd import writable_tool_ids
 
         invalid_tools = [
-            name for name in updates["tools"] if tool_access(name) != "write"
+            name for name in updates["tools"] if name not in writable_tool_ids()
         ]
         if invalid_tools:
             raise ControlPlaneError(

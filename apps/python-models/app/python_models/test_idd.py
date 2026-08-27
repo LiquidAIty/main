@@ -173,6 +173,34 @@ def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -
     }]
 
 
+def test_native_side_effect_annotations_do_not_redefine_idd_read_availability():
+    from app.python_models.idd import readable_tool_ids
+
+    references = materialize_tool_catalog([{
+        "name": "engraphis.recall", "namespace": "engraphis", "sourceId": "engraphis",
+        "nativeName": "engraphis_recall", "connectionKind": "external-mcp",
+        "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": False},
+    }])
+    recall = next(item for item in references if item["canonicalId"] == "engraphis.recall")
+    assert recall["access"] == "read"
+    assert recall["contracts"][0]["annotations"] == {"readOnlyHint": False}
+    assert "engraphis.recall" in readable_tool_ids()
+
+
+def test_engraphis_code_projection_is_operator_only_without_removing_declarations():
+    from app.python_models.idd import external_mcp_tool_ids, readable_tool_ids, writable_tool_ids
+
+    admin = {f"engraphis.{name}" for name in (
+        "export_code_graph", "index_repo", "search_code", "code_path", "code_impact",
+    )}
+    references = {item["canonicalId"]: item for item in materialize_tool_catalog([])}
+    assert admin.issubset(references)
+    assert all(references[name]["publication"] == "private-admin" for name in admin)
+    assert all(references[name]["availability"] == "disabled" for name in admin)
+    assert admin.isdisjoint(external_mcp_tool_ids() | readable_tool_ids() | writable_tool_ids())
+    assert {"cbm.search_graph", "cbm.search_code", "engraphis.recall"}.issubset(readable_tool_ids())
+
+
 def test_explicit_tool_permissions_come_from_the_idd() -> None:
     dictionary = load_input_data_dictionary()
     tool_names = {

@@ -51,13 +51,23 @@ class _Opener:
         return self.response
 
 
-def test_correlated_worker_receives_only_ephemeral_bearer(monkeypatch):
+def test_correlated_worker_receives_ephemeral_bearer_and_native_mcp_template(monkeypatch):
     bearer = "b" * 64
-    opener = _Opener(_Response(json.dumps({"ok": True, "bearer": bearer}).encode()))
+    opener = _Opener(_Response(json.dumps({
+        "ok": True, "bearer": bearer, "mcpUrl": "http://127.0.0.1:8765/mcp",
+    }).encode()))
     monkeypatch.setattr(plugin.urllib.request, "build_opener", lambda *_args: opener)
 
-    assert plugin._worker_environment(_context()) == {
-        "LIQUIDAITY_CARD_BEARER": bearer
+    environment = plugin._worker_environment(_context())
+    assert set(environment) == {"LIQUIDAITY_CARD_BEARER", "HERMES_MCP_SERVERS"}
+    assert environment["LIQUIDAITY_CARD_BEARER"] == bearer
+    assert bearer not in environment["HERMES_MCP_SERVERS"]
+    assert json.loads(environment["HERMES_MCP_SERVERS"]) == {
+        "liquidaity-card": {
+            "url": "http://127.0.0.1:8765/mcp",
+            "headers": {"Authorization": "Bearer ${LIQUIDAITY_CARD_BEARER}"},
+            "lazy": False,
+        },
     }
     assert json.loads(opener.request.data) == {
         "taskId": "t_root",
@@ -82,6 +92,46 @@ def test_uncorrelated_stock_task_keeps_original_lane(monkeypatch):
     )
 
     assert plugin._worker_environment(_context()) is None
+
+
+def test_real_native_child_configuration_consumes_only_its_bearer(monkeypatch, tmp_path):
+    from hermes_cli import config, plugins
+    from tools import mcp_tool
+
+    bearer = "child-only-" + "b" * 64
+    opener = _Opener(_Response(json.dumps({
+        "ok": True, "bearer": bearer, "mcpUrl": "http://127.0.0.1:8765/mcp",
+    }).encode()))
+    monkeypatch.setattr(plugin.urllib.request, "build_opener", lambda *_args: opener)
+    environment = plugin._worker_environment(_context())
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(config, "load_config", lambda: {})
+    monkeypatch.setattr(plugins, "discover_plugins", lambda: None)
+    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: SimpleNamespace(
+        get_portable_mcp_servers=lambda: {},
+    ))
+
+    servers = mcp_tool._load_mcp_config()
+    assert list(servers) == ["liquidaity-card"]
+    assert servers["liquidaity-card"]["headers"] == {"Authorization": f"Bearer {bearer}"}
+    assert not list(tmp_path.glob("*.yaml"))
+    assert bearer not in environment["HERMES_MCP_SERVERS"]
+    monkeypatch.delenv("LIQUIDAITY_CARD_BEARER")
+    with pytest.raises(ValueError, match="MCP environment value missing"):
+        mcp_tool._load_mcp_config()
+
+
+@pytest.mark.parametrize("url", [None, "https://example.test/mcp", "http://localhost/wrong",
+                                  "http://user:password@localhost/mcp"])
+def test_worker_rejects_noncanonical_mcp_destination(monkeypatch, url):
+    opener = _Opener(_Response(json.dumps({
+        "ok": True, "bearer": "b" * 64, "mcpUrl": url,
+    }).encode()))
+    monkeypatch.setattr(plugin.urllib.request, "build_opener", lambda *_args: opener)
+    with pytest.raises(RuntimeError, match="liquidaity_card_mcp_url_invalid"):
+        plugin._worker_environment(_context())
 
 
 @pytest.mark.parametrize(

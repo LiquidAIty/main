@@ -918,12 +918,19 @@ type NativeAttentionEvent = {
   }>;
   resultHash: string;
   truncated: boolean;
+  phase?: 'pending' | 'completed' | 'failed';
+  change?: 'read' | 'write' | 'create' | 'delete' | 'clear';
+  nativeChildId?: string | null;
+  nativeRunId?: string | null;
+  runState?: string;
+  scopeGroupIds?: string[];
 };
 
 function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
   if (!value || typeof value !== 'object') return [];
   const runs = Array.isArray((value as any).runs) ? (value as any).runs : [];
-  return runs.flatMap((run: any) => Array.isArray(run?.attentionEvents) ? run.attentionEvents : [])
+  return runs.flatMap((run: any) => Array.isArray(run?.attentionEvents)
+    ? run.attentionEvents.map((event: any) => ({ ...event, runState: run.state })) : [])
     .filter((event: any) => (
       event
       && typeof event === 'object'
@@ -959,16 +966,24 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
         .slice(0, 256) : [],
       resultHash: String(event.resultHash || ''),
       truncated: event.truncated === true,
+      ...(event.phase ? { phase: event.phase } : {}),
+      ...(event.change ? { change: event.change } : {}),
+      ...(event.nativeChildId ? { nativeChildId: String(event.nativeChildId) } : {}),
+      ...(event.nativeRunId ? { nativeRunId: String(event.nativeRunId) } : {}),
+      ...(event.runState ? { runState: String(event.runState) } : {}),
+      ...(Array.isArray(event.scopeGroupIds) ? { scopeGroupIds: event.scopeGroupIds.map(String).slice(0, 128) } : {}),
     }));
 }
 
 function latestScopedNativeAttentionEvents(
   value: unknown,
-  scope: { projectId: string; deckId: string; conversationId?: string },
+  scope: { projectId: string; deckId: string; conversationId?: string; cardId?: string; runId?: string },
 ): NativeAttentionEvent[] {
   const scoped = nativeAttentionEvents(value)
     .filter((event) => event.projectId === scope.projectId && event.deckId === scope.deckId)
     .filter((event) => !scope.conversationId || event.conversationId === scope.conversationId)
+    .filter((event) => !scope.cardId || event.cardId === scope.cardId)
+    .filter((event) => !scope.runId || event.runId === scope.runId)
     .filter((event) => event.authority !== 'agentgraph')
     .filter((event) => event.runId && Number.isFinite(Date.parse(event.timestamp)))
     .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
@@ -986,19 +1001,85 @@ router.get('/main/session/attention', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
   const conversationId = String(req.query?.conversationId || '').trim();
+  const cardId = String(req.query?.cardId || '').trim();
+  const runId = String(req.query?.runId || '').trim();
+  const stream = req.query?.stream === 'true';
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
   try {
-    const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
+    const readInspection = () => requestPythonRailsJson('/domain/agentgraph/inspect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, limit: 50 }),
+      body: JSON.stringify({ projectId, deckId, limit: cardId ? 1 : 50,
+        ...(conversationId ? { conversationId } : {}),
+        ...(cardId ? { cardId, directOnly: true } : {}),
+        ...(runId ? { runId } : {}),
+      }),
     });
+    const inspection = await readInspection();
+    if (stream) {
+      // Follow the existing AGE observation store using the same session and
+      // native_attention SSE contracts as Main. No runtime or event bus is
+      // started by this read-only subscription.
+      res.writeHead(200, { 'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no' });
+      let closed = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let previous = new Map<string, string>();
+      const emit = (kind: string, value: Record<string, unknown>, key: string,
+        next: Map<string, string>) => {
+        const body = JSON.stringify({ ...value, kind });
+        next.set(key, body);
+        if (body !== previous.get(key) && !closed) res.write(`event: ${kind}\ndata: ${body}\n\n`);
+      };
+      const deliver = (value: any) => {
+        const next = new Map<string, string>();
+        const runs = Array.isArray(value?.runs) ? value.runs : [];
+        for (const run of runs) {
+          emit('session', { projectId, deckId: run.deckId || deckId,
+            conversationId: run.conversationId || null, cardId: run.cardId,
+            runId: run.runId, state: run.state, nativeChildId: run.nativeChildId || null,
+            materializedNativeReferences: run.materializedNativeReferences || [] },
+          `run:${run.runId}`, next);
+        }
+        if (cardId && !runs.length) emit('session', { projectId, deckId, cardId,
+          runId: null, state: null, materializedNativeReferences: [] }, `card:${cardId}`, next);
+        // AGE returns newest-first for bounded selection. Replay oldest-first
+        // so a retained read cannot resurrect an acknowledged later deletion.
+        for (const event of nativeAttentionEvents(value)
+          .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))) {
+          if (event.authority === 'agentgraph' || event.projectId !== projectId
+            || event.deckId !== deckId || (cardId && (event.cardId !== cardId || event.nativeChildId))) continue;
+          emit('native_attention', event, event.eventId, next);
+        }
+        previous = next;
+      };
+      const poll = async () => {
+        try { deliver(await readInspection()); }
+        catch (error) {
+          if (!closed) {
+            res.write(`event: error\ndata: ${JSON.stringify({ kind: 'error',
+              error: error instanceof Error ? error.message : 'native_attention_read_failed' })}\n\n`);
+            res.end();
+          }
+          return;
+        }
+        if (!closed) timer = setTimeout(poll, 2000);
+      };
+      res.on('close', () => { closed = true; if (timer) clearTimeout(timer); });
+      deliver(inspection);
+      res.write(': AGE attention connected\n\n');
+      timer = setTimeout(poll, 2000);
+      return;
+    }
     return res.json({
       ok: true,
       events: latestScopedNativeAttentionEvents(inspection, {
         projectId,
         deckId,
         ...(conversationId ? { conversationId } : {}),
+        ...(cardId ? { cardId } : {}),
+        ...(runId ? { runId } : {}),
       }),
     });
   } catch (error) {
@@ -1087,7 +1168,9 @@ router.post('/main/session/chat', async (req, res) => {
       const publicEvent = projectHermesEvent(eventIdentity, { ...(payload as object), kind: eventName },
         sequence, new Date().toISOString());
       res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...(payload as object),
-        ...eventIdentity, ...(publicEvent ? { terminalEvent: publicEvent } : {}) })}\n\n`);
+        ...eventIdentity,
+        ...(eventName === 'native_attention' ? { nativeChildId: (payload as NativeAttentionEvent).nativeChildId || null } : {}),
+        ...(publicEvent ? { terminalEvent: publicEvent } : {}) })}\n\n`);
       return true;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

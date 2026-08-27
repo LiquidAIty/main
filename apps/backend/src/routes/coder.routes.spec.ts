@@ -1791,7 +1791,54 @@ describe('coder routes', () => {
           eventId: 'attention-code', authority: 'codegraph', nativeNodeIds: ['pkg.alpha', 'pkg.beta'],
           nativeEdges: [{ id: 'calls-one', source: 'pkg.alpha', target: 'pkg.beta', predicate: 'CALLS' }],
         })]);
+        expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith('/domain/agentgraph/inspect',
+          expect.objectContaining({ body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder',
+            limit: 50, conversationId: 'main' }) }));
       } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
+    it('streams the existing AGE contract for non-Main Cards and asks for direct current-Run scope', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init: any) => {
+        if (endpoint !== '/domain/agentgraph/inspect') return railsImplementation(endpoint, init);
+        expect(JSON.parse(init.body)).toEqual({ projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card-coder', directOnly: true, limit: 1 });
+        return { runs: [{ runId: 'coder-run', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card-coder', conversationId: 'coder-conversation', state: 'running',
+          materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.materialized' }],
+          attentionEvents: [{ eventId: 'delete-event', timestamp: '2026-08-27T12:00:02Z',
+            projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-coder', runId: 'coder-run',
+            authority: 'knowgraph', operation: 'write', change: 'delete', toolName: 'graphiti.delete_episode',
+            nativeNodeIds: ['episode-one'], nativeEdgeIds: [], resultHash: 'c'.repeat(64),
+          }, { eventId: 'direct-event', timestamp: '2026-08-27T12:00:00Z',
+            projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-coder', runId: 'coder-run',
+            authority: 'codegraph', operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.direct'], nativeEdgeIds: [], resultHash: 'a'.repeat(64),
+          }, { eventId: 'child-event', timestamp: '2026-08-27T12:00:01Z', nativeChildId: 'native-child',
+            projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-coder', runId: 'coder-run',
+            authority: 'codegraph', operation: 'read', toolName: 'cbm.search_graph',
+            nativeNodeIds: ['pkg.child'], nativeEdgeIds: [], resultHash: 'b'.repeat(64) }] }] };
+      });
+      const { server, baseUrl } = await createApiServer();
+      const controller = new AbortController();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/attention?projectId=project-1&deckId=deck_builder&cardId=card-coder&stream=true`,
+          { signal: controller.signal });
+        const part = await response.body!.getReader().read();
+        const body = new TextDecoder().decode(part.value);
+        expect(response.headers.get('content-type')).toBe('text/event-stream');
+        expect(body).toContain('event: session');
+        expect(body).toContain('pkg.materialized');
+        expect(body).toContain('event: native_attention');
+        expect(body).toContain('pkg.direct');
+        expect(body).not.toContain('pkg.child');
+        expect(body).not.toContain('child-event');
+        expect(body.indexOf('direct-event')).toBeLessThan(body.indexOf('delete-event'));
+      } finally {
+        controller.abort();
         orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         await closeServer(server);
       }

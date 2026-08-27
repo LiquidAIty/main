@@ -278,23 +278,44 @@ Files and symbols:
   `resolve_kanban_worker_environment` provide the generic synchronous registry.
 - `hermes_cli/kanban_db.py`: `_default_spawn` resolves additive values after stock worker identity is
   fixed and before `Popen`; provider errors follow the existing visible spawn-failure/retry path.
+  Optional process MCP configuration is validated against the exact child environment before spawn,
+  and its MCP toolset names are added to the existing native worker toolsets.
+- `tools/mcp_tool.py`: `process_mcp_servers` reads optional `HERMES_MCP_SERVERS` JSON without writing
+  config files. `_load_mcp_config` merges it once, rejects conflicting names/duplicate URLs, and
+  requires every environment placeholder to resolve from this process. Ordinary profile/portable
+  configuration keeps its original interpolation behavior.
+- `hermes_cli/mcp_startup.py`: the existing `ensure_mcp_discovery_before_agent_build` requires these
+  process-provided connections before constructing a native agent; missing connections fail closed.
+  It reuses native discovery and its existing timeout, not another connection owner or retry loop.
 - `tests/plugins/test_kanban_worker_environment.py`: product-free compatibility, additive merge,
   non-overwrite, disposal, and spawn proof.
+- `tests/tools/test_process_mcp_configuration.py`: real loader/interpolation, duplicate rejection,
+  missing-value failure, pre-agent readiness, and unchanged unconfigured behavior.
 
 The downstream LiquidAIty provider lives at `apps/hermes-liquidaity-plugin/`. It is installed into the
-existing Hermes environment as a normal `hermes_agent.plugins` entry point and returns only
-`LIQUIDAITY_CARD_BEARER`. Canonical startup removes the host-only signing secret before the Hermes
+existing Hermes environment as a normal `hermes_agent.plugins` entry point and returns
+`LIQUIDAITY_CARD_BEARER` plus one non-secret process MCP template referring to that variable.
+Canonical startup removes the host-only signing secret before the Hermes
 gateway starts, so no product-specific redaction remains in vendor source.
 
 Upstream behavior preserved: no-provider dispatch retains the original command, environment, worker
-ownership, profile, OAuth, and lifecycle. The provider cannot choose a model, tool, task, or runtime.
+ownership, profile, OAuth, and lifecycle. The provider cannot choose a model, task, or runtime.
+The opt-in process template registers the host's MCP tools through the existing native registry;
+the remote host remains responsible for enforcing their grants.
 LiquidAIty correlation and bearer signing stay outside Hermes; ordinary tasks that do not resolve to a
 saved Card Run receive no added value.
 
 Contribution plan: propose the generic bounded pre-spawn environment-provider registry upstream with
 tests for no-provider compatibility, non-overwrite, concurrent isolation, and visible provider
-failure. Keep the LiquidAIty loopback provider in its external entry-point package.
+failure. Include the generic non-persistent MCP configuration handoff and required pre-agent discovery
+as a bounded follow-up contract. Keep the LiquidAIty loopback provider in its external entry-point package.
+Sync cost: three native call sites (spawn, config load/interpolation, pre-agent readiness); no Hermes
+runtime or storage replacement. Provider-free tests prove configuration, not a live model worker.
 
 Rollback: remove the marked registry and `_default_spawn` call site. Native workers then retain stock
 spawning; the external LiquidAIty provider becomes inactive and Card-scoped Kanban MCP grants must fail
 closed.
+
+The process-MCP extension can be rolled back separately only by removing its optional loader/startup/
+spawn handling and the external plugin's template producer together. Card worker MCP must then fail
+closed until an equivalent native handoff exists; no static profile or duplicate connection is a fallback.

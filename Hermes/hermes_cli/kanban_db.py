@@ -10858,6 +10858,13 @@ def _default_spawn(
             + ", ".join(conflicts)
         )
     env.update(provider_env)
+    # LIQUIDAITY VENDOR PATCH: validate process-only MCP templates against the
+    # exact child environment before Popen; never write them into a profile.
+    process_servers = {}
+    if "HERMES_MCP_SERVERS" in env:
+        from tools.mcp_tool import process_mcp_servers
+
+        process_servers = process_mcp_servers(env)
 
     # A worker must NEVER boot the interactive TUI: an inherited HERMES_TUI=1
     # or a `display.interface: tui` in the profile's config would send the
@@ -10900,6 +10907,12 @@ def _default_spawn(
     if task.reasoning_effort:
         cmd.extend(["--reasoning", task.reasoning_effort])
     worker_toolsets = _resolve_worker_cli_toolsets(env.get("HERMES_HOME"))
+    if process_servers:
+        if not worker_toolsets:
+            raise RuntimeError("kanban_worker_native_toolsets_unavailable")
+        worker_toolsets = list(dict.fromkeys([
+            *worker_toolsets, *(f"mcp-{name}" for name in process_servers),
+        ]))
     if worker_toolsets:
         cmd.extend(["--toolsets", ",".join(worker_toolsets)])
     cmd.extend([

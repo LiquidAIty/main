@@ -21,6 +21,10 @@ export type InternalMcpPrincipal =
       grantedTools: string[];
       requiresExecutionContext?: boolean;
       executionContextId?: string;
+      // Signed native attribution only; these do not grant permissions or
+      // change token lifetime, revocation, or execution-context enforcement.
+      nativeChildId?: string;
+      nativeRunId?: string;
     };
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {

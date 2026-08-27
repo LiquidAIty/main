@@ -82,9 +82,11 @@ describe('native Kanban worker Card bearer', () => {
       callerRuntimeMode: 'kanban',
       grantedTools: ['cbm.search_graph', 'graphiti.add_memory'],
       requiresExecutionContext: false,
+      nativeChildId: 't_worker',
+      nativeRunId: '7',
     });
     expect(principal).not.toHaveProperty('taskId');
-    expect(principal).not.toHaveProperty('nativeRunId');
+    expect(principal).not.toHaveProperty('claimLock');
   });
 
   it('fails closed when the native claim does not match the running attempt', async () => {

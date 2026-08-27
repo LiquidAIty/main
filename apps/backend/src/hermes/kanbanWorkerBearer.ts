@@ -122,6 +122,8 @@ export async function issueHermesKanbanWorkerBearer(args: {
     callerRuntimeMode: 'kanban',
     grantedTools: context.grantedTools,
     requiresExecutionContext: false,
+    nativeChildId: context.nativeChildId,
+    nativeRunId: identity.nativeRunId,
   };
   const bearer = (args.mint ?? createInternalMcpBearer)(principal, args.env);
   return { bearer, context };
