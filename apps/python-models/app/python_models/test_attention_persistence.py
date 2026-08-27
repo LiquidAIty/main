@@ -15,10 +15,7 @@ def age_boundary(monkeypatch):
 
     class Cursor:
         def execute(self, query, *_args):
-            assert query == "SET TRANSACTION READ ONLY" or "SELECT EXISTS" in query and "ag_catalog.ag_label" in query
-
-        def fetchone(self):
-            return {"available": False}
+            assert query == "SET TRANSACTION READ ONLY"
 
     class Connection:
         @contextmanager
@@ -31,7 +28,6 @@ def age_boundary(monkeypatch):
 
     def rows(_cursor, query, params, _columns):
         statements.append((query, params))
-        assert "-[:READ]->" not in query  # absent native label is not scanned
         if "MERGE (run:Run {runId: $runId})" in query:
             # Apache AGE 1.6 rejects Neo4j's ON CREATE SET syntax. Retain
             # existing identity/state with the supported SET/coalesce form.
@@ -112,7 +108,8 @@ def test_external_attention_establishes_once_and_survives_scoped_readback(age_bo
     assert run["graphReads"] == 1 and run["graphWrites"] == 0
     assert [value["eventId"] for value in run["attentionEvents"]] == [event["eventId"]]
     assert run["attentionEvents"][0]["nativeNodeIds"] == ["pkg.actual"]
-    assert result["telemetry"]["materializedNativeReferencesAvailable"] is False
+    assert result["telemetry"]["materializedNativeReferencesAvailable"] is True
+    assert any("-[:READ]->" in query for query, _params in statements)
     before = len(statements)
     assert card_domain.observe_native_attention(event, external_context={**context, "mainCardId": "other"}) is False
     assert len(statements) == before
@@ -180,3 +177,16 @@ def test_authenticated_external_mcp_read_uses_the_real_writer_once_and_reports_f
     exception_observation = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
     assert exception_observation.isError is not True
     assert exception_observation.meta["nativeAttention"]["persisted"] is False
+
+
+def test_missing_materialized_read_schema_is_visible_even_without_runs(monkeypatch, age_boundary):
+    rows = card_domain._age_rows
+
+    def missing_read(cursor, query, params, columns):
+        if "-[:READ]->" in query:
+            raise PermissionError("READ label unavailable")
+        return rows(cursor, query, params, columns)
+
+    monkeypatch.setattr(card_domain, "_age_rows", missing_read)
+    with pytest.raises(card_domain.CardDomainError, match="agentgraph_materialized_read_unavailable:PermissionError"):
+        card_domain.inspect_agentgraph({"projectId": "project-one", "deckId": "deck-one"})

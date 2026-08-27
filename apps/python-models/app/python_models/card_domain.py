@@ -1012,20 +1012,26 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                 }
 
             run_ids = list(runs)
-            materialized_label_exists = False
+            # READ is required vocabulary, installed by migration 028. Exercise
+            # the real typed query even for an empty Run selection: missing
+            # schema/permissions must fail visibly, never omit observations.
+            try:
+                materialized = _age_rows(
+                    cursor,
+                    f"""
+                    MATCH (run:Run {{{owner_scope}}})-[:READ]->(native:NativeReference)
+                    WHERE run.runId IN $runIds
+                    RETURN run.runId, native.authority, native.nativeId
+                    LIMIT {edge_limit}
+                    """,
+                    {"projectId": project_id, "deckId": deck_id, "runIds": run_ids},
+                    "run_id agtype, authority agtype, native_id agtype",
+                )
+            except Exception as error:
+                raise CardDomainError(
+                    f"agentgraph_materialized_read_unavailable:{type(error).__name__}"
+                ) from error
             if run_ids:
-                # READ was not declared by the relational-domain migration.
-                # AGE can fall back to its restricted base-label scan for an
-                # unknown label. Inspect label metadata first, never broaden
-                # database grants or manufacture materialization observations.
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT 1 FROM ag_catalog.ag_label AS label
-                        JOIN ag_catalog.ag_graph AS graph ON graph.graphid=label.graph
-                        WHERE graph.name='agentgraph' AND label.name='READ' AND label.kind='e'
-                    ) AS available
-                """)
-                materialized_label_exists = bool((cursor.fetchone() or {}).get("available"))
                 telemetry_queries = {
                     "assignments": (
                         """
@@ -1089,15 +1095,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         """,
                         "run_id agtype, authority agtype, native_id agtype",
                     ),
-                    "materialized": (
-                        """
-                        MATCH (run:Run {projectId: $projectId, deckId: $deckId})
-                              -[:READ]->(native:NativeReference)
-                        WHERE run.runId IN $runIds
-                        RETURN run.runId, native.authority, native.nativeId
-                        """,
-                        "run_id agtype, authority agtype, native_id agtype",
-                    ),
                     "artifacts": (
                         """
                         MATCH (run:Run {projectId: $projectId, deckId: $deckId})
@@ -1122,9 +1119,8 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         columns,
                     )
                     for name, (query, columns) in telemetry_queries.items()
-                    if name != "materialized" or materialized_label_exists
                 }
-                telemetry.setdefault("materialized", [])
+                telemetry["materialized"] = materialized
                 for row in telemetry["assignments"]:
                     item = runs.get(str(row.get("run_id") or ""))
                     if item is not None:
@@ -1249,7 +1245,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
             "usedNativeReferences": True,
             "viewedNativeReferences": True,
             "nativeAttentionEvents": True,
-            "materializedNativeReferencesAvailable": materialized_label_exists,
+            "materializedNativeReferencesAvailable": True,
             "artifacts": True,
             "rawIdfStored": False,
         },

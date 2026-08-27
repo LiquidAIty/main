@@ -129,14 +129,21 @@ same pending event with actual UUIDs. Queue acceptance is not rendered as a comp
 Where native CBM declares a JSON output format, the host advertises and uses that default for structured
 attention IDs. Explicit format choices are preserved; non-structured results do not fabricate attention.
 
-Current proof boundary: the coordinated runtime reached the 66-tool catalog, but live external attention
-failed because AGE 1.6 rejects `ON CREATE SET`. The source now uses `SET`/`coalesce`; that correction and
-chronological SSE replay still require a later authorized coordinated restart and live readback. The
-new materialization read also exposed `permission denied for table _ag_label_vertex`. Migration 022
-does not declare/grant the existing producer's `READ` label. Inspection now checks native label metadata
-before attempting that optional query and explicitly reports materialization availability; no database
-grants were changed. First materialized-read/schema readiness remains unproven. Do not call this
-attention path live-ready until its persistence, retained-event inspection and SSE readback all pass.
+Current proof boundary: real AGE 1.6 `EXPLAIN` tests accept the production `SET`/`coalesce` queries and
+reject the former `ON CREATE SET` clause without inserting fixture records. Migration 028 completes the
+existing producer's missing `READ` label through the existing PostgreSQL schema owner. It grants only
+`SELECT/INSERT/UPDATE` on that label and `USAGE` on its sequence; the application retains no schema-create,
+base-label access or READ-delete privilege. The canonical migration runner recorded it once and verified
+an idempotent second pass. Inspection always executes the typed READ query, even with no selected Runs;
+schema failure is explicit, not a metadata-based omission. Focused attention, SSE, bearer and UI-hook
+tests pass. The canonical `npm run dev:fresh` now loads the current repair and reaches readiness with
+66/66 public tools. Loaded AGE inspection and the existing SSE endpoint return 200; four retained Main
+events replay chronologically with direct-only attribution. The existing UI projection consumes those
+real SSE events without animating the completed Run. The saved Deck and all six Card and six edge hashes
+remain unchanged. Fresh authenticated public persistence and a real worker boundary remain unproven:
+the current conversation's connector rejects even `main.context` as unknown before reaching the app.
+No fresh materialized READ record or browser-rendered attention was proven. Do not call this attention
+path fully live-ready until the remaining authenticated persistence and worker proof pass.
 
 Backend routes containing `/api/coder/mcp-bridge/` are retained transport names used by the official
 Python MCP host to reach server-owned Card, conversation, Run, and persistence operations. They are not

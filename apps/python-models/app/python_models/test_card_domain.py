@@ -2272,7 +2272,7 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
     })
 
     assert sql[0] == "SET TRANSACTION READ ONLY"
-    assert len(sql) == 2 and "SELECT EXISTS" in sql[1] and "ag_catalog.ag_label" in sql[1]
+    assert sql == ["SET TRANSACTION READ ONLY"]
     assert result["telemetry"]["materializedNativeReferencesAvailable"] is True
     assert result["authority"] == "postgresql-age-agentgraph"
     assert result["projectId"] == "project-one"

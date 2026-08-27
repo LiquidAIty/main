@@ -8,6 +8,7 @@ const REQUIRED_MIGRATIONS = [
   '025_async_kanban_card_runs.sql',
   '026_explicit_card_deletion.sql',
   '027_verify_explicit_card_deletion_grants.sql',
+  '028_agentgraph_materialized_read.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;
