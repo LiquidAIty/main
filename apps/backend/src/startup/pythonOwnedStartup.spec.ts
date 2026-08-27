@@ -52,4 +52,42 @@ describe('Python-owned backend startup', () => {
       maxAttempts: 1,
     })).rejects.toThrow('python_owned_startup_cancelled');
   });
+
+  it('does not replay post-readiness work when model reporting fails', async () => {
+    const request = vi.fn(async () => ({ status: 'ok' }));
+    const logModels = vi.fn(async () => { throw new Error('deck_transport_failed'); });
+    const recoverKanban = vi.fn(async () => ({ discovered: 0, started: 0 }));
+
+    await expect(runPythonOwnedStartupTasks({
+      request,
+      delay: vi.fn(async () => undefined),
+      logModels,
+      recoverKanban,
+      maxAttempts: 3,
+      pollIntervalMs: 0,
+    })).rejects.toThrow('deck_transport_failed');
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(logModels).toHaveBeenCalledOnce();
+    expect(recoverKanban).not.toHaveBeenCalled();
+  });
+
+  it('does not replay model reporting or recovery when recovery fails after readiness', async () => {
+    const request = vi.fn(async () => ({ status: 'ok' }));
+    const logModels = vi.fn(async () => undefined);
+    const recoverKanban = vi.fn(async () => { throw new Error('kanban_recovery_failed'); });
+
+    await expect(runPythonOwnedStartupTasks({
+      request,
+      delay: vi.fn(async () => undefined),
+      logModels,
+      recoverKanban,
+      maxAttempts: 3,
+      pollIntervalMs: 0,
+    })).rejects.toThrow('kanban_recovery_failed');
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(logModels).toHaveBeenCalledOnce();
+    expect(recoverKanban).toHaveBeenCalledOnce();
+  });
 });

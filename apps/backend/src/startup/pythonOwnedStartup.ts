@@ -43,16 +43,15 @@ export async function runPythonOwnedStartupTasks(
     dependencies.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
   ));
   let lastFailure = 'python_rails_unavailable';
+  let pythonRailsReady = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (!isActive()) throw new Error('python_owned_startup_cancelled');
     try {
       const response = await request('/health', { method: 'GET' }) as { status?: unknown };
       if (String(response?.status || '').trim() === 'ok') {
-        if (!isActive()) throw new Error('python_owned_startup_cancelled');
-        await logModels();
-        if (!isActive()) throw new Error('python_owned_startup_cancelled');
-        return recoverKanban();
+        pythonRailsReady = true;
+        break;
       }
       lastFailure = `python_rails_health_invalid:${String(response?.status || 'missing')}`;
     } catch (error) {
@@ -63,5 +62,16 @@ export async function runPythonOwnedStartupTasks(
     if (attempt < maxAttempts) await wait(pollIntervalMs);
   }
 
-  throw new Error(`python_owned_startup_timeout:${lastFailure}`);
+  if (!pythonRailsReady) {
+    throw new Error(`python_owned_startup_timeout:${lastFailure}`);
+  }
+
+  // Readiness is the only retried operation. Once the supervised Python rails
+  // process is ready, each stateful startup task runs at most once for this
+  // backend listener; failures remain visible instead of replaying Deck reads
+  // or Kanban recovery inside the readiness loop.
+  if (!isActive()) throw new Error('python_owned_startup_cancelled');
+  await logModels();
+  if (!isActive()) throw new Error('python_owned_startup_cancelled');
+  return recoverKanban();
 }
