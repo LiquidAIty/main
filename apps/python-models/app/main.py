@@ -35,6 +35,7 @@ from app.python_models.card_domain import (
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
+    materialize_runtime_options,
 )
 from app.python_models.orchestration_contracts import StoredRuntimeRequest
 from app.python_models.tool_registry import tool_manifest, materialize_tool_catalog
@@ -98,6 +99,15 @@ def idd_card_editor_materialize(payload: dict[str, Any]):
             payload.get("models"), native_options=payload.get("nativeOptions"),
             selected_ids=payload.get("selectedIds"),
         )
+    except IddValidationError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
+@app.post("/card-editor/options")
+def card_editor_options(payload: dict[str, Any]):
+    """Project executable field contracts and the current configured model catalog."""
+    try:
+        return materialize_runtime_options(payload.get("models"))
     except IddValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
@@ -80,12 +82,9 @@ describe('BuilderChat', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it('starts a new selected conversation through UI chrome', () => {
-    const onNewConversation = vi.fn();
+  it('keeps conversation identity and navigation out of Main Chat', () => {
     render(
       <BuilderChat
-        conversationId="conversation-a"
-        onNewConversation={onNewConversation}
         messages={[]}
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
@@ -93,9 +92,14 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByTitle('conversation-a')).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
-    expect(onNewConversation).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId('builder-chat-conversation-bar')).toBeNull();
+    expect(screen.queryByRole('button', { name: /new chat|rejoin|conversation/i })).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    const page = readFileSync(path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'), 'utf8');
+    expect(page).not.toMatch(/startNewConversation|syncConversationFromUrl|setConversationId|onNewConversation/);
+    // Existing project-scoped history and legacy links remain internal inputs.
+    expect(page).toContain('const [conversationId] = useState');
+    expect(page).toContain('selectedConversationId(window.location.search)');
   });
 
   it('keeps delegation and preview controls out of the chat composer', () => {

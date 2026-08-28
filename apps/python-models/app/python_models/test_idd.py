@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, template_objects
+from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, materialize_runtime_options, template_objects
 from app.python_models.tool_registry import materialize_tool_catalog, required_tool_caller_runtime
 from app.python_models.card_script import saved_script, assert_script_execution_available
 from app.python_models.orchestration_contracts import HermesRuntime
@@ -70,6 +70,41 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     ]
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1
+    assert fields["maxTurns"]["minimum"] == 1
+
+
+def test_ordinary_options_reuse_contracts_without_loading_the_builder_palette(monkeypatch):
+    from app.python_models import idd
+    models = [{"provider": "native-provider", "key": "current-model", "label": "Current model",
+               "providerModelId": "native-model", "default": False}]
+    palette = materialize_card_editor(models)
+
+    def forbidden_palette_read():
+        raise AssertionError("ordinary configuration must not read IDD")
+
+    monkeypatch.setattr(idd, "load_input_data_dictionary", forbidden_palette_read)
+    options = materialize_runtime_options(models)
+    assert options == {key: palette[key] for key in ("fields", "catalogs")}
+    assert set(options) == {"fields", "catalogs"}
+    fields = {field["name"]: field for field in options["fields"]}
+    assert fields["provider"]["options"] == [{"value": "native-provider", "label": "native-provider"}]
+    assert fields["runtimeKind"]["options"] == [
+        {"value": "hermes", "label": "hermes"}, {"value": "autogen", "label": "autogen"},
+    ]
+    assert materialize_runtime_options([])["catalogs"] == {"configured-models": []}
+
+
+@pytest.mark.parametrize("models,code", [
+    (None, "model_catalog_invalid"),
+    ([{"provider": "sk-secret"}], "model_catalog_entry_invalid"),
+    ([{"provider": "p", "key": "m", "label": "M", "providerModelId": "m"}] * 2,
+     "model_catalog_identity_duplicate"),
+])
+def test_ordinary_options_keep_catalog_validation(models, code):
+    with pytest.raises(IddValidationError) as error:
+        materialize_runtime_options(models)
+    assert str(error.value) == code
+    assert "sk-secret" not in str(error.value)
 
 
 def test_live_mcp_contract_is_ingested_into_the_one_permanent_idd_vocabulary() -> None:

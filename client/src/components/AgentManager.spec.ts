@@ -13,7 +13,8 @@ import {
   buildDisplayedToolRows,
   AgentManager,
   hasHermesModelDrift,
-  parseCardEditorInputDataDictionary,
+  parseCardEditorOptions,
+  type AgentManagerLocalConfig,
   selectKnowledgeGraphProjection,
   toggleSavedToolAssignment,
 } from './AgentManager';
@@ -24,7 +25,115 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+const runtimeOptions = {
+  ok: true,
+  fields: [
+    { name: 'runtimeKind', options: ['hermes', 'autogen'] },
+    { name: 'runtimeMode', options: ['main', 'delegate', 'kanban', 'assistant', 'magentic_one'] },
+    { name: 'provider', options: ['openai', 'openrouter'] },
+    { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
+    { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
+    ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
+  ].map(({ name, options }) => ({ name, label: name, path: name, control: 'select',
+    options: options.map((value) => ({ value, label: value })) })),
+  catalogs: { 'configured-models': [
+    { provider: 'openai', key: 'model-a', label: 'Model A', providerModelId: 'model-a' },
+    { provider: 'openrouter', key: 'model-b', label: 'Model B', providerModelId: 'model-b' },
+  ] },
+};
+
+function mockEditorFetch(optionsAvailable = true, toolsAvailable = true) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === '/api/coder/card-editor/options') {
+      return { ok: optionsAvailable, json: async () => optionsAvailable ? runtimeOptions : { ok: false } };
+    }
+    if (url.startsWith('/api/coder/input-data-dictionary/tools?')) {
+      return { ok: toolsAvailable, json: async () => ({ ok: toolsAvailable, references: [],
+        selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 0 }) };
+    }
+    // Native profile discovery is independent of ordinary runtime choices.
+    return { ok: false, json: async () => ({ ok: false, error: 'Native profile unavailable.' }) };
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+const savedConfig: AgentManagerLocalConfig = {
+  runtime: { kind: 'hermes', mode: 'delegate', profile: 'saved-profile' },
+  provider: 'openai', access_mode: 'chatgpt-account', model_key: 'removed-model',
+  prompt_template: 'Saved prompt', tools: ['calculator'], skills: [], toolsets: [], mcp_connection_ids: [],
+};
+
 describe('AgentManager active builder config', () => {
+  it('shows native-contract runtime choices without full Builder discovery or implicit model replacement', async () => {
+    const fetchMock = mockEditorFetch();
+    const onSave = vi.fn();
+    const before = JSON.stringify(savedConfig);
+    const { container } = render(React.createElement(AgentManager, {
+      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: savedConfig, onSaveLocalConfig: onSave,
+    }));
+    const provider = screen.getByLabelText('Saved Card provider') as HTMLSelectElement;
+    const model = screen.getByLabelText('Saved Card model') as HTMLSelectElement;
+    await waitFor(() => expect(provider.disabled).toBe(false));
+    expect([...screen.getByLabelText<HTMLSelectElement>('Runtime').options].map((option) => option.value))
+      .toEqual(['hermes', 'autogen']);
+    expect(model.value).toBe('removed-model');
+    expect(model.selectedOptions[0].text).toBe('removed-model (unavailable — saved)');
+    expect(onSave).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/input-data-dictionary/card-editor'))).toBe(false);
+    expect(container.textContent).not.toMatch(/\bIDD\b|\bIDF\b|Input Data (Dictionary|Definition)/i);
+
+    fireEvent.change(provider, { target: { value: 'openrouter' } });
+    expect(model.value).toBe('removed-model');
+    expect(screen.getByRole('option', { name: 'Model B' })).not.toBeNull();
+    fireEvent.click(screen.getByTestId('agent-manager-save'));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      runtime: savedConfig.runtime, provider: 'openrouter', model_key: 'removed-model',
+      prompt_template: savedConfig.prompt_template, tools: ['calculator'],
+    }));
+    expect(JSON.stringify(savedConfig)).toBe(before);
+  });
+
+  it.each([true, false])('retains unavailable saved provider/model values on Save (options available: %s)', async (available) => {
+    mockEditorFetch(available);
+    const config: AgentManagerLocalConfig = { ...savedConfig, provider: 'local_openai_compatible' };
+    const before = JSON.stringify(config);
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder', activeTab: 'Runtime', localConfig: config, onSaveLocalConfig: onSave,
+    }));
+    await waitFor(() => expect(screen.queryByText('Loading runtime options… Saved values are unchanged.')).toBeNull());
+    const provider = screen.getByLabelText('Saved Card provider') as HTMLSelectElement;
+    expect(provider.value).toBe('local_openai_compatible');
+    expect(provider.selectedOptions[0].text).toContain('unavailable — saved');
+    expect(provider.disabled).toBe(!available);
+    expect(screen.getByLabelText<HTMLSelectElement>('Saved Card model').value).toBe('removed-model');
+    if (!available) expect(screen.getByRole('alert').textContent).toContain('Runtime options unavailable');
+    fireEvent.click(screen.getByTestId('agent-manager-save'));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'local_openai_compatible', model_key: 'removed-model', runtime: config.runtime, tools: ['calculator'],
+    }));
+    expect(JSON.stringify(config)).toBe(before);
+  });
+
+  it('shows tool discovery failure without claiming an empty catalog or clearing saved grants', async () => {
+    mockEditorFetch(true, false);
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder', activeTab: 'Tools', localConfig: savedConfig, onSaveLocalConfig: onSave,
+    }));
+    expect(screen.getByText('Loading tools…')).not.toBeNull();
+    expect((await screen.findByRole('alert')).textContent).toBe('Tool options unavailable. Saved selections are unchanged.');
+    expect(screen.queryByText('0 tools')).toBeNull();
+    expect(screen.queryByText('No tools match this search.')).toBeNull();
+    expect(screen.getByLabelText<HTMLInputElement>('Include calculator').checked).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
   it('reports only an exact saved Card to native profile model mismatch', () => {
     expect(hasHermesModelDrift('gpt-5.6-terra', 'gpt-5.6-luna')).toBe(true);
     expect(hasHermesModelDrift('gpt-5.6-luna', 'gpt-5.6-luna')).toBe(false);
@@ -161,7 +270,7 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("data-testid=\"agent-manager-clear-invocation\"");
     expect(source).not.toContain('Prepare / Refresh');
     expect(source).toContain("{runBusy ? 'Running…' : 'Run'}");
-    expect(source).toContain('Export IDF…');
+    expect(source).toContain('Export Run input…');
     expect(source).not.toContain('Run Test');
   });
 
@@ -222,11 +331,12 @@ describe('AgentManager active builder config', () => {
       },
     }));
 
-    expect(screen.getByTestId('selected-run-idf').textContent).toContain('Selected Run · in.idf');
+    expect(screen.getByTestId('selected-run-idf').textContent).toContain('Selected Run · input');
     expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('system 40');
     expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('graph 30');
-    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('retained IDF');
-    fireEvent.click(screen.getByRole('button', { name: 'Export IDF…' }));
+    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('saved Run input');
+    expect(screen.getByTestId('selected-run-idf').textContent).not.toMatch(/\bIDD\b|\bIDF\b|Input Data (Dictionary|Definition)/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Export Run input…' }));
     await waitFor(() => expect(write).toHaveBeenCalledWith(idfText));
     expect(showSaveFilePicker).toHaveBeenCalledWith(expect.objectContaining({
       suggestedName: 'research-baseline.idf',
@@ -262,7 +372,7 @@ describe('AgentManager active builder config', () => {
     expect(screen.getByTestId('selected-run-idf-graph').textContent).toContain('3 records');
     expect(screen.getByTestId('selected-run-idf-graph').textContent).toContain('ThinkGraph, KnowGraph');
     expect(screen.getByTestId('selected-run-idf-graph-token-estimate').textContent).toContain('42 tokens');
-    expect(screen.getByTestId('selected-run-idf-graph-token-estimate').textContent).toContain('one retained IDF');
+    expect(screen.getByTestId('selected-run-idf-graph-token-estimate').textContent).toContain('saved Run input');
     expect(screen.queryByText(/sub-worker input/i)).toBeNull();
   });
 
@@ -359,24 +469,24 @@ describe('AgentManager active builder config', () => {
   it('keeps the card identity fields without adding another persistence path', () => {
     const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
     const source = readFileSync(filePath, 'utf8');
-    const idd = readFileSync(path.resolve(process.cwd(), 'LiquidAIty.idd'), 'utf8');
 
     expect(source).toContain('cardName');
     expect(source).toContain('cardSubtext');
     expect(source).toContain('onChangeCardName');
     expect(source).toContain('onChangeCardSubtext');
     expect(source).toContain('Description');
-    expect(source).not.toContain('Card mode');
+    expect(source).not.toMatch(/\bCard mode\b/);
     expect(source).not.toContain('Runtime Type');
-    expect(idd).toContain('label = "Runtime mode"');
+    expect(source).toContain('aria-label="Runtime mode"');
     expect(source).toContain('data-testid="agent-runtime-mode"');
     expect(source).toContain('Advanced runtime');
     expect(source).not.toContain('GlassInspectorSection');
     expect(source).not.toContain('roleBadge');
-    expect(idd).toContain('label = "Temperature"');
-    expect(idd).toContain('label = "Max tokens"');
-    expect(idd).toContain('label = "Max turns"');
-    expect(source).toContain('/api/coder/input-data-dictionary/card-editor');
+    expect(source).toContain('aria-label="Temperature"');
+    expect(source).toContain('aria-label="Max tokens"');
+    expect(source).toContain('aria-label="Max turns"');
+    expect(source).toContain('/api/coder/card-editor/options');
+    expect(source).not.toContain('/api/coder/input-data-dictionary/card-editor');
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
@@ -394,8 +504,8 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('HERMES_HOME');
   });
 
-  it('consumes IDD fields and materialized provider models without redefining them', () => {
-    const parsed = parseCardEditorInputDataDictionary({
+  it('consumes executable fields and configured provider models without redefining them', () => {
+    const parsed = parseCardEditorOptions({
       fields: [
         {
           name: 'temperature',

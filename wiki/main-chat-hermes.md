@@ -29,6 +29,10 @@ The backend owns conversation/Run/correlation identity and transports one Python
 Hermes-native delegation may choose only saved connected Cards supplied by the host. Missing Cards,
 relationships, tools, profiles, models, or credentials fail without fallback.
 
+Main Chat does not expose conversation IDs, New chat, a picker, or URL-driven conversation swapping.
+Existing conversation links are resolved once on mount; project-scoped native history remains internal.
+This presentation change does not repair Coder Run correlation, session locks, cancellation or recovery.
+
 The Coder terminal is a backend-owned Hermes terminal beneath Chat. `card_local_coder` is a stable
 persistence ID only; no LocalCoder/OpenClaude runtime exists.
 

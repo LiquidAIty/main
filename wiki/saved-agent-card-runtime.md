@@ -27,6 +27,13 @@ A saved card is the sole authority for its prompt, provider, model, runtime type
 The backend reads that card from the canonical deck, rejects caller overrides, transports one bounded
 runtime request, and returns the native result/run identity to the originating card.
 
+Ordinary inspector options use `/api/coder/card-editor/options`: the existing configured-model owner
+supplies models and Python projects executable field contracts without reading the full Builder IDD.
+The full Agent Builder palette remains separate. Unavailable saved provider/model selections stay
+visible and are not replaced on discovery failure or provider changes. Native Hermes profile reads
+and explicit Apply remain independent of Card Save. Public input labels use “Run input”; retained
+file bytes and formats are unchanged.
+
 Must remain true:
 
 - missing cards, models, tools, and runtimes fail explicitly;

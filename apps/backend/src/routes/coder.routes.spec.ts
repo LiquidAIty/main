@@ -171,6 +171,12 @@ const orchestratorMocks = vi.hoisted(() => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
     if (endpoint === '/tools/manifest') return { tools: [] };
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
+    if (endpoint === '/card-editor/options') {
+      return {
+        fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
+        catalogs: { 'configured-models': body.models },
+      };
+    }
     if (endpoint === '/idd/card-editor/materialize') {
       return {
         dictionary: { name: 'LiquidAIty', version: 4, purpose: 'agent-builder' },
@@ -668,7 +674,45 @@ describe('coder routes', () => {
     }
   });
 
-  it('materializes configured card-editor choices through the literal IDD boundary', async () => {
+  it('serves ordinary card-editor options without a Card read, full palette, or native tool discovery', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    deckMocks.getDeckDocument.mockClear();
+    mcpClientMocks.listPythonAgentMcpCatalog.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/card-editor/options`);
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(Object.keys(payload).sort()).toEqual(['catalogs', 'fields', 'ok']);
+      expect(payload.fields).toEqual([expect.objectContaining({ name: 'provider' })]);
+      expect(payload.catalogs['configured-models']).toEqual(expect.arrayContaining([
+        expect.objectContaining({ provider: 'openai', key: 'gpt-5.6-luna' }),
+        expect.objectContaining({ provider: 'openrouter' }),
+      ]));
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledExactlyOnceWith(
+        '/card-editor/options', expect.objectContaining({ method: 'POST' }),
+      );
+      const body = JSON.parse(String(orchestratorMocks.requestPythonRailsJson.mock.calls[0][1]?.body));
+      expect(Object.keys(body)).toEqual(['models']);
+      expect(deckMocks.getDeckDocument).not.toHaveBeenCalled();
+      expect(mcpClientMocks.listPythonAgentMcpCatalog).not.toHaveBeenCalled();
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+    } finally { await closeServer(server); }
+  });
+
+  it.each([null, new Error('sk-secret')])('fails ordinary card-editor options closed with a secret-safe error (%s)', async (failure) => {
+    if (failure instanceof Error) orchestratorMocks.requestPythonRailsJson.mockRejectedValueOnce(failure);
+    else orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce(failure);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/card-editor/options`);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ ok: false, error: 'runtime_options_unavailable' });
+    } finally { await closeServer(server); }
+  });
+
+  it('materializes the full Builder card-editor palette through the literal IDD boundary', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/input-data-dictionary/card-editor`);

@@ -377,23 +377,11 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('knowgraph');
-  const [conversationId, setConversationId] = useState(() => (
+  // Resolve existing conversation links once; continuity stays project-owned,
+  // without conversation navigation controls or a URL-driven swap mid-turn.
+  const [conversationId] = useState(() => (
     selectedConversationId(window.location.search)
   ));
-  useEffect(() => {
-    const syncConversationFromUrl = () => {
-      setConversationId(selectedConversationId(window.location.search));
-    };
-    window.addEventListener('popstate', syncConversationFromUrl);
-    return () => window.removeEventListener('popstate', syncConversationFromUrl);
-  }, []);
-  const startNewConversation = useCallback(() => {
-    const nextConversationId = `chat-${crypto.randomUUID()}`;
-    const params = new URLSearchParams(window.location.search);
-    params.set('conversationId', nextConversationId);
-    window.history.pushState(null, '', `${window.location.pathname}?${params.toString()}`);
-    setConversationId(nextConversationId);
-  }, []);
   const graphAttention = useAgentBuilderGraphAttention({
     projectId: activeProject,
     deckId: BUILDER_DECK_ID,
@@ -1794,8 +1782,6 @@ export default function AgentBuilder(): React.ReactElement {
           busy={nativeSessionActive}
           connecting={nativeSessionConnecting}
           historyLoading={sessionHistoryLoading}
-          conversationId={conversationId}
-          onNewConversation={startNewConversation}
           onStop={() => {
             void stopMainTurn().catch((error) => {
               setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');

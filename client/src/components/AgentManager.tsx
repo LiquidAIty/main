@@ -41,16 +41,16 @@ export type InputDictionaryEditorField = {
   options?: InputDictionaryEditorOption[];
 };
 
-export function parseCardEditorInputDataDictionary(payload: unknown): {
+export function parseCardEditorOptions(payload: unknown): {
   fields: InputDictionaryEditorField[];
   modelsByProvider: Record<string, ModelOption[]>;
 } {
   if (!payload || typeof payload !== 'object') {
-    throw new Error('input_data_dictionary_card_editor_invalid');
+    throw new Error('runtime_options_invalid');
   }
   const document = payload as Record<string, unknown>;
   if (!Array.isArray(document.fields)) {
-    throw new Error('input_data_dictionary_card_editor_invalid');
+    throw new Error('runtime_options_invalid');
   }
   const fields = document.fields.filter((field): field is InputDictionaryEditorField => (
     Boolean(field)
@@ -458,7 +458,7 @@ function buildEditedCardRuntime(
 
 export function buildActiveAgentManagerLocalConfig(input: {
   runtime: CardRuntime;
-  provider: 'openai' | 'openrouter' | '';
+  provider: NonNullable<AgentManagerLocalConfig['provider']>;
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | '';
   modelKey: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | '';
@@ -540,7 +540,7 @@ export function AgentManager({
   const [runtimeMode, setRuntimeMode] = useState<CardRuntime['mode']>('delegate');
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
   const [cardSubtextDraft, setCardSubtextDraft] = useState(cardSubtext);
-  const [provider, setProvider] = useState<'openai' | 'openrouter' | ''>('');
+  const [provider, setProvider] = useState<NonNullable<AgentManagerLocalConfig['provider']>>('');
   const [accessMode, setAccessMode] = useState<
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
@@ -551,6 +551,7 @@ export function AgentManager({
   >('');
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelOption[]>>({});
   const [cardEditorFields, setCardEditorFields] = useState<InputDictionaryEditorField[]>([]);
+  const [runtimeOptionsStatus, setRuntimeOptionsStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [toolDictionaryPage, setToolDictionaryPage] = useState<InputDictionaryToolPage>({
     references: [],
     selectedKnownReferences: [],
@@ -565,7 +566,8 @@ export function AgentManager({
   const [toolDictionaryNamespace, setToolDictionaryNamespace] = useState('');
   const [toolDictionaryOffset, setToolDictionaryOffset] = useState(0);
   const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(false);
-  const [toolDictionaryBusy, setToolDictionaryBusy] = useState(false);
+  const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
+  const [toolOptionsError, setToolOptionsError] = useState(false);
   const [temperature, setTemperature] = useState<number | ''>('');
   const [maxTokens, setMaxTokens] = useState<number | ''>('');
   const [maxTurns, setMaxTurns] = useState<number | ''>('');
@@ -667,7 +669,7 @@ export function AgentManager({
       const handle = await picker({
         suggestedName: filename,
         types: [{
-          description: 'Input Data File',
+          description: 'Run input',
           accept: { 'application/json': [extension] },
         }],
       });
@@ -689,23 +691,27 @@ export function AgentManager({
 
   useEffect(() => {
     let active = true;
-    const query = new URLSearchParams({ projectId: projectId || '', deckId: deckId || '', cardId: cardId || '' });
-    void fetch('/api/coder/input-data-dictionary/card-editor?' + query)
+    setRuntimeOptionsStatus('loading');
+    setCardEditorFields([]);
+    setModelsByProvider({});
+    void fetch('/api/coder/card-editor/options')
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok || payload?.ok !== true) {
-          throw new Error('input_data_dictionary_card_editor_unavailable');
+          throw new Error('runtime_options_unavailable');
         }
-        const parsed = parseCardEditorInputDataDictionary(payload);
+        const parsed = parseCardEditorOptions(payload);
         if (active) {
           setCardEditorFields(parsed.fields);
           setModelsByProvider(parsed.modelsByProvider);
+          setRuntimeOptionsStatus('ready');
         }
       })
       .catch(() => {
         if (active) {
           setCardEditorFields([]);
           setModelsByProvider({});
+          setRuntimeOptionsStatus('failed');
         }
       });
     return () => {
@@ -718,11 +724,7 @@ export function AgentManager({
     draftDirtyRef.current = false;
     setRuntimeKind(localConfig.runtime.kind);
     setRuntimeMode(localConfig.runtime.mode);
-    setProvider(
-      localConfig.provider === 'openai' || localConfig.provider === 'openrouter'
-        ? localConfig.provider
-        : '',
-    );
+    setProvider(localConfig.provider || '');
     setAccessMode(
       localConfig.access_mode === 'chatgpt-account'
       || localConfig.access_mode === 'openai-api'
@@ -864,11 +866,6 @@ export function AgentManager({
       ...localConfig,
       ...editedConfig,
       role: promptParts.role,
-      provider:
-        provider
-        || (localConfig.provider === 'local_openai_compatible'
-          ? 'local_openai_compatible'
-          : editedConfig.provider),
     };
   }, [
     localConfig,
@@ -1133,7 +1130,8 @@ export function AgentManager({
       : ['assistant', 'magentic_one'].includes(option.value),
   );
   const runtimeDictionaryReady = Boolean(
-    runtimeKindField
+    runtimeOptionsStatus === 'ready'
+    && runtimeKindField
     && runtimeModeField
     && runtimeProfileField
     && providerField
@@ -1161,6 +1159,8 @@ export function AgentManager({
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
     const controller = new AbortController();
+    setToolDictionaryBusy(true);
+    setToolOptionsError(false);
     const timer = window.setTimeout(() => {
       void (async () => {
         setToolDictionaryBusy(true);
@@ -1177,7 +1177,7 @@ export function AgentManager({
           });
           const payload = await response.json();
           if (!response.ok || !payload?.ok || !Array.isArray(payload.references)) {
-            throw new Error('Input data dictionary unavailable');
+            throw new Error('Tool options unavailable');
           }
           setToolDictionaryPage({
             references: payload.references,
@@ -1191,6 +1191,7 @@ export function AgentManager({
           });
         } catch (error) {
           if (!controller.signal.aborted) {
+            setToolOptionsError(true);
             setToolDictionaryPage((current) => ({
               ...current,
               references: [],
@@ -1446,11 +1447,11 @@ export function AgentManager({
                   <div data-testid="selected-run-idf-graph-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
                     Estimated model-visible graph context: {' '}
                     {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()} tokens. {' '}
-                    This bounded data remains inside the one retained IDF; native graphs remain authoritative.
+                    This bounded data remains inside the saved Run input; native graphs remain authoritative.
                   </div>
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                      Inspect actual graph data inside retained IDF
+                      Inspect actual graph data inside saved Run input
                     </summary>
                     <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
                       {JSON.stringify(runInputs.idf.actualGraphData, null, 2)}
@@ -1661,22 +1662,24 @@ export function AgentManager({
     }
 
     if (activeTab === 'Runtime') {
-      if (!runtimeDictionaryReady) {
-        return (
-          <div role="alert" style={{ color: '#FFA2A2', fontSize: 12 }}>
-            Input Data Definition unavailable. Runtime choices cannot be edited safely.
-          </div>
-        );
-      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {!runtimeDictionaryReady ? (
+            <div role={runtimeOptionsStatus === 'loading' ? 'status' : 'alert'} style={{ color: '#E0DED5', fontSize: 12 }}>
+              {runtimeOptionsStatus === 'loading'
+                ? 'Loading runtime options… Saved values are unchanged.'
+                : 'Runtime options unavailable. Saved values are unchanged.'}
+            </div>
+          ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {runtimeKindField?.label}
+                Runtime
               </label>
               <select
                 data-testid="agent-runtime-kind"
+                aria-label="Runtime"
+                disabled={!runtimeDictionaryReady}
                 value={runtimeKind}
                 onChange={(event) => {
                   const nextKind = event.target.value === 'autogen' ? 'autogen' : 'hermes';
@@ -1685,6 +1688,9 @@ export function AgentManager({
                   markDraftDirty();
                 }}
               >
+                {!runtimeKindField?.options?.some((option) => option.value === runtimeKind) ? (
+                  <option value={runtimeKind}>{runtimeKind} (saved)</option>
+                ) : null}
                 {(runtimeKindField?.options || []).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -1692,16 +1698,21 @@ export function AgentManager({
             </div>
             <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {runtimeModeField?.label}
+                Runtime mode
               </label>
               <select
                 data-testid="agent-runtime-mode"
+                aria-label="Runtime mode"
+                disabled={!runtimeDictionaryReady}
                 value={runtimeMode}
                 onChange={(event) => {
                   setRuntimeMode(event.target.value as CardRuntime['mode']);
                   markDraftDirty();
                 }}
               >
+                {!runtimeModeOptions.some((option) => option.value === runtimeMode) ? (
+                  <option value={runtimeMode}>{runtimeMode} (saved)</option>
+                ) : null}
                 {runtimeModeOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -1710,10 +1721,11 @@ export function AgentManager({
             {runtimeKind === 'hermes' ? (
               <div>
                 <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                  {runtimeProfileField?.label}
+                  Hermes profile
                 </label>
                 <input
                   data-testid="agent-hermes-profile"
+                  aria-label="Hermes profile"
                   value={hermesProfile}
                   onChange={(event) => {
                     setHermesProfile(event.target.value);
@@ -1725,27 +1737,24 @@ export function AgentManager({
                 </div>
               </div>
             ) : null}
-            {runtimeKind !== 'hermes' ? (
               <>
                 <div>
                   <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    {providerField?.label}
+                    Saved Card provider
                   </label>
                   <select
+                    aria-label="Saved Card provider"
+                    disabled={!runtimeDictionaryReady}
                     value={provider}
                     onChange={(event) => {
-                      const nextProvider = event.target.value as 'openai' | 'openrouter' | '';
-                      setProvider(nextProvider);
-                      const nextModels = nextProvider ? modelsByProvider[nextProvider] || [] : [];
-                      setModelKey((current) =>
-                        nextModels.some((model) => model.key === current)
-                          ? current
-                          : nextModels[0]?.key || '',
-                      );
+                      setProvider(event.target.value as typeof provider);
                       markDraftDirty();
                     }}
                   >
                     <option value="">Unset</option>
+                    {provider && !providerOptions.some((option) => option.value === provider) ? (
+                      <option value={provider}>{provider} (unavailable — saved)</option>
+                    ) : null}
                     {providerOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
@@ -1753,10 +1762,12 @@ export function AgentManager({
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    {accessModeField?.label}
+                    Access mode
                   </label>
                   <select
                     data-testid="agent-access-mode"
+                    aria-label="Access mode"
+                    disabled={!runtimeDictionaryReady}
                     value={accessMode}
                     onChange={(event) => {
                       setAccessMode(event.target.value as typeof accessMode);
@@ -1764,6 +1775,9 @@ export function AgentManager({
                     }}
                   >
                     <option value="">Select access mode</option>
+                    {accessMode && !accessModeOptions.some((option) => option.value === accessMode) ? (
+                      <option value={accessMode}>{accessMode} (saved)</option>
+                    ) : null}
                     {accessModeOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
@@ -1771,9 +1785,11 @@ export function AgentManager({
                 </div>
                 <div>
                   <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                    {modelKeyField?.label}
+                    Saved Card model
                   </label>
                   <select
+                    aria-label="Saved Card model"
+                    disabled={!runtimeDictionaryReady}
                     value={modelKey}
                     onChange={(event) => {
                       setModelKey(event.target.value);
@@ -1781,19 +1797,28 @@ export function AgentManager({
                     }}
                   >
                     <option value="">Select model</option>
+                    {modelKey && !availableModels.some((model) => model.key === modelKey) ? (
+                      <option value={modelKey}>{modelKey} (unavailable — saved)</option>
+                    ) : null}
                     {availableModels.map((model) => (
                       <option key={model.key} value={model.key}>{model.label}</option>
                     ))}
                   </select>
+                  {runtimeDictionaryReady && !availableModels.length ? (
+                    <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
+                      No configured models available for this provider. Saved selection is unchanged.
+                    </div>
+                  ) : null}
                 </div>
               </>
-            ) : null}
 
             {runtimeKind !== 'hermes' ? <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {reasoningEffortField?.label}
+                Reasoning effort
               </label>
               <select
+                aria-label="Reasoning effort"
+                disabled={!runtimeDictionaryReady}
                 value={reasoningEffort}
                 onChange={(event) => {
                   setReasoningEffort(
@@ -1811,6 +1836,9 @@ export function AgentManager({
                 }}
               >
                 <option value="">Model default</option>
+                {reasoningEffort && !reasoningEffortField?.options?.some((option) => option.value === reasoningEffort) ? (
+                  <option value={reasoningEffort}>{reasoningEffort} (saved)</option>
+                ) : null}
                 {(reasoningEffortField?.options || []).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -1824,10 +1852,11 @@ export function AgentManager({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
               <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {temperatureField?.label}
+                Temperature
               </label>
               <input
-                aria-label={temperatureField?.label}
+                aria-label="Temperature"
+                disabled={!runtimeDictionaryReady}
                 type="number"
                 min={temperatureField?.minimum}
                 max={temperatureField?.maximum}
@@ -1841,10 +1870,11 @@ export function AgentManager({
               </div>
               <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {maxTokensField?.label}
+                Max tokens
               </label>
               <input
-                aria-label={maxTokensField?.label}
+                aria-label="Max tokens"
+                disabled={!runtimeDictionaryReady}
                 type="number"
                 min={maxTokensField?.minimum}
                 max={maxTokensField?.maximum}
@@ -1858,10 +1888,11 @@ export function AgentManager({
               </div>
               <div>
               <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                {maxTurnsField?.label}
+                Max turns
               </label>
               <input
-                aria-label={maxTurnsField?.label}
+                aria-label="Max turns"
+                disabled={!runtimeDictionaryReady}
                 type="number"
                 min={maxTurnsField?.minimum}
                 max={maxTurnsField?.maximum}
@@ -1980,7 +2011,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Input Data Dictionary · Tools
+            Tools
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
@@ -2026,10 +2057,14 @@ export function AgentManager({
               Clear selected
             </button>
             <span style={{ color: '#80969F', fontSize: 11 }}>
-              {toolDictionaryPage.total.toLocaleString()} tools
-              {toolDictionaryBusy ? ' · Loading…' : ''}
+              {toolDictionaryBusy ? 'Loading tools…' : !toolOptionsError ? `${toolDictionaryPage.total.toLocaleString()} tools` : null}
             </span>
           </div>
+          {toolOptionsError ? (
+            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
+              Tool options unavailable. Saved selections are unchanged.
+            </div>
+          ) : null}
           {selectedToolRows.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
@@ -2068,7 +2103,7 @@ export function AgentManager({
                       {tool.kind ? ` · ${tool.kind}` : ''}
                       {tool.sourceIds?.length ? ` · ${tool.sourceIds.join(', ')}` : ''}
                       {tool.description ? ` · ${tool.description}` : ''}
-                      {tool.availability === 'stale' ? ' · Missing from current dictionary' : ''}
+                      {tool.availability === 'stale' ? ' · Unavailable in current catalog' : ''}
                       {tool.availability === 'disabled' ? ' · Currently unavailable' : ''}
                     </span>
                   </span>
@@ -2114,14 +2149,14 @@ export function AgentManager({
                 </label>
               ))}
             </div>
-          ) : !selectedToolRows.length ? (
+          ) : !selectedToolRows.length && !toolDictionaryBusy && !toolOptionsError ? (
             <div style={{ color: '#91A9B8', fontSize: 11 }}>
               {showSelectedToolsOnly
                 ? 'No tools are selected for this card.'
-                : 'No tools match this dictionary query.'}
+                : 'No tools match this search.'}
             </div>
           ) : null}
-          {!showSelectedToolsOnly ? (
+          {!showSelectedToolsOnly && !toolDictionaryBusy && !toolOptionsError ? (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <button
                 type="button"
@@ -2370,7 +2405,7 @@ export function AgentManager({
           fontSize: 12,
         }}
       >
-        Legacy Agent Manager has been disconnected from the active Builder runtime.
+        Select a saved Card to edit its configuration.
       </div>
     );
   }
@@ -2520,7 +2555,7 @@ export function AgentManager({
             style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
           >
             <strong style={{ color: '#D5E4E8', fontSize: 12 }}>
-              Selected Run · in.idf
+              Selected Run · input
             </strong>
             {runInputs.available && runInputs.idf && runInputs.idfText != null ? (
               <>
@@ -2534,11 +2569,11 @@ export function AgentManager({
                   output {Number(runInputs.inputSummary?.estimatedOutputContractTokens || 0).toLocaleString()} · {' '}
                   graph {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()}
                   <br />
-                  Estimate: UTF-8 bytes ÷ 4, rounded up. The retained IDF contains the exact LiquidAIty input fields; native provider usage remains authoritative after execution.
+                  Estimate: UTF-8 bytes ÷ 4, rounded up. The saved Run input contains the exact LiquidAIty input fields; native provider usage remains authoritative after execution.
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button type="button" onClick={() => void exportRuntimeInput('.idf', runInputs.idfText || '')}>
-                    Export IDF…
+                    Export Run input…
                   </button>
                 </div>
                 {inputFileTransferError ? (
@@ -2548,7 +2583,7 @@ export function AgentManager({
                 ) : null}
                 <details>
                   <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                    Inspect exact retained IDF JSON
+                    Inspect exact Run input JSON
                   </summary>
                   <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
                     {runInputs.idfText}
@@ -2595,7 +2630,7 @@ export function AgentManager({
                 {Number(runResult.costUsd || 0) > 0
                   ? ` · $${Number(runResult.costUsd).toFixed(6)}`
                   : ''}
-                . This is separate from the pre-run IDF estimate.
+                . This is separate from the pre-run input estimate.
               </div>
             ) : null}
             {runResult.output ? (

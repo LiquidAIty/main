@@ -32,8 +32,6 @@ export default function BuilderChat({
   busy = false,
   connecting = false,
   historyLoading = false,
-  conversationId,
-  onNewConversation,
   onStop,
   draft,
   onDraftChange,
@@ -48,8 +46,6 @@ export default function BuilderChat({
   connecting?: boolean;
   /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
   historyLoading?: boolean;
-  conversationId?: string;
-  onNewConversation?: () => void;
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
@@ -100,23 +96,6 @@ export default function BuilderChat({
           }
         `}
       </style>
-      <div
-        data-testid="builder-chat-conversation-bar"
-        className="flex items-center justify-between px-4 pt-3"
-        style={{ gap: 10, color: colors.neutral, fontSize: 12 }}
-      >
-        <span title={conversationId}>{conversationId || "Main chat"}</span>
-        {onNewConversation ? (
-          <button
-            type="button"
-            data-testid="builder-chat-new-conversation"
-            disabled={busy || connecting}
-            onClick={onNewConversation}
-          >
-            New chat
-          </button>
-        ) : null}
-      </div>
       <div
         ref={listRef}
         className="flex-1 builder-chat-scroll"

@@ -111,13 +111,10 @@ def _editor_fields(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return fields
 
 
-def materialize_card_editor(
-    model_options: Any, *, native_options: Any = None, selected_ids: Any = None,
-) -> dict[str, Any]:
-    """One builder palette. Native source data enriches IDD without becoming IDD."""
+def materialize_runtime_options(model_options: Any) -> dict[str, Any]:
+    """Ordinary configuration uses executable contracts, without reading IDD."""
     from app.python_models.orchestration_contracts import ModelOption
     from pydantic import ValidationError
-    document = load_input_data_dictionary()
     if not isinstance(model_options, list):
         raise IddValidationError("model_catalog_invalid")
     try:
@@ -126,6 +123,16 @@ def materialize_card_editor(
         raise IddValidationError("model_catalog_entry_invalid") from error
     if len({(item["provider"], item["key"]) for item in models}) != len(models):
         raise IddValidationError("model_catalog_identity_duplicate")
+    return {"fields": _editor_fields(models), "catalogs": {"configured-models": models}}
+
+
+def materialize_card_editor(
+    model_options: Any, *, native_options: Any = None, selected_ids: Any = None,
+) -> dict[str, Any]:
+    """One builder palette. Native source data enriches IDD without becoming IDD."""
+    document = load_input_data_dictionary()
+    runtime_options = materialize_runtime_options(model_options)
+    models = runtime_options["catalogs"]["configured-models"]
     selected = set(selected_ids or [])
     if not all(isinstance(value, str) for value in selected):
         raise IddValidationError("builder_selection_invalid")
@@ -180,5 +187,4 @@ def materialize_card_editor(
     palette["fingerprint"] = builder_fingerprint({
         "idd": document, "models": models, "native": native_options or [],
     })
-    return {**palette, "fields": _editor_fields(models),
-            "catalogs": {"configured-models": models}}
+    return {**palette, **runtime_options}

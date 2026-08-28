@@ -101,6 +101,24 @@ async function builderNativeOptions(projectId: string, deckId: string, cardId: s
   return { nativeOptions: options, selectedIds: [...new Set(selectedIds)] };
 }
 
+router.get('/card-editor/options', async (_req, res) => {
+  try {
+    const options = await requestPythonRailsJson('/card-editor/options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        models: listConfiguredModelOptions(process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna'),
+      }),
+    }) as Record<string, unknown>;
+    if (!Array.isArray(options?.fields) || !options.catalogs || typeof options.catalogs !== 'object') {
+      throw new Error('runtime_options_invalid');
+    }
+    return res.json({ ok: true, fields: options.fields, catalogs: options.catalogs });
+  } catch {
+    return res.status(503).json({ ok: false, error: 'runtime_options_unavailable' });
+  }
+});
+
 router.get('/input-data-dictionary/card-editor', async (req, res) => {
   try {
     const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
@@ -512,7 +530,7 @@ async function readConfiguredCardRunStatus(args: {
   };
 }
 
-// Thin configured-Card transport. Python owns Card/AGE/IDD validation, the one
+// Thin configured-Card transport. Python owns saved Card authorization, the one
 // canonical IDF materializer, runtime-owner selection, and separate Run
 // persistence. This route never rebuilds the model call.
 router.post('/mcp-bridge/run_configured_card', async (req, res) => {
