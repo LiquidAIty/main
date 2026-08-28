@@ -9,6 +9,7 @@ roots:
     - apps/python-models/app/python_models/card_domain.py
     - apps/python-models/app/python_models/idf.py
     - apps/python-models/app/python_models/idd.py
+    - apps/python-models/app/python_models/card_script.py
     - apps/backend/src/routes/coder.routes.ts
     - apps/backend/src/hermes/cardTerminal.ts
     - apps/backend/src/contracts/runtimeEvents.d.ts
@@ -54,3 +55,11 @@ apps\python-models\.venv\Scripts\python.exe -m pytest -q apps/python-models/app/
 ```
 
 Unproven: paid model execution through the canonical transient Card-call consumer path.
+
+Card Script source is optional saved runtime-extension data. Enabled Script currently fails before
+materialization with `card_script_isolated_native_execution_unavailable`; absent/disabled Script
+retains the existing path. Script analysis, generated names/types, lint, static call-site preview,
+autocomplete, formatting and the Script tab/editor are deferred to the second pass. A future static
+preview must not invoke tools, write graphs, grant capabilities, start a Run or produce a finalized
+IDF. Native execution and fixture execution remain unavailable.
+See the existing IDD section in ARCHITECTURE.md.

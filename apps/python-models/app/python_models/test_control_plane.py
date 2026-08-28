@@ -63,13 +63,13 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
         "id": "signals-card",
         "title": "WorldSignals",
         "runtime": {"kind": "autogen", "mode": "assistant"},
-        "tools": ["worldsignals.command"],
+        "tools": ["worldsignals.capabilities", "worldsignals.command"],
         "savedWriteTools": ["worldsignals.command"],
         "legacyReadableSelections": ["worldsignals.capabilities"],
         "unknownConfiguredTools": [],
         "unavailableConfiguredTools": [],
     }
-    assert "worldsignals.capabilities" in result["effectiveReadTools"]
+    assert result["effectiveReadTools"] == []
     assert all("prompt" not in card for card in result["cards"])
     assert result["wires"] == [
         {"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}
@@ -245,7 +245,10 @@ def test_card_graph_reference_handler_uses_the_one_card_domain_owner(monkeypatch
 
 
 class TestCardCreate:
-    def test_creates_one_explicit_autogen_card_without_launching(self, fake_backend):
+    def test_creates_one_explicit_autogen_card_without_launching(self, fake_backend, monkeypatch):
+        def no_runtime_dictionary():
+            raise AssertionError("Card persistence must not load the full IDD")
+        monkeypatch.setattr("app.python_models.idd.load_input_data_dictionary", no_runtime_dictionary)
         result = asyncio.run(cp.card_create({
             "projectId": "p",
             "deckId": "d",
@@ -284,7 +287,7 @@ class TestCardCreate:
         }
         assert fake_backend["deck"]["edges"] == DECK["edges"]
 
-    def test_rejects_read_tools_and_default_quick_add_title(self, fake_backend):
+    def test_rejects_unclassified_tools_and_default_quick_add_title(self, fake_backend):
         base = {
             "projectId": "p",
             "deckId": "d",
@@ -301,9 +304,9 @@ class TestCardCreate:
         }
         with pytest.raises(
             cp.ControlPlaneError,
-            match="card_create_tools_must_be_write_operations:web_search",
+            match="card_create_tool_unavailable:unclassified_read",
         ):
-            asyncio.run(cp.card_create({**base, "tools": ["web_search"]}))
+            asyncio.run(cp.card_create({**base, "tools": ["unclassified_read"]}))
         with pytest.raises(cp.ControlPlaneError, match="card_create_default_title_rejected"):
             asyncio.run(cp.card_create({**base, "title": "Assist 1"}))
         with pytest.raises(cp.ControlPlaneError, match="card_create_runtime_invalid"):
@@ -398,21 +401,23 @@ class TestCardUpdateConfiguration:
                 "updates": {"tools": [{"name": "shell"}]},
             }))
 
-    def test_tools_update_accepts_only_idd_write_operations(self, fake_backend):
+    def test_tools_update_rejects_unclassified_and_accepts_explicit_read_or_write(self, fake_backend):
         with pytest.raises(
             cp.ControlPlaneError,
-            match="card_update_tools_must_be_write_operations:web_search",
+            match="card_update_tool_unavailable:unclassified_read",
         ):
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"tools": ["web_search"]},
+                "updates": {"tools": ["unclassified_read"]},
             }))
 
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
-            "updates": {"tools": ["card.update_configuration"]},
+            "updates": {"tools": ["card.update_configuration", "web_search"]},
         }))
         assert result["ok"] is True
+        saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
+        assert saved["runtimeOptions"]["tools"] == ["card.update_configuration", "web_search"]
 
 
 class TestUpsertWire:

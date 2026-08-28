@@ -35,8 +35,13 @@ the Hermes-backed Coder; they do not identify a runtime.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count.
-- IDD declares legal inputs and operations. A saved Card grants a ceiling. One transient Card call
-  carries bounded values, tools, and native references for one communication.
+- IDD supplies composable builder types, objects, templates and effect annotations, not runtime
+  authentication or a second IDF validator. Main directs Coder under Chat in Agent Builder mode
+  after user agreement to compose existing templates or custom Cards. This interaction awaits live proof.
+- Hermes is the runtime platform; LiquidAIty composes native capabilities and contextualizes Runs.
+  Native catalogs, profiles, tools and worker lifecycle remain Hermes-owned.
+- Optional Card Script data and a fail-closed guard are retained. Script analysis, generated types,
+  static preview, the Script tab and editor polish are deferred. No substitute executor is approved.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
 - ThinkGraph, KnowGraph, CodeGraph, and AgentGraph have separate owners and never become one copied
   graph.
@@ -61,7 +66,8 @@ Structural tests are not substitutes for these live proofs.
 ```text
 effective capability
   = saved Card capability ceiling
-  ∩ IDD operation requirements
+  ∩ installed native availability
+  ∩ exact Run grants
   ∩ current input selections and native references
   ∩ saved AGE/ReactFlow relationship
   ∩ explicit user approval where required

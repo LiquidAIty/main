@@ -12,6 +12,7 @@ import {
   dispatchHermesLearnCommand,
   readHermesHistory,
   readHermesRunSnapshot,
+  requestHermesNative,
   startHermesTurn,
   type HermesHistoryArgs,
   type HermesSessionEvent,
@@ -37,6 +38,7 @@ import {
   type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
+import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
 import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
 import {
   reconcileTerminalKanbanRun,
@@ -52,13 +54,65 @@ import {
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
 
-router.get('/input-data-dictionary/card-editor', async (_req, res) => {
+async function builderNativeOptions(projectId: string, deckId: string, cardId: string) {
+  if (!projectId || !deckId || !cardId) return { nativeOptions: [], selectedIds: [] };
+  const { deck } = await getDeckDocument(projectId, deckId);
+  const card = deck?.nodes.find((node) => node.id === cardId);
+  if (!deck || !card) throw new Error('card_not_found');
+  const saved = card.runtimeOptions || {};
+  const selectedIds = [card.templateId, ...(saved.tools || []),
+    ...(saved.nativeTools || []).map((name) => 'hermes:tool:' + name),
+    ...(saved.skills || []).map((name) => 'skill:' + name),
+    ...(saved.toolsets || []).map((name) => 'toolset:' + name),
+    ...(saved.mcpConnectionIds || []).map((name) => 'mcp:' + name),
+    ...(saved.provider && saved.modelKey ? ['model:' + saved.provider + ':' + saved.modelKey] : []),
+  ].filter((value): value is string => typeof value === 'string' && Boolean(value));
+  const catalog = await listPythonAgentMcpCatalog();
+  const options: Array<Record<string, unknown>> = catalog.map((tool: any) => ({
+    id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
+    schema: tool.inputSchema, available: tool.available !== false,
+  }));
+  if (card.runtime.kind !== 'hermes') return { nativeOptions: options, selectedIds };
+  const { native } = await hydrateHermesCardProfile(card, deck);
+  const [tools, plugins] = await Promise.all([
+    requestHermesNative('tools.show', {}, card.runtime.profile),
+    requestHermesNative('plugins.list', {}, card.runtime.profile),
+  ]) as Array<Record<string, any>>;
+  options.push({ id: 'profile:' + native.name, kind: 'profile', owner: 'Hermes',
+    source: 'profiles.describe', schema: { name: native.name, model: native.model }, available: true });
+  selectedIds.push('profile:' + card.runtime.profile);
+  for (const [kind, values] of [
+    ['skill', native.skills], ['toolset', native.toolsets], ['mcp', native.mcpServers],
+    ['plugin', Array.isArray(plugins.plugins) ? plugins.plugins : []],
+  ] as const) {
+    for (const item of values) {
+      options.push({ id: kind + ':' + item.name, kind, owner: 'Hermes',
+        source: 'profile:' + native.name, schema: item, available: item.enabled !== false });
+      if (item.enabled === true) selectedIds.push(kind + ':' + item.name);
+    }
+  }
+  for (const section of Array.isArray(tools.sections) ? tools.sections : []) {
+    for (const tool of section.tools || []) options.push({
+      id: 'hermes:tool:' + tool.name, kind: 'tool', owner: 'Hermes', source: 'tools.show:' + native.name,
+      // Native tools.show does not expose schemas. Do not invent a callable signature.
+      schema: { nativeName: tool.name }, available: true,
+    });
+  }
+  return { nativeOptions: options, selectedIds: [...new Set(selectedIds)] };
+}
+
+router.get('/input-data-dictionary/card-editor', async (req, res) => {
   try {
     const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
     const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ models: listConfiguredModelOptions(openaiDefault) }),
+      body: JSON.stringify({
+        models: listConfiguredModelOptions(openaiDefault),
+        ...await builderNativeOptions(
+          String(req.query.projectId || ''), String(req.query.deckId || ''), String(req.query.cardId || ''),
+        ),
+      }),
     }) as Record<string, unknown>;
     if (
       !materialized?.dictionary
@@ -247,6 +301,8 @@ function resolveHermesTurnArgs(
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
     mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
+    nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
+    toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,

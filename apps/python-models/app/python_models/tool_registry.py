@@ -1,7 +1,6 @@
 """T001 ToolRegistry: typed, loud-failing runtime tool resolution.
 
-The literal IDD exposes enabled read operations to every Card. The Card Tools
-tab selects only write/effect authority. The registry combines those planes,
+The Card and Run select both reads and effects. The registry resolves that set,
 validates every selected name, and fails loudly for unknown, disabled,
 duplicate, empty-name, or schema-missing tools. There is no fallback,
 substitution, guessing, auto-selection, or tool invention.
@@ -17,10 +16,12 @@ import asyncio
 import ast
 import operator
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from autogen_core.tools import FunctionTool
+from app.python_models.idd import IddValidationError
 
 from app.python_models.web_search import web_search
 from app.python_models.orchestration_contracts import ToolSpec
@@ -44,9 +45,172 @@ from app.python_models.worldsignals_client import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Real tool callables (moved verbatim from magentic_runtime.py).
-# ---------------------------------------------------------------------------
+# One startup projection of effect/publication DATA, not a second dictionary or
+# saved grant owner. No Run reads the full builder dictionary. Native discovery
+# supplies actual schemas/availability; selection and authorization remain separate.
+def _load_operation_policies() -> dict[str, dict[str, Any]]:
+    from app.python_models.idd import load_input_data_dictionary
+    policies: dict[str, dict[str, Any]] = {}
+    for item in load_input_data_dictionary()["operations"]:
+        if (not isinstance(item.get("id"), str) or not item["id"]
+                or item["id"] in policies or item.get("access") not in {"read", "write"}
+                or item.get("publication") not in {"external-mcp", "private-runtime", "private-admin"}):
+            raise IddValidationError("operation_policy_invalid")
+        policies[item["id"]] = {
+            "canonicalId": item["id"], "kind": item["kind"],
+            "namespace": item["namespace"], "sourceIds": list(item["sourceIds"]),
+            "displayName": item["id"], "shortDescription": "",
+            "availability": "disabled", "access": item["access"],
+            "publication": item["publication"], "contracts": [],
+            **({"requiredCallerRuntimeKind": item["callerKind"],
+                "requiredCallerRuntimeMode": item["callerMode"]} if "callerKind" in item else {}),
+        }
+    return policies
+
+
+_TOOL_POLICIES = _load_operation_policies()
+
+
+def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
+    """Return one explicit runtime requirement; never infer one from a name."""
+    reference = _TOOL_POLICIES.get(name)
+    if reference is None:
+        return None
+    kind = reference.get("requiredCallerRuntimeKind")
+    mode = reference.get("requiredCallerRuntimeMode")
+    if not isinstance(kind, str) or not kind or not isinstance(mode, str) or not mode:
+        return None
+    return {"kind": kind, "mode": mode}
+
+
+def external_mcp_tool_ids() -> frozenset[str]:
+    """Return the host policy identities published through the external MCP."""
+    return frozenset(
+        name for name, reference in _TOOL_POLICIES.items()
+        if reference["publication"] == "external-mcp"
+    )
+
+
+def tool_publication(name: str) -> str | None:
+    reference = _TOOL_POLICIES.get(name)
+    return reference["publication"] if reference else None
+
+
+def tool_access(name: str) -> str | None:
+    """Return explicit effect metadata; never infer it from prose or names."""
+    reference = _TOOL_POLICIES.get(name)
+    access = reference.get("access") if reference is not None else None
+    return access if access in {"read", "write"} else None
+
+
+def readable_tool_ids() -> frozenset[str]:
+    return frozenset(
+        name for name, reference in _TOOL_POLICIES.items()
+        if reference["access"] == "read" and reference["publication"] != "private-admin"
+    )
+
+
+def writable_tool_ids() -> frozenset[str]:
+    return frozenset(
+        name for name, reference in _TOOL_POLICIES.items()
+        if reference["access"] == "write" and reference["publication"] != "private-admin"
+    )
+
+
+def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
+    """Combine startup effect metadata with factual live native contracts.
+
+    Discovery contributes only native contract data and current availability.
+    The function does not infer risk, compatibility, runtime ownership, graph
+    meaning, or card assignability from tool names or descriptions.
+    """
+    if not isinstance(discovered, list):
+        raise IddValidationError("idd_tool_discovery_invalid")
+    references = deepcopy(_TOOL_POLICIES)
+    seen_contracts: set[tuple[str, str, str]] = set()
+    for raw in discovered:
+        if not isinstance(raw, dict):
+            raise IddValidationError("idd_tool_discovery_entry_invalid")
+        canonical_id = raw.get("name")
+        source_id = raw.get("sourceId")
+        native_name = raw.get("nativeName")
+        namespace = raw.get("namespace")
+        connection_kind = raw.get("connectionKind")
+        input_schema = raw.get("inputSchema")
+        if (
+            not isinstance(canonical_id, str)
+            or not canonical_id
+            or not isinstance(source_id, str)
+            or not source_id
+            or not isinstance(native_name, str)
+            or not native_name
+            or not isinstance(namespace, str)
+            or not namespace
+            or not isinstance(connection_kind, str)
+            or not connection_kind
+            or not isinstance(input_schema, dict)
+        ):
+            raise IddValidationError("idd_tool_discovery_contract_invalid")
+        output_schema = raw.get("outputSchema")
+        annotations = raw.get("annotations")
+        security_schemes = raw.get("securitySchemes")
+        if output_schema is not None and not isinstance(output_schema, dict):
+            raise IddValidationError("idd_tool_discovery_output_schema_invalid")
+        if annotations is not None and not isinstance(annotations, dict):
+            raise IddValidationError("idd_tool_discovery_annotations_invalid")
+        if security_schemes is not None and (
+            not isinstance(security_schemes, list)
+            or not all(isinstance(item, dict) for item in security_schemes)
+        ):
+            raise IddValidationError("idd_tool_discovery_security_invalid")
+        kind = raw.get("kind", "tool")
+        if kind not in {"tool", "agent"}:
+            raise IddValidationError("idd_tool_discovery_kind_invalid")
+        available = raw.get("available", raw.get("enabled", True)) is not False
+        contract_key = (canonical_id, source_id, native_name)
+        if contract_key in seen_contracts:
+            raise IddValidationError("idd_tool_discovery_duplicate")
+        seen_contracts.add(contract_key)
+        contract: dict[str, Any] = {
+            "sourceId": source_id,
+            "nativeName": native_name,
+            "connectionKind": connection_kind,
+            "available": available,
+            "description": raw.get("description", ""),
+            "inputSchema": deepcopy(input_schema),
+        }
+        if output_schema is not None:
+            contract["outputSchema"] = deepcopy(output_schema)
+        if annotations is not None:
+            contract["annotations"] = deepcopy(annotations)
+        if security_schemes is not None:
+            contract["securitySchemes"] = deepcopy(security_schemes)
+        reference = references.get(canonical_id)
+        if reference is None:
+            if raw.get("owner") == "LiquidAIty":
+                raise IddValidationError("liquidaity_effect_unclassified")
+            reference = {
+                "canonicalId": canonical_id, "kind": kind, "namespace": namespace,
+                "sourceIds": [], "displayName": canonical_id,
+                "shortDescription": raw.get("description", ""),
+                "availability": "disabled", "publication": "native",
+                "access": "read" if (annotations or {}).get("readOnlyHint") is True else "write",
+                "contracts": [],
+            }
+            references[canonical_id] = reference
+        read_only_hint = annotations.get("readOnlyHint") if annotations is not None else None
+        if read_only_hint is not None and not isinstance(read_only_hint, bool):
+            raise IddValidationError(f"idd_tool_annotations_invalid:{canonical_id}")
+        if source_id not in reference["sourceIds"]:
+            reference["sourceIds"].append(source_id)
+        reference["contracts"].append(contract)
+        reference["shortDescription"] = raw.get("description", reference["shortDescription"])
+        if available and reference["publication"] != "private-admin":
+            reference["availability"] = "available"
+    return [
+        deepcopy(references[key])
+        for key in sorted(references)
+    ]
 
 _SAFE_BIN_OPS: dict[type[ast.AST], Callable[[Any, Any], Any]] = {
     ast.Add: operator.add,
@@ -183,7 +347,7 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ToolRegistry:
-    """Resolves the IDD read plane plus Card-selected write FunctionTools."""
+    """Resolves only explicitly selected native FunctionTools."""
 
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
@@ -227,11 +391,7 @@ class ToolRegistry:
         )
 
     def resolve_selected(self, selected_names: list[str]) -> list[FunctionTool]:
-        """Resolve the read plane plus exactly the Card-selected write plane.
-
-        Card selection is still validated exactly, including redundant legacy
-        read selections. Unselected write tools are never returned.
-        """
+        """Resolve exactly the selected set; public/native reads grant nothing."""
         selected: list[str] = []
         seen_selected: set[str] = set()
         for name in selected_names or []:
@@ -241,16 +401,9 @@ class ToolRegistry:
             self.resolve_one(canonical)
             seen_selected.add(canonical)
             selected.append(canonical)
-        effective_names = [
-            name for name in self.known_names()
-            if self._specs[name].enabled and self._specs[name].access == "read"
-        ] + [
-            name for name in selected
-            if self._specs[name].access == "write"
-        ]
         resolved: list[FunctionTool] = []
         runtime_names: set[str] = set()
-        for name in effective_names:
+        for name in selected:
             tool = self.resolve_one(name)
             if tool.name in runtime_names:
                 raise RuntimeError(f"card_tool_runtime_name_collision: {tool.name}")

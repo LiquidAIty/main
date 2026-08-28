@@ -34,6 +34,7 @@ _SUPPORTED_CARD_RUNTIME_MODES = {
     "autogen": {"assistant", "magentic_one"},
 }
 _CARD_CREATE_KEYS = {
+    "templateId",
     "projectId",
     "deckId",
     "expectedRevision",
@@ -57,6 +58,7 @@ _CARD_CREATE_MODEL_KEYS = {
 # shell config, hidden tools, authority grants, worker selection — is rejected.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
 _UPDATABLE_RUNTIME_OPTION_FIELDS = {
+    "script",
     "accessMode",
     "modelKey",
     "provider",
@@ -191,7 +193,7 @@ async def agentgraph_inspect(args: dict[str, Any]) -> dict[str, Any]:
 
 async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
     _require(args, "projectId", "deckId")
-    from app.python_models.idd import readable_tool_ids, tool_access, writable_tool_ids, tool_publication
+    from app.python_models.tool_registry import readable_tool_ids, tool_access, writable_tool_ids, tool_publication
 
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
@@ -213,9 +215,8 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
             "id": str(node.get("id") or ""),
             "title": str(node.get("title") or ""),
             "runtime": node.get("runtime"),
-            # Backward-compatible field now means exactly what the Card Tools
-            # tab means: durable write/effect assignments.
-            "tools": [name for name in saved_writes if name in writable_tool_ids()],
+            "tools": [name for name in configured_tools
+                      if tool_publication(name) != "private-admin" and tool_access(name) is not None],
             "savedWriteTools": saved_writes,
             "unavailableConfiguredTools": [name for name in configured_tools
                                            if tool_publication(name) == "private-admin"],
@@ -240,7 +241,8 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
         "projectId": project_id,
         "deckId": deck_id,
         "deckRevision": revision,
-        "effectiveReadTools": sorted(readable_tool_ids()),
+        # Public catalog visibility grants nothing to an ordinary saved Card.
+        "effectiveReadTools": [],
         "cards": cards,
         "wires": wires,
     }
@@ -352,6 +354,11 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(args) - _CARD_CREATE_KEYS)
     if unknown:
         raise ControlPlaneError(f"card_create_fields_rejected:{','.join(unknown)}")
+    # Builder templates construct Cards; persistence retains their reference, not
+    # a live dictionary dependency. A removed template must not invalidate a Card.
+    template_id = args.get("templateId", "template_assist")
+    if not isinstance(template_id, str) or not template_id.strip():
+        raise ControlPlaneError("card_create_template_invalid")
 
     title = str(args["title"]).strip()
     if title.casefold() == "assist 1":
@@ -401,12 +408,12 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ControlPlaneError("card_create_tools_must_be_string_list")
     normalized_tools = list(dict.fromkeys(name.strip() for name in tools))
-    from app.python_models.idd import writable_tool_ids
+    from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
 
-    invalid_tools = [name for name in normalized_tools if name not in writable_tool_ids()]
+    invalid_tools = [name for name in normalized_tools if name not in (readable_tool_ids() | writable_tool_ids())]
     if invalid_tools:
         raise ControlPlaneError(
-            f"card_create_tools_must_be_write_operations:{invalid_tools[0]}"
+            f"card_create_tool_unavailable:{invalid_tools[0]}"
         )
 
     position = args.get("position") or {"x": 0, "y": 0}
@@ -460,7 +467,7 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
                 "y": float(position.get("y", 0)),
             },
             "subtitle": role,
-            "templateId": f"template_{identity[:16]}",
+            "templateId": template_id,
             "runtime": saved_runtime,
             "parentGraphId": None,
             "runtimeOptions": runtime_options,
@@ -511,15 +518,22 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
     ):
         raise ControlPlaneError("card_update_tools_must_be_string_list")
     if "tools" in updates:
-        from app.python_models.idd import writable_tool_ids
+        from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
 
         invalid_tools = [
-            name for name in updates["tools"] if name not in writable_tool_ids()
+            name for name in updates["tools"] if name not in (readable_tool_ids() | writable_tool_ids())
         ]
         if invalid_tools:
             raise ControlPlaneError(
-                f"card_update_tools_must_be_write_operations:{invalid_tools[0]}"
+                f"card_update_tool_unavailable:{invalid_tools[0]}"
             )
+    if "script" in updates:
+        from app.python_models.card_script import saved_script
+        from app.python_models.idd import IddValidationError
+        try:
+            updates = {**updates, "script": saved_script(updates["script"])}
+        except IddValidationError as error:
+            raise ControlPlaneError(str(error)) from error
     if (
         "reasoningEffort" in updates
         and updates["reasoningEffort"] is not None

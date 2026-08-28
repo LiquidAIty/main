@@ -19,11 +19,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.python_models.idd import (
-    IddValidationError,
-    validate_record,
-)
-
 
 IDF_FILENAME = "in.idf"
 _FORBIDDEN_SECRET_KEYS = frozenset({
@@ -176,13 +171,6 @@ def _assert_secret_free(value: Any) -> None:
     elif isinstance(value, list):
         for item in value:
             _assert_secret_free(item)
-
-
-def _validate_idd_record(name: str, value: dict[str, Any]) -> None:
-    try:
-        validate_record(name, value)
-    except IddValidationError as error:
-        raise InputMaterializationError(str(error)) from error
 
 
 def _source_path(properties: dict[str, Any]) -> str | None:
@@ -359,8 +347,6 @@ def materialize_idf(
         record.authority for record in records
         if record.authority and record.authority != "mixed"
     })
-    for record in records:
-        _validate_idd_record("input-graph-record", record.model_dump(exclude_none=True))
     graph = ActualGraphData(
         authorities=authorities,
         selectedNativeReferences=[dict(item) for item in native_references],
@@ -402,7 +388,6 @@ def materialize_idf(
         dynamicContext=dynamic_context,
     )
     _assert_secret_free(idf.model_dump())
-    _validate_idd_record("input-data-file", idf.model_dump(mode="json"))
     return load_idf_bytes(_canonical_line(idf.model_dump(mode="json")))
 
 
@@ -417,9 +402,6 @@ def load_idf_bytes(idf_bytes: bytes) -> MaterializedIdf:
     if idf.actualGraphData.recordCounts != _record_counts(idf.actualGraphData.records):
         raise InputMaterializationError("input_graph_record_counts_mismatch")
     _assert_secret_free(idf.model_dump())
-    _validate_idd_record("input-data-file", idf.model_dump(mode="json"))
-    for record in idf.actualGraphData.records:
-        _validate_idd_record("input-graph-record", record.model_dump(exclude_none=True))
     return MaterializedIdf(idf=idf, idf_bytes=idf_bytes)
 
 

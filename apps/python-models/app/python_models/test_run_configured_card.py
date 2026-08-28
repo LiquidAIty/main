@@ -92,13 +92,14 @@ def test_single_card_consumes_graph_first_idf(monkeypatch) -> None:
     assert result.runId == "run:one"
     assert observed[0]["system_message"] == context.idf.stableSavedCardContext.instructions
     attached_names = {tool.name for tool in observed[0]["tools"]}
-    assert "web_search" in attached_names
+    assert "web_search" not in attached_names
     assert "calculator" in attached_names
+    assert attached_names == {"calculator"}
     assert observed[1] == {"task": "current native graph data\n\nrun"}
     assert context.idf.dynamicContext.task == "run"
 
 
-def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeypatch) -> None:
+def test_single_card_with_no_selected_tools_gets_no_global_read_tools(monkeypatch) -> None:
     observed: list[dict] = []
 
     class Agent:
@@ -118,8 +119,9 @@ def test_single_card_gets_idd_reads_without_copying_them_into_card_tools(monkeyp
     result = asyncio.run(mac.run_configured_card(context))
 
     assert result.ok is True
-    attached_names = {tool.name for tool in observed[0]["tools"]}
-    assert "web_search" in attached_names
+    attached_names = {tool.name for tool in observed[0].get("tools", [])}
+    assert "web_search" not in attached_names
+    assert attached_names == set()
     assert context.idf.selectedToolsAndGrants.enabledTools == []
 
 

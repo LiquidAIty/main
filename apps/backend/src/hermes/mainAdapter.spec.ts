@@ -571,7 +571,7 @@ describe('Hermes ACP transport identity', () => {
     }
   });
 
-  it('adds one Card-owned MCP surface without replacing native Hermes capabilities', () => {
+  it('adds one selected Card MCP surface without injecting native ACP defaults', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'session-1',
       projectId: 'project-1',
@@ -597,10 +597,9 @@ describe('Hermes ACP transport identity', () => {
     expect(projection.mcpServers).toHaveLength(1);
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(sessionConfig.enabledToolsets).toEqual([
-      'hermes-acp',
       expect.stringMatching(/^mcp-main-runtime-/),
     ]);
-    expect(sessionConfig).not.toHaveProperty('enabledTools');
+    expect(sessionConfig.enabledTools).toEqual([]);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
@@ -621,7 +620,7 @@ describe('Hermes ACP transport identity', () => {
     }));
   });
 
-  it('keeps Coder on Hermes native ACP capabilities without Card-side native lists', () => {
+  it('preserves explicitly selected native profile capabilities for Coder', () => {
     const projection = buildHermesHostSessionProjection({
       sessionKey: 'coder-session-1',
       projectId: 'project-1',
@@ -638,6 +637,8 @@ describe('Hermes ACP transport identity', () => {
       accessMode: 'chatgpt-account',
       tools: ['cbm.search_graph', 'cbm.trace_path'],
       mcpConnectionIds: [],
+      nativeProfileToolsets: ['terminal', 'file'],
+      nativeTools: ['read_file'],
       message: 'Inspect one symbol.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
@@ -646,10 +647,20 @@ describe('Hermes ACP transport identity', () => {
 
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(sessionConfig.enabledToolsets).toEqual([
-      'hermes-acp',
+      'terminal', 'file',
       expect.stringMatching(/^mcp-main-runtime-/),
     ]);
-    expect(sessionConfig).not.toHaveProperty('enabledTools');
+    expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.executionContextId).toBe('coder-context');
+  });
+
+  it('keeps an empty native and Card selection empty', () => {
+    const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(), tools: [], mcpConnectionIds: [],
+      nativeTools: [], toolsets: [], nativeProfileToolsets: [], nativeProfileMcpServerNames: [],
+    }, {});
+    expect(projection.mcpServers).toEqual([]);
+    expect((projection.sessionMeta.hermes as any).sessionConfig.enabledTools).toEqual([]);
+    expect((projection.sessionMeta.hermes as any).sessionConfig.enabledToolsets).toEqual([]);
   });
 });

@@ -16,15 +16,16 @@ from uuid import uuid4
 
 from psycopg.rows import dict_row
 
-from app.python_models.idd import (
+from app.python_models.tool_registry import (
     IddValidationError,
-    load_input_data_dictionary,
     materialize_tool_catalog,
     readable_tool_ids,
     writable_tool_ids,
     tool_access,
-    validate_record,
 )
+from pydantic import ValidationError
+from app.python_models.orchestration_contracts import DataAnchorReference, GraphHook
+from app.python_models.card_script import saved_script, assert_script_execution_available
 from app.python_models.idf import (
     InputMaterializationError,
     idf_public,
@@ -86,11 +87,8 @@ CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
 
 
 def _edge_labels() -> dict[str, str]:
-    """Read the one literal IDD relationship vocabulary mechanically."""
-    return {
-        str(item["canvasValue"]): str(item["name"])
-        for item in load_input_data_dictionary()["relationships"]
-    }
+    """Exact AGE transport labels; builder relationship descriptions grant nothing."""
+    return {"flow": "FLOW", "magentic_option": "MAGENTIC_OPTION", "magentic_control": "MAGENTIC_CONTROL"}
 
 
 def _now() -> datetime:
@@ -441,6 +439,11 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         for field in GRANT_FIELDS.values()
     }
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
+    if "script" in extensions:
+        try:
+            extensions["script"] = saved_script(extensions["script"])
+        except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
     stable = {
         "cardId": _required_text(card.get("id"), "card_id"),
         "templateId": _required_text(card.get("templateId"), "template_id"),
@@ -1744,9 +1747,9 @@ def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, 
         if not isinstance(item, dict):
             raise CardDomainError("data_anchor_invalid")
         try:
-            anchor = validate_record(record_name, item)
-        except IddValidationError as error:
-            raise CardDomainError(str(error)) from error
+            anchor = DataAnchorReference.model_validate(item).model_dump(exclude_unset=True)
+        except ValidationError as error:
+            raise CardDomainError("data_anchor_invalid") from error
         authority = _required_text(anchor.get("authority"), "data_anchor_authority")
         native_id = _required_text(anchor.get("nativeId"), "data_anchor_native_id")
         identity = (authority, native_id)
@@ -1926,9 +1929,9 @@ def _normalized_graph_hooks(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             raise CardDomainError("graph_hook_invalid")
         try:
-            hook = validate_record("graph-hook", item)
-        except IddValidationError as error:
-            raise CardDomainError(str(error)) from error
+            hook = GraphHook.model_validate(item).model_dump(exclude_unset=True)
+        except ValidationError as error:
+            raise CardDomainError("graph_hook_invalid") from error
         authority = _required_text(hook.get("authority"), "data_anchor_authority")
         native_id = str(hook.get("nativeId") or "").strip()
         semantic_search = hook.get("searchDynamicInput") is True
@@ -2024,6 +2027,10 @@ def _prepare_invocation(
             raise CardDomainError("card_invocation_edge_authority_required")
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
     graph_hooks = _normalized_graph_hooks(options.get("graphHooks"))
+    try:
+        assert_script_execution_available(options.get("script"))
+    except IddValidationError as error:
+        raise CardDomainError(str(error)) from error
     ceiling = _string_list(options.get("tools"), "tools")
     requested_tools = ceiling
     runtime = _card_runtime(card)
@@ -2073,9 +2080,10 @@ def _prepare_invocation(
     unknown_tools = [name for name in effective_tools if name not in by_id]
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
-    write_tools = [name for name in effective_tools if name in writable_tool_ids()]
-    call_config["enabledTools"] = write_tools
-    tool_definitions = [by_id[name] for name in write_tools]
+    selected_tools = [name for name in effective_tools
+                      if name in (readable_tool_ids() | writable_tool_ids())]
+    call_config["enabledTools"] = selected_tools
+    tool_definitions = [by_id[name] for name in selected_tools]
     for delegate in direct_card_targets:
         unknown_delegate_tools = [
             name for name in delegate["tools"] if name not in by_id
@@ -2085,7 +2093,7 @@ def _prepare_invocation(
                 f"configured_tool_unknown:{unknown_delegate_tools[0]}"
             )
         delegate["tools"] = [
-            name for name in delegate["tools"] if name in writable_tool_ids()
+            name for name in delegate["tools"] if name in (readable_tool_ids() | writable_tool_ids())
         ]
     return {
         "ok": True,
@@ -3070,7 +3078,19 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
     if not conversation_id:
         raise CardDomainError("hermes_kanban_card_run_conversation_not_found")
 
-    effective_tools = sorted(readable_tool_ids() | (set(saved_tool_grants) & writable_tool_ids()))
+    input_file = _input_file_descriptor_for_run(str(row["run_id"]))
+    if input_file is None:
+        raise CardDomainError("hermes_kanban_root_input_unavailable")
+    try:
+        root_input = load_idf(input_file, project_id=project_id, deck_id=deck_id,
+                              run_id=str(row["run_id"]), card_id=str(row["card_id"]))
+    except InputMaterializationError as error:
+        raise CardDomainError(str(error)) from error
+    effective_tools = sorted(
+        set(root_input.idf.selectedToolsAndGrants.enabledTools)
+        & set(saved_tool_grants)
+        & (readable_tool_ids() | writable_tool_ids())
+    )
     return {
         "ok": True,
         "context": {

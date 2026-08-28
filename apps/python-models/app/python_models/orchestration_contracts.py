@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.python_models.idf import Idf
 
@@ -14,8 +14,8 @@ class ToolSpec(BaseModel):
     """Canonical typed description of a tool the runtime may expose (T001).
 
     Read/write authority is explicit data, never inferred from the name or
-    description. Read tools form the IDD read plane; write tools additionally
-    require Card selection. Empty names and incomplete schemas are rejected.
+    description. Reads and writes both require explicit Card/Run selection.
+    Empty names and incomplete schemas are rejected.
     """
 
     name: RequiredRuntimeString
@@ -68,6 +68,62 @@ class RuntimeParticipant(BaseModel):
     cardId: str
     title: str
     runtime: HermesRuntime | AutoGenRuntime
+
+
+class ModelOption(BaseModel):
+    """Configured model transport, supplied by its native/configuration owner."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    provider: RequiredRuntimeString
+    key: RequiredRuntimeString
+    label: RequiredRuntimeString
+    providerModelId: RequiredRuntimeString
+    default: bool = False
+
+
+class CardConfiguration(BaseModel):
+    """Editable saved-Card transport fields, not an IDD-authored UI schema."""
+    runtimeKind: str
+    runtimeMode: str
+    runtimeProfile: str = ""
+    provider: str = ""
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
+    modelKey: str = ""
+    reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
+    temperature: float | None = Field(default=None, ge=0)
+    maxTokens: int | None = Field(default=None, ge=1)
+    maxTurns: int | None = Field(default=None, ge=1)
+    tools: list[str] = Field(default_factory=list)
+
+
+class DataAnchorReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    authority: Literal["ThinkGraph", "KnowGraph", "CodeGraph"]
+    nativeId: str
+    reason: str
+    priority: int
+    boundedExpansion: int
+    resultLimit: int = 24
+    required: bool
+
+
+class GraphHook(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    authority: Literal["ThinkGraph", "KnowGraph", "CodeGraph"]
+    nativeId: str | None = None
+    reason: str
+    order: int
+    boundedExpansion: int
+    resultLimit: int = 24
+    required: bool
+    searchDynamicInput: bool = False
+    entityTypes: list[str] = Field(default_factory=list)
+    edgeTypes: list[str] = Field(default_factory=list)
+    validAtAfter: str | None = None
+    validAtBefore: str | None = None
+    invalidAtAfter: str | None = None
+    invalidAtBefore: str | None = None
+    maxNodes: int = 8
+    maxFacts: int = 8
 
 
 class AutoGenMessage(BaseModel):

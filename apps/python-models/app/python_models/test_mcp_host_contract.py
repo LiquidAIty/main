@@ -1314,6 +1314,8 @@ def test_operator_code_tools_are_not_callable_even_with_a_retained_card_grant(mo
         monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: caller)
         assert all(mcp_host._request_tool_is_allowed(name) is False for name in admin)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+    assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
+    principal["grantedTools"].append("cbm.search_graph")
     assert mcp_host._request_tool_is_allowed("cbm.search_graph") is True
     assert mcp_host._request_tool_is_allowed("graphiti.add_memory") is True
     assert mcp_host._request_tool_is_allowed("graphiti.clear_graph") is False
@@ -1476,20 +1478,15 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
             lambda *_args, **_kwargs: SimpleNamespace(stdout=""),
         )
     mcp_host = importlib.import_module("mcp_host")
-    from app.python_models.idd import load_input_data_dictionary, tool_access
+    from app.python_models.idd import load_input_data_dictionary
+    from app.python_models.tool_registry import tool_access
 
-    groups = load_input_data_dictionary()["toolGroups"]
+    declarations = load_input_data_dictionary()["operations"]
     external_ids = {
-        group["namePrefix"] + tool["name"]
-        for group in groups
-        for tool in group["tools"]
-        if tool.get("publication", group["publication"]) == "external-mcp"
+        item["id"] for item in declarations if item["publication"] == "external-mcp"
     }
     private_ids = {
-        group["namePrefix"] + tool["name"]
-        for group in groups
-        if group["publication"] == "private-runtime"
-        for tool in group["tools"]
+        item["id"] for item in declarations if item["publication"] == "private-runtime"
     }
 
     def native_tool(canonical_name, native_name):
@@ -1524,16 +1521,15 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
         "engraphis": [],
         "graphiti": [],
     }
-    for group in groups:
-        namespace = group["namespace"]
-        if group["publication"] != "external-mcp" or namespace not in by_namespace:
+    for declaration in declarations:
+        namespace = declaration["namespace"]
+        if declaration["publication"] == "private-runtime" or namespace not in by_namespace:
             continue
-        for declaration in group["tools"]:
-            canonical_name = group["namePrefix"] + declaration["name"]
-            native_name = declaration["name"]
-            if namespace == "engraphis":
-                native_name = "engraphis_" + native_name
-            by_namespace[namespace].append(native_tool(canonical_name, native_name))
+        canonical_name = declaration["id"]
+        native_name = canonical_name.split(".", 1)[1]
+        if namespace == "engraphis":
+            native_name = "engraphis_" + native_name
+        by_namespace[namespace].append(native_tool(canonical_name, native_name))
 
     async def cbm_tools():
         return by_namespace["cbm"]

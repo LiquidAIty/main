@@ -173,7 +173,7 @@ const orchestratorMocks = vi.hoisted(() => {
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
     if (endpoint === '/idd/card-editor/materialize') {
       return {
-        dictionary: { name: 'LiquidAIty', version: 3, idfFormat: 'input-data-file' },
+        dictionary: { name: 'LiquidAIty', version: 4, purpose: 'agent-builder' },
         fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
         catalogs: { 'configured-models': body.models },
       };
@@ -676,7 +676,7 @@ describe('coder routes', () => {
       const payload = await response.json();
       expect(payload).toMatchObject({
         ok: true,
-        dictionary: { name: 'LiquidAIty', version: 3, idfFormat: 'input-data-file' },
+        dictionary: { name: 'LiquidAIty', version: 4, purpose: 'agent-builder' },
         fields: [expect.objectContaining({ name: 'provider' })],
       });
       expect(payload.catalogs['configured-models']).toEqual(expect.arrayContaining([
@@ -690,6 +690,30 @@ describe('coder routes', () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  it('projects native discovery and preserves missing saved selections without rewriting the Card', async () => {
+    const card = { id: 'custom', templateId: 'template_assist', runtime: { kind: 'autogen', mode: 'assistant' },
+      runtimeOptions: { tools: ['removed.tool'], nativeTools: [], provider: 'openrouter', modelKey: 'removed-model' } };
+    const before = JSON.stringify(card);
+    deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [card], edges: [] } } as any);
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
+      name: 'new.tool', sourceId: 'native-source', inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
+    }]);
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/input-data-dictionary/card-editor?projectId=p&deckId=d&cardId=custom`);
+      expect(response.status).toBe(200);
+      const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
+      const body = JSON.parse(String((call?.[1] as RequestInit).body));
+      expect(body.selectedIds).toEqual(['template_assist', 'removed.tool', 'model:openrouter:removed-model']);
+      expect(body.nativeOptions).toEqual([{
+        id: 'new.tool', kind: 'tool', owner: 'native-source', source: 'native-source', available: true,
+        schema: { type: 'object', properties: { q: { type: 'string' } } },
+      }]);
+      expect(JSON.stringify(card)).toBe(before);
+    } finally { await closeServer(server); }
   });
 
   it('returns an empty history only for a successful empty read', async () => {
@@ -1240,10 +1264,12 @@ describe('coder routes', () => {
         cardId: 'card_local_coder',
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         tools: ['cbm.search_graph'],
+        nativeTools: ['terminal'],
+        toolsets: ['file', 'terminal'],
         message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
       });
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('skills');
-      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('toolsets');
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0].toolsets).not.toContain('hermes-acp');
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       const payload = await response.json();
       expect(payload).toMatchObject({

@@ -140,10 +140,15 @@ tests pass. The canonical `npm run dev:fresh` now loads the current repair and r
 66/66 public tools. Loaded AGE inspection and the existing SSE endpoint return 200; four retained Main
 events replay chronologically with direct-only attribution. The existing UI projection consumes those
 real SSE events without animating the completed Run. The saved Deck and all six Card and six edge hashes
-remain unchanged. Fresh authenticated public persistence and a real worker boundary remain unproven:
-the current conversation's connector rejects even `main.context` as unknown before reaching the app.
-No fresh materialized READ record or browser-rendered attention was proven. Do not call this attention
-path fully live-ready until the remaining authenticated persistence and worker proof pass.
+remain unchanged. The authenticated external `cbm.list_projects` read at 2026-08-27T23:07:20Z also
+persisted: AGE inspection and SSE return its exact external Main Run, conversation, Card and native
+project reference, and the existing projection consumes the actual event. There is no proven missing
+Run-registration defect. Native tool-read observations use `USED_TOOL`/`USED`; `READ` separately records
+references resolved during canonical input materialization. This external tool read did not materialize
+an input, so its `materializedNativeReferences` remains empty; literal input-materialization `READ`
+proof is still separate. A new call from the coding task remains blocked because its connector rejects
+prefixed tool calls; this does not invalidate the successful external caller. Browser rendering and
+one real Codex-account Kanban Run remain unproven. Do not call the complete launch path live-ready.
 
 Backend routes containing `/api/coder/mcp-bridge/` are retained transport names used by the official
 Python MCP host to reach server-owned Card, conversation, Run, and persistence operations. They are not
@@ -179,12 +184,52 @@ observation gaps, not restrictions on native execution. Loaded-runtime proof rem
 
 ## IDD and transient Card calls
 
-`LiquidAIty.idd` is the one native input declaration language. It defines legal variables, types,
-constraints, tools, native operations, and output forms. The canonical one-call materialization law is
-defined only in `AGENTS.md`; this file maps component ownership without defining another format.
+`LiquidAIty.idd` is the source of composable Agent Builder data: types, named objects, templates,
+relationships and LiquidAIty effect/publication annotations. It is not an authenticator, checksum gate,
+native catalog owner or a competing IDF schema. Python reads this data mechanically; Pydantic owns
+executable transport contracts. The existing tool registry takes one startup projection of effect
+metadata; ordinary Runs do not load the builder palette or use its visibility as grants.
+
+Main leads Chat and may propose composing agents. After user agreement, the existing Coder under Chat
+performs Agent Builder work with reusable templates or custom typed objects. This is the approved
+interaction model, not another builder agent, semantic router or runtime. Live proof of that guided
+interaction remains outstanding; saved Main/Coder prompts and profiles are unchanged.
+
+Hermes is the runtime platform. LiquidAIty composes and contextualizes its native systems through
+saved Card identity, selected capabilities and exact Run input; it does not duplicate native catalogs,
+profiles, tool execution or worker scheduling. ACP receives a projection, never the IDD dictionary.
+One Hermes Card configures one native agent/profile; native subagents remain children of that agent,
+not newly saved Cards. Native prompt/model/tool/profile sections retain their native owners. Further
+section consolidation and aliases are deferred; existing non-Hermes saved bindings are preserved.
+
+Optional Python Card Script data and its fail-closed guard are retained in the existing Card
+runtime-extension field. Script analysis endpoints, generated names/types, lint, static previews,
+autocomplete, formatting and the Script tab are deferred to the second pass. Source identity and
+validation/support status never grant authority. Missing/disabled Script preserves materialization.
+
+Script execution is unavailable and an enabled Script fails before graph loading or IDF materialization.
+The inspected native `Hermes/tools/code_execution_tool.py::execute_code` runs arbitrary local Python,
+permits environment passthrough and broadens an empty tool intersection to its sandbox allowlist;
+it is not the required proxy-only isolation seam. No substitute executor or vendor patch was added.
+The native tools.show projection supplies names but not parameter schemas; those tools remain visible
+with a missing-schema diagnostic. Script preparation, safe execution and its IDF integration remain
+unavailable. Future static call-site previews must never be described as executed plans or dry runs.
+
+IDD responsibility reduction:
+
+| Previous responsibility | Current owner/disposition |
+| --- | --- |
+| Duplicated IDF/graph/Card/model records | Executable Pydantic contracts; duplicate IDD validation deleted |
+| Fixed model list and editor-control dictionary | Native/configured models and transport schema projection |
+| Bracket-island parser | Deleted; Markdown and Python source are not a second mixed-language runtime |
+| Native tool descriptions/schemas/availability | Current native discovery; IDD retains only host effect annotations |
+| Global readable-tool allocation | Deleted from host, ordinary Card, registry and Kanban worker paths |
+| Runtime template defaults/override writer in selected-Card editing | Removed; saved configuration wins, old overrides read only |
+| Initial new-Project/quick-add templates | Retained seed compatibility; not runtime authority |
+| Random card.create template IDs | Explicit construction reference or compatible custom-assistant template; persistence does not reload IDD |
 
 ```text
-capability = Card grants ∩ IDD requirements ∩ current input selections ∩ AGE relationship ∩ approval
+capability = native availability ∩ saved Card/profile selections ∩ Run grants ∩ required approval
 ```
 
 Routing IDs and telemetry remain outside `in.idf`. PostgreSQL retains the existing Run artifact metadata;
@@ -409,14 +454,15 @@ execution remains a separate explicitly authorized acceptance test. Model OAuth 
 enabled provider remain unchanged. Focused proof and rollback are registered in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
-Current authorization limits: internal Card tokens have a 12-hour lifetime, and the MCP host admits
-IDD-declared read operations in addition to explicit Card grants. Kanban worker tokens use the saved
-root Run identity but do not require the separate live ACP execution-context check. A native claim is
+Current authorization limits: internal Card tokens have a 12-hour lifetime. Current source restricts
+ordinary Card reads and effects to explicit grants; only the dedicated internal materializer retains
+its bounded read role. Kanban worker grants intersect the exact root IDF and saved revision. Worker
+tokens use the saved root Run identity but do not require the separate live ACP execution-context check. A native claim is
 validated when the bearer is issued; immediate per-worker revocation is not implemented.
 Signed native task/attempt IDs are observation metadata, not additional permissions; they distinguish
 worker graph events from direct root-Card materialization without creating another worker identity.
-Do not describe this as strict assigned-tools-only access or automatic revocation at Run completion. Tightening this
-existing policy is a separate compatibility decision, not a plugin-discovery repair.
+Do not describe this as automatic revocation at Run completion. The grant refactor needs a canonical
+reload and live worker proof before it is described as the loaded runtime's behavior.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup

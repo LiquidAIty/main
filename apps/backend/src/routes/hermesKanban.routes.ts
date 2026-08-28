@@ -341,7 +341,8 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
     || String(context.rootRunId || '') !== String(context.runId || '')
     || !String(context.cardId || '').trim()
     || !String(context.cardRevisionId || '').trim()
-    || !grantedTools.length
+    || !Array.isArray(context.grantedTools)
+    || context.grantedTools.some((value) => typeof value !== 'string' || !value.trim())
   ) {
     throw new Error('hermes_kanban_card_run_context_invalid');
   }

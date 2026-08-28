@@ -292,7 +292,7 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
         edges=[{"source": "parent", "target": "child", "edgeType": "flow"}],
     )
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == []
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert invocation["delegationTargets"] == [{
         **_expected_delegate(),
         "nativeTools": ["terminal"],
@@ -327,7 +327,7 @@ def test_no_flow_edge_materializes_no_delegation_transport(
 ) -> None:
     invocation = _delegation_invocation(monkeypatch, edges=[])
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == []
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert invocation["delegationTargets"] == []
 
 
@@ -811,8 +811,13 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
     assert projected["nativeRootId"] == "t_retained_root"
 
 
+@pytest.mark.parametrize("run_tools, expected_tools", [
+    (["card.load_graph_references", "graphiti.add_memory"], ["card.load_graph_references", "graphiti.add_memory"]),
+    ([], []),
+    (["calculator", "cbm.search_graph"], ["calculator"]),
+])
 def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, run_tools, expected_tools,
 ) -> None:
     statements: list[tuple[str, object]] = []
 
@@ -848,6 +853,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                     {"grant_id": "graphiti.add_memory"},
                     {"grant_id": "card.load_graph_references"},
                     {"grant_id": "engraphis.index_repo"},
+                    {"grant_id": "calculator"},
                 ]
             if "ag_catalog.cypher" in self.last_query:
                 return [{"value": json.dumps({"conversationId": "conversation-one"})}]
@@ -868,8 +874,15 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
     monkeypatch.setattr(
         card_domain,
         "readable_tool_ids",
-        lambda: frozenset({"cbm.search_graph", "engraphis.recall"}),
+        lambda: frozenset({"cbm.search_graph", "engraphis.recall", "calculator"}),
     )
+    from types import SimpleNamespace
+    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda run_id: {"runId": run_id})
+    monkeypatch.setattr(card_domain, "load_idf", lambda descriptor, **identity: SimpleNamespace(
+        idf=SimpleNamespace(selectedToolsAndGrants=SimpleNamespace(
+            enabledTools=run_tools,
+        )),
+    ))
 
     result = card_domain.resolve_native_hermes_task_context({
         "nativeTaskIds": ["t_worker", "t_root"],
@@ -886,12 +899,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
         "runtimeMode": "kanban",
         "runtimeProfile": "liquidaity-hermes-steward",
         "nativeRootId": "t_root",
-        "grantedTools": [
-            "card.load_graph_references",
-            "cbm.search_graph",
-            "engraphis.recall",
-            "graphiti.add_memory",
-        ],
+        "grantedTools": expected_tools,
     }
     query = "\n".join(statement for statement, _params in statements)
     assert "provider_thread_ref = ANY" in query
@@ -1456,6 +1464,47 @@ def _destination_payload(card_id: str) -> dict:
     }
 
 
+def test_enabled_script_stops_before_graph_reads_or_idf(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    card["runtimeOptions"]["script"] = {"enabled": True, "source": "return InvocationPreparation()"}
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Script must fail before graph reads/materialization")
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", forbidden)
+    monkeypatch.setattr(card_domain, "materialize_idf", forbidden)
+    with pytest.raises(card_domain.CardDomainError, match="card_script_isolated_native_execution_unavailable"):
+        card_domain.materialize_invocation(_destination_payload("hermes"))
+
+
+def test_disabled_script_preserves_input_and_saved_configuration(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    before = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
+    card["runtimeOptions"]["script"] = {"enabled": False, "source": "not executable"}
+    after = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
+    assert before == after
+    stable = card_domain._stable_card(card)
+    assert stable["runtimeExtensions"]["script"]["enabled"] is False
+    assert stable["runtimeExtensions"]["script"]["source"] == "not executable"
+    assert stable["runtimeExtensions"]["script"]["nativeSupport"]["available"] is False
+    assert stable["grants"]["tools"] == ["calculator"]
+
+
+@pytest.mark.parametrize("runtime", [
+    {"kind": "hermes", "mode": mode, "profile": "research"} for mode in ("main", "delegate", "kanban")
+] + [{"kind": "autogen", "mode": mode} for mode in ("assistant", "magentic_one")])
+def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, runtime):
+    from app.python_models import idd
+    loaded = _destination_fixture(monkeypatch)
+    next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")["runtime"] = runtime
+    monkeypatch.setattr(idd, "load_input_data_dictionary", lambda: (_ for _ in ()).throw(
+        AssertionError("ordinary Run must not load builder data")))
+    payload = _destination_payload("hermes")
+    payload.pop("senderCardId")
+    invocation = card_domain.materialize_invocation(payload)
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
+
+
 def test_receiving_card_materializes_its_own_exact_call_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1467,10 +1516,10 @@ def test_receiving_card_materializes_its_own_exact_call_data(
     assert hermes["idf"]["stableSavedCardContext"]["runtime"] == {
         "kind": "hermes", "mode": "delegate", "profile": "research",
     }
-    assert hermes["idf"]["selectedToolsAndGrants"]["enabledTools"] == []
+    assert hermes["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert autogen["idf"]["stableSavedCardContext"]["instructions"] == "AutoGen saved prompt"
     assert autogen["idf"]["stableSavedCardContext"]["runtime"] == {"kind": "autogen", "mode": "assistant"}
-    assert autogen["idf"]["selectedToolsAndGrants"]["enabledTools"] == []
+    assert autogen["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["current_datetime"]
     assert hermes["idf"]["dynamicContext"]["task"] == autogen["idf"]["dynamicContext"]["task"]
     assert hermes["idf"]["dynamicContext"]["task"] == "Use every supplied declaration."
     assert hermes["idf"]["actualGraphData"]["recordCounts"]["total"] == 0

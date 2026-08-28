@@ -16,6 +16,12 @@ def test_calculator_evaluates_arithmetic():
     assert tool_calculator("2 + 3 * 4") == "14.0"
 
 
+def test_registry_never_injects_unselected_reads():
+    registry = build_default_tool_registry()
+    assert registry.resolve_selected([]) == []
+    assert [tool.name for tool in registry.resolve_selected(["calculator"])] == ["calculator"]
+
+
 def test_current_datetime_returns_iso_like_string():
     value = tool_current_datetime()
     assert isinstance(value, str) and len(value) >= 10

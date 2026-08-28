@@ -4,7 +4,6 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { AgentManagerLocalConfig } from '../../../components/AgentManager';
 import { resolveEffectiveAgent } from '../../../components/builder/deckRuntime';
 import type {
-  AgentTemplate,
   DeckDocument,
 } from '../../../types/agentgraph';
 import {
@@ -12,7 +11,6 @@ import {
   normalizeCardRuntime,
   normalizeRuntimeOptions,
 } from '../deck/deckPrimitives';
-import { INITIAL_AGENT_TEMPLATES } from '../deck/newProjectDeck';
 
 type UseAgentBuilderCardEditorArgs = {
   deck: DeckDocument;
@@ -30,26 +28,6 @@ function normalizeStringList(value: unknown): string[] {
     : [];
 }
 
-function resolveAgentTemplate(
-  card: DeckDocument['nodes'][number] | null,
-): AgentTemplate | null {
-  if (!card) return null;
-  return (
-    INITIAL_AGENT_TEMPLATES.find(
-      (template) => template.id === card.templateId,
-    ) || null
-  );
-}
-
-function compactAgentOverrides(
-  overrides: Partial<AgentTemplate>,
-): Partial<AgentTemplate> | undefined {
-  const filtered = Object.fromEntries(
-    Object.entries(overrides).filter(([, value]) => value !== undefined),
-  ) as Partial<AgentTemplate>;
-  return Object.keys(filtered).length > 0 ? filtered : undefined;
-}
-
 export default function useAgentBuilderCardEditor({
   deck,
   recordDeckWriteReason,
@@ -60,14 +38,10 @@ export default function useAgentBuilderCardEditor({
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
     [deck.nodes, selectedCardId],
   );
-  const selectedTemplate = useMemo(
-    () => resolveAgentTemplate(selectedCard),
-    [selectedCard],
-  );
   const effectiveAgent = useMemo(
     () =>
       selectedCard
-        ? resolveEffectiveAgent(selectedCard, INITIAL_AGENT_TEMPLATES)
+        ? resolveEffectiveAgent(selectedCard)
         : null,
     [selectedCard],
   );
@@ -171,28 +145,6 @@ export default function useAgentBuilderCardEditor({
           toolsets: normalizeStringList(nextConfig.toolsets),
           mcpConnectionIds: normalizeStringList(nextConfig.mcp_connection_ids),
         });
-        const nextOverrides = compactAgentOverrides({
-          ...(selectedCard.overrides || {}),
-          provider:
-            !selectedTemplate ||
-            nextProvider !== (selectedTemplate.provider ?? null)
-              ? nextProvider
-              : undefined,
-          model:
-            !selectedTemplate || nextModel !== (selectedTemplate.model ?? null)
-              ? nextModel
-              : undefined,
-          temperature:
-            !selectedTemplate ||
-            nextTemperature !== (selectedTemplate.temperature ?? null)
-              ? nextTemperature
-              : undefined,
-          maxTokens:
-            !selectedTemplate ||
-            nextMaxTokens !== (selectedTemplate.maxTokens ?? null)
-              ? nextMaxTokens
-              : undefined,
-        });
 
         return {
           ...currentDeck,
@@ -207,7 +159,6 @@ export default function useAgentBuilderCardEditor({
                   runtime: nextRuntime,
                   runtimeOptions: nextRuntimeOptions,
                   parentGraphId: nextParentGraphId,
-                  overrides: nextOverrides,
                 }
               : node,
           ),
@@ -217,7 +168,6 @@ export default function useAgentBuilderCardEditor({
     [
       recordDeckWriteReason,
       selectedCard,
-      selectedTemplate,
       setDeck,
     ],
   );

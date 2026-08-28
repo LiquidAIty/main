@@ -86,12 +86,13 @@ def _startup_source_identity() -> tuple[str, str]:
     return revision, source_sha256
 
 from app.python_models.provider_config import ensure_env_loaded
-from app.python_models.idd import (
+from app.python_models.tool_registry import (
     external_mcp_tool_ids,
     readable_tool_ids,
     tool_publication,
     tool_access,
 )
+from app.python_models.card_script import CardScript
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -786,8 +787,6 @@ def _request_tool_is_allowed(name: str) -> bool:
         return name == "card.run_assistant_agent"
     if kind != "card-runtime":
         return False
-    if access == "read":
-        return True
     active = _ACTIVE_AUTHENTICATED_CONTEXT.get()
     if principal.get("requiresExecutionContext") is True:
         grants = active.get("grantedTools") if isinstance(active, dict) else None
@@ -2417,7 +2416,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "Create ONE explicitly configured saved Card through the canonical PostgreSQL "
                 "deck authority using optimistic locking. The server mints the Card identity; "
-                "read capabilities are rejected from the Card write-tool list. This operation "
+                "only explicitly selected capabilities enter the saved grant list. This operation "
                 "never launches the Card or Mag One."
             ),
             inputSchema={
@@ -2426,6 +2425,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "projectId": {"type": "string", "minLength": 1},
                     "deckId": {"type": "string", "minLength": 1},
                     "expectedRevision": {"type": "string", "minLength": 1},
+                    "templateId": {"type": "string", "minLength": 1},
                     "title": {"type": "string", "minLength": 1},
                     "role": {"type": "string", "minLength": 1},
                     "prompt": {"type": "string", "minLength": 1},
@@ -2483,7 +2483,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
                 "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
-                "temperature, maxTokens, tools. "
+                "temperature, maxTokens, tools, optional Python Card Script source. "
                 "Everything else (runtime code, "
                 "shell config, hidden tools, authority grants, worker selection) is rejected."
             ),
@@ -2513,6 +2513,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             },
                             "temperature": {"type": "number"},
                             "maxTokens": {"type": "integer", "minimum": 1},
+                            "script": CardScript.model_json_schema(),
                             "tools": {
                                 "type": "array",
                                 "items": {"type": "string", "minLength": 1},
@@ -2882,9 +2883,8 @@ async def list_tools() -> list[Tool]:
         allowed = {
             str(value).strip() for value in grants or [] if str(value).strip()
         } if isinstance(grants, list) else set()
-        readable = readable_tool_ids()
         return [tool for tool in tools if tool_publication(tool.name) != "private-admin"
-                and (tool.name in readable or tool.name in allowed)]
+                and tool.name in allowed]
     try:
         tools = await _materialize_complete_catalog()
     except Exception as error:
@@ -2928,7 +2928,7 @@ def _enforce_tool_caller(
     *,
     authenticated_external: bool = False,
 ) -> str | None:
-    from app.python_models.idd import required_tool_caller_runtime
+    from app.python_models.tool_registry import required_tool_caller_runtime
 
     expected = required_tool_caller_runtime(name)
     card_id = str(args.pop("_callerCardId", "") or "").strip()
@@ -3031,7 +3031,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.inspect": {"projectId", "deckId"},
     "card.create": {
         "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
-        "runtime", "model", "tools", "position",
+        "runtime", "model", "tools", "position", "templateId",
     },
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
@@ -3216,7 +3216,7 @@ async def _dispatch_tool(
                 if context.get("principalKind") != "system-root":
                     args["originatingAgentId"] = str(context["mainCardId"])
                     args["originatingRunId"] = str(context["parentRunId"])
-            from app.python_models.idd import required_tool_caller_runtime
+            from app.python_models.tool_registry import required_tool_caller_runtime
 
             if required_tool_caller_runtime(name) is not None:
                 args["_callerCardId"] = str(context["mainCardId"])

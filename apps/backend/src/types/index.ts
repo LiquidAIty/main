@@ -23,6 +23,15 @@ export type CardRuntime =
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type AgentCardRuntimeOptions = {
+  script?: {
+    enabled: boolean;
+    source: string;
+    version: number;
+    sourceHash?: string;
+    paletteFingerprint?: string;
+    lastValidation?: Record<string, unknown>;
+    nativeSupport?: Record<string, unknown>;
+  } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;

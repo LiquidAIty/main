@@ -192,7 +192,7 @@ async def _call_read_tools_via_mcp_async(
     calls: list[tuple[str, dict[str, Any]]],
     concurrent: bool = False,
 ) -> list[dict[str, Any]]:
-    from app.python_models.idd import tool_access
+    from app.python_models.tool_registry import tool_access
 
     for name, _arguments in calls:
         if tool_access(name) != "read":

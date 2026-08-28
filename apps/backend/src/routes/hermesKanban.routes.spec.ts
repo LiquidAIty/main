@@ -85,7 +85,10 @@ const TASKS = [
 ];
 
 describe('hermesKanban helpers', () => {
-  it('resolves an ephemeral worker through the native graph to one saved Card Run', async () => {
+  it.each([
+    { grantedTools: [] }, { grantedTools: ['calculator'] },
+    { grantedTools: ['graphiti.add_memory', 'cbm.search_graph'] },
+  ])('resolves one saved Card Run without adding grants to $grantedTools', async ({ grantedTools }) => {
     const snapshots: Record<string, any> = {
       t_worker: {
         task: { id: 't_worker', status: 'done', created_by: 'auto-decomposer' },
@@ -111,7 +114,7 @@ describe('hermesKanban helpers', () => {
           rootRunId: 'card-run-one', cardId: 'card_hermes_steward',
           cardRevisionId: 'revision-one', runtimeMode: 'kanban',
           runtimeProfile: 'liquidaity-hermes-steward', nativeRootId: 't_root',
-          grantedTools: ['graphiti.add_memory', 'cbm.search_graph'],
+          grantedTools,
         },
       };
     });
@@ -126,7 +129,7 @@ describe('hermesKanban helpers', () => {
     expect(context.conversationId).toBe('conversation-one');
     expect(context.nativeRootId).toBe('t_root');
     expect(context.nativeChildId).toBe('t_worker');
-    expect(context.grantedTools).toEqual(['cbm.search_graph', 'graphiti.add_memory']);
+    expect(context.grantedTools).toEqual([...grantedTools].sort());
   });
 
   it('derives aggregate retained-root progress without creating worker identities', () => {

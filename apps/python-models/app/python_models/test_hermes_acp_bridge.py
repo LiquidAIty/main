@@ -100,6 +100,13 @@ def test_native_manager_extension_is_an_exact_allowlisted_pass_through(monkeypat
         ("liquidaity-main", "learning.frames", {"cols": 60, "rows": 18, "frames": 2}),
         ("liquidaity-main", "command.dispatch", {"name": "learn", "arg": "this repository"}),
     ]
+    for method in ("tools.show", "plugins.list"):
+        result = asyncio.run(agent.ext_method("native/call", {
+            "method": method, "params": {}, "profile": "liquidaity-main",
+        }))
+        assert result["native_method"] == method
+        assert result["profile"] == "liquidaity-main"
+        assert profile_calls[-1] == ("liquidaity-main", method, {})
 
 
 def test_native_kanban_stop_controls_use_hermes_reclaim_lifecycle(monkeypatch):

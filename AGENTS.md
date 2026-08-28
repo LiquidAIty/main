@@ -429,21 +429,21 @@ receive their dynamic task through the saved-worker Card doorway, so each indepe
 Card gets its own root IDF. A Hermes Kanban Card is one root boundary: Hermes owns native task decomposition,
 worker prompts, handoffs, and child context. Never infer per-worker IDFs from native child IDs.
 
-IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` declaration language for
-constructing and editing structured input where structure is useful. It may declare named variables,
-types/defaults/constraints, tools, native operations, and output forms. Python rails interprets that
-file mechanically; TypeScript and Python must not contain a copied competing dictionary. Only the
-declarations selected for the current communication enter its IDF; the whole IDD never enters a model
-request. Ordinary prompt prose stays Markdown, while explicitly cataloged native-language islands may
-be typed.
+IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` Agent Builder palette
+for composable objects, typed fields, templates, relationships and effect metadata. Native Hermes,
+MCP and model discovery own their current catalogs. IDD is not runtime authority, an authenticator,
+a checksum gate or an IDF validator, and no copied dictionary belongs in TypeScript or Python.
+Full builder context belongs only to Coder in explicit Agent Builder work directed by Main after
+user approval. Ordinary Runs receive selected values/references, never the whole palette. Ordinary
+prompt prose stays Markdown. Script data and its fail-closed guard may be retained, but the Script
+tab/editor is deferred to the second pass; no substitute executor is approved.
 
 Authority is:
 
 ```text
-saved card capability ceiling
-∩ current input and deliberately selected values/references
-∩ IDD operation requirements
-∩ user approval where applicable
+native availability
+∩ saved Card/Hermes selection
+∩ current Run authorization (including user approval where applicable)
 ```
 
 Generic typed SQL/Cypher execution is retained. Implement it once on Python rails with parameterization,

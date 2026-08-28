@@ -330,20 +330,9 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             ),
             runtime_mode="assistant",
         )
-        # The IDD read plane is available to every configured Card. The saved
-        # Card's enabledTools contains only its write/effect ceiling. AutoGen's
-        # local FunctionTool registry can expose the intersection it actually
-        # implements without copying readable tools into each saved Card.
-        from app.python_models.idd import readable_tool_ids
-
-        implemented = set(DEFAULT_TOOL_REGISTRY.known_names())
-        selected_tools = list(dict.fromkeys([
-            *(
-                name for name in sorted(readable_tool_ids())
-                if name in implemented
-            ),
-            *list(context.idf.selectedToolsAndGrants.enabledTools),
-        ]))
+        # The exact reloaded IDF carries this Run's selected capability ceiling.
+        # Public readability is not a grant; unknown selections fail in the owner.
+        selected_tools = list(context.idf.selectedToolsAndGrants.enabledTools)
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",

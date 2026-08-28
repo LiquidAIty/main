@@ -43,7 +43,7 @@ function snapshots(): Record<string, HermesKanbanTaskSnapshot> {
   };
 }
 
-function resolvedContext(runId = 'card-run-one') {
+function resolvedContext(runId = 'card-run-one', grantedTools = ['graphiti.add_memory', 'cbm.search_graph']) {
   return {
     ok: true,
     context: {
@@ -51,19 +51,20 @@ function resolvedContext(runId = 'card-run-one') {
       runId, rootRunId: runId, cardId: 'card_hermes_steward',
       cardRevisionId: 'revision-one', runtimeMode: 'kanban',
       runtimeProfile: identity.profile, nativeRootId: 't_root',
-      grantedTools: ['graphiti.add_memory', 'cbm.search_graph'],
+      grantedTools,
     },
   };
 }
 
 describe('native Kanban worker Card bearer', () => {
-  it('mints from the existing root-to-Card Run correlation and exact grants', async () => {
+  it.each([{ grants: [] }, { grants: ['calculator'] }, { grants: ['graphiti.add_memory', 'cbm.search_graph'] }])(
+    'mints the existing root-to-Card correlation with exactly $grants', async ({ grants }) => {
     const graph = snapshots();
     const mint = vi.fn((_principal: InternalMcpPrincipal) => 'b'.repeat(96));
     const result = await issueHermesKanbanWorkerBearer({
       identity,
       show: async (taskId) => graph[taskId],
-      resolveRun: vi.fn(async () => resolvedContext()),
+      resolveRun: vi.fn(async () => resolvedContext('card-run-one', grants)),
       mint,
     });
 
@@ -80,7 +81,7 @@ describe('native Kanban worker Card bearer', () => {
       callerCardId: 'card_hermes_steward',
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'kanban',
-      grantedTools: ['cbm.search_graph', 'graphiti.add_memory'],
+      grantedTools: [...grants].sort(),
       requiresExecutionContext: false,
       nativeChildId: 't_worker',
       nativeRunId: '7',

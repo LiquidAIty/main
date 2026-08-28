@@ -35,10 +35,9 @@ from app.python_models.card_domain import (
 from app.python_models.idd import (
     IddValidationError,
     materialize_card_editor,
-    materialize_tool_catalog,
 )
 from app.python_models.orchestration_contracts import StoredRuntimeRequest
-from app.python_models.tool_registry import tool_manifest
+from app.python_models.tool_registry import tool_manifest, materialize_tool_catalog
 
 app = FastAPI()
 
@@ -95,7 +94,10 @@ def tools_manifest():
 def idd_card_editor_materialize(payload: dict[str, Any]):
     """Materialize current model choices through the one literal IDD."""
     try:
-        return materialize_card_editor(payload.get("models"))
+        return materialize_card_editor(
+            payload.get("models"), native_options=payload.get("nativeOptions"),
+            selected_ids=payload.get("selectedIds"),
+        )
     except IddValidationError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

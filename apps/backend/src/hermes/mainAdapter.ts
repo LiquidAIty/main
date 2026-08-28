@@ -46,6 +46,8 @@ export type HermesRuntimeConfig = {
   accessMode: CardAccessMode;
   tools: string[];
   mcpConnectionIds: string[];
+  nativeTools?: string[];
+  toolsets?: string[];
   nativeProfileToolsets?: string[];
   nativeProfileMcpServerNames?: string[];
 };
@@ -321,13 +323,17 @@ export function buildHermesHostSessionProjection(
       hermes: {
         sessionConfig: {
           enabledToolsets: uniqueStrings([
-            // Preserve Hermes' native ACP surface. LiquidAIty Card grants add
-            // scoped MCP capability; they do not replace native memory,
-            // skills, tools, terminal, delegation, or learning behavior.
-            'hermes-acp',
+            // Only explicit Card/Run and native-profile selections. Public ACP
+            // availability is not permission to add its broad default toolset.
+            ...(args.toolsets || []),
             ...(args.nativeProfileToolsets || []),
             ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),
             ...mcpToolsetNames(rootServers),
+          ]),
+          enabledTools: uniqueStrings([
+            ...(args.nativeTools || []),
+            // Existing saved web_search selection uses Hermes' native tool.
+            ...args.tools.filter((name) => name === 'web_search'),
           ]),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,

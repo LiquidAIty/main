@@ -689,7 +689,8 @@ export function AgentManager({
 
   useEffect(() => {
     let active = true;
-    void fetch('/api/coder/input-data-dictionary/card-editor')
+    const query = new URLSearchParams({ projectId: projectId || '', deckId: deckId || '', cardId: cardId || '' });
+    void fetch('/api/coder/input-data-dictionary/card-editor?' + query)
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok || payload?.ok !== true) {
@@ -710,7 +711,7 @@ export function AgentManager({
     return () => {
       active = false;
     };
-  }, []);
+  }, [projectId, deckId, cardId]);
 
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
@@ -1145,13 +1146,12 @@ export function AgentManager({
   );
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
-    toolDictionaryPage.selectedKnownReferences.filter((reference) => reference.access === 'write'),
+    toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
   );
   const availableToolRows = toolDictionaryPage.references.filter((reference) =>
     !savedToolNames.includes(reference.canonicalId) &&
-    reference.availability === 'available' &&
-    reference.access === 'write',
+    reference.availability === 'available',
   );
   const toggleTool = (name: string, checked: boolean) => {
     setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
@@ -1167,7 +1167,6 @@ export function AgentManager({
         try {
           const params = new URLSearchParams({
             query: toolDictionaryQuery,
-            access: 'write',
             offset: String(toolDictionaryOffset),
             limit: '100',
           });
