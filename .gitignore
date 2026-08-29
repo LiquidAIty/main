@@ -23,6 +23,7 @@ handoff/
 /runtime/run-inputs/
 /runtime/codex-models/
 /db/constellation/*.sqlite*
+/db/constellation/.*.mimir-runtime.json
 # Runtime copies of user-uploaded KnowGraph documents. The original user files
 # remain outside the repo and the service recreates these copies on ingestion.
 /services/knowgraph/uploads/

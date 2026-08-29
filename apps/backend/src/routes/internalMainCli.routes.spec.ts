@@ -77,6 +77,7 @@ describe('internal Main CLI bridge routes', () => {
         finalText: 'answer',
         nativeSessionId: 'session-1',
         nativeTurnId: 'turn-1',
+        contextAuthorityMode: 'main_native_honcho',
       });
       expect(onEvent).toHaveBeenCalledTimes(2);
     } finally {

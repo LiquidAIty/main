@@ -14,8 +14,7 @@ project: C-Projects-LiquidAIty-main
 @requires codegraph_first_navigation
 
 This is the canonical CBM skill. Do not create a second general CBM manual under another filename.
-`skills/codegraph.md` remains separate because it defines the product's CodeGraph authority and
-boundary rather than this development workflow.
+`ARCHITECTURE.md` owns the product's CodeGraph authority; this file owns the development workflow.
 
 ## What CBM Is
 

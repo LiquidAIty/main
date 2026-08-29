@@ -13,6 +13,12 @@ export type NativeHermesCardView = {
     description: string;
     soul: string;
     model: { provider: string; default: string };
+    backgroundReview: {
+      enabled: boolean;
+      provider: string;
+      model: string;
+      maxInputTokens: number | null;
+    };
     skills: Array<{ name: string; enabled: boolean }>;
     toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
     toolsetsPinned: boolean;
@@ -25,6 +31,24 @@ export type NativeHermesCardView = {
         date: string;
         nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
       }>;
+      graph: {
+        nodes: Array<{
+          id: string;
+          label: string;
+          kind: 'skill' | 'memory';
+          timestamp?: number | null;
+          category?: string;
+          useCount?: number;
+          state?: string;
+          createdBy?: string | null;
+          pinned?: boolean;
+          memorySource?: string;
+        }>;
+        edges: Array<{ source: string; target: string }>;
+        clusters: Array<{ category?: string; count?: number }>;
+        memory: Array<Record<string, unknown>>;
+        stats: Record<string, unknown>;
+      };
     };
   };
   nativeApply: 'explicit';
@@ -44,6 +68,25 @@ export type NativeHermesOperation =
   | { method: 'toolsets.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.test'; params: { name: string } };
+
+export type HermesLearningIndicator = {
+  learnedSkillCount: number;
+  recentChange: boolean;
+};
+
+export function summarizeHermesLearning(
+  view: NativeHermesCardView,
+  nowMs = Date.now(),
+): HermesLearningIndicator {
+  const skills = view.native.learning.graph.nodes.filter((node) => node.kind === 'skill');
+  const recentCutoffSeconds = Math.floor(nowMs / 1000) - (7 * 24 * 60 * 60);
+  return {
+    learnedSkillCount: skills.length,
+    recentChange: view.native.learning.graph.nodes.some((node) => (
+      typeof node.timestamp === 'number' && node.timestamp >= recentCutoffSeconds
+    )),
+  };
+}
 
 async function responseJson(response: Response): Promise<Record<string, any>> {
   const body = await response.json().catch(() => ({}));
@@ -81,7 +124,11 @@ export async function applyNativeHermesOperation(input: {
       body: JSON.stringify({ projectId: input.projectId, deckId: input.deckId, ...input.change }),
     },
   );
-  return responseJson(response) as Promise<NativeHermesCardView & { result: unknown }>;
+  const body = await responseJson(response) as NativeHermesCardView & { result: unknown };
+  window.dispatchEvent(new CustomEvent('liquidaity:hermes-profile-updated', {
+    detail: { cardId: input.cardId },
+  }));
+  return body;
 }
 
 export async function loadNativeHermesLearningDetail(input: {

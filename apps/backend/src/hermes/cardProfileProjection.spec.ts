@@ -55,6 +55,11 @@ function nativeRequest() {
     if (method === 'profiles.describe') return native();
     if (method === 'mcp.servers.list') return { servers: [{ name: 'liquidaity', transport: 'http', auth: 'header' }] };
     if (method === 'learning.frames') return { count: 1, summary: '1 learned item', buckets: [] };
+    if (method === 'learning.graph') return {
+      nodes: [{ id: 'native-research', label: 'native-research', kind: 'skill' }],
+      edges: [], clusters: [{ category: 'research', count: 1 }], memory: [],
+      stats: { learned_skills: 1 },
+    };
     throw new Error(`unexpected_native_method:${method}`);
   });
 }
@@ -73,10 +78,11 @@ describe('Hermes Card native profile binding', () => {
     const request = nativeRequest();
     const result = await hydrateHermesCardProfile(card, deck, request as never);
 
-    expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenCalledTimes(4);
     expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', { name: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(2, 'mcp.servers.list', { profile: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(3, 'learning.frames', { cols: 60, rows: 18, frames: 2 }, 'liquidaity-main');
+    expect(request).toHaveBeenNthCalledWith(4, 'learning.graph', {}, 'liquidaity-main');
     expect(result.nativeApply).toBe('explicit');
     expect(result.cardSaveMutatesNative).toBe(false);
     expect(result.native).toMatchObject({
@@ -99,7 +105,7 @@ describe('Hermes Card native profile binding', () => {
       request as never,
     );
 
-    expect(request).toHaveBeenCalledTimes(4);
+    expect(request).toHaveBeenCalledTimes(5);
     expect(request).toHaveBeenNthCalledWith(1, 'profiles.configure', {
       name: 'liquidaity-main',
       soul: 'New native Soul',

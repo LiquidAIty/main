@@ -208,8 +208,12 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
         def __init__(self):
             self.messages = []
 
-        def inject_message(self, message, *, interrupt_running):
-            self.messages.append((message, interrupt_running))
+        def inject_message(
+            self, message, *, interrupt_running, external_memory_mode
+        ):
+            self.messages.append(
+                (message, interrupt_running, external_memory_mode)
+            )
             return False
 
         def cli_conversation_snapshot(self):
@@ -222,6 +226,7 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
         "requestId": "request-1",
         "runId": "run-1",
         "driverSource": "external_plugin",
+        "contextAuthorityMode": "plugin_context_only",
         "message": "hello",
     }
 
@@ -235,7 +240,7 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
     monkeypatch.setattr(bridge, "_request", request)
     bridge._poll()
 
-    assert context.messages == [("hello", False)]
+    assert context.messages == [("hello", False, "bypass_automatic")]
     assert calls[-1][1]["kind"] == "rejected"
     assert calls[-1][1]["error"] == "main_driver_turn_already_running"
     assert bridge._active is None

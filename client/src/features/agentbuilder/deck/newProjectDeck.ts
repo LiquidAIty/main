@@ -382,6 +382,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
+        toolCatalogPolicy: 'all_healthy',
+        disabledTools: [],
         nativeTools: ['memory'],
         toolsets: ['file', 'terminal'],
       },
@@ -405,6 +407,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         tools: [...AGENT_BUILDER_CONTROLLER_TOOLS, ...CODEBASE_MEMORY_CODER_TOOLS],
+        toolCatalogPolicy: 'all_healthy',
+        disabledTools: [],
         nativeTools: ['memory'],
         skills: ['hermes-agent'],
         toolsets: ['hermes-acp', 'computer_use'],
@@ -450,6 +454,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         tools: [...CODEBASE_MEMORY_CODER_TOOLS],
+        toolCatalogPolicy: 'all_healthy',
+        disabledTools: [],
         // Keep provider-backed native memory explicit: Hermes only injects the
         // configured memory provider when the host selects `memory` directly.
         nativeTools: ['memory'],
@@ -475,6 +481,8 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
         tools: [...HERMES_CARD_TOOLS],
+        toolCatalogPolicy: 'all_healthy',
+        disabledTools: [],
         nativeTools: ['memory'],
         toolsets: ['web'],
         modelKey: DEFAULT_CARD_MODEL_KEY,

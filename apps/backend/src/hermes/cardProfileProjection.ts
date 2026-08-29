@@ -15,6 +15,12 @@ export type NativeHermesProfileState = {
   description: string;
   soul: string;
   model: { provider: string; default: string };
+  backgroundReview: {
+    enabled: boolean;
+    provider: string;
+    model: string;
+    maxInputTokens: number | null;
+  };
   skills: Array<{ name: string; enabled: boolean }>;
   toolsets: Array<{ name: string; label?: string; description?: string; tool_count?: number; enabled: boolean }>;
   toolsetsPinned: boolean;
@@ -27,6 +33,13 @@ export type NativeHermesProfileState = {
       date: string;
       nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
     }>;
+    graph: {
+      nodes: Array<Record<string, unknown>>;
+      edges: Array<{ source: string; target: string }>;
+      clusters: Array<Record<string, unknown>>;
+      memory: Array<Record<string, unknown>>;
+      stats: Record<string, unknown>;
+    };
   };
 };
 
@@ -95,6 +108,7 @@ function normalizeNative(
   profileValue: unknown,
   mcpValue: unknown,
   learningValue: unknown,
+  learningGraphValue: unknown,
 ): NativeHermesProfileState {
   const profile = profileValue && typeof profileValue === 'object'
     ? profileValue as Record<string, unknown>
@@ -103,8 +117,14 @@ function normalizeNative(
   const model = profile.model && typeof profile.model === 'object'
     ? profile.model as Record<string, unknown>
     : {};
+  const backgroundReview = profile.background_review && typeof profile.background_review === 'object'
+    ? profile.background_review as Record<string, unknown>
+    : {};
   const learning = learningValue && typeof learningValue === 'object'
     ? learningValue as Record<string, unknown>
+    : {};
+  const learningGraph = learningGraphValue && typeof learningGraphValue === 'object'
+    ? learningGraphValue as Record<string, unknown>
     : {};
   const mcp = mcpValue && typeof mcpValue === 'object'
     ? mcpValue as Record<string, unknown>
@@ -119,6 +139,14 @@ function normalizeNative(
     description: String(profile.description || ''),
     soul: String(profile.soul || ''),
     model: { provider: String(model.provider || ''), default: String(model.default || '') },
+    backgroundReview: {
+      enabled: backgroundReview.enabled !== false,
+      provider: String(backgroundReview.provider || 'auto'),
+      model: String(backgroundReview.model || ''),
+      maxInputTokens: typeof backgroundReview.max_input_tokens === 'number'
+        ? backgroundReview.max_input_tokens
+        : null,
+    },
     skills: Array.isArray(profile.skills)
       ? profile.skills.map((item: any) => ({ name: String(item?.name || ''), enabled: item?.enabled === true })).filter((item) => item.name)
       : [],
@@ -148,6 +176,25 @@ function normalizeNative(
           meta: String(node?.meta || ''),
         })).filter((node: any) => node.id) : [],
       })) : [],
+      graph: {
+        nodes: Array.isArray(learningGraph.nodes)
+          ? learningGraph.nodes.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          : [],
+        edges: Array.isArray(learningGraph.edges)
+          ? learningGraph.edges.map((item: any) => ({
+            source: String(item?.source || ''), target: String(item?.target || ''),
+          })).filter((item) => item.source && item.target)
+          : [],
+        clusters: Array.isArray(learningGraph.clusters)
+          ? learningGraph.clusters.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          : [],
+        memory: Array.isArray(learningGraph.memory)
+          ? learningGraph.memory.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+          : [],
+        stats: learningGraph.stats && typeof learningGraph.stats === 'object'
+          ? learningGraph.stats as Record<string, unknown>
+          : {},
+      },
     },
   };
 }
@@ -158,14 +205,13 @@ async function readNativeProfile(
 ): Promise<HermesCardProfileReadback> {
   const profile = await requestNative('profiles.describe', { name: binding.profile });
   const mcp = await requestNative('mcp.servers.list', { profile: binding.profile });
-  const learning = await requestNative(
-    'learning.frames',
-    { cols: 60, rows: 18, frames: 2 },
-    binding.profile,
-  );
+  const [learning, learningGraph] = await Promise.all([
+    requestNative('learning.frames', { cols: 60, rows: 18, frames: 2 }, binding.profile),
+    requestNative('learning.graph', {}, binding.profile),
+  ]);
   return {
     binding,
-    native: normalizeNative(profile, mcp, learning),
+    native: normalizeNative(profile, mcp, learning, learningGraph),
     nativeApply: 'explicit',
     cardSaveMutatesNative: false,
   };

@@ -70,7 +70,7 @@ durable portfolio or evidence judgment inside a stateless tool.
 
 Before changing product or vendor source:
 
-- read `DONT.md`, `PLAN.md`, the relevant `wiki/*.md`, and the relevant existing `skills/*.md`;
+- read `PLAN.md` and the relevant existing `skills/*.md`;
 - read current HEAD and complete Git status, and classify dirty paths as pre-existing, task-created, or
   generated/runtime state;
 - use the app-published `cbm.*` doorway on `C-Projects-LiquidAIty-main` first, following

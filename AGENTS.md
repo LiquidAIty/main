@@ -7,14 +7,12 @@ product prompt and not a substitute for current source, tests, or runtime proof.
 
 Before doing anything else:
 
-1. Read [DONT.md](./DONT.md) completely.
-2. Read [PLAN.md](./PLAN.md) completely.
-3. Read the explicitly relevant `wiki/*.md` feature manifests.
-4. Read the relevant `skills/*.md` procedures.
-5. Establish Git and native Codebase Memory state.
-6. Use CBM to resolve the structural slice.
-7. Direct-read the current source CBM identified.
-8. Only then plan or edit.
+1. Read [PLAN.md](./PLAN.md) completely.
+2. Read the relevant `skills/*.md` procedures.
+3. Establish Git and native Codebase Memory state.
+4. Use CBM to resolve the structural slice.
+5. Direct-read the current source CBM identified.
+6. Only then plan or edit.
 
 The repository has deleted well over 200,000 lines of layered experiments. The most important rule is:
 
@@ -30,7 +28,7 @@ models = semantic reasoning
 saved cards and graph topology = identity and authority
 ```
 
-Do not imitate nearby spaghetti. Follow this file and DONT.md.
+Do not imitate nearby spaghetti. Follow this file.
 
 ---
 
@@ -52,8 +50,9 @@ Never collapse CURRENT and TARGET into one claim.
 - Microsoft AutoGen 0.7.5 is checked in at `autogen-main` as first-party execution infrastructure;
   Python rails install its three packages only from that tree. The 0.7.5 upstream base is frozen;
   do not upgrade or rebase it onto later Microsoft AutoGen versions.
-- The complete loaded six-service runtime and user-visible Main/Coder/Kanban model execution remain
-  unproven until an explicitly approved live test.
+- The canonical stack, direct saved Main response, and saved Local Coder account-backed Run are live-proven.
+  Main-to-Agent-Builder, Main-to-Kanban, Magentic-One team execution, and external GPT-plugin acceptance
+  remain separate proofs.
 - The Knowledge workspace has a real 2D native force-directed graph surface.
 - The Agent Builder Graphs workspace renders bounded native ThinkGraph, KnowGraph, and CodeGraph
   attention projections; the redundant standalone CodeGraph app/package shell is deleted.
@@ -371,7 +370,8 @@ One authority and one writer per graph.
   stores raw IDFs, authorizes a runtime, chooses a card, or owns native runtime lifecycle.
 - The UI never writes graph meaning directly.
 - TypeScript never performs semantic graph merges.
-- Files/skills describe how-to; graphs store what-is. Do not smear SkillsGraph into KnowGraph.
+- Files/skills describe how-to; graphs store what-is. Do not copy Hermes profile learning/skill
+  nodes into KnowGraph.
 - A 2D or 3D visualization is permitted only when wired to real selection, context loading, handoff,
   consumption, traversal, or knowledge creation.
 
@@ -526,7 +526,7 @@ requested outcome
 requirements
 scope and files in/out
 CBM anchors and freshness
-relevant selected feature manifests and skills
+relevant selected skills
 Preservation Set
 proof commands
 stop conditions
@@ -536,7 +536,7 @@ expected CoderReport shape
 
 Execution order:
 
-1. Read repository law and selected manifests/skills.
+1. Read repository law and selected skills.
 2. Establish Git and CBM state.
 3. Resolve symbols, relationships, contracts, and tests through CBM.
 4. Direct-read current source.
@@ -591,10 +591,7 @@ task objects, or reconstructed Magentic-One ledgers. Do not mark completion with
 
 ---
 
-## Skills and feature manifests
-
-`wiki/*.md` files are compact feature pointer manifests. They identify the outcome, exact CBM anchors,
-must-not-break behavior, valid proof, and limitations. They are not source-of-truth replacements.
+## Skills
 
 `skills/*.md` files are reusable proven procedures and known traps. Retrieve a small relevant set. Do
 not inject every skill into every prompt. Do not create a skill merely because a task completed.
@@ -611,10 +608,8 @@ Canonical durable documents are:
 ```text
 PLAN.md
 AGENTS.md
-DONT.md
 ARCHITECTURE.md
 FUTURE.md
-wiki/*.md
 skills/*.md
 repo-intake/*.md only when explicitly required
 ```

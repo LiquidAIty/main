@@ -54,6 +54,17 @@ class TestSyncExternalMemoryForTurn:
         agent._memory_manager.sync_all.assert_not_called()
         agent._memory_manager.queue_prefetch_all.assert_not_called()
 
+    def test_contextualized_driver_turn_does_not_sync_or_prefetch(self):
+        agent = _bare_agent()
+        agent._current_turn_external_memory_mode = "bypass_automatic"
+        agent._sync_external_memory_for_turn(
+            original_user_message="Context already supplied by the connector.",
+            final_response="Completed answer.",
+            interrupted=False,
+        )
+        agent._memory_manager.sync_all.assert_not_called()
+        agent._memory_manager.queue_prefetch_all.assert_not_called()
+
 
     # --- Normal completed turn still syncs ------------------------------
 
@@ -75,4 +86,3 @@ class TestSyncExternalMemoryForTurn:
 
 
     # --- The specific matrix the reporter asked about ------------------
-

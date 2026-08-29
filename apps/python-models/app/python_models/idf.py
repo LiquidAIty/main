@@ -87,6 +87,8 @@ class SelectedToolsAndGrants(BaseModel):
 
     enabledTools: list[str] = Field(default_factory=list)
     toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
+    toolCatalogPolicy: str = "selected"
+    disabledTools: list[str] = Field(default_factory=list)
     nativeTools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     toolsets: list[str] = Field(default_factory=list)
@@ -372,6 +374,8 @@ def materialize_idf(
     tools_and_grants = SelectedToolsAndGrants(
         enabledTools=list(capabilities.get("enabledTools") or []),
         toolDefinitions=list(capabilities.get("toolDefinitions") or []),
+        toolCatalogPolicy=str(capabilities.get("toolCatalogPolicy") or "selected"),
+        disabledTools=list(capabilities.get("disabledTools") or []),
         nativeTools=list(capabilities.get("nativeTools") or []),
         skills=list(capabilities.get("skills") or []),
         toolsets=list(capabilities.get("toolsets") or []),
@@ -521,6 +525,8 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "runtimeOptions": dict(stable.runtimeOptions),
         "enabledTools": list(grants.enabledTools),
         "toolDefinitions": list(grants.toolDefinitions),
+        "toolCatalogPolicy": grants.toolCatalogPolicy,
+        "disabledTools": list(grants.disabledTools),
         "nativeTools": list(grants.nativeTools),
         "skills": list(grants.skills),
         "toolsets": list(grants.toolsets),

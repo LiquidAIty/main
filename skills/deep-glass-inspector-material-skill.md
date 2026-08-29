@@ -3,7 +3,6 @@
 @skill id=deep-glass-inspector-material
 @type Skill
 @status active
-@related_to no-fake-surfaces
 @related_to canvas-wiring-discipline
 
 ## When To Use It
@@ -56,17 +55,13 @@ shell, not transparent black.
 
 ## Where It Is Applied
 
-* `TaskNodeInspector.tsx` — outer `<aside>` shell only.
-* `PlanSourceInspector.tsx` — outer `<aside>` shell only.
+`client/src/components/graph/RightGlassDrawer.tsx` is the one current shell. Agent Builder,
+Constellation/ThinkGraph, native authority graphs, Hermes Kanban, and the embedded CodeGraph surface
+reuse it. Keep the material in `graphVisualTokens.ts` and the shell in `RightGlassDrawer.tsx`; do not
+create feature-specific drawer copies.
 
-Replace ONLY the outer shell visual style. Do NOT change data, labels, missing-state
-text ("none yet" / "No plan summary available."), or Run Agents behavior. The selected
-inspector is rendered from real ReactFlow selection in `BuilderCanvas.tsx`, so styling
-the shell does not create fake state.
-
-Next candidate (only if the two inspectors read well): `RightGlassDrawer.tsx`, which
-already powers the object drawer, CodeGraph filters, Media inspector, and Knowledge
-drawer.
+Change only the shared shell material. Do not change feature data, labels, loading/error states,
+selection behavior, graph authority, or write controls while applying this skill.
 
 ## Known Traps
 
@@ -78,6 +73,6 @@ drawer.
 
 ## Proof
 
-@proof id=deep-glass-inspector-material.types npx tsc -p client/tsconfig.app.json --noEmit (no new errors from graphVisualTokens.ts / TaskNodeInspector.tsx / PlanSourceInspector.tsx)
-@proof id=deep-glass-inspector-material.tests npx vitest run client/src/components/builder
-@proof id=deep-glass-inspector-material.browser /agentbuilder — select a task node and a plan/source node; inspector shells read as deep glass; text contrast holds; "none yet" / missing states stay visible.
+@proof id=deep-glass-inspector-material.types npx tsc -p client/tsconfig.app.json --noEmit
+@proof id=deep-glass-inspector-material.tests npx vitest run client/src/pages/agentbuilder.setup.spec.ts client/src/pages/agentbuilder.topology.spec.ts
+@proof id=deep-glass-inspector-material.browser inspect the shared drawer on Agent Builder plus one graph workspace; contrast and honest loading/empty/error states remain readable.

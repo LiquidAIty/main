@@ -331,6 +331,67 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     assert invocation["delegationTargets"] == []
 
 
+def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    card = _agent("catalog-card")
+    card["_cardRevisionId"] = "revision-catalog"
+    card["_cardRevision"] = 1
+    card["_cardRevisionSha256"] = "sha-catalog"
+    card["runtimeOptions"] = {
+        **card["runtimeOptions"],
+        "toolCatalogPolicy": "all_healthy",
+        "disabledTools": ["graphiti.search_nodes"],
+        "tools": ["constellation.remember"],
+    }
+    monkeypatch.setattr(
+        card_domain,
+        "_load_deck_internal",
+        lambda _project, _deck: {
+            "projectId": "00000000-0000-0000-0000-000000000001",
+            "deck": {"nodes": [card], "edges": []},
+        },
+    )
+
+    def discovered(name: str, namespace: str, *, read_only: bool) -> dict:
+        return {
+            "name": name,
+            "nativeName": name.split(".")[-1],
+            "kind": "tool",
+            "sourceId": "main_mcp",
+            "namespace": namespace,
+            "connectionKind": "external-mcp",
+            "description": name,
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": read_only},
+        }
+
+    invocation = card_domain.materialize_invocation({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "run-catalog",
+        "cardId": "catalog-card",
+        "assignment": "compose supported graph reads",
+        "discoveredTools": [
+            discovered("cbm.search_graph", "cbm", read_only=True),
+            discovered("graphiti.search_nodes", "graphiti", read_only=True),
+            discovered("constellation.remember", "constellation", read_only=False),
+            discovered("cbm.index_repository", "cbm", read_only=False),
+        ],
+    })
+
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    assert grants["toolCatalogPolicy"] == "all_healthy"
+    assert grants["disabledTools"] == ["graphiti.search_nodes"]
+    assert grants["enabledTools"] == [
+        "cbm.search_graph", "constellation.remember", "web_search",
+    ]
+    assert [tool["canonicalId"] for tool in grants["toolDefinitions"]] == [
+        "cbm.search_graph", "constellation.remember", "web_search",
+    ]
+    assert "cbm.index_repository" not in grants["enabledTools"]
+
+
 def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     reads = [{
         "authority": "CodeGraph", "nativeId": "symbol-one",
@@ -2076,7 +2137,9 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
     assert statements[0][1]["driverSource"] == "internal_chat"
+    assert statements[0][1]["contextAuthorityMode"] == "main_native_honcho"
     assert "run.driverSource=$driverSource" in statements[0][0]
+    assert "run.contextAuthorityMode=$contextAuthorityMode" in statements[0][0]
     assert all("USED_TOOL" not in query for query, _params in statements)
     assert all("[edge:USED]" not in query for query, _params in statements)
     assert all("[edge:VIEWED]" not in query for query, _params in statements)

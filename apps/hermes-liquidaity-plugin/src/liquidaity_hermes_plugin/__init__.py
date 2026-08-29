@@ -170,6 +170,11 @@ class _MainCliBridge:
             self._request("/events", {
                 "requestId": active["requestId"],
                 "runId": active["runId"],
+                "contextAuthorityMode": (
+                    "plugin_context_only"
+                    if active["driverSource"] == "external_plugin"
+                    else "main_native_honcho"
+                ),
                 "kind": kind,
                 **payload,
             })
@@ -234,14 +239,30 @@ class _MainCliBridge:
                 if not candidate:
                     self._stop.wait(_MAIN_BRIDGE_POLL_SECONDS)
                     continue
-                required = ("requestId", "runId", "driverSource", "message")
+                required = (
+                    "requestId", "runId", "driverSource", "message",
+                    "contextAuthorityMode",
+                )
                 if any(not isinstance(candidate.get(key), str) or not candidate[key]
                        for key in required):
+                    continue
+                expected_context_mode = (
+                    "plugin_context_only"
+                    if candidate["driverSource"] == "external_plugin"
+                    else "main_native_honcho"
+                )
+                if candidate["contextAuthorityMode"] != expected_context_mode:
                     continue
                 with self._lock:
                     self._active = candidate
                 accepted = self._ctx.inject_message(
-                    candidate["message"], interrupt_running=False
+                    candidate["message"],
+                    interrupt_running=False,
+                    external_memory_mode=(
+                        "bypass_automatic"
+                        if candidate["contextAuthorityMode"] == "plugin_context_only"
+                        else "normal"
+                    ),
                 )
                 if not accepted:
                     self._event("rejected", error="main_driver_turn_already_running")

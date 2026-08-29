@@ -11,8 +11,8 @@ Use this procedure only for the real Python-rails `MagenticOneGroupChat` boundar
 5. `run_mag_one` is the one team-run MCP entrypoint.
 6. Task and Progress Ledgers remain private AutoGen state.
 7. No TypeScript participant classifier, hidden provider substitution, copied ledger, or fallback team.
-8. Internal Hermes Coder/Kanban Cards are not Mag One workers unless a later explicit product decision
-   changes topology and runtime contracts.
+8. A Hermes-backed Card is a Mag One worker only when its current saved `magentic_option` edge makes it
+   eligible. The saved Local Coder is currently connected; no title, profile, or prompt implies membership.
 
 ## Discovery
 

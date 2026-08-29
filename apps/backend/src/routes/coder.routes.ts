@@ -4,6 +4,7 @@ import {
   coderTerminalSessionManager,
 } from '../hermes/coderTerminal';
 import {
+  contextAuthorityModeForDriver,
   mainCliBridge,
   type MainCliBridgeEvent,
   type MainDriverSource,
@@ -88,6 +89,7 @@ async function prepareMainCliRun(args: {
   dataAnchors?: unknown[];
 }): Promise<PreparedMainCliRun> {
   const runId = String(args.runId || `req_${randomUUID().slice(0, 8)}`);
+  const discoveredTools = await listPythonAgentMcpCatalog();
   const prepared: any = await requestPythonRailsJson('/domain/main/runs/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -100,6 +102,7 @@ async function prepareMainCliRun(args: {
       runId,
       correlationId: runId,
       dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
+      discoveredTools,
     }),
   });
   if (
@@ -419,6 +422,7 @@ router.post('/mcp-bridge/external_main_chat', async (req, res) => {
       runId: run.runId,
       cardId: run.cardId,
       driverSource: run.driverSource,
+      contextAuthorityMode: result.contextAuthorityMode,
       finalText: result.finalText,
       nativeSessionId: result.nativeSessionId || null,
       nativeTurnId: result.nativeTurnId || null,
@@ -499,6 +503,8 @@ function resolveHermesTurnArgs(
     providerModelId: String(provider?.providerModelId || ''),
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    toolCatalogPolicy: input.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
+    disabledTools: Array.isArray(input.disabledTools) ? input.disabledTools : [],
     mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
@@ -875,6 +881,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
 
   try {
     const cardRevisionId = String(body.cardRevisionId || '').trim();
+    const discoveredTools = await listPythonAgentMcpCatalog();
     const prepared = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -883,6 +890,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         cardRevisionId: cardRevisionId || undefined,
         runId: correlationId,
         correlationId,
+        discoveredTools,
       }),
     }) as any;
 
@@ -1347,7 +1355,12 @@ router.get('/main/session/attention', async (req, res) => {
 
 router.get('/main/session/driver', (_req, res) => {
   const status = mainCliBridge.status();
-  return res.json({ ok: true, ready: status.ready, activeDriver: status.activeDriver });
+  return res.json({
+    ok: true,
+    ready: status.ready,
+    activeDriver: status.activeDriver,
+    activeContextAuthorityMode: status.activeContextAuthorityMode,
+  });
 });
 
 router.post('/main/session/chat', async (req, res) => {
@@ -1398,7 +1411,11 @@ router.post('/main/session/chat', async (req, res) => {
     res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...payload, ...eventIdentity })}\n\n`);
     return true;
   };
-  writeSse('run', { state: 'accepted', driverSource: 'internal_chat' });
+  writeSse('run', {
+    state: 'accepted',
+    driverSource: 'internal_chat',
+    contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
+  });
 
   try {
     const result = await executePreparedMainCliRun(
@@ -1409,6 +1426,8 @@ router.post('/main/session/chat', async (req, res) => {
             sessionId: event.nativeSessionId || null,
             nativeTurnId: event.nativeTurnId || null,
             driverSource: 'internal_chat',
+            contextAuthorityMode: event.contextAuthorityMode
+              || contextAuthorityModeForDriver('internal_chat'),
             configuration: {
               provider: run.prepared.hermesTransport.request.provider?.provider || null,
               model: run.prepared.hermesTransport.request.provider?.providerModelId || null,
@@ -1424,6 +1443,7 @@ router.post('/main/session/chat', async (req, res) => {
     );
     writeSse('done', {
       fullText: result.finalText,
+      contextAuthorityMode: result.contextAuthorityMode,
       usage: {
         providerInputTokens: null,
         providerOutputTokens: null,

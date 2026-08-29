@@ -40,6 +40,10 @@ export type AgentCardRuntimeOptions = {
   maxTokens?: number | null;
   maxTurns?: number | null;
   tools?: string[] | null;
+  /** `all_healthy` resolves all public reads plus explicitly selected writes. */
+  toolCatalogPolicy?: 'selected' | 'all_healthy' | null;
+  /** Durable off switches; disabled tools stay visible in the catalog. */
+  disabledTools?: string[] | null;
   /** Runtime-specific native grants remain distinct from ordinary tool grants. */
   nativeTools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */

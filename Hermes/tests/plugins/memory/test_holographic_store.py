@@ -13,6 +13,7 @@ a failed write.
 
 import sqlite3
 import threading
+import json
 
 import pytest
 
@@ -225,3 +226,27 @@ class TestProviderShutdown:
         assert provider._store is None
         assert MemoryStore._shared == {}
 
+
+class TestProviderToolBounds:
+    def test_fact_store_reads_are_bounded_and_report_the_applied_limit(self, db_path):
+        from plugins.memory.holographic import HolographicMemoryProvider
+
+        provider = HolographicMemoryProvider(config={"db_path": str(db_path)})
+        provider.initialize("session-bounded-reads")
+        try:
+            for index in range(105):
+                provider._store.add_fact(f"bounded fact {index}", category="test")
+
+            negative = json.loads(provider.handle_tool_call(
+                "fact_store", {"action": "list", "category": "test", "limit": -1}
+            ))
+            oversized = json.loads(provider.handle_tool_call(
+                "fact_store", {"action": "list", "category": "test", "limit": 10000}
+            ))
+
+            assert negative["limit"] == 1
+            assert negative["count"] == 1
+            assert oversized["limit"] == 100
+            assert oversized["count"] == 100
+        finally:
+            provider.shutdown()

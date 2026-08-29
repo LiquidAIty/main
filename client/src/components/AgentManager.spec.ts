@@ -245,7 +245,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Terminal'] as const;",
+      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Runtime', 'Terminal'] as const;",
     );
     expect(source).toContain("activeTab === 'Terminal' && showTaskComposer");
     expect(source).not.toContain("activeTab === 'Task'");
@@ -387,7 +387,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(source).toContain('native-learning-graph');
-    expect(source).toContain('openNativeLearningNode(node.id)');
+    expect(source).toContain('onOpenNode={(id) => void openNativeLearningNode(id)}');
     expect(source).toContain('applyNativeLearningEdit()');
     expect(nativeClient).toContain("method: 'learning.detail'");
     expect(source).toContain('data-testid="agent-manager-learn"');

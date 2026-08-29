@@ -47,6 +47,25 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/constellation/operation")
+def constellation_operation(payload: dict[str, Any]):
+    """One loopback entrance to the process-owned Constellation child."""
+
+    from app.python_models.constellation import (
+        ConstellationError,
+        invoke_constellation_operation,
+    )
+
+    try:
+        return invoke_constellation_operation(
+            str(payload.get("projectId") or ""),
+            str(payload.get("operation") or ""),
+            payload.get("arguments") or {},
+        )
+    except ConstellationError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 # ---------------------------------------------------------------------------
 # Read-only Alpaca paper market data (no orders, no balances, no mutation).
 # The frontend /tradingui surface consumes these via the vite /market proxy.

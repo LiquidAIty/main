@@ -93,6 +93,7 @@ _NATIVE_MANAGER_METHODS = frozenset(
         "profiles.describe",
         "profiles.configure",
         "learning.frames",
+        "learning.graph",
         "learning.detail",
         "learning.edit",
         "skills.manage",
@@ -109,6 +110,7 @@ _NATIVE_MANAGER_METHODS = frozenset(
 _PROFILE_SCOPED_MANAGER_METHODS = frozenset(
     {
         "learning.frames",
+        "learning.graph",
         "learning.detail",
         "learning.edit",
         "tools.show",
@@ -136,6 +138,22 @@ def _call_native_manager(params: dict[str, Any]) -> dict[str, Any]:
     if method == "command.dispatch":
         if str(native_params.get("name") or "").lstrip("/").lower() != "learn":
             raise ValueError("hermes_native_command_unsupported")
+    if method == "learning.graph":
+        if not profile:
+            raise ValueError("hermes_native_profile_required")
+        from hermes_cli.profiles import get_profile_dir
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        profile_dir = get_profile_dir(profile)
+        if not profile_dir or not profile_dir.is_dir():
+            raise ValueError(f"hermes_native_profile_not_found:{profile}")
+        token = set_hermes_home_override(str(profile_dir))
+        try:
+            from agent.learning_graph import build_learning_graph
+
+            return build_learning_graph()
+        finally:
+            reset_hermes_home_override(token)
     if method in _PROFILE_SCOPED_MANAGER_METHODS:
         if not profile:
             raise ValueError("hermes_native_profile_required")

@@ -31,6 +31,25 @@ from hermes_cli.config import cfg_get
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_RESULT_LIMIT = 10
+_MAX_RESULT_LIMIT = 100
+
+
+def _bounded_result_limit(value: Any) -> int:
+    """Return the public fact-query limit inside the supported output bound.
+
+    SQLite treats ``LIMIT -1`` as unbounded.  The tool schema used to describe
+    a default without enforcing any minimum or maximum, so a direct MCP caller
+    could accidentally request the profile's complete fact store.  Keep the
+    existing forgiving tool contract while making every read deterministically
+    bounded.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = _DEFAULT_RESULT_LIMIT
+    return max(1, min(_MAX_RESULT_LIMIT, parsed))
+
 
 # ---------------------------------------------------------------------------
 # Tool schemas (unchanged from original PR)
@@ -68,7 +87,12 @@ FACT_STORE_SCHEMA = {
             "tags": {"type": "string", "description": "Comma-separated tags."},
             "trust_delta": {"type": "number", "description": "Trust adjustment for 'update'."},
             "min_trust": {"type": "number", "description": "Minimum trust filter (default: 0.3)."},
-            "limit": {"type": "integer", "description": "Max results (default: 10)."},
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": _MAX_RESULT_LIMIT,
+                "description": "Max results (default: 10, hard maximum: 100).",
+            },
         },
         "required": ["action"],
     },
@@ -273,6 +297,7 @@ class HolographicMemoryProvider(MemoryProvider):
             action = args["action"]
             store = self._store
             retriever = self._retriever
+            limit = _bounded_result_limit(args.get("limit", _DEFAULT_RESULT_LIMIT))
 
             if action == "add":
                 fact_id = store.add_fact(
@@ -287,25 +312,25 @@ class HolographicMemoryProvider(MemoryProvider):
                     args["query"],
                     category=args.get("category"),
                     min_trust=float(args.get("min_trust", self._min_trust)),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"results": results, "count": len(results)})
+                return json.dumps({"results": results, "count": len(results), "limit": limit})
 
             elif action == "probe":
                 results = retriever.probe(
                     args["entity"],
                     category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"results": results, "count": len(results)})
+                return json.dumps({"results": results, "count": len(results), "limit": limit})
 
             elif action == "related":
                 results = retriever.related(
                     args["entity"],
                     category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"results": results, "count": len(results)})
+                return json.dumps({"results": results, "count": len(results), "limit": limit})
 
             elif action == "reason":
                 entities = args.get("entities", [])
@@ -314,16 +339,16 @@ class HolographicMemoryProvider(MemoryProvider):
                 results = retriever.reason(
                     entities,
                     category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"results": results, "count": len(results)})
+                return json.dumps({"results": results, "count": len(results), "limit": limit})
 
             elif action == "contradict":
                 results = retriever.contradict(
                     category=args.get("category"),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"results": results, "count": len(results)})
+                return json.dumps({"results": results, "count": len(results), "limit": limit})
 
             elif action == "update":
                 updated = store.update_fact(
@@ -343,9 +368,9 @@ class HolographicMemoryProvider(MemoryProvider):
                 facts = store.list_facts(
                     category=args.get("category"),
                     min_trust=float(args.get("min_trust", 0.0)),
-                    limit=int(args.get("limit", 10)),
+                    limit=limit,
                 )
-                return json.dumps({"facts": facts, "count": len(facts)})
+                return json.dumps({"facts": facts, "count": len(facts), "limit": limit})
 
             else:
                 return tool_error(f"Unknown action: {action}")

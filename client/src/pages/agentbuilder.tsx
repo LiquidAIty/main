@@ -102,6 +102,11 @@ import type {
   RetainedRunInputs,
   StandaloneCardTestResult,
 } from '../components/AgentManager';
+import {
+  loadNativeHermesCard,
+  summarizeHermesLearning,
+  type HermesLearningIndicator,
+} from '../features/agentbuilder/nativeHermesCard';
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
@@ -201,7 +206,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Tools', 'Runtime', 'Terminal'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Runtime', 'Terminal'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -288,6 +293,9 @@ export default function AgentBuilder(): React.ReactElement {
     createInitialDeck: buildProjectlessDeckDocument,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
+  const [hermesLearningIndicators, setHermesLearningIndicators] = useState<
+    Record<string, HermesLearningIndicator>
+  >({});
   const canonicalDeckReady = Boolean(
     canvasProjectId
       && stateLoaded
@@ -300,6 +308,43 @@ export default function AgentBuilder(): React.ReactElement {
     projectId: canonicalDeckReady ? canvasProjectId : '',
     deck,
   });
+
+  useEffect(() => {
+    if (!canonicalDeckReady || !canvasProjectId) {
+      setHermesLearningIndicators({});
+      return;
+    }
+    const controller = new AbortController();
+    const hermesCards = deck.nodes.filter((node) => node.runtime.kind === 'hermes');
+    const refresh = async () => {
+      const entries = await Promise.all(hermesCards.map(async (card) => {
+        try {
+          const view = await loadNativeHermesCard({
+            projectId: canvasProjectId,
+            deckId: deck.id,
+            cardId: card.id,
+            signal: controller.signal,
+          });
+          return [card.id, summarizeHermesLearning(view)] as const;
+        } catch (error) {
+          if (isAbortLikeError(error)) return null;
+          return null;
+        }
+      }));
+      if (!controller.signal.aborted) {
+        setHermesLearningIndicators(Object.fromEntries(
+          entries.filter((entry): entry is readonly [string, HermesLearningIndicator] => Boolean(entry)),
+        ));
+      }
+    };
+    void refresh();
+    const onProfileUpdated = () => void refresh();
+    window.addEventListener('liquidaity:hermes-profile-updated', onProfileUpdated);
+    return () => {
+      controller.abort();
+      window.removeEventListener('liquidaity:hermes-profile-updated', onProfileUpdated);
+    };
+  }, [canonicalDeckReady, canvasProjectId, deck.id, deck.nodes]);
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -1844,6 +1889,7 @@ export default function AgentBuilder(): React.ReactElement {
         onPersistGraphMutation={recordDeckWriteReason}
         activeCardIds={cardActivity.activeCardIds}
         activeAgentCounts={cardActivity.activeAgentCounts}
+        learningIndicators={hermesLearningIndicators}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

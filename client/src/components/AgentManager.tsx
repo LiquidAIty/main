@@ -9,6 +9,7 @@ import type {
   AgentCardRuntimeOptions,
   CardRuntime,
 } from '../types/agentgraph';
+import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
 import {
   applyNativeHermesOperation,
   loadNativeHermesCard,
@@ -581,6 +582,7 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState(false);
   const [toolsText, setToolsText] = useState('');
+  const [disabledToolsText, setDisabledToolsText] = useState('');
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
@@ -752,6 +754,13 @@ export function AgentManager({
             .join('\n')
         : '',
     );
+    setDisabledToolsText(
+      Array.isArray(localConfig.runtime_options?.disabledTools)
+        ? localConfig.runtime_options.disabledTools
+            .filter((entry): entry is string => typeof entry === 'string')
+            .join('\n')
+        : '',
+    );
     setSkillsText(
       Array.isArray(localConfig.skills)
         ? localConfig.skills.filter((entry): entry is string => typeof entry === 'string').join('\n')
@@ -865,6 +874,11 @@ export function AgentManager({
     return {
       ...localConfig,
       ...editedConfig,
+      runtime_options: {
+        ...(localConfig.runtime_options || {}),
+        toolCatalogPolicy: runtimeKind === 'hermes' ? 'all_healthy' : 'selected',
+        disabledTools: runtimeKind === 'hermes' ? parseListText(disabledToolsText) : [],
+      },
       role: promptParts.role,
     };
   }, [
@@ -884,6 +898,7 @@ export function AgentManager({
     promptParts,
     promptText,
     toolsText,
+    disabledToolsText,
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
@@ -1142,17 +1157,29 @@ export function AgentManager({
     && maxTokensField
     && maxTurnsField,
   );
+  const completeHealthyCatalog = runtimeKind === 'hermes';
+  const disabledToolNames = parseListText(disabledToolsText);
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
     toolDictionaryPage.selectedKnownReferences,
     toolDictionaryPage.unresolvedSelectedIds,
   );
   const availableToolRows = toolDictionaryPage.references.filter((reference) =>
-    !savedToolNames.includes(reference.canonicalId) &&
-    reference.availability === 'available',
+    !savedToolNames.includes(reference.canonicalId)
+    && (!showSelectedToolsOnly || (
+      completeHealthyCatalog
+        ? reference.access === 'read'
+          ? !disabledToolNames.includes(reference.canonicalId)
+          : savedToolNames.includes(reference.canonicalId)
+        : savedToolNames.includes(reference.canonicalId)
+    )),
   );
-  const toggleTool = (name: string, checked: boolean) => {
-    setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
+  const toggleTool = (name: string, checked: boolean, access: 'read' | 'write' = 'write') => {
+    if (completeHealthyCatalog && access === 'read') {
+      setDisabledToolsText(toggleSavedToolAssignment(disabledToolNames, name, !checked).join('\n'));
+    } else {
+      setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
+    }
     markDraftDirty();
   };
 
@@ -1171,7 +1198,7 @@ export function AgentManager({
             limit: '100',
           });
           if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
-          if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
+          if (!completeHealthyCatalog && savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
           const response = await fetch(`/api/coder/input-data-dictionary/tools?${params}`, {
             signal: controller.signal,
           });
@@ -1215,6 +1242,8 @@ export function AgentManager({
     isLocalConfigMode,
     localConfig,
     savedToolNames.join('\u0000'),
+    disabledToolNames.join('\u0000'),
+    completeHealthyCatalog,
     toolDictionaryNamespace,
     toolDictionaryOffset,
     toolDictionaryQuery,
@@ -1425,6 +1454,100 @@ export function AgentManager({
       );
     }
 
+    if (activeTab === 'Skills') {
+      return (
+        <section
+          data-testid="native-learning-graph"
+          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+            <div>
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills and learning</div>
+              <div style={{ color: '#80969F', fontSize: 10.5 }}>
+                {nativeHermesState
+                  ? `Native profile ${nativeHermesState.binding.profile} · ${nativeHermesState.native.learning.count} learning entries`
+                  : 'Read-only native Hermes projection; LiquidAIty stores no copy.'}
+              </div>
+            </div>
+            <button type="button" onClick={() => void refreshNativeProfile()} disabled={nativeHermesStatus === 'loading'}>
+              {nativeHermesStatus === 'loading' ? 'Reading…' : 'Refresh'}
+            </button>
+          </div>
+          {runtimeKind !== 'hermes' ? (
+            <div role="status" style={{ color: '#91A9B8', fontSize: 11 }}>
+              SkillGraph is available only for Cards bound to a native Hermes profile.
+            </div>
+          ) : nativeHermesStatus === 'failed' ? (
+            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
+              {nativeHermesError || 'Native profile learning is unavailable.'}
+            </div>
+          ) : nativeHermesState ? (
+            <>
+              <section
+                data-testid="native-background-review"
+                style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
+              >
+                <div style={{ display: 'grid', gap: 3 }}>
+                  <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Asynchronous self-learning</strong>
+                  <span style={{ color: '#80969F', fontSize: 10.5 }}>
+                    {nativeHermesState.native.backgroundReview.enabled
+                      ? `${nativeHermesState.native.backgroundReview.provider} · ${nativeHermesState.native.backgroundReview.model || 'parent model'}`
+                      : 'Disabled for this native profile'}
+                  </span>
+                  <span style={{ color: '#80969F', fontSize: 10 }}>
+                    Native Hermes reviews eligible completed turns with only profile memory/skill tools; the foreground response does not wait for the model call.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={nativeApplyStatus === 'applying'}
+                  onClick={() => void runNativeApply({
+                    method: 'profiles.configure',
+                    params: {
+                      background_review: {
+                        enabled: true,
+                        provider: 'openai-codex',
+                        model: 'gpt-5.6-luna',
+                        max_input_tokens: 120000,
+                      },
+                    },
+                  })}
+                >
+                  Use account Luna
+                </button>
+              </section>
+              <HermesSkillGraph
+                graph={nativeHermesState.native.learning.graph}
+                profile={nativeHermesState.binding.profile}
+                onOpenNode={(id) => void openNativeLearningNode(id)}
+              />
+              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening native node…</div> : null}
+              {nativeLearningStatus === 'failed' ? (
+                <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
+              ) : null}
+              {nativeLearningDetail ? (
+                <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
+                  <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
+                  <textarea
+                    aria-label="Native learning node content"
+                    value={nativeLearningDraft}
+                    onChange={(event) => setNativeLearningDraft(event.target.value)}
+                    rows={10}
+                    style={{ fontFamily: 'monospace', resize: 'vertical' }}
+                  />
+                  <button type="button" disabled={nativeApplyStatus === 'applying'} onClick={() => void applyNativeLearningEdit()}>
+                    Apply native learning edit
+                  </button>
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Reading the bound native profile…</div>
+          )}
+        </section>
+      );
+    }
+
     if (activeTab === 'Knowledge') {
       return (
         <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
@@ -1517,53 +1640,6 @@ export function AgentManager({
                   >
                     Apply Soul to profile
                   </button>
-                </div>
-              </details>
-              <details>
-                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Memory, skills, and learning graph
-                </summary>
-                <div data-testid="native-learning-graph" style={{ display: 'grid', gap: 8, marginTop: 8, color: '#9FB2B8', fontSize: 10.5 }}>
-                  {nativeHermesState.native.learning.buckets.flatMap((bucket) => (
-                    bucket.nodes.map((node) => (
-                      <button
-                        type="button"
-                        key={node.id}
-                        data-testid={`native-learning-node-${node.id}`}
-                        onClick={() => void openNativeLearningNode(node.id)}
-                        style={{ textAlign: 'left', display: 'grid', gap: 2 }}
-                      >
-                        <span>{node.fullLabel || node.label || node.id}</span>
-                        <span style={{ opacity: 0.72 }}>{bucket.label}{node.meta ? ` · ${node.meta}` : ''}</span>
-                      </button>
-                    ))
-                  ))}
-                  {nativeHermesState.native.learning.buckets.every((bucket) => bucket.nodes.length === 0) ? (
-                    <div>No editable native memory or learned-skill nodes are available.</div>
-                  ) : null}
-                  {nativeLearningStatus === 'loading' ? <div>Opening native node…</div> : null}
-                  {nativeLearningStatus === 'failed' ? (
-                    <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
-                  ) : null}
-                  {nativeLearningDetail ? (
-                    <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
-                      <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
-                      <textarea
-                        aria-label="Native learning node content"
-                        value={nativeLearningDraft}
-                        onChange={(event) => setNativeLearningDraft(event.target.value)}
-                        rows={10}
-                        style={{ fontFamily: 'monospace', resize: 'vertical' }}
-                      />
-                      <button
-                        type="button"
-                        disabled={nativeApplyStatus === 'applying'}
-                        onClick={() => void applyNativeLearningEdit()}
-                      >
-                        Apply native learning edit
-                      </button>
-                    </section>
-                  ) : null}
                 </div>
               </details>
               {nativeApplyStatus === 'applying' ? (
@@ -2048,18 +2124,24 @@ export function AgentManager({
             </label>
             <button
               type="button"
-              disabled={!savedToolNames.length}
+              disabled={completeHealthyCatalog ? !disabledToolNames.length : !savedToolNames.length}
               onClick={() => {
-                setToolsText('');
+                if (completeHealthyCatalog) setDisabledToolsText('');
+                else setToolsText('');
                 markDraftDirty();
               }}
             >
-              Clear selected
+              {completeHealthyCatalog ? 'Enable all healthy' : 'Clear selected'}
             </button>
             <span style={{ color: '#80969F', fontSize: 11 }}>
               {toolDictionaryBusy ? 'Loading tools…' : !toolOptionsError ? `${toolDictionaryPage.total.toLocaleString()} tools` : null}
             </span>
           </div>
+          {completeHealthyCatalog ? (
+            <div style={{ color: '#91A9B8', fontSize: 11 }}>
+              All healthy reads enabled · {disabledToolNames.length} reads explicitly off · {savedToolNames.length} explicit write selections. Off and unavailable tools remain visible; new healthy reads become reachable after normal catalog refresh.
+            </div>
+          ) : null}
           {toolOptionsError ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
               Tool options unavailable. Saved selections are unchanged.
@@ -2113,7 +2195,9 @@ export function AgentManager({
           ) : null}
           {!showSelectedToolsOnly && availableToolRows.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Available</div>
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                {completeHealthyCatalog ? 'Catalog' : 'Available'}
+              </div>
               {availableToolRows.map((tool) => (
                 <label
                   key={tool.canonicalId}
@@ -2130,8 +2214,13 @@ export function AgentManager({
                 >
                   <input
                     type="checkbox"
-                    checked={false}
-                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
+                    checked={completeHealthyCatalog && (
+                      tool.access === 'read'
+                        ? !disabledToolNames.includes(tool.canonicalId)
+                        : savedToolNames.includes(tool.canonicalId)
+                    )}
+                    disabled={tool.availability !== 'available'}
+                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked, tool.access)}
                     aria-label={`Include ${tool.displayName || tool.canonicalId}`}
                   />
                   <span>
@@ -2141,9 +2230,11 @@ export function AgentManager({
                     <span style={{ display: 'block', color: '#80969F', fontSize: 10 }}>
                       {tool.canonicalId}
                       {tool.namespace ? ` · ${tool.namespace}` : ''}
+                      {` · ${tool.access}`}
                       {tool.kind ? ` · ${tool.kind}` : ''}
                       {tool.sourceIds?.length ? ` · ${tool.sourceIds.join(', ')}` : ''}
                       {tool.shortDescription ? ` · ${tool.shortDescription}` : ''}
+                      {tool.availability !== 'available' ? ' · Unavailable in current catalog' : ''}
                     </span>
                   </span>
                 </label>

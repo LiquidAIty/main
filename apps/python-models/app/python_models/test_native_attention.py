@@ -186,6 +186,58 @@ def test_constellation_context_uses_returned_nodes_and_does_not_invent_edge_ids(
     assert event["nativeEdges"] == []
 
 
+def test_current_constellation_read_and_write_operations_preserve_native_ids() -> None:
+    updated = native_attention.build_native_attention_event(
+        "constellation.update_memory",
+        _result({"ok": True, "id": "memory-a", "updatedFields": ["tags"]}),
+        None,
+    )
+    assert updated is not None
+    assert updated["operation"] == "write"
+    assert updated["nativeNodeIds"] == ["memory-a"]
+
+    pair = native_attention.build_native_attention_event(
+        "constellation.adjust_edge_pair",
+        _result({"nodeA": "memory-a", "nodeB": "memory-b", "updated": 2}),
+        None,
+    )
+    assert pair is not None
+    assert pair["nativeNodeIds"] == ["memory-a", "memory-b"]
+
+    edge = native_attention.build_native_attention_event(
+        "constellation.inspect_edge",
+        _result({"edge": {
+            "id": 12,
+            "source": "memory-a",
+            "target": "memory-b",
+            "edge_type": "builds_on",
+        }}),
+        None,
+    )
+    assert edge is not None
+    assert edge["operation"] == "read"
+    assert edge["nativeEdgeIds"] == ["12"]
+    assert edge["nativeEdges"] == [{
+        "id": "12",
+        "source": "memory-a",
+        "target": "memory-b",
+        "predicate": "builds_on",
+    }]
+
+
+def test_constellation_receipts_without_native_ids_do_not_fake_attention() -> None:
+    assert native_attention.build_native_attention_event(
+        "constellation.semantic_status",
+        _result({"state": "ready", "model": "Xenova/bge-m3"}),
+        None,
+    ) is None
+    assert native_attention.build_native_attention_event(
+        "constellation.autonomy_status",
+        _result({"run": {"id": "not-a-memory-node", "state": "running"}}),
+        None,
+    ) is None
+
+
 def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(
     monkeypatch,
 ) -> None:

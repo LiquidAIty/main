@@ -19,7 +19,7 @@ import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 
 /*
- * Hermes Kanban proxy — thin read/persistence adapter (DONT.md rule 5).
+ * Hermes Kanban proxy — thin read/persistence adapter (AGENTS.md runtime boundary).
  *
  * This router shells out to the repo-owned Hermes CLI for the LIVE kanban
  * system (kanban.db is owned by Hermes, not by LiquidAIty).

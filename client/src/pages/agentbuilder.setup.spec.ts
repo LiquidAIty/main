@@ -137,6 +137,7 @@ describe('agentbuilder authoring flow', () => {
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
     expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['hermes-acp', 'computer_use']);
+    expect(systemCoder?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
       source: 'card_magentic', target: 'card_local_coder', edgeType: 'magentic_option',

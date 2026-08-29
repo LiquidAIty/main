@@ -113,6 +113,9 @@ def graphiti_project_group_id(project_id: str) -> str:
     return f"liquidaity-{project_id}"
 
 BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
+PYTHON_RAILS = os.environ.get(
+    "AUTOGEN_ORCHESTRATOR_URL", "http://127.0.0.1:8003"
+).rstrip("/")
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
 HTTP_MCP_HOST = "127.0.0.1"
 HTTP_MCP_PORT = int(os.environ.get("MCP_HTTP_PORT", "8765"))
@@ -2030,6 +2033,44 @@ def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
         return json.dumps({"ok": False, "error": f"backend_unreachable: {err.reason}"})
 
 
+def _constellation_via_python_rails_sync(
+    name: str,
+    project_id: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    operation = str(name or "").removeprefix("constellation.").strip()
+    request = Request(
+        f"{PYTHON_RAILS}/constellation/operation",
+        data=json.dumps({
+            "projectId": project_id,
+            "operation": operation,
+            "arguments": arguments,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    timeout = 210.0 if operation in {
+        "identity_apply", "inject_message", "reembed_start", "remember_semantic",
+        "semantic_context", "semantic_start",
+    } else _MCP_CALL_TIMEOUT_SECONDS
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - configured Python rails only
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as err:
+        try:
+            body = json.loads(err.read().decode("utf-8"))
+        except Exception:
+            body = {}
+        raise RuntimeError(
+            str(body.get("detail") or f"constellation_python_rails_http_{err.code}")
+        ) from err
+    except URLError as err:
+        raise RuntimeError(f"constellation_python_rails_unreachable:{err.reason}") from err
+    if not isinstance(result, dict):
+        raise RuntimeError("constellation_python_rails_result_invalid")
+    return result
+
+
 def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, Any] | None:
     try:
         payload = json.loads(_bridge_sync("external_main_context", {"issuer": issuer, "subject": subject}))
@@ -2691,6 +2732,485 @@ async def _materialize_complete_catalog() -> list[Tool]:
             },
         ),
     ]
+    constellation_edge_schema = {
+        "type": "object",
+        "properties": {
+            "target": {"type": "string", "minLength": 1, "maxLength": 300},
+            "type": {
+                "type": "string",
+                "enum": [
+                    "causal", "contrastive", "hierarchical", "associative",
+                    "temporal", "supersedes", "coactivation", "collision",
+                    "builds_on", "resolves", "contradicts",
+                ],
+            },
+            "strength": {"type": "number", "minimum": 0.01, "maximum": 1},
+        },
+        "required": ["target", "type"],
+        "additionalProperties": False,
+    }
+    tools.extend([
+        Tool(
+            name="constellation.capabilities",
+            description=(
+                "Read the pinned Constellation Engine version, lifecycle modes, exact "
+                "bounded operation surface, and honest blockers for semantic, autonomous, "
+                "identity-changing, launcher-owned, or unbounded native operations."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.stats",
+            description=(
+                "Read native Constellation node, edge, dormancy, and embedding counts for "
+                "the authenticated Project without opening a second database owner."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.semantic_status",
+            description=(
+                "Read the authoritative pinned Mimir/BGE-M3 lifecycle, model, dimension, "
+                "port, database ownership, and readiness without starting it."
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.semantic_start",
+            description=(
+                "Explicitly start the pinned local Mimir/BGE-M3 child under the existing "
+                "Constellation process owner. Requires the saved effect grant and confirmation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "confirmStart": {"type": "boolean", "const": True},
+                    "waitForReady": {"type": "boolean", "default": True},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["confirmStart"],
+            },
+        ),
+        Tool(
+            name="constellation.semantic_stop",
+            description="Stop the process-owned local Mimir embedding child explicitly.",
+            inputSchema={
+                "type": "object",
+                "properties": {"confirmStop": {"type": "boolean", "const": True}},
+                "required": ["confirmStop"],
+            },
+        ),
+        Tool(
+            name="constellation.semantic_context",
+            description=(
+                "Read bounded native Constellation context with the real pinned BGE-M3 vector "
+                "path enabled. It lazily starts the process-owned embedder and fails honestly."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "focus": {
+                        "oneOf": [
+                            {"type": "string", "minLength": 1, "maxLength": 500},
+                            {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
+                        ]
+                    },
+                    "budget": {"type": "integer", "minimum": 100, "maximum": 12000, "default": 2000},
+                    "maxDepth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 3},
+                    "maxL2": {"type": "integer", "minimum": 0, "maximum": 128, "default": 12},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["focus"],
+            },
+        ),
+        Tool(
+            name="constellation.remember_semantic",
+            description=(
+                "Write one bounded Constellation memory through the native asynchronous "
+                "remember path and persist its real BGE-M3 embedding."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "l0": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "l1": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "l2": {"type": "string", "minLength": 1, "maxLength": 50000},
+                    "tags": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 120}},
+                    "tone": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "valence": {"type": "number", "minimum": -1, "maximum": 1},
+                    "arousal": {"type": "number", "minimum": 0, "maximum": 1},
+                    "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+                    "source": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "nodeType": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "eventAt": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "subkind": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "skipDedup": {"type": "boolean"},
+                    "edges": {"type": "array", "maxItems": 64, "items": constellation_edge_schema},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["id", "l0", "l1", "l2"],
+            },
+        ),
+        Tool(
+            name="constellation.reembed_start",
+            description=(
+                "Start one bounded cancellable native BGE-M3 re-embedding job for the exact "
+                "authenticated Project database, with progress and a hard node/time ceiling."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "confirmReembed": {"type": "boolean", "const": True},
+                    "maxNodes": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+                    "maxDurationSeconds": {"type": "integer", "minimum": 10, "maximum": 3600, "default": 300},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["confirmReembed"],
+            },
+        ),
+        Tool(
+            name="constellation.reembed_status",
+            description="Read exact progress and receipts for the current or most recent bounded re-embedding job.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.reembed_cancel",
+            description="Cancel one exact in-process re-embedding job at its next native node boundary.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "jobId": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "confirmCancel": {"type": "boolean", "const": True},
+                },
+                "required": ["jobId", "confirmCancel"],
+            },
+        ),
+        Tool(
+            name="constellation.identity_preview",
+            description=(
+                "Preview exact native Soul Core identity changes against current readback and "
+                "return a short-lived digest without mutating the database."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "segments": {
+                        "type": "object",
+                        "properties": {key: {"type": "string", "minLength": 1, "maxLength": 1200} for key in ["name", "values", "direction", "relationship"]},
+                        "minProperties": 1,
+                        "additionalProperties": False,
+                    },
+                    "batchId": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 500},
+                },
+                "required": ["segments", "reason"],
+            },
+        ),
+        Tool(
+            name="constellation.identity_apply",
+            description=(
+                "Apply one exact unexpired Soul Core preview through native saveSoulCore, with "
+                "saved grant, explicit confirmation, provenance, and exact database readback."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "previewId": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    "confirmIdentityMutation": {"type": "boolean", "const": True},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["previewId", "digest", "confirmIdentityMutation"],
+            },
+        ),
+        Tool(
+            name="constellation.autonomy_status",
+            description="Read the exact state, limits, progress, and latest receipt for bounded native Constellation autonomy.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.autonomy_start",
+            description=(
+                "Start one bounded process-owned native collision or maintenance loop with "
+                "explicit time, cycle, context-token, depth, concurrency, and write limits."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["collide", "maintenance"], "default": "collide"},
+                    "confirmAutonomy": {"type": "boolean", "const": True},
+                    "confirmWrites": {"type": "boolean"},
+                    "maxCycles": {"type": "integer", "minimum": 1, "maximum": 100, "default": 3},
+                    "maxDurationSeconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 300},
+                    "intervalSeconds": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 30},
+                    "maxDepth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 3},
+                    "maxTokens": {"type": "integer", "minimum": 100, "maximum": 100000, "default": 6000},
+                    "perCycleTokens": {"type": "integer", "minimum": 100, "maximum": 4000, "default": 1000},
+                    "numFoci": {"type": "integer", "minimum": 2, "maximum": 8, "default": 3},
+                    "decayFactor": {"type": "number", "minimum": 0.9, "maximum": 1, "default": 0.95},
+                    "pruneThreshold": {"type": "number", "minimum": 0, "maximum": 0.2, "default": 0.05},
+                    "dormantThreshold": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0.001},
+                },
+                "required": ["confirmAutonomy"],
+            },
+        ),
+        *[
+            Tool(
+                name=f"constellation.autonomy_{action}",
+                description=f"{action.title()} one exact bounded native Constellation autonomy run.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "runId": {"type": "string", "minLength": 1, "maxLength": 100},
+                        f"confirm{action.title()}": {"type": "boolean", "const": True},
+                    },
+                    "required": ["runId", f"confirm{action.title()}"],
+                },
+            )
+            for action in ["pause", "resume", "stop"]
+        ],
+        Tool(
+            name="constellation.notification_status",
+            description="Read the existing native launcher outbox setting and pending count without changing it.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.notify",
+            description=(
+                "Queue one bounded OS notification through the pinned engine's existing launcher "
+                "outbox. Disabled launcher settings return an honest non-queued receipt."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "body": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "deeplink": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "confirmNotification": {"type": "boolean", "const": True},
+                },
+                "required": ["kind", "title", "body", "confirmNotification"],
+            },
+        ),
+        Tool(
+            name="constellation.edge_review",
+            description=(
+                "Use the pinned engine's native stale, verified, or fine-type proposal review "
+                "contract for one exact edge with an explicit saved effect grant."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["flag_stale", "verify", "propose_fine_type"]},
+                    "edgeId": {"type": "integer", "minimum": 1},
+                    "coarseType": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "proposedFineType": {"type": "string", "minLength": 1, "maxLength": 80},
+                },
+                "required": ["action", "edgeId"],
+            },
+        ),
+        Tool(
+            name="constellation.adjust_edge_pair",
+            description=(
+                "Apply one bounded native strength delta to both directions of an exact "
+                "Constellation edge pair, preserving the pinned engine's paired contract."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "nodeA": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "nodeB": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "edgeType": {"type": "string", "enum": ["causal", "contrastive", "hierarchical", "associative", "temporal", "supersedes", "coactivation", "collision", "builds_on", "resolves", "contradicts"]},
+                    "delta": {"type": "number", "minimum": -0.5, "maximum": 0.5},
+                },
+                "required": ["nodeA", "nodeB", "edgeType", "delta"],
+            },
+        ),
+        Tool(
+            name="constellation.classify_edge_pair",
+            description=(
+                "Apply one allowed fine type to both directions of an exact native edge pair "
+                "and return the before/after receipts for every matched direction."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "nodeA": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "nodeB": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "edgeType": {"type": "string", "enum": ["causal", "contrastive", "hierarchical", "associative", "temporal", "supersedes", "coactivation", "collision", "builds_on", "resolves", "contradicts"]},
+                    "fineType": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "fineConfidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["nodeA", "nodeB", "edgeType", "fineType"],
+            },
+        ),
+        Tool(
+            name="constellation.inject_message",
+            description=(
+                "Persist one explicitly confirmed bounded native alignment-message memory. "
+                "The receipt discloses whether launcher chat or Telegram delivery is actually wired."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "source": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "batchId": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "confirmInject": {"type": "boolean", "const": True},
+                    "maxWaitSeconds": {"type": "integer", "minimum": 1, "maximum": 180, "default": 90},
+                },
+                "required": ["text", "confirmInject"],
+            },
+        ),
+        Tool(
+            name="constellation.inspect_edge",
+            description="Read one exact native Constellation edge and its classification metadata.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edgeId": {"type": "integer", "minimum": 1},
+                },
+                "required": ["edgeId"],
+            },
+        ),
+        Tool(
+            name="constellation.check_duplicate",
+            description=(
+                "Run the pinned engine's deterministic exact-title and FTS duplicate guard "
+                "before a proposed Constellation memory write."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "l0": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "l2": {"type": "string", "minLength": 1, "maxLength": 50000},
+                },
+                "required": ["l0", "l2"],
+            },
+        ),
+        Tool(
+            name="constellation.edge_types",
+            description="Read the pinned engine's native coarse-to-fine edge type vocabulary.",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="constellation.collide",
+            description=(
+                "Run one bounded native dream-collision exploration over existing Project "
+                "memories. It returns real focal IDs, bridges, and an insight prompt; it "
+                "does not call a model or create a memory."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "numFoci": {"type": "integer", "minimum": 2, "maximum": 8, "default": 3},
+                    "budget": {"type": "integer", "minimum": 100, "maximum": 4000, "default": 800},
+                    "maxDepth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 3},
+                },
+            },
+        ),
+        Tool(
+            name="constellation.update_memory",
+            description=(
+                "Update bounded non-embedding fields on one exact native Constellation memory. "
+                "This is an effect tool and remains subject to saved Card grant and confirmation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "nativeId": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "l2": {"type": "string", "minLength": 1, "maxLength": 50000},
+                    "tags": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 120}},
+                    "tone": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "valence": {"type": "number", "minimum": -1, "maximum": 1},
+                    "arousal": {"type": "number", "minimum": 0, "maximum": 1},
+                    "weight": {"type": "number", "minimum": 0.01, "maximum": 10},
+                    "nodeType": {"type": "string", "minLength": 1, "maxLength": 100},
+                },
+                "required": ["nativeId"],
+                "minProperties": 2,
+            },
+        ),
+        Tool(
+            name="constellation.link",
+            description=(
+                "Add bounded native typed edges between existing Constellation memories. "
+                "Missing endpoints fail closed; this is an effect tool."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sourceId": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "edges": {"type": "array", "minItems": 1, "maxItems": 64, "items": constellation_edge_schema},
+                },
+                "required": ["sourceId", "edges"],
+            },
+        ),
+        Tool(
+            name="constellation.adjust_edge",
+            description=(
+                "Apply one bounded native strength adjustment to an exact Constellation edge. "
+                "The engine clamps its policy range and reports stale candidates without silently pruning."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edgeId": {"type": "integer", "minimum": 1},
+                    "delta": {"type": "number", "minimum": -0.5, "maximum": 0.5},
+                },
+                "required": ["edgeId", "delta"],
+            },
+        ),
+        Tool(
+            name="constellation.classify_edge",
+            description=(
+                "Set one exact native edge's fine type within the pinned coarse-type vocabulary. "
+                "Out-of-vocabulary classifications fail closed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edgeId": {"type": "integer", "minimum": 1},
+                    "fineType": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "fineConfidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["edgeId", "fineType"],
+            },
+        ),
+        Tool(
+            name="constellation.forget",
+            description=(
+                "Mark one exact Constellation memory and its edges dormant. This destructive "
+                "effect requires both the saved Card grant/confirmation gate and confirmDormant=true."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "nativeId": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "confirmDormant": {"type": "boolean", "const": True},
+                },
+                "required": ["nativeId", "confirmDormant"],
+            },
+        ),
+        Tool(
+            name="constellation.maintain",
+            description=(
+                "Run one explicitly confirmed, bounded native Project maintenance cycle for "
+                "decay, dormancy, and orphan-edge cleanup. No background loop is started."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "confirmProjectMaintenance": {"type": "boolean", "const": True},
+                    "decayFactor": {"type": "number", "minimum": 0.9, "maximum": 1, "default": 0.95},
+                    "pruneThreshold": {"type": "number", "minimum": 0, "maximum": 0.2, "default": 0.05},
+                    "dormantThreshold": {"type": "number", "minimum": 0, "maximum": 0.05, "default": 0.001},
+                },
+                "required": ["confirmProjectMaintenance"],
+            },
+        ),
+    ])
     tools = [_bind_repo_tool_source(tool) for tool in tools]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
@@ -3086,10 +3606,68 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "web_search": {"query", "max_results"},
     "constellation.context": {"focus", "budget", "maxDepth", "maxL2"},
     "constellation.inspect": {"nativeId", "budget", "maxDepth", "maxL2"},
+    "constellation.capabilities": set(),
+    "constellation.stats": set(),
+    "constellation.semantic_status": set(),
+    "constellation.semantic_start": {"confirmStart", "waitForReady", "maxWaitSeconds"},
+    "constellation.semantic_stop": {"confirmStop"},
+    "constellation.semantic_context": {"focus", "budget", "maxDepth", "maxL2", "maxWaitSeconds"},
+    "constellation.inspect_edge": {"edgeId"},
+    "constellation.check_duplicate": {"l0", "l2"},
+    "constellation.edge_types": set(),
+    "constellation.collide": {"numFoci", "budget", "maxDepth"},
     "constellation.remember": {
         "id", "l0", "l1", "l2", "tags", "tone", "valence", "arousal",
         "weight", "source", "nodeType", "eventAt", "subkind", "skipDedup",
         "edges",
+    },
+    "constellation.remember_semantic": {
+        "id", "l0", "l1", "l2", "tags", "tone", "valence", "arousal",
+        "weight", "source", "nodeType", "eventAt", "subkind", "skipDedup",
+        "edges", "maxWaitSeconds",
+    },
+    "constellation.reembed_start": {
+        "confirmReembed", "maxNodes", "maxDurationSeconds", "maxWaitSeconds",
+    },
+    "constellation.reembed_status": set(),
+    "constellation.reembed_cancel": {"jobId", "confirmCancel"},
+    "constellation.identity_preview": {"segments", "batchId", "reason"},
+    "constellation.identity_apply": {
+        "previewId", "digest", "confirmIdentityMutation", "maxWaitSeconds",
+    },
+    "constellation.autonomy_status": set(),
+    "constellation.autonomy_start": {
+        "mode", "confirmAutonomy", "confirmWrites", "maxCycles",
+        "maxDurationSeconds", "intervalSeconds", "maxDepth", "maxTokens",
+        "perCycleTokens", "numFoci", "decayFactor", "pruneThreshold",
+        "dormantThreshold",
+    },
+    "constellation.autonomy_pause": {"runId", "confirmPause"},
+    "constellation.autonomy_resume": {"runId", "confirmResume"},
+    "constellation.autonomy_stop": {"runId", "confirmStop"},
+    "constellation.notification_status": set(),
+    "constellation.notify": {
+        "kind", "title", "body", "deeplink", "confirmNotification",
+    },
+    "constellation.edge_review": {
+        "action", "edgeId", "coarseType", "proposedFineType",
+    },
+    "constellation.update_memory": {
+        "nativeId", "l2", "tags", "tone", "valence", "arousal", "weight", "nodeType",
+    },
+    "constellation.link": {"sourceId", "edges"},
+    "constellation.adjust_edge": {"edgeId", "delta"},
+    "constellation.adjust_edge_pair": {"nodeA", "nodeB", "edgeType", "delta"},
+    "constellation.classify_edge": {"edgeId", "fineType", "fineConfidence"},
+    "constellation.classify_edge_pair": {
+        "nodeA", "nodeB", "edgeType", "fineType", "fineConfidence",
+    },
+    "constellation.inject_message": {
+        "text", "source", "batchId", "confirmInject", "maxWaitSeconds",
+    },
+    "constellation.forget": {"nativeId", "confirmDormant"},
+    "constellation.maintain": {
+        "confirmProjectMaintenance", "decayFactor", "pruneThreshold", "dormantThreshold",
     },
 }
 
@@ -3246,19 +3824,9 @@ async def _dispatch_tool(
                     "error": "authenticated_project_required",
                 }),
             )]
-        from app.python_models.constellation import (
-            constellation_context,
-            constellation_inspect,
-            constellation_remember,
-        )
-        handlers = {
-            "constellation.context": constellation_context,
-            "constellation.inspect": constellation_inspect,
-            "constellation.remember": constellation_remember,
-        }
-        handler = handlers[name]
         result = await asyncio.to_thread(
-            handler,
+            _constellation_via_python_rails_sync,
+            name,
             str(context["projectId"]),
             args,
         )

@@ -1915,6 +1915,7 @@ class AIAgent:
             if not enabled:
                 return
         from agent.background_review import (
+            finish_background_review_host_execution,
             finish_background_review_run,
             prepare_background_review_run,
             spawn_background_review_thread,
@@ -1925,6 +1926,12 @@ class AIAgent:
         if review_run is None:
             return
         try:
+            # LIQUIDAITY VENDOR PATCH: allocate the existing generic ACP child
+            # context before the native asynchronous review starts. Ordinary
+            # CLI/gateway sessions have no host requester and remain unchanged.
+            review_run._subagent_id = "background-review"
+            from acp_adapter.host_profiles import allocate_host_child_execution
+            allocate_host_child_execution(self, review_run)
             target, _prompt = spawn_background_review_thread(
                 self,
                 messages_snapshot,
@@ -1942,7 +1949,12 @@ class AIAgent:
                 name="bg-review",
             )
             t.start()
-        except Exception:
+        except Exception as exc:
+            finish_background_review_host_execution(
+                review_run,
+                "failed",
+                error_summary=str(exc),
+            )
             finish_background_review_run(self, review_run)
             raise
 
@@ -4503,6 +4515,8 @@ class AIAgent:
         backend must not block the user from seeing their response.
         """
         if interrupted:
+            return
+        if getattr(self, "_current_turn_external_memory_mode", "normal") == "bypass_automatic":
             return
         if not (self._memory_manager and final_response and original_user_message):
             return

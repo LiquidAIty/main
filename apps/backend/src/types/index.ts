@@ -41,6 +41,11 @@ export type AgentCardRuntimeOptions = {
   maxTokens?: number | null;
   maxTurns?: number | null;
   tools?: string[] | null;
+  /** How a Hermes Card resolves LiquidAIty tools at Run start. `all_healthy`
+   * materializes all current public reads plus explicitly selected writes. */
+  toolCatalogPolicy?: 'selected' | 'all_healthy' | null;
+  /** Durable user-off exceptions. Catalog entries remain visible in IDD. */
+  disabledTools?: string[] | null;
   /** Saved skill identities. Runtime homes materialize/cache them separately. */
   skills?: string[] | null;
   /** Named capability bundles; resolution belongs to the owning runtime. */

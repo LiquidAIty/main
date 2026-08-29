@@ -25,20 +25,10 @@ _ANCHOR_BODY_LIMIT = 12_000
 _GRAPH_SEED_LIMIT = 48_000
 _KNOWGRAPH_RESULT_LIMIT = 24
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
-_SKILL_GRAPH_LABELS = {
-    "Skill", "SkillAttempt", "FailedAttempt", "Decision", "Guardrail",
-    "QueryPattern", "SkillSection",
-}
 
 
 class DataAnchorError(ValueError):
     """Typed failure before a provider can receive an ungrounded request."""
-
-
-def _iso(value: Any) -> str:
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat().replace("+00:00", "Z")
-    return "current"
 
 
 def _json_value(value: Any) -> Any:
@@ -181,14 +171,12 @@ def read_knowgraph_exact(
                 MATCH (n)
                 WHERE (elementId(n) = $nativeId OR toString(n.uuid) = $nativeId)
                   AND toString(n.group_id) IN $scopeIds
-                  AND NONE(label IN labels(n) WHERE label IN $excludedLabels)
                 RETURN coalesce(toString(n.uuid), elementId(n)) AS nativeId,
                        labels(n) AS labels, properties(n) AS properties
                 LIMIT 1
                 """,
                 nativeId=native_id,
                 scopeIds=scope_ids,
-                excludedLabels=sorted(_SKILL_GRAPH_LABELS),
             ))
             relationship_center = False
             if not center_rows:
@@ -199,8 +187,6 @@ def read_knowgraph_exact(
                       AND toString(a.group_id) IN $scopeIds
                       AND toString(b.group_id) IN $scopeIds
                       AND toString(r.group_id) IN $scopeIds
-                      AND NONE(label IN labels(a) WHERE label IN $excludedLabels)
-                      AND NONE(label IN labels(b) WHERE label IN $excludedLabels)
                     RETURN coalesce(toString(r.uuid), elementId(r)) AS nativeId,
                            [type(r)] AS labels, properties(r) AS properties,
                            coalesce(toString(a.uuid), elementId(a)) AS sourceNativeId,
@@ -213,7 +199,6 @@ def read_knowgraph_exact(
                     """,
                     nativeId=native_id,
                     scopeIds=scope_ids,
-                    excludedLabels=sorted(_SKILL_GRAPH_LABELS),
                 ))
                 relationship_center = bool(center_rows)
             if not center_rows:
@@ -229,8 +214,7 @@ def read_knowgraph_exact(
                       AND toString(center.group_id) IN $scopeIds
                     MATCH path=(center)-[*1..{bounded_expansion}]-(other)
                     WHERE ALL(node IN nodes(path)
-                              WHERE toString(node.group_id) IN $scopeIds
-                                AND NONE(label IN labels(node) WHERE label IN $excludedLabels))
+                              WHERE toString(node.group_id) IN $scopeIds)
                       AND ALL(rel IN relationships(path)
                               WHERE toString(rel.group_id) IN $scopeIds)
                     RETURN [node IN nodes(path) | {{
@@ -245,7 +229,6 @@ def read_knowgraph_exact(
                     """,
                     nativeId=native_id,
                     scopeIds=scope_ids,
-                    excludedLabels=sorted(_SKILL_GRAPH_LABELS),
                     limit=result_limit,
                 ))
     except Exception as error:

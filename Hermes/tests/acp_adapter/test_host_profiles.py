@@ -18,6 +18,10 @@ from acp_adapter.host_profiles import (
     host_execution_scope,
     parse_host_session_config,
 )
+from agent.background_review import (
+    _BackgroundReviewRun,
+    finish_background_review_host_execution,
+)
 from acp_adapter.server import HermesACPAgent
 from acp_adapter.session import SessionManager
 
@@ -181,6 +185,63 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
         {"executionContextId": "child-context", "state": "completed"},
     )
     assert "credential" not in repr(calls).lower()
+
+
+def test_background_review_closes_its_host_child_once_with_bounded_usage() -> None:
+    calls = []
+
+    def requester(method, params):
+        calls.append((method, params))
+        if method == "session/create_execution_context":
+            return {
+                "executionContextId": "review-context",
+                "runId": "review-run",
+                "toolCallMeta": {"host/execution-context": "review-context"},
+            }
+        return {"closed": True}
+
+    parent = SimpleNamespace(
+        _host_execution_context_id="root-context",
+        _host_execution_session_id="acp-session",
+        _host_execution_requester=requester,
+    )
+    review_run = _BackgroundReviewRun()
+    review_run._subagent_id = "background-review"
+
+    assert allocate_host_child_execution(parent, review_run) is True
+    finish_background_review_host_execution(
+        review_run,
+        "completed",
+        usage={
+            "input_tokens": 321,
+            "output_tokens": 45,
+            "estimated_cost_usd": 0.0123,
+        },
+    )
+    finish_background_review_host_execution(review_run, "failed")
+
+    assert calls == [
+        (
+            "session/create_execution_context",
+            {
+                "sessionId": "acp-session",
+                "parentExecutionContextId": "root-context",
+                "nativeChildId": "background-review",
+            },
+        ),
+        (
+            "session/finish_execution_context",
+            {
+                "executionContextId": "review-context",
+                "state": "completed",
+                "usage": {
+                    "providerInputTokens": 321,
+                    "providerOutputTokens": 45,
+                    "totalCostUsd": 0.0123,
+                },
+            },
+        ),
+    ]
 
 
 def test_unconfigured_upstream_agents_do_not_activate_the_host_extension() -> None:

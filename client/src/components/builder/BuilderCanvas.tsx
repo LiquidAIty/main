@@ -48,6 +48,7 @@ import {
 } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
+import type { HermesLearningIndicator } from '../../features/agentbuilder/nativeHermesCard';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 const DEV_MODE = import.meta.env.DEV;
@@ -197,6 +198,7 @@ export function toFlowNodes(
   inspectMode: boolean,
   activeCardIds: Set<string>,
   activeAgentCounts: Record<string, number> = {},
+  learningIndicators: Record<string, HermesLearningIndicator> = {},
 ): Node[] {
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
@@ -224,6 +226,7 @@ export function toFlowNodes(
         ...node,
         isRuntimeActive: activeCardIds.has(node.id),
         activeAgentCount: activeAgentCounts[node.id] ?? 0,
+        learningIndicator: learningIndicators[node.id],
         isInspecting: inspectMode && selectedCardId === node.id,
       },
       selected: node.id === selectedCardId,
@@ -557,6 +560,7 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge,
   activeCardIds = [],
   activeAgentCounts = {},
+  learningIndicators = {},
   activeEdgeIds = [],
   inspectMode = false,
   focusZone = null,
@@ -571,6 +575,7 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge?: () => void;
   activeCardIds?: string[];
   activeAgentCounts?: Record<string, number>;
+  learningIndicators?: Record<string, HermesLearningIndicator>;
   activeEdgeIds?: string[];
   inspectMode?: boolean;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
@@ -592,8 +597,9 @@ export default function BuilderCanvas({
         inspectMode,
         activeCardIdSet,
         activeAgentCounts,
+        learningIndicators,
       ),
-    [activeAgentCounts, activeCardIdSet, document, hoveredCardId, inspectMode, selectedCardId],
+    [activeAgentCounts, activeCardIdSet, document, hoveredCardId, inspectMode, learningIndicators, selectedCardId],
   );
   const flowEdges = useMemo(
     () =>

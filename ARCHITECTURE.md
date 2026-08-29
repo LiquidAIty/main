@@ -1,7 +1,7 @@
 # LiquidAIty Core v0 Architecture
 
 This document describes current source ownership. `PLAN.md` orders future proof; `FUTURE.md` contains
-deferred work; `AGENTS.md` and `DONT.md` are execution law.
+deferred work; `AGENTS.md` is execution law.
 
 ## One-line law
 
@@ -19,6 +19,7 @@ React/Vite Agent Builder and Chat
   → Node/TypeScript HTTP, SSE, saved-state, and session transport
      → repo-owned Hermes ACP adapter, reusing one process owner per native profile
         ├─ Main: stable native session, home/profile liquidaity-main
+        ├─ Agent Builder: stable native session, home/profile liquidaity-agent-builder
         ├─ Coder: stable native session, home/profile coder
         └─ Kanban: stable native session, home/profile liquidaity-hermes-steward
      → official Python MCP client boundary
@@ -90,6 +91,83 @@ The backend injects server-owned Card, conversation, Run, and correlation identi
 Python-materialized Card call plus minimal Card identity. No generic model call or another agent runtime
 hides behind Hermes.
 
+### Memory and knowledge authorities
+
+There are **seven durable memory/knowledge authority types**. The first four are private to one Hermes
+profile; the final three are shared project authorities reached through granted tools. Holographic and
+Honcho are alternatives inside item 3, not two extra layers. The native Hermes Learning Journey/SkillGraph
+is a projection over items 2 and 4, not an eighth store.
+
+1. **Conversation history — Hermes `state.db`, per profile.** Serves continuity inside that Card's
+   sessions: transcript load, search, and pagination. It does not become curated long-term memory and is
+   never shared with another Card profile.
+2. **Curated personal memory — `memories/MEMORY.md` and `USER.md`, per profile.** Serves durable facts,
+   preferences, and user/profile guidance intentionally kept by that Card. The native memory tool is its
+   writer and reader.
+3. **One optional external-memory provider — per profile.** Serves semantic recall beyond the files while
+   remaining subordinate to the profile boundary. `MemoryManager` selects at most one provider. Main selects
+   Honcho; default/Coder/Steward select Holographic; Agent Builder currently selects none. Honcho owns its
+   account/workspace/peer/session records. Holographic owns one profile-local `memory_store.db`.
+4. **Native profile skills — `skills/*/SKILL.md` plus `.usage.json`, per profile.** Serves reusable how-to
+   knowledge learned or installed for that Card. The bounded native background-review child may create or
+   patch only the owning profile's skills. `build_learning_graph()` reads these files and curated-memory
+   chunks under that profile's `HERMES_HOME`; the Card Skills tab stores no copy.
+5. **ThinkGraph — one Constellation SQLite authority.** Serves project reasoning, hypotheses, relationships,
+   operational knowledge, semantic embeddings, identity segments, and its launcher outbox. The pinned engine
+   is its sole writer.
+6. **KnowGraph — one Graphiti/Neo4j authority.** Serves sourced entities, facts, episodes, temporal truth, and
+   provenance, isolated by native project `group_id`. `Episodic` is a label inside this authority, not another
+   memory layer.
+7. **CodeGraph — the app-published CBM projection.** Serves derived repository structure, callers, symbols,
+   and code-navigation evidence. The official CBM watcher/indexer is its sole writer; source remains final
+   truth.
+
+These authorities support a bounded cascade without copying or universal access tokens:
+
+```text
+current Card turn
+  → that profile's state.db + curated memory
+  → that profile's one selected external provider (when configured and allowed)
+  → that profile's native skills / Learning Journey projection
+  → deliberate tool reads from ThinkGraph, KnowGraph, and/or CodeGraph
+  → one Run-scoped in.idf with bounded native IDs, data, and provenance
+```
+
+The cascade is guidance, not mandatory injection. An agent can search/read any healthy authority exposed by
+its effective catalog; writes remain explicit saved Card grants with the authority's confirmation contract.
+Cross-authority handoff passes native IDs and provenance, never copied subgraphs or credentials. Contextualized
+plugin Main bypasses automatic Honcho prefetch/observe/write for that turn; direct native Main uses its own
+Honcho fail-open. Workers and background-review children never inherit Main's Honcho context.
+
+PostgreSQL Card configuration, Runs/artifact metadata, AgentGraph telemetry/topology, Kanban tasks, the Hermes
+project registry, attention events, the Run-scoped `in.idf`, browser state, and IDD are operational or transport
+state. They may preserve evidence, but they are deliberately **not counted as memory/knowledge authorities**.
+
+The other installed external-provider implementations (`byterover`, `hindsight`, `mem0`, `openviking`,
+`retaindb`, and `supermemory`) are available alternatives, not simultaneously active layers.
+
+#### Holographic SQL and context contract
+
+Each active Holographic profile owns exactly one `memory_store.db`. Its schema contains `facts`
+(unique content, category/tags, trust/usage counters, timestamps, optional HRR vector), `entities`, the
+many-to-many `fact_entities`, the FTS5 `facts_fts` virtual table and synchronization triggers, and
+`memory_banks` for category-level HRR vectors. A process-wide registry shares one WAL connection and
+re-entrant lock per resolved DB path; refcounted shutdown closes the last handle. Parameterized SQL,
+the unique constraint, atomic SQLite statements, and deterministic HRR serialization provide integrity.
+
+`fact_store` reads with `search`, `probe`, `related`, `reason`, `contradict`, and `list`; the public
+result limit is now schema-declared and enforced at 1–100, preventing SQLite `LIMIT -1` from becoming an
+unbounded read. Its `add`, `update`, and `remove` actions write. `fact_feedback` adjusts trust, built-in
+memory `add` may be mirrored as a fact, and optional session-end extraction writes only when
+`auto_extract` is explicitly true. `sync_turn` is otherwise a no-op. Automatic context uses a five-result
+trust-filtered search, then `MemoryManager` fences the text as `<memory-context>` and fails open on provider
+errors/timeouts. Provider tool writes remain inside the saved native `memory` toolset grant; broad
+application-catalog read discovery does not silently grant them.
+
+This layout is mostly well separated, not one accidental stack of duplicate databases. The confusing parts
+are projections and labels: Learning Journey/native SkillGraph shows profile files, Graphiti `Episodic` is a
+node label, and attention repeats only stable IDs as observations. None is another durable memory authority.
+
 ## AutoGen ownership
 
 The checked-in `autogen-main` fork at Microsoft AutoGen tag `python-v0.7.5`, commit
@@ -115,12 +193,12 @@ from current registered owners and is discovered dynamically. A fixed numeric ca
 architecture contract.
 
 The literal `LiquidAIty.idd` separates publication/access policy from native MCP side-effect annotations.
-Constellation exposes only bounded `context`, `inspect`, and `remember` operations. CBM remains the only
-product CodeGraph owner. Obsolete saved tool grants fail unavailable; there is no data migration or
-synthetic topology regeneration.
-The current 2026-08-29 startup snapshot publishes 43/43 unique tools after the retired Engraphis
-family was removed and the three bounded Constellation tools were added. The count is a run receipt,
-not a fixed architecture promise. Cached GPT tool descriptors must be reissued in a fresh selected-
+The published catalog keeps every known tool visible even when a Card disables it or its native source is
+temporarily unavailable. `all_healthy` Cards receive every currently healthy bounded read/search/discovery
+tool except their explicit disabled-read set; write/effect tools still require exact saved Card grants and
+their existing confirmation gates. CBM remains the only product CodeGraph owner. Obsolete saved tool grants
+stay visible as unavailable and fail honestly; there is no data migration or synthetic topology regeneration.
+Catalog counts are startup/revision receipts, not fixed architecture promises. Cached GPT tool descriptors must be reissued in a fresh selected-
 connector conversation; restarting an already-ready server does not replace a conversation-cached schema.
 
 Graph attention reuses AGE `USED_TOOL` events, `USED` native references and materialized `READ` edges.
@@ -289,6 +367,30 @@ and images. `apps/python-models/app/python_models/idf.py::materialize_idf` is th
 No owner copies another graph into itself. Context uses native IDs, bounded selections, and provenance.
 AgentGraph observes execution; it does not own Card configuration or runtime lifecycle.
 
+Constellation is pinned to npm package `constellation-engine` `1.0.5`, revision
+`ac460489f1cd3cd629fa96f2730e5ae9daa4326c`. The existing Constellation child owns the pinned Mímir
+semantic child and passes the exact same database path; there is no daemon/database fallback. Python rails
+own that child. Both the ThinkGraph projection and the official MCP host call the same Python-rails
+operation adapter, so the MCP process never imports the bridge or launches a second child against the
+SQLite database. The current bounded operation surface is:
+
+- reads/discovery: `capabilities`, `stats`, `context`, `inspect`, `inspect_edge`, `check_duplicate`,
+  `edge_types`, `collide`, `semantic_status`, `semantic_context`, `reembed_status`, `identity_preview`,
+  `autonomy_status`, and `notification_status`;
+- confirmed effects: `remember`, `remember_semantic`, `update_memory`, `link`, `adjust_edge`,
+  `adjust_edge_pair`, `classify_edge`, `classify_edge_pair`, `forget`, `maintain`, `semantic_start`,
+  `semantic_stop`, `reembed_start`, `reembed_cancel`, `identity_apply`, `autonomy_start`,
+  `autonomy_pause`, `autonomy_resume`, `autonomy_stop`, `notify`, `edge_review`, and `inject_message`.
+
+Semantic mode uses the real local BGE-M3 1024-dimensional embedder. Bulk re-embedding is one bounded,
+cancellable process-owned job with progress and exact database receipt. Identity mutation is
+preview/digest/confirm/native-write/readback. Bounded autonomy permits one concurrent native `collide` or
+confirmed maintenance loop with cycle, duration, interval, traversal-depth, aggregate-context and
+per-cycle token budgets; it does not call a model. Launcher notifications use the existing database
+outbox. `kickoffSeedExpansion`, `draftSoulCore`, and `rememberRaw` stay catalog-disclosed but unavailable:
+the pinned upstream contracts respectively require a configured provider plus launcher worker,
+Constellation provider credentials, or a cancellable LLM-fetch timeout that upstream does not expose.
+
 ## Native attention and Reveal
 
 `useAgentBuilderGraphAttention` consumes compact attention events from real graph/tool activity.
@@ -326,16 +428,24 @@ KnowGraph only and is not a second ThinkGraph renderer. ThinkGraph attention may
 already present in the authoritative Constellation projection; it may never create a visual node from an
 attention receipt alone. An empty native projection therefore remains visibly and structurally empty.
 
+KnowGraph projection reads first select a deterministic, project-scoped node window (default 200,
+maximum 500), then return only relationships whose endpoints are inside that window (maximum 1,000).
+Embedding-vector properties are excluded from projection and expansion payloads while native UUIDs,
+element IDs, provenance, and all non-embedding properties remain intact. Graphiti's native bounded MCP
+reads remain the semantic search doorway; the UI projection is not a bulk database export.
+
 Valid activation events include native query results, selections, delivery/consumption, traversal,
 writes, and run completion/failure. Answer prose and hidden reasoning are never telemetry.
 
 ## Persistence
 
-- PostgreSQL: Projects, saved Cards/revisions, provider/model references, conversations, Runs, and
-  artifact metadata.
+- PostgreSQL: Projects, saved Cards/revisions/grants/facets, provider/model references, conversations,
+  Runs, and artifact metadata.
 - AGE on PostgreSQL: saved Card relationships and execution/reference observations.
-- Neo4j: KnowGraph.
-- Constellation Engine SQLite: ThinkGraph.
+- Hermes profile stores: native `state.db`, optional built-in memory files, one selected external
+  provider authority, profile skills/usage, and Kanban/project stores where that profile uses them.
+- Neo4j: KnowGraph/Graphiti only.
+- Constellation Engine SQLite: ThinkGraph, semantic embeddings, identity segments and launcher outbox.
 - The checksum-pinned native CBM binary under LiquidAIty AppData: CodeGraph. Its official daemon, watcher,
   embedded UI, and disposable cache remain outside the repository; the Python MCP host owns the only stdio
   frontend. Docker does not own or launch CBM.
@@ -483,7 +593,12 @@ enabled provider remain unchanged. Focused proof and rollback are registered in
 The same external plugin drives the one persistent native Main CLI through Hermes' existing message
 injection and structured stream/turn hooks. One generic optional argument on
 `PluginContext.inject_message` makes an external human input driver fail closed while the agent is
-running or another input is pending; omission preserves Hermes' interrupting upstream behavior.
+running or another input is pending; omission preserves Hermes' interrupting upstream behavior. The
+same call may carry the trusted one-turn `external_memory_mode=bypass_automatic` marker used by the
+contextualized GPT/plugin Main entrance. That marker suppresses only automatic external-memory
+turn-start, prefetch, and sync for the injected root turn. A direct Main turn keeps the profile's
+native provider path, unknown values fail open to normal Hermes behavior, and the provider's explicit
+tools remain callable. The marker is not projected into worker or background-review child input.
 The paired read-only `PluginContext.cli_conversation_snapshot` returns a detached snapshot only while
 the interactive CLI is idle. The external plugin projects only user/assistant text over the same
 tokenized loopback bridge so browser reconnect reads the live CLI conversation without ACP or direct
@@ -493,6 +608,17 @@ only structured public text to Chat while the complete native bytes remain on th
 provider-free proof lives in `Hermes/tests/hermes_cli/test_plugin_message_injection.py` and
 `apps/hermes-liquidaity-plugin/tests/test_plugin.py`; contribution and rollback details are registered
 in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
+After an eligible completed Hermes root Run, the existing native background-review subsystem may
+allocate one generic ACP child and run the owning profile's saved `auxiliary.background_review`
+selector. LiquidAIty configures that selector to the account-backed Luna model with a 120,000-token
+ceiling for each Hermes Card profile. The child is asynchronous, deduplicated by profile/root Run,
+profile-contained, and instructed to create or patch a native skill only when the completed work
+contains a durable reusable lesson. A legitimate no-op is success; allocation, provider, tool, and
+completion failures remain visible on the child receipt. The child skips external-memory prefetch and
+sync and cannot inherit Main Honcho context. The existing Card Skills tab applies only the exact native
+`background_review` selector fields (`enabled`, `provider`, `model`, and `max_input_tokens`) and reads the
+profile back; Card Save does not mutate that native profile setting.
 
 Current authorization limits: internal Card tokens have a 12-hour lifetime. Current source restricts
 ordinary Card reads and effects to explicit grants; only the dedicated internal materializer retains
@@ -509,10 +635,13 @@ WorldSignals and other imported roots remain isolated owners and are not ordinar
 
 ## Known limitations
 
-- Complete loaded-runtime and user-visible model proof is a separate approved run.
-- Native Hermes child Run/AGE attribution has no-provider contract proof; loaded-runtime execution and
-  persistence readback remain for the separately approved live session.
+- Direct saved Main and Local Coder model execution are live-proven. Main-to-Agent-Builder,
+  Main-to-Kanban, and native Magentic-One team execution remain separate proofs.
+- A native asynchronous Luna background-review child has loaded-runtime execution and parent/root Run
+  readback. Broader child/reference/artifact attribution still requires the affected runtime proof.
 - Reveal pacing, stacked 3D presentation, and transient-call consumption illumination remain incomplete.
-- Constellation semantic embeddings are explicitly degraded until a real configured daemon is approved.
+- The loaded application published a 76-tool catalog. One reload is required for the latest Constellation
+  stop-state source fix, and separate external GPT-plugin acceptance must use a fresh connector conversation;
+  an external connector call is not inferred from local MCP tests.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are
   classified legacy identifiers, not active architectures.

@@ -167,7 +167,7 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
   });
 
-  it('keeps role capability ceilings bounded and explicit', () => {
+  it('keeps broad read discovery separate from explicit write selections', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const main = byId.get('card_main_chat');
     const coder = byId.get('card_local_coder');
@@ -178,6 +178,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
+    expect(main?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(main?.prompt).toContain('card.run_assistant_agent');
     expect(main?.prompt).toContain('A wire grants authority but never starts work');
     expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
@@ -193,6 +194,7 @@ describe('Main / Hermes / graph authority topology', () => {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
         toolsets: ['hermes-acp', 'computer_use'],
+        toolCatalogPolicy: 'all_healthy',
       },
     });
     expect(coder?.runtimeOptions?.tools).toEqual([
@@ -220,6 +222,7 @@ describe('Main / Hermes / graph authority topology', () => {
         nativeTools: ['memory'],
         skills: ['hermes-agent'],
         toolsets: ['hermes-acp', 'computer_use'],
+        toolCatalogPolicy: 'all_healthy',
         tools: [
           'card.create', 'card.update_configuration', 'canvas.upsert_wire',
           'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
@@ -234,6 +237,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(steward?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
+    expect(steward?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
     expect(steward?.prompt).toContain('Use card.run_assistant_agent for a normal automatic handoff');
     expect(steward?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');

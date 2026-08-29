@@ -2763,18 +2763,13 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     active_scopes[:] = ["main"]
 
     calls = []
-    from app.python_models import constellation
+    def constellation_call(name, project_id, arguments):
+        calls.append((name, project_id, arguments))
+        return {"ok": True, "id": arguments.get("id"), "nodes": []}
 
-    def constellation_context(project_id, arguments):
-        calls.append(("constellation.context", project_id, arguments))
-        return {"nodes": []}
-
-    def constellation_remember(project_id, arguments):
-        calls.append(("constellation.remember", project_id, arguments))
-        return {"ok": True, "id": arguments["id"]}
-
-    monkeypatch.setattr(constellation, "constellation_context", constellation_context)
-    monkeypatch.setattr(constellation, "constellation_remember", constellation_remember)
+    monkeypatch.setattr(
+        mcp_host, "_constellation_via_python_rails_sync", constellation_call
+    )
 
     def call_native_cbm(name, arguments):
         calls.append((name, arguments))

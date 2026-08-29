@@ -2,7 +2,7 @@
 
 This is the current product plan. It describes what the repository owns now, what must remain
 separate, and the smallest proof required before live model testing. Historical migrations belong in
-Git history and clearly labelled purge notes, not in the active plan.
+Git history, not active Markdown.
 
 ## Core v0
 
@@ -37,6 +37,9 @@ they do not select a runtime implementation.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count.
+- The published catalog preserves disabled/unavailable tools. `all_healthy` grants broad healthy
+  read/search/discovery access while every write/effect remains an explicit saved Card grant with its
+  confirmation contract.
 - IDD supplies composable builder types, objects, templates and effect annotations, not runtime
   authentication or a second IDF validator. After user agreement, Main directs only the dedicated
   Agent Builder Card to compose existing templates or custom Cards. Local Coder never receives the
@@ -46,22 +49,39 @@ they do not select a runtime implementation.
 - Optional Card Script data and a fail-closed guard are retained. Script analysis, generated types,
   static preview, the Script tab and editor polish are deferred. No substitute executor is approved.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
+- Python rails own the one Constellation child and database adapter. The official MCP host proxies its
+  Constellation calls through that existing owner and never starts another engine process or database.
 - ThinkGraph, KnowGraph, CodeGraph, and AgentGraph have separate owners and never become one copied
   graph.
+- KnowGraph UI reads are deterministically bounded and exclude embedding-vector properties; native IDs,
+  provenance, and Graphiti's separate bounded semantic reads remain available.
 - Reveal renders compact native attention events. It never infers hidden reasoning or writes graph
   meaning.
 - The Agent Builder Graphs workspace uses the embedded CodeGraph renderer with bounded native CBM
   projections. The removed standalone CBM demo/package shell is not part of the product.
+- Every Hermes-profile Card reads its real native Learning Journey/SkillGraph in the existing Skills
+  tab. The graph is a projection of profile skills, usage and curated-memory chunks, not another store.
+- Eligible completed Hermes Runs may launch one deduplicated, asynchronous native background review.
+  LiquidAIty profiles can route it to account-backed `gpt-5.6-luna`; it can patch only the owning
+  profile's native memory/skills and may legitimately make no change.
+- Main context routing is mutually exclusive: contextualized external-plugin turns keep Honcho tools
+  callable but bypass automatic Honcho inject/observe/write; direct native Main turns use Main-only
+  Honcho fail-open. Workers and background-review children receive neither Main Honcho context nor sync.
 
 ### Still requiring live proof
 
-- A completed Main response through the saved Hermes profile and saved account/model.
 - Native Main-to-Agent-Builder delegation with truthful child Run, tool, native-reference, and AGE lineage.
 - Main-to-Kanban execution and separate-session memory behavior.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
-- Constellation semantic embeddings remain explicitly degraded until a real configured embedding
-  daemon is available; native topology, context, inspection, and writes remain authoritative.
+- One canonical reload must load the Constellation semantic-stop bookkeeping fix; the separate external
+  GPT-plugin acceptance must then fetch the current 76-tool catalog in a fresh conversation.
+- Direct Main routing and fail-open completion are live-proven. Actual Honcho recall/write success remains
+  unavailable until the intended service and account credential/base URL are present.
+
+Live proof already completed: one direct saved Main account/model response; one saved Local Coder
+account-backed Run; a real Holographic add/search/remove lifecycle with zero retained test facts; and one
+deduplicated asynchronous Luna background-review child whose valid result was no new skill.
 
 Structural tests are not substitutes for these live proofs.
 
@@ -145,6 +165,39 @@ The foreground graph starts empty and reveals only native objects actually retur
 consumed, traversed, handed off, or written. Inspector detail may show technical receipts. Card faces
 may show correlated tool activity, but Card animation is not a substitute for graph attention.
 
+Constellation uses pinned engine `1.0.5` at revision
+`ac460489f1cd3cd629fa96f2730e5ae9daa4326c` and one database/process owner. Its catalog exposes bounded
+topology reads/writes, BGE-M3 semantic start/status/stop/context/remember, cancellable re-embedding,
+preview-confirm-readback identity mutation, explicit bounded autonomy controls, edge review/pair
+operations, launcher outbox status/notify, and message injection. `kickoffSeedExpansion`,
+`draftSoulCore`, and `rememberRaw` remain disclosed as unavailable until their exact upstream
+provider/worker/timeout contracts are satisfied; no second runtime or database substitutes for them.
+
+KnowGraph UI projection selects at most 500 project-scoped nodes and 1,000 in-window relationships and
+does not transport embedding arrays. Graphiti remains the only native KnowGraph semantic/search authority.
+
+## Stable prompt and procedure recommendations
+
+These are recommendations for later saved-prompt review, not grant changes or catalog pruning:
+
+- Main should begin with its exact server context, use ThinkGraph/Constellation for project reasoning,
+  and call downstream Cards only through saved topology. Contextualized plugin turns should keep the
+  Honcho bypass marker; direct Main should retain native Main-only Honcho fail-open behavior.
+- Agent Builder should follow `IDD/catalog inspect -> select existing object/tool -> preview exact saved
+  change -> save -> native/readback verification`. It may use CodeGraph for this repository but should
+  not send the whole IDD palette to ordinary Cards.
+- Local Coder should follow `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet -> complete direct
+  source read -> inverse caller/residue audit -> focused tests/typecheck`. Literal `search_code`/`rg`
+  remains the fallback for imports, configuration, ignored files, and coverage gaps.
+- Kanban/Steward should use native Hermes task/history state for planning and KnowGraph/Graphiti bounded
+  reads for sourced knowledge. Any Graphiti write remains an explicit saved grant and confirmed effect.
+- Any Card may use healthy read/search/discovery tools when the saved `all_healthy` policy permits them;
+  prompts should name the desired authority and ask for native IDs/provenance instead of copying graph
+  schemas or passing receipt/token keys.
+- Native skills should carry reusable tool-use knowledge. Promote an ordered procedure into a recipe only
+  after repeated real lifecycle proof shows stable inputs, receipts, cleanup, and failure handling; do not
+  create another skill/recipe engine.
+
 ## Supported repository commands
 
 Node is pinned by `.nvmrc`, `engines`, and `packageManager`. Dependency lifecycle scripts are disabled
@@ -181,13 +234,18 @@ alternate startup instructions.
 4. Prove Main → Kanban with separate session/memory.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
-7. Only then reduce remaining legacy names, tune the UI, or expand memory behavior.
+7. Rebuild the canonical IDD/application/MCP catalogs, preserve disabled entries, and prove real local
+   read/write/readback lifecycles before the separate external GPT-plugin acceptance.
+8. Only then consider prompt/skill/recipe recommendations and later catalog reduction; recommendations
+   do not change grants or remove tools.
 
 ## Core v0 acceptance
 
 - One Card authority, one IDD, one transient Python call materializer, one official Python MCP host.
 - One canonical `dev:fresh` tree and one root npm workspace lock.
 - Hermes Main/Agent Builder/Local Coder/Kanban, AutoGen Assistant/Mag One, and four graph authorities remain distinct.
+- Memory projections are named honestly: Learning Journey/native SkillGraph, episodic labels,
+  attention, and Run artifacts do not become duplicate stores.
 - No OpenClaude/standalone-LocalCoder/Bun implementation, package root, lock, fallback, or downloader.
 - No fake graph activity, provider substitution, automatic embeddings, or product-data reset.
 - Regression Ratio for every accepted change is `0.000`.

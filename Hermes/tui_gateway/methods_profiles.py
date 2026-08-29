@@ -671,6 +671,14 @@ def _(rid, params: dict) -> dict:
                 pass
 
             model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+            auxiliary_cfg = (
+                cfg.get("auxiliary") if isinstance(cfg.get("auxiliary"), dict) else {}
+            )
+            review_cfg = (
+                auxiliary_cfg.get("background_review")
+                if isinstance(auxiliary_cfg.get("background_review"), dict)
+                else {}
+            )
 
             description = ""
             try:
@@ -689,6 +697,16 @@ def _(rid, params: dict) -> dict:
                     "model": {
                         "provider": str(model_cfg.get("provider") or ""),
                         "default": str(model_cfg.get("default") or ""),
+                    },
+                    # LIQUIDAITY VENDOR PATCH: expose only the native,
+                    # secret-free auxiliary review selector so a profile UI
+                    # can configure and prove Hermes' existing self-learning
+                    # path without reading config.yaml directly.
+                    "background_review": {
+                        "enabled": is_truthy_value(review_cfg.get("enabled"), default=True),
+                        "provider": str(review_cfg.get("provider") or "auto"),
+                        "model": str(review_cfg.get("model") or ""),
+                        "max_input_tokens": review_cfg.get("max_input_tokens"),
                     },
                     "skills": installed,
                     "toolsets": toolsets_out,
@@ -712,6 +730,8 @@ def _(rid, params: dict) -> dict:
     ``disabled_skills`` (list[str], replace semantics),
     ``enabled_toolsets`` (list[str], replace semantics; empty list clears
     the pin so every toolset is enabled again), and
+    ``background_review`` (object; native auxiliary review enabled/provider/
+    model/max_input_tokens), and
     ``ui_meta_expected_revisions`` (dict[str, int], optional compare-and-swap
     preconditions for keys supplied in ``ui_meta``).
 
@@ -853,6 +873,7 @@ def _(rid, params: dict) -> dict:
             isinstance(params.get("disabled_skills"), list)
             or isinstance(params.get("enabled_toolsets"), list)
             or isinstance(params.get("enabled_mcp_servers"), list)
+            or isinstance(params.get("background_review"), dict)
         )
         if needs_cfg:
             # Launch profile's MCP catalog, read BEFORE the home override
@@ -902,6 +923,57 @@ def _(rid, params: dict) -> dict:
                         applied["toolsets"] = True
                     except Exception:
                         applied["toolsets"] = False
+
+                if isinstance(params.get("background_review"), dict):
+                    # LIQUIDAITY VENDOR PATCH: use Hermes' existing
+                    # auxiliary.background_review contract. This is profile
+                    # configuration only; credentials continue to resolve via
+                    # the selected native provider.
+                    try:
+                        incoming = params["background_review"]
+                        unknown = sorted(
+                            set(incoming)
+                            - {"enabled", "provider", "model", "max_input_tokens"}
+                        )
+                        if unknown:
+                            raise ValueError(
+                                f"unknown background_review field: {unknown[0]}"
+                            )
+                        if not isinstance(incoming.get("enabled", True), bool):
+                            raise ValueError("background_review.enabled must be bool")
+                        review_provider = str(incoming.get("provider") or "auto").strip()
+                        review_model = str(incoming.get("model") or "").strip()
+                        if review_provider != "auto" and not review_model:
+                            raise ValueError(
+                                "background_review.model required for explicit provider"
+                            )
+                        max_input_tokens = incoming.get("max_input_tokens")
+                        if max_input_tokens is not None and (
+                            not isinstance(max_input_tokens, int)
+                            or isinstance(max_input_tokens, bool)
+                        ):
+                            raise ValueError(
+                                "background_review.max_input_tokens must be int"
+                            )
+                        cfg = load_config() or {}
+                        auxiliary_cfg = (
+                            cfg.get("auxiliary")
+                            if isinstance(cfg.get("auxiliary"), dict)
+                            else {}
+                        )
+                        review_cfg = {
+                            "enabled": incoming.get("enabled", True),
+                            "provider": review_provider,
+                            "model": review_model,
+                        }
+                        if max_input_tokens is not None:
+                            review_cfg["max_input_tokens"] = max_input_tokens
+                        auxiliary_cfg["background_review"] = review_cfg
+                        cfg["auxiliary"] = auxiliary_cfg
+                        save_config(cfg)
+                        applied["background_review"] = True
+                    except Exception:
+                        applied["background_review"] = False
 
                 # ``enabled_mcp_servers`` (list[str], replace semantics):
                 # toggle the profile's mcp_servers entries via the standard

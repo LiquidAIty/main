@@ -15,10 +15,12 @@ from pathlib import Path
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import threading
 import time
 from typing import Any
+import uuid
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -66,6 +68,27 @@ class ConstellationProcess:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         if not _BRIDGE.is_file():
             raise ConstellationError("constellation_bridge_missing")
+        # The authoritative bridge owns its pinned Mimir child. Reserve one
+        # loopback port up front so the engine and daemon share the exact same
+        # endpoint; Mimir itself is started lazily by an explicit semantic or
+        # background-control operation.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            self.mimir_port = int(reservation.getsockname()[1])
+        child_env = os.environ.copy()
+        child_env.update(
+            {
+                "MIMIR_PORT": str(self.mimir_port),
+                "MIMIR_PORT_RANGE": "1",
+                "MIMIR_HOST": "127.0.0.1",
+                "CONSTELLATION_DB": str(self.database_path),
+                "MIMIR_RUNTIME_FILE": str(
+                    self.database_path.parent
+                    / f".{self.database_path.stem}.mimir-runtime.json"
+                ),
+                "INSTALL_ID": str(uuid.uuid4()),
+            }
+        )
         creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         self._process = subprocess.Popen(
             [
@@ -82,6 +105,7 @@ class ConstellationProcess:
             errors="replace",
             bufsize=1,
             creationflags=creation_flags,
+            env=child_env,
         )
         self._responses: queue.Queue[dict[str, Any]] = queue.Queue()
         self._stderr: deque[str] = deque(maxlen=16)
@@ -334,6 +358,50 @@ def constellation_inspect(project_id: str, arguments: dict[str, Any]) -> dict[st
     return get_constellation(project_id).request("inspect", arguments)
 
 
+def constellation_capabilities(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("capabilities", arguments)
+
+
+def constellation_stats(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("stats", arguments)
+
+
+def constellation_semantic_status(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("semantic_status", arguments)
+
+
+def constellation_semantic_start(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "semantic_start", arguments, timeout_seconds=190.0
+    )
+
+
+def constellation_semantic_stop(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("semantic_stop", arguments)
+
+
+def constellation_semantic_context(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "semantic_context", arguments, timeout_seconds=190.0
+    )
+
+
+def constellation_inspect_edge(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("inspect_edge", arguments)
+
+
+def constellation_check_duplicate(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("check_duplicate", arguments)
+
+
+def constellation_edge_types(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("edge_types", arguments)
+
+
+def constellation_collide(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("collide", arguments)
+
+
 def constellation_remember(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return get_constellation(project_id).request(
         "remember",
@@ -342,6 +410,111 @@ def constellation_remember(project_id: str, arguments: dict[str, Any]) -> dict[s
             "projectTag": f"liquidaity-project:{_project_id(project_id)}",
         },
     )
+
+
+def constellation_remember_semantic(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "remember_semantic",
+        {
+            **dict(arguments or {}),
+            "projectTag": f"liquidaity-project:{_project_id(project_id)}",
+        },
+        timeout_seconds=190.0,
+    )
+
+
+def constellation_reembed_start(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "reembed_start", arguments, timeout_seconds=190.0
+    )
+
+
+def constellation_reembed_status(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("reembed_status", arguments)
+
+
+def constellation_reembed_cancel(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("reembed_cancel", arguments)
+
+
+def constellation_identity_preview(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("identity_preview", arguments)
+
+
+def constellation_identity_apply(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "identity_apply", arguments, timeout_seconds=190.0
+    )
+
+
+def constellation_autonomy_status(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("autonomy_status", arguments)
+
+
+def constellation_autonomy_start(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("autonomy_start", arguments)
+
+
+def constellation_autonomy_pause(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("autonomy_pause", arguments)
+
+
+def constellation_autonomy_resume(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("autonomy_resume", arguments)
+
+
+def constellation_autonomy_stop(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("autonomy_stop", arguments)
+
+
+def constellation_notification_status(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("notification_status", arguments)
+
+
+def constellation_notify(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("notify", arguments)
+
+
+def constellation_edge_review(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("edge_review", arguments)
+
+
+def constellation_update_memory(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("update_memory", arguments)
+
+
+def constellation_link(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("link", arguments)
+
+
+def constellation_adjust_edge(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("adjust_edge", arguments)
+
+
+def constellation_adjust_edge_pair(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("adjust_edge_pair", arguments)
+
+
+def constellation_classify_edge(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("classify_edge", arguments)
+
+
+def constellation_classify_edge_pair(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("classify_edge_pair", arguments)
+
+
+def constellation_inject_message(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request(
+        "inject_message", arguments, timeout_seconds=190.0
+    )
+
+
+def constellation_forget(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("forget", arguments)
+
+
+def constellation_maintain(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return get_constellation(project_id).request("maintain", arguments)
 
 
 def constellation_projection(project_id: str) -> dict[str, Any]:
@@ -360,3 +533,61 @@ def constellation_neighborhood(project_id: str, native_id: str) -> dict[str, Any
         {"nativeId": str(native_id or "").strip(), "maxDepth": 1, "budget": 12000},
     )
     return _projection(resolved, native)
+
+
+_OPERATION_HANDLERS = {
+    "adjust_edge": constellation_adjust_edge,
+    "adjust_edge_pair": constellation_adjust_edge_pair,
+    "autonomy_pause": constellation_autonomy_pause,
+    "autonomy_resume": constellation_autonomy_resume,
+    "autonomy_start": constellation_autonomy_start,
+    "autonomy_status": constellation_autonomy_status,
+    "autonomy_stop": constellation_autonomy_stop,
+    "capabilities": constellation_capabilities,
+    "check_duplicate": constellation_check_duplicate,
+    "classify_edge": constellation_classify_edge,
+    "classify_edge_pair": constellation_classify_edge_pair,
+    "collide": constellation_collide,
+    "context": constellation_context,
+    "edge_types": constellation_edge_types,
+    "edge_review": constellation_edge_review,
+    "forget": constellation_forget,
+    "identity_apply": constellation_identity_apply,
+    "identity_preview": constellation_identity_preview,
+    "inject_message": constellation_inject_message,
+    "inspect": constellation_inspect,
+    "inspect_edge": constellation_inspect_edge,
+    "link": constellation_link,
+    "maintain": constellation_maintain,
+    "notification_status": constellation_notification_status,
+    "notify": constellation_notify,
+    "reembed_cancel": constellation_reembed_cancel,
+    "reembed_start": constellation_reembed_start,
+    "reembed_status": constellation_reembed_status,
+    "remember": constellation_remember,
+    "remember_semantic": constellation_remember_semantic,
+    "semantic_context": constellation_semantic_context,
+    "semantic_start": constellation_semantic_start,
+    "semantic_status": constellation_semantic_status,
+    "semantic_stop": constellation_semantic_stop,
+    "stats": constellation_stats,
+    "update_memory": constellation_update_memory,
+}
+
+
+def invoke_constellation_operation(
+    project_id: str,
+    operation: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Dispatch one allowlisted operation inside the Python-rails owner."""
+
+    resolved_operation = str(operation or "").strip()
+    handler = _OPERATION_HANDLERS.get(resolved_operation)
+    if handler is None:
+        raise ConstellationError(
+            f"constellation_operation_unsupported:{resolved_operation}"
+        )
+    if not isinstance(arguments, dict):
+        raise ConstellationError("constellation_arguments_invalid")
+    return handler(_project_id(project_id), dict(arguments))

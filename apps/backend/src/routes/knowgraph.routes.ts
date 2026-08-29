@@ -140,6 +140,16 @@ function toNeoJsonValue(value: any): any {
   return out;
 }
 
+export function boundedKnowGraphProperties(value: unknown): Record<string, unknown> {
+  const properties = (toNeoJsonValue(value || {}) || {}) as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(properties).filter(([key]) => {
+    const normalized = key.trim().toLowerCase();
+    return normalized !== 'embedding'
+      && !normalized.endsWith('_embedding')
+      && !normalized.startsWith('embedding_');
+  }));
+}
+
 function neoNodeLabel(id: string, props: Record<string, unknown>): string {
   const candidates = [props.name, props.title, props.label, props.id, props.document_id, props.chunk_id];
   for (const candidate of candidates) {
@@ -195,16 +205,6 @@ async function resolveKnowGraphProjectScopeIds(projectId: string): Promise<strin
   return Array.from(scopeIds);
 }
 
-// SkillGraph (services/knowgraph/skill_ingest.py) shares this Neo4j database but uses its OWN node
-// labels. The KnowGraph reads below scope by Graphiti group_id but are otherwise label-blind, so :Skill*
-// nodes would leak into the KnowGraph canvas. Exclude the skill-graph labels from every KnowGraph
-// read. KnowGraph itself never writes these labels (it writes :SemanticRecord / :SourceBackedAssertion
-// / :Entity / :Source / :Observation / ...), so this can only remove skill nodes, never hide evidence.
-const SKILL_GRAPH_LABELS = ['Skill', 'SkillAttempt', 'FailedAttempt', 'Decision', 'Guardrail', 'QueryPattern', 'SkillSection'] as const;
-function notSkillNode(varName: string): string {
-  return `NOT (${SKILL_GRAPH_LABELS.map((label) => `${varName}:${label}`).join(' OR ')})`;
-}
-
 function _neoInt(v: any): number {
   return Number(v?.toNumber?.() ?? v ?? 0);
 }
@@ -227,7 +227,7 @@ async function listKnowGraphScopes(): Promise<
   try {
     const r = await session.run(
       `
-        MATCH (n) WHERE n.group_id IS NOT NULL AND ${notSkillNode('n')}
+        MATCH (n) WHERE n.group_id IS NOT NULL
         WITH toString(n.group_id) AS scope, collect(n) AS ns
         RETURN scope,
           size(ns) AS nodes,
@@ -250,7 +250,7 @@ async function listKnowGraphScopes(): Promise<
   }
 }
 
-async function queryKnowGraphProject(projectId: string): Promise<{
+async function queryKnowGraphProject(projectId: string, limit: number): Promise<{
   nodes: KnowGraphNodeDto[];
   relationships: KnowGraphRelationshipDto[];
 }> {
@@ -277,7 +277,7 @@ async function queryKnowGraphProject(projectId: string): Promise<{
       if (!rawId) return;
 
       const labels = Array.isArray(labelsRaw) ? labelsRaw.map((x) => String(x)) : [];
-      const props = toNeoJsonValue(propsRaw || {}) as Record<string, unknown>;
+      const props = boundedKnowGraphProperties(propsRaw);
 
       if (!nodeMap.has(rawId)) {
         nodeMap.set(rawId, {
@@ -293,25 +293,46 @@ async function queryKnowGraphProject(projectId: string): Promise<{
       }
     };
 
-    const relResult = await session.run(
+    const nodeResult = await session.run(
+      `
+        MATCH (n)
+        WHERE toString(n.group_id) IN $projectScopeIds
+        RETURN DISTINCT coalesce(toString(n.uuid), elementId(n)) AS node_id,
+          labels(n) AS node_labels, properties(n) AS node_props
+        ORDER BY node_id
+        LIMIT toInteger($limit)
+      `,
+      { projectScopeIds, limit },
+    );
+
+    nodeResult.records.forEach((record: any) => {
+      upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
+    });
+
+    const nodeIds = Array.from(nodeMap.keys());
+    const relResult = nodeIds.length === 0 ? { records: [] } : await session.run(
       `
         MATCH (a)-[r]->(b)
-        WHERE toString(a.group_id) IN $projectScopeIds
-          AND toString(b.group_id) IN $projectScopeIds
+        WITH a, r, b,
+          coalesce(toString(a.uuid), elementId(a)) AS from_id,
+          coalesce(toString(b.uuid), elementId(b)) AS to_id
+        WHERE from_id IN $nodeIds
+          AND to_id IN $nodeIds
           AND toString(r.group_id) IN $projectScopeIds
-          AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           elementId(r) AS rel_id,
           type(r) AS rel_type,
           properties(r) AS rel_props,
-          elementId(a) AS from_id,
+          from_id,
           labels(a) AS from_labels,
           properties(a) AS from_props,
-          elementId(b) AS to_id,
+          to_id,
           labels(b) AS to_labels,
           properties(b) AS to_props
+        ORDER BY rel_id
+        LIMIT toInteger($relationshipLimit)
       `,
-      { projectScopeIds },
+      { projectScopeIds, nodeIds, relationshipLimit: Math.min(1_000, limit * 4) },
     );
 
     const relationships: KnowGraphRelationshipDto[] = [];
@@ -331,22 +352,8 @@ async function queryKnowGraphProject(projectId: string): Promise<{
         to: toId,
         type: String(record.get('rel_type') || 'RELATED_TO'),
         source: 'know',
-        properties: (toNeoJsonValue(record.get('rel_props') || {}) || {}) as Record<string, unknown>,
+        properties: boundedKnowGraphProperties(record.get('rel_props')),
       });
-    });
-
-    const nodeResult = await session.run(
-      `
-        MATCH (n)
-        WHERE toString(n.group_id) IN $projectScopeIds
-          AND ${notSkillNode('n')}
-        RETURN DISTINCT elementId(n) AS node_id, labels(n) AS node_labels, properties(n) AS node_props
-      `,
-      { projectScopeIds },
-    );
-
-    nodeResult.records.forEach((record: any) => {
-      upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
     });
 
     return {
@@ -398,7 +405,7 @@ async function queryKnowGraphExpand(
       const rawId = String(idRaw ?? '').trim();
       if (!rawId) return;
       const labels = Array.isArray(labelsRaw) ? labelsRaw.map((x) => String(x)) : [];
-      const props = toNeoJsonValue(propsRaw || {}) as Record<string, unknown>;
+      const props = boundedKnowGraphProperties(propsRaw);
       if (!nodeMap.has(rawId)) {
         nodeMap.set(rawId, {
           id: rawId,
@@ -443,7 +450,6 @@ async function queryKnowGraphExpand(
           AND toString(a.group_id) IN $projectScopeIds
           AND toString(b.group_id) IN $projectScopeIds
           AND toString(r.group_id) IN $projectScopeIds
-          AND ${notSkillNode('a')} AND ${notSkillNode('b')}
         RETURN DISTINCT
           coalesce(toString(r.uuid), elementId(r)) AS rel_id,
           type(r) AS rel_type,
@@ -475,7 +481,7 @@ async function queryKnowGraphExpand(
         to: toId,
         type: String(record.get('rel_type') || 'RELATED_TO'),
         source: 'know',
-        properties: (toNeoJsonValue(record.get('rel_props') || {}) || {}) as Record<string, unknown>,
+        properties: boundedKnowGraphProperties(record.get('rel_props')),
       });
     });
 
@@ -539,7 +545,8 @@ router.get('/graph', async (req, res) => {
       });
     }
 
-    const graph = await queryKnowGraphProject(projectId);
+    const limit = clampInt(req.query?.limit, 1, 500, 200);
+    const graph = await queryKnowGraphProject(projectId, limit);
     return res.json(graph);
   } catch (error: any) {
     const message = error?.message || 'Failed to fetch KnowGraph graph';

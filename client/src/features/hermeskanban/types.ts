@@ -1,6 +1,6 @@
 // Hermes Kanban feature types — shapes mirror the native `hermes kanban`
 // JSON surface (see apps/backend/src/routes/hermesKanban.routes.ts). No logic
-// here: TS is transport/pixels only (DONT.md rule 5).
+// here: TS is transport/pixels only (AGENTS.md runtime boundary).
 
 export type KanbanBoardInfo = {
   slug: string;

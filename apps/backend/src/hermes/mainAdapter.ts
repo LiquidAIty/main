@@ -45,6 +45,8 @@ export type HermesRuntimeConfig = {
   providerModelId: string;
   accessMode: CardAccessMode;
   tools: string[];
+  toolCatalogPolicy?: 'selected' | 'all_healthy';
+  disabledTools?: string[];
   mcpConnectionIds: string[];
   nativeTools?: string[];
   toolsets?: string[];
@@ -323,8 +325,10 @@ export function buildHermesHostSessionProjection(
       hermes: {
         sessionConfig: {
           enabledToolsets: uniqueStrings([
-            // Only explicit Card/Run and native-profile selections. Public ACP
-            // availability is not permission to add its broad default toolset.
+            // Native Hermes toolsets remain explicit saved Card/profile
+            // selections because several include write-capable tools. The
+            // all_healthy policy applies to the exact LiquidAIty MCP catalog,
+            // whose read/write effects are gated during IDF materialization.
             ...(args.toolsets || []),
             ...(args.nativeProfileToolsets || []),
             ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),

@@ -2013,6 +2013,9 @@ class PluginContext:
         # LIQUIDAITY VENDOR PATCH: generic, optional idle-only injection for
         # external human input drivers; the upstream interrupting default stays unchanged.
         interrupt_running: bool = True,
+        # LIQUIDAITY VENDOR PATCH: one-turn external-memory policy selected by
+        # a trusted input-driver plugin before the message is accepted.
+        external_memory_mode: str = "normal",
     ) -> bool:
         """Inject a message into a CLI or gateway conversation.
 
@@ -2034,6 +2037,8 @@ class PluginContext:
         """
         cli = self._manager._cli_ref
         msg = content if role == "user" else f"[{role}] {content}"
+        if external_memory_mode not in {"normal", "bypass_automatic"}:
+            raise ValueError("inject_message: invalid external_memory_mode")
 
         if cli is not None:
             if getattr(cli, "_agent_running", False):
@@ -2044,6 +2049,13 @@ class PluginContext:
             else:
                 if not interrupt_running and not cli._pending_input.empty():
                     return False
+                agent = getattr(cli, "agent", None)
+                if external_memory_mode != "normal" and agent is None:
+                    # A bypass request must never fall through to a freshly
+                    # initialized agent whose policy could not be staged.
+                    return False
+                if agent is not None:
+                    agent._next_turn_external_memory_mode = external_memory_mode
                 # Agent is idle - queue as next input
                 cli._pending_input.put(msg)
             return True

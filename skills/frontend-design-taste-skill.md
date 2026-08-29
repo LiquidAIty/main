@@ -4,7 +4,6 @@
 @type Skill
 @status active
 @related_to deep-glass-inspector-material
-@related_to no-fake-surfaces
 
 ## Source / Attribution
 
@@ -44,7 +43,7 @@ apply the landing-page layout mandates to dense data UI.
   `solar` accent — consolidate deliberately, don't sprinkle.
 * Shadows: tint to the background hue, never pure black at low opacity.
 * Surfaces: true glassmorphism = blur + a 1px directional border + layered inner
-  shadow for edge refraction (see [[deep-glass-inspector-material]]), not bare
+  shadow for edge refraction (see `skills/deep-glass-inspector-material-skill.md`), not bare
   `backdrop-filter: blur`.
 * States: real hover / active (`scale(0.98)`) / focus-ring / loading-skeleton /
   honest empty + error states. Never `window.alert()`.
@@ -67,13 +66,6 @@ states. Stop and review between steps.
 * Check `package.json` before importing anything new.
 * Keep edits scoped and reviewable; prefer shared-token changes that propagate over
   per-element copy-paste.
-
-## Plugin / Install (upstream)
-
-The upstream pack is a Claude Code plugin and an Agent-Skills bundle:
-
-* Claude Code plugin (interactive terminal): `/plugin marketplace add Leonxlnx/taste-skill` then `/plugin install taste-skill`.
-* Agent-Skills CLI (drops SKILL.md into the project): `npx skills add https://github.com/Leonxlnx/taste-skill --skill "redesign-existing-projects"`.
 
 ## Proof
 

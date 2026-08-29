@@ -320,23 +320,66 @@ The process-MCP extension can be rolled back separately only by removing its opt
 spawn handling and the external plugin's template producer together. Card worker MCP must then fail
 closed until an equivalent native handoff exists; no static profile or duplicate connection is a fallback.
 
-## Patch: fail-closed CLI plugin input and idle transcript snapshot
+## Patch: bounded native background-review host child and profile selector
+
+Purpose: expose Hermes' existing `auxiliary.background_review` selector through the native profile
+API and make each asynchronous review observable as one generic host child execution. The review is
+allocated before its daemon thread starts, never delays the foreground response, closes exactly once
+with bounded usage/failure state, and keeps the existing owning-profile memory/skill tool whitelist.
+The prompt correction permits a clean no-op instead of pressuring the model to create filler skills.
+
+Files and symbols:
+
+- `tui_gateway/methods_profiles.py`: `profiles.describe` returns the secret-free review selector and
+  `profiles.configure` validates/writes only enabled/provider/model/max-input-token fields through
+  Hermes' native config owner.
+- `agent/background_review.py`: `_BackgroundReviewRun` exact-once host closure,
+  `finish_background_review_host_execution`, honest completion/failure/cancellation and the no-junk
+  native review prompt.
+- `run_agent.py`: `_spawn_background_review` allocates the existing generic host child before
+  `Thread.start()` and closes allocation failures.
+- `tests/tui_gateway/test_profile_background_review.py` and
+  `tests/acp_adapter/test_host_profiles.py`: profile read/apply, exact-once child receipt and bounded
+  usage proof.
+
+Upstream behavior preserved: ordinary CLI/gateway sessions have no host requester and retain native
+review behavior. The selected provider's normal Hermes credential resolver remains authoritative.
+Review memory/skills remain inside the owning profile, background children keep external memory
+disabled, and zero reusable learning remains a valid result.
+
+Contribution plan: propose the secret-free profile selector and generic auxiliary-child receipt
+independently. Keep LiquidAIty's account-Luna profile choice and Card UI outside upstream Hermes.
+Sync cost: three contained symbols plus profile RPC fields. Remove the divergence if upstream exposes
+equivalent profile configuration and background-child lifecycle hooks.
+
+Rollback: remove the profile fields and child allocation/closure hooks, and restore the upstream
+review prompt. Native background review continues but cannot be configured/proven from a Card and must
+not be reported as a LiquidAIty child Run.
+
+## Patch: fail-closed CLI plugin input, one-turn memory mode, and idle transcript snapshot
 
 Purpose: let a plugin use Hermes' existing CLI message-injection API as an alternate human input
 driver without interrupting or queueing behind an already accepted turn. The optional
 `interrupt_running=False` form returns `False` while the agent is running or the CLI input queue is
-non-empty. The paired `cli_conversation_snapshot()` returns a detached copy of the live interactive
-CLI session ID and conversation only while the agent is idle. It adds no process, session, scheduler,
-provider, tool, or persistence owner and never opens Hermes' session database.
+non-empty. A validated single-use `external_memory_mode="bypass_automatic"` lets a contextualized
+external driver skip automatic provider turn-start, prefetch and end-of-turn sync for exactly that
+accepted turn while leaving provider tools callable. The paired `cli_conversation_snapshot()` returns
+a detached copy of the live interactive CLI session ID and conversation only while the agent is idle.
+It adds no process, session, scheduler, provider, tool, or persistence owner and never opens Hermes'
+session database.
 
 Files and symbols:
 
-- `hermes_cli/plugins.py`: `PluginContext.inject_message(..., interrupt_running=True)` retains the
-  upstream default and adds the optional idle-only refusal;
+- `hermes_cli/plugins.py`: `PluginContext.inject_message(..., interrupt_running=True,
+  external_memory_mode="normal")` retains both upstream defaults, validates the trusted mode and
+  stages it only on a live idle agent;
   `PluginContext.cli_conversation_snapshot()` exposes one read-only detached idle snapshot.
-- `tests/hermes_cli/test_plugin_message_injection.py`: proves the idle-only form refuses both a live
-  turn and a pending input without mutating either queue, and proves snapshots are detached and
-  unavailable during a turn or outside interactive CLI mode.
+- `agent/turn_context.py`: `consume_external_memory_mode` consumes once and gates only automatic
+  provider turn-start/prefetch.
+- `run_agent.py`: `_sync_external_memory_for_turn` skips automatic sync/next-prefetch for that turn.
+- `tests/hermes_cli/test_plugin_message_injection.py`, `tests/agent/test_turn_context.py`, and
+  `tests/run_agent/test_memory_sync_interrupted.py`: idle refusal, single-use/fail-open mode,
+  prefetch/sync mutual exclusion and unchanged normal-turn proof.
 - Downstream proof in `apps/hermes-liquidaity-plugin/tests/test_plugin.py` verifies structured native
   hooks, public-text-only forwarding, busy refusal, and cancellation reporting.
 
@@ -344,11 +387,12 @@ Upstream behavior preserved: every existing caller omits the new argument and ke
 interrupt-or-queue semantics. No existing code calls the new observation method. Gateway injection,
 plugin consent, roles, session keys, persistence, and native CLI queue ownership are unchanged.
 
-Contribution plan: submit the optional idle-only flag and read-only idle snapshot with focused
-compatibility tests upstream as one generic multiple-human-surface contract. Drop this patch when
-upstream exposes equivalent non-interrupting injection and live-CLI observation operations.
+Contribution plan: submit the optional idle-only flag, generic one-turn external-memory mode and
+read-only idle snapshot with focused compatibility tests upstream as one multiple-human-surface
+contract. Drop this patch when upstream exposes equivalent non-interrupting injection, scoped memory
+lifecycle control and live-CLI observation operations.
 
-Rollback: remove the optional argument, its two guards, and the snapshot method. LiquidAIty's
+Rollback: remove the optional arguments, their guards, the turn/sync gates and the snapshot method. LiquidAIty's
 external Main drivers and Chat history must then fail closed because the stock plugin contract cannot
 prove single-driver ownership or observe the live CLI conversation; no ACP process, direct database
 read, input queue, or terminal-scraping fallback is permitted.

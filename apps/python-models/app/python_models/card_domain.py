@@ -2031,9 +2031,15 @@ def _prepare_invocation(
         assert_script_execution_available(options.get("script"))
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
-    ceiling = _string_list(options.get("tools"), "tools")
-    requested_tools = ceiling
     runtime = _card_runtime(card)
+    ceiling = _string_list(options.get("tools"), "tools")
+    catalog_policy = str(options.get("toolCatalogPolicy") or "selected").strip()
+    if catalog_policy not in {"selected", "all_healthy"}:
+        raise CardDomainError("tool_catalog_policy_invalid")
+    disabled_tools = _string_list(options.get("disabledTools"), "disabled_tools")
+    if catalog_policy != "all_healthy" and disabled_tools:
+        raise CardDomainError("disabled_tools_require_all_healthy_catalog")
+    requested_tools = ceiling
     owner = _runtime_owner(card)
     common_prompt = str(card.get("prompt") or "")
     system_text = common_prompt
@@ -2066,17 +2072,40 @@ def _prepare_invocation(
         },
         "runtimeOptions": runtime_options,
         "enabledTools": requested_tools,
+        "toolCatalogPolicy": catalog_policy,
+        "disabledTools": disabled_tools,
         "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
         "skills": _string_list(options.get("skills"), "skills"),
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
     }
     try:
-        catalog = materialize_tool_catalog(tool_manifest())
+        discovered_tools = payload.get("discoveredTools") or []
+        if not isinstance(discovered_tools, list):
+            raise CardDomainError("discovered_tools_invalid")
+        catalog = materialize_tool_catalog([*tool_manifest(), *discovered_tools])
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
-    effective_tools = list(call_config["enabledTools"])
+    if catalog_policy == "all_healthy":
+        disabled = set(disabled_tools)
+        healthy_reads = [
+            item["canonicalId"] for item in catalog
+            if item.get("publication") == "external-mcp"
+            and item.get("availability") == "available"
+            and item.get("access") == "read"
+            and item["canonicalId"] not in disabled
+        ]
+        explicit_writes = [
+            name for name in ceiling
+            if name in by_id
+            and by_id[name].get("publication") == "external-mcp"
+            and by_id[name].get("availability") == "available"
+            and by_id[name].get("access") == "write"
+        ]
+        effective_tools = sorted(set(healthy_reads) | set(explicit_writes))
+    else:
+        effective_tools = list(call_config["enabledTools"])
     unknown_tools = [name for name in effective_tools if name not in by_id]
     if unknown_tools:
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
@@ -2231,6 +2260,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             capabilities={
                 "enabledTools": call_config["enabledTools"],
                 "toolDefinitions": tool_definitions,
+                "toolCatalogPolicy": call_config["toolCatalogPolicy"],
+                "disabledTools": call_config["disabledTools"],
                 "nativeTools": call_config["nativeTools"],
                 "skills": call_config["skills"],
                 "toolsets": call_config["toolsets"],
@@ -3256,6 +3287,11 @@ def _observe_run_start(
             "internal_chat", "external_plugin", "native_cli"
         }:
             raise CardDomainError("run_driver_source_invalid")
+        context_authority_mode = (
+            "plugin_context_only"
+            if driver_source == "external_plugin"
+            else ("main_native_honcho" if driver_source else None)
+        )
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
             runtime = (
@@ -3272,6 +3308,7 @@ def _observe_run_start(
                     run.nativeChildId=$nativeChildId,
                     run.nativeProfileId=$nativeProfileId,
                     run.driverSource=$driverSource,
+                    run.contextAuthorityMode=$contextAuthorityMode,
                     run.conversationId=$conversationId,
                     run.rootRunId=$rootRunId
                 WITH run
@@ -3292,6 +3329,7 @@ def _observe_run_start(
                         or None
                     ),
                     "driverSource": driver_source or None,
+                    "contextAuthorityMode": context_authority_mode,
                     "conversationId": str(payload.get("conversationId") or "").strip() or None,
                     "rootRunId": str(payload.get("rootRunId") or run_id).strip(),
                 },

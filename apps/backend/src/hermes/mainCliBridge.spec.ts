@@ -18,6 +18,7 @@ describe('MainCliBridge', () => {
     expect(candidate).toMatchObject({
       runId: 'run-1',
       driverSource: 'internal_chat',
+      contextAuthorityMode: 'main_native_honcho',
       message: 'hello',
     });
     expect(bridge.take()).toBeNull();
@@ -40,12 +41,14 @@ describe('MainCliBridge', () => {
       finalText: 'answer',
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
+      contextAuthorityMode: 'main_native_honcho',
     });
 
     await expect(done).resolves.toEqual({
       finalText: 'answer',
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
+      contextAuthorityMode: 'main_native_honcho',
     });
     expect(onEvent).toHaveBeenCalledTimes(2);
     expect(bridge.status()).toMatchObject({ activeDriver: null, runId: null });
@@ -62,6 +65,7 @@ describe('MainCliBridge', () => {
     });
     expect(bridge.status()).toMatchObject({
       activeDriver: 'external_plugin',
+      activeContextAuthorityMode: 'plugin_context_only',
       runId: 'run-external',
     });
     expect(bridge.requestCancel('wrong-run')).toBe(false);

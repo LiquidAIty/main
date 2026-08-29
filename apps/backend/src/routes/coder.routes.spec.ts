@@ -95,7 +95,12 @@ const chatSessionMocks = vi.hoisted(() => {
 
 const mainCliBridgeMocks = vi.hoisted(() => ({
   history: vi.fn((): any => null),
-  status: vi.fn(() => ({ ready: true, activeDriver: null, runId: null })),
+  status: vi.fn(() => ({
+    ready: true,
+    activeDriver: null,
+    activeContextAuthorityMode: null,
+    runId: null,
+  })),
   submit: vi.fn(async (args: any) => {
     args.onEvent({
       requestId: 'main-cli-request',
@@ -103,6 +108,9 @@ const mainCliBridgeMocks = vi.hoisted(() => ({
       kind: 'started',
       nativeSessionId: 'native-main-session',
       nativeTurnId: 'native-main-turn',
+      contextAuthorityMode: args.driverSource === 'external_plugin'
+        ? 'plugin_context_only'
+        : 'main_native_honcho',
     });
     args.onEvent({
       requestId: 'main-cli-request',
@@ -114,6 +122,9 @@ const mainCliBridgeMocks = vi.hoisted(() => ({
       finalText: 'Real assistant reply.',
       nativeSessionId: 'native-main-session',
       nativeTurnId: 'native-main-turn',
+      contextAuthorityMode: args.driverSource === 'external_plugin'
+        ? 'plugin_context_only'
+        : 'main_native_honcho',
     };
   }),
   requestCancel: vi.fn((_runId: string) => false),
@@ -528,6 +539,9 @@ vi.mock('../hermes/mainAdapter', () => ({
 }));
 
 vi.mock('../hermes/mainCliBridge', () => ({
+  contextAuthorityModeForDriver: (driverSource: string) => (
+    driverSource === 'external_plugin' ? 'plugin_context_only' : 'main_native_honcho'
+  ),
   mainCliBridge: mainCliBridgeMocks,
   mainCliBridgeToken: 'test-main-cli-bridge-token',
 }));
@@ -2019,7 +2033,8 @@ describe('coder routes', () => {
         const sessionFrame = body.split('\n\n').find((frame) => frame.startsWith('event: session'))!;
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
         expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native-main-session',
-          nativeTurnId: 'native-main-turn', driverSource: 'internal_chat' });
+          nativeTurnId: 'native-main-turn', driverSource: 'internal_chat',
+          contextAuthorityMode: 'main_native_honcho' });
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(([route, init]) => {
           if (route !== '/domain/runs/finish') return false;
           const payload = JSON.parse(String(init?.body));
@@ -2070,6 +2085,7 @@ describe('coder routes', () => {
           ok: true,
           cardId: 'card_main_chat',
           driverSource: 'external_plugin',
+          contextAuthorityMode: 'plugin_context_only',
           finalText: 'Real assistant reply.',
         });
         const begin = JSON.parse(String(
@@ -2096,7 +2112,10 @@ describe('coder routes', () => {
     it('does not project CLI bytes or private tool traffic into Chat', async () => {
       mainCliBridgeMocks.submit.mockImplementationOnce(async (args: any) => {
         args.onEvent({ requestId: 'r', runId: args.runId, kind: 'text', delta: 'Public answer.' });
-        return { finalText: 'Public answer.', nativeSessionId: 's', nativeTurnId: 't' };
+        return {
+          finalText: 'Public answer.', nativeSessionId: 's', nativeTurnId: 't',
+          contextAuthorityMode: 'main_native_honcho',
+        };
       });
       const { server, baseUrl } = await createApiServer();
       try {
@@ -2182,6 +2201,7 @@ describe('coder routes', () => {
           finalText: 'Finished before late event.',
           nativeSessionId: 'native-main-session',
           nativeTurnId: 'native-main-turn',
+          contextAuthorityMode: 'main_native_honcho',
         };
       });
       const { server, baseUrl } = await createApiServer();

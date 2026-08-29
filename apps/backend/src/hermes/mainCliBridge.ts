@@ -1,6 +1,13 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
+export type MainContextAuthorityMode = 'main_native_honcho' | 'plugin_context_only';
+
+export function contextAuthorityModeForDriver(
+  driverSource: MainDriverSource,
+): MainContextAuthorityMode {
+  return driverSource === 'external_plugin' ? 'plugin_context_only' : 'main_native_honcho';
+}
 
 export type MainCliBridgeEvent = {
   requestId: string;
@@ -11,6 +18,7 @@ export type MainCliBridgeEvent = {
   error?: string;
   nativeSessionId?: string;
   nativeTurnId?: string;
+  contextAuthorityMode?: MainContextAuthorityMode;
 };
 
 export type MainCliHistoryMessage = {
@@ -23,9 +31,11 @@ type MainCliTurn = {
   runId: string;
   driverSource: Exclude<MainDriverSource, 'native_cli'>;
   message: string;
+  contextAuthorityMode: MainContextAuthorityMode;
   delivered: boolean;
   onEvent: (event: MainCliBridgeEvent) => void;
-  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string }) => void;
+  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string;
+    contextAuthorityMode: MainContextAuthorityMode }) => void;
   reject: (error: Error) => void;
 };
 
@@ -42,10 +52,12 @@ export class MainCliBridge {
     return Date.now() - this.lastPollAt < 5_000;
   }
 
-  status(): { ready: boolean; activeDriver: MainDriverSource | null; runId: string | null } {
+  status(): { ready: boolean; activeDriver: MainDriverSource | null;
+    activeContextAuthorityMode: MainContextAuthorityMode | null; runId: string | null } {
     return {
       ready: this.ready(),
       activeDriver: this.active?.driverSource || null,
+      activeContextAuthorityMode: this.active?.contextAuthorityMode || null,
       runId: this.active?.runId || null,
     };
   }
@@ -55,7 +67,8 @@ export class MainCliBridge {
     driverSource: Exclude<MainDriverSource, 'native_cli'>;
     message: string;
     onEvent: (event: MainCliBridgeEvent) => void;
-  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string }> {
+  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string;
+    contextAuthorityMode: MainContextAuthorityMode }> {
     if (!this.ready()) throw new Error('main_cli_bridge_unavailable');
     if (this.active) throw new Error('main_driver_turn_already_running');
     const requestId = `main_cli_${randomUUID()}`;
@@ -64,6 +77,7 @@ export class MainCliBridge {
         requestId,
         runId: args.runId,
         driverSource: args.driverSource,
+        contextAuthorityMode: contextAuthorityModeForDriver(args.driverSource),
         message: args.message,
         delivered: false,
         onEvent: args.onEvent,
@@ -77,14 +91,17 @@ export class MainCliBridge {
     this.notePoll();
     if (!this.active || this.active.delivered) return null;
     this.active.delivered = true;
-    const { requestId, runId, driverSource, message } = this.active;
-    return { requestId, runId, driverSource, message };
+    const { requestId, runId, driverSource, message, contextAuthorityMode } = this.active;
+    return { requestId, runId, driverSource, message, contextAuthorityMode };
   }
 
   acceptEvent(event: MainCliBridgeEvent): void {
     const active = this.active;
     if (!active || event.requestId !== active.requestId || event.runId !== active.runId) {
       throw new Error('main_cli_bridge_event_identity_mismatch');
+    }
+    if (event.contextAuthorityMode && event.contextAuthorityMode !== active.contextAuthorityMode) {
+      throw new Error('main_cli_bridge_context_authority_mismatch');
     }
     active.onEvent(event);
     if (event.kind === 'completed') {
@@ -93,6 +110,7 @@ export class MainCliBridge {
         finalText: String(event.finalText || ''),
         nativeSessionId: String(event.nativeSessionId || ''),
         nativeTurnId: String(event.nativeTurnId || ''),
+        contextAuthorityMode: active.contextAuthorityMode,
       });
     } else if (event.kind === 'failed' || event.kind === 'rejected') {
       this.active = null;

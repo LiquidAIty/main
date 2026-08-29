@@ -2,7 +2,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import router from './knowgraph.routes';
+import router, { boundedKnowGraphProperties } from './knowgraph.routes';
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -62,6 +62,21 @@ afterEach(() => {
 });
 
 describe('KnowGraph PDF upload project authority', () => {
+  it('keeps native provenance but excludes embedding vectors from bounded UI projections', () => {
+    expect(boundedKnowGraphProperties({
+      uuid: 'node-1',
+      source: 'Graphiti',
+      name_embedding: [0.1, 0.2],
+      embedding: [0.3],
+      embedding_1024: [0.4],
+      entity_edges: ['edge-1'],
+    })).toEqual({
+      uuid: 'node-1',
+      source: 'Graphiti',
+      entity_edges: ['edge-1'],
+    });
+  });
+
   it('resolves the authenticated project selector to its canonical id before Graphiti ingest', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
