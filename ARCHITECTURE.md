@@ -82,6 +82,16 @@ distinct Run and `nativeChildId` before execution and uses an opaque host-issued
 context. Hermes may open a dedicated connection to its owning profile's `state.db` for a child's native
 transcript lifecycle; that is not independent Card memory or identity.
 
+Each saved Hermes Card may additionally own a desired `subagentModel`. At Run start the existing backend
+adapter projects that selector into Hermes' native top-level `delegation.provider/model` and
+`auxiliary.background_review` fields, then reads the same profile back before inference. The parent Card
+keeps its own saved model. A native child Run records the provider/model actually used and whether
+Hermes fell back. External-memory provider choice remains Hermes profile state, not saved Card state.
+Main alone exposes a native Honcho selection/setup/status control; it never reconfigures or contacts
+Honcho during generic Run-start materialization. Card Save changes only desired PostgreSQL state, so a
+stale or unavailable subagent selection stays
+visible until an eligible Run either materializes it or fails honestly.
+
 The host derives one opaque key from Project, conversation, and Card identity. Hermes stores that key
 in its existing native `sessions.session_key` field so an ACP restart recovers the exact session even
 when Main and Coder share the repository working directory. The key is routing identity only; it is
@@ -104,10 +114,13 @@ is a projection over items 2 and 4, not an eighth store.
 2. **Curated personal memory — `memories/MEMORY.md` and `USER.md`, per profile.** Serves durable facts,
    preferences, and user/profile guidance intentionally kept by that Card. The native memory tool is its
    writer and reader.
-3. **One optional external-memory provider — per profile.** Serves semantic recall beyond the files while
-   remaining subordinate to the profile boundary. `MemoryManager` selects at most one provider. Main selects
-   Honcho; default/Coder/Steward select Holographic; Agent Builder currently selects none. Honcho owns its
-   account/workspace/peer/session records. Holographic owns one profile-local `memory_store.db`.
+3. **One optional external-memory provider — native per profile.** Serves semantic recall beyond the files
+   while remaining subordinate to the profile boundary. Hermes profile configuration selects `builtin` or
+   one provider; `MemoryManager` loads at most that one provider. LiquidAIty exposes only Main's Honcho
+   selection/setup/status, while preserving other profiles' existing Holographic configuration without a
+   generalized Card control. Honcho owns its account/workspace/peer/session records. Holographic owns one
+   profile-local `memory_store.db`. Selection, installed state, connection reachability, credential status,
+   and effective turn policy are separate facts.
 4. **Native profile skills — `skills/*/SKILL.md` plus `.usage.json`, per profile.** Serves reusable how-to
    knowledge learned or installed for that Card. The bounded native background-review child may create or
    patch only the owning profile's skills. `build_learning_graph()` reads these files and curated-memory
@@ -200,6 +213,10 @@ their existing confirmation gates. CBM remains the only product CodeGraph owner.
 stay visible as unavailable and fail honestly; there is no data migration or synthetic topology regeneration.
 Catalog counts are startup/revision receipts, not fixed architecture promises. Cached GPT tool descriptors must be reissued in a fresh selected-
 connector conversation; restarting an already-ready server does not replace a conversation-cached schema.
+The `card.create` and `card.update_configuration` schemas carry the saved Hermes `subagentModel` field;
+its available values come from the configured model catalog rather than IDD copies. Run-start readback,
+not schema presence, proves materialization. Main Honcho setup/status uses the profile Inspector's explicit
+native operation and is absent from Card create/update schemas.
 
 Graph attention reuses AGE `USED_TOOL` events, `USED` native references and materialized `READ` edges.
 The external-Main mapping is designed to establish an idempotent AGE observation Run under its existing
@@ -611,14 +628,15 @@ in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 After an eligible completed Hermes root Run, the existing native background-review subsystem may
 allocate one generic ACP child and run the owning profile's saved `auxiliary.background_review`
-selector. LiquidAIty configures that selector to the account-backed Luna model with a 120,000-token
-ceiling for each Hermes Card profile. The child is asynchronous, deduplicated by profile/root Run,
+selector. The owning Card's saved `subagentModel` is materialized into both this selector and Hermes'
+native delegation selector with a 120,000-token review ceiling; new Hermes Cards default to the
+account-backed Luna selection without making it the only valid future value. The child is asynchronous, deduplicated by profile/root Run,
 profile-contained, and instructed to create or patch a native skill only when the completed work
 contains a durable reusable lesson. A legitimate no-op is success; allocation, provider, tool, and
 completion failures remain visible on the child receipt. The child skips external-memory prefetch and
-sync and cannot inherit Main Honcho context. The existing Card Skills tab applies only the exact native
-`background_review` selector fields (`enabled`, `provider`, `model`, and `max_input_tokens`) and reads the
-profile back; Card Save does not mutate that native profile setting.
+sync and cannot inherit Main Honcho context. The Card Inspector shows desired, native and effective
+selection state; Card Save does not mutate the native profile, while the next eligible Run applies and
+reads back the exact native fields before inference.
 
 Current authorization limits: internal Card tokens have a 12-hour lifetime. Current source restricts
 ordinary Card reads and effects to explicit grants; only the dedicated internal materializer retains
@@ -637,11 +655,12 @@ WorldSignals and other imported roots remain isolated owners and are not ordinar
 
 - Direct saved Main and Local Coder model execution are live-proven. Main-to-Agent-Builder,
   Main-to-Kanban, and native Magentic-One team execution remain separate proofs.
-- A native asynchronous Luna background-review child has loaded-runtime execution and parent/root Run
-  readback. Broader child/reference/artifact attribution still requires the affected runtime proof.
+- Native asynchronous background review has parent/root Run attribution. The saved-Card selector to
+  native-profile to actual-child receipt chain requires one loaded-runtime account-Luna proof after the
+  current migration is applied; broader child/reference/artifact attribution remains separate.
 - Reveal pacing, stacked 3D presentation, and transient-call consumption illumination remain incomplete.
-- The loaded application published a 76-tool catalog. One reload is required for the latest Constellation
-  stop-state source fix, and separate external GPT-plugin acceptance must use a fresh connector conversation;
-  an external connector call is not inferred from local MCP tests.
+- Catalog count, uniqueness, hash and source revision are startup receipts. Separate external GPT-plugin
+  acceptance must use a fresh selected-connector conversation; an external connector call is not inferred
+  from local MCP tests.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are
   classified legacy identifiers, not active architectures.

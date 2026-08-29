@@ -320,41 +320,52 @@ The process-MCP extension can be rolled back separately only by removing its opt
 spawn handling and the external plugin's template producer together. Card worker MCP must then fail
 closed until an equivalent native handoff exists; no static profile or duplicate connection is a fallback.
 
-## Patch: bounded native background-review host child and profile selector
+## Patch: bounded native child-model/background review and memory-provider profile readback
 
 Purpose: expose Hermes' existing `auxiliary.background_review` selector through the native profile
-API and make each asynchronous review observable as one generic host child execution. The review is
-allocated before its daemon thread starts, never delays the foreground response, closes exactly once
-with bounded usage/failure state, and keeps the existing owning-profile memory/skill tool whitelist.
-The prompt correction permits a clean no-op instead of pressuring the model to create filler skills.
+API, expose its existing top-level `delegation.provider/model` selector, and make the actual provider/model
+of each native child observable through the existing generic host child execution. The review is allocated
+before its daemon thread starts, never delays the foreground response, closes exactly once with bounded
+usage/failure state, and keeps the existing owning-profile memory/skill tool whitelist. The prompt correction
+permits a clean no-op instead of pressuring the model to create filler skills. The same profile API also
+reports Hermes' existing single `memory.provider`, installed provider IDs, and profile-local Holographic
+database status. LiquidAIty requests the separate bounded host-scoped Honcho reachability probe only while
+reading Main's Inspector; ordinary profile reads and Run-start synchronization perform no Honcho I/O. Native
+`profiles.configure` remains the single memory selector, but LiquidAIty exposes it only to Main for `builtin`
+or `honcho`, without returning credentials or creating a second registry/store.
 
 Files and symbols:
 
-- `tui_gateway/methods_profiles.py`: `profiles.describe` returns the secret-free review selector and
-  `profiles.configure` validates/writes only enabled/provider/model/max-input-token fields through
-  Hermes' native config owner.
+- `tui_gateway/methods_profiles.py`: `profiles.describe` returns the secret-free review/delegation
+  selectors plus native memory-provider/database metadata; optional `probe_honcho` adds one bounded,
+  read-only Main Inspector reachability result. `profiles.configure` validates and writes only the native
+  review, delegation, and memory-provider fields through Hermes' config owner.
+- `acp_adapter/host_profiles.py`: child allocation and closure carry the provider/model actually selected
+  by Hermes plus explicit fallback state over the existing generic host lifecycle extension.
 - `agent/background_review.py`: `_BackgroundReviewRun` exact-once host closure,
-  `finish_background_review_host_execution`, honest completion/failure/cancellation and the no-junk
-  native review prompt.
-- `run_agent.py`: `_spawn_background_review` allocates the existing generic host child before
-  `Thread.start()` and closes allocation failures.
+  `finish_background_review_host_execution`, honest actual-model/fallback completion/failure/cancellation,
+  and the no-junk native review prompt.
+- `run_agent.py`: `_spawn_background_review` publishes the configured review provider/model, allocates the
+  existing generic host child before `Thread.start()`, and closes allocation failures.
 - `tests/tui_gateway/test_profile_background_review.py` and
-  `tests/acp_adapter/test_host_profiles.py`: profile read/apply, exact-once child receipt and bounded
-  usage proof.
+  `tests/acp_adapter/test_host_profiles.py`: profile read/apply, profile-local memory isolation/status,
+  exact child model/fallback receipt, exact-once closure and bounded usage proof.
 
 Upstream behavior preserved: ordinary CLI/gateway sessions have no host requester and retain native
 review behavior. The selected provider's normal Hermes credential resolver remains authoritative.
-Review memory/skills remain inside the owning profile, background children keep external memory
-disabled, and zero reusable learning remains a valid result.
+Review memory/skills remain inside the owning profile, background children keep external memory disabled,
+and zero reusable learning remains a valid result. Provider availability checks use native provider
+discovery/configuration and do not perform a memory write, remote recall, OAuth exchange, or credential export.
 
-Contribution plan: propose the secret-free profile selector and generic auxiliary-child receipt
-independently. Keep LiquidAIty's account-Luna profile choice and Card UI outside upstream Hermes.
-Sync cost: three contained symbols plus profile RPC fields. Remove the divergence if upstream exposes
-equivalent profile configuration and background-child lifecycle hooks.
+Contribution plan: propose the secret-free profile selectors/readiness and generic actual-child-model
+receipt independently. Keep LiquidAIty's saved Card choices and Inspector outside upstream Hermes. Sync
+cost: four contained production files plus profile RPC fields. Remove the divergence if upstream exposes
+equivalent delegation/review/memory profile configuration and actual child lifecycle receipts.
 
-Rollback: remove the profile fields and child allocation/closure hooks, and restore the upstream
-review prompt. Native background review continues but cannot be configured/proven from a Card and must
-not be reported as a LiquidAIty child Run.
+Rollback: remove the added profile fields and child model/fallback fields while preserving the older generic
+child allocation/closure seam, then restore the upstream review prompt. Native background review continues
+but cannot be configured/proven from a Card, saved memory selection cannot be materialized/read back through
+the Inspector, and actual child model identity must fail closed rather than be inferred from the parent.
 
 ## Patch: fail-closed CLI plugin input, one-turn memory mode, and idle transcript snapshot
 

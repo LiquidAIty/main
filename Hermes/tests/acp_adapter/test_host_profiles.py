@@ -164,7 +164,9 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
         _host_execution_session_id="acp-session",
         _host_execution_requester=requester,
     )
-    child = SimpleNamespace(_subagent_id="sa-1")
+    child = SimpleNamespace(
+        _subagent_id="sa-1", provider="openai-codex", model="gpt-5.6-luna"
+    )
     assert allocate_host_child_execution(parent, child) is True
     assert calls[0] == (
         "session/create_execution_context",
@@ -172,6 +174,8 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
             "sessionId": "acp-session",
             "parentExecutionContextId": "root-context",
             "nativeChildId": "sa-1",
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
         },
     )
     with host_execution_scope(child):
@@ -182,7 +186,16 @@ def test_generic_child_execution_uses_only_host_issued_context_metadata() -> Non
     finish_host_child_execution(child, "completed")
     assert calls[1] == (
         "session/finish_execution_context",
-        {"executionContextId": "child-context", "state": "completed"},
+        {
+            "executionContextId": "child-context",
+            "state": "completed",
+            "configuration": {
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+                "fallbackOccurred": False,
+                "fallbackReason": "",
+            },
+        },
     )
     assert "credential" not in repr(calls).lower()
 
@@ -207,6 +220,8 @@ def test_background_review_closes_its_host_child_once_with_bounded_usage() -> No
     )
     review_run = _BackgroundReviewRun()
     review_run._subagent_id = "background-review"
+    review_run.provider = "openai-codex"
+    review_run.model = "gpt-5.6-luna"
 
     assert allocate_host_child_execution(parent, review_run) is True
     finish_background_review_host_execution(
@@ -216,6 +231,8 @@ def test_background_review_closes_its_host_child_once_with_bounded_usage() -> No
             "input_tokens": 321,
             "output_tokens": 45,
             "estimated_cost_usd": 0.0123,
+            "provider": "openai-codex",
+            "model": "gpt-5.6-luna",
         },
     )
     finish_background_review_host_execution(review_run, "failed")
@@ -227,6 +244,8 @@ def test_background_review_closes_its_host_child_once_with_bounded_usage() -> No
                 "sessionId": "acp-session",
                 "parentExecutionContextId": "root-context",
                 "nativeChildId": "background-review",
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
             },
         ),
         (
@@ -238,6 +257,12 @@ def test_background_review_closes_its_host_child_once_with_bounded_usage() -> No
                     "providerInputTokens": 321,
                     "providerOutputTokens": 45,
                     "totalCostUsd": 0.0123,
+                },
+                "configuration": {
+                    "provider": "openai-codex",
+                    "model": "gpt-5.6-luna",
+                    "fallbackOccurred": False,
+                    "fallbackReason": "",
                 },
             },
         ),

@@ -66,6 +66,9 @@ const chatSessionMocks = vi.hoisted(() => {
     deleteHermesHistory: vi.fn(async () => ({ sessionId: 'persisted-session', deleted: true })),
     readHermesHistory: vi.fn(async (): Promise<any> => ({ sessionId: null, messages: [] })),
     readHermesRunSnapshot: vi.fn((): any => null),
+    materializeHermesProfileSelections: vi.fn(async () => ({
+      native: { name: 'default', toolsets: [], mcp_servers: [] },
+    })),
     requestHermesNative: vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'profiles.describe') return {
         name: String(params?.name || 'liquidaity-agent-builder'),
@@ -534,6 +537,7 @@ vi.mock('../hermes/mainAdapter', () => ({
   deleteHermesHistory: chatSessionMocks.deleteHermesHistory,
   readHermesHistory: chatSessionMocks.readHermesHistory,
   readHermesRunSnapshot: chatSessionMocks.readHermesRunSnapshot,
+  materializeHermesProfileSelections: chatSessionMocks.materializeHermesProfileSelections,
   requestHermesNative: chatSessionMocks.requestHermesNative,
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
@@ -2034,7 +2038,8 @@ describe('coder routes', () => {
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
         expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native-main-session',
           nativeTurnId: 'native-main-turn', driverSource: 'internal_chat',
-          contextAuthorityMode: 'main_native_honcho' });
+          contextAuthorityMode: 'main_native_honcho',
+          configuration: { honchoTurnStatus: 'native_fail_open' } });
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(([route, init]) => {
           if (route !== '/domain/runs/finish') return false;
           const payload = JSON.parse(String(init?.body));
@@ -2087,6 +2092,7 @@ describe('coder routes', () => {
           driverSource: 'external_plugin',
           contextAuthorityMode: 'plugin_context_only',
           finalText: 'Real assistant reply.',
+          configuration: { honchoTurnStatus: 'bypassed' },
         });
         const begin = JSON.parse(String(
           orchestratorMocks.requestPythonRailsJson.mock.calls[0]?.[1]?.body,

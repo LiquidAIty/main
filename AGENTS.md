@@ -39,7 +39,8 @@ Never collapse CURRENT and TARGET into one claim.
 ### CURRENT
 
 - Main Chat, Agent Builder, Local Coder, and Kanban are saved Cards served through one persistent
-  repo-owned Hermes ACP adapter with separate profiles, sessions, memory, prompts, models, and grants.
+  repo-owned Hermes ACP adapter with separate profiles, sessions, memory, prompts, parent models,
+  bounded-subagent model selections, and grants.
 - Local Coder is the Hermes delegate Card `card_local_coder` / profile `coder`, owns work against an
   explicitly selected local repository, remains a Magentic-One option, and is not Agent Builder.
 - Agent Builder is a separate Hermes delegate Card/profile directly connected from Main. It owns
@@ -305,6 +306,12 @@ LiquidAIty front door, not the name of a third-party UI. Its default execution m
 Main is not a distinct card type and must not be structurally forbidden from using the same card-owned
 Hermes Kanban/swarm capability when explicitly selected. The adapter preserves saved prompt/profile/
 model/tool authority and real streaming/session/failure behavior.
+Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
+selection into the bound native profile and reads it back before inference; actual child provider/model
+and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,
+Kanban worker selection, Magentic-One, or Constellation. External-memory selection remains native
+profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
+general Card memory-provider field or reconfigures memory at Run start.
 
 ### Hermes planning/memory/KnowGraph helper
 
@@ -475,6 +482,7 @@ A saved card is the sole permanent authority for:
 identity
 prompt
 provider/model/profile
+bounded native subagent model
 runtime type and binding
 enabled state
 tool and capability grants

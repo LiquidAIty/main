@@ -24,6 +24,19 @@ import AdaptiveCardTerminal, {
 } from '../features/agentbuilder/console/AdaptiveCardTerminal';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
+type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
+const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
+  provider: 'openai',
+  accessMode: 'chatgpt-account',
+  modelKey: 'gpt-5.6-luna',
+  providerModelId: 'gpt-5.6-luna',
+};
+
+function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] {
+  return provider === 'openrouter' ? 'openrouter-api'
+    : provider === 'openai' ? 'chatgpt-account'
+    : 'openai-api';
+}
 export type InputDictionaryEditorOption = { value: string; label: string };
 export type InputDictionaryEditorField = {
   name: string;
@@ -546,6 +559,7 @@ export function AgentManager({
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
   const [modelKey, setModelKey] = useState('');
+  const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [hermesProfile, setHermesProfile] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
@@ -735,6 +749,12 @@ export function AgentManager({
         : '',
     );
     setModelKey(localConfig.model_key || '');
+    const savedSubagentModel = localConfig.runtime_options?.subagentModel;
+    setSubagentModel(
+      localConfig.runtime.kind === 'hermes' && savedSubagentModel
+        ? savedSubagentModel
+        : DEFAULT_SUBAGENT_MODEL,
+    );
     setHermesProfile(localConfig.runtime.kind === 'hermes' ? localConfig.runtime.profile : '');
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
@@ -878,6 +898,7 @@ export function AgentManager({
         ...(localConfig.runtime_options || {}),
         toolCatalogPolicy: runtimeKind === 'hermes' ? 'all_healthy' : 'selected',
         disabledTools: runtimeKind === 'hermes' ? parseListText(disabledToolsText) : [],
+        subagentModel: runtimeKind === 'hermes' ? subagentModel : null,
       },
       role: promptParts.role,
     };
@@ -890,6 +911,7 @@ export function AgentManager({
     provider,
     accessMode,
     modelKey,
+    subagentModel,
     reasoningEffort,
     temperature,
     maxTokens,
@@ -1124,6 +1146,15 @@ export function AgentManager({
   ]);
 
   const availableModels = provider ? modelsByProvider[provider] || [] : [];
+  const subagentCatalogOptions = Object.entries(modelsByProvider).flatMap(([catalogProvider, models]) => (
+    models.map((model) => ({ provider: catalogProvider, ...model }))
+  ));
+  const subagentModelAvailable = subagentCatalogOptions.some((option) => (
+    option.provider === subagentModel.provider
+    && option.key === subagentModel.modelKey
+    && option.providerModelId === subagentModel.providerModelId
+  ));
+  const subagentSelectValue = `${subagentModel.provider}\u0000${subagentModel.modelKey}`;
   const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
   const runtimeKindField = editorField('runtimeKind');
   const runtimeModeField = editorField('runtimeMode');
@@ -1488,34 +1519,88 @@ export function AgentManager({
                 style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
               >
                 <div style={{ display: 'grid', gap: 3 }}>
-                  <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Asynchronous self-learning</strong>
+                  <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Subagent model</strong>
                   <span style={{ color: '#80969F', fontSize: 10.5 }}>
-                    {nativeHermesState.native.backgroundReview.enabled
-                      ? `${nativeHermesState.native.backgroundReview.provider} · ${nativeHermesState.native.backgroundReview.model || 'parent model'}`
-                      : 'Disabled for this native profile'}
+                    Saved: {subagentModel.provider} · {subagentModel.providerModelId} · {subagentModel.accessMode}
+                    {!subagentModelAvailable ? ' · unavailable/stale in current catalog' : ''}
                   </span>
                   <span style={{ color: '#80969F', fontSize: 10 }}>
-                    Native Hermes reviews eligible completed turns with only profile memory/skill tools; the foreground response does not wait for the model call.
+                    Native: {nativeHermesState.native.subagentModel.provider || 'not materialized'} · {nativeHermesState.native.subagentModel.model || 'not materialized'} · {nativeHermesState.subagentModelMaterialization}. The next eligible Run materializes this saved choice for native delegation and asynchronous profile-only skill review.
                   </span>
                 </div>
-                <button
-                  type="button"
-                  disabled={nativeApplyStatus === 'applying'}
-                  onClick={() => void runNativeApply({
-                    method: 'profiles.configure',
-                    params: {
-                      background_review: {
-                        enabled: true,
-                        provider: 'openai-codex',
-                        model: 'gpt-5.6-luna',
-                        max_input_tokens: 120000,
-                      },
-                    },
-                  })}
+                <select
+                  aria-label="Subagent model"
+                  value={subagentSelectValue}
+                  onChange={(event) => {
+                    const [selectedProvider, selectedKey] = event.target.value.split('\u0000');
+                    const selected = (modelsByProvider[selectedProvider] || [])
+                      .find((option) => option.key === selectedKey);
+                    if (!selected) return;
+                    setSubagentModel({
+                      provider: selectedProvider,
+                      accessMode: subagentAccessMode(selectedProvider),
+                      modelKey: selected.key,
+                      providerModelId: selected.providerModelId,
+                    });
+                    markDraftDirty();
+                  }}
                 >
-                  Use account Luna
-                </button>
+                  {!subagentModelAvailable ? (
+                    <option value={subagentSelectValue}>
+                      Unavailable saved · {subagentModel.providerModelId}
+                    </option>
+                  ) : null}
+                  {subagentCatalogOptions.map((option) => (
+                    <option
+                      key={`${option.provider}:${option.key}`}
+                      value={`${option.provider}\u0000${option.key}`}
+                    >
+                      {option.provider} · {option.label}
+                    </option>
+                  ))}
+                </select>
               </section>
+              {runtimeMode === 'main' && nativeHermesState.native.honcho ? (
+                <section
+                  data-testid="main-honcho-status"
+                  style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
+                >
+                  <div style={{ display: 'grid', gap: 3 }}>
+                    <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Main Honcho</strong>
+                    <span style={{ color: '#80969F', fontSize: 10.5 }}>
+                      {nativeHermesState.native.honcho.configurationStatus === 'not_configured'
+                        ? 'Not configured'
+                        : nativeHermesState.native.honcho.connectionStatus === 'configured_unreachable'
+                          ? 'Configured but unreachable'
+                          : nativeHermesState.native.honcho.connectionStatus === 'connected'
+                            ? 'Connected'
+                            : 'Configured; connection not checked'}
+                      {' · '}{nativeHermesState.native.honcho.target}
+                      {nativeHermesState.native.honcho.availabilityReason
+                        ? ` · ${nativeHermesState.native.honcho.availabilityReason}`
+                        : ''}
+                    </span>
+                    <span style={{ color: '#80969F', fontSize: 10 }}>
+                      Direct Main conversations use native Honcho fail-open when selected. Contextualized GPT-plugin Main turns report Honcho bypassed and neither recall nor write it.
+                    </span>
+                    <span style={{ color: '#80969F', fontSize: 10 }}>
+                      Setup: {nativeHermesState.native.honcho.setupAction} · Status: {nativeHermesState.native.honcho.statusAction}. Secrets are never returned to the Card.
+                    </span>
+                  </div>
+                  <select
+                    aria-label="Main Honcho mode"
+                    value={nativeHermesState.native.honcho.selected ? 'honcho' : 'builtin'}
+                    disabled={nativeApplyStatus === 'applying'}
+                    onChange={(event) => void runNativeApply({
+                      method: 'profiles.configure',
+                      params: { memory_provider: event.target.value },
+                    })}
+                  >
+                    <option value="builtin">Built-in only</option>
+                    <option value="honcho">Honcho</option>
+                  </select>
+                </section>
+              ) : null}
               <HermesSkillGraph
                 graph={nativeHermesState.native.learning.graph}
                 profile={nativeHermesState.binding.profile}

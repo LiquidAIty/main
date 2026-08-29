@@ -174,10 +174,15 @@ def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
     native_child_id = str(getattr(child, "_subagent_id", "") or "")
     if not native_child_id:
         raise HostSessionConfigError("hermes_host_native_child_id_missing")
+    child_provider = str(getattr(child, "provider", "") or "").strip()
+    child_model = str(getattr(child, "model", "") or "").strip()
+    if bool(child_provider) != bool(child_model):
+        raise HostSessionConfigError("hermes_host_child_model_configuration_incomplete")
     response = requester("session/create_execution_context", {
         "sessionId": session_id,
         "parentExecutionContextId": parent_context_id,
         "nativeChildId": native_child_id,
+        **({"provider": child_provider, "model": child_model} if child_provider else {}),
     })
     if not isinstance(response, dict):
         raise HostSessionConfigError("hermes_host_child_execution_response_invalid")
@@ -216,11 +221,22 @@ def finish_host_child_execution(
         )
         if isinstance(usage, Mapping) and usage.get(key) is not None
     }
+    configuration = {
+        "provider": str(getattr(child, "provider", "") or "").strip(),
+        "model": str(getattr(child, "model", "") or "").strip(),
+        "fallbackOccurred": bool(
+            getattr(child, "_host_model_fallback_occurred", False)
+        ),
+        "fallbackReason": str(
+            getattr(child, "_host_model_fallback_reason", "") or ""
+        )[:2048],
+    }
     requester("session/finish_execution_context", {
         "executionContextId": context_id,
         "state": state if state in {"completed", "failed", "cancelled"} else "failed",
         **({"errorSummary": str(error_summary)[:2048]} if error_summary else {}),
         **({"usage": safe_usage} if safe_usage else {}),
+        "configuration": configuration,
     })
 
 

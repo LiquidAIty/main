@@ -59,6 +59,13 @@ KNOWN_RUNTIME_OPTION_FIELDS = {
     "provider", "modelKey", "providerModelId", "accessMode", "reasoningEffort",
     "temperature", "maxTokens", "maxTurns", "enabled",
 }
+
+SUBAGENT_MODEL_FIELDS = {
+    "provider", "accessMode", "modelKey", "providerModelId",
+}
+SUBAGENT_ACCESS_MODES = {
+    "chatgpt-account", "openai-api", "openrouter-api",
+}
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
     "parentGraphId", "prompt", "outputContract", "runtime",
@@ -439,6 +446,10 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         for field in GRANT_FIELDS.values()
     }
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
+    if "subagentModel" in extensions:
+        extensions["subagentModel"] = _subagent_model_selection(
+            extensions["subagentModel"]
+        )
     if "script" in extensions:
         try:
             extensions["script"] = saved_script(extensions["script"])
@@ -479,6 +490,24 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
     if stable["kind"] != "agent":
         raise CardDomainError("card_kind_unsupported")
     return stable
+
+
+def _subagent_model_selection(value: Any) -> dict[str, str] | None:
+    """Validate the saved desired child-model selector without consulting availability.
+
+    Stale native selections remain durable and inspectable. Availability and
+    credential resolution belong to the bound Hermes profile at Run start.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != SUBAGENT_MODEL_FIELDS:
+        raise CardDomainError("card_subagent_model_invalid")
+    normalized = {key: str(value.get(key) or "").strip() for key in SUBAGENT_MODEL_FIELDS}
+    if any(not item or len(item) > 256 for item in normalized.values()):
+        raise CardDomainError("card_subagent_model_invalid")
+    if normalized["accessMode"] not in SUBAGENT_ACCESS_MODES:
+        raise CardDomainError("card_subagent_model_access_mode_invalid")
+    return normalized
 
 
 def _insert_revision(
@@ -2054,6 +2083,9 @@ def _prepare_invocation(
         "maxTokens": options.get("maxTokens"),
         "maxTurns": options.get("maxTurns"),
     }
+    subagent_model = _subagent_model_selection(options.get("subagentModel"))
+    if subagent_model is not None:
+        runtime_options["subagentModel"] = subagent_model
     if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:
@@ -2832,6 +2864,9 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "runtimeKind": str(row.get("runtime_kind") or ""),
         "runtimeMode": str(row.get("runtime_mode") or ""),
         "runtimeProfile": str(row.get("runtime_profile") or ""),
+        "provider": str(row.get("provider") or "") or None,
+        "model": str(row.get("provider_model_id") or row.get("model_key") or "") or None,
+        "accessMode": str(row.get("access_mode") or "") or None,
         "state": str(row.get("state") or ""),
         "nativePhase": str(row.get("native_phase") or "") or None,
         "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
@@ -2845,6 +2880,8 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "cachedTokens": row.get("provider_cached_tokens"),
         "reasoningTokens": row.get("provider_reasoning_tokens"),
         "costUsd": float(cost) if cost is not None else None,
+        "modelFallbackOccurred": row.get("model_fallback_occurred") is True,
+        "modelFallbackReason": str(row.get("model_fallback_reason") or "") or None,
         "startedAt": timestamp("started_at"),
         "finishedAt": timestamp("finished_at"),
         "result": str(row.get("final_result") or "") or None,
@@ -2893,7 +2930,8 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                     )]
                 cursor.execute(
                     """
-                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
+                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title,
+                           revision.runtime_extension_config
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
@@ -2911,7 +2949,8 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                 }[selector]
                 cursor.execute(
                     f"""
-                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
+                    SELECT run.*, revision.card_id, revision.runtime_profile, revision.title,
+                           revision.runtime_extension_config
                     FROM ag_catalog.agent_runs AS run
                     JOIN ag_catalog.agent_card_revisions AS revision
                       ON revision.revision_id=run.target_card_revision_id
@@ -2951,7 +2990,8 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
     if children_by_id:
         cursor.execute(
             """
-            SELECT run.*, revision.card_id, revision.runtime_profile, revision.title
+            SELECT run.*, revision.card_id, revision.runtime_profile, revision.title,
+                   revision.runtime_extension_config
             FROM ag_catalog.agent_runs AS run
             JOIN ag_catalog.agent_card_revisions AS revision
               ON revision.revision_id=run.target_card_revision_id
@@ -2994,9 +3034,14 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
         "configuration": {
             "provider": row.get("provider"),
             "model": row.get("provider_model_id") or row.get("model_key"),
+            "fallbackOccurred": row.get("model_fallback_occurred") is True,
+            "fallbackReason": str(row.get("model_fallback_reason") or "") or None,
             "profile": row.get("runtime_profile"),
             "grantedTools": None,
             "loadedSkills": None,
+            "subagentModelDesired": dict(row.get("runtime_extension_config") or {}).get(
+                "subagentModel"
+            ),
         },
         "parentRunIds": [str(item["parent_id"]) for item in lineage if str(item["child_id"]) == run_id],
         "children": children,
@@ -3388,6 +3433,10 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     card_id = _required_text(payload.get("cardId"), "card_id")
     native_child_id = _required_text(payload.get("nativeChildId"), "native_child_id")
+    child_provider = str(payload.get("provider") or "").strip()
+    child_model = str(payload.get("model") or "").strip()
+    if bool(child_provider) != bool(child_model):
+        raise CardDomainError("hermes_child_model_configuration_incomplete")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -3427,8 +3476,10 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
                 run_id, root["project_id"], root["deck_id"],
                 target_owner.get("revision_id", target_owner.get("target_card_revision_id")),
                 target_owner["runtime_kind"], target_owner["runtime_mode"],
-                target_owner["provider"], target_owner["model_key"],
-                target_owner["provider_model_id"], target_owner["access_mode"], correlation_id,
+                child_provider or target_owner["provider"],
+                child_model or target_owner["model_key"],
+                child_model or target_owner["provider_model_id"],
+                target_owner["access_mode"], correlation_id,
             ),
         )
     prepared = {
@@ -3471,6 +3522,16 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         raise CardDomainError("run_result_reconciliation_invalid")
     if reconcile_native_terminal and reconcile_persisted_result:
         raise CardDomainError("run_reconciliation_mode_conflict")
+    child_provider = str(payload.get("provider") or "").strip()
+    child_model = str(payload.get("model") or "").strip()
+    if bool(child_provider) != bool(child_model):
+        raise CardDomainError("run_child_model_configuration_incomplete")
+    fallback_occurred = payload.get("modelFallbackOccurred", False)
+    if not isinstance(fallback_occurred, bool):
+        raise CardDomainError("run_model_fallback_flag_invalid")
+    fallback_reason = str(payload.get("modelFallbackReason") or "").strip()
+    if fallback_occurred and not fallback_reason:
+        raise CardDomainError("run_model_fallback_reason_required")
     if reconcile_persisted_result:
         final_result = str(payload.get("finalResult") or "")
         expected_sha256 = _required_text(
@@ -3508,6 +3569,11 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             cursor.execute(
                 f"""
                 UPDATE ag_catalog.agent_runs SET state=%s, finished_at=NOW(),
+                  provider=COALESCE(%s, provider),
+                  model_key=COALESCE(%s, model_key),
+                  provider_model_id=COALESCE(%s, provider_model_id),
+                  model_fallback_occurred=%s,
+                  model_fallback_reason=%s,
                   provider_thread_ref=%s, provider_turn_ref=%s::text,
                   error_code=%s, error_summary=%s,
                   provider_input_tokens=%s, provider_output_tokens=%s,
@@ -3521,7 +3587,9 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                 WHERE run_id=%s AND {terminal_condition}
                 """,
                 (
-                    state, payload.get("providerThreadRef"), payload.get("providerTurnRef"),
+                    state, child_provider or None, child_model or None, child_model or None,
+                    fallback_occurred, fallback_reason or None,
+                    payload.get("providerThreadRef"), payload.get("providerTurnRef"),
                     payload.get("errorCode"), payload.get("errorSummary"),
                     payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
                     payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
@@ -3544,7 +3612,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                    provider_reasoning_tokens, tool_call_count, total_cost_usd,
                    native_phase, native_task_completed_count,
                    native_task_total_count, native_active_worker_count,
-                   final_result
+                   final_result, model_fallback_occurred, model_fallback_reason
             FROM ag_catalog.agent_runs WHERE run_id=%s
             """,
             (run_id,),
@@ -3611,6 +3679,10 @@ def _observe_run_finish(
                     run.providerReasoningTokens=$providerReasoningTokens,
                     run.toolCallCount=$toolCallCount,
                     run.totalCostUsd=$totalCostUsd,
+                    run.provider=$provider,
+                    run.model=$model,
+                    run.modelFallbackOccurred=$modelFallbackOccurred,
+                    run.modelFallbackReason=$modelFallbackReason,
                     run.nativePhase=$nativePhase,
                     run.nativeTaskCompletedCount=$tasksCompleted,
                     run.nativeTaskTotalCount=$tasksTotal,
@@ -3629,6 +3701,10 @@ def _observe_run_finish(
                     "providerReasoningTokens": (payload or {}).get("providerReasoningTokens"),
                     "toolCallCount": (payload or {}).get("toolCallCount"),
                     "totalCostUsd": (payload or {}).get("totalCostUsd"),
+                    "provider": (payload or {}).get("provider"),
+                    "model": (payload or {}).get("model"),
+                    "modelFallbackOccurred": (payload or {}).get("modelFallbackOccurred", False),
+                    "modelFallbackReason": (payload or {}).get("modelFallbackReason"),
                     "nativePhase": (payload or {}).get("nativePhase"),
                     "tasksCompleted": (payload or {}).get("tasksCompleted"),
                     "tasksTotal": (payload or {}).get("tasksTotal"),

@@ -30,6 +30,10 @@ they do not select a runtime implementation.
 ### Current source contracts
 
 - Saved Cards own identity, prompt, provider/model/profile, runtime binding, enabled state, and grants.
+- Each saved Hermes Card also owns a desired bounded-subagent model. Run start materializes that
+  selection into the same native profile, reads it back, and records actual child provider/model plus
+  fallback state without rewriting the parent model. Memory-provider choice remains native profile
+  configuration; only Main exposes the bounded Honcho setup/status control.
 - `runtime.kind` plus `runtime.mode` selects Hermes Main/delegate/Kanban, AutoGen Assistant, or native
   Magentic-One. Card names and template text do not select runtimes.
 - Main, Agent Builder, Local Coder, and Kanban are separate saved Hermes Cards with separate profiles
@@ -62,8 +66,9 @@ they do not select a runtime implementation.
 - Every Hermes-profile Card reads its real native Learning Journey/SkillGraph in the existing Skills
   tab. The graph is a projection of profile skills, usage and curated-memory chunks, not another store.
 - Eligible completed Hermes Runs may launch one deduplicated, asynchronous native background review.
-  LiquidAIty profiles can route it to account-backed `gpt-5.6-luna`; it can patch only the owning
-  profile's native memory/skills and may legitimately make no change.
+  The owning Card's subagent selector configures both native delegation and this review; new Hermes
+  Cards default to account-backed `gpt-5.6-luna`. It can patch only the owning profile's native
+  memory/skills and may legitimately make no change.
 - Main context routing is mutually exclusive: contextualized external-plugin turns keep Honcho tools
   callable but bypass automatic Honcho inject/observe/write; direct native Main turns use Main-only
   Honcho fail-open. Workers and background-review children receive neither Main Honcho context nor sync.
@@ -74,14 +79,17 @@ they do not select a runtime implementation.
 - Main-to-Kanban execution and separate-session memory behavior.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
-- One canonical reload must load the Constellation semantic-stop bookkeeping fix; the separate external
-  GPT-plugin acceptance must then fetch the current 76-tool catalog in a fresh conversation.
+- A canonical reload must load the saved subagent selector chain, child receipt migration,
+  Constellation operation route, bounded KnowGraph/profile readback, and the corrected Main-only Honcho
+  Inspector status. Local proof must record the startup-specific catalog count/hash and retain one actual
+  account-Luna child receipt without issuing a duplicate paid call.
 - Direct Main routing and fail-open completion are live-proven. Actual Honcho recall/write success remains
   unavailable until the intended service and account credential/base URL are present.
 
-Live proof already completed: one direct saved Main account/model response; one saved Local Coder
-account-backed Run; a real Holographic add/search/remove lifecycle with zero retained test facts; and one
-deduplicated asynchronous Luna background-review child whose valid result was no new skill.
+Live proof already completed before this integration pass: one direct saved Main account/model response;
+one saved Local Coder account-backed Run; a real Holographic add/search/remove lifecycle with zero retained
+test facts; and one deduplicated asynchronous Luna background-review child whose valid result was no new
+skill. The prior child does not by itself prove the new saved-Card selector and actual-model receipt chain.
 
 Structural tests are not substitutes for these live proofs.
 
@@ -183,6 +191,9 @@ These are recommendations for later saved-prompt review, not grant changes or ca
 - Main should begin with its exact server context, use ThinkGraph/Constellation for project reasoning,
   and call downstream Cards only through saved topology. Contextualized plugin turns should keep the
   Honcho bypass marker; direct Main should retain native Main-only Honcho fail-open behavior.
+- Memory use should stay deliberate: profile history and curated memory, then the profile's native
+  external provider when explicitly configured, then a relevant native skill, followed by selected ThinkGraph/KnowGraph/CodeGraph reads. Do
+  not inject all authorities or pass credential/receipt tokens between agents.
 - Agent Builder should follow `IDD/catalog inspect -> select existing object/tool -> preview exact saved
   change -> save -> native/readback verification`. It may use CodeGraph for this repository but should
   not send the whole IDD palette to ordinary Cards.
@@ -234,8 +245,9 @@ alternate startup instructions.
 4. Prove Main → Kanban with separate session/memory.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
-7. Rebuild the canonical IDD/application/MCP catalogs, preserve disabled entries, and prove real local
-   read/write/readback lifecycles before the separate external GPT-plugin acceptance.
+7. Complete one loaded-runtime selector/receipt proof, rebuild the canonical IDD/application/MCP
+   catalogs, preserve disabled entries, and prove real local read/write/readback lifecycles before the
+   separate external GPT-plugin acceptance.
 8. Only then consider prompt/skill/recipe recommendations and later catalog reduction; recommendations
    do not change grants or remove tools.
 

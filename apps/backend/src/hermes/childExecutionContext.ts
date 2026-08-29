@@ -16,6 +16,8 @@ export type HermesExecutionContext = {
   cardId: string;
   runtimeMode: 'main' | 'delegate' | 'kanban';
   nativeChildId: string | null;
+  childProvider: string | null;
+  childModel: string | null;
   grantedTools: string[];
   expiresAt: number;
   state: 'active' | 'closing' | 'closed';
@@ -73,6 +75,8 @@ export function registerHermesRootExecutionContext(args: {
     cardId: required[5],
     runtimeMode: args.runtimeMode,
     nativeChildId: null,
+    childProvider: null,
+    childModel: null,
     grantedTools: uniqueStrings(args.grantedTools),
     expiresAt: (args.now ?? Date.now()) + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
@@ -93,11 +97,16 @@ export async function createHermesChildExecutionContext(args: {
   sessionId: string;
   parentExecutionContextId: string;
   nativeChildId: string;
+  provider?: string;
+  model?: string;
   request?: typeof requestPythonRailsJson;
 }): Promise<HermesExecutionContext> {
   const parent = activeContext(args.parentExecutionContextId);
   const sessionId = String(args.sessionId || '').trim();
   const nativeChildId = String(args.nativeChildId || '').trim();
+  const provider = String(args.provider || '').trim();
+  const model = String(args.model || '').trim();
+  if (Boolean(provider) !== Boolean(model)) throw new Error('hermes_child_model_configuration_incomplete');
   if (!sessionId || sessionId !== parent.sessionId) throw new Error('hermes_child_session_mismatch');
   if (!nativeChildId) throw new Error('hermes_native_child_id_required');
   const runId = `hermes_child_${randomUUID()}`;
@@ -111,6 +120,8 @@ export async function createHermesChildExecutionContext(args: {
     cardId: parent.cardId,
     runtimeMode: parent.runtimeMode,
     nativeChildId,
+    childProvider: provider || null,
+    childModel: model || null,
     expiresAt: Date.now() + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
     grantedTools: [...parent.grantedTools],
@@ -129,6 +140,7 @@ export async function createHermesChildExecutionContext(args: {
       conversationId: context.conversationId,
       cardId: context.cardId,
       nativeChildId,
+      ...(provider ? { provider, model } : {}),
     }),
   });
   contexts.set(context.contextId, context);
@@ -171,6 +183,12 @@ export async function finishHermesExecutionContext(args: {
     providerOutputTokens?: number;
     totalCostUsd?: number;
   };
+  configuration?: {
+    provider?: string;
+    model?: string;
+    fallbackOccurred?: boolean;
+    fallbackReason?: string;
+  };
   request?: typeof requestPythonRailsJson;
 }): Promise<boolean> {
   const context = contexts.get(String(args.contextId || '').trim());
@@ -191,6 +209,10 @@ export async function finishHermesExecutionContext(args: {
           providerInputTokens: args.usage?.providerInputTokens,
           providerOutputTokens: args.usage?.providerOutputTokens,
           totalCostUsd: args.usage?.totalCostUsd,
+          provider: String(args.configuration?.provider || '').trim() || context.childProvider || undefined,
+          model: String(args.configuration?.model || '').trim() || context.childModel || undefined,
+          modelFallbackOccurred: args.configuration?.fallbackOccurred === true,
+          modelFallbackReason: String(args.configuration?.fallbackReason || '').trim() || undefined,
         }),
       });
     }

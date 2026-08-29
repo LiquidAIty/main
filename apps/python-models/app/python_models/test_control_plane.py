@@ -296,6 +296,30 @@ class TestCardCreate:
         }
         assert fake_backend["deck"]["edges"] == DECK["edges"]
 
+    def test_new_hermes_card_gets_the_account_luna_subagent_default(self, fake_backend):
+        result = asyncio.run(cp.card_create({
+            "projectId": "p",
+            "deckId": "d",
+            "expectedRevision": "rev1",
+            "title": "Hermes Researcher",
+            "role": "Research",
+            "prompt": "Return cited evidence.",
+            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
+            "model": {
+                "provider": "openai",
+                "modelKey": "gpt-5.6-sol",
+                "providerModelId": "gpt-5.6-sol",
+                "accessMode": "chatgpt-account",
+            },
+        }))
+
+        assert result["card"]["runtimeOptions"]["subagentModel"] == {
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-luna",
+            "providerModelId": "gpt-5.6-luna",
+        }
+
     def test_rejects_unclassified_tools_and_default_quick_add_title(self, fake_backend):
         base = {
             "projectId": "p",
@@ -396,6 +420,29 @@ class TestCardUpdateConfiguration:
             "modelKey": "gpt-5.6-sol",
             "providerModelId": "gpt-5.6-sol",
         }
+
+    def test_hermes_subagent_model_is_saved_without_claiming_native_availability(
+        self, fake_backend, monkeypatch,
+    ):
+        monkeypatch.setitem(
+            DECK["nodes"][0],
+            "runtime",
+            {"kind": "hermes", "mode": "delegate", "profile": "research"},
+        )
+        selection = {
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-luna",
+            "providerModelId": "gpt-5.6-luna",
+        }
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {"subagentModel": selection},
+        }))
+
+        assert result["ok"] is True
+        saved = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
+        assert saved["runtimeOptions"]["subagentModel"] == selection
 
     def test_access_mode_must_be_supported(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_access_mode_invalid"):

@@ -27,18 +27,23 @@ These calls require explicit approval. Structural tests must not be presented as
 
 ## Hermes memory
 
-- Measure Main, Coder, and Kanban profile isolation over real sessions.
-- Decide whether native Hermes holographic memory is sufficient before adding any Card-level SQLite
-  memory contract.
+- Measure recall quality and profile isolation across longer real Main, Coder, Agent Builder, and
+  Kanban sessions without copying data between profiles.
+- Test Honcho cloud or self-hosted recall/write only after its intended native setup flow supplies the
+  owning profile's real OAuth/API-key or base-URL configuration.
+- Compare the already-installed native external-memory providers only through their native profile
+  selections; do not add a Card-level provider field, SQLite store, or parallel provider registry.
 - Keep memory separation intentional; do not create one automatic cross-agent memory dump.
 
-## Constellation semantic mode
+## Constellation quality work
 
-- Keep semantic embeddings outside startup and Card-call materialization.
-- Add an embedding daemon only through Constellation's documented boundary and only after measured
-  native-context quality justifies the additional service.
-- Until then, expose semantic mode as degraded while preserving real native topology; never create
-  deterministic fake vectors or synthetic memories.
+- Measure the current process-owned BGE-M3 semantic context quality before changing embedding models,
+  dimensions, lifecycle, or startup policy.
+- Exercise bounded autonomy and bulk re-embedding on meaningful retained data only through their
+  existing saved grants, limits, cancellation controls, receipts, and exact database owner.
+- Revisit `kickoffSeedExpansion`, `draftSoulCore`, and `rememberRaw` only if upstream supplies their
+  required provider/launcher contracts and a cancellable timeout for the raw LLM fetch. Do not add a
+  second engine process, database, or hidden model adapter.
 
 ## UI after runtime proof
 

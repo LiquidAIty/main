@@ -19,6 +19,38 @@ export type NativeHermesCardView = {
       model: string;
       maxInputTokens: number | null;
     };
+    subagentModel: { provider: string; model: string };
+    memory: {
+      selected: string;
+      installedProviders: string[];
+      installed: boolean;
+      available: boolean;
+      availabilityReason: string | null;
+      target: string;
+      credentialStatus: 'not_required' | 'not_configured' | 'configured' | 'unknown';
+      credentialSource: string | null;
+      setupAction: string | null;
+      historyDatabasePath: string;
+      curatedMemoryEnabled: boolean;
+      userProfileEnabled: boolean;
+      database: null | {
+        kind: 'sqlite';
+        path: string;
+        exists: boolean;
+        factCount: number;
+      };
+    };
+    honcho: null | {
+      selected: boolean;
+      configurationStatus: 'not_configured' | 'configured';
+      connectionStatus: 'not_configured' | 'not_checked' | 'configured_unreachable' | 'connected';
+      availabilityReason: string | null;
+      target: 'honcho_cloud' | 'honcho_self_hosted' | 'honcho_cloud_or_self_hosted_unresolved';
+      credentialStatus: 'not_configured' | 'configured' | 'unknown';
+      credentialSource: string | null;
+      setupAction: string;
+      statusAction: string;
+    };
     skills: Array<{ name: string; enabled: boolean }>;
     toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
     toolsetsPinned: boolean;
@@ -51,7 +83,16 @@ export type NativeHermesCardView = {
       };
     };
   };
-  nativeApply: 'explicit';
+  desired: {
+    subagentModel: {
+      provider: string;
+      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
+      modelKey: string;
+      providerModelId: string;
+    } | null;
+  };
+  subagentModelMaterialization: 'not_saved' | 'materialized' | 'diverged';
+  nativeApply: 'run_start';
   cardSaveMutatesNative: false;
   binding: {
     profile: string;

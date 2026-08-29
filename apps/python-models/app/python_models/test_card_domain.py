@@ -864,12 +864,18 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
         "runtime_mode": "kanban",
         "runtime_profile": "liquidaity-hermes-steward",
         "provider_thread_ref": "t_retained_root",
+        "provider": "openai-codex",
+        "provider_model_id": "gpt-5.6-luna",
+        "access_mode": "chatgpt-account",
         "state": "failed",
     })
 
     assert projected["runId"] == "run-one"
     assert projected["runtimeProfile"] == "liquidaity-hermes-steward"
     assert projected["nativeRootId"] == "t_retained_root"
+    assert projected["provider"] == "openai-codex"
+    assert projected["model"] == "gpt-5.6-luna"
+    assert projected["accessMode"] == "chatgpt-account"
 
 
 @pytest.mark.parametrize("run_tools, expected_tools", [
@@ -1549,6 +1555,24 @@ def test_disabled_script_preserves_input_and_saved_configuration(monkeypatch):
     assert stable["runtimeExtensions"]["script"]["source"] == "not executable"
     assert stable["runtimeExtensions"]["script"]["nativeSupport"]["available"] is False
     assert stable["grants"]["tools"] == ["calculator"]
+
+
+def test_saved_hermes_subagent_model_survives_canonical_idf_materialization(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    selection = {
+        "provider": "openai",
+        "accessMode": "chatgpt-account",
+        "modelKey": "gpt-5.6-luna",
+        "providerModelId": "gpt-5.6-luna",
+    }
+    card["runtimeOptions"]["subagentModel"] = selection
+
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+
+    assert invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["subagentModel"] == selection
+    assert invocation["idf"]["stableSavedCardContext"]["provider"]["providerModelId"] != "gpt-5.6-luna"
+    assert card_domain._stable_card(card)["runtimeExtensions"]["subagentModel"] == selection
 
 
 @pytest.mark.parametrize("runtime", [

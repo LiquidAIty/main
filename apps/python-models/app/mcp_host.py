@@ -2413,6 +2413,24 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "required": ["provider", "modelKey", "accessMode"],
                         "additionalProperties": False,
                     },
+                    "subagentModel": {
+                        "type": "object",
+                        "description": (
+                            "Saved desired model for bounded native Hermes delegated children and "
+                            "background skill review. Omit for AutoGen Cards."
+                        ),
+                        "properties": {
+                            "provider": {"type": "string", "minLength": 1},
+                            "accessMode": {
+                                "type": "string",
+                                "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
+                            },
+                            "modelKey": {"type": "string", "minLength": 1},
+                            "providerModelId": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["provider", "accessMode", "modelKey", "providerModelId"],
+                        "additionalProperties": False,
+                    },
                     "tools": {
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
@@ -2459,7 +2477,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
                 "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
-                "temperature, maxTokens, explicit tool/native-tool/skill/toolset/MCP selections, "
+                "temperature, maxTokens, the Hermes subagent model, explicit "
+                "tool/native-tool/skill/toolset/MCP selections, "
                 "optional Python Card Script source. "
                 "Everything else (runtime code, "
                 "shell config, hidden tools, run authority, worker selection) is rejected."
@@ -2490,6 +2509,20 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             },
                             "temperature": {"type": "number"},
                             "maxTokens": {"type": "integer", "minimum": 1},
+                            "subagentModel": {
+                                "type": "object",
+                                "properties": {
+                                    "provider": {"type": "string", "minLength": 1},
+                                    "accessMode": {
+                                        "type": "string",
+                                        "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
+                                    },
+                                    "modelKey": {"type": "string", "minLength": 1},
+                                    "providerModelId": {"type": "string", "minLength": 1},
+                                },
+                                "required": ["provider", "accessMode", "modelKey", "providerModelId"],
+                                "additionalProperties": False,
+                            },
                             "script": CardScript.model_json_schema(),
                             "tools": {
                                 "type": "array",
@@ -3585,7 +3618,8 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.inspect": {"projectId", "deckId"},
     "card.create": {
         "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
-        "runtime", "model", "tools", "position", "templateId",
+        "runtime", "model", "subagentModel", "tools", "nativeTools",
+        "skills", "toolsets", "mcpConnectionIds", "position", "templateId",
     },
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},

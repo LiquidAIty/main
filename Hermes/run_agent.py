@@ -1930,6 +1930,16 @@ class AIAgent:
             # context before the native asynchronous review starts. Ordinary
             # CLI/gateway sessions have no host requester and remain unchanged.
             review_run._subagent_id = "background-review"
+            configured_review_provider = str(
+                (task_cfg or {}).get("provider") or self.provider or ""
+            ).strip()
+            configured_review_model = str(
+                (task_cfg or {}).get("model") or self.model or ""
+            ).strip()
+            if configured_review_provider == "auto":
+                configured_review_provider = str(self.provider or "").strip()
+            review_run.provider = configured_review_provider
+            review_run.model = configured_review_model
             from acp_adapter.host_profiles import allocate_host_child_execution
             allocate_host_child_execution(self, review_run)
             target, _prompt = spawn_background_review_thread(

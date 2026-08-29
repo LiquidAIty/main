@@ -451,6 +451,62 @@ describe('Hermes ACP transport identity', () => {
     );
   });
 
+  it('materializes one saved Card subagent model into native delegation and background review before inference', async () => {
+    const startTurn = vi.fn(async (args: any) => ({ args }));
+    const acquire = vi.fn(() => ({ startTurn }) as never);
+    const readNative = vi.fn()
+      .mockResolvedValueOnce({
+        name: 'liquidaity-main',
+        subagent_model: { provider: '', model: '' },
+        background_review: { enabled: false, provider: 'auto', model: '' },
+        toolsets: [],
+        mcp_servers: [],
+      })
+      .mockResolvedValueOnce({
+        name: 'liquidaity-main',
+        subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
+        background_review: {
+          enabled: true,
+          provider: 'openai-codex',
+          model: 'gpt-5.6-luna',
+          max_input_tokens: 120_000,
+        },
+        toolsets: [],
+        mcp_servers: [],
+      });
+    const configure = vi.fn(async () => ({
+      ok: true,
+      applied: { subagent_model: true, background_review: true },
+    }));
+    const saved = {
+      provider: 'openai',
+      accessMode: 'chatgpt-account' as const,
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+    };
+
+    await startHermesTurnWithOnePrePromptRecovery(
+      { ...providerFreeTurnArgs(0), subagentModel: saved },
+      () => undefined,
+      acquire,
+      readNative,
+      configure,
+    );
+
+    expect(configure).toHaveBeenCalledWith('liquidaity-main', {
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+    });
+    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(startTurn.mock.calls[0][0].effectiveSubagentModel).toEqual({
+      desired: saved,
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      fallbackOccurred: false,
+      fallbackReason: null,
+    });
+  });
+
   it('requires visible completion text from the Hermes loop', () => {
     expect(requireHermesCompletionText('answer')).toBe('answer');
     expect(() => requireHermesCompletionText('  ')).toThrow('hermes_empty_completion');

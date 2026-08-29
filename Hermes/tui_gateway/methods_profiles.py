@@ -535,7 +535,8 @@ def _(rid, params: dict) -> dict:
 def _(rid, params: dict) -> dict:
     """Full configuration snapshot of one profile, for an editor UI.
 
-    Params: ``name`` (required). Result:
+    Params: ``name`` (required), plus optional ``probe_honcho`` for the
+    Main Inspector's bounded read-only reachability check. Result:
     ``{name, description, soul, model: {provider, default}, skills:
     [{name, enabled}], toolsets: [{name, description, tool_count, enabled}]}``
 
@@ -679,6 +680,264 @@ def _(rid, params: dict) -> dict:
                 if isinstance(auxiliary_cfg.get("background_review"), dict)
                 else {}
             )
+            delegation_cfg = (
+                cfg.get("delegation") if isinstance(cfg.get("delegation"), dict) else {}
+            )
+
+            # LIQUIDAITY VENDOR PATCH: secret-free native memory discovery and
+            # readiness for the bound Card Inspector. Provider IDs come from
+            # Hermes' own discovery surface; this is status/readback, not a
+            # copied catalog or a network probe.
+            memory_cfg = cfg.get("memory") if isinstance(cfg.get("memory"), dict) else {}
+            selected_memory = str(memory_cfg.get("provider") or "").strip() or "builtin"
+            installed_memory = []
+            try:
+                from plugins.memory import list_memory_provider_names
+
+                installed_memory = list_memory_provider_names()
+            except Exception:
+                installed_memory = []
+            memory_status = {
+                "selected": selected_memory,
+                "installed_providers": installed_memory,
+                "installed": selected_memory == "builtin" or selected_memory in installed_memory,
+                "available": selected_memory == "builtin",
+                "availability_reason": None,
+                "target": "profile_builtin" if selected_memory == "builtin" else "external",
+                "credential_status": "not_required" if selected_memory == "builtin" else "unknown",
+                "credential_source": "not_required" if selected_memory == "builtin" else None,
+                "setup_action": None,
+                "history_database_path": str(profile_dir / "state.db"),
+                "curated_memory_enabled": is_truthy_value(
+                    memory_cfg.get("memory_enabled"), default=True
+                ),
+                "user_profile_enabled": is_truthy_value(
+                    memory_cfg.get("user_profile_enabled"), default=True
+                ),
+                "database": None,
+            }
+            if selected_memory != "builtin":
+                memory_status["setup_action"] = (
+                    f"hermes --profile {name} memory setup {selected_memory}"
+                )
+                if selected_memory not in installed_memory:
+                    memory_status["availability_reason"] = "provider_not_installed"
+                else:
+                    try:
+                        from plugins.memory import load_memory_provider
+
+                        provider = load_memory_provider(
+                            selected_memory, register_skills=False
+                        )
+                        memory_status["available"] = bool(
+                            provider and provider.is_available()
+                        )
+                        if not memory_status["available"]:
+                            memory_status["availability_reason"] = (
+                                "provider_configuration_required"
+                            )
+                    except Exception:
+                        memory_status["availability_reason"] = (
+                            "provider_availability_check_failed"
+                        )
+
+            if selected_memory == "holographic":
+                try:
+                    plugin_cfg = (
+                        (cfg.get("plugins") or {}).get("hermes-memory-store")
+                        if isinstance(cfg.get("plugins"), dict)
+                        else {}
+                    )
+                    if not isinstance(plugin_cfg, dict):
+                        plugin_cfg = {}
+                    raw_db_path = str(
+                        plugin_cfg.get("db_path") or profile_dir / "memory_store.db"
+                    )
+                    raw_db_path = raw_db_path.replace(
+                        "$HERMES_HOME", str(profile_dir)
+                    ).replace("${HERMES_HOME}", str(profile_dir))
+                    db_path = Path(raw_db_path).expanduser()
+                    fact_count = 0
+                    if db_path.is_file():
+                        import sqlite3
+
+                        connection = sqlite3.connect(
+                            f"file:{db_path.as_posix()}?mode=ro", uri=True
+                        )
+                        try:
+                            fact_count = int(
+                                connection.execute(
+                                    "SELECT COUNT(*) FROM facts"
+                                ).fetchone()[0]
+                            )
+                        finally:
+                            connection.close()
+                    memory_status.update({
+                        "target": "profile_sqlite",
+                        "credential_status": "not_required",
+                        "credential_source": "not_required",
+                        "setup_action": None,
+                        "database": {
+                            "kind": "sqlite",
+                            "path": str(db_path),
+                            "exists": db_path.is_file(),
+                            "fact_count": fact_count,
+                        },
+                    })
+                except Exception:
+                    memory_status["availability_reason"] = (
+                        memory_status["availability_reason"]
+                        or "holographic_status_read_failed"
+                    )
+            # Resolve Honcho configuration at most once, and only when the
+            # profile selects it or Main explicitly requests Inspector status.
+            honcho = None
+            honcho_configuration = None
+            if selected_memory == "honcho" or params.get("probe_honcho") is True:
+                try:
+                    import json as _json
+                    from plugins.memory.honcho.client import (
+                        HonchoClientConfig,
+                        _host_block,
+                        profile_host_key,
+                    )
+
+                    honcho = HonchoClientConfig.from_global_config(
+                        host=profile_host_key(name)
+                    )
+                    raw_honcho = {}
+                    config_path = honcho.bound_config_path()
+                    if config_path.is_file():
+                        try:
+                            loaded_honcho = _json.loads(
+                                config_path.read_text(encoding="utf-8")
+                            )
+                            if isinstance(loaded_honcho, dict):
+                                raw_honcho = loaded_honcho
+                        except Exception:
+                            raw_honcho = {}
+                    host_block = _host_block(raw_honcho, honcho.host)
+                    oauth_block = (
+                        host_block.get("oauth")
+                        if isinstance(host_block.get("oauth"), dict)
+                        else raw_honcho.get("oauth")
+                    )
+                    configured = bool(
+                        honcho.enabled and (honcho.api_key or honcho.base_url)
+                    )
+                    self_hosted = bool(honcho.base_url)
+                    honcho_configuration = {
+                        "configuration_status": (
+                            "configured" if configured else "not_configured"
+                        ),
+                        "availability_reason": (
+                            None if configured
+                            else "honcho_credentials_or_base_url_required"
+                        ),
+                        "target": (
+                            "honcho_self_hosted" if self_hosted
+                            else "honcho_cloud"
+                        ),
+                        "credential_status": (
+                            "configured" if configured else "not_configured"
+                        ),
+                        "credential_source": (
+                            "oauth_grant"
+                            if isinstance(oauth_block, dict)
+                            and oauth_block.get("refreshToken")
+                            else f"honcho_config:{config_path}"
+                            if host_block.get("apiKey") or raw_honcho.get("apiKey")
+                            else "HONCHO_API_KEY" if honcho.api_key
+                            else "self_hosted_base_url" if self_hosted
+                            else None
+                        ),
+                    }
+                except Exception:
+                    honcho_configuration = None
+
+            if selected_memory == "honcho":
+                if honcho_configuration is None:
+                    memory_status.update({
+                        "available": False,
+                        "availability_reason": "honcho_status_read_failed",
+                        "target": "honcho_cloud_or_self_hosted_unresolved",
+                        "credential_status": "unknown",
+                    })
+                else:
+                    configured = (
+                        honcho_configuration["configuration_status"] == "configured"
+                    )
+                    memory_status.update({
+                        "available": configured,
+                        "availability_reason": honcho_configuration["availability_reason"],
+                        "target": honcho_configuration["target"],
+                        "credential_status": honcho_configuration["credential_status"],
+                        "credential_source": honcho_configuration["credential_source"],
+                        "setup_action": (
+                            None if configured
+                            else f"hermes --profile {name} memory setup honcho"
+                        ),
+                    })
+
+            # Main alone requests this separate, secret-free status block.
+            # Ordinary reads and every Run-start synchronization omit the
+            # flag and therefore perform no Honcho network I/O.
+            honcho_status = None
+            if params.get("probe_honcho") is True:
+                setup_action = f"hermes --profile {name} memory setup honcho"
+                status_action = f"hermes --profile {name} honcho status"
+                if honcho_configuration is None or honcho is None:
+                    honcho_status = {
+                        "selected": selected_memory == "honcho",
+                        "configuration_status": "not_configured",
+                        "connection_status": "not_checked",
+                        "availability_reason": "honcho_status_read_failed",
+                        "target": "honcho_cloud_or_self_hosted_unresolved",
+                        "credential_status": "unknown",
+                        "credential_source": None,
+                        "setup_action": setup_action,
+                        "status_action": status_action,
+                    }
+                else:
+                    configured = (
+                        honcho_configuration["configuration_status"] == "configured"
+                    )
+                    connection_status = (
+                        "not_configured" if not configured else "not_checked"
+                    )
+                    availability_reason = honcho_configuration["availability_reason"]
+                    if configured:
+                        try:
+                            import httpx
+
+                            probe_base_url = (
+                                honcho.base_url or "https://api.honcho.dev"
+                            ).rstrip("/")
+                            probe_timeout = min(2.0, float(honcho.timeout or 2.0))
+                            response = httpx.get(
+                                f"{probe_base_url}/health",
+                                timeout=max(0.2, probe_timeout),
+                                follow_redirects=False,
+                            )
+                            if response.status_code < 500:
+                                connection_status = "connected"
+                                availability_reason = None
+                            else:
+                                connection_status = "configured_unreachable"
+                                availability_reason = (
+                                    f"honcho_health_http_{response.status_code}"
+                                )
+                        except Exception:
+                            connection_status = "configured_unreachable"
+                            availability_reason = "honcho_health_unreachable"
+                    honcho_status = {
+                        "selected": selected_memory == "honcho",
+                        **honcho_configuration,
+                        "connection_status": connection_status,
+                        "availability_reason": availability_reason,
+                        "setup_action": setup_action,
+                        "status_action": status_action,
+                    }
 
             description = ""
             try:
@@ -708,6 +967,15 @@ def _(rid, params: dict) -> dict:
                         "model": str(review_cfg.get("model") or ""),
                         "max_input_tokens": review_cfg.get("max_input_tokens"),
                     },
+                    # LIQUIDAITY VENDOR PATCH: expose Hermes' native top-level
+                    # delegation provider/model selector without secrets. The
+                    # actual delegate_task implementation reads this section.
+                    "subagent_model": {
+                        "provider": str(delegation_cfg.get("provider") or ""),
+                        "model": str(delegation_cfg.get("model") or ""),
+                    },
+                    "memory": memory_status,
+                    "honcho": honcho_status,
                     "skills": installed,
                     "toolsets": toolsets_out,
                     "toolsets_pinned": pinned_set is not None,
@@ -732,6 +1000,8 @@ def _(rid, params: dict) -> dict:
     the pin so every toolset is enabled again), and
     ``background_review`` (object; native auxiliary review enabled/provider/
     model/max_input_tokens), and
+    ``subagent_model`` (object; native delegation provider/model), and
+    ``memory_provider`` (native provider ID or ``builtin``), and
     ``ui_meta_expected_revisions`` (dict[str, int], optional compare-and-swap
     preconditions for keys supplied in ``ui_meta``).
 
@@ -874,6 +1144,8 @@ def _(rid, params: dict) -> dict:
             or isinstance(params.get("enabled_toolsets"), list)
             or isinstance(params.get("enabled_mcp_servers"), list)
             or isinstance(params.get("background_review"), dict)
+            or isinstance(params.get("subagent_model"), dict)
+            or isinstance(params.get("memory_provider"), str)
         )
         if needs_cfg:
             # Launch profile's MCP catalog, read BEFORE the home override
@@ -974,6 +1246,61 @@ def _(rid, params: dict) -> dict:
                         applied["background_review"] = True
                     except Exception:
                         applied["background_review"] = False
+
+                if isinstance(params.get("subagent_model"), dict):
+                    # LIQUIDAITY VENDOR PATCH: configure only Hermes' existing
+                    # top-level delegation selector. Bounds, tools, depth and
+                    # concurrency remain owned by the native delegation path.
+                    try:
+                        incoming = params["subagent_model"]
+                        unknown = sorted(set(incoming) - {"provider", "model"})
+                        if unknown:
+                            raise ValueError(
+                                f"unknown subagent_model field: {unknown[0]}"
+                            )
+                        child_provider = str(incoming.get("provider") or "").strip()
+                        child_model = str(incoming.get("model") or "").strip()
+                        if not child_provider or not child_model:
+                            raise ValueError(
+                                "subagent_model.provider and model required"
+                            )
+                        cfg = load_config() or {}
+                        delegation_cfg = (
+                            cfg.get("delegation")
+                            if isinstance(cfg.get("delegation"), dict)
+                            else {}
+                        )
+                        delegation_cfg["provider"] = child_provider
+                        delegation_cfg["model"] = child_model
+                        cfg["delegation"] = delegation_cfg
+                        save_config(cfg)
+                        applied["subagent_model"] = True
+                    except Exception:
+                        applied["subagent_model"] = False
+
+                if isinstance(params.get("memory_provider"), str):
+                    # LIQUIDAITY VENDOR PATCH: select Hermes' existing single
+                    # external-memory provider. Secrets and provider-specific
+                    # setup remain in their native secure configuration seams.
+                    try:
+                        selected = str(params["memory_provider"] or "").strip()
+                        if not selected or len(selected) > 128:
+                            raise ValueError("memory_provider invalid")
+                        cfg = load_config() or {}
+                        memory_cfg = (
+                            cfg.get("memory")
+                            if isinstance(cfg.get("memory"), dict)
+                            else {}
+                        )
+                        if selected == "builtin":
+                            memory_cfg.pop("provider", None)
+                        else:
+                            memory_cfg["provider"] = selected
+                        cfg["memory"] = memory_cfg
+                        save_config(cfg)
+                        applied["memory_provider"] = True
+                    except Exception:
+                        applied["memory_provider"] = False
 
                 # ``enabled_mcp_servers`` (list[str], replace semantics):
                 # toggle the profile's mcp_servers entries via the standard

@@ -30,12 +30,14 @@ describe('Hermes child execution attribution', () => {
 
   it('creates concurrent native children on one Card without crossing Run identity', async () => {
     const parent = root();
-    const request = vi.fn(async () => ({ ok: true }));
+    const request = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true }));
     const [coder, kanban] = await Promise.all([
       createHermesChildExecutionContext({
         sessionId: 'acp-session-1',
         parentExecutionContextId: parent.contextId,
         nativeChildId: 'sa-one',
+        provider: 'openai-codex',
+        model: 'gpt-5.6-luna',
         request,
       }),
       createHermesChildExecutionContext({
@@ -58,6 +60,11 @@ describe('Hermes child execution attribution', () => {
     });
     expect(JSON.stringify(executionToolCallMeta(coder.contextId))).not.toMatch(/token|secret|credential/i);
     expect(request).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(request.mock.calls[0][1]?.body))).toMatchObject({
+      nativeChildId: 'sa-one',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+    });
   });
 
   it('keeps concurrent saved Coder root Runs isolated before their first MCP call', () => {
@@ -171,17 +178,22 @@ describe('Hermes child execution attribution', () => {
 
   it('closes one child Run exactly once', async () => {
     const parent = root();
-    const createRequest = vi.fn(async () => ({ ok: true }));
+    const createRequest = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true }));
     const child = await createHermesChildExecutionContext({
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,
       nativeChildId: 'sa-one',
       request: createRequest,
     });
-    const finishRequest = vi.fn(async () => ({ ok: true }));
+    const finishRequest = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true }));
     await expect(finishHermesExecutionContext({
       contextId: child.contextId,
       state: 'completed',
+      configuration: {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-luna',
+        fallbackOccurred: false,
+      },
       request: finishRequest,
     })).resolves.toBe(true);
     await expect(finishHermesExecutionContext({
@@ -190,5 +202,10 @@ describe('Hermes child execution attribution', () => {
       request: finishRequest,
     })).resolves.toBe(false);
     expect(finishRequest).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(finishRequest.mock.calls[0][1]?.body))).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      modelFallbackOccurred: false,
+    });
   });
 });

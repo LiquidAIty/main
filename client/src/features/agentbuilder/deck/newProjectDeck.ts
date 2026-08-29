@@ -18,6 +18,13 @@ import {
   MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
+const DEFAULT_HERMES_SUBAGENT_MODEL = {
+  provider: 'openai',
+  accessMode: 'chatgpt-account' as const,
+  modelKey: 'gpt-5.6-luna',
+  providerModelId: 'gpt-5.6-luna',
+};
+
 function buildPromptTemplate(parts: {
   role: string;
   goal: string;
@@ -381,6 +388,7 @@ export const INITIAL_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
+        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -406,6 +414,7 @@ export const INITIAL_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
+        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         tools: [...AGENT_BUILDER_CONTROLLER_TOOLS, ...CODEBASE_MEMORY_CODER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -453,6 +462,7 @@ export const INITIAL_DECK: DeckDocument = {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
+        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         tools: [...CODEBASE_MEMORY_CODER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -480,6 +490,7 @@ export const INITIAL_DECK: DeckDocument = {
         )?.content || '',
       runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
+        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         tools: [...HERMES_CARD_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],

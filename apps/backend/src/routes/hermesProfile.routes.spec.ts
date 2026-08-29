@@ -12,16 +12,28 @@ const deck: DeckDocument = {
   version: 1,
   promptTemplates: [],
   edges: [],
-  nodes: [{
-    id: 'card_main',
-    templateId: 'main',
-    title: 'Main Chat',
-    role: 'Card role',
-    prompt: 'Card contract',
-    runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-    runtimeOptions: { tools: ['main.context'] },
-    position: { x: 0, y: 0 },
-  }],
+  nodes: [
+    {
+      id: 'card_main',
+      templateId: 'main',
+      title: 'Main Chat',
+      role: 'Card role',
+      prompt: 'Card contract',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      runtimeOptions: { tools: ['main.context'] },
+      position: { x: 0, y: 0 },
+    },
+    {
+      id: 'card_coder',
+      templateId: 'coder',
+      title: 'Local Coder',
+      role: 'Coder role',
+      prompt: 'Coder contract',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+      runtimeOptions: { tools: [] },
+      position: { x: 1, y: 1 },
+    },
+  ],
 };
 
 function native() {
@@ -37,8 +49,14 @@ function native() {
   };
 }
 
+type NativeRequest = (
+  method: string,
+  params?: Record<string, unknown>,
+  profile?: string,
+) => Promise<unknown>;
+
 function nativeRequest() {
-  return vi.fn(async (method: string) => {
+  return vi.fn<NativeRequest>(async (method: string) => {
     if (method === 'profiles.describe') return native();
     if (method === 'mcp.servers.list') return { servers: [] };
     if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
@@ -59,7 +77,7 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
 
-async function start(requestNative = nativeRequest()) {
+async function start(requestNative: NativeRequest = nativeRequest()) {
   const app = express();
   app.use(express.json());
   app.use('/hermes-profile', createHermesProfileRouter({
@@ -81,12 +99,14 @@ describe('Hermes profile Card routes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.nativeApply).toBe('explicit');
+    expect(body.nativeApply).toBe('run_start');
     expect(body.cardSaveMutatesNative).toBe(false);
     expect(body.binding).toMatchObject({ profile: 'liquidaity-main', mode: 'main' });
     expect(body.native).toMatchObject({ description: 'Native description', soul: 'Native SOUL' });
     expect(requestNative).toHaveBeenCalledTimes(4);
-    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.describe', { name: 'liquidaity-main' });
+    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.describe', {
+      name: 'liquidaity-main', probe_honcho: true,
+    });
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
 
@@ -173,6 +193,79 @@ describe('Hermes profile Card routes', () => {
       model: 'gpt-5.6-luna',
       maxInputTokens: 120_000,
     });
+  });
+
+  it('applies Main Honcho through the native profile boundary', async () => {
+    const requestNative = nativeRequest();
+    requestNative.mockImplementation(async (method: string): Promise<unknown> => {
+      if (method === 'profiles.configure') return { ok: true, applied: { memory_provider: true } };
+      if (method === 'profiles.describe') return {
+        ...native(),
+        memory: {
+          selected: 'honcho', installed_providers: ['holographic', 'honcho'],
+          installed: true, available: false, target: 'honcho_self_hosted',
+          credential_status: 'configured', history_database_path: 'profile/state.db',
+        },
+      };
+      if (method === 'mcp.servers.list') return { servers: [] };
+      if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
+      if (method === 'learning.graph') return { nodes: [], edges: [] };
+      throw new Error(`unexpected_native_method:${method}`);
+    });
+    const { base } = await start(requestNative);
+    const response = await fetch(`${base}/cards/card_main/native`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
+        params: { memory_provider: 'honcho' },
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
+      name: 'liquidaity-main', memory_provider: 'honcho',
+    });
+    expect(body.native.memory).toMatchObject({
+      selected: 'honcho', available: false, target: 'honcho_self_hosted',
+    });
+  });
+
+  it('rejects Honcho configuration for another Hermes Card', async () => {
+    const { base, requestNative } = await start();
+    const response = await fetch(`${base}/cards/card_coder/native`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
+        params: { memory_provider: 'honcho' },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      ok: false, error: 'main_honcho_configuration_required',
+    });
+    expect(requestNative).not.toHaveBeenCalled();
+  });
+
+  it('does not expose another profile-local provider through Main Honcho control', async () => {
+    const { base, requestNative } = await start();
+    const response = await fetch(`${base}/cards/card_main/native`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
+        params: { memory_provider: 'holographic' },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      ok: false, error: 'main_honcho_provider_invalid',
+    });
+    expect(requestNative).not.toHaveBeenCalled();
   });
 
   it('rejects unbounded or malformed background-review selectors before Hermes', async () => {

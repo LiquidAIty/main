@@ -14,15 +14,18 @@ import {
   deleteHermesHistory,
   deriveHermesSessionKey,
   dispatchHermesLearnCommand,
+  materializeHermesProfileSelections,
   readHermesHistory,
   readHermesRunSnapshot,
   requestHermesNative,
   startHermesTurn,
   type HermesHistoryArgs,
+  type HermesProfileMaterialization,
   type HermesSessionEvent,
   type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
+import { readSavedSubagentModel } from '../hermes/subagentModel';
 import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { listConversations } from '../conversations/store';
@@ -69,6 +72,7 @@ type PreparedMainCliRun = {
   cardId: string;
   driverSource: RemoteMainDriverSource;
   prepared: any;
+  profileMaterialization?: HermesProfileMaterialization;
 };
 
 function internalMcpBridgeAuthorized(value: unknown): boolean {
@@ -129,6 +133,15 @@ async function executePreparedMainCliRun(
 ) {
   let result: Awaited<ReturnType<typeof mainCliBridge.submit>>;
   try {
+    const turnArgs = resolveHermesTurnArgs({
+      prepared: run.prepared,
+      projectId: run.projectId,
+      deckId: run.deckId,
+      conversationId: run.conversationId,
+      parentRunId: run.runId,
+      onEvent: () => undefined,
+    }, run.prepared.hermesTransport);
+    run.profileMaterialization = await materializeHermesProfileSelections(turnArgs);
     result = await mainCliBridge.submit({
       runId: run.runId,
       driverSource: run.driverSource,
@@ -165,7 +178,7 @@ async function executePreparedMainCliRun(
         finalResult: result.finalText,
       }),
     });
-    return result;
+    return { ...result, profileMaterialization: run.profileMaterialization };
   } catch (error) {
     await requestPythonRailsJson('/domain/runs/finish', {
       method: 'POST',
@@ -426,6 +439,10 @@ router.post('/mcp-bridge/external_main_chat', async (req, res) => {
       finalText: result.finalText,
       nativeSessionId: result.nativeSessionId || null,
       nativeTurnId: result.nativeTurnId || null,
+      configuration: {
+        subagentModel: result.profileMaterialization?.effectiveSubagentModel || null,
+        honchoTurnStatus: 'bypassed',
+      },
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'external_main_chat_failed';
@@ -493,6 +510,7 @@ function resolveHermesTurnArgs(
   ) {
     throw new Error('prepared_hermes_transport_invalid');
   }
+  const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
   return {
     cardId: String(identity.cardId || ''),
     title: String(identity.title || ''),
@@ -501,6 +519,9 @@ function resolveHermesTurnArgs(
     provider: String(provider?.provider || ''),
     modelKey: String(provider?.modelKey || ''),
     providerModelId: String(provider?.providerModelId || ''),
+    ...(savedSubagentModel
+      ? { subagentModel: savedSubagentModel }
+      : {}),
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
     toolCatalogPolicy: input.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
@@ -1434,6 +1455,8 @@ router.post('/main/session/chat', async (req, res) => {
               profile: run.prepared.hermesTransport.request.runtime?.profile || null,
               grantedTools: run.prepared.hermesTransport.request.enabledTools || [],
               loadedSkills: null,
+              subagentModel: run.profileMaterialization?.effectiveSubagentModel || null,
+              honchoTurnStatus: 'native_fail_open',
             },
           });
         } else if (event.kind === 'text' && event.delta) {

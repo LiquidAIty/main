@@ -15,6 +15,13 @@ import {
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
 } from './childExecutionContext';
+import {
+  HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
+  sameNativeSubagentModel,
+  toNativeSubagentModel,
+  type NativeSubagentModel,
+  type SavedSubagentModel,
+} from './subagentModel';
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -43,6 +50,14 @@ export type HermesRuntimeConfig = {
   provider: string;
   modelKey: string;
   providerModelId: string;
+  subagentModel?: SavedSubagentModel;
+  effectiveSubagentModel?: {
+    desired: SavedSubagentModel;
+    provider: string;
+    model: string;
+    fallbackOccurred: boolean;
+    fallbackReason: string | null;
+  };
   accessMode: CardAccessMode;
   tools: string[];
   toolCatalogPolicy?: 'selected' | 'all_healthy';
@@ -130,6 +145,7 @@ export type HermesRunSnapshot = {
   modelBlocks?: Array<{ text: string; sequence: number; timestamp: string }>;
   configuration?: {
     provider: string; model: string; profile: string; grantedTools: string[]; loadedSkills: null;
+    subagentModel: HermesRuntimeConfig['effectiveSubagentModel'] | null;
   };
 };
 
@@ -527,6 +543,8 @@ export class AcpProcess {
         sessionId,
         parentExecutionContextId: String(message.params?.parentExecutionContextId || ''),
         nativeChildId: String(message.params?.nativeChildId || ''),
+        provider: String(message.params?.provider || ''),
+        model: String(message.params?.model || ''),
       }).then((context) => {
         this.send({
           jsonrpc: '2.0', id: message.id, result: {
@@ -549,6 +567,9 @@ export class AcpProcess {
         errorSummary: String(message.params?.errorSummary || '') || undefined,
         usage: message.params?.usage && typeof message.params.usage === 'object'
           ? message.params.usage
+          : undefined,
+        configuration: message.params?.configuration && typeof message.params.configuration === 'object'
+          ? message.params.configuration
           : undefined,
       }).then((closed) => this.send({ jsonrpc: '2.0', id: message.id, result: { closed } }))
         .catch((error) => this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32003, message: error instanceof Error ? error.message : 'hermes_child_context_finish_failed' } }));
@@ -977,7 +998,8 @@ export class AcpProcess {
         permissionRequestIds: new Map(),
         rootExecutionContextId: rootContext.contextId,
         configuration: { provider: args.provider, model: args.providerModelId, profile: args.runtime.profile,
-          grantedTools: [...args.tools], loadedSkills: null },
+          grantedTools: [...args.tools], loadedSkills: null,
+          subagentModel: args.effectiveSubagentModel || null },
         modelBlocks: [],
         lastPublicKind: '',
       };
@@ -1100,6 +1122,79 @@ export async function startHermesTurn(
   return startHermesTurnWithOnePrePromptRecovery(args, onEvent);
 }
 
+export type HermesProfileMaterialization = {
+  native: any;
+  effectiveSubagentModel?: HermesRuntimeConfig['effectiveSubagentModel'];
+};
+
+export async function materializeHermesProfileSelections(
+  args: HermesRuntimeConfig,
+  readNativeProfile: (profile: string) => Promise<any> = (profile) => (
+    requestHermesNative('profiles.describe', { name: profile })
+  ),
+  configureNativeSubagentModel: (
+    profile: string,
+    selection: NativeSubagentModel,
+  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
+    name: profile,
+    subagent_model: selection,
+    background_review: {
+      enabled: true,
+      provider: selection.provider,
+      model: selection.model,
+      max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
+    },
+  }),
+): Promise<HermesProfileMaterialization> {
+  const profile = String(args.runtime.profile || '').trim();
+  let native = await readNativeProfile(profile);
+  if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
+    throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
+  }
+  let effectiveSubagentModel = args.effectiveSubagentModel;
+  if (args.subagentModel) {
+    const expected = toNativeSubagentModel(args.subagentModel);
+    const review = native.background_review && typeof native.background_review === 'object'
+      ? native.background_review as Record<string, unknown>
+      : {};
+    const reviewMatches = review.enabled === true
+      && sameNativeSubagentModel(review, expected)
+      && Number(review.max_input_tokens) === HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS;
+    if (!sameNativeSubagentModel(native.subagent_model, expected) || !reviewMatches) {
+      const configured = await configureNativeSubagentModel(profile, expected);
+      const applied = configured?.applied && typeof configured.applied === 'object'
+        ? configured.applied as Record<string, unknown>
+        : {};
+      if (configured?.ok !== true || applied.subagent_model !== true || applied.background_review !== true) {
+        throw new Error(`hermes_native_subagent_model_apply_failed:${profile}`);
+      }
+      native = await readNativeProfile(profile);
+    }
+    const finalReview = native?.background_review && typeof native.background_review === 'object'
+      ? native.background_review as Record<string, unknown>
+      : {};
+    if (
+      !sameNativeSubagentModel(native?.subagent_model, expected)
+      || finalReview.enabled !== true
+      || !sameNativeSubagentModel(finalReview, expected)
+      || Number(finalReview.max_input_tokens) !== HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS
+    ) {
+      throw new Error(`hermes_native_subagent_model_readback_mismatch:${profile}`);
+    }
+    effectiveSubagentModel = {
+      desired: args.subagentModel,
+      provider: expected.provider,
+      model: expected.model,
+      fallbackOccurred: false,
+      fallbackReason: null,
+    };
+  }
+  return {
+    native,
+    ...(effectiveSubagentModel ? { effectiveSubagentModel } : {}),
+  };
+}
+
 export async function startHermesTurnWithOnePrePromptRecovery(
   args: HermesTurnArgs,
   onEvent: (event: HermesSessionEvent) => void,
@@ -1107,14 +1202,30 @@ export async function startHermesTurnWithOnePrePromptRecovery(
   readNativeProfile: (profile: string) => Promise<any> = (profile) => (
     requestHermesNative('profiles.describe', { name: profile })
   ),
+  configureNativeSubagentModel: (
+    profile: string,
+    selection: NativeSubagentModel,
+  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
+    name: profile,
+    subagent_model: selection,
+    background_review: {
+      enabled: true,
+      provider: selection.provider,
+      model: selection.model,
+      max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
+    },
+  }),
 ): Promise<HermesTurnHandle> {
   const profile = String(args.runtime.profile || '').trim();
-  const native = await readNativeProfile(profile);
-  if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
-    throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
-  }
+  const materialized = await materializeHermesProfileSelections(
+    args,
+    readNativeProfile,
+    configureNativeSubagentModel,
+  );
+  const { native, effectiveSubagentModel } = materialized;
   const nativeArgs: HermesTurnArgs = {
     ...args,
+    ...(effectiveSubagentModel ? { effectiveSubagentModel } : {}),
     nativeProfileToolsets: Array.isArray(native.toolsets)
       ? native.toolsets
         .filter((item: any) => item?.enabled === true)

@@ -135,6 +135,14 @@ def finish_background_review_host_execution(
         from acp_adapter.host_profiles import finish_host_child_execution
 
         source = usage or {}
+        if source.get("provider"):
+            run.provider = source.get("provider")
+        if source.get("model"):
+            run.model = source.get("model")
+        run._host_model_fallback_occurred = bool(
+            source.get("fallback_occurred")
+        )
+        run._host_model_fallback_reason = source.get("fallback_reason")
         finish_host_child_execution(
             run,
             state,
@@ -386,6 +394,8 @@ def _resolve_review_runtime(
         "command": getattr(agent, "acp_command", None),
         "args": list(getattr(agent, "acp_args", []) or []),
         "routed": False,
+        "fallback_occurred": False,
+        "fallback_reason": None,
     }
     task = _background_review_task_config(task_cfg)
     task_provider = (str(task.get("provider", "")).strip() or None)
@@ -416,10 +426,16 @@ def _resolve_review_runtime(
             "command": rp.get("command"),
             "args": list(rp.get("args") or []),
             "routed": True,
+            "fallback_occurred": False,
+            "fallback_reason": None,
         }
     except Exception as e:
         logger.debug("background-review aux routing failed (%s); using main model", e)
-        return parent
+        return {
+            **parent,
+            "fallback_occurred": True,
+            "fallback_reason": f"background_review_route_failed:{type(e).__name__}",
+        }
 
 
 def _msg_text(m: Dict) -> str:
@@ -984,6 +1000,10 @@ def _snapshot_review_usage(review_agent: Any) -> Dict[str, Any]:
         ),
         "api_calls": int(getattr(review_agent, "session_api_calls", 0) or 0),
         "estimated_cost_usd": getattr(review_agent, "session_estimated_cost_usd", None),
+        "fallback_occurred": bool(
+            getattr(review_agent, "_host_model_fallback_occurred", False)
+        ),
+        "fallback_reason": getattr(review_agent, "_host_model_fallback_reason", None),
     }
 
 
@@ -1288,6 +1308,10 @@ def _run_review_in_thread(
                 skip_memory=True,
                 **_fork_kwargs,
             )
+            review_agent._host_model_fallback_occurred = bool(
+                _rt.get("fallback_occurred")
+            )
+            review_agent._host_model_fallback_reason = _rt.get("fallback_reason")
             review_agent._memory_write_origin = "background_review"
             review_agent._memory_write_context = "background_review"
             # The review fork pins the parent's cached system prompt and keeps

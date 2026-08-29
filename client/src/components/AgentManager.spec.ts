@@ -232,6 +232,12 @@ describe('AgentManager active builder config', () => {
     expect(nativeClient).toContain('/native`');
     expect(nativeClient).not.toMatch(/\/preview|expectedFingerprint|HermesCardDraft/);
     expect(source).not.toContain('runNativeApply(buildCurrentLocalPayload');
+    expect(source).toContain('aria-label="Subagent model"');
+    expect(source).toContain('aria-label="Main Honcho mode"');
+    expect(source).toContain('Contextualized GPT-plugin Main turns report Honcho bypassed');
+    expect(source).toContain("runtimeMode === 'main' && nativeHermesState.native.honcho");
+    expect(source).toContain('subagentCatalogOptions.map');
+    expect(source).not.toContain('Use account Luna');
   });
 
   it('replaces Task with Terminal while retaining exactly one mission composer', () => {
@@ -387,6 +393,8 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(source).toContain('native-learning-graph');
+    expect(source).toContain('data-testid="main-honcho-status"');
+    expect(source).toContain('Secrets are never returned to the Card.');
     expect(source).toContain('onOpenNode={(id) => void openNativeLearningNode(id)}');
     expect(source).toContain('applyNativeLearningEdit()');
     expect(nativeClient).toContain("method: 'learning.detail'");

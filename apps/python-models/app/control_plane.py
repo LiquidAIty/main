@@ -43,6 +43,7 @@ _CARD_CREATE_KEYS = {
     "prompt",
     "runtime",
     "model",
+    "subagentModel",
     "tools",
     "nativeTools",
     "skills",
@@ -67,6 +68,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "modelKey",
     "provider",
     "providerModelId",
+    "subagentModel",
     "reasoningEffort",
     "temperature",
     "maxTokens",
@@ -81,10 +83,33 @@ _CAPABILITY_LIST_FIELDS = {
 }
 _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
+_SUBAGENT_MODEL_FIELDS = {
+    "provider", "accessMode", "modelKey", "providerModelId",
+}
+_DEFAULT_HERMES_SUBAGENT_MODEL = {
+    "provider": "openai",
+    "accessMode": "chatgpt-account",
+    "modelKey": "gpt-5.6-luna",
+    "providerModelId": "gpt-5.6-luna",
+}
 
 
 class ControlPlaneError(Exception):
     pass
+
+
+def _subagent_model_selection(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != _SUBAGENT_MODEL_FIELDS:
+        raise ControlPlaneError("card_subagent_model_invalid")
+    normalized = {
+        key: str(value.get(key) or "").strip()
+        for key in _SUBAGENT_MODEL_FIELDS
+    }
+    if any(not item or len(item) > 256 for item in normalized.values()):
+        raise ControlPlaneError("card_subagent_model_invalid")
+    if normalized["accessMode"] not in _ACCESS_MODES:
+        raise ControlPlaneError("card_subagent_model_access_mode_invalid")
+    return normalized
 
 
 def _backend_json(method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
@@ -411,7 +436,15 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     reasoning_effort = model.get("reasoningEffort")
     if reasoning_effort is not None and reasoning_effort not in _REASONING_EFFORTS:
         raise ControlPlaneError("card_create_reasoning_effort_invalid")
-
+    raw_subagent_model = args.get("subagentModel")
+    if runtime_kind != "hermes" and raw_subagent_model is not None:
+        raise ControlPlaneError("card_create_subagent_model_requires_hermes")
+    subagent_model = (
+        _subagent_model_selection(raw_subagent_model)
+        if raw_subagent_model is not None
+        else dict(_DEFAULT_HERMES_SUBAGENT_MODEL) if runtime_kind == "hermes"
+        else None
+    )
     normalized_selections: dict[str, list[str]] = {}
     for field in _CAPABILITY_LIST_FIELDS:
         values = args.get(field) or []
@@ -467,6 +500,8 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
             "accessMode": access_mode,
             **normalized_selections,
         }
+        if subagent_model is not None:
+            runtime_options["subagentModel"] = subagent_model
         for key in ("providerModelId", "reasoningEffort"):
             if model.get(key) is not None:
                 runtime_options[key] = model[key]
@@ -571,7 +606,11 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
         and not str(updates["providerModelId"] or "").strip()
     ):
         raise ControlPlaneError("card_update_provider_model_id_required")
-
+    if "subagentModel" in updates:
+        updates = {
+            **updates,
+            "subagentModel": _subagent_model_selection(updates["subagentModel"]),
+        }
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
     card_id = str(args["cardId"]).strip()
@@ -579,6 +618,8 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
     def _apply() -> dict[str, Any]:
         deck, revision = _load_deck(project_id, deck_id)
         card = _find_card(deck, card_id)
+        if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
+            raise ControlPlaneError("card_update_subagent_model_requires_hermes")
         for key in _UPDATABLE_TOP_FIELDS:
             if key in updates:
                 card[key] = str(updates[key])

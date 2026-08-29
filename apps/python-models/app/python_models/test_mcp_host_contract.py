@@ -1394,6 +1394,8 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "model",
         ]
         assert by_name["card.create"].inputSchema["additionalProperties"] is False
+        assert "subagentModel" in by_name["card.create"].inputSchema["properties"]
+        assert "memoryProvider" not in by_name["card.create"].inputSchema["properties"]
         assert by_name["card.create"].inputSchema["properties"]["runtime"]["properties"]["mode"] == {
             "type": "string",
             "enum": ["main", "delegate", "kanban", "assistant", "magentic_one"],
@@ -1415,6 +1417,11 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "type": "string",
             "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
         }
+        update_properties = by_name["card.update_configuration"].inputSchema[
+            "properties"
+        ]["updates"]["properties"]
+        assert "subagentModel" in update_properties
+        assert "memoryProvider" not in update_properties
         assert "main.context" in by_name
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name

@@ -175,6 +175,15 @@ describe('Main / Hermes / graph authority topology', () => {
     const steward = byId.get('card_hermes_steward');
     const magOne = byId.get('card_magentic');
 
+    for (const card of [main, coder, agentBuilder, steward]) {
+      expect(card?.runtimeOptions?.subagentModel).toEqual({
+        provider: 'openai',
+        accessMode: 'chatgpt-account',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+      });
+    }
+
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
