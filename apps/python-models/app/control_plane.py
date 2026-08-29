@@ -44,6 +44,10 @@ _CARD_CREATE_KEYS = {
     "runtime",
     "model",
     "tools",
+    "nativeTools",
+    "skills",
+    "toolsets",
+    "mcpConnectionIds",
     "position",
 }
 _CARD_CREATE_RUNTIME_KEYS = {"kind", "mode", "profile"}
@@ -54,8 +58,8 @@ _CARD_CREATE_MODEL_KEYS = {
     "providerModelId",
     "reasoningEffort",
 }
-# Exact allowlist of card fields Harness may edit. Anything else — runtime code,
-# shell config, hidden tools, authority grants, worker selection — is rejected.
+# Exact allowlist of Card fields Agent Builder may edit. Native selections stay
+# saved as selections; current native availability is checked by the runtime.
 _UPDATABLE_TOP_FIELDS = {"prompt", "title"}
 _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "script",
@@ -67,6 +71,13 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "temperature",
     "maxTokens",
     "tools",
+    "nativeTools",
+    "skills",
+    "toolsets",
+    "mcpConnectionIds",
+}
+_CAPABILITY_LIST_FIELDS = {
+    "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
 }
 _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
@@ -401,20 +412,24 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
     if reasoning_effort is not None and reasoning_effort not in _REASONING_EFFORTS:
         raise ControlPlaneError("card_create_reasoning_effort_invalid")
 
-    tools = args.get("tools") or []
-    if (
-        not isinstance(tools, list)
-        or any(not isinstance(name, str) or not name.strip() for name in tools)
-    ):
-        raise ControlPlaneError("card_create_tools_must_be_string_list")
-    normalized_tools = list(dict.fromkeys(name.strip() for name in tools))
-    from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
+    normalized_selections: dict[str, list[str]] = {}
+    for field in _CAPABILITY_LIST_FIELDS:
+        values = args.get(field) or []
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(name, str) or not name.strip() for name in values)
+        ):
+            raise ControlPlaneError(f"card_create_{field}_must_be_string_list")
+        normalized_selections[field] = list(dict.fromkeys(name.strip() for name in values))
+    normalized_tools = normalized_selections["tools"]
+    if normalized_tools:
+        from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
 
-    invalid_tools = [name for name in normalized_tools if name not in (readable_tool_ids() | writable_tool_ids())]
-    if invalid_tools:
-        raise ControlPlaneError(
-            f"card_create_tool_unavailable:{invalid_tools[0]}"
-        )
+        invalid_tools = [name for name in normalized_tools if name not in (readable_tool_ids() | writable_tool_ids())]
+        if invalid_tools:
+            raise ControlPlaneError(
+                f"card_create_tool_unavailable:{invalid_tools[0]}"
+            )
 
     position = args.get("position") or {"x": 0, "y": 0}
     if not isinstance(position, dict) or set(position) - {"x", "y"}:
@@ -450,7 +465,7 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
             "provider": provider,
             "modelKey": model_key,
             "accessMode": access_mode,
-            "tools": normalized_tools,
+            **normalized_selections,
         }
         for key in ("providerModelId", "reasoningEffort"):
             if model.get(key) is not None:
@@ -512,11 +527,17 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
             f"card_update_fields_rejected: {','.join(sorted(unknown))} "
             f"(allowed: {','.join(sorted(_UPDATABLE_TOP_FIELDS | _UPDATABLE_RUNTIME_OPTION_FIELDS))})"
         )
-    if "tools" in updates and (
-        not isinstance(updates["tools"], list)
-        or any(not isinstance(t, str) or not t.strip() for t in updates["tools"])
-    ):
-        raise ControlPlaneError("card_update_tools_must_be_string_list")
+    for field in _CAPABILITY_LIST_FIELDS & set(updates):
+        values = updates[field]
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(item, str) or not item.strip() for item in values)
+        ):
+            raise ControlPlaneError(f"card_update_{field}_must_be_string_list")
+        updates = {
+            **updates,
+            field: list(dict.fromkeys(item.strip() for item in values)),
+        }
     if "tools" in updates:
         from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
 

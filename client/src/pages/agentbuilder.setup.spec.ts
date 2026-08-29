@@ -56,8 +56,9 @@ describe('agentbuilder authoring flow', () => {
   it('ships the default example using the real magentic-led agent graph', () => {
     expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
       'Main Chat',
+      'Agent Builder',
       'Magentic-One',
-      'Coder',
+      'Local Coder',
       'Kanban',
       'Trading Agent',
       'WorldSignals Agent',
@@ -65,6 +66,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.map((node) => node.runtime)).toEqual([
       { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       { kind: 'autogen', mode: 'magentic_one' },
       { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
@@ -73,6 +75,7 @@ describe('agentbuilder authoring flow', () => {
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
       'template_main_chat',
+      'template_agent_builder',
       'template_magentic',
       'template_local_coder',
       'template_hermes_steward',
@@ -86,7 +89,7 @@ describe('agentbuilder authoring flow', () => {
       edgeType: edge.edgeType,
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -102,16 +105,48 @@ describe('agentbuilder authoring flow', () => {
         target: 'card_magentic',
         edgeType: 'magentic_option',
       },
+      {
+        source: 'card_magentic',
+        target: 'card_local_coder',
+        edgeType: 'magentic_option',
+      },
     ]);
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
+    const agentBuilder = INITIAL_DECK.nodes.find((node) => node.id === 'card_agent_builder');
     expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
+    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
-    expect(systemCoder?.runtimeOptions?.tools).toContain('card.update_configuration');
-    expect(systemCoder?.runtimeOptions?.tools).not.toContain('cbm.search_graph');
+    expect(systemCoder?.runtimeOptions?.tools).toEqual([
+      'cbm.search_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.check_index_coverage',
+      'cbm.detect_changes',
+    ]);
+    expect(agentBuilder?.runtimeOptions?.tools).toEqual([
+      'card.create',
+      'card.update_configuration',
+      'canvas.upsert_wire',
+      'cbm.search_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.check_index_coverage',
+      'cbm.detect_changes',
+    ]);
+    expect(agentBuilder?.runtimeOptions?.skills).toEqual(['hermes-agent']);
+    expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
     expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['hermes-acp', 'computer_use']);
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
-    expect(INITIAL_DECK.edges.some((edge) => edge.source === 'card_local_coder' && edge.edgeType === 'magentic_option')).toBe(false);
+    expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
+      source: 'card_magentic', target: 'card_local_coder', edgeType: 'magentic_option',
+    }));
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow',
+    }));
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
+    }));
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtime).toEqual({ kind: 'hermes', mode: 'main', profile: 'liquidaity-main' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });

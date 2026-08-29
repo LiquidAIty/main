@@ -14,15 +14,16 @@ cbm_anchors:
 
 # Main Chat and native Hermes specialists
 
-Main, Coder, and Kanban are three saved Cards served by the repo-owned Hermes ACP adapter, with a
-reused process owner per native profile. They have separate homes, Card identity, sessions, memory,
-prompts, models, and grant ceilings. Do not collapse their memory into one shared home.
+Main, Agent Builder, Local Coder, and Kanban are four saved Cards served by the repo-owned Hermes ACP
+adapter, with a reused process owner per native profile. They have separate homes, Card identity,
+sessions, memory, prompts, models, and grant ceilings. Do not collapse their memory into one shared home.
 
 ```text
 Main Chat (liquidaity-main)
-├─ flow → Coder (coder)
+├─ flow → Agent Builder (liquidaity-agent-builder)
 ├─ flow → Kanban (liquidaity-hermes-steward)
 └─ magentic_control → Magentic-One
+   └─ magentic_option → Local Coder (coder)
 ```
 
 The backend owns conversation/Run/correlation identity and transports one Python-materialized Card call.
@@ -33,8 +34,9 @@ Main Chat does not expose conversation IDs, New chat, a picker, or URL-driven co
 Existing conversation links are resolved once on mount; project-scoped native history remains internal.
 This presentation change does not repair Coder Run correlation, session locks, cancellation or recovery.
 
-The Coder terminal is a backend-owned Hermes terminal beneath Chat. `card_local_coder` is a stable
-persistence ID only; no LocalCoder/OpenClaude runtime exists.
+The existing Local Coder terminal is backend-owned. `card_local_coder` remains its saved identity;
+no standalone LocalCoder/OpenClaude runtime exists. Agent Builder has a separate saved profile and
+future native sessions/Runs; native Main ACP-to-existing-PTY attachment remains a separate blocker.
 
 The Card Terminal tab holds Main's technical events without adding them to chat. Coder invocation
 focuses the existing external Code Console's attributed Card Run view; its interactive native CLI
@@ -46,7 +48,7 @@ session remains distinct. Both views reuse existing owners and do not start a se
 - Coder terminal lifecycle tests;
 - saved topology and runtime-binding tests;
 - exact retained-`in.idf` inspection/reload/transport tests;
-- one separately approved live Main → Coder proof with child Run and AGE lineage.
+- one separately approved live Main → Agent Builder proof with child Run and AGE lineage.
 
 ## Limitations
 

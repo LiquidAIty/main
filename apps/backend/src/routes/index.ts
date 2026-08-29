@@ -10,6 +10,7 @@ import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
 import hermesKanbanRoutes from './hermesKanban.routes';
+import internalMainCliRoutes from './internalMainCli.routes';
 import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 
@@ -24,6 +25,7 @@ router.use('/health', health);
 // It is intentionally outside user/Auth0 middleware and never mounted by the
 // public MCP/ngrok service.
 router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
+router.use('/internal/main-cli', internalMainCliRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);

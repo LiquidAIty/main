@@ -264,6 +264,10 @@ class TestCardCreate:
                 "reasoningEffort": "low",
             },
             "tools": [],
+            "nativeTools": ["memory"],
+            "skills": [],
+            "toolsets": ["computer_use"],
+            "mcpConnectionIds": [],
             "position": {"x": 320, "y": 240},
         }))
 
@@ -283,6 +287,10 @@ class TestCardCreate:
             "modelKey": "research-model",
             "accessMode": "openrouter-api",
             "tools": [],
+            "nativeTools": ["memory"],
+            "skills": [],
+            "toolsets": ["computer_use"],
+            "mcpConnectionIds": [],
             "reasoningEffort": "low",
         }
         assert fake_backend["deck"]["edges"] == DECK["edges"]
@@ -418,6 +426,25 @@ class TestCardUpdateConfiguration:
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"]["tools"] == ["card.update_configuration", "web_search"]
+
+    def test_native_selections_persist_without_claiming_current_availability(self, fake_backend):
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {
+                "nativeTools": ["memory"],
+                "skills": ["agent-maker", "removed-saved-skill"],
+                "toolsets": ["computer_use"],
+                "mcpConnectionIds": ["saved-native-mcp"],
+            },
+        }))
+        assert result["ok"] is True
+        saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
+        assert saved["runtimeOptions"] | {
+            "nativeTools": ["memory"],
+            "skills": ["agent-maker", "removed-saved-skill"],
+            "toolsets": ["computer_use"],
+            "mcpConnectionIds": ["saved-native-mcp"],
+        } == saved["runtimeOptions"]
 
 
 class TestUpsertWire:

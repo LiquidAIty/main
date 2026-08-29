@@ -45,18 +45,21 @@ Current internal Cards:
 | User-facing role | Stable Card ID | Runtime | Profile |
 | --- | --- | --- | --- |
 | Main Chat | `card_main_chat` | Hermes `main` | `liquidaity-main` |
-| Coder | `card_local_coder` | Hermes `delegate` | `coder` |
+| Agent Builder | saved server-minted Card ID | Hermes `delegate` | `liquidaity-agent-builder` |
+| Local Coder | `card_local_coder` | Hermes `delegate` | `coder` |
 | Kanban | `card_hermes_steward` | Hermes `kanban` | `liquidaity-hermes-steward` |
 
-`card_local_coder` and `template_local_coder` are retained database identities from an earlier runtime.
-They no longer imply LocalCoder or OpenClaude behavior. Renaming them requires a deliberate stored-data
-migration; source must not infer runtime ownership from those strings.
+`card_local_coder` and `template_local_coder` are retained identities and now present the Hermes-backed
+Local Coder. They do not imply the removed standalone LocalCoder/OpenClaude runtime.
 
 The current default topology preserves:
 
-- Main → Coder: `flow`
+- Main → Agent Builder: `flow`
 - Main → Kanban: `flow`
 - Main → Magentic-One: `magentic_control`
+- Magentic-One → Local Coder: `magentic_option`
+- Main → Local Coder: no direct connection
+- Agent Builder → Magentic-One: no connection
 - explicit production-agent → Magentic-One edges: `magentic_option`
 
 AGE/ReactFlow relationships authorize who may call whom. They do not select providers, rewrite model input, or
@@ -68,7 +71,8 @@ start runtimes.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. The ACP adapter reuses
 one process owner per normalized native profile. Named profiles select
 `Hermes/.hermes/profiles/<profile>` as `HERMES_HOME`; the unprofiled extension owner uses the root home.
-Main, Coder, and Kanban retain separate profile homes, native memory, sessions, and configuration.
+Main, Agent Builder, Local Coder, and Kanban retain separate profile homes, native memory, sessions,
+and configuration.
 They share the vendored Hermes installation and integration code, not one merged memory database.
 Native profile configuration and Hermes' auth resolver remain authoritative. A native `delegate_task` child is ephemeral inside its owning Card's
 session. It remains activity of that same saved Card, inherits a Card-bounded native and MCP ceiling
@@ -190,10 +194,10 @@ native catalog owner or a competing IDF schema. Python reads this data mechanica
 executable transport contracts. The existing tool registry takes one startup projection of effect
 metadata; ordinary Runs do not load the builder palette or use its visibility as grants.
 
-Main leads Chat and may propose composing agents. After user agreement, the existing Coder under Chat
-performs Agent Builder work with reusable templates or custom typed objects. This is the approved
-interaction model, not another builder agent, semantic router or runtime. Live proof of that guided
-interaction remains outstanding; saved Main/Coder prompts and profiles are unchanged.
+Main leads Chat and may propose composing agents. After user agreement, Main directs the dedicated
+Agent Builder Card to perform IDD-backed construction/configuration with reusable templates or custom
+typed objects. Local Coder remains repository-focused and never receives the full IDD. Live proof of
+the guided Agent Builder interaction remains outstanding.
 
 Hermes is the runtime platform. LiquidAIty composes and contextualizes its native systems through
 saved Card identity, selected capabilities and exact Run input; it does not duplicate native catalogs,
@@ -249,10 +253,11 @@ AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is ma
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.
 
-Saved Hermes Cards remain three distinct persistent agents: Main, Coder, and Kanban. A saved `flow`
+Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Kanban. A saved `flow`
 edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
-call Coder or Kanban, and Coder may call Kanban, through `card.run_assistant_agent`. Kanban has no
-outgoing saved-Card delegation grant. Each such call uses the receiving Card's saved Hermes profile and
+call Agent Builder or Kanban through `card.run_assistant_agent`. Local Coder is instead eligible only
+through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. Kanban has no
+outgoing saved-Card delegation grant. Each direct call uses the receiving Card's saved Hermes profile and
 one explicit mission plus selected native graph references. This is the normal automatic handoff and it
 executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
 message windows, prior-result packets, and caller-authored native-reference bodies; it rereads each
@@ -453,6 +458,20 @@ written. Bearer/configuration/interpolation have provider-free contract proof; a
 execution remains a separate explicitly authorized acceptance test. Model OAuth and ordinary workers without the
 enabled provider remain unchanged. Focused proof and rollback are registered in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
+The same external plugin drives the one persistent native Main CLI through Hermes' existing message
+injection and structured stream/turn hooks. One generic optional argument on
+`PluginContext.inject_message` makes an external human input driver fail closed while the agent is
+running or another input is pending; omission preserves Hermes' interrupting upstream behavior.
+The paired read-only `PluginContext.cli_conversation_snapshot` returns a detached snapshot only while
+the interactive CLI is idle. The external plugin projects only user/assistant text over the same
+tokenized loopback bridge so browser reconnect reads the live CLI conversation without ACP or direct
+session-database access; conversation deletion remains native-CLI-owned and unavailable in Chat.
+LiquidAIty's backend admits one active driver, materializes the saved Main Card Run first, and sends
+only structured public text to Chat while the complete native bytes remain on the same PTY. Focused
+provider-free proof lives in `Hermes/tests/hermes_cli/test_plugin_message_injection.py` and
+`apps/hermes-liquidaity-plugin/tests/test_plugin.py`; contribution and rollback details are registered
+in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 Current authorization limits: internal Card tokens have a 12-hour lifetime. Current source restricts
 ordinary Card reads and effects to explicit grants; only the dedicated internal materializer retains

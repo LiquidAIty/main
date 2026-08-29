@@ -3251,6 +3251,11 @@ def _observe_run_start(
 ) -> bool:
     """Write identity-only AGE telemetry without affecting durable Run state."""
     try:
+        driver_source = str(payload.get("driverSource") or "").strip()
+        if driver_source and driver_source not in {
+            "internal_chat", "external_plugin", "native_cli"
+        }:
+            raise CardDomainError("run_driver_source_invalid")
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             identity = prepared["cardIdentity"]
             runtime = (
@@ -3266,6 +3271,7 @@ def _observe_run_start(
                     run.startedAt=$startedAt,
                     run.nativeChildId=$nativeChildId,
                     run.nativeProfileId=$nativeProfileId,
+                    run.driverSource=$driverSource,
                     run.conversationId=$conversationId,
                     run.rootRunId=$rootRunId
                 WITH run
@@ -3285,6 +3291,7 @@ def _observe_run_start(
                         str(runtime.get("profile") or "").strip()
                         or None
                     ),
+                    "driverSource": driver_source or None,
                     "conversationId": str(payload.get("conversationId") or "").strip() or None,
                     "rootRunId": str(payload.get("rootRunId") or run_id).strip(),
                 },

@@ -222,7 +222,6 @@ export function getStandaloneCardUnavailableReason(
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
   const BUILDER_DEV = import.meta.env.DEV;
-  const [focusCoderTerminalRequest, setFocusCoderTerminalRequest] = useState(0);
   const largeSurface = 'chat' as const;
   const [workspaceView, setWorkspaceView] = useState<
     | 'chat'
@@ -654,6 +653,7 @@ export default function AgentBuilder(): React.ReactElement {
     messages,
     nativeSessionActive,
     nativeSessionConnecting,
+    mainDriverSource,
     sessionHistoryLoading,
     technicalEvents: mainTechnicalEvents,
     technicalError: mainTechnicalError,
@@ -1567,11 +1567,24 @@ export default function AgentBuilder(): React.ReactElement {
                             : <div>No public runtime events observed in this conversation.</div>}
                         </div>
                       : selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
-                        ? <div data-testid="coder-card-terminal-link">
-                            {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
-                            <button type="button" onClick={() => setFocusCoderTerminalRequest((value) => value + 1)}>Open existing Coder terminal</button>
-                            <div>The external console shows this ACP Run separately from its native CLI session.</div>
-                          </div> : undefined}
+                        ? <div data-testid="local-coder-card-terminal">
+                             {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
+                             <div style={{ height: 360, minHeight: 240 }}>
+                               <CoderTerminalPanel
+                                 open
+                                 placement="docked"
+                                 title="Local Coder CLI"
+                                 testIdPrefix="local-coder-cli"
+                                 ownerCardId="card_local_coder"
+                                 cardIdentity={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
+                                   cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
+                                 cardRun={standaloneTestResult}
+                                 cardRunBusy={standaloneTestBusy}
+                                 onStopCardRun={stopStandaloneCardTest}
+                                 onRejoinCardRun={rejoinStandaloneCardRun}
+                               />
+                             </div>
+                           </div> : undefined}
                     cardSubtext={selectedCard.subtitle || ''}
                     onChangeCardName={handleRenameSelectedCard}
                     onChangeCardSubtext={handleUpdateSelectedCardSubtext}
@@ -1585,7 +1598,7 @@ export default function AgentBuilder(): React.ReactElement {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
                     onOpenCoderTerminal={() => {
-                      setFocusCoderTerminalRequest((value) => value + 1);
+                      setTab('Terminal');
                     }}
                     onOpenHermesKanban={openHermesKanban}
                     onOpenMainChat={openMainChat}
@@ -1596,9 +1609,6 @@ export default function AgentBuilder(): React.ReactElement {
                       moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
                     }}
                     onRunCard={() => {
-                      if (selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder') {
-                        setFocusCoderTerminalRequest((value) => value + 1);
-                      }
                       void runStandaloneCardTest();
                     }}
                     onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
@@ -1758,8 +1768,7 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Normal chat is primary. The saved Coder Card's Hermes terminal remains
-    // mounted beneath it so layout changes do not destroy the live session.
+    // Chat and CLI are presentation drivers over one always-mounted Main surface.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1799,21 +1808,20 @@ export default function AgentBuilder(): React.ReactElement {
           <div style={{ height: '100%' }}>{chat}</div>
         ) : (
           <HarnessChatPanel
-            focusTerminalRequest={focusCoderTerminalRequest}
+            activeDriver={mainDriverSource === 'external_plugin'
+              ? 'external_plugin'
+              : nativeSessionActive || nativeSessionConnecting
+                ? 'internal_chat'
+                : null}
+            storageKey={`liquidaity.main.surface.split.v1:${projectId}`}
             chat={chat}
             terminal={
               <CoderTerminalPanel
                 open
                 placement="docked"
-                title="Coder"
-                testIdPrefix="coder-console"
-                cardIdentity={selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
-                  ? { projectId: canvasProjectId, deckId: BUILDER_DECK_ID, cardId: selectedCard.id, profile: selectedCard.runtime.profile }
-                  : undefined}
-                cardRun={standaloneTestResult}
-                cardRunBusy={standaloneTestBusy}
-                onStopCardRun={stopStandaloneCardTest}
-                onRejoinCardRun={rejoinStandaloneCardRun}
+                title="Main CLI"
+                testIdPrefix="main-cli"
+                ownerCardId={mainCardId || 'card_main_chat'}
               />
             }
           />

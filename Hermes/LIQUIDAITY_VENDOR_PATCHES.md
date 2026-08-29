@@ -319,3 +319,36 @@ closed.
 The process-MCP extension can be rolled back separately only by removing its optional loader/startup/
 spawn handling and the external plugin's template producer together. Card worker MCP must then fail
 closed until an equivalent native handoff exists; no static profile or duplicate connection is a fallback.
+
+## Patch: fail-closed CLI plugin input and idle transcript snapshot
+
+Purpose: let a plugin use Hermes' existing CLI message-injection API as an alternate human input
+driver without interrupting or queueing behind an already accepted turn. The optional
+`interrupt_running=False` form returns `False` while the agent is running or the CLI input queue is
+non-empty. The paired `cli_conversation_snapshot()` returns a detached copy of the live interactive
+CLI session ID and conversation only while the agent is idle. It adds no process, session, scheduler,
+provider, tool, or persistence owner and never opens Hermes' session database.
+
+Files and symbols:
+
+- `hermes_cli/plugins.py`: `PluginContext.inject_message(..., interrupt_running=True)` retains the
+  upstream default and adds the optional idle-only refusal;
+  `PluginContext.cli_conversation_snapshot()` exposes one read-only detached idle snapshot.
+- `tests/hermes_cli/test_plugin_message_injection.py`: proves the idle-only form refuses both a live
+  turn and a pending input without mutating either queue, and proves snapshots are detached and
+  unavailable during a turn or outside interactive CLI mode.
+- Downstream proof in `apps/hermes-liquidaity-plugin/tests/test_plugin.py` verifies structured native
+  hooks, public-text-only forwarding, busy refusal, and cancellation reporting.
+
+Upstream behavior preserved: every existing caller omits the new argument and keeps the original
+interrupt-or-queue semantics. No existing code calls the new observation method. Gateway injection,
+plugin consent, roles, session keys, persistence, and native CLI queue ownership are unchanged.
+
+Contribution plan: submit the optional idle-only flag and read-only idle snapshot with focused
+compatibility tests upstream as one generic multiple-human-surface contract. Drop this patch when
+upstream exposes equivalent non-interrupting injection and live-CLI observation operations.
+
+Rollback: remove the optional argument, its two guards, and the snapshot method. LiquidAIty's
+external Main drivers and Chat history must then fail closed because the stock plugin contract cannot
+prove single-driver ownership or observe the live CLI conversation; no ACP process, direct database
+read, input queue, or terminal-scraping fallback is permitted.

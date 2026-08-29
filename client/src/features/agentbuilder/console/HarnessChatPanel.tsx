@@ -3,26 +3,42 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 const HANDLE_HEIGHT = 12;
 const MIN_OPEN_HEIGHT = 160;
 const DEFAULT_PEEK_HEIGHT = 240;
-const COLLAPSE_THRESHOLD = 72;
+
+export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
 type HarnessChatPanelProps = {
   chat: ReactNode;
   terminal: ReactNode;
-  focusTerminalRequest?: number;
+  activeDriver?: Exclude<MainDriverSource, 'native_cli'> | null;
+  storageKey?: string;
 };
 
-/** Main Chat with the saved Coder Card's persistent Hermes terminal beneath it. */
-export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest = 0 }: HarnessChatPanelProps) {
+/** Two presentation drivers over one always-mounted Main CLI surface. */
+export default function HarnessChatPanel({
+  chat,
+  terminal,
+  activeDriver = null,
+  storageKey = 'liquidaity.main.surface.split.v1',
+}: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
   const listenersRef = useRef<{
     move: (event: MouseEvent) => void;
     up: () => void;
   } | null>(null);
-  const heightRef = useRef(0);
-  const lastOpenHeightRef = useRef(DEFAULT_PEEK_HEIGHT);
+  const initialSplitHeight = (() => {
+    try {
+      const saved = Number(window.localStorage.getItem(storageKey));
+      return Number.isFinite(saved) && saved >= MIN_OPEN_HEIGHT ? saved : DEFAULT_PEEK_HEIGHT;
+    } catch {
+      return DEFAULT_PEEK_HEIGHT;
+    }
+  })();
+  const heightRef = useRef(initialSplitHeight);
+  const lastOpenHeightRef = useRef(initialSplitHeight);
   const dragMovedRef = useRef(false);
-  const [height, setHeightState] = useState(0);
+  const [height, setHeightState] = useState(initialSplitHeight);
+  const [manualFullCli, setManualFullCli] = useState(false);
   const [dragging, setDragging] = useState(false);
 
   const setHeight = useCallback((next: number) => {
@@ -33,8 +49,17 @@ export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest 
   const clampHeight = useCallback((next: number) => {
     const total = containerRef.current?.getBoundingClientRect().height ?? 0;
     const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
-    return Math.min(maximum, Math.max(0, next));
+    return Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, next));
   }, []);
+
+  const rememberSplitHeight = useCallback((next: number) => {
+    lastOpenHeightRef.current = next;
+    try {
+      window.localStorage.setItem(storageKey, String(Math.round(next)));
+    } catch {
+      // Presentation persistence is best-effort; layout remains usable in memory.
+    }
+  }, [storageKey]);
 
   const removeDragListeners = useCallback(() => {
     const listeners = listenersRef.current;
@@ -44,16 +69,6 @@ export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest 
     listenersRef.current = null;
     dragRef.current = false;
   }, []);
-
-  useEffect(() => {
-    if (!focusTerminalRequest) return;
-    setHeight(clampHeight(lastOpenHeightRef.current));
-    const frame = window.requestAnimationFrame(() => {
-      containerRef.current?.querySelector<HTMLElement>('[data-testid="coder-console-panel"]')?.focus();
-      window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusTerminalRequest, clampHeight, setHeight]);
 
   useEffect(() => removeDragListeners, [removeDragListeners]);
 
@@ -74,10 +89,12 @@ export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest 
     const up = () => {
       const total = containerRef.current?.getBoundingClientRect().height ?? 0;
       const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
-      const settledHeight = heightRef.current < COLLAPSE_THRESHOLD
-        ? 0
+      const fullCli = heightRef.current >= maximum - 1;
+      const settledHeight = fullCli
+        ? maximum
         : Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, heightRef.current));
-      if (settledHeight > 0) lastOpenHeightRef.current = settledHeight;
+      setManualFullCli(fullCli);
+      if (!fullCli) rememberSplitHeight(settledHeight);
       setHeight(settledHeight);
       removeDragListeners();
       setDragging(false);
@@ -88,52 +105,58 @@ export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest 
     listenersRef.current = { move, up };
     window.addEventListener('mousemove', move, true);
     window.addEventListener('mouseup', up, true);
-  }, [clampHeight, removeDragListeners, setHeight]);
+  }, [clampHeight, rememberSplitHeight, removeDragListeners, setHeight]);
 
   const toggleTerminal = useCallback(() => {
     if (dragMovedRef.current) {
       dragMovedRef.current = false;
       return;
     }
-    if (heightRef.current > 0) {
-      lastOpenHeightRef.current = heightRef.current;
-      setHeight(0);
-    } else {
+    if (manualFullCli) {
+      setManualFullCli(false);
       setHeight(clampHeight(lastOpenHeightRef.current));
+    } else {
+      const total = containerRef.current?.getBoundingClientRect().height ?? 0;
+      setManualFullCli(true);
+      setHeight(Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT));
     }
     window.requestAnimationFrame(() => {
       window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
     });
-  }, [clampHeight, setHeight]);
+  }, [clampHeight, manualFullCli, setHeight]);
 
-  const containerHeight = containerRef.current?.getBoundingClientRect().height ?? 0;
-  const terminalMode = height === 0
-    ? 'collapsed'
-    : containerHeight > 0 && height >= Math.max(MIN_OPEN_HEIGHT, containerHeight - HANDLE_HEIGHT) - 1
-      ? 'expanded'
-      : 'peek';
+  const forcedFullCli = activeDriver === 'external_plugin';
+  const fullCli = forcedFullCli || manualFullCli;
+  const driverSource: MainDriverSource = activeDriver || (manualFullCli ? 'native_cli' : 'internal_chat');
+  const terminalMode = fullCli ? 'expanded' : 'split';
 
   return (
     <div
       ref={containerRef}
-      data-testid="harness-chat-panel"
-      data-main-mode={terminalMode === 'expanded' ? 'chatgpt' : 'native'}
+      data-testid="main-work-surface"
+      data-main-driver={driverSource}
       data-terminal-mode={terminalMode}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      {terminalMode !== 'expanded' ? (
-        <div data-testid="harness-chat" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      {!fullCli ? (
+        <div data-testid="main-chat-region" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
           {chat}
+        </div>
+      ) : null}
+
+      {forcedFullCli ? (
+        <div data-testid="main-driver-indicator" role="status" style={{ padding: '4px 8px' }}>
+          External Chat driving Main
         </div>
       ) : null}
 
       <button
         type="button"
-        data-testid="chat-coder-terminal-handle"
-        aria-expanded={height > 0}
-        aria-controls="chat-coder-terminal-region"
-        aria-label="Resize Chat and Coder terminal"
-        title="Resize Chat and Coder terminal"
+        data-testid="main-chat-cli-divider"
+        aria-expanded={fullCli}
+        aria-controls="main-cli-region"
+        aria-label="Resize Main Chat and Main CLI"
+        title="Resize Main Chat and Main CLI"
         onMouseDown={onDragStart}
         onClick={toggleTerminal}
         style={{
@@ -154,15 +177,14 @@ export default function HarnessChatPanel({ chat, terminal, focusTerminalRequest 
       </button>
 
       <div
-        id="chat-coder-terminal-region"
-        data-testid="chat-coder-terminal-region"
-        aria-hidden={height === 0}
+        id="main-cli-region"
+        data-testid="main-cli-region"
+        aria-hidden="false"
         style={{
-          flex: '0 0 auto',
-          height,
+          flex: fullCli ? '1 1 auto' : '0 0 auto',
+          height: fullCli ? 'auto' : height,
           minHeight: 0,
           overflow: 'hidden',
-          visibility: height === 0 ? 'hidden' : 'visible',
           userSelect: dragging ? 'none' : 'auto',
         }}
       >

@@ -5,6 +5,8 @@ import { waitForBackendReady } from '../../../components/builder/backendReadines
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import {
   loadSessionHistory,
+  loadMainDriverStatus,
+  type MainDriverSource,
   type NativeSessionEvent,
   SessionStreamError,
   stopSession,
@@ -283,6 +285,7 @@ export default function useAgentBuilderMainChat({
   const activeStreamRef = useRef<{
     key: string;
     controller: AbortController;
+    runId: string | null;
   } | null>(null);
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
@@ -291,6 +294,26 @@ export default function useAgentBuilderMainChat({
     && turnState.phase === 'connecting';
   const nativeSessionPending = nativeSessionActive || nativeSessionConnecting;
   const sessionHistoryLoading = historyState.key === conversationKey && historyState.loading;
+  const [mainDriverSource, setMainDriverSource] = useState<MainDriverSource | null>(null);
+
+  useEffect(() => {
+    if (!canvasProjectId) {
+      setMainDriverSource(null);
+      return;
+    }
+    const controller = new AbortController();
+    const refresh = () => {
+      void loadMainDriverStatus(controller.signal)
+        .then((status) => setMainDriverSource(status.activeDriver))
+        .catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 1000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [canvasProjectId]);
 
   useEffect(() => {
     const projectId = canvasProjectId;
@@ -363,13 +386,11 @@ export default function useAgentBuilderMainChat({
       let runId: string | null = null;
       setTechnical({ key: conversationKey, events: [], error: null });
       const streamController = new AbortController();
-      activeStreamRef.current = { key: conversationKey, controller: streamController };
+      activeStreamRef.current = { key: conversationKey, controller: streamController, runId: null };
       setTurnState({ key: conversationKey, phase: 'connecting' });
 
-      let assistantStarted = false;
       const appendModelText = (chunk: string) => {
         if (!chunk) return;
-        assistantStarted = true;
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const copy = [...current.messages];
@@ -386,7 +407,6 @@ export default function useAgentBuilderMainChat({
         });
       };
       const finalizeModelText = (nativeFinalText: string) => {
-        assistantStarted = true;
         setTranscript((current) => {
           if (current.key !== conversationKey) return current;
           const copy = [...current.messages];
@@ -431,6 +451,9 @@ export default function useAgentBuilderMainChat({
             // the canonical backend Run, never a second browser-generated ID.
             if (observedRunId && !runId) {
               runId = observedRunId;
+              if (activeStreamRef.current?.controller === streamController) {
+                activeStreamRef.current.runId = runId;
+              }
               notifyObserver(onUserTurnStarted, { projectId: canvasProjectId, conversationId,
                 runId, text, observedAt: new Date().toISOString() });
             }
@@ -495,11 +518,18 @@ export default function useAgentBuilderMainChat({
         });
         return completedText;
       } catch (error: unknown) {
+        setTranscript((current) => {
+          if (current.key !== conversationKey) return current;
+          const messages = [...current.messages];
+          if (messages[messages.length - 1]?.role === 'assistant') messages.pop();
+          return { key: conversationKey, messages };
+        });
         setTechnical((current) => current.key === conversationKey ? { ...current,
           error: error instanceof SessionStreamError ? error.code : 'main_turn_failed',
         } : current);
         const disconnected = streamController.signal.aborted;
-        const cancelled = error instanceof SessionStreamError && error.code === 'harness_turn_cancelled';
+        const cancelled = error instanceof SessionStreamError
+          && ['harness_turn_cancelled', 'main_cli_turn_cancelled'].includes(error.code);
         if (runId) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
@@ -507,14 +537,6 @@ export default function useAgentBuilderMainChat({
           status: disconnected ? 'disconnected' : cancelled ? 'cancelled' : 'failed',
           observedAt: new Date().toISOString(),
         });
-        if (assistantStarted) {
-          setTranscript((current) => {
-            if (current.key !== conversationKey) return current;
-            const copy = [...current.messages];
-            if (copy[copy.length - 1]?.role === 'assistant') copy.pop();
-            return { key: conversationKey, messages: copy };
-          });
-        }
         throw error;
       } finally {
         if (activeStreamRef.current?.controller === streamController) {
@@ -551,8 +573,22 @@ export default function useAgentBuilderMainChat({
 
   const stopMainTurn = useCallback(async () => {
     if (!nativeSessionPending || !canvasProjectId) return;
+    const active = activeStreamRef.current;
+    const expectedRunId = active?.key === conversationKey ? active.runId : null;
+    if (!expectedRunId) {
+      throw new SessionStreamError({
+        code: 'expected_run_id_required',
+        message: 'The accepted Main Run identity is not available yet.',
+        route: '/api/coder/main/session/stop',
+      });
+    }
     try {
-      await stopSession({ projectId: canvasProjectId, deckId, conversationId });
+      await stopSession({
+        projectId: canvasProjectId,
+        deckId,
+        conversationId,
+        expectedRunId,
+      });
     } catch (error) {
       if (error instanceof SessionStreamError && error.code === 'no_active_turn') {
         activeStreamRef.current?.controller.abort();
@@ -570,6 +606,7 @@ export default function useAgentBuilderMainChat({
     technicalError: technical.key === conversationKey ? technical.error : null,
     handleNativeSend,
     messages,
+    mainDriverSource,
     nativeSessionActive,
     nativeSessionConnecting,
     sessionHistoryLoading,

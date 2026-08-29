@@ -171,6 +171,129 @@ def test_register_uses_stock_plugin_api():
     assert callbacks == [plugin._worker_environment]
 
 
+def test_main_bridge_emits_only_structured_native_hook_events(monkeypatch):
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    bridge._active = {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "driverSource": "internal_chat",
+        "message": "hello",
+    }
+    events = []
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: events.append((path, payload)) or {"ok": True},
+    )
+
+    bridge.on_stream_start(session_id="session-1", turn_id="turn-1")
+    bridge.on_stream_delta(kind="text", delta="public delta")
+    bridge.on_stream_delta(kind="reasoning", delta="private reasoning")
+    bridge.on_turn_complete(
+        assistant_response="public final",
+        session_id="session-1",
+        turn_id="turn-1",
+    )
+
+    assert [event[1]["kind"] for event in events] == [
+        "started", "text", "completed"
+    ]
+    assert events[1][1]["delta"] == "public delta"
+    assert events[2][1]["finalText"] == "public final"
+    assert bridge._active is None
+
+
+def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
+    class Context:
+        def __init__(self):
+            self.messages = []
+
+        def inject_message(self, message, *, interrupt_running):
+            self.messages.append((message, interrupt_running))
+            return False
+
+        def cli_conversation_snapshot(self):
+            return {"session_id": "session-1", "messages": []}
+
+    context = Context()
+    bridge = plugin._MainCliBridge(context, "http://127.0.0.1:4000", "token")
+    calls = []
+    candidate = {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "driverSource": "external_plugin",
+        "message": "hello",
+    }
+
+    def request(path, payload=None):
+        calls.append((path, payload))
+        if path == "/next":
+            bridge._stop.set()
+            return candidate
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "_request", request)
+    bridge._poll()
+
+    assert context.messages == [("hello", False)]
+    assert calls[-1][1]["kind"] == "rejected"
+    assert calls[-1][1]["error"] == "main_driver_turn_already_running"
+    assert bridge._active is None
+
+
+def test_main_bridge_marks_unfinished_native_stream_cancelled(monkeypatch):
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    bridge._active = {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "driverSource": "internal_chat",
+        "message": "hello",
+    }
+    events = []
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: events.append((path, payload)) or {"ok": True},
+    )
+
+    bridge.on_stream_end(finished=False)
+
+    assert events[-1][1]["kind"] == "failed"
+    assert events[-1][1]["error"] == "main_cli_turn_cancelled"
+    assert bridge._active is None
+
+
+def test_main_bridge_projects_live_cli_history_without_tool_messages(monkeypatch):
+    context = SimpleNamespace(cli_conversation_snapshot=lambda: {
+        "session_id": "session-1",
+        "messages": [
+            {"role": "user", "content": "question"},
+            {"role": "tool", "content": "private tool output"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "answer"}
+            ]},
+        ],
+    })
+    bridge = plugin._MainCliBridge(context, "http://127.0.0.1:4000", "token")
+    calls = []
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: calls.append((path, payload)) or {"ok": True},
+    )
+
+    bridge._sync_history()
+    bridge._sync_history()
+
+    assert calls == [("/history", {
+        "sessionId": "session-1",
+        "messages": [
+            {"role": "user", "text": "question"},
+            {"role": "assistant", "text": "answer"},
+        ],
+    })]
+
+
 @pytest.mark.parametrize("status", [401, 403, 409, 503])
 def test_rejected_lookup_never_returns_an_environment(monkeypatch, status):
     error = urllib.error.HTTPError(

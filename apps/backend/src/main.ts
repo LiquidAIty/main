@@ -12,6 +12,7 @@ import { runPythonOwnedStartupTasks } from "./startup/pythonOwnedStartup";
 import {
   coderTerminalSessionManager,
   ensurePersistentCoderTerminal,
+  ensurePersistentMainTerminal,
 } from "./hermes/coderTerminal";
 
 const app = express();
@@ -222,6 +223,8 @@ async function startServer() {
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
   try {
+    const mainTerminal = ensurePersistentMainTerminal();
+    console.log(`[BOOT] Main CLI ready profile=${mainTerminal.profile} pid=${mainTerminal.pid}`);
     const terminal = ensurePersistentCoderTerminal();
     console.log(`[BOOT] Coder terminal ready profile=${terminal.profile} pid=${terminal.pid}`);
   } catch (error) {

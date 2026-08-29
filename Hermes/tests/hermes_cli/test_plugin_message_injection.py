@@ -52,6 +52,46 @@ def test_cli_running_injection_keeps_existing_interrupt_behaviour():
     assert cli._pending_input.empty()
 
 
+def test_cli_fail_closed_injection_rejects_running_or_queued_turn():
+    context, manager = _context()
+    cli = SimpleNamespace(
+        _agent_running=True,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+    )
+    manager._cli_ref = cli
+
+    assert context.inject_message("external turn", interrupt_running=False) is False
+    assert cli._pending_input.empty()
+    assert cli._interrupt_queue.empty()
+
+    cli._agent_running = False
+    cli._pending_input.put("native turn")
+    assert context.inject_message("external turn", interrupt_running=False) is False
+    assert cli._pending_input.get_nowait() == "native turn"
+
+
+def test_cli_conversation_snapshot_is_idle_read_only_and_detached():
+    context, manager = _context()
+    history = [{"role": "user", "content": "hello"}]
+    cli = SimpleNamespace(
+        _agent_running=False,
+        session_id="session-1",
+        conversation_history=history,
+    )
+    manager._cli_ref = cli
+
+    snapshot = context.cli_conversation_snapshot()
+    assert snapshot == {"session_id": "session-1", "messages": history}
+    snapshot["messages"][0]["content"] = "changed"
+    assert history[0]["content"] == "hello"
+
+    cli._agent_running = True
+    assert context.cli_conversation_snapshot() is None
+    manager._cli_ref = None
+    assert context.cli_conversation_snapshot() is None
+
+
 def test_gateway_injection_requires_session_key(tmp_path, monkeypatch):
     _write_plugin_config(
         tmp_path,

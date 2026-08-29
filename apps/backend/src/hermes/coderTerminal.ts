@@ -5,6 +5,7 @@ import { spawn as spawnPty, type IPty, type IWindowsPtyForkOptions } from 'node-
 
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
+import { mainCliBridgeToken } from './mainCliBridge';
 
 type ConsoleSessionState = 'starting' | 'running' | 'stopping' | 'stopped' | 'failed';
 type ConsoleTransportMode = 'pty';
@@ -292,6 +293,25 @@ function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
   });
 }
 
+function startMainTerminalSession(session: HermesCoderTerminalSession): void {
+  const install = resolveHermesCliInstall();
+  const hermesHome = path.join(install.root, '.hermes');
+  const profile = session.info.profile || 'liquidaity-main';
+  const backendPort = String(process.env.PORT || '4000').trim();
+  session.start({
+    executable: install.executable,
+    args: ['-p', profile, 'chat', '--cli', '--in', session.info.targetRoot],
+    env: {
+      ...withoutInternalMcpSecret(process.env),
+      HERMES_HOME: hermesHome,
+      LIQUIDAITY_MAIN_BRIDGE_URL: `http://127.0.0.1:${backendPort}/api/internal/main-cli`,
+      LIQUIDAITY_MAIN_BRIDGE_TOKEN: mainCliBridgeToken,
+    },
+    profile,
+    hermesHome,
+  });
+}
+
 export function ensurePersistentCoderTerminal(
   manager: HermesCoderTerminalManager = coderTerminalSessionManager,
   launch: (session: HermesCoderTerminalSession) => void = startCoderTerminalSession,
@@ -311,6 +331,35 @@ export function ensurePersistentCoderTerminal(
   }
   if (!acquired.session.isLive()) {
     throw new Error(acquired.session.info.error || 'hermes_coder_terminal_startup_failed');
+  }
+  return acquired.session.info;
+}
+
+const PERSISTENT_MAIN_TERMINAL_IDENTITY = {
+  projectId: 'liquidaity',
+  deckId: 'deck_builder',
+  conversationId: 'main',
+  ownerCardId: 'card_main_chat',
+  profile: 'liquidaity-main',
+} as const;
+
+export function ensurePersistentMainTerminal(
+  manager: HermesCoderTerminalManager = coderTerminalSessionManager,
+  launch: (session: HermesCoderTerminalSession) => void = startMainTerminalSession,
+): ConsoleSessionInfo {
+  const acquired = manager.acquire(PERSISTENT_MAIN_TERMINAL_IDENTITY);
+  if (!acquired.ok) throw new Error(acquired.error);
+  if (acquired.created) {
+    try {
+      launch(acquired.session);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'hermes_main_terminal_prepare_failed';
+      acquired.session.markFailed(reason);
+      throw new Error(reason);
+    }
+  }
+  if (!acquired.session.isLive()) {
+    throw new Error(acquired.session.info.error || 'hermes_main_terminal_startup_failed');
   }
   return acquired.session.info;
 }

@@ -1,12 +1,15 @@
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import {
   coderTerminalSessionManager,
 } from '../hermes/coderTerminal';
 import {
-  answerHermesSession,
+  mainCliBridge,
+  type MainCliBridgeEvent,
+  type MainDriverSource,
+} from '../hermes/mainCliBridge';
+import {
   cancelHermesRun,
-  cancelHermesSession,
   deleteHermesHistory,
   deriveHermesSessionKey,
   dispatchHermesLearnCommand,
@@ -19,10 +22,10 @@ import {
   type HermesTurnArgs,
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
-import { buildCardTerminal, projectHermesEvent, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
+import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { listConversations } from '../conversations/store';
-import { formatHarnessTrace, logHarnessTrace, redactTrace } from '../services/harnessTrace';
+import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
@@ -53,12 +56,139 @@ import {
 
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
+const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
+
+type RemoteMainDriverSource = Exclude<MainDriverSource, 'native_cli'>;
+
+type PreparedMainCliRun = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  runId: string;
+  cardId: string;
+  driverSource: RemoteMainDriverSource;
+  prepared: any;
+};
+
+function internalMcpBridgeAuthorized(value: unknown): boolean {
+  const expected = Buffer.from(String(process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || ''), 'utf8');
+  const supplied = Buffer.from(String(value || ''), 'utf8');
+  return expected.length >= 32
+    && supplied.length === expected.length
+    && timingSafeEqual(supplied, expected);
+}
+
+async function prepareMainCliRun(args: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  message: string;
+  driverSource: RemoteMainDriverSource;
+  runId?: string;
+  dataAnchors?: unknown[];
+}): Promise<PreparedMainCliRun> {
+  const runId = String(args.runId || `req_${randomUUID().slice(0, 8)}`);
+  const prepared: any = await requestPythonRailsJson('/domain/main/runs/begin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      message: args.message,
+      conversationId: args.conversationId,
+      driverSource: args.driverSource,
+      runId,
+      correlationId: runId,
+      dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
+    }),
+  });
+  if (
+    prepared.runtimeOwner !== 'hermes'
+    || !prepared.hermesTransport?.cardIdentity
+    || !prepared.hermesTransport?.request
+  ) {
+    throw new Error('main_hermes_card_not_runnable');
+  }
+  return {
+    projectId: args.projectId,
+    deckId: args.deckId,
+    conversationId: args.conversationId,
+    runId,
+    cardId: String(prepared.hermesTransport.cardIdentity.cardId || ''),
+    driverSource: args.driverSource,
+    prepared,
+  };
+}
+
+async function executePreparedMainCliRun(
+  run: PreparedMainCliRun,
+  onEvent: (event: MainCliBridgeEvent) => void,
+) {
+  let result: Awaited<ReturnType<typeof mainCliBridge.submit>>;
+  try {
+    result = await mainCliBridge.submit({
+      runId: run.runId,
+      driverSource: run.driverSource,
+      message: String(run.prepared.hermesTransport.request.message || ''),
+      onEvent,
+    });
+  } catch (error) {
+    const rawReason = error instanceof Error ? error.message : 'main_cli_turn_failed';
+    const reason = rawReason.includes('cancel')
+      ? 'main_cli_turn_cancelled'
+      : ['main_cli_bridge_unavailable', 'main_driver_turn_already_running'].includes(rawReason)
+        ? rawReason
+        : 'main_cli_turn_failed';
+    await requestPythonRailsJson('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: run.runId,
+        state: reason === 'main_cli_turn_cancelled' ? 'cancelled' : 'failed',
+        errorSummary: reason,
+      }),
+    }).catch(() => undefined);
+    throw new Error(reason);
+  }
+  try {
+    await requestPythonRailsJson('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: run.runId,
+        state: 'completed',
+        providerThreadRef: result.nativeSessionId || null,
+        providerTurnRef: result.nativeTurnId || null,
+        finalResult: result.finalText,
+      }),
+    });
+    return result;
+  } catch (error) {
+    await requestPythonRailsJson('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: run.runId,
+        state: 'failed',
+        errorSummary: 'main_run_persistence_failed',
+      }),
+    }).catch(() => undefined);
+    throw new Error('main_run_persistence_failed');
+  }
+}
 
 async function builderNativeOptions(projectId: string, deckId: string, cardId: string) {
   if (!projectId || !deckId || !cardId) return { nativeOptions: [], selectedIds: [] };
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = deck?.nodes.find((node) => node.id === cardId);
   if (!deck || !card) throw new Error('card_not_found');
+  if (
+    card.runtime.kind !== 'hermes'
+    || card.runtime.mode !== 'delegate'
+    || card.runtime.profile !== AGENT_BUILDER_PROFILE
+  ) {
+    throw new Error('agent_builder_card_required');
+  }
   const saved = card.runtimeOptions || {};
   const selectedIds = [card.templateId, ...(saved.tools || []),
     ...(saved.nativeTools || []).map((name) => 'hermes:tool:' + name),
@@ -72,7 +202,6 @@ async function builderNativeOptions(projectId: string, deckId: string, cardId: s
     id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
     schema: tool.inputSchema, available: tool.available !== false,
   }));
-  if (card.runtime.kind !== 'hermes') return { nativeOptions: options, selectedIds };
   const { native } = await hydrateHermesCardProfile(card, deck);
   const [tools, plugins] = await Promise.all([
     requestHermesNative('tools.show', {}, card.runtime.profile),
@@ -247,6 +376,58 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
     return res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'external_main_context_failed',
+    });
+  }
+});
+
+router.post('/mcp-bridge/external_main_chat', async (req, res) => {
+  if (!internalMcpBridgeAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
+    return res.status(401).json({ ok: false, error: 'internal_mcp_bridge_authorization_required' });
+  }
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || '').trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const mainCardId = String(req.body?.mainCardId || '').trim();
+  const message = String(req.body?.message || '');
+  if (!projectId || !deckId || !conversationId || !mainCardId || !message) {
+    return res.status(400).json({ ok: false, error: 'external_main_chat_context_required' });
+  }
+  try {
+    const run = await prepareMainCliRun({
+      projectId,
+      deckId,
+      conversationId,
+      message,
+      driverSource: 'external_plugin',
+      dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
+    });
+    if (run.cardId !== mainCardId) {
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: run.runId,
+          state: 'failed',
+          errorSummary: 'external_main_card_identity_mismatch',
+        }),
+      }).catch(() => undefined);
+      return res.status(409).json({ ok: false, error: 'external_main_card_identity_mismatch' });
+    }
+    const result = await executePreparedMainCliRun(run, () => undefined);
+    return res.json({
+      ok: true,
+      runId: run.runId,
+      cardId: run.cardId,
+      driverSource: run.driverSource,
+      finalText: result.finalText,
+      nativeSessionId: result.nativeSessionId || null,
+      nativeTurnId: result.nativeTurnId || null,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'external_main_chat_failed';
+    return res.status(reason === 'main_driver_turn_already_running' ? 409 : 502).json({
+      ok: false,
+      error: reason,
     });
   }
 });
@@ -1164,354 +1345,154 @@ router.get('/main/session/attention', async (req, res) => {
   }
 });
 
-async function readPreparedMainSessionProfile(
-  projectId: string,
-  deckId: string,
-): Promise<Record<string, any>> {
-  const prepared = await requestPythonRailsJson('/domain/main/prepare', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId,
-      deckId,
-    }),
-  }) as any;
-  if (prepared.runtimeOwner !== 'hermes' || !prepared.cardIdentity || !prepared.sessionProfile) {
-    throw new Error('main_hermes_card_not_runnable');
-  }
-  return { ...prepared.sessionProfile, cardIdentity: prepared.cardIdentity };
-}
+router.get('/main/session/driver', (_req, res) => {
+  const status = mainCliBridge.status();
+  return res.json({ ok: true, ready: status.ready, activeDriver: status.activeDriver });
+});
 
 router.post('/main/session/chat', async (req, res) => {
-  const projectId = String(req.body?.projectId || '');
+  const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.body?.conversationId || 'default');
+  const conversationId = String(req.body?.conversationId || 'default').trim();
   const message = String(req.body?.message || '');
-  const workingDirectory = String(req.body?.workingDirectory || '').trim() || undefined;
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
-  // One correlation id per turn for the concise backend trace. This does NOT change
-  // the SSE stream or browser behavior — it only makes the real Harness events
-  // (already flowing to the browser) legible in the backend dev terminal.
-  const correlationId = `req_${randomUUID().slice(0, 8)}`;
-  let prepared: any;
+
+  let run: PreparedMainCliRun;
   try {
-    prepared = await requestPythonRailsJson('/domain/main/runs/begin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId,
-        deckId,
-        message,
-        conversationId,
-        runId: correlationId,
-        correlationId,
-        dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
-      }),
+    run = await prepareMainCliRun({
+      projectId,
+      deckId,
+      conversationId,
+      message,
+      driverSource: 'internal_chat',
+      dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'main_domain_preparation_failed';
-    logHarnessTrace(
-      `[harness] request rejected corr=${correlationId} reason=${redactTrace(reason)}`,
-    );
-    return res.status(503).json({
+    logHarnessTrace(`[main-cli] request rejected reason=${redactTrace(reason)}`);
+    return res.status(reason === 'main_hermes_card_not_runnable' ? 424 : 503).json({
       ok: false,
-      error: 'main_domain_preparation_failed',
-      correlationId,
+      error: reason === 'main_hermes_card_not_runnable'
+        ? reason
+        : 'main_domain_preparation_failed',
     });
   }
-  if (prepared.runtimeOwner !== 'hermes' || !prepared.hermesTransport?.cardIdentity || !prepared.hermesTransport?.request) {
-    return res.status(424).json({ ok: false, error: 'main_hermes_card_not_runnable' });
-  }
-  const mainCardId = String(prepared.hermesTransport.cardIdentity.cardId || '');
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-  let eventSequence = 0;
-  const eventIdentity = { projectId, deckId, cardId: mainCardId,
-    cardName: String(prepared.hermesTransport.cardIdentity.title || ''), runId: correlationId,
-    parentRunId: null, nativeChildId: null };
-  const writeSse = (eventName: string, payload: unknown): boolean => {
+  const eventIdentity = {
+    projectId,
+    deckId,
+    conversationId,
+    cardId: run.cardId,
+    runId: run.runId,
+  };
+  const writeSse = (eventName: string, payload: Record<string, unknown>): boolean => {
     if (res.destroyed || res.writableEnded) return false;
-    try {
-      const sequence = ++eventSequence;
-      const publicEvent = projectHermesEvent(eventIdentity, { ...(payload as object), kind: eventName },
-        sequence, new Date().toISOString());
-      res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...(payload as object),
-        ...eventIdentity,
-        ...(eventName === 'native_attention' ? { nativeChildId: (payload as NativeAttentionEvent).nativeChildId || null } : {}),
-        ...(publicEvent ? { terminalEvent: publicEvent } : {}) })}\n\n`);
-      return true;
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      logHarnessTrace(`[harness] sse write skipped corr=${correlationId} reason=${redactTrace(reason)}`);
-      return false;
-    }
+    res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...payload, ...eventIdentity })}\n\n`);
+    return true;
   };
-  logHarnessTrace(`[hermes] request received ${`corr=${correlationId}`} project=${projectId} profile=${prepared.hermesTransport.request.runtime.profile}`);
-  let turnFinished = false;
-  let terminalDoneEvent: Extract<HermesSessionEvent, { kind: 'done' }> | null = null;
-  const emittedAttentionIds = new Set<string>();
-  let attentionReadQueue = Promise.resolve();
-  const queueAttentionRead = (): Promise<void> => {
-    attentionReadQueue = attentionReadQueue.then(async () => {
-      const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId, deckId, conversationId, runId: correlationId, limit: 1 }),
-      });
-      for (const attention of nativeAttentionEvents(inspection)) {
-        if (attention.runId !== correlationId || emittedAttentionIds.has(attention.eventId)) continue;
-        emittedAttentionIds.add(attention.eventId);
-        writeSse('native_attention', { kind: 'native_attention', ...attention });
-      }
-    }).catch((error) => {
-      logHarnessTrace(
-        `[harness] native attention readback skipped corr=${correlationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-      );
-    });
-    return attentionReadQueue;
-  };
+  writeSse('run', { state: 'accepted', driverSource: 'internal_chat' });
+
   try {
-    const handle = await startPreparedHermesTransport({
-      prepared,
-      projectId,
-      deckId,
-      conversationId,
-      parentRunId: correlationId,
-      workingDirectory,
-      onEvent: async (event) => {
-        if (turnFinished) return;
-        if (event.kind === 'done') {
-          terminalDoneEvent = event;
-          return;
-        }
-        const scopedEvent = event.kind === 'tool_start' || event.kind === 'tool_result'
-          ? { ...event, invokingCardId: mainCardId }
-          : event;
-        const traceLine = formatHarnessTrace(scopedEvent, correlationId);
-        if (traceLine) logHarnessTrace(traceLine);
-        writeSse(scopedEvent.kind, scopedEvent);
-        if (scopedEvent.kind === 'tool_result' && !scopedEvent.isError) {
-          void queueAttentionRead();
+    const result = await executePreparedMainCliRun(
+      run,
+      (event) => {
+        if (event.kind === 'started') {
+          writeSse('session', {
+            sessionId: event.nativeSessionId || null,
+            nativeTurnId: event.nativeTurnId || null,
+            driverSource: 'internal_chat',
+            configuration: {
+              provider: run.prepared.hermesTransport.request.provider?.provider || null,
+              model: run.prepared.hermesTransport.request.provider?.providerModelId || null,
+              profile: run.prepared.hermesTransport.request.runtime?.profile || null,
+              grantedTools: run.prepared.hermesTransport.request.enabledTools || [],
+              loadedSkills: null,
+            },
+          });
+        } else if (event.kind === 'text' && event.delta) {
+          writeSse('text', { text: event.delta });
         }
       },
-    });
-    // Announce an active stream only after the native Hermes adapter has
-    // returned a real turn handle. Before this event the browser renders
-    // Connecting, never Working.
-    writeSse('session', {
-      sessionId: handle.runtime?.sessionId || null,
-      runId: correlationId,
-      projectId,
-      deckId,
-      conversationId,
-      cardId: mainCardId,
-      configuration: {
-        provider: prepared.hermesTransport.request.provider?.provider || null,
-        model: prepared.hermesTransport.request.provider?.providerModelId || null,
-        profile: prepared.hermesTransport.request.runtime.profile,
-        grantedTools: prepared.hermesTransport.request.enabledTools || [],
-        loadedSkills: null,
-      },
-    });
-    const { finalText, usage, transport } = await handle.done;
-    await attentionReadQueue;
-    try {
-      await requestPythonRailsJson('/domain/runs/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          runId: correlationId,
-          state: 'completed',
-          providerThreadRef: handle.runtime?.sessionId || transport?.threadId || null,
-          providerTurnRef: transport?.turnId || null,
-          providerInputTokens: usage.providerInputTokens,
-          providerOutputTokens: usage.providerOutputTokens,
-          totalCostUsd: usage.totalCostUsd,
-          finalResult: finalText,
-        }),
-      });
-    } catch (error) {
-      throw new Error(
-        `harness_run_persistence_failed:${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const doneEvent = terminalDoneEvent || { kind: 'done', fullText: finalText, usage };
-    const doneTrace = formatHarnessTrace(doneEvent, correlationId);
-    if (doneTrace) logHarnessTrace(doneTrace);
-    writeSse('done', doneEvent);
-    turnFinished = true;
-    logHarnessTrace(
-      `[harness] request completed corr=${correlationId} providerUsage=${usage.usageAvailable ? `${usage.providerInputTokens}in/${usage.providerOutputTokens}out (${usage.usageSource})` : 'unavailable'} cost=${usage.totalCostUsd ?? 'unavailable'} contextBreakdown=${usage.contextBreakdownJson ? 'present' : 'unavailable'}`,
     );
-  } catch (error) {
-    turnFinished = true;
-    const reason = error instanceof Error ? error.message : 'hermes_turn_failed';
-    const errorCode = reason.startsWith('harness_run_persistence_failed')
-      ? 'harness_run_persistence_failed'
-      : 'harness_turn_failed';
-    const runCancelled = reason === 'hermes_turn_cancelled';
-    await requestPythonRailsJson('/domain/runs/finish', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        runId: correlationId,
-        state: runCancelled ? 'cancelled' : 'failed',
-        nativePhase: runCancelled ? 'cancelled' : 'failed',
-        errorCode: runCancelled ? 'main_run_stopped' : errorCode,
-        errorSummary: reason,
-      }),
-    }).catch((persistenceError) => {
-      logHarnessTrace(
-        `[harness] failure persistence failed corr=${correlationId} reason=${redactTrace(persistenceError instanceof Error ? persistenceError.message : String(persistenceError))}`,
-      );
+    writeSse('done', {
+      fullText: result.finalText,
+      usage: {
+        providerInputTokens: null,
+        providerOutputTokens: null,
+        totalCostUsd: null,
+        usageAvailable: false,
+        usageSource: 'native_cli_usage_unavailable',
+      },
     });
-    logHarnessTrace(`[harness] request failed corr=${correlationId} reason=${redactTrace(reason)}`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'main_cli_turn_failed';
     writeSse('error', {
-      code: runCancelled ? 'harness_turn_cancelled' : errorCode,
-      message: runCancelled
-        ? 'The chat run was stopped.'
-        : errorCode === 'harness_run_persistence_failed'
-        ? 'The model finished, but its durable run record could not be completed.'
-        : 'The chat run failed. Check the correlation ID in the backend logs.',
-      correlationId,
-      route: '/api/coder/main/session/chat',
-      status: 502,
+      code: reason,
+      message: reason === 'main_driver_turn_already_running'
+        ? 'Another Main input driver owns the active turn.'
+        : 'The native Main CLI turn failed.',
+      status: reason === 'main_driver_turn_already_running'
+        ? 409
+        : reason === 'main_cli_bridge_unavailable'
+          ? 503
+          : 502,
     });
   } finally {
-    turnFinished = true;
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
   }
   return undefined;
 });
-
 router.post('/main/session/stop', async (req, res) => {
-  const projectId = String(req.body?.projectId || '').trim();
-  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.body?.conversationId || 'default');
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
-  let runtimeConfig: Record<string, any>;
-  try {
-    runtimeConfig = await readPreparedMainSessionProfile(projectId, deckId);
-  } catch {
-    return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
+  const expectedRunId = String(req.body?.expectedRunId || '').trim();
+  if (!expectedRunId) {
+    return res.status(400).json({ ok: false, error: 'expected_run_id_required' });
   }
-  const sessionId = deriveHermesSessionKey(
-    projectId,
-    conversationId,
-    runtimeConfig.cardIdentity.cardId,
-  );
-  try {
-    const runId = cancelHermesSession(runtimeConfig.runtime.profile, sessionId);
-    return res.status(202).json({ ok: true, runId, state: 'stopping' });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'hermes_session_turn_not_running') {
-      return res.status(404).json({ ok: false, error: 'no_active_turn' });
-    }
-    return res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'main_run_stop_failed',
-    });
+  if (!mainCliBridge.requestCancel(expectedRunId)) {
+    return res.status(404).json({ ok: false, error: 'no_active_turn' });
   }
+  const mainTerminal = coderTerminalSessionManager.list().find((session) => (
+    session.ownerCardId === 'card_main_chat'
+    && session.runtimeSource === 'repository_hermes_cli'
+    && ['starting', 'running'].includes(session.state)
+  ));
+  const session = mainTerminal ? coderTerminalSessionManager.get(mainTerminal.id) : undefined;
+  if (!session?.write('\x03')) {
+    return res.status(503).json({ ok: false, error: 'main_cli_stop_unavailable' });
+  }
+  return res.status(202).json({ ok: true, runId: expectedRunId, state: 'stopping' });
 });
-
-router.post('/main/session/answer', async (req, res) => {
-  const projectId = String(req.body?.projectId || '');
-  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
-  let runtimeConfig: Record<string, any>;
-  try {
-    runtimeConfig = await readPreparedMainSessionProfile(projectId, deckId);
-  } catch {
-    return res.status(404).json({ ok: false, error: 'main_hermes_card_not_runnable' });
-  }
-  const sessionId = deriveHermesSessionKey(
-    projectId,
-    String(req.body?.conversationId || 'default'),
-    runtimeConfig.cardIdentity.cardId,
-  );
-  try {
-    answerHermesSession(
-      runtimeConfig.runtime.profile,
-      sessionId,
-      String(req.body?.promptId || ''),
-      String(req.body?.reply || ''),
-    );
-    return res.json({ ok: true });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'hermes_session_turn_not_running') {
-      return res.status(404).json({ ok: false, error: 'no_active_turn' });
-    }
-    return res.status(409).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'main_permission_answer_failed',
-    });
-  }
+router.post('/main/session/answer', (_req, res) => {
+  return res.status(409).json({
+    ok: false,
+    error: 'main_cli_structured_answer_unavailable',
+  });
 });
-
-// Load the durable project-scoped transcript for a conversation so a reload
-// restores the same chat. A valid conversation with no messages returns an
-// empty transcript. A persistence failure remains a visible typed failure.
-router.get('/main/session/history', async (req, res) => {
-  const projectId = String(req.query?.projectId || '');
-  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.query?.conversationId || 'default');
-  if (!projectId) {
-    return res.status(400).json({ ok: false, error: 'projectId_required', messages: [] });
-  }
-  try {
-    const mainIdentity = await resolveMainChatHermesIdentity(projectId, deckId);
-    if (!mainIdentity) throw new Error('main_hermes_card_not_runnable');
-    const historyArgs: HermesHistoryArgs = {
-      sessionKey: deriveHermesSessionKey(projectId, conversationId, mainIdentity.cardId),
-      profile: mainIdentity.profile,
-    };
-    const history = await readHermesHistory(historyArgs);
-    return res.json({ ok: true, sessionId: history.sessionId, messages: history.messages });
-  } catch (error) {
-    logHarnessTrace(
-      `[harness] history read failed project=${projectId} conversation=${conversationId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-    );
-    return res.status(500).json({
+router.get('/main/session/history', (_req, res) => {
+  const history = mainCliBridge.history();
+  if (!history) {
+    return res.status(503).json({
       ok: false,
-      error: 'conversation_history_read_failed',
+      error: 'main_cli_history_bridge_unavailable',
       messages: [],
     });
   }
+  return res.json({ ok: true, ...history });
 });
-
-router.delete('/main/session/history', async (req, res) => {
-  const projectId = String(req.query?.projectId || '').trim();
-  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  const conversationId = String(req.query?.conversationId || '').trim();
-  if (!projectId || !conversationId) {
-    return res.status(400).json({
-      ok: false,
-      error: 'projectId_and_conversationId_required',
-    });
-  }
-  try {
-    const mainIdentity = await resolveMainChatHermesIdentity(projectId, deckId);
-    if (!mainIdentity) throw new Error('main_hermes_card_not_runnable');
-    const result = await deleteHermesHistory({
-      sessionKey: deriveHermesSessionKey(projectId, conversationId, mainIdentity.cardId),
-      profile: mainIdentity.profile,
-    });
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const code = error instanceof Error ? error.message : 'conversation_history_delete_failed';
-    return res.status(code === 'hermes_session_turn_already_running' ? 409 : 500).json({
-      ok: false,
-      error: code,
-    });
-  }
+router.delete('/main/session/history', (_req, res) => {
+  return res.status(405).json({
+    ok: false,
+    error: 'main_cli_history_is_native_owned',
+  });
 });
-
 router.get('/main/session/conversations', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
   if (!projectId) {

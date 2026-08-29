@@ -1,0 +1,118 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { MainCliBridge } from './mainCliBridge';
+
+describe('MainCliBridge', () => {
+  it('delivers one remote driver turn and completes only from matching structured events', async () => {
+    const bridge = new MainCliBridge();
+    const onEvent = vi.fn();
+    bridge.notePoll();
+
+    const done = bridge.submit({
+      runId: 'run-1',
+      driverSource: 'internal_chat',
+      message: 'hello',
+      onEvent,
+    });
+    const candidate = bridge.take();
+    expect(candidate).toMatchObject({
+      runId: 'run-1',
+      driverSource: 'internal_chat',
+      message: 'hello',
+    });
+    expect(bridge.take()).toBeNull();
+    expect(() => bridge.acceptEvent({
+      requestId: candidate!.requestId,
+      runId: 'wrong-run',
+      kind: 'completed',
+    })).toThrow('main_cli_bridge_event_identity_mismatch');
+
+    bridge.acceptEvent({
+      requestId: candidate!.requestId,
+      runId: 'run-1',
+      kind: 'text',
+      delta: 'answer',
+    });
+    bridge.acceptEvent({
+      requestId: candidate!.requestId,
+      runId: 'run-1',
+      kind: 'completed',
+      finalText: 'answer',
+      nativeSessionId: 'session-1',
+      nativeTurnId: 'turn-1',
+    });
+
+    await expect(done).resolves.toEqual({
+      finalText: 'answer',
+      nativeSessionId: 'session-1',
+      nativeTurnId: 'turn-1',
+    });
+    expect(onEvent).toHaveBeenCalledTimes(2);
+    expect(bridge.status()).toMatchObject({ activeDriver: null, runId: null });
+  });
+
+  it('allows exactly one active driver and authorizes Stop by exact Run identity', async () => {
+    const bridge = new MainCliBridge();
+    bridge.notePoll();
+    const first = bridge.submit({
+      runId: 'run-external',
+      driverSource: 'external_plugin',
+      message: 'external message',
+      onEvent: vi.fn(),
+    });
+    expect(bridge.status()).toMatchObject({
+      activeDriver: 'external_plugin',
+      runId: 'run-external',
+    });
+    expect(bridge.requestCancel('wrong-run')).toBe(false);
+    expect(bridge.requestCancel('run-external')).toBe(true);
+    expect(() => bridge.submit({
+      runId: 'run-internal',
+      driverSource: 'internal_chat',
+      message: 'internal message',
+      onEvent: vi.fn(),
+    })).toThrow('main_driver_turn_already_running');
+
+    const candidate = bridge.take()!;
+    bridge.acceptEvent({
+      requestId: candidate.requestId,
+      runId: candidate.runId,
+      kind: 'failed',
+      error: 'main_cli_turn_cancelled',
+    });
+    await expect(first).rejects.toThrow('main_cli_turn_cancelled');
+  });
+
+  it('fails closed while the native plugin poller is unavailable', () => {
+    const bridge = new MainCliBridge();
+    expect(bridge.ready()).toBe(false);
+    expect(() => bridge.submit({
+      runId: 'run-1',
+      driverSource: 'internal_chat',
+      message: 'hello',
+      onEvent: vi.fn(),
+    })).toThrow('main_cli_bridge_unavailable');
+  });
+
+  it('retains only a bounded typed projection of the live CLI history', () => {
+    const bridge = new MainCliBridge();
+    bridge.acceptHistory({
+      sessionId: 'session-1',
+      messages: [
+        { role: 'user', text: 'question' },
+        { role: 'assistant', text: 'answer' },
+      ],
+    });
+    expect(bridge.history()).toEqual({
+      sessionId: 'session-1',
+      messages: [
+        { role: 'user', text: 'question' },
+        { role: 'assistant', text: 'answer' },
+      ],
+    });
+    expect(() => bridge.acceptHistory({
+      sessionId: 'session-1',
+      messages: [{ role: 'tool', text: 'private tool output' }],
+    })).toThrow('main_cli_history_invalid');
+  });
+});

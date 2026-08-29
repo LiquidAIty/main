@@ -2087,16 +2087,19 @@ atexit.register(_close_native_cbm)
 
 
 def _backend_bridge_timeout_seconds(path: str) -> float:
-    if path == "run_configured_card":
+    if path in {"run_configured_card", "external_main_chat"}:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
+    headers = {"Content-Type": "application/json"}
+    if path == "external_main_chat" and INTERNAL_MCP_SECRET:
+        headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
     request = Request(
         f"{BACKEND}/api/coder/mcp-bridge/{path}",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -2462,6 +2465,26 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "items": {"type": "string", "minLength": 1},
                         "default": [],
                     },
+                    "nativeTools": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "default": [],
+                    },
+                    "skills": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "default": [],
+                    },
+                    "toolsets": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "default": [],
+                    },
+                    "mcpConnectionIds": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "default": [],
+                    },
                     "position": {
                         "type": "object",
                         "properties": {
@@ -2483,9 +2506,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
                 "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
-                "temperature, maxTokens, tools, optional Python Card Script source. "
+                "temperature, maxTokens, explicit tool/native-tool/skill/toolset/MCP selections, "
+                "optional Python Card Script source. "
                 "Everything else (runtime code, "
-                "shell config, hidden tools, authority grants, worker selection) is rejected."
+                "shell config, hidden tools, run authority, worker selection) is rejected."
             ),
             inputSchema={
                 "type": "object",
@@ -2515,6 +2539,22 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "maxTokens": {"type": "integer", "minimum": 1},
                             "script": CardScript.model_json_schema(),
                             "tools": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                            "nativeTools": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                            "skills": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                            "toolsets": {
+                                "type": "array",
+                                "items": {"type": "string", "minLength": 1},
+                            },
+                            "mcpConnectionIds": {
                                 "type": "array",
                                 "items": {"type": "string", "minLength": 1},
                             },
@@ -3251,6 +3291,27 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if (
+        name == "card.run_assistant_agent"
+        and context is not None
+        and str(args.get("action") or "execute") == "execute"
+        and str(args.get("cardId") or "") == str(context.get("mainCardId") or "")
+    ):
+        return await _bridge(
+            "external_main_chat",
+            {
+                "projectId": str(context["projectId"]),
+                "deckId": str(context["deckId"]),
+                "conversationId": str(context["conversationId"]),
+                "mainCardId": str(context["mainCardId"]),
+                "message": str(args.get("input") or ""),
+                **(
+                    {"dataAnchors": args["dataAnchors"]}
+                    if isinstance(args.get("dataAnchors"), list)
+                    else {}
+                ),
+            },
+        )
     if name == "run_mag_one":
         from app.python_models.card_domain import (
             CardDomainError,

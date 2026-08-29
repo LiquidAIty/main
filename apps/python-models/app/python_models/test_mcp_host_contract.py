@@ -571,7 +571,7 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
     ]
 
 
-def test_internal_card_invocation_injects_caller_identity_and_root_entry_omits_sender(monkeypatch):
+def test_card_invocation_injects_caller_identity_and_main_uses_the_external_cli_bridge(monkeypatch):
     import asyncio
     import mcp_host
     from app import control_plane
@@ -588,12 +588,21 @@ def test_internal_card_invocation_injects_caller_identity_and_root_entry_omits_s
         "grantedTools": ["card.run_assistant_agent"],
     }
     calls = []
+    bridge_calls = []
 
     async def run(args):
         calls.append(dict(args))
         return {"ok": True, "result": {"status": "completed", "output": "ok"}}
 
+    async def bridge(path, payload):
+        bridge_calls.append((path, dict(payload)))
+        return [mcp_host.TextContent(
+            type="text",
+            text=json.dumps({"ok": True, "driverSource": "external_plugin"}),
+        )]
+
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_bridge", bridge)
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
     result = asyncio.run(mcp_host._dispatch_tool(
         "card.run_assistant_agent",
@@ -617,8 +626,14 @@ def test_internal_card_invocation_injects_caller_identity_and_root_entry_omits_s
         "card.run_assistant_agent",
         {"cardId": "card-main", "input": "root entry"},
     ))
-    assert "originatingAgentId" not in calls[-1]
-    assert "originatingRunId" not in calls[-1]
+    assert bridge_calls == [("external_main_chat", {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "mainCardId": "card-main",
+        "message": "root entry",
+    })]
+    assert calls == []
 
 
 def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):
@@ -1170,7 +1185,41 @@ def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
 
     assert mcp_host._backend_bridge_timeout_seconds("run_configured_card") == 300.0
+    assert mcp_host._backend_bridge_timeout_seconds("external_main_chat") == 300.0
     assert mcp_host._backend_bridge_timeout_seconds("external_main_context") == 30.0
+
+
+def test_external_main_backend_bridge_uses_the_process_owned_secret(monkeypatch):
+    import mcp_host
+
+    secret = "external-main-test-secret-0123456789abcdef"
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def open_request(request, *, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    monkeypatch.setattr(mcp_host, "urlopen", open_request)
+
+    assert json.loads(mcp_host._bridge_sync(
+        "external_main_chat", {"message": "hello"}
+    )) == {"ok": True}
+    assert captured["request"].get_header(
+        "X-liquidaity-internal-mcp-secret"
+    ) == secret
+    assert captured["timeout"] == mcp_host._NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
 
 
 def test_cold_engraphis_timeout_cannot_enter_write_and_retry_is_safe(monkeypatch):

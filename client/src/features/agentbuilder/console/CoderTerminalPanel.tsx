@@ -7,13 +7,14 @@ import {
 import XtermView from './XtermView';
 import AdaptiveCardTerminal, { type TerminalRun } from './AdaptiveCardTerminal';
 
-/** The saved Coder Card's genuine Hermes CLI pseudoterminal. */
+/** A saved Hermes Card's genuine CLI pseudoterminal. */
 
 type CoderTerminalPanelProps = {
   open: boolean;
   title?: string;
   placement?: 'overlay' | 'docked';
   testIdPrefix?: string;
+  ownerCardId?: string;
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
   client?: CoderTerminalClient;
@@ -31,6 +32,7 @@ function CoderTerminalPanelInner({
   title = 'Coder',
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
+  ownerCardId = 'card_local_coder',
   onClose,
   client = coderTerminalClient,
   initialSession = null,
@@ -60,7 +62,7 @@ function CoderTerminalPanelInner({
       .then((sessions) => {
         if (cancelled) return;
         const live = sessions.find((candidate) => (
-          candidate.ownerCardId === 'card_local_coder'
+          candidate.ownerCardId === ownerCardId
           && candidate.runtimeSource === 'repository_hermes_cli'
           && ['starting', 'running'].includes(candidate.state)
           && Boolean(candidate.pid)
@@ -69,7 +71,7 @@ function CoderTerminalPanelInner({
           setSession(live);
           return;
         }
-        setTerminalError('coder_terminal_startup_session_unavailable');
+        setTerminalError(`${ownerCardId}_terminal_startup_session_unavailable`);
       })
       .catch((error) => {
         if (!cancelled) {
@@ -79,7 +81,7 @@ function CoderTerminalPanelInner({
     return () => {
       cancelled = true;
     };
-  }, [client, open, session]);
+  }, [client, open, ownerCardId, session]);
 
   const connectOutput = useCallback(
     async (onData: (data: string) => void, signal: AbortSignal) => {
@@ -206,7 +208,7 @@ function CoderTerminalPanelInner({
 
       {!session ? (
         <div style={{ flex: 1, padding: 8, color: '#8fa6bc' }} role={terminalError ? 'alert' : 'status'}>
-          {terminalError || 'Coder terminal connecting'}
+          {terminalError || `${title} connecting`}
         </div>
       ) : null}
       </div>

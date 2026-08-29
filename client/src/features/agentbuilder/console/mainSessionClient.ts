@@ -15,6 +15,24 @@ export type NativeSessionEvent = {
 
 const BASE = '/api/coder/main/session';
 
+export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
+
+export async function loadMainDriverStatus(signal?: AbortSignal): Promise<{
+  ready: boolean;
+  activeDriver: MainDriverSource | null;
+}> {
+  const res = await fetch(`${BASE}/driver`, { credentials: 'include', signal });
+  const payload = await res.json().catch(() => null) as {
+    ready?: unknown;
+    activeDriver?: unknown;
+  } | null;
+  if (!res.ok || !payload) throw new Error('main_driver_status_unavailable');
+  const activeDriver = ['internal_chat', 'external_plugin', 'native_cli'].includes(
+    String(payload.activeDriver || ''),
+  ) ? payload.activeDriver as MainDriverSource : null;
+  return { ready: payload.ready === true, activeDriver };
+}
+
 export function selectedConversationId(search: string): string {
   const selected = new URLSearchParams(search).get('conversationId')?.trim();
   return selected || 'main';
@@ -152,6 +170,7 @@ export async function stopSession(args: {
   projectId: string;
   deckId?: string;
   conversationId: string;
+  expectedRunId: string;
 }): Promise<{ runId: string; state: string }> {
   const res = await fetch(`${BASE}/stop`, {
     method: 'POST',

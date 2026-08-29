@@ -2074,6 +2074,7 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     assert card_domain._observe_run_start(
         prepared,
         {
+            "driverSource": "internal_chat",
             "nativeReferences": [{
                 "authority": "KnowGraph",
                 "nativeId": "episode:stale-request",
@@ -2086,6 +2087,8 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
         correlation_id="correlation-one",
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
+    assert statements[0][1]["driverSource"] == "internal_chat"
+    assert "run.driverSource=$driverSource" in statements[0][0]
     assert all("USED_TOOL" not in query for query, _params in statements)
     assert all("[edge:USED]" not in query for query, _params in statements)
     assert all("[edge:VIEWED]" not in query for query, _params in statements)

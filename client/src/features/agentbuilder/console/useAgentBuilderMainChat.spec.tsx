@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  loadMainDriverStatus: vi.fn(),
   loadSessionHistory: vi.fn(),
   stopSession: vi.fn(),
   streamSession: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('./mainSessionClient', async () => {
   const actual = await vi.importActual<typeof import('./mainSessionClient')>('./mainSessionClient');
   return {
     ...actual,
+    loadMainDriverStatus: mocks.loadMainDriverStatus,
     loadSessionHistory: mocks.loadSessionHistory,
     stopSession: mocks.stopSession,
     streamSession: mocks.streamSession,
@@ -30,6 +32,7 @@ import useAgentBuilderMainChat, {
 import { SessionStreamError } from './mainSessionClient';
 
 beforeEach(() => {
+  mocks.loadMainDriverStatus.mockReset().mockResolvedValue({ ready: true, activeDriver: null });
   mocks.loadSessionHistory.mockReset();
   mocks.stopSession.mockReset();
   mocks.streamSession.mockReset();
@@ -37,6 +40,20 @@ beforeEach(() => {
 });
 
 describe('Main chat live observation callbacks', () => {
+  it('surfaces the server-owned active Main input driver', async () => {
+    mocks.loadMainDriverStatus.mockResolvedValue({
+      ready: true,
+      activeDriver: 'external_plugin',
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+    }));
+
+    await waitFor(() => expect(result.current.mainDriverSource).toBe('external_plugin'));
+  });
+
   it('keeps duplicate technical events under the server-issued Run and out of chat', async () => {
     const onUserTurnStarted = vi.fn();
     const onNativeTurnEvent = vi.fn();
@@ -455,7 +472,7 @@ describe('Main chat live observation callbacks', () => {
 
   it('clears the native active state when the backend reports no active turn', async () => {
     mocks.streamSession.mockImplementation(({ signal, onEvent }) => new Promise((_resolve, reject) => {
-      onEvent({ kind: 'session', sessionId: 'native-session' });
+      onEvent({ kind: 'session', sessionId: 'native-session', runId: 'native-run' });
       signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
         once: true,
       });

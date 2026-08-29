@@ -7,6 +7,7 @@ import {
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
   ensurePersistentCoderTerminal,
+  ensurePersistentMainTerminal,
   type ConsoleSessionInfo,
   type HermesCoderPtyLaunch,
   type PtyFactory,
@@ -113,6 +114,30 @@ describe('Hermes Coder real PTY boundary', () => {
     });
     expect(second.id).toBe(first.id);
     expect(launchPersistent).toHaveBeenCalledOnce();
+  });
+
+  it('keeps one persistent Main CLI process distinct from the Local Coder CLI', () => {
+    const children = [new FakePty(), new FakePty()];
+    const manager = new HermesCoderTerminalManager(
+      vi.fn(() => children.shift()!) as unknown as PtyFactory,
+    );
+    const launchCoder = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
+    const launchMain = vi.fn((session: HermesCoderTerminalSession) => session.start({
+      ...launch(),
+      args: ['-p', 'liquidaity-main', 'chat', '--cli', '--in', 'C:/repo'],
+      profile: 'liquidaity-main',
+    }));
+
+    const coder = ensurePersistentCoderTerminal(manager, launchCoder);
+    const main = ensurePersistentMainTerminal(manager, launchMain);
+    const sameMain = ensurePersistentMainTerminal(manager, launchMain);
+
+    expect(coder).toMatchObject({ ownerCardId: 'card_local_coder', profile: 'coder' });
+    expect(main).toMatchObject({ ownerCardId: 'card_main_chat', profile: 'liquidaity-main' });
+    expect(main.id).not.toBe(coder.id);
+    expect(sameMain.id).toBe(main.id);
+    expect(launchCoder).toHaveBeenCalledOnce();
+    expect(launchMain).toHaveBeenCalledOnce();
   });
 
   it('requires server-owned project, deck, and conversation identity', () => {

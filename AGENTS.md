@@ -40,11 +40,15 @@ Never collapse CURRENT and TARGET into one claim.
 
 ### CURRENT
 
-- Main Chat, Coder, and Kanban are saved Cards source-wired through one persistent repo-owned Hermes
-  ACP adapter with separate profiles, sessions, memory, prompts, models, and grants.
-- Coder is a Hermes delegate Card with a backend-owned terminal under Chat. The historical
-  `card_local_coder` identifier is persistence compatibility, not runtime ownership.
-- OpenClaude, LocalCoder, and Bun are absent from the supported product and dependency graph.
+- Main Chat, Agent Builder, Local Coder, and Kanban are saved Cards served through one persistent
+  repo-owned Hermes ACP adapter with separate profiles, sessions, memory, prompts, models, and grants.
+- Local Coder is the Hermes delegate Card `card_local_coder` / profile `coder`, owns work against an
+  explicitly selected local repository, remains a Magentic-One option, and is not Agent Builder.
+- Agent Builder is a separate Hermes delegate Card/profile directly connected from Main. It owns
+  approved Card construction/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work;
+  it is not connected to Magentic-One and receives no Local Coder state.
+- OpenClaude, the removed standalone LocalCoder runtime, and Bun are absent from the supported
+  dependency graph. The user-facing Local Coder is Hermes-backed.
 - Microsoft AutoGen 0.7.5 is checked in at `autogen-main` as first-party execution infrastructure;
   Python rails install its three packages only from that tree. The 0.7.5 upstream base is frozen;
   do not upgrade or rebase it onto later Microsoft AutoGen versions.
@@ -311,12 +315,19 @@ Kanban card." It is an ordinary Hermes-backed card and may run either `single` o
 changing its identity, profile home, memory, or capability ceiling. Temporary Hermes swarm workers are
 not saved LiquidAIty cards.
 
-### Hermes Coder
+### Hermes Local Coder
 
-The saved Coder Card uses the repo-owned Hermes adapter in `delegate` mode with profile `coder` and a
-backend-owned terminal under Chat. Its stable `card_local_coder` ID must not be interpreted as a
-runtime selector. Coder uses CBM first for this repository. Do not restore OpenClaude/LocalCoder, add a
-hidden coding runtime, or make Coder a Mag One worker without an explicit later product decision.
+The saved Local Coder Card uses the repo-owned Hermes adapter in `delegate` mode with profile `coder`
+and a backend-owned terminal. Its stable `card_local_coder` ID must not be interpreted as a runtime
+selector. Local Coder uses CBM first for an explicitly selected local repository and remains connected
+to Magentic-One through `edge_coder_magentic_option`. Do not restore OpenClaude, add a hidden coding
+runtime, or give Local Coder Agent Builder/IDD authority.
+
+### Hermes Agent Builder
+
+The saved Agent Builder Card uses the repo-owned Hermes adapter in `delegate` mode with profile
+`liquidaity-agent-builder`. Main reaches it through a direct `flow`. Its Card/profile memory, skills,
+tools, sessions, CLI, Runs, and history are independent of Local Coder, and it has no Magentic-One edge.
 
 ### Magentic-One
 
@@ -433,8 +444,9 @@ IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` Age
 for composable objects, typed fields, templates, relationships and effect metadata. Native Hermes,
 MCP and model discovery own their current catalogs. IDD is not runtime authority, an authenticator,
 a checksum gate or an IDF validator, and no copied dictionary belongs in TypeScript or Python.
-Full builder context belongs only to Coder in explicit Agent Builder work directed by Main after
-user approval. Ordinary Runs receive selected values/references, never the whole palette. Ordinary
+Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
+Main after user approval. Ordinary Runs and Local Coder receive selected values/references, never the
+whole palette. Ordinary
 prompt prose stays Markdown. Script data and its fail-closed guard may be retained, but the Script
 tab/editor is deferred to the second pass; no substitute executor is approved.
 

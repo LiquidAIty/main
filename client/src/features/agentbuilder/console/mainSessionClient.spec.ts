@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  loadMainDriverStatus,
   loadSessionHistory,
   selectedConversationId,
   SessionStreamError,
@@ -30,6 +31,33 @@ describe('selectedConversationId', () => {
 
   it('uses main only when no selected conversation exists', () => {
     expect(selectedConversationId('?projectId=project-1')).toBe('main');
+  });
+});
+
+describe('loadMainDriverStatus', () => {
+  it('accepts only the three explicit Main input drivers', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true, ready: true, activeDriver: 'external_plugin',
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true, ready: true, activeDriver: 'invented_driver',
+      }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loadMainDriverStatus()).resolves.toEqual({
+      ready: true,
+      activeDriver: 'external_plugin',
+    });
+    await expect(loadMainDriverStatus()).resolves.toEqual({
+      ready: true,
+      activeDriver: null,
+    });
+  });
+
+  it('fails closed when Main driver status is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    await expect(loadMainDriverStatus()).rejects.toThrow('main_driver_status_unavailable');
   });
 });
 

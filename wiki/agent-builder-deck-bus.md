@@ -43,8 +43,9 @@ determine which cards participate in multi-agent work.
 ## What the user/agent experiences
 
 Main owns the Chat conversation. In the approved Agent Builder interaction it proposes agents,
-obtains user agreement and directs the existing Coder beneath Chat to compose reusable IDD objects
-from templates or create custom Cards. IDD is builder data, not another agent or runtime.
+obtains user agreement and directs the dedicated Agent Builder Card to compose reusable IDD objects
+from templates or create custom Cards. Local Coder remains a separate Magentic-One repository worker
+and never loads the full IDD. IDD is builder data, not another agent or runtime.
 The guided conversation is not yet live-proven. No saved Card/profile/prompt is changed by loading
 the palette; ordinary model Runs never receive the full dictionary.
 

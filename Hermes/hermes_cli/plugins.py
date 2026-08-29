@@ -2010,11 +2010,17 @@ class PluginContext:
         role: str = "user",
         *,
         session_key: str | None = None,
+        # LIQUIDAITY VENDOR PATCH: generic, optional idle-only injection for
+        # external human input drivers; the upstream interrupting default stays unchanged.
+        interrupt_running: bool = True,
     ) -> bool:
         """Inject a message into a CLI or gateway conversation.
 
         If the agent is idle (waiting for user input), this starts a new turn.
-        If the agent is running, this interrupts and injects the message.
+        If the agent is running, this interrupts and injects the message unless
+        ``interrupt_running`` is false. The fail-closed form is intended for
+        alternate human input drivers that must never steer or queue behind an
+        already accepted turn.
 
         This enables plugins (e.g. remote control viewers, messaging bridges)
         to send messages into the conversation from external sources.
@@ -2031,9 +2037,13 @@ class PluginContext:
 
         if cli is not None:
             if getattr(cli, "_agent_running", False):
+                if not interrupt_running:
+                    return False
                 # Agent is mid-turn - interrupt with the message
                 cli._interrupt_queue.put(msg)
             else:
+                if not interrupt_running and not cli._pending_input.empty():
+                    return False
                 # Agent is idle - queue as next input
                 cli._pending_input.put(msg)
             return True
@@ -2073,6 +2083,24 @@ class PluginContext:
                 exc_info=True,
             )
             return False
+
+    def cli_conversation_snapshot(self) -> dict | None:
+        """Return an immutable idle snapshot of the live interactive CLI conversation."""
+        # LIQUIDAITY VENDOR PATCH: generic, read-only live-CLI observation for
+        # alternate human surfaces. Gateway/non-CLI and active-turn callers fail closed.
+        cli = self._manager._cli_ref
+        if cli is None or getattr(cli, "_agent_running", False):
+            return None
+        history = getattr(cli, "conversation_history", None)
+        if not isinstance(history, list):
+            return None
+        try:
+            return {
+                "session_id": str(getattr(cli, "session_id", "") or ""),
+                "messages": copy.deepcopy(history),
+            }
+        except Exception:
+            return None
 
     def _gateway_injection_allowed(self) -> bool:
         """Return whether this plugin may trigger gateway session turns."""

@@ -9,9 +9,10 @@ Git history and clearly labelled purge notes, not in the active plan.
 ```text
 Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
-     ├─ flow → Coder Card (Hermes delegate, profile coder, terminal under Chat)
+     ├─ flow → Agent Builder Card (Hermes delegate, profile liquidaity-agent-builder)
      ├─ flow → Kanban Card (Hermes, profile liquidaity-hermes-steward)
      └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
+        └─ magentic_option → Local Coder Card (Hermes delegate, profile coder)
 
 Direct Assistant Card
   → native AutoGen AssistantAgent
@@ -20,9 +21,9 @@ Every shared tool
   → one official Python HTTP MCP host
 ```
 
-OpenClaude, LocalCoder, and Bun are absent from the product and dependency graph. Stable persisted
-identifiers such as `card_local_coder` and `template_local_coder` remain migration-compatible IDs for
-the Hermes-backed Coder; they do not identify a runtime.
+OpenClaude, the removed standalone LocalCoder runtime, and Bun are absent from the dependency graph.
+`card_local_coder` and `template_local_coder` now identify the Hermes-backed user-facing Local Coder;
+they do not select a runtime implementation.
 
 ## Current versus unproven
 
@@ -31,13 +32,15 @@ the Hermes-backed Coder; they do not identify a runtime.
 - Saved Cards own identity, prompt, provider/model/profile, runtime binding, enabled state, and grants.
 - `runtime.kind` plus `runtime.mode` selects Hermes Main/delegate/Kanban, AutoGen Assistant, or native
   Magentic-One. Card names and template text do not select runtimes.
-- Main, Coder, and Kanban are separate saved Hermes Cards with separate profiles and runtime homes.
+- Main, Agent Builder, Local Coder, and Kanban are separate saved Hermes Cards with separate profiles
+  and runtime homes.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count.
 - IDD supplies composable builder types, objects, templates and effect annotations, not runtime
-  authentication or a second IDF validator. Main directs Coder under Chat in Agent Builder mode
-  after user agreement to compose existing templates or custom Cards. This interaction awaits live proof.
+  authentication or a second IDF validator. After user agreement, Main directs only the dedicated
+  Agent Builder Card to compose existing templates or custom Cards. Local Coder never receives the
+  full palette. This interaction awaits live proof.
 - Hermes is the runtime platform; LiquidAIty composes native capabilities and contextualizes Runs.
   Native catalogs, profiles, tools and worker lifecycle remain Hermes-owned.
 - Optional Card Script data and a fail-closed guard are retained. Script analysis, generated types,
@@ -53,7 +56,7 @@ the Hermes-backed Coder; they do not identify a runtime.
 ### Still requiring live proof
 
 - A completed Main response through the saved Hermes profile and saved account/model.
-- Native Main-to-Coder delegation with truthful child Run, tool, native-reference, and AGE lineage.
+- Native Main-to-Agent-Builder delegation with truthful child Run, tool, native-reference, and AGE lineage.
 - Main-to-Kanban execution and separate-session memory behavior.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
@@ -85,13 +88,20 @@ the transient Card call. The call carries task meaning and selected context, not
 - Owns the persistent conversation front door and approval of downstream work.
 - May use only its saved tools and its saved outgoing relationships.
 
-### Coder
+### Agent Builder
 
-- Card: `card_local_coder` (stable historical database ID; user-facing name is Coder)
+- Card: saved dedicated Agent Builder identity
+- Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
+- Owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
+- Has no Magentic-One connection and receives no Local Coder state.
+
+### Local Coder
+
+- Card: `card_local_coder` (user-facing name is Local Coder)
 - Hermes mode/profile: `delegate` / `coder`
-- Owns bounded repository work and the under-chat terminal.
+- Owns bounded work against an explicitly selected local repository.
 - Uses CodeGraph/CBM first, then direct source and focused proof.
-- Is not automatically a Magentic-One worker.
+- Remains a Magentic-One worker option and has no direct Main flow.
 
 ### Kanban helper
 
@@ -160,7 +170,7 @@ alternate startup instructions.
 
 1. Keep cold install, typecheck, build, focused tests, and static startup proof green.
 2. Prove Main alone with one bounded, explicitly approved model call.
-3. Prove Main → Coder and truthful child lineage.
+3. Prove Main → Agent Builder and truthful child lineage.
 4. Prove Main → Kanban with separate session/memory.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
@@ -170,7 +180,7 @@ alternate startup instructions.
 
 - One Card authority, one IDD, one transient Python call materializer, one official Python MCP host.
 - One canonical `dev:fresh` tree and one root npm workspace lock.
-- Hermes Main/Coder/Kanban, AutoGen Assistant/Mag One, and four graph authorities remain distinct.
-- No OpenClaude/LocalCoder/Bun implementation, package root, lock, fallback, or downloader.
+- Hermes Main/Agent Builder/Local Coder/Kanban, AutoGen Assistant/Mag One, and four graph authorities remain distinct.
+- No OpenClaude/standalone-LocalCoder/Bun implementation, package root, lock, fallback, or downloader.
 - No fake graph activity, provider substitution, automatic embeddings, or product-data reset.
 - Regression Ratio for every accepted change is `0.000`.

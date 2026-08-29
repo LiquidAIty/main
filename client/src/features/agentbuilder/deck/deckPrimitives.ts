@@ -35,12 +35,22 @@ export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-// Seed default ONLY for a fresh Coder card. Once a card has a saved
-// provider/model, that saved value remains authoritative.
-export const CODER_CONTROLLER_TOOLS = [
+// Seed default only for the dedicated Agent Builder Card. These tools mutate
+// saved Card configuration/topology and therefore do not belong to Local Coder.
+export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'card.create',
   'card.update_configuration',
   'canvas.upsert_wire',
+] as const;
+// Shared non-administrative CodeGraph corridor for repository-owning Cards.
+// Indexing, trace ingestion, ADR mutation, and project deletion stay outside
+// ordinary Card grants.
+export const CODEBASE_MEMORY_CODER_TOOLS = [
+  'cbm.search_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+  'cbm.check_index_coverage',
+  'cbm.detect_changes',
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'card.run_assistant_agent',

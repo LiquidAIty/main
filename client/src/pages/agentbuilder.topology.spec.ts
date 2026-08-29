@@ -23,6 +23,7 @@ describe('Main / Hermes / graph authority topology', () => {
       'card_hermes_steward',
       'card_magentic',
       'card_local_coder',
+      'card_agent_builder',
     ]));
   });
 
@@ -82,23 +83,32 @@ describe('Main / Hermes / graph authority topology', () => {
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
-    for (const internalCardId of ['card_main_chat', 'card_local_coder', 'card_hermes_steward']) {
+    for (const internalCardId of ['card_main_chat', 'card_agent_builder', 'card_hermes_steward']) {
       expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
         source: internalCardId,
         target: 'card_magentic',
         edgeType: 'magentic_option',
       }));
     }
+    expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
+      source: 'card_magentic', target: 'card_local_coder', edgeType: 'magentic_option',
+    }));
   });
 
   it('uses wires only as explicit help authority and gives Kanban no outward flow', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
     ]));
-    expect(INITIAL_DECK.edges).toHaveLength(5);
+    expect(INITIAL_DECK.edges).toHaveLength(6);
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_local_coder', edgeType: 'flow',
+    }));
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow',
+    }));
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
     }));
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_hermes_steward', edgeType: 'flow',
@@ -161,6 +171,7 @@ describe('Main / Hermes / graph authority topology', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const main = byId.get('card_main_chat');
     const coder = byId.get('card_local_coder');
+    const agentBuilder = byId.get('card_agent_builder');
     const steward = byId.get('card_hermes_steward');
     const magOne = byId.get('card_magentic');
 
@@ -176,7 +187,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
     expect(coder).toMatchObject({
-      title: 'Coder',
+      title: 'Local Coder',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       runtimeOptions: {
         accessMode: 'chatgpt-account',
@@ -184,16 +195,40 @@ describe('Main / Hermes / graph authority topology', () => {
         toolsets: ['hermes-acp', 'computer_use'],
       },
     });
+    expect(coder?.runtimeOptions?.tools).toEqual([
+      'cbm.search_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.check_index_coverage',
+      'cbm.detect_changes',
+    ]);
     expect(coder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
-    expect(coder?.runtimeOptions?.tools).not.toContain('cbm.search_graph');
     expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'run_mag_one',
       'graphiti.add_memory',
     ]));
-    expect(coder?.prompt).toContain('You are Coder');
+    expect(coder?.prompt).toContain('You are Local Coder');
     expect(coder?.prompt).toContain('Native delegate_task is available');
     expect(coder?.prompt).toContain('children remain parts of this Coder Card');
     expect(coder?.prompt).not.toContain('retask the saved Kanban Card');
+
+    expect(agentBuilder).toMatchObject({
+      title: 'Agent Builder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtimeOptions: {
+        accessMode: 'chatgpt-account',
+        nativeTools: ['memory'],
+        skills: ['hermes-agent'],
+        toolsets: ['hermes-acp', 'computer_use'],
+        tools: [
+          'card.create', 'card.update_configuration', 'canvas.upsert_wire',
+          'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
+          'cbm.check_index_coverage', 'cbm.detect_changes',
+        ],
+      },
+    });
+    expect(agentBuilder?.prompt).toContain('Load the full LiquidAIty.idd only');
+    expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
     expect(steward?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
