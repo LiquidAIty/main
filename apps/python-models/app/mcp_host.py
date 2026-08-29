@@ -3116,36 +3116,6 @@ async def _dispatch_tool(
     arguments: dict[str, Any],
 ) -> Any:
     context = _authenticated_main_context()
-    if name.startswith("constellation."):
-        if context is None or not str(context.get("projectId") or "").strip():
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "ok": False,
-                    "error": "authenticated_project_required",
-                }),
-            )]
-        from app.python_models.constellation import (
-            constellation_context,
-            constellation_inspect,
-            constellation_remember,
-        )
-        handlers = {
-            "constellation.context": constellation_context,
-            "constellation.inspect": constellation_inspect,
-            "constellation.remember": constellation_remember,
-        }
-        handler = handlers.get(name)
-        if handler is not None:
-            result = await asyncio.to_thread(
-                handler,
-                str(context["projectId"]),
-                dict(arguments or {}),
-            )
-            return [TextContent(
-                type="text",
-                text=json.dumps(result, ensure_ascii=False),
-            )]
     if name.startswith(_NATIVE_PREFIXES["cbm"]):
         await _native_cbm_tools()
         native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
@@ -3267,6 +3237,35 @@ async def _dispatch_tool(
                 text=json.dumps({"ok": False, "error": f"tool_arguments_rejected: {','.join(sorted(extra))}"}),
             )
         ]
+    if name.startswith("constellation."):
+        if context is None or not str(context.get("projectId") or "").strip():
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "ok": False,
+                    "error": "authenticated_project_required",
+                }),
+            )]
+        from app.python_models.constellation import (
+            constellation_context,
+            constellation_inspect,
+            constellation_remember,
+        )
+        handlers = {
+            "constellation.context": constellation_context,
+            "constellation.inspect": constellation_inspect,
+            "constellation.remember": constellation_remember,
+        }
+        handler = handlers[name]
+        result = await asyncio.to_thread(
+            handler,
+            str(context["projectId"]),
+            args,
+        )
+        return [TextContent(
+            type="text",
+            text=json.dumps(result, ensure_ascii=False),
+        )]
     if (
         name == "card.run_assistant_agent"
         and context is not None

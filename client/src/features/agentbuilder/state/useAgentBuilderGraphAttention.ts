@@ -75,6 +75,7 @@ type ExpandRequest = {
 export type GraphAttentionState = {
   projections: Record<GraphAttentionAuthority, GraphProjectionV1>;
   errors: Partial<Record<GraphAttentionAuthority, string>>;
+  statuses: Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>;
   startAttentionScope: (turn: MainChatTurnStarted) => void;
   observeNativeTurnEvent: (turn: MainChatTurnEvent) => void;
   finishAttentionScope: (turn: MainChatTurnFinished) => void;
@@ -437,6 +438,41 @@ export function mergeAttentionProjection(
   };
 }
 
+export function overlayAuthoritativeThinkGraphAttention(
+  authoritative: GraphProjectionV1,
+  attention: GraphProjectionV1,
+): GraphProjectionV1 {
+  const attentionNodes = new Map(attention.nodes.map((node) => [node.id, node]));
+  const attentionEdges = new Map(attention.edges.map((edge) => [edge.id, edge]));
+  return {
+    ...authoritative,
+    nodes: authoritative.nodes.map((node) => {
+      const observed = attentionNodes.get(node.id);
+      if (!observed) return node;
+      return {
+        ...node,
+        properties: {
+          ...node.properties,
+          ...observed.properties,
+          attentionProvenance: observed.provenance,
+        },
+      };
+    }),
+    edges: authoritative.edges.map((edge) => {
+      const observed = attentionEdges.get(edge.id);
+      if (!observed) return edge;
+      return {
+        ...edge,
+        properties: {
+          ...edge.properties,
+          ...observed.properties,
+          attentionProvenance: observed.provenance,
+        },
+      };
+    }),
+  };
+}
+
 function emptyAttention(projectId: string): Record<GraphAttentionAuthority, GraphProjectionV1> {
   return {
     thinkgraph: projection('thinkgraph', projectId),
@@ -458,10 +494,15 @@ export default function useAgentBuilderGraphAttention({
 }): GraphAttentionState {
   const [projections, setProjections] = useState(() => emptyAttention(projectId));
   const [errors, setErrors] = useState<Partial<Record<GraphAttentionAuthority, string>>>({});
+  const [statuses, setStatuses] = useState<Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>>({
+    thinkgraph: 'loading', knowgraph: 'ready', codegraph: 'ready',
+  });
   const activeScopeRef = useRef<{ clientRunId: string; serverRunId: string | null } | null>(null);
   const seenEventIdsRef = useRef(new Set<string>());
   const selectedRunRef = useRef<string | null>(null);
   const mainActorRef = useRef<string | null>(null);
+  const authoritativeThinkGraphRef = useRef<GraphProjectionV1>(projection('thinkgraph', projectId));
+  const thinkGraphRequestRef = useRef(0);
 
   useEffect(() => {
     activeScopeRef.current = null;
@@ -469,17 +510,70 @@ export default function useAgentBuilderGraphAttention({
     selectedRunRef.current = null;
     setErrors({});
     setProjections(emptyAttention(projectId));
+    authoritativeThinkGraphRef.current = projection('thinkgraph', projectId);
+    setStatuses({ thinkgraph: 'loading', knowgraph: 'ready', codegraph: 'ready' });
   }, [deckId, projectId, selectedCardId]);
 
   useEffect(() => { activeScopeRef.current = null; }, [conversationId]);
 
   const merge = useCallback((authority: GraphAttentionAuthority, incoming: GraphProjectionV1) => {
+    if (authority === 'thinkgraph') {
+      authoritativeThinkGraphRef.current = mergeAttentionProjection(
+        authoritativeThinkGraphRef.current,
+        incoming,
+      );
+    }
     setProjections((current) => ({
       ...current,
       [authority]: mergeAttentionProjection(current[authority], incoming),
     }));
     setErrors((current) => ({ ...current, [authority]: undefined }));
   }, []);
+
+  const refreshThinkGraph = useCallback(async (attention?: GraphProjectionV1) => {
+    const requestId = thinkGraphRequestRef.current + 1;
+    thinkGraphRequestRef.current = requestId;
+    setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
+    try {
+      const query = new URLSearchParams({ projectId });
+      const response = await fetch(`/api/thinkgraph/projection?${query.toString()}`);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !isRecord(payload)) {
+        throw new Error(String(payload?.error || `HTTP ${response.status}`));
+      }
+      if (
+        payload.schemaVersion !== 'thinkgraph.constellation.v1'
+        || payload.authority !== 'constellation-engine'
+        || payload.projectId !== projectId
+        || !Array.isArray(payload.nodes)
+        || !Array.isArray(payload.edges)
+      ) {
+        throw new Error('invalid_constellation_projection');
+      }
+      if (requestId !== thinkGraphRequestRef.current) return;
+      const authoritative = payload as GraphProjectionV1;
+      authoritativeThinkGraphRef.current = authoritative;
+      setProjections((current) => ({
+        ...current,
+        thinkgraph: attention
+          ? overlayAuthoritativeThinkGraphAttention(authoritative, attention)
+          : authoritative,
+      }));
+      setErrors((current) => ({ ...current, thinkgraph: undefined }));
+      setStatuses((current) => ({ ...current, thinkgraph: 'ready' }));
+    } catch (caught) {
+      if (requestId !== thinkGraphRequestRef.current) return;
+      setErrors((current) => ({
+        ...current,
+        thinkgraph: caught instanceof Error ? caught.message : String(caught),
+      }));
+      setStatuses((current) => ({ ...current, thinkgraph: 'error' }));
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refreshThinkGraph();
+  }, [refreshThinkGraph]);
 
   const observeAttentionEvent = useCallback((event: NativeAttentionEvent) => {
     if (event.projectId !== projectId || event.deckId !== deckId || !event.runId
@@ -492,6 +586,11 @@ export default function useAgentBuilderGraphAttention({
     const key = `${event.eventId}:${event.phase || 'completed'}:${event.resultHash}`;
     if (seenEventIdsRef.current.has(key)) return;
     if (event.change === 'delete' || event.change === 'clear') {
+      if (event.authority === 'thinkgraph') {
+        void refreshThinkGraph();
+        seenEventIdsRef.current.add(key);
+        return;
+      }
       setProjections((current) => {
         const authority = event.authority as GraphAttentionAuthority;
         const value = current[authority];
@@ -505,13 +604,25 @@ export default function useAgentBuilderGraphAttention({
     } else {
       const result = projectNativeAttentionEvent({ event, projectId, deckId });
       if (!result) return;
-      merge(result.authority, result.projection);
+      if (result.authority === 'thinkgraph') {
+        const authoritativeIds = new Set(authoritativeThinkGraphRef.current.nodes.map((node) => node.id));
+        if (result.projection.nodes.every((node) => authoritativeIds.has(node.id))) {
+          setProjections((current) => ({
+            ...current,
+            thinkgraph: overlayAuthoritativeThinkGraphAttention(current.thinkgraph, result.projection),
+          }));
+        } else {
+          void refreshThinkGraph(result.projection);
+        }
+      } else {
+        merge(result.authority, result.projection);
+      }
     }
     seenEventIdsRef.current.add(key);
     if (seenEventIdsRef.current.size > 2048) {
       seenEventIdsRef.current.delete(seenEventIdsRef.current.values().next().value!);
     }
-  }, [deckId, merge, projectId, selectedCardId]);
+  }, [deckId, merge, projectId, refreshThinkGraph, selectedCardId]);
 
   const observeAttentionSession = useCallback((session: NativeAttentionSession) => {
     if (session.projectId !== projectId || session.deckId !== deckId) return;
@@ -522,7 +633,10 @@ export default function useAgentBuilderGraphAttention({
       if (selectedRunRef.current !== nextRun || !nextRun) {
         selectedRunRef.current = nextRun;
         seenEventIdsRef.current.clear();
-        setProjections(emptyAttention(projectId));
+        setProjections({
+          ...emptyAttention(projectId),
+          thinkgraph: authoritativeThinkGraphRef.current,
+        });
       }
     } else if (!active) {
       setProjections((current) => Object.fromEntries(Object.entries(current).map(([authority, value]) => [authority, {
@@ -547,9 +661,13 @@ export default function useAgentBuilderGraphAttention({
           provenance: { authority, nativeId: ref.nativeId, runId: session.runId,
             cardId: session.cardId, source: 'AGE READ' },
         }));
-      if (nodes.length) merge(authority, projection(authority, projectId, nodes.slice(0, MAX_OPERATION_NODES)));
+      if (nodes.length) {
+        const incoming = projection(authority, projectId, nodes.slice(0, MAX_OPERATION_NODES));
+        if (authority === 'thinkgraph') void refreshThinkGraph(incoming);
+        else merge(authority, incoming);
+      }
     }
-  }, [deckId, merge, projectId, selectedCardId]);
+  }, [deckId, merge, projectId, refreshThinkGraph, selectedCardId]);
 
   const startAttentionScope = useCallback((turn: MainChatTurnStarted) => {
     if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
@@ -559,6 +677,7 @@ export default function useAgentBuilderGraphAttention({
     const actor = mainActorRef.current;
     if (actor && (!selectedCardId || actor === selectedCardId)) {
       setProjections((current) => Object.fromEntries(Object.entries(current).map(([authority, value]) => {
+        if (authority === 'thinkgraph') return [authority, authoritativeThinkGraphRef.current];
         const nodes = value.nodes.filter((node) => node.properties?.attentionActorCardId !== actor);
         const ids = new Set(nodes.map((node) => node.id));
         return [authority, projection(authority as GraphAttentionAuthority, projectId, nodes,
@@ -660,6 +779,7 @@ export default function useAgentBuilderGraphAttention({
   return {
     projections,
     errors,
+    statuses,
     startAttentionScope,
     observeNativeTurnEvent,
     finishAttentionScope,

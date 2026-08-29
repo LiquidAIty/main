@@ -32,6 +32,7 @@ type Props = {
   surfaceRole?: 'large' | 'companion';
   attentionProjections: Record<KnowledgeSurfaceKind, import('./NativeAuthorityGraphSurface').GraphProjectionV1>;
   attentionErrors: Partial<Record<KnowledgeSurfaceKind, string>>;
+  attentionStatuses?: Partial<Record<KnowledgeSurfaceKind, 'idle' | 'loading' | 'ready' | 'error'>>;
   onExpandAttentionNode: (
     authority: KnowledgeSurfaceKind,
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
@@ -51,6 +52,7 @@ export default function KnowledgeGraphFramework({
   surfaceRole = minHeight > 320 ? 'large' : 'companion',
   attentionProjections,
   attentionErrors,
+  attentionStatuses,
   onExpandAttentionNode,
   onUseAttentionNode,
   onKindChange,
@@ -130,7 +132,7 @@ export default function KnowledgeGraphFramework({
         ) : kind === 'thinkgraph' ? (
           <NativeThinkGraphSurface
             projection={attentionProjections.thinkgraph}
-            status={attentionErrors.thinkgraph ? 'error' : 'ready'}
+            status={attentionStatuses?.thinkgraph || (attentionErrors.thinkgraph ? 'error' : 'ready')}
             error={attentionErrors.thinkgraph || null}
             authority="thinkgraph"
             onExpand={(node) => onExpandAttentionNode('thinkgraph', node)}

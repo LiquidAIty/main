@@ -1988,7 +1988,7 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert prepared["message"] == "Help me prepare work for another agent."
     assert "idf" not in prepared
     assert prepared["sessionProfile"]["systemPrompt"] == main["prompt"]
-    assert prepared["sessionProfile"]["enabledTools"] == []
+    assert prepared["sessionProfile"]["enabledTools"] == ["canvas.inspect"]
     assert prepared["sessionProfile"]["runtime"] == {
         "kind": "hermes", "mode": "main", "profile": "default",
     }

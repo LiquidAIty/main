@@ -118,7 +118,10 @@ The literal `LiquidAIty.idd` separates publication/access policy from native MCP
 Constellation exposes only bounded `context`, `inspect`, and `remember` operations. CBM remains the only
 product CodeGraph owner. Obsolete saved tool grants fail unavailable; there is no data migration or
 synthetic topology regeneration.
-This changes the previous 71-tool public catalog to 66; cached GPT tool descriptors need reissue/refresh.
+The current 2026-08-29 startup snapshot publishes 43/43 unique tools after the retired Engraphis
+family was removed and the three bounded Constellation tools were added. The count is a run receipt,
+not a fixed architecture promise. Cached GPT tool descriptors must be reissued in a fresh selected-
+connector conversation; restarting an already-ready server does not replace a conversation-cached schema.
 
 Graph attention reuses AGE `USED_TOOL` events, `USED` native references and materialized `READ` edges.
 The external-Main mapping is designed to establish an idempotent AGE observation Run under its existing
@@ -140,8 +143,9 @@ existing producer's missing `READ` label through the existing PostgreSQL schema 
 base-label access or READ-delete privilege. The canonical migration runner recorded it once and verified
 an idempotent second pass. Inspection always executes the typed READ query, even with no selected Runs;
 schema failure is explicit, not a metadata-based omission. Focused attention, SSE, bearer and UI-hook
-tests pass. The canonical `npm run dev:fresh` now loads the current repair and reaches readiness with
-66/66 public tools. Loaded AGE inspection and the existing SSE endpoint return 200; four retained Main
+tests pass. The canonical `npm run dev:fresh` now loads source revision
+`07ec833e833bbf72c7f63d7a639d3446707969fc` and reaches readiness with 43/43 public tools. Loaded AGE
+inspection and the existing SSE endpoint return 200; four retained Main
 events replay chronologically with direct-only attribution. The existing UI projection consumes those
 real SSE events without animating the completed Run. The saved Deck and all six Card and six edge hashes
 remain unchanged. The authenticated external `cbm.list_projects` read at 2026-08-27T23:07:20Z also
@@ -304,6 +308,23 @@ AgentGraph observes execution; it does not own Card configuration or runtime lif
 The embedded CodeGraph view starts from returned objects and expands explicitly; it does not auto-load
 the entire repository graph. The former standalone CBM UI app/package/demo shell and duplicated UI
 primitives are intentionally absent.
+
+ThinkGraph renders through one separate authority chain:
+
+```text
+Constellation Engine SQLite
+→ Python-owned Constellation child and bounded projection route
+→ backend proxy
+→ GraphProjectionV1
+→ ephemeral browser-only Graphology MultiDirectedGraph
+→ LiquidAIty ConstellationSigmaSurface using Sigma v3 WebGL
+```
+
+Graphology preserves surviving view positions during keyed native-ID updates but owns no persistent
+meaning. Sigma owns camera, hit testing, and drawing. The generic force-graph projection surface owns
+KnowGraph only and is not a second ThinkGraph renderer. ThinkGraph attention may decorate an exact ID
+already present in the authoritative Constellation projection; it may never create a visual node from an
+attention receipt alone. An empty native projection therefore remains visibly and structurally empty.
 
 Valid activation events include native query results, selections, delivery/consumption, traversal,
 writes, and run completion/failure. Answer prose and hidden reasoning are never telemetry.

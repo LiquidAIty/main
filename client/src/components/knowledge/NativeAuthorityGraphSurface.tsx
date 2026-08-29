@@ -8,7 +8,7 @@ import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import './nativeAuthorityGraphSurface.css';
 
-type GraphAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph' | 'agentgraph';
+type GraphAuthority = 'knowgraph';
 
 // The server-owned graph projection contract rendered by the native surfaces.
 export type GraphProjectionNode = {
@@ -213,11 +213,6 @@ const TYPE_COLORS: Record<string, string> = {
   Risk: '#8798A0',
 };
 const DEFAULT_TYPE_COLOR = '#A7B0BA';
-const CONSTELLATION_LEVEL_COLORS: Record<string, string> = {
-  L2: '#ffd166',
-  L1: '#7dd3fc',
-  L0: '#a78bfa',
-};
 const LIVE_SOURCE_COLORS: Record<string, string> = {
   user: '#F3B35B',
   reasoning: '#A98BF3',
@@ -239,7 +234,7 @@ export function NativeGraphProjectionSurface({
   projection,
   status,
   error,
-  authority = 'thinkgraph',
+  authority = 'knowgraph',
   onExpand,
   onUseAsContext,
 }: {
@@ -443,20 +438,12 @@ export function NativeGraphProjectionSurface({
           ? node.currentState === 'settled' ? 0.48 : 1
           : hasTransient ? 0.2 : 1;
         context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
-        const constellationLevel = String(node.properties.level || '');
-        const constellationColor = authority === 'thinkgraph'
-          ? CONSTELLATION_LEVEL_COLORS[constellationLevel] || '#5eead4'
-          : null;
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
         context.fillStyle = node.attentionActorColor
           || (node.transient && node.source
           ? LIVE_SOURCE_COLORS[node.source]
-          : constellationColor || TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
-        if (authority === 'thinkgraph') {
-          context.shadowColor = String(context.fillStyle);
-          context.shadowBlur = Math.max(3, radius * 1.8);
-        }
+          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
         context.fill();
         context.shadowBlur = 0;
         if (connectedFocus && node.id === focused) {
@@ -488,7 +475,7 @@ export function NativeGraphProjectionSurface({
         const focused = hoveredRef.current || selectedRef.current;
         return (focused && (endpointId(link.source) === focused || endpointId(link.target) === focused) ? 1.8 : 0.75) * settings.linkWidth;
       })
-      .linkDirectionalArrowLength(authority === 'thinkgraph' ? 0 : 2)
+      .linkDirectionalArrowLength(2)
       .linkDirectionalArrowRelPos(1)
       .linkCanvasObjectMode(() => (showLinkLabels ? 'after' : undefined))
       .linkCanvasObject((link: NativeLink, context: CanvasRenderingContext2D, scale: number) => {
@@ -599,9 +586,9 @@ export function NativeGraphProjectionSurface({
     return counts;
   }, new Map<string, number>())].sort((a, b) => b[1] - a[1]);
   const connectedCount = nativeData.nodes.filter((node) => node.degree > 0).length;
-  const surfaceLabel = authority === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
+  const surfaceLabel = 'KnowGraph';
   return (
-    <div data-testid={`native-${authority}-surface`} className={`native-authority-graph${authority === 'thinkgraph' ? ' constellation-star-map' : ''}`}>
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph">
       <div className="native-authority-canvas">
         <GraphPaperBackground />
         <div ref={hostRef} className="native-authority-network" />

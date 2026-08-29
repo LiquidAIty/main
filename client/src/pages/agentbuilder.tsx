@@ -1935,6 +1935,7 @@ export default function AgentBuilder(): React.ReactElement {
             surfaceRole={surfaceRole}
             attentionProjections={graphAttention.projections}
             attentionErrors={graphAttention.errors}
+            attentionStatuses={graphAttention.statuses}
             onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
               authority,
               node,

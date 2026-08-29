@@ -135,6 +135,12 @@ CodeGraph   = native CBM repository structure
 AgentGraph  = Cards, relationships, Runs, delegation, references, tools, and artifacts in AGE
 ```
 
+The current ThinkGraph MVP uses the Python-owned Constellation projection route, the renderer-neutral
+`GraphProjectionV1` DTO, one disposable in-memory Graphology `MultiDirectedGraph`, and Sigma v3 WebGL.
+Graphology and Sigma are view state only. Attention decorates exact IDs already returned by Constellation;
+it cannot create substitute nodes. Empty native results render an honest empty state. A later 3D mode may
+consume the same DTO but is not part of the current renderer.
+
 The foreground graph starts empty and reveals only native objects actually returned, selected,
 consumed, traversed, handed off, or written. Inspector detail may show technical receipts. Card faces
 may show correlated tool activity, but Card animation is not a substitute for graph attention.

@@ -90,8 +90,8 @@ describe('native authority graph surfaces', () => {
 
   it('reuses surviving node objects and reheats only when topology grows', async () => {
     const first = {
-      schemaVersion: 'thinkgraph.attention.projection.v1',
-      authority: 'thinkgraph',
+      schemaVersion: 'knowgraph.attention.projection.v1',
+      authority: 'knowgraph',
       projectId: 'project-1',
       nodes: [{
         id: 'mem-one',
@@ -114,7 +114,7 @@ describe('native authority graph surfaces', () => {
     const survivingNode = graph.data.nodes[0];
     expect(survivingNode.attentionActorColor).toBe('#37ADAA');
     act(() => graph.nodeClick(survivingNode));
-    expect(screen.getByTestId('thinkgraph-node-inspector').textContent).toContain('mem-one');
+    expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('mem-one');
     expect(screen.getByText('card_main_chat')).toBeTruthy();
     survivingNode.x = 42;
     const initialReheats = graph.d3ReheatSimulation.mock.calls.length;
@@ -169,7 +169,7 @@ describe('native authority graph surfaces', () => {
   it('attaches only the exact selected native node to Main', async () => {
     const onUseAsContext = vi.fn();
     const projection = {
-      ...empty('thinkgraph'),
+      ...empty('knowgraph'),
       nodes: [{
         id: 'mem-one', canonicalId: 'mem-one', label: 'Decision', mentionCount: 1,
         properties: { attentionActive: true, attentionActorCardId: 'card_main_chat' },

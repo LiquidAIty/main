@@ -1419,7 +1419,8 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name
         assert "card.load_graph_references" in by_name
-        assert len(by_name) == 66
+        assert {"constellation.context", "constellation.inspect", "constellation.remember"}.issubset(by_name)
+        assert not any(name.startswith("engraphis.") for name in by_name)
         assert "coder.status" not in by_name
         assert all(
             tool.inputSchema.get("additionalProperties") is False

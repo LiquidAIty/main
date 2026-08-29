@@ -4,32 +4,14 @@ import Sigma from 'sigma';
 
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls } from '../graph/GraphCanvasChrome';
+import { synchronizeProjectionGraph } from './constellationSigmaGraph';
 import type { GraphProjectionNode, GraphProjectionV1 } from './NativeAuthorityGraphSurface';
 import './nativeAuthorityGraphSurface.css';
 
-const LEVEL_COLORS: Record<string, string> = {
-  L2: '#ffd166',
-  L1: '#7dd3fc',
-  L0: '#a78bfa',
-};
-
-function stableAngle(id: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < id.length; index += 1) {
-    hash ^= id.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return ((hash >>> 0) / 0xffffffff) * Math.PI * 2;
-}
-
-function nodePosition(node: GraphProjectionNode, index: number, total: number) {
-  const distance = Number(node.properties?.distance);
-  const normalizedDistance = Number.isFinite(distance) ? Math.max(0, distance) : null;
-  const angle = stableAngle(node.id) + index * Math.PI * (3 - Math.sqrt(5));
-  const radius = normalizedDistance == null
-    ? 1.2 + Math.sqrt((index + 1) / Math.max(1, total)) * 8
-    : 1.2 + Math.min(10, normalizedDistance * 7);
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+function reducedMotionPreferred(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export default function ConstellationSigmaSurface({
@@ -48,47 +30,45 @@ export default function ConstellationSigmaSurface({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<Sigma | null>(null);
+  const graph = useMemo(() => new MultiDirectedGraph(), []);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [search, setSearch] = useState('');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [rendered, setRendered] = useState({ nodes: 0, edges: 0, filteredEdges: 0 });
 
   const selected = useMemo(
     () => projection?.nodes.find((node) => node.id === selectedId) || null,
     [projection, selectedId],
   );
 
-  const graph = useMemo(() => {
-    const next = new MultiDirectedGraph();
-    const nodes = projection?.nodes || [];
-    const degree = new Map<string, number>();
-    for (const edge of projection?.edges || []) {
-      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
-      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
-    }
-    nodes.forEach((node, index) => {
-      const position = nodePosition(node, index, nodes.length);
-      const level = String(node.properties?.level || '');
-      const nodeDegree = degree.get(node.id) || 0;
-      next.addNode(node.id, {
-        ...position,
-        label: String(node.label || node.title || node.id),
-        color: String(node.properties?.attentionActorColor || LEVEL_COLORS[level] || '#5eead4'),
-        size: Math.max(3, Math.min(14, 4 + Math.sqrt(nodeDegree + 1) * 1.8)),
-        zIndex: level === 'L2' ? 3 : level === 'L1' ? 2 : 1,
+  useEffect(() => {
+    try {
+      const result = synchronizeProjectionGraph(graph, projection);
+      setRendered({
+        nodes: result.renderedNodes,
+        edges: result.renderedEdges,
+        filteredEdges: result.filteredEdges,
       });
-    });
-    for (const edge of projection?.edges || []) {
-      if (!next.hasNode(edge.source) || !next.hasNode(edge.target)) continue;
-      next.addDirectedEdgeWithKey(edge.id, edge.source, edge.target, {
-        label: edge.predicate,
-        color: 'rgba(111, 190, 210, 0.34)',
-        size: Math.max(0.4, Math.min(3, Number(edge.properties?.strength) || 0.8)),
-      });
+      setSyncError(null);
+      if (selectedId && !graph.hasNode(selectedId)) {
+        setSelectedId(null);
+        setInspectorOpen(false);
+      }
+      if (hoveredId && !graph.hasNode(hoveredId)) setHoveredId(null);
+      const renderer = rendererRef.current;
+      if (renderer) {
+        if (result.becamePopulated) {
+          renderer.getCamera().setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
+        }
+        renderer.refresh();
+      }
+    } catch (caught) {
+      setSyncError(caught instanceof Error ? caught.message : String(caught));
     }
-    return next;
-  }, [projection]);
+  }, [graph, hoveredId, projection, selectedId]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -143,16 +123,34 @@ export default function ConstellationSigmaSurface({
     setInspectorOpen(true);
     const display = rendererRef.current.getNodeDisplayData(match);
     if (display) {
-      void rendererRef.current.getCamera().animate(
-        { x: display.x, y: display.y, ratio: 0.18 },
-        { duration: 500 },
-      );
+      const camera = rendererRef.current.getCamera();
+      const state = { x: display.x, y: display.y, ratio: 0.18 };
+      if (reducedMotionPreferred()) camera.setState(state);
+      else void camera.animate(state, { duration: 500 });
     }
   };
 
   const runtime = projection && 'runtime' in projection
     ? (projection as GraphProjectionV1 & { runtime?: Record<string, unknown> }).runtime
     : undefined;
+  const embeddingState = String(projection?.embedding?.state || '');
+  const degradedReason = projection?.embedding?.reason;
+  const displayedError = error || syncError;
+
+  const changeZoom = (factor: number) => {
+    const camera = rendererRef.current?.getCamera();
+    if (!camera) return;
+    const next = { ratio: camera.getState().ratio * factor };
+    if (reducedMotionPreferred()) camera.setState(next);
+    else void camera.animate(next, { duration: 220 });
+  };
+
+  const resetCamera = () => {
+    const camera = rendererRef.current?.getCamera();
+    if (!camera) return;
+    if (reducedMotionPreferred()) camera.setState({ x: 0.5, y: 0.5, ratio: 1, angle: 0 });
+    else void camera.animatedReset({ duration: 320 });
+  };
 
   return (
     <div data-testid="native-thinkgraph-surface" className="constellation-sigma-surface">
@@ -161,16 +159,23 @@ export default function ConstellationSigmaSurface({
         <div ref={containerRef} className="constellation-sigma-network" />
         <div className="constellation-sigma-badge">
           <strong>Constellation</strong>
-          <span>{projection?.nodes.length || 0} memories · {projection?.edges.length || 0} relations</span>
+          <span>{rendered.nodes} memories · {rendered.edges} relations</span>
+          {rendered.filteredEdges > 0 ? <span>{rendered.filteredEdges} relation endpoints outside projection</span> : null}
         </div>
         <GraphNavigationControls
-          onZoomIn={() => { void rendererRef.current?.getCamera().animatedZoom({ duration: 220 }); }}
-          onZoomOut={() => { void rendererRef.current?.getCamera().animatedUnzoom({ duration: 220 }); }}
-          onFit={() => { void rendererRef.current?.getCamera().animatedReset({ duration: 320 }); }}
+          onZoomIn={() => changeZoom(1 / 1.5)}
+          onZoomOut={() => changeZoom(1.5)}
+          onFit={resetCamera}
         />
+        {status === 'idle' && !projection ? <div className="native-authority-empty">Waiting for Constellation…</div> : null}
         {status === 'loading' && !projection ? <div className="native-authority-empty">Loading Constellation…</div> : null}
-        {status === 'error' ? <div className="native-authority-empty">Constellation failed: {error}</div> : null}
+        {(status === 'error' || syncError) ? <div role="alert" className="native-authority-empty">Constellation failed: {displayedError}</div> : null}
         {status === 'ready' && graph.order === 0 ? <div className="native-authority-empty">No Constellation memories in this attention scope yet.</div> : null}
+        {status === 'ready' && embeddingState === 'degraded' ? (
+          <div role="status" className="constellation-sigma-degraded">
+            Deterministic topology active; semantic retrieval degraded{degradedReason ? `: ${String(degradedReason)}` : '.'}
+          </div>
+        ) : null}
       </div>
       <RightGlassDrawer
         isOpen={inspectorOpen}
