@@ -104,9 +104,9 @@ tests, compilation, and runtime evidence decide implementation truth.
 
 ### 3.2 Project and knowledge memory
 
-[Engraphis](https://github.com/Coding-Dev-Tools/engraphis) is a local-first, inspectable memory system for
-coding agents. [Graphiti](https://github.com/getzep/graphiti) provides a temporally aware knowledge-graph
-approach for agent memory. These projects motivate durable, queryable context and temporal/provenance-aware
+[Constellation Engine](https://github.com/CONSTELLATION-ENGINE/constellation-engine) is a local-first,
+inspectable memory system for coding agents. [Graphiti](https://github.com/getzep/graphiti) provides a
+temporally aware knowledge-graph approach for agent memory. These projects motivate durable, queryable context and temporal/provenance-aware
 knowledge, but they do not establish the effect of LiquidAIty's four-authority composition.
 
 ### 3.3 Execution graphs
@@ -158,7 +158,7 @@ authority and whether the resulting loop improves observed work.
 The repository contains concrete anchors for testing the proposal, including:
 
 - CodeGraph/CBM integration and a repo-local Codex lifecycle;
-- ThinkGraph storage through the project's SQLite/Engraphis boundary;
+- ThinkGraph storage through the project's Constellation Engine boundary;
 - KnowGraph storage through Graphiti/Neo4j boundaries;
 - AgentGraph relationships and execution observations through Apache AGE/PostgreSQL;
 - `apps/python-models/app/python_models/idf.py::materialize_idf` for canonical graph-first `in.idf`
@@ -555,6 +555,6 @@ cache effects, operator learning, and selective reporting. The beta must decide 
    [Magentic-One: A Generalist Multi-Agent System for Solving Complex Tasks](https://arxiv.org/abs/2411.04468).
 6. Microsoft. [AutoGen, Python v0.7.5 source](https://github.com/microsoft/autogen/tree/python-v0.7.5).
 7. Nous Research. [Hermes Agent](https://github.com/NousResearch/hermes-agent).
-8. Coding-Dev-Tools. [Engraphis](https://github.com/Coding-Dev-Tools/engraphis).
+8. Constellation Engine. [Constellation Engine](https://github.com/CONSTELLATION-ENGINE/constellation-engine).
 9. Zep. [Graphiti](https://github.com/getzep/graphiti).
 10. Apache Software Foundation. [Apache AGE overview](https://age.apache.org/overview/).

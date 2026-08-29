@@ -54,19 +54,9 @@ export const CODEBASE_MEMORY_CODER_TOOLS = [
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'card.run_assistant_agent',
-  'engraphis.remember',
-  'engraphis.forget',
-  'engraphis.pin',
-  'engraphis.correct',
-  'engraphis.promote',
-  'engraphis.link',
-  'engraphis.record_event',
-  'engraphis.index_repo',
-  'engraphis.start_session',
-  'engraphis.end_session',
-  'engraphis.ingest',
-  'engraphis.ingest_postgres_schema',
-  'engraphis.consolidate',
+  'constellation.context',
+  'constellation.inspect',
+  'constellation.remember',
   'run_mag_one',
 ] as const;
 export const HERMES_CARD_TOOLS = [

@@ -167,28 +167,23 @@ def test_declared_write_contract_extracts_graphiti_nodes_and_edge() -> None:
     }]
 
 
-def test_thinkgraph_edge_uses_explicit_endpoints_not_provenance_source() -> None:
+def test_constellation_context_uses_returned_nodes_and_does_not_invent_edge_ids() -> None:
     event = native_attention.build_native_attention_event(
-        "engraphis.link",
+        "constellation.context",
         _result({
-            "edge_id": "edge-one",
-            "a": "memory-a",
-            "b": "memory-b",
-            "relation": "supports",
-            "source": "user supplied provenance",
-            "source_description": "bounded selection",
+            "nodes": [{"id": "memory-a"}, {"id": "memory-b"}],
+            "edges": [{
+                "from": "memory-a", "to": "memory-b", "type": "builds_on",
+                "strength": 0.8,
+            }],
         }),
         None,
     )
 
     assert event is not None
-    assert event["nativeEdges"] == [{
-        "id": "edge-one",
-        "source": "memory-a",
-        "target": "memory-b",
-        "predicate": "supports",
-        "provenance": {"source_description": "bounded selection"},
-    }]
+    assert event["nativeNodeIds"] == ["memory-a", "memory-b"]
+    assert event["nativeEdgeIds"] == []
+    assert event["nativeEdges"] == []
 
 
 def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(
@@ -212,23 +207,21 @@ def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(
 
 def test_result_hash_is_stable_for_the_same_normalized_reference_set() -> None:
     first = native_attention.build_native_attention_event(
-        "engraphis.why", _result({"answer": [{"id": "memory-one"}]}), None
+        "constellation.context", _result({"nodes": [{"id": "memory-one"}]}), None
     )
     second = native_attention.build_native_attention_event(
-        "engraphis.why", _result({"answer": [{"id": "memory-one"}]}), None
+        "constellation.context", _result({"nodes": [{"id": "memory-one"}]}), None
     )
     assert first is not None and second is not None
     assert first["resultHash"] == second["resultHash"]
     assert first["eventId"] != second["eventId"]
 
 
-def test_self_inspection_and_engraphis_code_projection_never_create_attention():
-    for tool in ("agentgraph.inspect", "engraphis.export_code_graph", "engraphis.search_code",
-                 "engraphis.code_path", "engraphis.code_impact"):
-        assert native_attention.build_native_attention_event(tool, _result({
-            "cards": [{"cardId": "card-one"}], "runs": [{"runId": "run-one"}],
-            "id": "not-a-memory", "symbols": [{"fqname": "not-cbm"}],
-        }), None) is None
+def test_self_inspection_never_creates_native_graph_attention():
+    assert native_attention.build_native_attention_event("agentgraph.inspect", _result({
+        "cards": [{"cardId": "card-one"}], "runs": [{"runId": "run-one"}],
+        "id": "not-a-memory", "symbols": [{"fqname": "not-cbm"}],
+    }), None) is None
 
 
 def test_graphiti_pending_completion_and_deletion_contracts_never_invent_ids():

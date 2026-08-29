@@ -11,35 +11,44 @@
 }
 
 .cbm-native-surface { overflow: hidden; }
-.engraphis-native-graph { position:relative; display:flex; width:100%; height:100%; min-height:0; padding:64px 18px 18px; color:#dce8e8; background:#0b0e12; font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-.engraphis-native-canvas { flex:1; min-width:0; position:relative; overflow:hidden; border:1px solid rgba(167,176,186,.22); border-radius:8px; background:#0b0e12; }
-.engraphis-native-network { position:absolute; inset:0; z-index:1; }
-.engraphis-native-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:#7a7a8c; pointer-events:none; }
-.engraphis-native-controls { width:100%; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:12px; }
-.engraphis-native-controls section { padding:12px; border:1px solid rgba(167,176,186,.22); border-radius:10px; background:rgba(11,20,24,.72); }
-.engraphis-native-controls h3 { margin:0 0 12px; color:#7a7a8c; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; }
-.engraphis-native-controls h3 span { float:right; color:#5f5f70; font-weight:400; }
-.engraphis-native-controls h4 { margin:0; color:#d8d8e2; font-size:13px; font-weight:600; }
-.engraphis-native-controls label { display:flex; align-items:center; gap:7px; margin:7px 0; font-size:12px; color:#b8b8c5; }
-.engraphis-native-controls input[type=text], .engraphis-native-controls input:not([type]) { width:100%; padding:8px 10px; border:1px solid rgba(167,176,186,.22); border-radius:7px; background:rgba(8,15,20,.82); color:#dce8e8; }
-.engraphis-native-controls input[placeholder] { width:100%; margin:6px 0 10px; padding:8px 10px; border:1px solid rgba(167,176,186,.22); border-radius:7px; background:rgba(8,15,20,.82); color:#dce8e8; }
-.engraphis-native-actions { display:flex; gap:6px; margin-bottom:8px; }
-.engraphis-native-actions button { flex:1; padding:6px; border:1px solid rgba(55,173,170,.28); border-radius:7px; background:rgba(13,30,34,.76); color:#dce8e8; }
-.engraphis-native-slider span { width:82px; flex-shrink:0; color:#7a7a8c; font-size:11px; }
-.engraphis-native-slider input { flex:1; accent-color:#37adaa; }
-.engraphis-native-rank { width:100%; display:flex; align-items:center; gap:7px; padding:5px 4px; border:0; background:transparent; color:#7a7a8c; text-align:left; }
-.engraphis-native-rank:hover { background:#1a1a24; color:#d8d8e2; }
-.engraphis-native-rank span { width:13px; text-align:right; font-size:10px; }
-.engraphis-native-rank i { width:7px; height:7px; border-radius:50%; }
-.engraphis-native-rank b { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:400; }
-.engraphis-native-rank em { font-size:10px; font-style:normal; }
-.engraphis-native-type { display:flex; align-items:center; gap:8px; padding:4px 2px; color:#b8b8c5; font-size:12px; }
-.engraphis-native-type i { width:9px; height:9px; flex:none; border-radius:50%; }
-.engraphis-native-type span { flex:1; text-transform:capitalize; }
-.engraphis-native-type b { color:#7a7a8c; font-size:11px; font-weight:400; }
-.engraphis-native-stats { margin:0; }
-.engraphis-native-stats div { display:flex; justify-content:space-between; padding:3px 0; color:#7a7a8c; font-size:12px; }
-.engraphis-native-stats dt, .engraphis-native-stats dd { margin:0; }
-.engraphis-native-stats dd { color:#d8d8e2; font-variant-numeric:tabular-nums; }
-.engraphis-native-controls p { color:#7a7a8c; font-size:12px; }
-.engraphis-native-controls pre { max-height:160px; overflow:auto; color:#a9a9b8; font-size:10px; white-space:pre-wrap; }
+.native-authority-graph { position:relative; display:flex; width:100%; height:100%; min-height:0; padding:64px 18px 18px; color:#dce8e8; background:#0b0e12; font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.native-authority-graph.constellation-star-map { background:radial-gradient(circle at 50% 48%,rgba(26,80,96,.28),rgba(4,8,18,.96) 52%,#02050c 100%); }
+.native-authority-canvas { flex:1; min-width:0; position:relative; overflow:hidden; border:1px solid rgba(167,176,186,.22); border-radius:8px; background:#0b0e12; }
+.constellation-star-map .native-authority-canvas { border-color:rgba(125,211,252,.2); background:radial-gradient(circle at center,rgba(12,27,47,.62),rgba(2,5,12,.95) 68%); box-shadow:inset 0 0 80px rgba(17,94,89,.12); }
+.native-authority-network { position:absolute; inset:0; z-index:1; }
+.native-authority-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:20px; color:#7a7a8c; pointer-events:none; }
+.native-authority-controls { width:100%; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:12px; }
+.native-authority-controls section { padding:12px; border:1px solid rgba(167,176,186,.22); border-radius:10px; background:rgba(11,20,24,.72); }
+.native-authority-controls h3 { margin:0 0 12px; color:#7a7a8c; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.8px; }
+.native-authority-controls h3 span { float:right; color:#5f5f70; font-weight:400; }
+.native-authority-controls h4 { margin:0; color:#d8d8e2; font-size:13px; font-weight:600; }
+.native-authority-controls label { display:flex; align-items:center; gap:7px; margin:7px 0; font-size:12px; color:#b8b8c5; }
+.native-authority-controls input[type=text], .native-authority-controls input:not([type]) { width:100%; padding:8px 10px; border:1px solid rgba(167,176,186,.22); border-radius:7px; background:rgba(8,15,20,.82); color:#dce8e8; }
+.native-authority-controls input[placeholder] { width:100%; margin:6px 0 10px; padding:8px 10px; border:1px solid rgba(167,176,186,.22); border-radius:7px; background:rgba(8,15,20,.82); color:#dce8e8; }
+.native-authority-actions { display:flex; gap:6px; margin-bottom:8px; }
+.native-authority-actions button { flex:1; padding:6px; border:1px solid rgba(55,173,170,.28); border-radius:7px; background:rgba(13,30,34,.76); color:#dce8e8; }
+.native-authority-slider span { width:82px; flex-shrink:0; color:#7a7a8c; font-size:11px; }
+.native-authority-slider input { flex:1; accent-color:#37adaa; }
+.native-authority-rank { width:100%; display:flex; align-items:center; gap:7px; padding:5px 4px; border:0; background:transparent; color:#7a7a8c; text-align:left; }
+.native-authority-rank:hover { background:#1a1a24; color:#d8d8e2; }
+.native-authority-rank span { width:13px; text-align:right; font-size:10px; }
+.native-authority-rank i { width:7px; height:7px; border-radius:50%; }
+.native-authority-rank b { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; font-weight:400; }
+.native-authority-rank em { font-size:10px; font-style:normal; }
+.native-authority-type { display:flex; align-items:center; gap:8px; padding:4px 2px; color:#b8b8c5; font-size:12px; }
+.native-authority-type i { width:9px; height:9px; flex:none; border-radius:50%; }
+.native-authority-type span { flex:1; text-transform:capitalize; }
+.native-authority-type b { color:#7a7a8c; font-size:11px; font-weight:400; }
+.native-authority-stats { margin:0; }
+.native-authority-stats div { display:flex; justify-content:space-between; padding:3px 0; color:#7a7a8c; font-size:12px; }
+.native-authority-stats dt, .native-authority-stats dd { margin:0; }
+.native-authority-stats dd { color:#d8d8e2; font-variant-numeric:tabular-nums; }
+.native-authority-controls p { color:#7a7a8c; font-size:12px; }
+.native-authority-controls pre { max-height:160px; overflow:auto; color:#a9a9b8; font-size:10px; white-space:pre-wrap; }
+.constellation-sigma-surface { position:relative; width:100%; height:100%; min-height:0; padding:54px 18px 18px; color:#dce8e8; background:radial-gradient(circle at 50% 46%,#0d2237 0%,#050a14 52%,#010308 100%); font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.constellation-sigma-canvas { position:relative; width:100%; height:100%; min-height:0; overflow:hidden; border:1px solid rgba(125,211,252,.2); border-radius:10px; background:radial-gradient(circle at 50% 50%,rgba(18,56,74,.52),rgba(2,5,12,.95) 70%); box-shadow:inset 0 0 100px rgba(17,94,89,.12),0 18px 60px rgba(0,0,0,.35); }
+.constellation-sigma-stars { position:absolute; inset:0; opacity:.28; pointer-events:none; background-image:radial-gradient(circle,#d9f4ff 0 1px,transparent 1.4px),radial-gradient(circle,#8be9fd 0 1px,transparent 1.5px); background-position:0 0,37px 53px; background-size:91px 91px,137px 137px; }
+.constellation-sigma-network { position:absolute; inset:0; z-index:1; }
+.constellation-sigma-badge { position:absolute; top:14px; left:16px; z-index:3; display:flex; flex-direction:column; gap:2px; padding:8px 11px; border:1px solid rgba(125,211,252,.18); border-radius:8px; background:rgba(2,7,16,.68); backdrop-filter:blur(10px); pointer-events:none; }
+.constellation-sigma-badge strong { color:#f4d58d; font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+.constellation-sigma-badge span { color:#87a8b8; font-size:10px; }

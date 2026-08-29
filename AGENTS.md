@@ -355,7 +355,7 @@ project, trace, or render ledger artifacts in LiquidAIty.
 ## Graph law
 
 ```text
-ThinkGraph = SQLite/Engraphis project reasoning and operational knowledge
+ThinkGraph = Constellation Engine project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
 CodeGraph  = native CBM repository structure
 AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and execution telemetry,

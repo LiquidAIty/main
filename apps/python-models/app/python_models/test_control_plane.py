@@ -76,16 +76,17 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
     ]
 
 
-def test_canvas_keeps_saved_admin_grant_but_never_allocates_it(fake_backend, monkeypatch):
+def test_canvas_reports_removed_grant_unavailable_and_never_allocates_it(fake_backend, monkeypatch):
     monkeypatch.setitem(DECK["nodes"][0]["runtimeOptions"], "tools", [
-        "engraphis.index_repo", "worldsignals.command",
+        "retired.project_memory_admin", "worldsignals.command",
     ])
     result = asyncio.run(cp.canvas_inspect({"projectId": "p", "deckId": "d"}))
     card = result["cards"][0]
     assert card["tools"] == ["worldsignals.command"]
-    assert card["savedWriteTools"] == ["engraphis.index_repo", "worldsignals.command"]
-    assert card["unavailableConfiguredTools"] == ["engraphis.index_repo"]
-    assert "engraphis.export_code_graph" not in result["effectiveReadTools"]
+    assert card["savedWriteTools"] == ["worldsignals.command"]
+    assert card["unknownConfiguredTools"] == ["retired.project_memory_admin"]
+    assert card["unavailableConfiguredTools"] == []
+    assert "retired.project_memory_read" not in result["effectiveReadTools"]
     assert fake_backend == {}  # inspection never rewrites the saved grant
 
 

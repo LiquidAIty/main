@@ -1,0 +1,15 @@
+{
+  "name": "@liquidaity/constellation-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "constellation-engine": "git+https://github.com/CONSTELLATION-ENGINE/constellation-engine.git#ac460489f1cd3cd629fa96f2730e5ae9daa4326c"
+  },
+  "liquidaity": {
+    "upstream": "https://github.com/CONSTELLATION-ENGINE/constellation-engine",
+    "revision": "ac460489f1cd3cd629fa96f2730e5ae9daa4326c",
+    "upstreamVersion": "1.0.5",
+    "upstreamLicense": "AGPL-3.0-or-later"
+  }
+}

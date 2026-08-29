@@ -374,7 +374,7 @@ wrapper name when an authority's live schema differs.
 
 ### ThinkGraph — Main / Kanban project reasoning
 
-- **Graph authority:** SQLite/Engraphis project reasoning and operational knowledge; its native owner remains
+- **Graph authority:** Constellation Engine project reasoning and operational knowledge; its native owner remains
   the sole graph writer.
 - **Role:** select bounded project reasoning records and relationships for the next model without converting
   them into CodeGraph or KnowGraph records.

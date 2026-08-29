@@ -20,10 +20,9 @@ const canonicalHostAvailable = Boolean(
 );
 
 describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery + calls', () => {
-  it('federates the three complete native catalogs with the Main control surface', async () => {
+  it('publishes bounded Constellation tools with the native CBM and Graphiti catalogs', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toHaveLength(71);
     expect(names).toEqual(expect.arrayContaining([
       'canvas.inspect',
       'canvas.upsert_wire',
@@ -33,8 +32,9 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'card.update_configuration',
       'cbm.search_graph',
       'cbm.index_status',
-      'engraphis.recall',
-      'engraphis.stats',
+      'constellation.context',
+      'constellation.inspect',
+      'constellation.remember',
       'graphiti.search_nodes',
       'graphiti.get_status',
       'agentgraph.inspect',
@@ -59,10 +59,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names).not.toContain('coder.stop');
     expect(names).not.toContain('coder.steer');
     expect(names).not.toContain('coder.status');
-    expect(names).toContain('engraphis.check_update');
-    expect(names).toContain('engraphis.context_savings');
-    expect(names).toContain('engraphis.answer');
-  // A cold host initializes three native catalogs; slower backup/development
+  // A cold host initializes two native catalogs; slower backup/development
   // machines can cross 30s even when the real catalog completes successfully.
   }, 60_000);
 

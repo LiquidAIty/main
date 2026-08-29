@@ -12,7 +12,7 @@ WHERE reference_type IN ('graph_view', 'registered_query', 'query_execution');
 
 UPDATE ag_catalog.agent_context_references
 SET reference_type = CASE reference_type
-  WHEN 'thinkgraph' THEN 'engraphis'
+  WHEN 'thinkgraph' THEN 'constellation'
   WHEN 'knowgraph' THEN 'graphiti'
   WHEN 'codegraph' THEN 'cbm'
   ELSE reference_type
@@ -28,7 +28,7 @@ ALTER TABLE ag_catalog.agent_context_references
       'artifact',
       'conversation_message',
       'database',
-      'engraphis',
+      'constellation',
       'graphiti',
       'cbm',
       'native_session',

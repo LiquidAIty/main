@@ -185,7 +185,7 @@ describe('pythonRailsClient', () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({
-        schemaVersion: 'thinkgraph.engraphis.projection.v1',
+        schemaVersion: 'thinkgraph.constellation.v1',
         projectId: 'p1',
         nodes: [],
         edges: [],

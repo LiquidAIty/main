@@ -201,7 +201,7 @@ export async function describeConnectedAgents(
   };
 }
 
-/** Read one native Engraphis project projection without reshaping it in TypeScript. */
+/** Read one native Constellation project projection without reshaping it in TypeScript. */
 export async function fetchThinkGraphProjection(
   projectId: string,
   limit?: number,
@@ -211,7 +211,7 @@ export async function fetchThinkGraphProjection(
   return requestPythonRailsJson(`/thinkgraph/projection?${query.toString()}`, { method: 'GET' });
 }
 
-/** Read one bounded native Engraphis neighborhood without reshaping it in TypeScript. */
+/** Read one bounded native Constellation neighborhood without reshaping it in TypeScript. */
 export async function fetchThinkGraphNeighborhood(
   projectId: string,
   canonicalId: string,

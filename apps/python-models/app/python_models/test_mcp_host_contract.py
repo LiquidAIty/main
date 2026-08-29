@@ -657,7 +657,6 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     async def forbidden_native_init():
         raise AssertionError("ungranted native catalog initialized")
 
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", forbidden_native_init)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", forbidden_native_init)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", forbidden_native_init)
 
@@ -1168,12 +1167,11 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
 
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 30.0)
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
-    monkeypatch.setattr(mcp_host, "_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS", 240.0)
 
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
-    assert mcp_host._mcp_tool_timeout_seconds("engraphis.remember") == 240.0
+    assert mcp_host._mcp_tool_timeout_seconds("constellation.remember") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 
@@ -1222,78 +1220,6 @@ def test_external_main_backend_bridge_uses_the_process_owned_secret(monkeypatch)
     assert captured["timeout"] == mcp_host._NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
 
 
-def test_cold_engraphis_timeout_cannot_enter_write_and_retry_is_safe(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    preparing = threading.Event()
-    release = threading.Event()
-    prepare_calls = []
-    writes = []
-
-    def prepare():
-        prepare_calls.append("prepare")
-        preparing.set()
-        if len(prepare_calls) == 1 and not release.wait(timeout=2):
-            raise RuntimeError("test_release_timeout")
-
-    class NativeMcp:
-        async def call_tool(self, name, arguments):
-            writes.append((name, arguments))
-            return [mcp_host.TextContent(
-                type="text",
-                text=json.dumps({"ok": True, "id": "mem-one"}),
-            )]
-
-    async def initialized():
-        return None
-
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_NAMES",
-        frozenset({"engraphis_remember"}),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_TOOLS",
-        (mcp_host.Tool(
-            name="engraphis_remember",
-            description="Remember",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string"},
-                    "workspace": {"type": "string"},
-                    "repo": {"type": "string"},
-                },
-            },
-        ),),
-    )
-    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
-    monkeypatch.setattr(mcp_host, "_prepare_native_engraphis_semantic_write", prepare)
-    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.02)
-    monkeypatch.setattr(mcp_host, "_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS", 1.0)
-
-    first = asyncio.run(mcp_host.call_tool(
-        "engraphis.remember",
-        {"content": "Approved bounded fact"},
-    ))
-    assert preparing.is_set()
-    assert first.isError is True
-    assert json.loads(first.content[0].text)["failureCode"] == "timeout"
-    assert writes == []
-
-    release.set()
-    second = asyncio.run(mcp_host.call_tool(
-        "engraphis.remember",
-        {"content": "Approved bounded fact"},
-    ))
-    assert second.isError is not True
-    assert writes == [(
-        "engraphis_remember",
-        {"content": "Approved bounded fact"},
-    )]
 
 
 def test_plain_text_does_not_hide_a_later_structured_tool_error():
@@ -1340,7 +1266,7 @@ def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
     }
 
 
-@pytest.mark.parametrize("name", ["engraphis.recall", "engraphis.recall_context", "engraphis.proactive_context", "engraphis.check_update"])
+@pytest.mark.parametrize("name", ["constellation.context", "constellation.inspect"])
 def test_idd_read_access_does_not_overwrite_native_side_effect_annotations(name):
     import mcp_host
 
@@ -1351,17 +1277,13 @@ def test_idd_read_access_does_not_overwrite_native_side_effect_annotations(name)
     assert bound.meta["liquidaityAccess"] == "read"
 
 
-def test_operator_code_tools_are_not_callable_even_with_a_retained_card_grant(monkeypatch):
+def test_ungranted_and_destructive_tools_are_not_callable(monkeypatch):
     import asyncio
     import mcp_host
 
-    admin = {f"engraphis.{name}" for name in (
-        "export_code_graph", "index_repo", "search_code", "code_path", "code_impact",
-    )}
-    principal = {"kind": "card-runtime", "grantedTools": [*admin, "graphiti.add_memory"]}
-    for caller in (principal, None):
-        monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: caller)
-        assert all(mcp_host._request_tool_is_allowed(name) is False for name in admin)
+    principal = {"kind": "card-runtime", "grantedTools": ["graphiti.add_memory"]}
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+    assert mcp_host._request_tool_is_allowed("constellation.remember") is False
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
     assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
     principal["grantedTools"].append("cbm.search_graph")
@@ -1372,7 +1294,7 @@ def test_operator_code_tools_are_not_callable_even_with_a_retained_card_grant(mo
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(
         mcp_host.Tool(name=name, inputSchema={"type": "object"})
-        for name in [*admin, "cbm.search_graph", "graphiti.add_memory"]
+        for name in ["constellation.remember", "cbm.search_graph", "graphiti.add_memory"]
     ))
     assert {tool.name for tool in asyncio.run(mcp_host.list_tools())} == {"cbm.search_graph", "graphiti.add_memory"}
 
@@ -1502,7 +1424,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert all(
             tool.inputSchema.get("additionalProperties") is False
             for name, tool in by_name.items()
-            if not name.startswith(("engraphis.", "cbm.", "graphiti."))
+            if not name.startswith(("cbm.", "graphiti."))
         )
         assert not any(name.startswith("worldsignals.") for name in by_name)
         assert by_name
@@ -1567,7 +1489,6 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
 
     by_namespace = {
         "cbm": [],
-        "engraphis": [],
         "graphiti": [],
     }
     for declaration in declarations:
@@ -1576,15 +1497,10 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
             continue
         canonical_name = declaration["id"]
         native_name = canonical_name.split(".", 1)[1]
-        if namespace == "engraphis":
-            native_name = "engraphis_" + native_name
         by_namespace[namespace].append(native_tool(canonical_name, native_name))
 
     async def cbm_tools():
         return by_namespace["cbm"]
-
-    async def engraphis_tools():
-        return by_namespace["engraphis"]
 
     async def graphiti_tools():
         return by_namespace["graphiti"]
@@ -1594,7 +1510,6 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_tools)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", engraphis_tools)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_tools)
 
     canonical = asyncio.run(mcp_host._materialize_complete_catalog())
@@ -1628,8 +1543,9 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
         "cbm.index_repository",
         "cbm.ingest_traces",
         "cbm.manage_adr",
-        "engraphis.check_update",
-        "engraphis.ingest_postgres_schema",
+        "constellation.context",
+        "constellation.inspect",
+        "constellation.remember",
         "graphiti.clear_graph",
     }.issubset(published_names)
 
@@ -1680,125 +1596,12 @@ def test_mag_one_tools_use_direct_transient_input_contract():
     }
 
 
-def test_native_engraphis_registry_is_initialized_once_without_schema_adaptation():
-    import asyncio
-    import mcp_host
-
-    async def check():
-        await mcp_host._initialize_native_engraphis()
-        native = {
-            tool.name: tool
-            for tool in await mcp_host._native_engraphis_mcp().list_tools()
-        }
-        first = await mcp_host._native_engraphis_tools()
-        await mcp_host._initialize_native_engraphis()
-        second = await mcp_host._native_engraphis_tools()
-        assert len(native) == 31
-        assert set(native) == {tool.name for tool in first}
-        assert len(first) == 31
-        assert [id(tool) for tool in first] == [id(tool) for tool in second]
-        assert {tool.name for tool in first} == set(native)
-        for tool in first:
-            assert tool.model_dump() == native[tool.name].model_dump()
-        combined = await mcp_host.list_tools()
-        combined_names = [tool.name for tool in combined]
-        assert len(set(combined_names)) == len(combined_names)
-        combined_identity = mcp_host._catalog_identity(combined)
-        assert combined_identity[0] == len(combined_names)
-        assert len(combined_identity[1]) == 64
-        assert {
-            "main.context",
-            "canvas.inspect",
-            "card.run_assistant_agent",
-        }.issubset(set(combined_names))
-        assert {
-            "coder.inspect",
-            "coder.effective_tools",
-            "coder.account",
-            "coder.stop",
-            "coder.steer",
-        }.isdisjoint(combined_names)
-        assert {
-            f'engraphis.{name.removeprefix("engraphis_")}' for name in set(native)
-        }.issubset(combined_names)
-        assert not set(native).intersection(combined_names)
-
-    asyncio.run(check())
 
 
-def test_native_engraphis_uses_the_cached_local_embedding_model(monkeypatch):
-    import mcp_host
-
-    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
-    mcp_host._load_native_engraphis_mcp()
-    assert os.environ["HF_HUB_OFFLINE"] == "1"
-    assert os.environ["TRANSFORMERS_OFFLINE"] == "1"
 
 
-def test_native_engraphis_catalog_discovery_never_constructs_memory_or_embedder(
-        monkeypatch):
-    import asyncio
-    import engraphis.mcp_server as engraphis_mcp
-    import engraphis.backends.embedder_st as embedder_st
-    import engraphis.core.engine as engraphis_engine
-    import mcp_host
-
-    constructions = []
-    monkeypatch.setattr(
-        engraphis_mcp.MemoryService,
-        "create",
-        lambda *args, **kwargs: constructions.append("memory_service"),
-    )
-    monkeypatch.setattr(
-        embedder_st,
-        "_construct_local_sentence_transformer",
-        lambda *args, **kwargs: constructions.append("sentence_transformer"),
-    )
-    monkeypatch.setattr(
-        engraphis_engine,
-        "get_embedder",
-        lambda *args, **kwargs: constructions.append("embedder"),
-    )
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_MCP", None)
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_TOOLS", None)
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_NAMES", frozenset())
-
-    asyncio.run(mcp_host._initialize_native_engraphis())
-
-    assert len(mcp_host._NATIVE_ENGRAPHIS_TOOLS or ()) == 31
-    assert constructions == []
 
 
-def test_native_engraphis_nonsemantic_dispatch_has_no_global_embedding_gate(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    native_result = mcp_host.TextContent(
-        type="text",
-        text=json.dumps({"ok": True, "source": "native"}),
-    )
-
-    class NativeMcp:
-        async def call_tool(self, name, arguments):
-            return [native_result]
-
-    async def initialized():
-        return None
-
-    async def check():
-        monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-        monkeypatch.setattr(
-            mcp_host,
-            "_NATIVE_ENGRAPHIS_NAMES",
-            frozenset({"engraphis_stats"}),
-        )
-        monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
-
-        ready = await mcp_host.call_tool("engraphis.stats", {})
-        assert ready.content[0] is native_result
-
-    asyncio.run(check())
 
 
 def test_streamable_http_binds_before_catalog_provider_initialization(monkeypatch):
@@ -1806,9 +1609,6 @@ def test_streamable_http_binds_before_catalog_provider_initialization(monkeypatc
     import mcp_host
 
     events = []
-
-    async def initialized_engraphis():
-        events.append("engraphis_registry")
 
     async def initialized_graphiti():
         events.append("graphiti_registry")
@@ -1821,7 +1621,6 @@ def test_streamable_http_binds_before_catalog_provider_initialization(monkeypatc
         events.append("http")
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", initialized_cbm)
     monkeypatch.setattr(mcp_host, "_run_streamable_http", run_http)
@@ -1948,10 +1747,6 @@ def test_catalog_progress_names_completed_and_active_families(monkeypatch):
 
     snapshots = []
 
-    async def engraphis_catalog():
-        snapshots.append(mcp_host._catalog_diagnostics())
-        return []
-
     async def cbm_catalog():
         snapshots.append(mcp_host._catalog_diagnostics())
         return []
@@ -1961,7 +1756,6 @@ def test_catalog_progress_names_completed_and_active_families(monkeypatch):
         return []
 
     monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: None)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", engraphis_catalog)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_catalog)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_catalog)
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
@@ -1971,18 +1765,15 @@ def test_catalog_progress_names_completed_and_active_families(monkeypatch):
     asyncio.run(mcp_host._materialize_complete_catalog())
 
     assert [item["initializingCatalogFamily"] for item in snapshots] == [
-        "engraphis",
         "cbm",
         "graphiti",
     ]
     assert [item["completedCatalogFamilies"] for item in snapshots] == [
         ["liquidaity"],
-        ["liquidaity", "engraphis"],
-        ["liquidaity", "engraphis", "cbm"],
+        ["liquidaity", "cbm"],
     ]
     assert mcp_host._CATALOG_COMPLETED_FAMILIES == (
         "liquidaity",
-        "engraphis",
         "cbm",
         "graphiti",
     )
@@ -2122,9 +1913,6 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
 
     events = []
 
-    async def initialized_engraphis():
-        events.append("engraphis_registry")
-
     async def initialized_graphiti():
         events.append("graphiti_registry")
 
@@ -2132,7 +1920,6 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
         events.append("stdio")
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized_engraphis)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized_graphiti)
     monkeypatch.setattr(mcp_host, "_run_stdio", run_stdio)
 
@@ -2141,158 +1928,10 @@ def test_stdio_accepts_protocol_before_catalog_provider_initialization(monkeypat
     assert events == ["stdio"]
 
 
-def test_native_engraphis_hung_call_does_not_block_later_native_dispatch(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    outer_thread = threading.get_ident()
-    entered = threading.Event()
-    release = threading.Event()
-    calls = []
-    native_result = mcp_host.TextContent(
-        type="text",
-        text=json.dumps({"ok": True, "source": "native"}),
-    )
-
-    class NativeMcp:
-        async def call_tool(self, name, arguments):
-            calls.append((name, arguments, threading.get_ident()))
-            if name == "engraphis_hung":
-                entered.set()
-                if not release.wait(timeout=2):
-                    raise RuntimeError("test_release_timeout")
-            return [native_result], {"result": {"ok": True, "source": "native"}}
-
-    async def initialized():
-        return None
-
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    native_access = mcp_host.tool_access
-    monkeypatch.setattr(
-        mcp_host,
-        "tool_access",
-        lambda name: "read" if name == "engraphis.hung" else native_access(name),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_NAMES",
-        frozenset({"engraphis_hung", "engraphis_stats"}),
-    )
-    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
-
-    async def check():
-        hung = asyncio.create_task(
-            mcp_host.call_tool("engraphis.hung", {"request": 1})
-        )
-        for _ in range(200):
-            if entered.is_set():
-                break
-            await asyncio.sleep(0.005)
-        assert entered.is_set()
-        later = await asyncio.wait_for(
-            mcp_host.call_tool("engraphis.stats", {"request": 2}),
-            timeout=1,
-        )
-        release.set()
-        return later, await asyncio.wait_for(hung, timeout=1)
-
-    later, hung = asyncio.run(check())
-    assert later.content[0] is native_result
-    assert hung.content[0] is native_result
-    assert [call[:2] for call in calls] == [
-        ("engraphis_hung", {"request": 1}),
-        ("engraphis_stats", {"request": 2}),
-    ]
-    assert all(call[2] != outer_thread for call in calls)
-    assert calls[0][2] != calls[1][2]
 
 
-def test_native_engraphis_failure_is_typed_and_the_next_call_succeeds(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    class NativeFailure(RuntimeError):
-        pass
-
-    class NativeMcp:
-        async def call_tool(self, name, arguments):
-            if name == "engraphis_native_failure":
-                raise NativeFailure("canonical native failure")
-            return [mcp_host.TextContent(type="text", text=json.dumps({
-                "name": name,
-                "arguments": arguments,
-            }))]
-
-    native = NativeMcp()
-    native_access = mcp_host.tool_access
-    monkeypatch.setattr(
-        mcp_host,
-        "tool_access",
-        lambda name: (
-            "read"
-            if name in {"engraphis.normal_call", "engraphis.native_failure"}
-            else native_access(name)
-        ),
-    )
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_MCP", native)
-    monkeypatch.setattr(mcp_host, "_NATIVE_ENGRAPHIS_TOOLS", ())
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_NAMES",
-        frozenset({"engraphis_normal_call", "engraphis_native_failure"}),
-    )
-
-    async def check():
-        typed = await mcp_host.call_tool("engraphis.native_failure", {"value": 1})
-        assert typed.isError is True
-        typed_payload = json.loads(typed.content[0].text)
-        assert typed_payload["error"] == "internal_failure"
-        assert typed_payload["failureCode"] == "internal_failure"
-        normal = await mcp_host.call_tool("engraphis.normal_call", {"value": 2})
-        assert json.loads(normal.content[0].text) == {
-            "name": "engraphis_normal_call",
-            "arguments": {"value": 2},
-        }
-
-    asyncio.run(check())
 
 
-def test_native_engraphis_missing_local_model_is_a_precise_tool_error(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    class NativeMcp:
-        async def call_tool(self, name, arguments):
-            return [mcp_host.TextContent(
-                type="text",
-                text="Error: local_embedding_model_unavailable",
-            )]
-
-    async def initialized():
-        return None
-
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
-    monkeypatch.setattr(
-        mcp_host,
-        "_prepare_native_engraphis_semantic_write",
-        lambda: None,
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_NAMES",
-        frozenset({"engraphis_remember"}),
-    )
-    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
-
-    async def check():
-        result = await mcp_host.call_tool("engraphis.remember", {"content": "isolated"})
-        assert result.isError is True
-        payload = json.loads(result.content[0].text)
-        assert payload["failureCode"] == "local_embedding_model_unavailable"
-        assert payload["errorCategory"] == "DEPENDENCY_UNAVAILABLE"
-        assert payload["retryable"] is False
-
-    asyncio.run(check())
 
 
 def test_native_cbm_replaces_a_stale_process_without_retrying_a_tool(monkeypatch):
@@ -2987,47 +2626,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
             },
         ),
     ]
-    native_engraphis_tools = [
-        mcp_host.Tool(
-            name="engraphis_recall",
-            title="Recall",
-            description="Native Engraphis recall.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "workspace": {"type": "string"},
-                    "repo": {"type": "string"},
-                },
-                "required": ["query"],
-            },
-        ),
-        mcp_host.Tool(
-            name="engraphis_answer",
-            title="Answer",
-            description="Native Engraphis grounded answer.",
-            inputSchema={
-                "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
-            },
-        ),
-        mcp_host.Tool(
-            name="engraphis_remember",
-            title="Remember",
-            description="Native Engraphis write.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "content": {"type": "string"},
-                    "workspace": {"type": "string"},
-                    "repo": {"type": "string"},
-                },
-                "required": ["content"],
-            },
-        ),
-    ]
     native_graphiti_tools = [
         mcp_host.Tool(
             name="get_status",
@@ -3060,21 +2658,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return native_cbm_tools
 
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", native_cbm_catalog)
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_NAMES",
-        frozenset(tool.name for tool in native_engraphis_tools),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_NATIVE_ENGRAPHIS_TOOLS",
-        tuple(native_engraphis_tools),
-    )
-    monkeypatch.setattr(
-        mcp_host,
-        "_native_engraphis_tools",
-        lambda: asyncio.sleep(0, result=native_engraphis_tools),
-    )
     monkeypatch.setattr(
         mcp_host,
         "_NATIVE_GRAPHITI_NAMES",
@@ -3121,9 +2704,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert removed_public_wrappers.isdisjoint(mcp_host._ALLOWED_KEYS)
     assert removed_public_wrappers.isdisjoint(mcp_host._BRIDGE_PATHS)
     native_names = {
-        f"engraphis.{tool.name.removeprefix('engraphis_')}"
-        for tool in native_engraphis_tools
-    } | {
         f"cbm.{tool.name}" for tool in native_cbm_tools
     } | {
         f"graphiti.{tool.name}" for tool in native_graphiti_tools
@@ -3134,13 +2714,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         if name not in native_names
     )
     assert not any(name.startswith("worldsignals.") for name in by_name)
-    assert "engraphis.recall" in by_name
-    assert "engraphis.answer" in by_name
-    assert "engraphis.remember" in by_name
-    assert "workspace" not in by_name["engraphis.recall"].inputSchema["properties"]
-    assert "repo" not in by_name["engraphis.recall"].inputSchema["properties"]
-    assert "workspace" not in by_name["engraphis.remember"].inputSchema["properties"]
-    assert "repo" not in by_name["engraphis.remember"].inputSchema["properties"]
+    assert {"constellation.context", "constellation.inspect", "constellation.remember"}.issubset(by_name)
+    assert "projectId" not in by_name["constellation.context"].inputSchema["properties"]
+    assert "projectId" not in by_name["constellation.remember"].inputSchema["properties"]
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -3163,7 +2739,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     ]
     assert "saved runtime adapter" in card_tool.description
     assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-    assert {scheme["scopes"][0] for scheme in by_name["engraphis.recall"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["constellation.context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
@@ -3180,30 +2756,24 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
-        "engraphis.answer", "graphiti.get_status",
+        "constellation.context", "graphiti.get_status",
         "card.create", "card.update_configuration", "canvas.upsert_wire",
     }.issubset(main_names)
     active_scopes[:] = ["main"]
 
     calls = []
-    class NativeMcp:
-        async def list_tools(self):
-            return native_engraphis_tools
+    from app.python_models import constellation
 
-        async def call_tool(self, name, arguments):
-            calls.append((name, arguments))
-            return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
+    def constellation_context(project_id, arguments):
+        calls.append(("constellation.context", project_id, arguments))
+        return {"nodes": []}
 
-    async def initialize_engraphis():
-        return None
+    def constellation_remember(project_id, arguments):
+        calls.append(("constellation.remember", project_id, arguments))
+        return {"ok": True, "id": arguments["id"]}
 
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialize_engraphis)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_mcp", lambda: NativeMcp())
-    monkeypatch.setattr(
-        mcp_host,
-        "_prepare_native_engraphis_semantic_write",
-        lambda: None,
-    )
+    monkeypatch.setattr(constellation, "constellation_context", constellation_context)
+    monkeypatch.setattr(constellation, "constellation_remember", constellation_remember)
 
     def call_native_cbm(name, arguments):
         calls.append((name, arguments))
@@ -3238,33 +2808,30 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return {"ok": True}
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
-    asyncio.run(mcp_host.call_tool("engraphis.recall", {"query": "Main", "limit": 3}))
+    asyncio.run(mcp_host.call_tool("constellation.context", {"focus": "Main", "budget": 2000}))
     assert calls[-1] == (
-        "engraphis_recall",
-        {
-            "query": "Main",
-            "limit": 3,
-            "workspace": "project-1",
-            "repo": "thinkgraph",
-        },
+        "constellation.context",
+        "project-1",
+        {"focus": "Main", "budget": 2000},
     )
 
-    asyncio.run(mcp_host.call_tool("engraphis.remember", {"content": "Approved fact"}))
+    memory = {
+        "id": "approved-fact", "l0": "Approved fact", "l1": "Approved fact",
+        "l2": "Approved fact",
+    }
+    asyncio.run(mcp_host.call_tool("constellation.remember", memory))
     assert calls[-1] == (
-        "engraphis_remember",
-        {
-            "content": "Approved fact",
-            "workspace": "project-1",
-            "repo": "thinkgraph",
-        },
+        "constellation.remember",
+        "project-1",
+        memory,
     )
     rejected_scope = asyncio.run(mcp_host.call_tool(
-        "engraphis.remember",
-        {"content": "Approved fact", "workspace": "other-project"},
+        "constellation.remember",
+        {**memory, "projectId": "other-project"},
     ))
     assert json.loads(rejected_scope.content[0].text) == {
         "ok": False,
-        "error": "caller_identity_rejected: workspace",
+        "error": "caller_identity_rejected: projectId",
     }
 
     cbm_result = asyncio.run(
@@ -3381,7 +2948,6 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
         "catalogReady": True,
         "completedCatalogFamilies": [
             "liquidaity",
-            "engraphis",
             "cbm",
             "graphiti",
         ],
@@ -3453,7 +3019,6 @@ def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypa
 
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
 
@@ -3591,9 +3156,6 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
     import mcp_host
     from app import control_plane
 
-    async def initialized():
-        mcp_host._NATIVE_ENGRAPHIS_NAMES = frozenset()
-
     attempts = 0
 
     async def inspect(_args):
@@ -3603,7 +3165,6 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
             raise RuntimeError("database_connection_lost")
         return {"ok": True, "cards": []}
 
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(control_plane, "canvas_inspect", inspect)
 
@@ -3620,8 +3181,6 @@ def test_one_handler_exception_returns_a_tool_error_and_later_calls_still_work(m
 
 def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     import asyncio
-    import engraphis.backends.embedder_st as embedder_st
-    import engraphis.mcp_server as engraphis_mcp
     import httpx
     import mcp_host
 
@@ -3644,21 +3203,9 @@ def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
     monkeypatch.setattr(mcp_host, "AUTH0_CLIENT_ID", "chatgpt-client")
     monkeypatch.setattr(mcp_host, "AUTH0_REQUIRED_SCOPE", "liquidaity.main")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
-    monkeypatch.setattr(mcp_host, "_initialize_native_engraphis", initialized)
     monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialized)
-    monkeypatch.setattr(mcp_host, "_native_engraphis_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
-    monkeypatch.setattr(
-        engraphis_mcp.MemoryService,
-        "create",
-        lambda *args, **kwargs: pytest.fail("OAuth readiness constructed MemoryService"),
-    )
-    monkeypatch.setattr(
-        embedder_st,
-        "_construct_local_sentence_transformer",
-        lambda *args, **kwargs: pytest.fail("OAuth readiness constructed embedder"),
-    )
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())

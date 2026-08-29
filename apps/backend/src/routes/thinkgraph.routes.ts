@@ -7,7 +7,7 @@ import {
 
 const router = Router();
 
-// Transport only: Python/Engraphis owns the projection and its graph data.
+// Transport only: Python/Constellation owns the projection and its graph data.
 router.get('/projection', async (req, res) => {
   const projectId = String(req.query.projectId || '').trim();
   if (!projectId) return res.status(400).json({ error: 'projectId required' });

@@ -60,7 +60,8 @@ they do not select a runtime implementation.
 - Main-to-Kanban execution and separate-session memory behavior.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
-- Engraphis semantic recall. Nonsemantic ThinkGraph operations remain the near-term boundary.
+- Constellation semantic embeddings remain explicitly degraded until a real configured embedding
+  daemon is available; native topology, context, inspection, and writes remain authoritative.
 
 Structural tests are not substitutes for these live proofs.
 
@@ -128,7 +129,7 @@ the transient Card call. The call carries task meaning and selected context, not
 ## Graph and attention plan
 
 ```text
-ThinkGraph  = Engraphis SQLite project reasoning and memory
+ThinkGraph  = Constellation Engine project reasoning and memory
 KnowGraph   = Graphiti/Neo4j sourced knowledge and provenance
 CodeGraph   = native CBM repository structure
 AgentGraph  = Cards, relationships, Runs, delegation, references, tools, and artifacts in AGE

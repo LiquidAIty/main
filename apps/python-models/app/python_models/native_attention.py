@@ -270,6 +270,7 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
         "history",
         "sources",
         "records",
+        "nodes",
     )
     nodes = _values(records, "id", "memory_id")
     top_id = _text(payload.get("id") or payload.get("memory_id"))
@@ -283,14 +284,9 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
 
 
 def _extract_thinkgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-    reference = _edge_reference({
-        "edge_id": payload.get("edge_id"),
-        "source_node_uuid": payload.get("a"),
-        "target_node_uuid": payload.get("b"),
-        "relation": payload.get("relation"),
-        "source_description": payload.get("source_description"),
-    })
-    return [reference] if reference else []
+    # Constellation returns authoritative edge endpoints/type/strength but does
+    # not currently assign native edge IDs. Attention must not manufacture one.
+    return _edge_references(_records(payload, "edges"))
 
 
 def _contracts() -> dict[str, NativeAttentionContract]:
@@ -320,33 +316,13 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
         "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
     }
-    for name in (
-        "engraphis.recall",
-        "engraphis.recall_context",
-        "engraphis.recall_grounded",
-        "engraphis.answer",
-        "engraphis.why",
-        "engraphis.timeline",
-        "engraphis.recall_proactive",
-        "engraphis.proactive_context",
-    ):
+    for name in ("constellation.context", "constellation.inspect"):
         contracts[name] = NativeAttentionContract(
             "thinkgraph", "read", _extract_thinkgraph, _extract_thinkgraph_edges
         )
-    for name in (
-        "engraphis.remember",
-        "engraphis.forget",
-        "engraphis.pin",
-        "engraphis.correct",
-        "engraphis.promote",
-        "engraphis.link",
-        "engraphis.record_event",
-        "engraphis.ingest",
-        "engraphis.consolidate",
-    ):
-        contracts[name] = NativeAttentionContract(
-            "thinkgraph", "write", _extract_thinkgraph, _extract_thinkgraph_edges
-        )
+    contracts["constellation.remember"] = NativeAttentionContract(
+        "thinkgraph", "write", _extract_thinkgraph, _extract_thinkgraph_edges
+    )
     return contracts
 
 

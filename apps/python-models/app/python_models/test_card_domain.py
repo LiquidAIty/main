@@ -852,7 +852,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                 return [
                     {"grant_id": "graphiti.add_memory"},
                     {"grant_id": "card.load_graph_references"},
-                    {"grant_id": "engraphis.index_repo"},
+                    {"grant_id": "retired.project_memory_admin"},
                     {"grant_id": "calculator"},
                 ]
             if "ag_catalog.cypher" in self.last_query:
@@ -874,7 +874,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
     monkeypatch.setattr(
         card_domain,
         "readable_tool_ids",
-        lambda: frozenset({"cbm.search_graph", "engraphis.recall", "calculator"}),
+        lambda: frozenset({"cbm.search_graph", "constellation.context", "calculator"}),
     )
     from types import SimpleNamespace
     monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda run_id: {"runId": run_id})
@@ -1946,24 +1946,12 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    import engraphis.backends.embedder_st as embedder_st
-    import engraphis.core.engine as engraphis_engine
-    import engraphis.mcp_server as engraphis_mcp
+    from app.python_models import constellation
 
     monkeypatch.setattr(
-        embedder_st,
-        "_construct_local_sentence_transformer",
-        lambda *args, **kwargs: pytest.fail("Main preparation initialized Engraphis"),
-    )
-    monkeypatch.setattr(
-        engraphis_engine,
-        "get_embedder",
-        lambda *args, **kwargs: pytest.fail("Main preparation constructed embedder"),
-    )
-    monkeypatch.setattr(
-        engraphis_mcp.MemoryService,
-        "create",
-        lambda *args, **kwargs: pytest.fail("Main preparation opened Engraphis"),
+        constellation,
+        "get_constellation",
+        lambda *_args, **_kwargs: pytest.fail("Main preparation opened Constellation"),
     )
     main = _agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}

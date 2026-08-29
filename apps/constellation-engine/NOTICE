@@ -1,0 +1,11 @@
+Constellation Engine
+Copyright belongs to the Constellation Engine contributors.
+
+Upstream source: https://github.com/CONSTELLATION-ENGINE/constellation-engine
+Pinned revision: ac460489f1cd3cd629fa96f2730e5ae9daa4326c
+Upstream version: 1.0.5
+License: GNU Affero General Public License v3.0 or later
+
+LiquidAIty loads the upstream package across a separable local process boundary.
+The upstream package and its license remain in the installed dependency; no
+packaged or closed Constellation dashboard code is copied into LiquidAIty.

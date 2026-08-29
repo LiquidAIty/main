@@ -623,7 +623,7 @@ export default function useAgentBuilderGraphAttention({
         const payload = await response.json().catch(() => null);
         if (!response.ok || !isRecord(payload)) throw new Error(String(payload?.error || `HTTP ${response.status}`));
         incoming = decorateNativeProjection(authority, payload, projectId, {
-          actorCardId, actorColor, toolName: 'engraphis.neighborhood',
+          actorCardId, actorColor, toolName: 'constellation.inspect',
         });
       } else if (authority === 'knowgraph') {
         const query = new URLSearchParams({ projectId, nodeId: node.id, limit: '50', depth: '1' });

@@ -11,14 +11,16 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import sqlite3
 from typing import Any, Callable
 
 from app.python_models.internal_mcp import call_read_tools_via_mcp
+from app.python_models.constellation import (
+    ConstellationProcess,
+    constellation_inspect,
+)
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_DEFAULT_THINKGRAPH_DB = _REPO_ROOT / "db" / "thinkgraph-engraphis-v2.sqlite"
 _ANCHOR_BODY_LIMIT = 12_000
 _GRAPH_SEED_LIMIT = 48_000
 _KNOWGRAPH_RESULT_LIMIT = 24
@@ -71,62 +73,66 @@ def read_thinkgraph_exact(
     *,
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """Read one current project-scoped Engraphis record without opening Store."""
-    path = Path(
-        db_path
-        or os.environ.get("THINKGRAPH_ENGRAPHIS_DB")
-        or _DEFAULT_THINKGRAPH_DB
-    ).resolve()
-    if not path.is_file():
-        raise DataAnchorError("data_anchor_thinkgraph_unavailable")
-    uri = f"{path.as_uri()}?mode=ro"
+    """Read one current project-scoped Constellation memory by native ID."""
+    client: ConstellationProcess | None = None
     try:
-        with sqlite3.connect(uri, uri=True, timeout=5) as connection:
-            connection.row_factory = sqlite3.Row
-            row = connection.execute(
-                """
-                SELECT m.id, m.mtype, m.title, m.content, m.metadata,
-                       m.provenance, m.valid_from, m.valid_to, m.ingested_at
-                FROM memories AS m
-                JOIN workspaces AS w ON w.id = m.workspace_id
-                JOIN repos AS r ON r.id = m.repo_id
-                WHERE w.name = ?
-                  AND r.name = 'thinkgraph'
-                  AND m.valid_to IS NULL
-                  AND (
-                    m.id = ?
-                    OR (
-                      json_valid(m.metadata)
-                      AND json_extract(m.metadata, '$.canonicalId') = ?
-                    )
-                  )
-                ORDER BY m.ingested_at DESC
-                LIMIT 1
-                """,
-                (project_id, native_id, native_id),
-            ).fetchone()
-    except sqlite3.Error as error:
+        if db_path is None:
+            native = constellation_inspect(
+                project_id,
+                {"nativeId": native_id, "maxDepth": 0, "budget": 12000},
+            )
+        else:
+            path = Path(db_path).resolve()
+            if not path.is_file():
+                raise DataAnchorError("data_anchor_thinkgraph_unavailable")
+            client = ConstellationProcess(project_id, database_path=path)
+            native = client.request(
+                "inspect",
+                {"nativeId": native_id, "maxDepth": 0, "budget": 12000},
+            )
+    except Exception as error:
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
+    finally:
+        if client is not None:
+            client.close()
+    nodes = native.get("nodes") if isinstance(native, dict) else None
+    inspected = native.get("inspectedNode") if isinstance(native, dict) else None
+    row = inspected if isinstance(inspected, dict) else next(
+        (
+            item for item in (nodes or [])
+            if isinstance(item, dict) and str(item.get("id") or "") == native_id
+        ),
+        None,
+    )
     if row is None:
         return None
-    metadata = _json_value(row["metadata"])
-    canonical_id = (
-        str(metadata.get("canonicalId") or "").strip()
-        if isinstance(metadata, dict)
-        else ""
-    ) or str(row["id"])
+    tags = _json_value(row.get("tags"))
+    tags = tags if isinstance(tags, list) else []
+    if f"liquidaity-project:{project_id}" not in {str(tag) for tag in tags}:
+        return None
+    canonical_id = str(row["id"])
+    title = str(row.get("l0") or row.get("content") or canonical_id)
+    content = str(row.get("l2") or row.get("l1") or row.get("content") or title)
     return {
         "authority": "ThinkGraph",
         "nativeId": canonical_id,
         "nativeKind": "node",
-        "recordId": str(row["id"]),
-        "type": str(row["mtype"] or ""),
-        "title": str(row["title"] or ""),
-        "content": str(row["content"] or "")[:_ANCHOR_BODY_LIMIT],
-        "metadata": metadata if isinstance(metadata, dict) else {},
-        "provenance": _json_value(row["provenance"]),
-        "asOf": _iso(row["ingested_at"]),
-        "readOperation": "engraphis.exact_id",
+        "recordId": canonical_id,
+        "type": str(row.get("node_type") or "ConstellationMemory"),
+        "title": title,
+        "content": content[:_ANCHOR_BODY_LIMIT],
+        "metadata": {
+            "tags": tags,
+            "level": row.get("level"),
+            "distance": row.get("distance"),
+        },
+        "provenance": {
+            "engine": native.get("engine"),
+            "engineVersion": native.get("engineVersion"),
+            "engineRevision": native.get("engineRevision"),
+        },
+        "asOf": "current",
+        "readOperation": "constellation.inspect",
     }
 
 

@@ -4,8 +4,9 @@ The canonical supervised service tree launches one Streamable HTTP host for
 the process lifetime. Hermes and AutoGen use that same authenticated seam; no
 per-turn spawn or fallback host exists.
 
-Exposes this application tool surface plus the dynamically discovered native
-Engraphis, Codebase Memory, and official Graphiti MCP registries:
+Exposes this application tool surface plus the process-owned Constellation
+ThinkGraph adapter and dynamically discovered Codebase Memory and official
+Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
@@ -154,7 +155,6 @@ _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
-_LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS = 300.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
@@ -814,11 +814,6 @@ server = AgentRuntimeServer(
     instructions=_PUBLIC_MCP_DESCRIPTION,
 )
 
-_NATIVE_ENGRAPHIS_MCP: Any | None = None
-_NATIVE_ENGRAPHIS_TOOLS: tuple[Tool, ...] | None = None
-_NATIVE_ENGRAPHIS_NAMES: frozenset[str] = frozenset()
-_NATIVE_ENGRAPHIS_WRITE_READY = False
-_NATIVE_ENGRAPHIS_WRITE_READY_LOCK = threading.Lock()
 _NATIVE_CBM_CLIENT: "_NativeStdioMcpClient | None" = None
 _NATIVE_CBM_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_CBM_NAMES: frozenset[str] = frozenset()
@@ -848,7 +843,6 @@ _NATIVE_GRAPHITI_SERVICE_READY = False
 _NATIVE_GRAPHITI_SERVICE_INIT_LOCK = asyncio.Lock()
 _NATIVE_PREFIXES = {
     "cbm": "cbm.",
-    "engraphis": "engraphis.",
     "graphiti": "graphiti.",
 }
 
@@ -860,8 +854,6 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
     for tool in tools:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         native_name = tool.name
-        if provider == "engraphis":
-            native_name = native_name.removeprefix("engraphis_")
         payload["name"] = prefix + native_name
         meta = dict(payload.get("_meta") or {})
         meta["liquidaitySource"] = {
@@ -950,86 +942,6 @@ async def list_resources() -> list[Any]:
         **_oauth_trace_fields(),
     )
     return []
-
-
-def _load_native_engraphis_mcp():
-    """Import Engraphis' FastMCP registry with its repository-owned database."""
-    repo_root = os.path.dirname(os.path.dirname(_PACKAGE_ROOT))
-    # This host is the local workbench boundary. The configured
-    # SentenceTransformer model is already cached locally; allowing Hugging Face
-    # metadata requests here can leave the first external MCP tool call waiting on
-    # the network long enough for ChatGPT to disable the otherwise healthy connector.
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ.setdefault(
-        "ENGRAPHIS_DB_PATH",
-        os.path.join(repo_root, "db", "thinkgraph-engraphis-v2.sqlite"),
-    )
-    from engraphis.mcp_server import mcp
-
-    return mcp
-
-
-async def _initialize_native_engraphis() -> None:
-    """Discover Engraphis once, before the outer MCP server accepts requests.
-
-    The installed MCP SDK has no public server-mount/import API. Calling the
-    nested FastMCP ``list_tools`` method from the outer low-level server's own
-    ``tools/list`` callback stalls that stdio request. Startup discovery keeps
-    Engraphis' original Tool objects and handlers while removing that nested
-    request-lifecycle interaction.
-    """
-    global _NATIVE_ENGRAPHIS_MCP, _NATIVE_ENGRAPHIS_NAMES, _NATIVE_ENGRAPHIS_TOOLS
-    if _NATIVE_ENGRAPHIS_TOOLS is not None:
-        return
-    native_mcp = _load_native_engraphis_mcp()
-    tools = tuple(
-        await asyncio.to_thread(
-            asyncio.run,
-            native_mcp.list_tools(),
-        )
-    )
-    names = [tool.name for tool in tools]
-    if len(names) != len(set(names)):
-        raise RuntimeError("native_engraphis_duplicate_tool_name")
-    _NATIVE_ENGRAPHIS_MCP = native_mcp
-    _NATIVE_ENGRAPHIS_TOOLS = tools
-    _NATIVE_ENGRAPHIS_NAMES = frozenset(names)
-
-
-def _native_engraphis_mcp():
-    """Return the initialized native Engraphis FastMCP registry."""
-    if _NATIVE_ENGRAPHIS_MCP is None:
-        raise RuntimeError("native_engraphis_not_initialized")
-    return _NATIVE_ENGRAPHIS_MCP
-
-
-def _prepare_native_engraphis_semantic_write() -> None:
-    """Load the lazy local embedder without entering Engraphis' write handler.
-
-    A cancelled or timed-out first request may leave this preparation running in
-    its worker thread, but it cannot commit a memory. A later retry reuses the
-    prepared process state and enters the native write handler exactly once.
-    """
-
-    global _NATIVE_ENGRAPHIS_WRITE_READY
-    if _NATIVE_ENGRAPHIS_WRITE_READY:
-        return
-    with _NATIVE_ENGRAPHIS_WRITE_READY_LOCK:
-        if _NATIVE_ENGRAPHIS_WRITE_READY:
-            return
-        from engraphis.mcp_server import service
-
-        vectors = service().engine.embedder.embed([""])
-        if len(vectors) != 1:
-            raise RuntimeError("native_engraphis_embedding_prepare_failed")
-        _NATIVE_ENGRAPHIS_WRITE_READY = True
-
-
-async def _native_engraphis_tools() -> list[Tool]:
-    """Return the original native Engraphis Tool objects discovered at startup."""
-    await _initialize_native_engraphis()
-    return list(_NATIVE_ENGRAPHIS_TOOLS or ())
 
 
 def _graphiti_config():
@@ -2688,6 +2600,96 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 ],
             },
         ),
+        Tool(
+            name="constellation.context",
+            description=(
+                "Read a bounded native Constellation Engine context by exact memory ID, "
+                "tag, or text focus. The authenticated Project scope is server-owned. "
+                "Returns native IDs, weighted topology, provenance, and explicit semantic "
+                "degradation state; it does not fabricate embeddings."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "focus": {
+                        "oneOf": [
+                            {"type": "string", "minLength": 1, "maxLength": 500},
+                            {
+                                "type": "array", "minItems": 1, "maxItems": 16,
+                                "items": {"type": "string", "minLength": 1, "maxLength": 500},
+                            },
+                        ]
+                    },
+                    "budget": {"type": "integer", "minimum": 100, "maximum": 12000, "default": 2000},
+                    "maxDepth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 3},
+                    "maxL2": {"type": "integer", "minimum": 0, "maximum": 128, "default": 12},
+                },
+                "required": ["focus"],
+            },
+        ),
+        Tool(
+            name="constellation.inspect",
+            description=(
+                "Read one exact native Constellation memory and its bounded weighted "
+                "neighborhood for the authenticated Project."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "nativeId": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "budget": {"type": "integer", "minimum": 100, "maximum": 12000, "default": 2000},
+                    "maxDepth": {"type": "integer", "minimum": 0, "maximum": 5, "default": 1},
+                    "maxL2": {"type": "integer", "minimum": 0, "maximum": 128, "default": 12},
+                },
+                "required": ["nativeId"],
+            },
+        ),
+        Tool(
+            name="constellation.remember",
+            description=(
+                "Write one explicitly structured memory through the single process-owned "
+                "Constellation Engine writer for the authenticated Project."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "l0": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "l1": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "l2": {"type": "string", "minLength": 1, "maxLength": 50000},
+                    "tags": {
+                        "type": "array", "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 120},
+                    },
+                    "tone": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "valence": {"type": "number", "minimum": -1, "maximum": 1},
+                    "arousal": {"type": "number", "minimum": 0, "maximum": 1},
+                    "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 10},
+                    "source": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "nodeType": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "eventAt": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "subkind": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "skipDedup": {"type": "boolean"},
+                    "edges": {
+                        "type": "array", "maxItems": 64,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "target": {"type": "string", "minLength": 1, "maxLength": 300},
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["causal", "contrastive", "hierarchical", "associative", "temporal", "supersedes", "coactivation", "collision", "builds_on", "resolves", "contradicts"],
+                                },
+                                "strength": {"type": "number", "minimum": 0.01, "maximum": 1},
+                            },
+                            "required": ["target", "type"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["id", "l0", "l1", "l2"],
+            },
+        ),
     ]
     tools = [_bind_repo_tool_source(tool) for tool in tools]
     for tool in tools:
@@ -2697,10 +2699,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
         tools = [tool for tool in tools if tool.name in allowlist]
     _complete_catalog_family("liquidaity")
     native_catalogs: dict[str, list[Tool]] = {}
-    if allowlist is None or any(name.startswith("engraphis.") for name in allowlist):
-        _set_catalog_initializing_family("engraphis")
-        native_catalogs["engraphis"] = await _native_engraphis_tools()
-        _complete_catalog_family("engraphis")
     if allowlist is None or any(name.startswith("cbm.") for name in allowlist):
         _set_catalog_initializing_family("cbm")
         native_catalogs["cbm"] = await _native_cbm_tools()
@@ -3016,14 +3014,10 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
                     field for field in required if field not in _SERVER_OWNED_ARGUMENTS
                 ]
             payload["inputSchema"] = schema
-        elif native_system in {"engraphis", "graphiti"}:
+        elif native_system == "graphiti":
             schema = copy.deepcopy(tool.inputSchema)
             properties = schema.get("properties")
-            server_owned_scope_fields = (
-                {"workspace", "repo"}
-                if native_system == "engraphis"
-                else {"group_id", "group_ids"}
-            )
+            server_owned_scope_fields = {"group_id", "group_ids"}
             if isinstance(properties, dict):
                 for field in server_owned_scope_fields:
                     properties.pop(field, None)
@@ -3090,6 +3084,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "dataAnchors",
     },
     "web_search": {"query", "max_results"},
+    "constellation.context": {"focus", "budget", "maxDepth", "maxL2"},
+    "constellation.inspect": {"nativeId", "budget", "maxDepth", "maxL2"},
+    "constellation.remember": {
+        "id", "l0", "l1", "l2", "tags", "tone", "valence", "arousal",
+        "weight", "source", "nodeType", "eventAt", "subkind", "skipDedup",
+        "edges",
+    },
 }
 
 _BRIDGE_PATHS: dict[str, str] = {
@@ -3115,61 +3116,36 @@ async def _dispatch_tool(
     arguments: dict[str, Any],
 ) -> Any:
     context = _authenticated_main_context()
-    if name.startswith(_NATIVE_PREFIXES["engraphis"]):
-        await _initialize_native_engraphis()
-        native_name = "engraphis_" + name.removeprefix(_NATIVE_PREFIXES["engraphis"])
-        if native_name in _NATIVE_ENGRAPHIS_NAMES:
-            native_args = dict(arguments or {})
-            if context is not None:
-                supplied_scope = sorted({"workspace", "repo"} & native_args.keys())
-                if supplied_scope:
-                    return [
-                        TextContent(
-                            type="text",
-                            text=json.dumps({
-                                "ok": False,
-                                "error": (
-                                    "caller_identity_rejected: "
-                                    + ",".join(supplied_scope)
-                                ),
-                            }),
-                        )
-                    ]
-                native_tool = next(
-                    (
-                        tool
-                        for tool in (_NATIVE_ENGRAPHIS_TOOLS or ())
-                        if tool.name == native_name
-                    ),
-                    None,
-                )
-                native_properties = (
-                    native_tool.inputSchema.get("properties", {})
-                    if native_tool is not None
-                    and isinstance(native_tool.inputSchema, dict)
-                    else {}
-                )
-                if "workspace" in native_properties:
-                    native_args["workspace"] = str(context["projectId"])
-                if "repo" in native_properties:
-                    native_args["repo"] = "thinkgraph"
-            if native_name == "engraphis_remember":
-                # Keep the cold model load outside the native write handler. If
-                # it exceeds the ordinary connector window, the request fails
-                # before any memory can be committed; a retry can safely reuse
-                # the completed lazy initialization.
-                await asyncio.wait_for(
-                    asyncio.to_thread(_prepare_native_engraphis_semantic_write),
-                    timeout=_MCP_CALL_TIMEOUT_SECONDS,
-                )
+    if name.startswith("constellation."):
+        if context is None or not str(context.get("projectId") or "").strip():
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "ok": False,
+                    "error": "authenticated_project_required",
+                }),
+            )]
+        from app.python_models.constellation import (
+            constellation_context,
+            constellation_inspect,
+            constellation_remember,
+        )
+        handlers = {
+            "constellation.context": constellation_context,
+            "constellation.inspect": constellation_inspect,
+            "constellation.remember": constellation_remember,
+        }
+        handler = handlers.get(name)
+        if handler is not None:
             result = await asyncio.to_thread(
-                asyncio.run,
-                _native_engraphis_mcp().call_tool(
-                    native_name,
-                    native_args,
-                ),
+                handler,
+                str(context["projectId"]),
+                dict(arguments or {}),
             )
-            return _normalize_native_tool_result(result, dependency="engraphis")
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, ensure_ascii=False),
+            )]
     if name.startswith(_NATIVE_PREFIXES["cbm"]):
         await _native_cbm_tools()
         native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
@@ -3495,11 +3471,6 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
         "run_mag_one",
     }:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
-    if name == "engraphis.remember":
-        # The first explicit semantic write owns Engraphis' offline lazy model
-        # initialization.  Do not report failure while its worker can still
-        # complete and commit the requested write after the generic timeout.
-        return _LOCAL_EMBEDDING_TOOL_TIMEOUT_SECONDS
     return _MCP_CALL_TIMEOUT_SECONDS
 
 

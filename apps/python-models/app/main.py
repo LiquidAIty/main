@@ -311,33 +311,30 @@ def thinkgraph_projection(
     includeHistorical: bool = False,
     memoryType: str | None = None,
 ):
-    """Read the native Engraphis projection for the selected project."""
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    """Read the native Constellation projection for the selected project."""
+    from app.python_models.constellation import constellation_projection
 
     project_id = str(projectId or "").strip()
     if not project_id:
         raise HTTPException(status_code=400, detail="projectId required")
     try:
-        return get_thinkgraph().projection(
-            project_id,
-            limit=limit or 500,
-            include_historical=includeHistorical,
-            memory_type=memoryType,
-        )
+        # The route keeps its stable transport contract. Constellation owns the
+        # bounded live topology; historical/type filtering is not fabricated.
+        return constellation_projection(project_id)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
 
 @app.get("/thinkgraph/neighborhood")
 def thinkgraph_neighborhood(projectId: str, canonicalId: str):
-    """Read the exact Engraphis neighborhood of one native memory."""
-    from app.python_models.thinkgraph_engraphis import get_thinkgraph
+    """Read one exact Constellation memory and its native neighborhood."""
+    from app.python_models.constellation import constellation_neighborhood
 
     project_id = str(projectId or "").strip()
     canonical_id = str(canonicalId or "").strip()
     if not project_id or not canonical_id:
         raise HTTPException(status_code=400, detail="projectId and canonicalId required")
     try:
-        return get_thinkgraph().neighborhood(project_id, canonical_id)
+        return constellation_neighborhood(project_id, canonical_id)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err

@@ -36,7 +36,7 @@ function attention(
     authority,
     operation: 'read',
     toolName: authority === 'codegraph' ? 'cbm.search_graph'
-      : authority === 'knowgraph' ? 'graphiti.search_nodes' : 'engraphis.why',
+      : authority === 'knowgraph' ? 'graphiti.search_nodes' : 'constellation.context',
     nativeNodeIds,
     nativeEdgeIds,
     nativeEdges,

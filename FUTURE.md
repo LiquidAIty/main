@@ -32,13 +32,13 @@ These calls require explicit approval. Structural tests must not be presented as
   memory contract.
 - Keep memory separation intentional; do not create one automatic cross-agent memory dump.
 
-## Engraphis
+## Constellation semantic mode
 
 - Keep semantic embeddings outside startup and Card-call materialization.
-- When revisited, use one lazy local-only singleton and the existing compatible cached model.
-- If the model is absent, fail only semantic recall; never use deterministic fake vectors.
-- Evaluate whether Engraphis earns its place after real ThinkGraph use rather than through startup
-  warmup or synthetic memories.
+- Add an embedding daemon only through Constellation's documented boundary and only after measured
+  native-context quality justifies the additional service.
+- Until then, expose semantic mode as degraded while preserving real native topology; never create
+  deterministic fake vectors or synthetic memories.
 
 ## UI after runtime proof
 

@@ -213,6 +213,11 @@ const TYPE_COLORS: Record<string, string> = {
   Risk: '#8798A0',
 };
 const DEFAULT_TYPE_COLOR = '#A7B0BA';
+const CONSTELLATION_LEVEL_COLORS: Record<string, string> = {
+  L2: '#ffd166',
+  L1: '#7dd3fc',
+  L0: '#a78bfa',
+};
 const LIVE_SOURCE_COLORS: Record<string, string> = {
   user: '#F3B35B',
   reasoning: '#A98BF3',
@@ -438,13 +443,22 @@ export function NativeGraphProjectionSurface({
           ? node.currentState === 'settled' ? 0.48 : 1
           : hasTransient ? 0.2 : 1;
         context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
+        const constellationLevel = String(node.properties.level || '');
+        const constellationColor = authority === 'thinkgraph'
+          ? CONSTELLATION_LEVEL_COLORS[constellationLevel] || '#5eead4'
+          : null;
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
         context.fillStyle = node.attentionActorColor
           || (node.transient && node.source
           ? LIVE_SOURCE_COLORS[node.source]
-          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
+          : constellationColor || TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
+        if (authority === 'thinkgraph') {
+          context.shadowColor = String(context.fillStyle);
+          context.shadowBlur = Math.max(3, radius * 1.8);
+        }
         context.fill();
+        context.shadowBlur = 0;
         if (connectedFocus && node.id === focused) {
           context.lineWidth = 1.6;
           context.strokeStyle = '#A9ECE8';
@@ -474,7 +488,7 @@ export function NativeGraphProjectionSurface({
         const focused = hoveredRef.current || selectedRef.current;
         return (focused && (endpointId(link.source) === focused || endpointId(link.target) === focused) ? 1.8 : 0.75) * settings.linkWidth;
       })
-      .linkDirectionalArrowLength(2)
+      .linkDirectionalArrowLength(authority === 'thinkgraph' ? 0 : 2)
       .linkDirectionalArrowRelPos(1)
       .linkCanvasObjectMode(() => (showLinkLabels ? 'after' : undefined))
       .linkCanvasObject((link: NativeLink, context: CanvasRenderingContext2D, scale: number) => {
@@ -553,7 +567,7 @@ export function NativeGraphProjectionSurface({
         initialFitTimerRef.current = null;
       }, 180);
     }
-  }, [adjacency, nativeData, settings, showLinkLabels]);
+  }, [adjacency, authority, nativeData, settings, showLinkLabels]);
 
   useEffect(() => {
     if (!selected || nativeData.nodes.some((node) => node.id === selected.id)) return;
@@ -587,10 +601,10 @@ export function NativeGraphProjectionSurface({
   const connectedCount = nativeData.nodes.filter((node) => node.degree > 0).length;
   const surfaceLabel = authority === 'knowgraph' ? 'KnowGraph' : 'ThinkGraph';
   return (
-    <div data-testid={`native-${authority}-surface`} className="engraphis-native-graph">
-      <div className="engraphis-native-canvas">
+    <div data-testid={`native-${authority}-surface`} className={`native-authority-graph${authority === 'thinkgraph' ? ' constellation-star-map' : ''}`}>
+      <div className="native-authority-canvas">
         <GraphPaperBackground />
-        <div ref={hostRef} className="engraphis-native-network" />
+        <div ref={hostRef} className="native-authority-network" />
         <GraphNavigationControls
           onZoomIn={() => {
             const graph = graphRef.current;
@@ -602,9 +616,9 @@ export function NativeGraphProjectionSurface({
           }}
           onFit={() => graphRef.current?.zoomToFit(320, 60)}
         />
-        {status === 'loading' && !projection ? <div className="engraphis-native-empty">Loading graph…</div> : null}
-        {status === 'error' ? <div className="engraphis-native-empty">Graph failed: {error}</div> : null}
-        {status === 'ready' && allNodes === 0 ? <div className="engraphis-native-empty">No {surfaceLabel} data viewed in this attention scope yet.</div> : null}
+        {status === 'loading' && !projection ? <div className="native-authority-empty">Loading graph…</div> : null}
+        {status === 'error' ? <div className="native-authority-empty">Graph failed: {error}</div> : null}
+        {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No {surfaceLabel} data viewed in this attention scope yet.</div> : null}
       </div>
       <RightGlassDrawer
         isOpen={inspectorOpen}
@@ -622,7 +636,7 @@ export function NativeGraphProjectionSurface({
         bottom={12}
         zIndex={6}
       >
-      <div className="engraphis-native-controls">
+      <div className="native-authority-controls">
         {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}</section> : null}
         {selected?.attentionActorCardId ? <section><h3>Attention</h3><p><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 6, background: selected.attentionActorColor || DEFAULT_TYPE_COLOR }} />{selected.attentionActorCardId}</p><p>{selected.attentionToolName}</p>{onExpand ? <button disabled={expanding} onClick={() => {
           const native = projection?.nodes.find((node) => node.id === selected.id);
@@ -635,7 +649,7 @@ export function NativeGraphProjectionSurface({
         }}>Attach native reference to Main</button> : null}</section> : null}
         <section>
           <h3>Controls</h3>
-          <div className="engraphis-native-actions">
+          <div className="native-authority-actions">
             <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
           </div>
           <label><input type="checkbox" checked={hideIsolated} onChange={(event) => setHideIsolated(event.target.checked)} /> Hide unconnected entities</label>
@@ -647,20 +661,20 @@ export function NativeGraphProjectionSurface({
             ['Repel force', 'repel', 20, 400], ['Link distance', 'linkDistance', 10, 150],
             ['Center gravity', 'gravity', 0, 50],
           ] as const).map(([label, key, min, max]) => (
-            <label className="engraphis-native-slider" key={key}><span>{label}</span><input type="range" min={min} max={max} step={key === 'linkWidth' ? 0.1 : 1} value={settings[key]} onChange={(event) => setSettings((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>
+            <label className="native-authority-slider" key={key}><span>{label}</span><input type="range" min={min} max={max} step={key === 'linkWidth' ? 0.1 : 1} value={settings[key]} onChange={(event) => setSettings((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>
           ))}
         </section>
         <section>
           <h3>Top connected</h3>
-          {topConnected.map((node, index) => <button className="engraphis-native-rank" key={node.id} onClick={() => { setSearch(node.label); focusNode(node); }}><span>{index + 1}</span><i style={{ background: TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR }} /> <b>{node.label}</b><em>{node.degree}</em></button>)}
+          {topConnected.map((node, index) => <button className="native-authority-rank" key={node.id} onClick={() => { setSearch(node.label); focusNode(node); }}><span>{index + 1}</span><i style={{ background: TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR }} /> <b>{node.label}</b><em>{node.degree}</em></button>)}
         </section>
         <section>
           <h3>Entity types <span>{typeCounts.length}</span></h3>
-          {typeCounts.map(([type, count]) => <div className="engraphis-native-type" key={type}><i style={{ background: TYPE_COLORS[type] || DEFAULT_TYPE_COLOR }} /><span>{type}</span><b>{count}</b></div>)}
+          {typeCounts.map(([type, count]) => <div className="native-authority-type" key={type}><i style={{ background: TYPE_COLORS[type] || DEFAULT_TYPE_COLOR }} /><span>{type}</span><b>{count}</b></div>)}
         </section>
         <section>
           <h3>Graph stats</h3>
-          <dl className="engraphis-native-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
+          <dl className="native-authority-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
         </section>
         {selected && Object.keys(selected.provenance).length > 0 ? <section><h3>Provenance</h3><pre>{JSON.stringify(selected.provenance, null, 2)}</pre></section> : null}
         {selected ? <section><h3>Technical details</h3><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}

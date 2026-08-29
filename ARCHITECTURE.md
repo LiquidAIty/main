@@ -26,7 +26,7 @@ React/Vite Agent Builder and Chat
            ├─ Card call/IDD/AGE deterministic rails
            ├─ AutoGen AssistantAgent
            ├─ AutoGen MagenticOneGroupChat
-           ├─ ThinkGraph/Engraphis
+           ├─ ThinkGraph/Constellation Engine
            ├─ KnowGraph/Graphiti
            └─ CodeGraph/native CBM through one app-owned AppData frontend
 ```
@@ -115,9 +115,9 @@ from current registered owners and is discovered dynamically. A fixed numeric ca
 architecture contract.
 
 The literal `LiquidAIty.idd` separates publication/access policy from native MCP side-effect annotations.
-Engraphis `export_code_graph`, `index_repo`, `search_code`, `code_path`, and `code_impact` are private
-operator declarations, excluded from public tools, shared reads and effective Card action allocation.
-Historical saved grants and ThinkGraph data remain unchanged. CBM is the only product CodeGraph owner.
+Constellation exposes only bounded `context`, `inspect`, and `remember` operations. CBM remains the only
+product CodeGraph owner. Obsolete saved tool grants fail unavailable; there is no data migration or
+synthetic topology regeneration.
 This changes the previous 71-tool public catalog to 66; cached GPT tool descriptors need reissue/refresh.
 
 Graph attention reuses AGE `USED_TOOL` events, `USED` native references and materialized `READ` edges.
@@ -277,7 +277,7 @@ and images. `apps/python-models/app/python_models/idf.py::materialize_idf` is th
 
 | Graph | Native owner | Meaning |
 | --- | --- | --- |
-| ThinkGraph | Engraphis SQLite/Python | project reasoning and operational memory |
+| ThinkGraph | Constellation Engine through the Python/Node adapter | project reasoning and operational memory |
 | KnowGraph | Graphiti/Neo4j/Python | sourced knowledge, evidence, and provenance |
 | CodeGraph | native codebase-memory-mcp | repository structure and impact |
 | AgentGraph | Apache AGE/PostgreSQL | Card relationships, delegation, Runs, tools, references, artifacts |
@@ -314,7 +314,7 @@ writes, and run completion/failure. Answer prose and hidden reasoning are never 
   artifact metadata.
 - AGE on PostgreSQL: saved Card relationships and execution/reference observations.
 - Neo4j: KnowGraph.
-- Engraphis SQLite: ThinkGraph.
+- Constellation Engine SQLite: ThinkGraph.
 - The checksum-pinned native CBM binary under LiquidAIty AppData: CodeGraph. Its official daemon, watcher,
   embedded UI, and disposable cache remain outside the repository; the Python MCP host owns the only stdio
   frontend. Docker does not own or launch CBM.
@@ -334,8 +334,8 @@ first-party command after install; it is never enabled as an install hook.
 
 Python dependency owners remain:
 
-- `apps/python-models/requirements.txt` for official MCP, deterministic Card/IDD/AGE rails, AutoGen,
-  and the local Engraphis integration;
+- `apps/python-models/requirements.txt` for official MCP, deterministic Card/IDD/AGE rails, and AutoGen;
+- `apps/constellation-engine/package.json` for the exact pinned Constellation Engine dependency;
 - `services/knowgraph/requirements.txt` for Graphiti/Neo4j;
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
 
@@ -484,8 +484,7 @@ Do not describe this as automatic revocation at Run completion. The grant refact
 reload and live worker proof before it is described as the loaded runtime's behavior.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
-WorldSignals, Engraphis, and other imported roots remain isolated owners and are not ordinary cleanup
-targets.
+WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.
 
 ## Known limitations
 
@@ -493,6 +492,6 @@ targets.
 - Native Hermes child Run/AGE attribution has no-provider contract proof; loaded-runtime execution and
   persistence readback remain for the separately approved live session.
 - Reveal pacing, stacked 3D presentation, and transient-call consumption illumination remain incomplete.
-- Engraphis semantic embeddings are deferred and must remain lazy/offline when revisited.
+- Constellation semantic embeddings are explicitly degraded until a real configured daemon is approved.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are
   classified legacy identifiers, not active architectures.

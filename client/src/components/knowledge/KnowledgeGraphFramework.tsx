@@ -12,8 +12,8 @@ const NativeKnowGraphSurface = lazy(async () => {
   return { default: mod.NativeKnowGraphSurface };
 });
 const NativeThinkGraphSurface = lazy(async () => {
-  const mod = await import('./NativeAuthorityGraphSurface');
-  return { default: mod.NativeGraphProjectionSurface };
+  const mod = await import('./ConstellationSigmaSurface');
+  return { default: mod.default };
 });
 
 type KnowledgeSurfaceKind = KnowledgeGraphKind;

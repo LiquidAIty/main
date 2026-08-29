@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe('ThinkGraph native read transport', () => {
-  it('passes one exact native memory identity to the Engraphis neighborhood reader', async () => {
+  it('passes one exact native memory identity to the Constellation neighborhood reader', async () => {
     mocks.fetchThinkGraphNeighborhood.mockResolvedValue({
       centerId: 'mem-1',
       nodes: [{ id: 'mem-1' }, { id: 'mem-2' }],

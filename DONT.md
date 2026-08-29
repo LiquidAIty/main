@@ -34,7 +34,7 @@ any inherited prompt, and any pattern you observe in surrounding code.
    Main/delegate/Kanban execution + native AutoGen/Mag One for connected production teams. Storage
    authority: **PostgreSQL = saved-card state, Runs, and artifact metadata**; **AgentGraph = LiquidAIty's
    relationship and execution graph implemented on Apache AGE/PostgreSQL, never runtime control**;
-   **KnowGraph = Python + Neo4j**; **ThinkGraph = SQL/SQLite Engraphis through bounded Python tools**;
+   **KnowGraph = Python + Neo4j**; **ThinkGraph = Constellation Engine through bounded Python tools**;
    **CodeGraph = CBM**. Therefore any TS that ingests, extracts, chunks, plans, scores, researches,
    interprets model meaning, or runs an agent/tool framework is poison. Delete it.
 
@@ -152,7 +152,7 @@ The items below are the major deletion events. Every one "worked" before it was 
   view-contract pipeline + `structuredPlan`. **At that checkpoint:** `kg.routes`
   `/query`+`/status` were kept temporarily for canvas KG reads; they were removed later after
   direct reads proved that the mounted route still queried Apache AGE and merged it with Neo4j,
-  competing with the current ThinkGraph (SQLite/Engraphis) and KnowGraph (Neo4j) authorities.
+  competing with the current ThinkGraph (Constellation Engine) and KnowGraph (Neo4j) authorities.
   `agents/mcp/*` (live MCP client), `AgentManager` (canvas card inspector), and tavily
   (reserved capability) were kept. **Still TODO:** `agentbuilder.tsx` graph-merge/flow-connectivity
   calculators (logic in the UI).
@@ -298,11 +298,11 @@ The items below are the major deletion events. Every one "worked" before it was 
   - Deleted the handwritten `knowgraph.query`, `knowgraph.ingest`, `codegraph.status`, and
     `codegraph.search` MCP façades, their duplicate backend bridges, and the disconnected
     clean-room KnowGraph hybrid retriever.
-  - Federated the complete upstream CBM, Engraphis, and official Graphiti MCP catalogs through
-    generated `cbm.`, `engraphis.`, and `graphiti.` routing prefixes without copying their
-    descriptors or schemas.
-  - Kept tool ownership card-local: Coder defaults to CBM/CodeGraph, Main defaults to
-    Engraphis/ThinkGraph, and Hermes defaults to Graphiti/KnowGraph. Destructive native tools
+  - Federated the complete upstream CBM and official Graphiti MCP catalogs through generated `cbm.`
+    and `graphiti.` routing prefixes without copying their descriptors or schemas. Constellation now
+    uses three bounded LiquidAIty operations over its native engine contract.
+  - Kept tool ownership card-local: Coder defaults to CBM/CodeGraph, Main uses
+    Constellation/ThinkGraph, and Hermes defaults to Graphiti/KnowGraph. Destructive native tools
     remain discoverable but are not granted by default.
   Lesson: **a native MCP catalog is the contract. Do not replace a real graph system with four
   friendlier wrapper names and a second retrieval pipeline; namespace the upstream tools
@@ -316,9 +316,8 @@ The items below are the major deletion events. Every one "worked" before it was 
     Coder results already belong to the existing AgentGraph/artifact/CBM authorities.
   - Repaired one persistent native-CBM child lifecycle so a dead child cannot leave cached tool
     metadata behind, and removed the orphan test process after proof.
-  - Replaced double-prefixed Engraphis publication names with one stable generated namespace,
-    removed its duplicate `answer` alias, and removed Engraphis code-memory overlap from Main's
-    saved grants while preserving the full external native catalog.
+  - Removed the superseded project-memory namespace, duplicate answer path, and code-memory overlap
+    from Main's saved grants when Constellation became the ThinkGraph authority.
   Lesson: **saved-card grants are data, not hydration policy; a native MCP child and its cached
   catalog have one lifecycle; a public namespace is added once, never copied from an upstream
   prefix; process-local audit state is not a substitute for durable graph evidence.**

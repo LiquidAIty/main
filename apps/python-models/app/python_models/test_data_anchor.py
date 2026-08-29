@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-import sqlite3
-
 import pytest
 
 from app.python_models.data_anchor import (
@@ -14,39 +11,31 @@ from app.python_models.data_anchor import (
     resolve_data_anchors,
     search_knowgraph_hybrid,
 )
+from app.python_models.constellation import ConstellationProcess
 
 
 def _database(tmp_path):
     path = tmp_path / "thinkgraph.sqlite"
-    with sqlite3.connect(path) as connection:
-        connection.executescript("""
-            CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-            CREATE TABLE repos (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, name TEXT NOT NULL);
-            CREATE TABLE memories (
-              id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo_id TEXT NOT NULL,
-              mtype TEXT, title TEXT, content TEXT, metadata TEXT, provenance TEXT,
-              valid_from REAL, valid_to REAL, ingested_at REAL
-            );
-        """)
-        connection.execute("INSERT INTO workspaces VALUES (?, ?)", ("workspace-1", "project-1"))
-        connection.execute("INSERT INTO repos VALUES (?, ?, ?)", ("repo-1", "workspace-1", "thinkgraph"))
-        connection.execute(
-            "INSERT INTO memories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "physical-1", "workspace-1", "repo-1", "semantic", "Current fact",
-                "Current native graph content", json.dumps({"canonicalId": "fact:one"}),
-                json.dumps({"source": "unit"}), 1.0, None, 2.0,
-            ),
-        )
-        connection.execute(
-            "INSERT INTO memories VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "mem-native-1", "workspace-1", "repo-1", "semantic",
-                "Native Engraphis memory", "Project-scoped native MCP content",
-                json.dumps({}), json.dumps({"source": "agent"}),
-                2.0, None, 3.0,
-            ),
-        )
+    client = ConstellationProcess("project-1", database_path=path)
+    try:
+        client.request("remember", {
+            "id": "fact:one",
+            "l0": "Current fact",
+            "l1": "Current native graph content",
+            "l2": "Current native graph content",
+            "source": "unit",
+            "projectTag": "liquidaity-project:project-1",
+        })
+        client.request("remember", {
+            "id": "mem-native-1",
+            "l0": "Native Constellation memory",
+            "l1": "Project-scoped native engine content",
+            "l2": "Project-scoped native engine content",
+            "source": "agent",
+            "projectTag": "liquidaity-project:project-1",
+        })
+    finally:
+        client.close()
     return path
 
 
@@ -62,14 +51,14 @@ def test_exact_thinkgraph_read_is_project_scoped_and_read_only(tmp_path) -> None
     assert path.stat().st_mtime_ns == before
 
 
-def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(tmp_path) -> None:
+def test_exact_thinkgraph_read_accepts_project_scoped_native_constellation_id(tmp_path) -> None:
     path = _database(tmp_path)
     record = read_thinkgraph_exact("project-1", "mem-native-1", db_path=path)
 
     assert record is not None
     assert record["nativeId"] == "mem-native-1"
     assert record["recordId"] == "mem-native-1"
-    assert record["content"] == "Project-scoped native MCP content"
+    assert record["content"] == "Project-scoped native engine content"
 
 
 def test_required_anchor_materializes_real_data_and_stable_reference(tmp_path) -> None:

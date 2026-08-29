@@ -460,25 +460,25 @@ describe('Hermes ACP transport identity', () => {
   it('does not report a completed Run after a Card-authorized effect failed', () => {
     expect(() => {
       requireHermesEffectSuccess(
-        ['engraphis.remember'],
-        [{ toolName: 'engraphis.remember', toolUseId: 'tool-1', isError: true }],
+        ['constellation.remember'],
+        [{ toolName: 'constellation.remember', toolUseId: 'tool-1', isError: true }],
       );
       requireHermesCompletionText('I answered even though the required write failed.');
-    }).toThrow('hermes_required_effect_failed:engraphis.remember');
+    }).toThrow('hermes_required_effect_failed:constellation.remember');
     expect(() => requireHermesEffectSuccess(
-      ['engraphis.remember'],
-      [{ toolName: 'engraphis.remember', toolUseId: 'tool-1', isError: false }],
+      ['constellation.remember'],
+      [{ toolName: 'constellation.remember', toolUseId: 'tool-1', isError: false }],
     )).not.toThrow();
   });
 
   it('maps one Hermes MCP runtime name back to its exact Card effect grant', () => {
-    const effects = new Set(['engraphis.remember', 'card.run_assistant_agent']);
+    const effects = new Set(['constellation.remember', 'card.run_assistant_agent']);
     expect(resolveHermesEffectToolName(
       effects,
-      'mcp__main_runtime_3b25e34a0e05__engraphis_remember',
-    )).toBe('engraphis.remember');
-    expect(resolveHermesEffectToolName(effects, 'engraphis.remember')).toBe('engraphis.remember');
-    expect(resolveHermesEffectToolName(effects, 'engraphis.stats')).toBe('engraphis.stats');
+      'mcp__main_runtime_3b25e34a0e05__constellation_remember',
+    )).toBe('constellation.remember');
+    expect(resolveHermesEffectToolName(effects, 'constellation.remember')).toBe('constellation.remember');
+    expect(resolveHermesEffectToolName(effects, 'constellation.inspect')).toBe('constellation.inspect');
   });
 
   it('does not guess when normalized Card effect names are ambiguous', () => {
@@ -489,8 +489,8 @@ describe('Hermes ACP transport identity', () => {
 
   it('keeps optional readable-tool failures separate from required effects', () => {
     expect(() => requireHermesEffectSuccess(
-      ['engraphis.remember'],
-      [{ toolName: 'engraphis.stats', toolUseId: 'tool-1', isError: true }],
+      ['constellation.remember'],
+      [{ toolName: 'constellation.inspect', toolUseId: 'tool-1', isError: true }],
     )).not.toThrow();
   });
 

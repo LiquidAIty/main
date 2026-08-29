@@ -5,7 +5,7 @@ import type { AgentCardInstance } from '../types';
 // The REAL runtime authority for every agent's provider/model is the saved
 // Agent Canvas deck (Python-owned relational Deck/Card domain → deck_builder),
 // resolved by the runtime owner. This boot banner reads saved values only so it
-// reflects configured routing: graph services (Engraphis/Graphiti/Neo4j) never
+// reflects configured routing: graph services (Constellation/Graphiti/Neo4j) never
 // appear as agents, and each card shows its own saved provider/model.
 
 function derivePrintableProvider(card: AgentCardInstance): string {
