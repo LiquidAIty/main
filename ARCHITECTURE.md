@@ -205,11 +205,10 @@ in `apps/python-models`; any later fork edit must be registered in
 from current registered owners and is discovered dynamically. A fixed numeric catalog promise is not an
 architecture contract.
 
-The external GPT connector receives exactly one public namespace: every IDD `external-mcp` operation is
-published as `liquidaity.<canonical-id>`. The existing public projection maps that name once to the unchanged
-canonical ID before permission checks and dispatch. Internal Card, catalog-reader, and stdio clients continue
-to use canonical unprefixed IDs. The projection changes neither schemas nor handler ownership and publishes
-no compatibility alias or duplicate registry entry.
+The external GPT connector publishes every IDD `external-mcp` operation exactly once under its canonical
+unprefixed ID. LiquidAIty is the app/plugin name; it is not a server-side tool-name prefix because ChatGPT
+derives the client namespace from the selected app. Public, Card, catalog-reader, and stdio clients use the
+same canonical IDs, schemas, grants, handlers, and receipts with no compatibility alias or duplicate registry.
 
 The MCP host owns OAuth/resource metadata, catalog readiness, schemas, and dispatch. The canonical startup
 launches ngrok directly against that one host; the tunnel is transport only and does not duplicate or gate MCP
@@ -259,12 +258,11 @@ project reference, and the existing projection consumes the actual event. There 
 Run-registration defect. Native tool-read observations use `USED_TOOL`/`USED`; `READ` separately records
 references resolved during canonical input materialization. This external tool read did not materialize
 an input, so its `materializedNativeReferences` remains empty; literal input-materialization `READ`
-proof is still separate. The August 29 connector failure occurred before dispatch: OAuth discovery and
-`tools/list` succeeded, but the generated connector invoked the public `liquidaity.*` name while the served
-catalog still advertised only the internal canonical ID, so no `tools/call` or handler receipt existed. The
-single public projection above is the source-side transport repair. Its official MCP SDK contract proves
-namespaced dispatch and bounded invalid-name receipts, but a loaded-process readback and a genuinely fresh
-selected-plugin conversation remain separate product proof. ChatGPT owns its approved app-action snapshot;
+proof is still separate. The August 29 connector failure occurred before dispatch because a server-side app
+prefix duplicated the namespace ChatGPT already derives from the selected LiquidAIty app. The canonical
+unprefixed catalog and dispatcher are the source-side repair. The official MCP SDK contract proves canonical
+dispatch and bounded invalid-name receipts, but a loaded-process readback and a genuinely fresh selected-plugin
+conversation remain separate product proof. ChatGPT owns its approved app-action snapshot;
 refresh or recreate/publish that app definition through the applicable workspace control after a public schema
 change, then test from a fresh chat with LiquidAIty selected. Browser rendering and one real Codex-account
 Kanban Run also remain unproven. Do not call the complete launch path live-ready.
@@ -275,9 +273,8 @@ a second MCP server and do not represent the removed Coder runtime. Rename only 
 migration.
 
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
-honestly. The exact public-name projection is not a handler alias: names outside the one `liquidaity.*`
-namespace fail before canonical dispatch. There is no provider substitution, duplicate registry, or
-direct-database shortcut.
+honestly. There is no server-side app prefix, prefix-stripping alias, provider substitution, duplicate
+registry, or direct-database shortcut.
 
 ## Card Terminal projections
 

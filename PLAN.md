@@ -41,10 +41,11 @@ they do not select a runtime implementation.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count. The external GPT connector
-  projects each IDD `external-mcp` operation once as `liquidaity.<canonical-id>` and resolves that exact
-  public name back to the unchanged canonical dispatcher. Internal Card/catalog-reader/stdio catalogs retain
-  canonical unprefixed IDs; neither surface contains aliases or duplicate handlers. Source/SDK proof is not
-  a substitute for a loaded-process readback and a genuinely fresh selected-plugin conversation.
+  publishes each IDD `external-mcp` operation once under its canonical unprefixed ID. LiquidAIty is the app
+  name and is not injected into server tool IDs; ChatGPT owns its client-side app namespace. Public,
+  Card/catalog-reader, and stdio dispatch all use the same canonical IDs without aliases or duplicate handlers.
+  Source/SDK proof is not a substitute for a loaded-process readback and a genuinely fresh selected-plugin
+  conversation.
   The MCP host owns OAuth/resource metadata and readiness; canonical startup launches ngrok directly as
   transport and does not place catalog or application policy in a tunnel helper.
 - The published catalog preserves disabled/unavailable tools. `all_healthy` grants broad healthy
