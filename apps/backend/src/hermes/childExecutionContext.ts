@@ -127,7 +127,7 @@ export async function createHermesChildExecutionContext(args: {
     grantedTools: [...parent.grantedTools],
   };
   const request = args.request ?? requestPythonRailsJson;
-  await request('/domain/runs/begin-native-hermes-child', {
+  const created = await request('/domain/runs/begin-native-hermes-child', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -143,6 +143,9 @@ export async function createHermesChildExecutionContext(args: {
       ...(provider ? { provider, model } : {}),
     }),
   });
+  const persistedRunId = String((created as any)?.runId || '').trim();
+  if (!persistedRunId) throw new Error('hermes_child_run_id_missing');
+  context.runId = persistedRunId;
   contexts.set(context.contextId, context);
   return { ...context, grantedTools: [...context.grantedTools] };
 }
@@ -175,7 +178,7 @@ export function resolveHermesExecutionContext(args: {
 
 export async function finishHermesExecutionContext(args: {
   contextId: string;
-  state: 'completed' | 'failed' | 'cancelled';
+  state: 'completed' | 'blocked' | 'failed' | 'cancelled';
   errorSummary?: string;
   usage?: {
     durationMs?: number;
@@ -188,6 +191,15 @@ export async function finishHermesExecutionContext(args: {
     model?: string;
     fallbackOccurred?: boolean;
     fallbackReason?: string;
+  };
+  nativeResult?: {
+    providerThreadRef: string;
+    providerTurnRef?: string | number | null;
+    nativePhase: string;
+    tasksCompleted: number;
+    tasksTotal: number;
+    activeWorkers: number;
+    finalResult?: string;
   };
   request?: typeof requestPythonRailsJson;
 }): Promise<boolean> {
@@ -203,7 +215,9 @@ export async function finishHermesExecutionContext(args: {
         body: JSON.stringify({
           runId: context.runId,
           state: args.state,
-          errorCode: args.state === 'failed' ? 'hermes_native_child_failed' : undefined,
+          errorCode: args.state === 'failed' || args.state === 'blocked'
+            ? 'hermes_native_child_failed'
+            : undefined,
           errorSummary: args.errorSummary,
           durationMs: args.usage?.durationMs,
           providerInputTokens: args.usage?.providerInputTokens,
@@ -213,6 +227,13 @@ export async function finishHermesExecutionContext(args: {
           model: String(args.configuration?.model || '').trim() || context.childModel || undefined,
           modelFallbackOccurred: args.configuration?.fallbackOccurred === true,
           modelFallbackReason: String(args.configuration?.fallbackReason || '').trim() || undefined,
+          providerThreadRef: args.nativeResult?.providerThreadRef,
+          providerTurnRef: args.nativeResult?.providerTurnRef,
+          nativePhase: args.nativeResult?.nativePhase,
+          tasksCompleted: args.nativeResult?.tasksCompleted,
+          tasksTotal: args.nativeResult?.tasksTotal,
+          activeWorkers: args.nativeResult?.activeWorkers,
+          finalResult: args.nativeResult?.finalResult,
         }),
       });
     }

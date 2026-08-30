@@ -3089,7 +3089,7 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any]:
-    """Resolve one native task component to its exact persisted Kanban Card Run.
+    """Resolve one native task component to its exact persisted Hermes Run.
 
     Hermes owns task topology.  LiquidAIty owns the saved Card revision and the
     Run/root correlation, so this read joins only those existing authorities;
@@ -3129,7 +3129,6 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
                 WHERE run.project_id=%s AND run.deck_id=%s
                   AND run.provider_thread_ref = ANY(%s::text[])
                   AND run.runtime_kind='hermes'
-                  AND run.runtime_mode='kanban'
                 ORDER BY run.created_at ASC
                 """,
                     (project_id, deck_id, task_ids),
@@ -3147,7 +3146,6 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
                   ON revision.revision_id=run.target_card_revision_id
                 WHERE run.provider_thread_ref = ANY(%s::text[])
                   AND run.runtime_kind='hermes'
-                  AND run.runtime_mode='kanban'
                 ORDER BY run.created_at ASC
                 """,
                     (task_ids,),
@@ -3192,12 +3190,17 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
     if not conversation_id:
         raise CardDomainError("hermes_kanban_card_run_conversation_not_found")
 
-    input_file = _input_file_descriptor_for_run(str(row["run_id"]))
+    root_run_id = (
+        str(telemetry.get("rootRunId") or "").strip()
+        if isinstance(telemetry, dict)
+        else ""
+    ) or str(row["run_id"])
+    input_file = _input_file_descriptor_for_run(root_run_id)
     if input_file is None:
         raise CardDomainError("hermes_kanban_root_input_unavailable")
     try:
         root_input = load_idf(input_file, project_id=project_id, deck_id=deck_id,
-                              run_id=str(row["run_id"]), card_id=str(row["card_id"]))
+                              run_id=root_run_id, card_id=str(row["card_id"]))
     except InputMaterializationError as error:
         raise CardDomainError(str(error)) from error
     effective_tools = sorted(
@@ -3212,10 +3215,10 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
             "deckId": deck_id,
             "conversationId": conversation_id,
             "runId": str(row["run_id"]),
-            "rootRunId": str(row["run_id"]),
+            "rootRunId": root_run_id,
             "cardId": str(row["card_id"]),
             "cardRevisionId": revision_id,
-            "runtimeMode": "kanban",
+            "runtimeMode": str(row.get("runtime_mode") or ""),
             "runtimeProfile": str(row.get("runtime_profile") or ""),
             "nativeRootId": str(row["provider_thread_ref"]),
             "grantedTools": effective_tools,
@@ -3224,7 +3227,12 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
 
 
 def list_active_kanban_runs() -> dict[str, Any]:
-    """Return persisted Kanban roots that still need aggregate monitoring."""
+    """Return native Kanban roots that still need aggregate monitoring.
+
+    This includes saved Kanban Card roots and execution-only Team child Runs.
+    Ordinary Hermes Card sessions use non-task provider refs and are excluded
+    by the exact native ``t_`` identity filter below.
+    """
 
     with connect_postgres(autocommit=False) as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
@@ -3237,12 +3245,17 @@ def list_active_kanban_runs() -> dict[str, Any]:
                   ON revision.revision_id=run.target_card_revision_id
                 WHERE run.state IN ('pending','running')
                   AND run.runtime_kind='hermes'
-                  AND run.runtime_mode='kanban'
                   AND run.provider_thread_ref IS NOT NULL
                 ORDER BY run.created_at ASC
                 """
             )
-            rows = [dict(row) for row in cursor.fetchall()]
+            rows = [
+                dict(row) for row in cursor.fetchall()
+                if re.fullmatch(
+                    r"t_[A-Za-z0-9_-]+",
+                    str(row.get("provider_thread_ref") or ""),
+                )
+            ]
     return {
         "ok": True,
         "runs": [
@@ -3473,6 +3486,11 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
     native_child_id = _required_text(payload.get("nativeChildId"), "native_child_id")
     child_provider = str(payload.get("provider") or "").strip()
     child_model = str(payload.get("model") or "").strip()
+    native_task_ref = (
+        native_child_id
+        if re.fullmatch(r"t_[A-Za-z0-9_-]+", native_child_id)
+        else None
+    )
     if bool(child_provider) != bool(child_model):
         raise CardDomainError("hermes_child_model_configuration_incomplete")
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
@@ -3502,13 +3520,42 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
         if str(parent["card_id"]) != card_id:
             raise CardDomainError("hermes_child_parent_card_mismatch")
         target_owner = parent
+        if native_task_ref:
+            cursor.execute(
+                """
+                SELECT run.run_id
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.project_id=%s AND run.deck_id=%s
+                  AND revision.card_id=%s
+                  AND run.runtime_kind='hermes'
+                  AND run.provider_thread_ref=%s
+                ORDER BY run.created_at ASC
+                """,
+                (project_id, deck_id, card_id, native_task_ref),
+            )
+            existing = cursor.fetchall()
+            if len(existing) > 1:
+                raise CardDomainError("hermes_child_native_task_run_ambiguous")
+            if existing:
+                return {
+                    "ok": True,
+                    "runId": str(existing[0]["run_id"]),
+                    "parentRunId": parent_run_id,
+                    "rootRunId": root_run_id,
+                    "cardId": card_id,
+                    "nativeChildId": native_child_id,
+                    "telemetryWritten": True,
+                    "rejoined": True,
+                }
         cursor.execute(
             """
             INSERT INTO ag_catalog.agent_runs (
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode, provider, model_key, provider_model_id,
-              access_mode, correlation_id, state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              access_mode, correlation_id, provider_thread_ref, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             """,
             (
                 run_id, root["project_id"], root["deck_id"],
@@ -3517,7 +3564,7 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
                 child_provider or target_owner["provider"],
                 child_model or target_owner["model_key"],
                 child_model or target_owner["provider_model_id"],
-                target_owner["access_mode"], correlation_id,
+                target_owner["access_mode"], correlation_id, native_task_ref,
             ),
         )
     prepared = {
@@ -3544,6 +3591,7 @@ def begin_native_hermes_child_run(payload: dict[str, Any]) -> dict[str, Any]:
         "cardId": card_id,
         "nativeChildId": native_child_id,
         "telemetryWritten": telemetry_written,
+        "rejoined": False,
     }
 
 

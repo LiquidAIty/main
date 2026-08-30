@@ -1492,6 +1492,39 @@ class HermesACPAgent(acp.Agent):
         restoring an AIAgent or configuring MCP, tools, models, or host state.
         """
 
+        if method == "session/append_native_team_result":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_team_result_params_must_be_object")
+            unknown = sorted(
+                set(params) - {"sessionId", "taskId", "result", "state"}
+            )
+            if unknown:
+                raise ValueError(f"hermes_team_result_unknown_field:{unknown[0]}")
+            session_id = str(params.get("sessionId") or "").strip()
+            task_id = str(params.get("taskId") or "").strip()
+            result = str(params.get("result") or "").strip()
+            terminal_state = str(params.get("state") or "").strip().lower()
+            if not session_id or not task_id or not result:
+                raise ValueError("hermes_team_result_required_field_missing")
+            if terminal_state not in {"completed", "blocked", "failed", "cancelled"}:
+                raise ValueError("hermes_team_result_state_invalid")
+            appended = self.session_manager.append_native_team_result(
+                session_id,
+                task_id=task_id,
+                result=result,
+                terminal_state=terminal_state,
+            )
+            if appended and self._conn:
+                await self._conn.session_update(
+                    session_id,
+                    acp.update_agent_message_text(result),
+                )
+            return {
+                "appended": appended,
+                "sessionId": session_id,
+                "taskId": task_id,
+            }
+
         if method == "session/read_history":
             if not isinstance(params, dict):
                 raise ValueError("hermes_history_extension_params_must_be_object")

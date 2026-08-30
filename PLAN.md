@@ -10,7 +10,8 @@ Git history, not active Markdown.
 Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
      ├─ flow → Agent Builder Card (Hermes delegate, profile liquidaity-agent-builder)
-     ├─ flow → Kanban Card (Hermes, profile liquidaity-hermes-steward)
+     ├─ flow → Hermes planning/memory helper Card (profile liquidaity-hermes-steward)
+     ├─ native delegate_task(team) → headless Auto-Team inside Main's existing Card Run/session
      └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
         └─ magentic_option → Local Coder Card (Hermes delegate, profile coder)
 
@@ -36,8 +37,14 @@ they do not select a runtime implementation.
   configuration; only Main exposes the bounded Honcho setup/status control.
 - `runtime.kind` plus `runtime.mode` selects Hermes Main/delegate/Kanban, AutoGen Assistant, or native
   Magentic-One. Card names and template text do not select runtimes.
-- Main, Agent Builder, Local Coder, and Kanban are separate saved Hermes Cards with separate profiles
+- Main, Agent Builder, Local Coder, and the Hermes planning/memory helper are separate saved Hermes Cards with separate profiles
   and runtime homes.
+- Any authorized ordinary Hermes Card may use native `delegate_task(role="team")` as a headless
+  capability. The MVP recipe submits one explicit mission/context packet, uses Terra for native
+  decomposition, creates two to four Luna tasks, then re-runs the original root on Terra for review
+  and one synthesized report in the originating Card session. Team has no saved Card, board, tab,
+  embedded CLI, or execution authority of its own. The LiquidAIty projection exposes `team`
+  generally, `leaf` only for Main's existing direct Agent Builder doorway, and no `orchestrator`.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count. The external GPT connector
@@ -88,14 +95,15 @@ they do not select a runtime implementation.
 ### Still requiring live proof
 
 - Native Main-to-Agent-Builder delegation with truthful child Run, tool, native-reference, and AGE lineage.
-- Main-to-Kanban execution and separate-session memory behavior.
+- One live ordinary-Card headless Team run with exact Terra/Luna/Terra native receipts, same-session
+  result return, retry/rejoin behavior, and no recursive delegation.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - A canonical reload must load the saved subagent selector chain, child receipt migration,
   Constellation operation route, bounded KnowGraph/profile readback, and the corrected Main-only Honcho
   Inspector status. Local proof must record the startup-specific catalog count/hash and retain one actual
   account-Luna child receipt without issuing a duplicate paid call.
-- The new Card Script path still requires one canonical loaded-process proof: saved Main, Kanban and
+- The new Card Script path still requires one canonical loaded-process proof: saved Main, the Hermes helper and
   Agent Builder Scripts must retain their normal prompts/profiles/grants, one real account-backed Luna
   turn must return the compact Script/native receipt, and blank/broken exact-selected MCP fallback must
   be observed without a catalog-wide leak.
@@ -148,13 +156,15 @@ the transient Card call. The call carries task meaning and selected context, not
 - Uses CodeGraph/CBM first, then direct source and focused proof.
 - Remains a Magentic-One worker option and has no direct Main flow.
 
-### Kanban helper
+### Hermes planning/memory helper
 
 - Card: `card_hermes_steward`
 - Hermes mode/profile: `kanban` / `liquidaity-hermes-steward`
-- Owns planning, native Kanban, research, memory, and KnowGraph work within its grants.
+- Owns planning, research, memory, and KnowGraph work within its grants. It is an ordinary Card, not
+  the execution authority for Team; like other authorized Hermes Cards it may use the headless native
+  Auto-Team capability internally.
 - Has separate saved-Card identity, prompt, model, grants, stable native session, and native profile home.
-  Main, Coder, and Kanban keep separate native memory and sessions. The ACP adapter reuses a process
+  Main, Coder, and the helper keep separate native memory and sessions. The ACP adapter reuses a process
   owner per profile; shared integration code does not imply a shared memory database.
 
 ### AutoGen
@@ -216,7 +226,7 @@ These are recommendations for later saved-prompt review, not grant changes or ca
 - Local Coder should follow `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet -> complete direct
   source read -> inverse caller/residue audit -> focused tests/typecheck`. Literal `search_code`/`rg`
   remains the fallback for imports, configuration, ignored files, and coverage gaps.
-- Kanban/Steward should use native Hermes task/history state for planning and KnowGraph/Graphiti bounded
+- The Hermes planning/memory helper should use native Hermes task/history state for planning and KnowGraph/Graphiti bounded
   reads for sourced knowledge. Any Graphiti write remains an explicit saved grant and confirmed effect.
 - Any Card may use healthy read/search/discovery tools when the saved `all_healthy` policy permits them;
   prompts should name the desired authority and ask for native IDs/provenance instead of copying graph
@@ -258,7 +268,8 @@ alternate startup instructions.
 1. Keep cold install, typecheck, build, focused tests, and static startup proof green.
 2. Prove Main alone with one bounded, explicitly approved model call.
 3. Prove Main → Agent Builder and truthful child lineage.
-4. Prove Main → Kanban with separate session/memory.
+4. Prove one ordinary Card's headless Auto-Team with Terra decomposition, two to four Luna workers,
+   separate Terra review/synthesis, exact same-session result delivery, and durable rejoin.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
 7. Complete the loaded Card Script/selector/receipt proof, rebuild the canonical IDD/application/MCP
@@ -271,7 +282,8 @@ alternate startup instructions.
 
 - One Card authority, one IDD, one transient Python call materializer, one official Python MCP host.
 - One canonical `dev:fresh` tree and one root npm workspace lock.
-- Hermes Main/Agent Builder/Local Coder/Kanban, AutoGen Assistant/Mag One, and four graph authorities remain distinct.
+- Hermes Main/Agent Builder/Local Coder/planning helper, the per-Card headless Auto-Team capability,
+  AutoGen Assistant/Mag One, and four graph authorities remain distinct.
 - Memory projections are named honestly: Learning Journey/native SkillGraph, episodic labels,
   attention, and Run artifacts do not become duplicate stores.
 - No OpenClaude/standalone-LocalCoder/Bun implementation, package root, lock, fallback, or downloader.

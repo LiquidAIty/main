@@ -14,6 +14,7 @@ import {
   executionToolCallMeta,
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
+  type HermesExecutionContext,
 } from './childExecutionContext';
 import {
   HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
@@ -569,6 +570,11 @@ export function buildHermesHostSessionProjection(
             ...args.tools.filter((name) => name === 'web_search'),
             ...rawOfficialTools,
           ]),
+          // This narrows only the trusted LiquidAIty session projection. The
+          // native delegate_task registry keeps every upstream role.
+          delegationRoles: args.cardId === 'card_main_chat'
+            ? ['team', 'leaf']
+            : ['team'],
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
           ...(hostScript ? { hostScript } : {}),
@@ -707,6 +713,27 @@ export class AcpProcess {
     this.send({ jsonrpc: '2.0', method, params });
   }
 
+  private startNativeTeamMonitor(context: HermesExecutionContext): void {
+    if (!/^t_[A-Za-z0-9_-]+$/.test(String(context.nativeChildId || ''))) return;
+    // LIQUIDAITY VENDOR PATCH counterpart: load the host monitor lazily so
+    // the existing Kanban route -> adapter dependency remains acyclic.
+    void import('./kanbanRunRecovery.js').then(({ startHermesTeamRunMonitor }) => {
+      startHermesTeamRunMonitor(context, async (result: {
+        sessionId: string;
+        taskId: string;
+        result: string;
+        state: 'completed' | 'blocked' | 'failed' | 'cancelled';
+      }) => {
+        await this.request('_session/append_native_team_result', result);
+      });
+    }).catch((error) => {
+      this.stderrTail.push(
+        `hermes_team_monitor_start_failed:${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.stderrTail = this.stderrTail.slice(-30);
+    });
+  }
+
   private consumeStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
     for (;;) {
@@ -768,6 +795,7 @@ export class AcpProcess {
             toolCallMeta: executionToolCallMeta(context.contextId),
           },
         });
+        this.startNativeTeamMonitor(context);
       }).catch((error) => {
         this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: error instanceof Error ? error.message : 'hermes_child_context_failed' } });
       });
@@ -1543,8 +1571,9 @@ export async function startHermesTurnWithOnePrePromptRecovery(
 export async function requestHermesExtension(
   method: string,
   params: Record<string, unknown>,
+  profile = '',
 ): Promise<any> {
-  return sharedHermesProcess().requestExtension(method, params);
+  return sharedHermesProcess(profile).requestExtension(method, params);
 }
 
 export async function requestHermesNative(

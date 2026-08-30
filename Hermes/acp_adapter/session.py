@@ -488,6 +488,68 @@ class SessionManager:
         if state is not None:
             self._persist(state)
 
+    def append_native_team_result(
+        self,
+        session_id: str,
+        *,
+        task_id: str,
+        result: str,
+        terminal_state: str,
+    ) -> bool:
+        """Persist one native Team terminal result in its originating session.
+
+        LIQUIDAITY VENDOR PATCH: ACP does not run the TUI notification poller,
+        so a host-correlated durable Team needs the same-session persistence
+        adapter.  The native task id is the idempotency key; no model call or
+        alternate transcript store is introduced here.
+        """
+
+        state = self.get_session(session_id)
+        if state is None:
+            raise RuntimeError("hermes_team_session_not_found")
+        task_id = str(task_id or "").strip()
+        result = str(result or "").strip()
+        terminal_state = str(terminal_state or "").strip().lower()
+        if not task_id or not result:
+            raise ValueError("hermes_team_result_incomplete")
+        metadata = {
+            "nativeTaskId": task_id,
+            "terminalState": terminal_state,
+        }
+        with state.runtime_lock:
+            if state.is_running:
+                raise RuntimeError("hermes_team_session_turn_in_progress")
+            for message in state.history:
+                if not isinstance(message, dict):
+                    continue
+                display = message.get("display_metadata")
+                if (
+                    message.get("display_kind") == "native_team_result"
+                    and isinstance(display, dict)
+                    and display.get("nativeTaskId") == task_id
+                ):
+                    return False
+            db = self._get_db()
+            if db is None:
+                raise RuntimeError("hermes_team_session_store_unavailable")
+            from agent.message_metadata import append_message
+
+            message = {
+                "role": "assistant",
+                "content": result,
+                "display_kind": "native_team_result",
+                "display_metadata": metadata,
+            }
+            db.append_message(
+                session_id,
+                role="assistant",
+                content=result,
+                display_kind="native_team_result",
+                display_metadata=metadata,
+            )
+            append_message(state.history, message)
+        return True
+
     # ---- persistence via SessionDB ------------------------------------------
 
     def _get_db(self):

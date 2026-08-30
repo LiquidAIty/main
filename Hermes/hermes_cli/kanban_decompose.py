@@ -291,10 +291,36 @@ def decompose_task(
         )
 
     cfg = _load_config()
-    orchestrator = _resolve_orchestrator_profile(cfg)
+    # LIQUIDAITY VENDOR PATCH: delegate_task(role="team") marks one native
+    # workflow root.  Auto-Kanban still owns decomposition and profile routing;
+    # this branch only applies the recipe's bounded native task/model fields.
+    is_team = task.workflow_template_id == "delegate-team-v1"
+    orchestrator = (
+        task.assignee
+        if is_team and task.assignee
+        else _resolve_orchestrator_profile(cfg)
+    )
     default_assignee = _resolve_default_assignee(cfg)
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     auto_promote = bool(kanban_cfg.get("auto_promote_children", True))
+    team_max_workers = 4
+    team_worker_provider = ""
+    team_worker_model = ""
+    team_worker_reasoning = None
+    if is_team:
+        try:
+            team_max_workers = max(
+                2, min(4, int(kanban_cfg.get("team_max_workers", 4)))
+            )
+        except (TypeError, ValueError):
+            team_max_workers = 4
+        team_worker_provider = str(
+            kanban_cfg.get("team_worker_provider") or ""
+        ).strip()
+        team_worker_model = str(
+            kanban_cfg.get("team_worker_model") or ""
+        ).strip()
+        team_worker_reasoning = kanban_cfg.get("team_worker_reasoning_effort")
     roster, valid_names = _build_roster()
 
     try:
@@ -316,10 +342,21 @@ def decompose_task(
         # (provider/model/base_url, extra_body, reasoning_effort, retries)
         # all apply — the previous direct client.chat.completions.create()
         # path dropped auxiliary.<task>.extra_body entirely (#35566).
+        system_prompt = _SYSTEM_PROMPT
+        if is_team:
+            system_prompt += (
+                "\n\nThis Triage item is a bounded delegate Team mission. "
+                f"Create between 2 and {team_max_workers} worker tasks. Use two "
+                "for smaller missions and more only when the work has "
+                "genuinely independent evidence or implementation slices. The "
+                "worker graph is depth one: workers may depend on siblings but "
+                "must not create or delegate further work. The root will perform "
+                "the final review and synthesis after every child finishes."
+            )
         resp = call_llm(
             task="kanban_decomposer",
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
             ],
             temperature=0.3,
@@ -345,6 +382,10 @@ def decompose_task(
     audit_author = author or _profile_author()
 
     if not fanout:
+        if is_team:
+            return DecomposeOutcome(
+                task_id, False, "team decomposer must return 2 or more worker tasks",
+            )
         # Fall back to single-task spec promotion (same effect as specify).
         new_title = parsed.get("title")
         new_body = parsed.get("body")
@@ -383,6 +424,13 @@ def decompose_task(
     if not isinstance(raw_tasks, list) or not raw_tasks:
         return DecomposeOutcome(
             task_id, False, "decomposer returned fanout=true with empty tasks list",
+        )
+    if is_team and not (2 <= len(raw_tasks) <= team_max_workers):
+        return DecomposeOutcome(
+            task_id,
+            False,
+            f"team decomposition must contain 2-{team_max_workers} workers "
+            f"(received {len(raw_tasks)})",
         )
 
     # Rewrite invalid assignees to the default fallback. Never leave a
@@ -427,6 +475,15 @@ def decompose_task(
             "body": body.strip(),
             "assignee": chosen,
             "parents": clean_parents,
+            **(
+                {
+                    "model_override": team_worker_model,
+                    "provider_override": team_worker_provider,
+                    "reasoning_effort": team_worker_reasoning,
+                }
+                if is_team
+                else {}
+            ),
         })
 
     try:

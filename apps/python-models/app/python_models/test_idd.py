@@ -198,6 +198,15 @@ def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None
     assert "tools: Final[ToolControls]" in header["source"]
     assert "search_graph: SelectedToolHandle" in header["source"]
     assert "delete_project: UngrantedToolHandle" in header["source"]
+    assert "role: Literal['leaf', 'team'] = 'team'" in header["source"]
+    assert "orchestrator" not in header["source"]
+    ordinary = generate_card_script_header(
+        catalog_tools=catalog,
+        selected_tools=["cbm.search_graph"],
+        card_id="card_research",
+    )
+    assert "role: Literal['team'] = 'team'" in ordinary["source"]
+    assert "leaf" not in ordinary["source"]
     assert "This file is not saved, executed, or sent to a model" in header["source"]
     changed = generate_card_script_header(
         catalog_tools=catalog,

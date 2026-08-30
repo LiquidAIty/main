@@ -65,6 +65,46 @@ class TestCreateSession:
         fetched = manager.get_session(state.session_id)
         assert fetched is state
 
+    def test_native_team_result_persists_once_in_the_originating_session(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setattr(acp_session, "_register_task_cwd", lambda *_args: None)
+        db = SessionDB(db_path=tmp_path / "state.db")
+        agent = SimpleNamespace(model="gpt-5.6-sol")
+        manager = SessionManager(agent_factory=lambda **_kwargs: agent, db=db)
+        state = manager.create_session(cwd=str(tmp_path))
+
+        assert manager.append_native_team_result(
+            state.session_id,
+            task_id="t_team_root",
+            result="One Terra synthesis.",
+            terminal_state="completed",
+        ) is True
+        assert manager.append_native_team_result(
+            state.session_id,
+            task_id="t_team_root",
+            result="One Terra synthesis.",
+            terminal_state="completed",
+        ) is False
+
+        messages = db.get_messages_as_conversation(state.session_id)
+        assert messages[-1]["role"] == "assistant"
+        assert messages[-1]["content"] == "One Terra synthesis."
+        assert state.history[-1]["display_kind"] == "native_team_result"
+        assert state.history[-1]["display_metadata"] == {
+            "nativeTaskId": "t_team_root",
+            "terminalState": "completed",
+        }
+
+        state.is_running = True
+        with pytest.raises(RuntimeError, match="hermes_team_session_turn_in_progress"):
+            manager.append_native_team_result(
+                state.session_id,
+                task_id="t_other",
+                result="Must wait.",
+                terminal_state="completed",
+            )
+
 
     def test_make_agent_stamps_session_cwd_for_codex_runtime(self, monkeypatch):
         class FakeAgent:

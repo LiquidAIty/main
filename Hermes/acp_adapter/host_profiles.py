@@ -36,6 +36,7 @@ _SESSION_FIELDS = {
     "systemPrompt",
     "toolCallMeta",
     "hostScript",
+    "delegationRoles",
 }
 
 
@@ -267,7 +268,50 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         ),
         "toolCallMeta": normalized_tool_meta,
         "hostScript": _host_script(raw.get("hostScript")),
+        "delegationRoles": _delegation_roles(raw.get("delegationRoles")),
     }
+
+
+def _delegation_roles(value: Any) -> list[str]:
+    roles = _bounded_string_list(value, "delegationRoles")
+    unknown = [role for role in roles if role not in {"leaf", "orchestrator", "team"}]
+    if unknown:
+        raise HostSessionConfigError(
+            f"hermes_host_config_delegation_role_invalid:{unknown[0]}"
+        )
+    return roles
+
+
+def _project_delegation_roles(
+    definitions: list[dict[str, Any]],
+    roles: list[str],
+) -> list[dict[str, Any]]:
+    """Narrow only the host session's view of native ``delegate_task``."""
+
+    if not roles:
+        return definitions
+    projected = copy.deepcopy(definitions)
+    for definition in projected:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        if not isinstance(function, dict) or function.get("name") != "delegate_task":
+            continue
+        parameters = function.get("parameters")
+        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        role = properties.get("role") if isinstance(properties, dict) else None
+        if not isinstance(role, dict):
+            raise HostSessionConfigError("hermes_host_delegate_task_schema_invalid")
+        role["enum"] = list(roles)
+        role["default"] = "team" if "team" in roles else roles[0]
+        role["description"] = "Authorized delegation mode for this host session."
+        # LiquidAIty's Card doorway is one explicit mission, not Hermes' batch
+        # orchestration surface. Native Hermes keeps its full schema whenever
+        # the trusted host omits delegationRoles.
+        properties.pop("tasks", None)
+        function["description"] = (
+            "Delegate one explicit task using this host session's authorized "
+            f"native role(s): {', '.join(roles)}."
+        )
+    return projected
 
 
 def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> None:
@@ -295,9 +339,21 @@ def attach_host_execution_requester(agent: Any, requester: Any, session_id: str)
     setattr(agent, "_host_execution_session_id", str(session_id or ""))
 
 
-def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
-    """Allocate trusted host execution state before a native child may run."""
+def allocate_host_native_execution(
+    parent_agent: Any,
+    *,
+    native_child_id: str,
+    provider: str = "",
+    model: str = "",
+) -> dict[str, Any] | None:
+    """Allocate opaque host execution state for one native child identity.
 
+    LIQUIDAITY VENDOR PATCH: native runtimes such as durable Kanban teams do
+    not necessarily construct an in-process ``AIAgent`` child.  The ACP host
+    correlation contract therefore keys on Hermes' native child id, while the
+    older object-shaped helper below remains a compatibility adapter for
+    temporary delegation children.
+    """
     requester = getattr(parent_agent, "_host_execution_requester", None)
     raw_parent_context_id = getattr(parent_agent, "_host_execution_context_id", "")
     raw_session_id = getattr(parent_agent, "_host_execution_session_id", "")
@@ -306,14 +362,14 @@ def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
     )
     session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
     if not parent_context_id and not session_id:
-        return False
+        return None
     if not callable(requester) or not parent_context_id or not session_id:
         raise HostSessionConfigError("hermes_host_child_execution_context_unavailable")
-    native_child_id = str(getattr(child, "_subagent_id", "") or "")
+    native_child_id = str(native_child_id or "").strip()
     if not native_child_id:
         raise HostSessionConfigError("hermes_host_native_child_id_missing")
-    child_provider = str(getattr(child, "provider", "") or "").strip()
-    child_model = str(getattr(child, "model", "") or "").strip()
+    child_provider = str(provider or "").strip()
+    child_model = str(model or "").strip()
     if bool(child_provider) != bool(child_model):
         raise HostSessionConfigError("hermes_host_child_model_configuration_incomplete")
     response = requester("session/create_execution_context", {
@@ -335,8 +391,33 @@ def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
         or not all(_META_KEY.fullmatch(str(key)) for key in tool_meta)
     ):
         raise HostSessionConfigError("hermes_host_child_execution_meta_invalid")
+    return {
+        "executionContextId": context_id,
+        "runId": _bounded_text(
+            response.get("runId"), "childRunId", limit=128, required=True
+        ),
+        "toolCallMeta": dict(tool_meta),
+    }
+
+
+def allocate_host_child_execution(parent_agent: Any, child: Any) -> bool:
+    """Allocate trusted host execution state before a native child may run."""
+
+    response = allocate_host_native_execution(
+        parent_agent,
+        native_child_id=str(getattr(child, "_subagent_id", "") or ""),
+        provider=str(getattr(child, "provider", "") or ""),
+        model=str(getattr(child, "model", "") or ""),
+    )
+    if response is None:
+        return False
+    context_id = str(response["executionContextId"])
+    tool_meta = dict(response["toolCallMeta"])
     setattr(child, "_host_execution_context_id", context_id)
     setattr(child, "_host_tool_call_meta", dict(tool_meta))
+    raw_session_id = getattr(parent_agent, "_host_execution_session_id", "")
+    session_id = raw_session_id.strip() if isinstance(raw_session_id, str) else ""
+    requester = getattr(parent_agent, "_host_execution_requester", None)
     attach_host_execution_requester(child, requester, session_id)
     return True
 
@@ -519,6 +600,9 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
             f"hermes_host_config_tool_blocked:{blocked_explicit[0]}"
         )
     definitions = _merge_definitions(definitions, _explicit_tool_definitions(explicit_names))
+    definitions = _project_delegation_roles(
+        definitions, list(config.get("delegationRoles") or [])
+    )
 
     # Memory-provider tools are injected only when the trusted host selected
     # the native memory surface.  This prevents provider defaults from widening

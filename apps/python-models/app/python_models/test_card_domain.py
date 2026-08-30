@@ -818,7 +818,7 @@ def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
             statements.append(str(query))
 
         def fetchall(self):
-            return [{
+            base = {
                 "run_id": "run-one",
                 "correlation_id": "correlation-one",
                 "project_id": "project-one",
@@ -830,7 +830,23 @@ def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
                 "runtime_profile": "liquidaity-hermes-steward",
                 "state": "running",
                 "provider_thread_ref": "t_existing_root",
-            }]
+            }
+            return [
+                base,
+                {
+                    **base,
+                    "run_id": "run-team-child",
+                    "runtime_mode": "main",
+                    "runtime_profile": "liquidaity-main",
+                    "provider_thread_ref": "t_team_root",
+                },
+                {
+                    **base,
+                    "run_id": "run-card-session",
+                    "runtime_mode": "main",
+                    "provider_thread_ref": "acp-session-uuid",
+                },
+            ]
 
     class Connection:
         def __enter__(self):
@@ -847,13 +863,16 @@ def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
     result = card_domain.list_active_kanban_runs()
 
     assert result["ok"] is True
-    assert len(result["runs"]) == 1
+    assert len(result["runs"]) == 2
     assert result["runs"][0]["runId"] == "run-one"
     assert result["runs"][0]["nativeRootId"] == "t_existing_root"
     assert result["runs"][0]["runtimeProfile"] == "liquidaity-hermes-steward"
+    assert result["runs"][1]["runId"] == "run-team-child"
+    assert result["runs"][1]["runtimeMode"] == "main"
+    assert result["runs"][1]["nativeRootId"] == "t_team_root"
     query = "\n".join(statements)
     assert "run.state IN ('pending','running')" in query
-    assert "run.runtime_mode='kanban'" in query
+    assert "run.runtime_mode='kanban'" not in query
     assert "provider_thread_ref IS NOT NULL" in query
     assert "native_child" not in query.lower()
 
@@ -2262,7 +2281,10 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     insert = next(params for query, params in statements if "INSERT INTO ag_catalog.agent_runs" in query)
     assert insert[3] == "main-revision"
     assert insert[4:6] == ("hermes", "main")
-    assert len(insert) == 11
+    assert len(insert) == 12
+    # Only durable native Kanban task ids are valid rejoin selectors. Native
+    # one-shot leaf ids retain the pre-existing unbound child-Run behavior.
+    assert insert[11] is None
     assert result["cardId"] == "card_main_chat"
     assert result["parentRunId"] == "main-run"
     assert result["nativeChildId"] == "sa-ephemeral"
@@ -2286,6 +2308,85 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
             "cardId": "card_coder",
             "nativeChildId": "sa-forged",
         })
+
+
+def test_native_hermes_team_root_gets_one_idempotent_child_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    native_run_exists = False
+    parent = {
+        "run_id": "main-run", "project_id": "project-one", "deck_id": "deck-one",
+        "target_card_revision_id": "main-revision", "runtime_kind": "hermes",
+        "runtime_mode": "main", "provider": "openai-codex", "model_key": "gpt-5.6-sol",
+        "provider_model_id": "gpt-5.6-sol", "access_mode": "chatgpt-account",
+        "state": "running", "card_id": "card_main_chat",
+    }
+
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement, params):
+            nonlocal native_run_exists
+            self.last_query = str(statement)
+            statements.append((self.last_query, params))
+            if "INSERT INTO ag_catalog.agent_runs" in self.last_query:
+                native_run_exists = True
+
+        def fetchall(self):
+            if "WHERE run.run_id IN" in self.last_query:
+                return [parent]
+            if "run.provider_thread_ref=%s" in self.last_query:
+                return [{"run_id": "team-child-run"}] if native_run_exists else []
+            return []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    observed: list[str] = []
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_start",
+        lambda _prepared, _payload, **kwargs: observed.append(kwargs["run_id"]) or True,
+    )
+    payload = {
+        "runId": "team-child-run", "correlationId": "team-child-correlation",
+        "rootRunId": "main-run", "parentRunId": "main-run",
+        "projectId": "project-one", "deckId": "deck-one",
+        "conversationId": "conversation-one", "cardId": "card_main_chat",
+        "nativeChildId": "t_team_root", "provider": "openai-codex",
+        "model": "gpt-5.6-terra",
+    }
+
+    created = card_domain.begin_native_hermes_child_run(payload)
+    rejoined = card_domain.begin_native_hermes_child_run({
+        **payload,
+        "runId": "duplicate-run-must-not-persist",
+        "correlationId": "duplicate-correlation",
+    })
+
+    inserts = [params for query, params in statements if "INSERT INTO ag_catalog.agent_runs" in query]
+    assert len(inserts) == 1
+    assert inserts[0][11] == "t_team_root"
+    assert created["runId"] == "team-child-run"
+    assert created["rejoined"] is False
+    assert rejoined["runId"] == "team-child-run"
+    assert rejoined["rejoined"] is True
+    assert observed == ["team-child-run"]
 
 
 def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(

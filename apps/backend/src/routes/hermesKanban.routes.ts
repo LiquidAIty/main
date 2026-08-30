@@ -170,6 +170,7 @@ export type HermesKanbanUsageTotals = {
 export type RejoinedHermesKanbanResult = {
   finalText: string;
   nativeRunId: string | number | null;
+  sessionId: string | null;
   progress: HermesKanbanProgress;
 };
 
@@ -278,7 +279,7 @@ export type HermesKanbanCardExecutionContext = {
   rootRunId: string;
   cardId: string;
   cardRevisionId: string;
-  runtimeMode: 'kanban';
+  runtimeMode: 'main' | 'delegate' | 'kanban';
   runtimeProfile: string;
   nativeRootId: string;
   nativeChildId: string;
@@ -325,6 +326,10 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
   const resolvedDeckId = String(context.deckId || '').trim();
   const conversationId = String(context.conversationId || '').trim();
   const nativeRootId = String(context.nativeRootId || '').trim();
+  const runId = String(context.runId || '').trim();
+  const rootRunId = String(context.rootRunId || '').trim();
+  const runtimeMode = String(context.runtimeMode || '');
+  const teamDelegation = Boolean(runId && rootRunId && runId !== rootRunId);
   const root = snapshots.find((snapshot) => String(snapshot.task.id || '').trim() === nativeRootId);
   const grantedTools = Array.isArray(context.grantedTools)
     ? [...new Set(context.grantedTools.map(String).map((value) => value.trim()).filter(Boolean))].sort()
@@ -336,9 +341,10 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
     || !conversationId
     || (projectId && resolvedProjectId !== projectId)
     || (deckId && resolvedDeckId !== deckId)
-    || String(context.runtimeMode || '') !== 'kanban'
-    || !String(context.runId || '').trim()
-    || String(context.rootRunId || '') !== String(context.runId || '')
+    || !['main', 'delegate', 'kanban'].includes(runtimeMode)
+    || !runId
+    || !rootRunId
+    || (!teamDelegation && rootRunId !== runId)
     || !String(context.cardId || '').trim()
     || !String(context.cardRevisionId || '').trim()
     || !Array.isArray(context.grantedTools)
@@ -348,7 +354,11 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
   }
   const nativeCardId = String(root.task.created_by || '').trim();
   const nativeProjectId = String(root.task.project_id || '').trim();
-  if (nativeCardId && nativeCardId !== String(context.cardId)) {
+  if (
+    nativeCardId
+    && nativeCardId !== String(context.cardId)
+    && !(teamDelegation && nativeCardId === 'delegate_task:team')
+  ) {
     throw new Error('hermes_kanban_card_run_card_mismatch');
   }
   if (nativeProjectId && nativeProjectId !== resolvedProjectId) {
@@ -358,11 +368,11 @@ export async function resolveHermesKanbanCardExecutionContext(args: {
     projectId: resolvedProjectId,
     deckId: resolvedDeckId,
     conversationId,
-    runId: String(context.runId),
-    rootRunId: String(context.runId),
+    runId,
+    rootRunId,
     cardId: String(context.cardId),
     cardRevisionId: String(context.cardRevisionId),
-    runtimeMode: 'kanban',
+    runtimeMode: runtimeMode as HermesKanbanCardExecutionContext['runtimeMode'],
     runtimeProfile: String(context.runtimeProfile || ''),
     nativeRootId,
     nativeChildId: taskId,
@@ -478,7 +488,12 @@ export async function waitForHermesKanbanCardTask(
       }
       return { taskId, runId: nativeRunId(snapshot), snapshot };
     }
-    if (status === 'blocked' || status === 'archived') {
+    const waitingForTeamCorrelation = (
+      status === 'blocked'
+      && String(snapshot.task.workflow_template_id || '').trim() === 'delegate-team-v1'
+      && String(snapshot.task.current_step_key || '').trim() === 'correlation'
+    );
+    if ((status === 'blocked' && !waitingForTeamCorrelation) || status === 'archived') {
       throw new Error(`hermes_kanban_card_${status}`);
     }
     if (now() >= deadline) throw new Error('hermes_kanban_card_join_timeout');
@@ -526,6 +541,7 @@ export async function rejoinNativeHermesKanbanTask(args: {
   return {
     finalText,
     nativeRunId: completed.runId,
+    sessionId: String(completed.snapshot.task.session_id || '').trim() || null,
     progress: latestProgress ?? deriveHermesKanbanProgress(args.taskId, [completed.snapshot]),
   };
 }

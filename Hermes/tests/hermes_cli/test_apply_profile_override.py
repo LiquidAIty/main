@@ -85,6 +85,37 @@ class TestApplyProfileOverrideHermesHomeGuard:
             f"Expected HERMES_HOME to end with 'coder', got: {result!r}"
         )
 
+    def test_explicit_default_profile_beats_sticky_active_profile(
+        self, tmp_path, monkeypatch
+    ):
+        hermes_root = tmp_path / ".hermes"
+        argv = [
+            "hermes",
+            "-p",
+            "default",
+            "gateway",
+            "run",
+            "--replace",
+            "--external-supervisor",
+        ]
+
+        result = _run_apply_profile_override(
+            tmp_path,
+            monkeypatch,
+            hermes_home=str(hermes_root),
+            active_profile="saved-helper",
+            argv=argv,
+        )
+
+        assert result == str(hermes_root)
+        assert sys.argv == [
+            "hermes",
+            "gateway",
+            "run",
+            "--replace",
+            "--external-supervisor",
+        ]
+
 
     def test_sudo_explicit_profile_resolves_invoking_users_profile(self, tmp_path, monkeypatch):
         """sudo elias ... should resolve `-p elias` under SUDO_USER, not root."""
@@ -163,4 +194,3 @@ class TestSupervisedChildIgnoresStickyProfile:
         result = os.environ.get("HERMES_HOME")
         assert result is not None
         assert result.endswith("coder")
-

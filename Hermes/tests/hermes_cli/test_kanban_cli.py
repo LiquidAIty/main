@@ -24,6 +24,38 @@ def kanban_home(tmp_path, monkeypatch):
     return home
 
 
+def test_dispatcher_presence_stopped_home_fails_closed(kanban_home):
+    running, message = kc._check_dispatcher_presence(kanban_home)
+
+    assert running is False
+    assert message.startswith("No gateway is running")
+
+
+def test_dispatcher_presence_rejects_stale_pid_state_and_heartbeat(kanban_home):
+    stale_pid = 2_147_483_647
+    record = {
+        "pid": stale_pid,
+        "kind": "hermes-gateway",
+        "argv": ["hermes", "gateway", "run", "--external-supervisor"],
+        "hermes_home": str(kanban_home),
+    }
+    (kanban_home / "gateway.pid").write_text(json.dumps(record), encoding="utf-8")
+    (kanban_home / "gateway_state.json").write_text(
+        json.dumps({**record, "gateway_state": "running"}), encoding="utf-8"
+    )
+    heartbeat = kanban_home / "state" / "gateway.heartbeat"
+    heartbeat.parent.mkdir(parents=True)
+    heartbeat.write_text(
+        json.dumps({"pid": stale_pid, "updated_at": "2000-01-01T00:00:00+00:00"}),
+        encoding="utf-8",
+    )
+
+    running, message = kc._check_dispatcher_presence(kanban_home)
+
+    assert running is False
+    assert message.startswith("No gateway is running")
+
+
 # ---------------------------------------------------------------------------
 # Workspace flag parsing
 # ---------------------------------------------------------------------------
@@ -177,5 +209,3 @@ def test_run_slash_reclaim_running_task(kanban_home):
 # ---------------------------------------------------------------------------
 # /kanban help / no-args / unknown-action UX (issue #21794)
 # ---------------------------------------------------------------------------
-
-

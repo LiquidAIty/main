@@ -11,6 +11,7 @@ relationships = [
 # LiquidAIty publication/effect annotations only. These are not installed-tool declarations
 # or grants. The existing host consumes this small projection at startup.
 operations = [
+  { id = "delegate_task", access = "write", publication = "private-runtime", sourceIds = ["hermes"], namespace = "hermes", kind = "tool", allowedRoles = ["team"], defaultRole = "team" },
   { id = "main.context", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "agentgraph.inspect", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "mag_one.describe_connected_agents", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
@@ -102,7 +103,7 @@ operations = [
 
 [dictionary]
 name = "LiquidAIty"
-version = 4
+version = 5
 purpose = "agent-builder"
 source = "LiquidAIty.idd"
 ordinaryText = "markdown"

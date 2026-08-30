@@ -13,6 +13,11 @@ import {
 describe('Hermes child execution attribution', () => {
   beforeEach(() => clearHermesExecutionContextsForTest());
 
+  const persistRequestedRun = async (_path: string, init?: RequestInit) => ({
+    ok: true,
+    runId: JSON.parse(String(init?.body || '{}')).runId,
+  });
+
   function root() {
     const context = registerHermesRootExecutionContext({
       sessionId: 'provisional',
@@ -30,7 +35,7 @@ describe('Hermes child execution attribution', () => {
 
   it('creates concurrent native children on one Card without crossing Run identity', async () => {
     const parent = root();
-    const request = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true }));
+    const request = vi.fn(persistRequestedRun);
     const [coder, kanban] = await Promise.all([
       createHermesChildExecutionContext({
         sessionId: 'acp-session-1',
@@ -129,7 +134,7 @@ describe('Hermes child execution attribution', () => {
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,
       nativeChildId: 'sa-ephemeral',
-      request: vi.fn(async () => ({ ok: true })),
+      request: vi.fn(persistRequestedRun),
     });
     expect(child.cardId).toBe('card_main_chat');
     expect(child.runId).not.toBe(parent.runId);
@@ -139,7 +144,7 @@ describe('Hermes child execution attribution', () => {
 
   it('fails closed for forged principals and grant widening', async () => {
     const parent = root();
-    const request = vi.fn(async () => ({ ok: true }));
+    const request = vi.fn(persistRequestedRun);
     const coder = await createHermesChildExecutionContext({
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,
@@ -178,7 +183,7 @@ describe('Hermes child execution attribution', () => {
 
   it('closes one child Run exactly once', async () => {
     const parent = root();
-    const createRequest = vi.fn(async (_path: string, _init?: RequestInit) => ({ ok: true }));
+    const createRequest = vi.fn(persistRequestedRun);
     const child = await createHermesChildExecutionContext({
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,

@@ -280,6 +280,31 @@ describe('hermesKanban helpers', () => {
     expect(result.snapshot.latest_summary).toBe('Native root result');
   });
 
+  it('waits through the Team correlation barrier before native Triage activation', async () => {
+    const show = vi.fn()
+      .mockResolvedValueOnce({
+        task: {
+          id: 't_root', status: 'blocked',
+          workflow_template_id: 'delegate-team-v1', current_step_key: 'correlation',
+        },
+        latest_summary: null, parents: [], children: [], events: [], runs: [],
+      })
+      .mockResolvedValueOnce({
+        task: { id: 't_root', status: 'triage', workflow_template_id: 'delegate-team-v1' },
+        latest_summary: null, parents: [], children: [], events: [], runs: [],
+      })
+      .mockResolvedValueOnce({
+        task: { id: 't_root', status: 'done', result: 'Team synthesis' },
+        latest_summary: 'Team synthesis', parents: ['t_luna'], children: [], events: [],
+        runs: [{ id: 19, status: 'done' }],
+      });
+
+    await expect(waitForHermesKanbanCardTask('default', 't_root', {
+      show, pause: async () => undefined, timeoutMs: 1_000,
+    })).resolves.toMatchObject({ taskId: 't_root', runId: 19 });
+    expect(show).toHaveBeenCalledTimes(3);
+  });
+
   it('survives bounded transient ACP show loss and returns the same native root result', async () => {
     const show = vi.fn()
       .mockRejectedValueOnce(new Error('bridge-replaced'))

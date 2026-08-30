@@ -3183,6 +3183,8 @@ def create_task(
     board: Optional[str] = None,
     project_id: Optional[str] = None,
     project_source_task_id: Optional[str] = None,
+    workflow_template_id: Optional[str] = None,
+    current_step_key: Optional[str] = None,
 ) -> str:
     """Create a new task and optionally link it under parent tasks.
 
@@ -3223,6 +3225,13 @@ def create_task(
     board can supply the repo and branch convention. Its literal worktree is
     never reused; the new task still gets its own task-id-keyed path.
     """
+    # LIQUIDAITY VENDOR PATCH: first-party delegate-task Team workers are a
+    # bounded, depth-one Auto-Kanban recipe.  They may complete or block their
+    # assigned native task, but they may not grow a second task graph by
+    # importing this module or shelling around the model-facing tool guard.
+    if os.environ.get("HERMES_KANBAN_TEAM_WORKER", "").strip() == "1":
+        raise RuntimeError("team workers cannot create nested Kanban tasks")
+
     model_override = (model_override or "").strip() or None
     provider_override = (provider_override or "").strip() or None
     reasoning_effort = normalize_reasoning_effort(reasoning_effort)
@@ -3497,8 +3506,9 @@ def create_task(
                         max_runtime_seconds,
                         skills, max_retries, model_override, provider_override,
                         reasoning_effort,
-                        goal_mode, goal_max_turns, session_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        goal_mode, goal_max_turns, session_id,
+                        workflow_template_id, current_step_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id,
@@ -3524,6 +3534,8 @@ def create_task(
                         1 if goal_mode else 0,
                         int(goal_max_turns) if goal_max_turns is not None else None,
                         session_id,
+                        str(workflow_template_id or "").strip() or None,
+                        str(current_step_key or "").strip() or None,
                     ),
                 )
                 for pid in parents:
@@ -7186,6 +7198,34 @@ def invalidate_descendants_for_parent_reopen(
     return {"invalidated": invalidated, "terminations": terminations}
 
 
+def activate_team_triage_task(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Activate one host-correlated delegate Team root for Auto-Kanban.
+
+    LIQUIDAITY VENDOR PATCH: Team roots are initially committed as ``blocked``
+    so an ACP host can durably allocate its child Run before any dispatcher
+    model call.  Standalone Hermes follows the same two-step path with a
+    no-op host allocation.  Only the exact Team workflow marker may cross this
+    boundary; ordinary blocked tasks keep their existing lifecycle.
+    """
+    with write_txn(conn):
+        cur = conn.execute(
+            "UPDATE tasks SET status='triage', block_kind=NULL, "
+            "current_step_key='decomposition' "
+            "WHERE id=? AND status='blocked' "
+            "AND workflow_template_id='delegate-team-v1'",
+            (task_id,),
+        )
+        if cur.rowcount != 1:
+            return False
+        _append_event(
+            conn,
+            task_id,
+            "team_activated",
+            {"workflow_template_id": "delegate-team-v1"},
+        )
+    return True
+
+
 def specify_triage_task(
     conn: sqlite3.Connection,
     task_id: str,
@@ -7370,7 +7410,8 @@ def decompose_triage_task(
     child_ids: list[str] = []
     with write_txn(conn):
         root_row = conn.execute(
-            "SELECT id, status, tenant, workspace_kind, workspace_path "
+            "SELECT id, status, tenant, workspace_kind, workspace_path, "
+            "workflow_template_id, max_retries "
             "FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
@@ -7385,6 +7426,7 @@ def decompose_triage_task(
         # override with its own 'workspace_kind' / 'workspace_path'.
         root_ws_kind = root_row["workspace_kind"] or "scratch"
         root_ws_path = root_row["workspace_path"]
+        team_workflow = root_row["workflow_template_id"] == "delegate-team-v1"
 
         # Create children. Status is 'todo' regardless of parents — we
         # link them under the root AFTER creation so the dispatcher
@@ -7419,8 +7461,10 @@ def decompose_triage_task(
             conn.execute(
                 "INSERT INTO tasks "
                 "(id, title, body, assignee, status, workspace_kind, "
-                " workspace_path, tenant, created_at, created_by) "
-                "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?)",
+                " workspace_path, tenant, created_at, created_by, "
+                " workflow_template_id, current_step_key, max_retries, "
+                " model_override, provider_override, reasoning_effort) "
+                "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id,
                     title,
@@ -7431,6 +7475,12 @@ def decompose_triage_task(
                     tenant,
                     now,
                     (author or "decomposer"),
+                    "delegate-team-v1" if team_workflow else None,
+                    "worker" if team_workflow else None,
+                    child.get("max_retries", root_row["max_retries"]),
+                    child.get("model_override"),
+                    child.get("provider_override"),
+                    normalize_reasoning_effort(child.get("reasoning_effort")),
                 ),
             )
             _append_event(
@@ -7469,6 +7519,8 @@ def decompose_triage_task(
         # Flip the root: triage -> todo, set assignee to the orchestrator.
         sets = ["status = 'todo'"]
         params: list[Any] = []
+        if team_workflow:
+            sets.append("current_step_key = 'synthesis'")
         if root_assignee is not None:
             sets.append("assignee = ?")
             params.append(root_assignee)
@@ -9361,7 +9413,23 @@ def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int) -> None:
                 "UPDATE task_runs SET worker_pid = ? WHERE id = ?",
                 (int(pid), run_id),
             )
-        _append_event(conn, task_id, "spawned", {"pid": int(pid)}, run_id=run_id)
+        payload: dict[str, Any] = {"pid": int(pid)}
+        receipt = conn.execute(
+            "SELECT workflow_template_id, current_step_key, "
+            "model_override, provider_override FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        # LIQUIDAITY VENDOR PATCH: Team must leave a durable receipt for the
+        # exact provider/model selected at the process boundary.  Keep the
+        # stock event shape for every other Kanban task.
+        if receipt and receipt["workflow_template_id"] == "delegate-team-v1":
+            payload.update({
+                "workflow_template_id": receipt["workflow_template_id"],
+                "step_key": receipt["current_step_key"],
+                "provider": receipt["provider_override"],
+                "model": receipt["model_override"],
+            })
+        _append_event(conn, task_id, "spawned", payload, run_id=run_id)
 
 
 def _clear_failure_counter(conn: sqlite3.Connection, task_id: str) -> None:
@@ -10829,6 +10897,13 @@ def _default_spawn(
     # what the tool reads — set it explicitly here so comments are
     # attributed correctly regardless of how the child loads config.
     env["HERMES_PROFILE"] = profile_arg
+    # LIQUIDAITY VENDOR PATCH: the first-party delegate Team recipe is a
+    # depth-one graph.  Every task in that workflow (including the root's
+    # final synthesis pass) receives a process-only marker consumed by the
+    # delegation and task-creation guards; no profile or durable config is
+    # rewritten to enforce the per-run bound.
+    if task.workflow_template_id == "delegate-team-v1":
+        env["HERMES_KANBAN_TEAM_WORKER"] = "1"
 
     # LIQUIDAITY VENDOR PATCH: registered providers may add narrowly-scoped
     # values to this one child
@@ -11104,6 +11179,24 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
     if task.branch_name:
         lines.append(f"Branch:   {task.branch_name}")
     lines.append("")
+
+    # LIQUIDAITY VENDOR PATCH: the original Team root is the native final
+    # worker after decomposition.  Its dependencies are the Luna tasks, so the
+    # stock parent-results section below supplies every completed report.  Make
+    # this pass's responsibility explicit without adding another scheduler or
+    # model call: review all evidence, resolve conflicts, and return one report.
+    if (
+        task.workflow_template_id == "delegate-team-v1"
+        and task.current_step_key == "synthesis"
+    ):
+        lines.append("## Team review and synthesis contract")
+        lines.append(
+            "This is the separate final review/synthesis pass. Review every "
+            "completed worker report below against the original mission and "
+            "explicit context, identify gaps or contradictions, and produce "
+            "one evidence-backed final report. Do not delegate or create tasks."
+        )
+        lines.append("")
 
     if task.body and task.body.strip():
         lines.append("## Body")

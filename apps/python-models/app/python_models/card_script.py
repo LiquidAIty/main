@@ -107,12 +107,14 @@ def generate_card_script_header(
         "cardId": card_id,
     }
     header_hash = sha256(_canonical(identity).encode("utf-8")).hexdigest()
+    card_delegation_roles = ["leaf", "team"] if card_id == "card_main_chat" else ["team"]
+    role_literal = ", ".join(repr(value) for value in card_delegation_roles)
     lines = [
         "# Generated from LiquidAIty.idd + live native catalog + saved Card selection.",
         "# Read-only editor/compiler metadata. This file is not saved, executed, or sent to a model.",
         f"# schema: liquidaity.card-script.header.v1  hash: {header_hash}",
         "from enum import IntEnum",
-        "from typing import Any, Final, Protocol, TypedDict",
+        "from typing import Any, Final, Literal, Protocol, TypedDict",
         "",
         "class ToolMode(IntEnum):",
         "    OFF = 0",
@@ -151,6 +153,12 @@ def generate_card_script_header(
         "    prompt: str",
         "    overlay: SparseOverlay",
         "",
+        "class CardDelegation(Protocol):",
+        "    def delegate_task(",
+        "        self, *, goal: str, context: str | None = None,",
+        f"        role: Literal[{role_literal}] = 'team',",
+        "    ) -> Any: ...",
+        "",
     ]
     definitions: dict[str, dict[str, Any]] = {}
     idd_type_names = {
@@ -183,7 +191,7 @@ def generate_card_script_header(
         "    memory: Any  # native profile input; no credential material",
         "    skills: Any  # native profile input",
         "    agent: Any  # native Hermes stage",
-        "    subagents: Any  # bounded native delegation when granted",
+        "    subagents: CardDelegation  # one native delegate_task; bounded Card roles only",
         "    handoffs: Any  # typed persisted artifacts and authorized edges",
         "    receipts: Any  # immutable Run evidence",
         "",

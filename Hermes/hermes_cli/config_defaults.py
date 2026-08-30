@@ -2732,6 +2732,14 @@ DEFAULT_CONFIG = {
         # large bulk-load of triage tasks from spending a burst of aux
         # LLM calls in one tick. Excess tasks defer to the next tick.
         "auto_decompose_per_tick": 3,
+        # LIQUIDAITY VENDOR PATCH: optional native policy for the bounded
+        # delegate_task(role="team") Auto-Kanban recipe.  Empty model fields
+        # make Team fail before task creation; deployments opt into the exact
+        # worker provider/model through ordinary Hermes config authority.
+        "team_max_workers": 4,
+        "team_worker_provider": "",
+        "team_worker_model": "",
+        "team_worker_reasoning_effort": None,
         # Stale detection: running tasks that have exceeded this many
         # seconds without a heartbeat (since ``last_heartbeat_at``) are
         # auto-reclaimed to ``ready`` on the next dispatcher tick. The

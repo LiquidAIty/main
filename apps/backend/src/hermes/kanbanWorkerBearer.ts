@@ -95,6 +95,7 @@ export async function issueHermesKanbanWorkerBearer(args: {
   const snapshot = claimedSnapshot as HermesKanbanTaskSnapshot | null;
   const task = snapshot?.task;
   const run = snapshot?.runs.at(-1);
+  const teamDelegation = context.runId !== context.rootRunId;
   if (
     !task
     || !run
@@ -106,7 +107,9 @@ export async function issueHermesKanbanWorkerBearer(args: {
     || String(run.profile || '').trim().toLowerCase() !== identity.profile
     || String(run.claim_lock || '').trim() !== identity.claimLock
     || run.ended_at != null
-    || (context.runtimeProfile && context.runtimeProfile.toLowerCase() !== identity.profile)
+    || (!teamDelegation
+      && context.runtimeProfile
+      && context.runtimeProfile.toLowerCase() !== identity.profile)
   ) {
     throw new Error('hermes_kanban_worker_native_claim_mismatch');
   }
@@ -116,10 +119,10 @@ export async function issueHermesKanbanWorkerBearer(args: {
     projectId: context.projectId,
     deckId: context.deckId,
     conversationId: context.conversationId,
-    parentRunId: context.runId,
+    parentRunId: context.rootRunId,
     callerCardId: context.cardId,
     callerRuntimeKind: 'hermes',
-    callerRuntimeMode: 'kanban',
+    callerRuntimeMode: context.runtimeMode,
     grantedTools: context.grantedTools,
     requiresExecutionContext: false,
     nativeChildId: context.nativeChildId,

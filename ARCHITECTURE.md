@@ -21,7 +21,7 @@ React/Vite Agent Builder and Chat
         ├─ Main: stable native session, home/profile liquidaity-main
         ├─ Agent Builder: stable native session, home/profile liquidaity-agent-builder
         ├─ Coder: stable native session, home/profile coder
-        └─ Kanban: stable native session, home/profile liquidaity-hermes-steward
+        └─ Hermes planning/memory helper: stable native session, home/profile liquidaity-hermes-steward
      → official Python MCP client boundary
         → one official Python HTTP MCP host on :8765/mcp
            ├─ Card call/IDD/AGE deterministic rails
@@ -48,7 +48,7 @@ Current internal Cards:
 | Main Chat | `card_main_chat` | Hermes `main` | `liquidaity-main` |
 | Agent Builder | saved server-minted Card ID | Hermes `delegate` | `liquidaity-agent-builder` |
 | Local Coder | `card_local_coder` | Hermes `delegate` | `coder` |
-| Kanban | `card_hermes_steward` | Hermes `kanban` | `liquidaity-hermes-steward` |
+| Hermes planning/memory helper | `card_hermes_steward` | Hermes `kanban` | `liquidaity-hermes-steward` |
 
 `card_local_coder` and `template_local_coder` are retained identities and now present the Hermes-backed
 Local Coder. They do not imply the removed standalone LocalCoder/OpenClaude runtime.
@@ -56,7 +56,7 @@ Local Coder. They do not imply the removed standalone LocalCoder/OpenClaude runt
 The current default topology preserves:
 
 - Main → Agent Builder: `flow`
-- Main → Kanban: `flow`
+- Main → Hermes planning/memory helper: `flow`
 - Main → Magentic-One: `magentic_control`
 - Magentic-One → Local Coder: `magentic_option`
 - Main → Local Coder: no direct connection
@@ -72,7 +72,7 @@ start runtimes.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. The ACP adapter reuses
 one process owner per normalized native profile. Named profiles select
 `Hermes/.hermes/profiles/<profile>` as `HERMES_HOME`; the unprofiled extension owner uses the root home.
-Main, Agent Builder, Local Coder, and Kanban retain separate profile homes, native memory, sessions,
+Main, Agent Builder, Local Coder, and the Hermes planning/memory helper retain separate profile homes, native memory, sessions,
 and configuration.
 They share the vendored Hermes installation and integration code, not one merged memory database.
 Native profile configuration and Hermes' auth resolver remain authoritative. A native `delegate_task` child is ephemeral inside its owning Card's
@@ -81,6 +81,23 @@ through Hermes' native rules, and is not another saved Card or profile. Every ch
 distinct Run and `nativeChildId` before execution and uses an opaque host-issued MCP 2 execution
 context. Hermes may open a dedicated connection to its owning profile's `state.db` for a child's native
 transcript lifecycle; that is not independent Card memory or identity.
+
+Native `delegate_task(role="team")` is a headless capability of an authorized ordinary Hermes Card;
+it is not a Card type or a standalone Kanban/Team Card authority. The adapter creates one durable native
+Auto-Kanban root owned by the originating profile/session. The repository-root policy pins native
+decomposition and the resumed root's separate review/synthesis pass to
+`openai-codex/gpt-5.6-terra`, pins two to four decomposed workers to
+`openai-codex/gpt-5.6-luna`, and caps the current recipe at four workers and one level. Every Luna task
+is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Terra
+pass all worker reports. That pass returns one native task result to the existing originating ACP
+session and Card Run. Existing Hermes SQLite dependencies, retries, recovery, notifications, Stop and
+rejoin remain the execution substrate; no board controls or UI state are exposed.
+
+LiquidAIty's Card-facing IDD/Script and trusted ACP session projections expose `team` generally and add
+`leaf` only for Main's existing direct Agent Builder doorway. They do not expose `orchestrator`. Native Hermes keeps
+`leaf`, `orchestrator`, and `team` on its one `delegate_task` contract for compatibility. A process-only
+Team marker blocks every Team worker and synthesis pass from calling any nested delegation role or
+creating another native task, so the first-party MVP recipe cannot recurse.
 
 Each saved Hermes Card may additionally own a desired `subagentModel`. At Run start the existing backend
 adapter projects that selector into Hermes' native top-level `delegation.provider/model` and
@@ -378,10 +395,10 @@ AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is ma
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.
 
-Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Kanban. A saved `flow`
+Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and the Hermes planning/memory helper. A saved `flow`
 edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
-call Agent Builder or Kanban through `card.run_assistant_agent`. Local Coder is instead eligible only
-through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. Kanban has no
+call Agent Builder or the helper through `card.run_assistant_agent`. Local Coder is instead eligible only
+through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. The helper has no
 outgoing saved-Card delegation grant. Each direct call uses the receiving Card's saved Hermes profile and
 one explicit mission plus selected native graph references. This is the normal automatic handoff and it
 executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
@@ -540,7 +557,7 @@ this is not a GPT plugin readiness blocker. Do not print, copy, export, or repla
 
 ## Controlled vendor divergence
 
-Hermes is the only vendor boundary required by the three internal Cards. LiquidAIty-owned integration
+Hermes is the vendor boundary shared by the internal Hermes Cards. LiquidAIty-owned integration
 stays in the backend adapter whenever possible. Any Hermes edit must remain narrowly recorded, tested,
 and justified against an unavailable upstream adapter/configuration hook.
 
@@ -584,7 +601,7 @@ contained model-origin patch tags only native model chunks and returns the exact
 assistant text through ACP `_meta`; the backend ignores untagged prose for transcript authoring and
 the browser reconciles the completed streamed bubble to those exact native bytes. Provider-exposed
 reasoning and tool events may appear only as transient UI activity outside the transcript.
-Actual Main/Coder/Kanban execution continues through standard session creation/load followed by the
+Actual Main/Coder/helper execution continues through standard session creation/load followed by the
 trusted `_session/configure_host` boundary with a real per-Run execution context. The exact patch,
 test, upstream-contribution, and rollback records live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
@@ -603,11 +620,21 @@ ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
 idempotent Triage creation, and task readback over the stock Hermes ACP agent. It never calls
 `session/prompt`, decomposes work, dispatches workers, or synthesizes a response. The persistent
 Hermes gateway remains the sole automatic decomposer and dispatcher; native child tasks and profile
-workers remain internal to the one saved Kanban Card Run. One focused vendor correction lets Hermes'
+workers remain internal to the receiving saved Card Run. The explicit `kanban`-mode Card route remains
+available for compatibility, but it is not the authority or required doorway for headless Team. One focused vendor correction lets Hermes'
 first-run guard recognize an explicitly selected provider only when the normal Hermes auth resolver
 reports that exact provider logged in; it does not change provider, model, temperature, profile, or
 OAuth storage. The registered files, proof, contribution plan, and rollback live in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
+The headless per-Card Team doorway is a separate contained divergence over Hermes' same native
+`delegate_task`, Auto-Kanban SQLite graph, decomposer, dispatcher and worker context. The generic host
+allocation callback accepts the durable native root ID before activation; LiquidAIty creates one child
+Card Run for that root and monitors/rejoins it through the existing Kanban read path. Hermes appends the
+terminal native result to the exact idle originating session before the child Run closes. Team-specific
+task markers carry Terra/Luna model overrides, final-stage identity and a durable spawn receipt; the
+stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
+sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 The default native Kanban worker lane also exposes one generic registered pre-spawn environment
 provider. The provider receives only bounded native task/run/board/profile/workspace/claim identity
@@ -690,7 +717,7 @@ WorldSignals and other imported roots remain isolated owners and are not ordinar
 ## Known limitations
 
 - Direct saved Main and Local Coder model execution are live-proven. Main-to-Agent-Builder,
-  Main-to-Kanban, and native Magentic-One team execution remain separate proofs.
+  ordinary-Card headless Team, and native Magentic-One team execution remain separate proofs.
 - Native asynchronous background review has parent/root Run attribution. The saved-Card selector to
   native-profile to actual-child receipt chain requires one loaded-runtime account-Luna proof after the
   current migration is applied; broader child/reference/artifact attribution remains separate.

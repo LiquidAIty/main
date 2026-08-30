@@ -462,3 +462,74 @@ Rollback: remove the optional host arguments/helpers, host-profile Script valida
 session operation together, then remove the downstream compact tool registration. Saved Script source may
 remain inspectable but must fail closed as unavailable; never replace this path with direct `exec`, a second
 sandbox or raw MCP schema suppression.
+
+## Patch: headless durable Team on native `delegate_task` and Auto-Kanban
+
+Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
+
+Purpose: add `role="team"` to the one native `delegate_task` tool as a headless durable recipe over
+Hermes' existing Auto-Kanban SQLite graph, decomposer, dispatcher, task workers, dependency handoffs,
+retries, recovery, notifications and rejoin. One originating Card mission/context packet becomes two to
+four Luna tasks; the original root then resumes as a separate Terra review/synthesis pass and returns one
+result to the exact originating Hermes session. Team is not a Card, board UI, profile UI, scheduler,
+transcript store, or second Hermes tool.
+
+External alternative check: native `leaf` is one ephemeral child and native `orchestrator` owns a
+recursive dynamic delegation strategy, while the existing explicit Kanban Card route requires a separate
+saved Card Run. None gives an ordinary authorized Card a bounded, durable, depth-one Auto-Team that rejoins
+its own session. A LiquidAIty-owned task database, scheduler, model fan-out, polling loop or synthesis call
+was rejected because it would duplicate Hermes' native execution owners. The contained adapter is the
+smallest upstream-shaped seam.
+
+Files and symbols:
+
+- `tools/delegate_tool.py`: preserves native `leaf` and `orchestrator`, adds only the top-level `team`
+  branch, validates one goal/context packet and blocks nested delegation in Team processes.
+- `hermes_cli/kanban_team.py`: validates the repository-root Team policy, creates one blocked/idempotent
+  native root, correlates it before activation and then hands ownership to native Auto-Kanban.
+- `hermes_cli/config_defaults.py`: declares the generic maximum-worker and worker provider/model settings.
+- `hermes_cli/kanban_decompose.py`: applies the depth-one two-to-four-worker recipe, retains the originating
+  profile on the root and assigns exact per-task worker provider/model overrides.
+- `hermes_cli/kanban_db.py`: persists the generic workflow/step fields already present in the schema,
+  activates the correlated root, propagates the Team marker and retry/model fields, blocks nested task
+  creation, gives the resumed root every completed worker handoff plus an explicit synthesis contract, and
+  records exact Team provider/model at the native spawn boundary.
+- `acp_adapter/host_profiles.py`: generalizes the existing opaque host child-allocation callback to accept
+  any durable native execution ID; the previous leaf helper delegates to it unchanged. A trusted
+  per-session host projection narrows the model-visible native role enum without changing Hermes' native
+  tool contract when that projection is absent.
+- `acp_adapter/session.py` and `acp_adapter/server.py`: append one completed native Team result to an exact
+  idle originating session with task-ID idempotence and the existing session database/history owner.
+
+Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
+temporary-agent construction, depth, provider/model and result behavior. Batch entries still accept only
+the two upstream roles. Ordinary Kanban tasks keep their existing event shape, decomposition freedom,
+manual controls, models, prompts and UI. Team markers and limits apply only to
+`workflow_template_id="delegate-team-v1"`; no profile, global configuration, credential or user-global
+Hermes home is rewritten by a Team run.
+
+Contracts: repository-owned `Hermes/.hermes/config.yaml` pins decomposition and the resumed root to
+`openai-codex/gpt-5.6-terra`, workers to `openai-codex/gpt-5.6-luna`, and the maximum to four. Team rejects
+fewer than two or more than the configured maximum, rejects fan-in as a single task, and stamps every
+worker plus the root with a process-only recursion guard. Native dependency links make every Luna task a
+parent of the original root. A durable `spawned` event records the exact step/provider/model used at the
+process boundary. Host correlation is committed before activation; terminal session append occurs before
+the child Card Run is closed.
+
+Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
+`tests/acp/test_session.py`, and `tests/acp_adapter/test_host_profiles.py` prove the one-tool branch,
+two-to-four bound, Terra/Luna/Terra task and spawn receipts, all-worker synthesis context, non-recursion,
+opaque host allocation, same-session idempotent result append and unchanged native roles. Downstream
+LiquidAIty lifecycle, recovery and Run-correlation tests live beside the backend/Python owners.
+
+Fork cost and contribution plan: seven narrow native files, one new adapter module and focused tests.
+Propose a generic durable `team` delegation recipe upstream using workflow metadata and the existing
+Auto-Kanban lifecycle, independently propose the generic durable native-execution host allocation and
+idle session-result append operations, and keep LiquidAIty Card/IDD/Run policy downstream. Remove each
+piece only when an upstream equivalent exists in a separately authorized Hermes refresh.
+
+Rollback: remove the `team` branch, Team adapter/policy keys/workflow handling, generic host allocation
+extension and native session append together; restore the previous leaf helper body and unchanged Kanban
+event/context behavior. Native leaf/orchestrator and explicit Kanban operation continue. LiquidAIty must
+then remove only its `team` projection and fail closed for Team rather than route through a standalone
+helper Card, another database, direct model fan-out or a synthetic result.

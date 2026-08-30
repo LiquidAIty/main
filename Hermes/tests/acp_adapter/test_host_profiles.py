@@ -172,6 +172,51 @@ def test_outer_controller_is_host_entered_and_never_presented_to_the_model(monke
     }
 
 
+def test_host_delegation_roles_narrow_only_the_session_schema(monkeypatch) -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"]["delegationRoles"] = ["team", "leaf"]
+    native = _definition("delegate_task")
+    native["function"]["parameters"]["properties"] = {
+        "goal": {"type": "string"},
+        "role": {
+            "type": "string",
+            "enum": ["leaf", "orchestrator", "team"],
+            "default": "leaf",
+        },
+        "tasks": {"type": "array"},
+    }
+    monkeypatch.setitem(
+        sys.modules,
+        "model_tools",
+        SimpleNamespace(get_tool_definitions=lambda **_kwargs: []),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.registry",
+        SimpleNamespace(registry=SimpleNamespace(
+            get_definitions=lambda names, quiet=True: [copy.deepcopy(native)],
+        )),
+    )
+    agent = SimpleNamespace(disabled_toolsets=[])
+    apply_host_session_config(agent, parse_host_session_config(metadata))
+
+    projected = agent.tools[0]["function"]["parameters"]["properties"]
+    assert projected["role"]["enum"] == ["team", "leaf"]
+    assert projected["role"]["default"] == "team"
+    assert "tasks" not in projected
+    assert native["function"]["parameters"]["properties"]["role"]["enum"] == [
+        "leaf", "orchestrator", "team",
+    ]
+
+    invalid = _metadata()
+    invalid["hermes"]["sessionConfig"]["delegationRoles"] = ["manager"]
+    with pytest.raises(
+        HostSessionConfigError,
+        match="hermes_host_config_delegation_role_invalid:manager",
+    ):
+        parse_host_session_config(invalid)
+
+
 def test_failed_host_script_reveals_only_its_pre_registered_saved_aliases(monkeypatch) -> None:
     metadata = _metadata()
     metadata["hermes"]["sessionConfig"]["enabledTools"] = []
