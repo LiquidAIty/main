@@ -394,6 +394,9 @@ router.get('/input-data-dictionary/script-tools', async (req, res) => {
       selectedIds: commaSeparatedIds(req.query.selectedIds),
       disabledIds: commaSeparatedIds(req.query.disabledIds),
     });
+    const referenceIds = new Set(references.map((reference) => reference.canonicalId));
+    const defaultAgentTools = commaSeparatedIds(req.query.selectedIds)
+      .filter((canonicalId) => referenceIds.has(canonicalId));
     const fingerprint = createHash('sha256').update(JSON.stringify(
       references.map((reference) => ({
         canonicalId: reference.canonicalId,
@@ -408,6 +411,7 @@ router.get('/input-data-dictionary/script-tools', async (req, res) => {
       body: JSON.stringify({
         catalogTools: catalog.references,
         selectedTools: references.map((reference) => reference.canonicalId),
+        defaultAgentTools,
         cardId: typeof req.query.cardId === 'string' ? req.query.cardId : '',
       }),
     });
@@ -426,12 +430,18 @@ router.get('/input-data-dictionary/script-tools', async (req, res) => {
 router.post('/card-script/validate', async (req, res) => {
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const selectedToolIds: string[] = Array.isArray(body.selectedTools)
+      ? body.selectedTools.map((value: unknown) => String(value))
+      : [];
     const catalog = await loadInputDictionaryToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
       policy: body.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
-      selectedIds: Array.isArray(body.selectedTools) ? body.selectedTools.map(String) : [],
+      selectedIds: selectedToolIds,
       disabledIds: Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : [],
     });
+    const referenceIds = new Set(references.map((reference) => reference.canonicalId));
+    const defaultAgentTools = selectedToolIds
+      .filter((canonicalId) => referenceIds.has(canonicalId));
     const paletteFingerprint = createHash('sha256').update(JSON.stringify(
       references.map((reference) => ({
         canonicalId: reference.canonicalId,
@@ -446,6 +456,7 @@ router.post('/card-script/validate', async (req, res) => {
       body: JSON.stringify({
         script: body.script,
         selectedTools: references.map((reference) => reference.canonicalId),
+        defaultAgentTools,
         paletteFingerprint,
         nativeAvailable: body.runtimeKind === 'hermes',
       }),

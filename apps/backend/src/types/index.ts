@@ -33,10 +33,14 @@ export type AgentCardRuntimeOptions = {
     paletteFingerprint?: string;
     compiled?: {
       schemaVersion?: string;
-      mode?: 'context_preflight' | 'model_callable' | 'handoff';
+      mode?: 'outer_controller';
       inputSchema?: Record<string, unknown>;
       outputSchema?: Record<string, unknown>;
       toolHandles?: string[];
+      toolStates?: Record<string, number>;
+      offToolIds?: string[];
+      scriptToolIds?: string[];
+      agentToolIds?: string[];
       timeoutSeconds?: number;
       maxToolCalls?: number;
       maxOutputBytes?: number;

@@ -343,6 +343,19 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
         "toolCatalogPolicy": "all_healthy",
         "disabledTools": ["graphiti.search_nodes"],
         "tools": ["constellation.remember"],
+        "script": {
+            "enabled": True,
+            "source": '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.cbm.search_graph = SCRIPT
+tools.call("cbm.search_graph")
+output.emit({"agent": {"run": False}})
+''',
+        },
     }
     monkeypatch.setattr(
         card_domain,
@@ -391,6 +404,14 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
         "constellation.remember",
     ]
     assert "cbm.index_repository" not in grants["enabledTools"]
+    script = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
+    assert grants["scriptPresentation"]["mode"] == "script"
+    assert script["nativeSupport"]["active"] is True
+    assert script["compiled"]["toolStates"] == {
+        "cbm.search_graph": 1,
+        "constellation.remember": 2,
+        "web_search": 0,
+    }
 
 
 def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:

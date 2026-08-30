@@ -57,7 +57,9 @@ they do not select a runtime implementation.
   transport and does not place catalog or application policy in a tunnel helper.
 - The published catalog preserves disabled/unavailable tools. `all_healthy` grants broad healthy
   read/search/discovery access while every write/effect remains an explicit saved Card grant with its
-  confirmation contract.
+  confirmation contract. That broad read set is Script authorization, not default model presentation:
+  explicitly saved tools remain `AGENT` by default, implicit healthy reads remain `OFF` unless the saved
+  Script claims them as `SCRIPT` or `BOTH`.
 - IDD supplies composable builder types, objects, templates and effect annotations, not runtime
   authentication or a second IDF validator. After user agreement, Main directs only the dedicated
   Agent Builder Card to compose existing templates or custom Cards. Local Coder never receives the

@@ -146,15 +146,22 @@ def card_script_validate(payload: dict[str, Any]):
     """Compile one unsaved Card Script draft without executing it."""
 
     selected_tools = payload.get("selectedTools")
+    default_agent_tools = payload.get("defaultAgentTools")
     if (
         not isinstance(selected_tools, list)
         or any(not isinstance(item, str) or not item.strip() for item in selected_tools)
     ):
         raise HTTPException(status_code=400, detail="card_script_selected_tools_invalid")
+    if (
+        not isinstance(default_agent_tools, list)
+        or any(not isinstance(item, str) or not item.strip() for item in default_agent_tools)
+    ):
+        raise HTTPException(status_code=400, detail="card_script_default_agent_tools_invalid")
     try:
         return saved_script(
             payload.get("script") or {},
             selected_tools=list(dict.fromkeys(item.strip() for item in selected_tools)),
+            default_agent_tools=list(dict.fromkeys(item.strip() for item in default_agent_tools)),
             palette_fingerprint=str(payload.get("paletteFingerprint") or ""),
             native_available=payload.get("nativeAvailable") is True,
         )
@@ -168,12 +175,18 @@ def card_script_header(payload: dict[str, Any]):
 
     catalog_tools = payload.get("catalogTools")
     selected_tools = payload.get("selectedTools")
-    if not isinstance(catalog_tools, list) or not isinstance(selected_tools, list):
+    default_agent_tools = payload.get("defaultAgentTools")
+    if (
+        not isinstance(catalog_tools, list)
+        or not isinstance(selected_tools, list)
+        or not isinstance(default_agent_tools, list)
+    ):
         raise HTTPException(status_code=400, detail="card_script_header_input_invalid")
     try:
         return generate_card_script_header(
             catalog_tools=catalog_tools,
             selected_tools=[str(item) for item in selected_tools],
+            default_agent_tools=[str(item) for item in default_agent_tools],
             card_id=str(payload.get("cardId") or ""),
         )
     except (IddValidationError, ValueError) as err:

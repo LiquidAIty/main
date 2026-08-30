@@ -353,9 +353,12 @@ saved Hermes Card whose profile is `liquidaity-agent-builder`; it cannot rewrite
 
 Python rails parses the source without execution, requires one literal `CARD_SCRIPT` object, safe imports,
 one or more `output.emit()` calls and literal `tools.call()` IDs, then validates those IDs against the
-effective saved Card grants. A valid Hermes Script projects one compact `execute_host_script` definition
-plus any selected tools it does not wrap; wrapped component schemas are absent from the model request.
-Blank, disabled or invalid source projects the exact selected MCP schemas. A native Script failure removes
+effective saved Card grants. Under `all_healthy`, implicit healthy reads are authorized for Script use but
+default to `OFF`; only explicitly saved tools default to `AGENT`, and a literal Script assignment may move
+an authorized tool to `SCRIPT` or `BOTH`. A valid Hermes Script projects one compact
+`execute_host_script` definition plus the `AGENT`/`BOTH` tools it does not wrap; wrapped component schemas
+are absent from the model request. Blank, disabled or invalid source projects the Card's ordinary saved MCP
+presentation. A native Script failure removes
 the compact definition and activates only its already-registered wrapped handles for the next model
 iteration. Neither mode exposes IDD, `all_healthy`, or the complete catalog.
 

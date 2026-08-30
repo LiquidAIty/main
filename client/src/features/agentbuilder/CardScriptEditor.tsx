@@ -872,7 +872,7 @@ export function CardScriptEditor({
             liquidaity_card.pyi <span className="card-script-ide__readonly">read-only</span>
           </button>
           <div className="card-script-ide__grant-key" aria-label="Tool grant legend">
-            <span className="is-selected">{toolReferences.length} selected</span>
+            <span className="is-selected">{toolReferences.length} authorized</span>
             <span className="is-ungranted">{ungrantedCount} ungranted</span>
           </div>
         </div>

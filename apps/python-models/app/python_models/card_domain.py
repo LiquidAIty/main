@@ -2154,7 +2154,8 @@ def _prepare_invocation(
     try:
         script_plan = script_presentation(
             options.get("script"),
-            selected_tools=presented_tools,
+            selected_tools=selected_tools,
+            default_agent_tools=presented_tools,
         )
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error

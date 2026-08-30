@@ -63,6 +63,7 @@ def generate_card_script_header(
     *,
     catalog_tools: list[dict[str, Any]],
     selected_tools: list[str],
+    default_agent_tools: list[str] | None = None,
     card_id: str,
 ) -> dict[str, Any]:
     """Generate the read-only editor/compiler stub from canonical live inputs.
@@ -85,6 +86,10 @@ def generate_card_script_header(
     unknown = next((name for name in selected_tools if name not in catalog_by_id), None)
     if unknown:
         raise ValueError(f"card_script_tool_not_selected:{unknown}")
+    default_agent = set(selected_tools if default_agent_tools is None else default_agent_tools)
+    unknown_default = next((name for name in default_agent if name not in selected), None)
+    if unknown_default:
+        raise ValueError(f"card_script_default_agent_tool_not_selected:{unknown_default}")
 
     identity = {
         "schemaVersion": "liquidaity.card-script.header.v1",
@@ -104,6 +109,7 @@ def generate_card_script_header(
             for name in sorted(catalog_by_id)
         ],
         "selectedTools": list(selected_tools),
+        "defaultAgentTools": [name for name in selected_tools if name in default_agent],
         "cardId": card_id,
     }
     header_hash = sha256(_canonical(identity).encode("utf-8")).hexdigest()
@@ -214,7 +220,7 @@ def generate_card_script_header(
             handle_type = "SelectedToolHandle" if granted else "UngrantedToolHandle"
             access = str(item.get("access") or "read").upper()
             availability = str(item.get("availability") or "disabled").upper()
-            state = "AGENT" if granted else "UNGRANTED"
+            state = "AGENT" if canonical_id in default_agent else "OFF" if granted else "UNGRANTED"
             lines.append(
                 f"    {_python_identifier(leaf)}: {handle_type}  # {canonical_id} | {access} | {availability} | {state}"
             )
@@ -429,8 +435,16 @@ def _tool_mode_value(value: ast.expr) -> int:
     raise ValueError("card_script_tool_mode_invalid")
 
 
-def _tool_states(tree: ast.Module, selected_tools: list[str]) -> dict[str, int]:
+def _tool_states(
+    tree: ast.Module,
+    selected_tools: list[str],
+    default_agent_tools: list[str] | None = None,
+) -> dict[str, int]:
     selected = set(selected_tools)
+    default_agent = set(selected_tools if default_agent_tools is None else default_agent_tools)
+    unknown_default = next((name for name in default_agent if name not in selected), None)
+    if unknown_default:
+        raise ValueError(f"card_script_default_agent_tool_not_selected:{unknown_default}")
     explicit: dict[str, int] = {}
     for node in tree.body:
         target: ast.expr | None = None
@@ -450,13 +464,20 @@ def _tool_states(tree: ast.Module, selected_tools: list[str]) -> dict[str, int]:
         if tool_id not in selected and mode != TOOL_MODE_VALUES["OFF"]:
             raise ValueError(f"card_script_tool_not_selected:{tool_id}")
         explicit[tool_id] = mode
-    return {tool_id: explicit.get(tool_id, TOOL_MODE_VALUES["AGENT"]) for tool_id in selected_tools}
+    return {
+        tool_id: explicit.get(
+            tool_id,
+            TOOL_MODE_VALUES["AGENT"] if tool_id in default_agent else TOOL_MODE_VALUES["OFF"],
+        )
+        for tool_id in selected_tools
+    }
 
 
 def compile_card_script(
     source: str,
     *,
     selected_tools: list[str] | None = None,
+    default_agent_tools: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic compiled descriptor without executing source."""
 
@@ -476,7 +497,7 @@ def compile_card_script(
         unavailable = [handle for handle in handles if handle not in selected]
         if unavailable:
             raise ValueError(f"card_script_tool_not_selected:{unavailable[0]}")
-    tool_states = _tool_states(tree, selected_order)
+    tool_states = _tool_states(tree, selected_order, default_agent_tools)
     invalid_calls = [
         handle for handle in handles
         if tool_states.get(handle) not in {TOOL_MODE_VALUES["SCRIPT"], TOOL_MODE_VALUES["BOTH"]}
@@ -501,6 +522,7 @@ def saved_script(
     value: Any,
     *,
     selected_tools: list[str] | None = None,
+    default_agent_tools: list[str] | None = None,
     palette_fingerprint: str = "",
     native_available: bool = False,
 ) -> dict[str, Any]:
@@ -520,6 +542,7 @@ def saved_script(
             script.compiled = compile_card_script(
                 script.source,
                 selected_tools=selected_tools,
+                default_agent_tools=default_agent_tools,
             )
             script.compiledHash = str(script.compiled["compiledHash"])
         except ValueError as error:
@@ -546,12 +569,18 @@ def saved_script(
     return script.model_dump()
 
 
-def script_presentation(value: Any, *, selected_tools: list[str]) -> dict[str, Any]:
+def script_presentation(
+    value: Any,
+    *,
+    selected_tools: list[str],
+    default_agent_tools: list[str] | None = None,
+) -> dict[str, Any]:
     """Choose Script or exact selected-MCP presentation without widening grants."""
 
     script = saved_script(
         value or {},
         selected_tools=selected_tools,
+        default_agent_tools=default_agent_tools,
         native_available=True,
     )
     if script["nativeSupport"]["active"]:

@@ -826,6 +826,14 @@ describe('coder routes', () => {
         schemaVersion: 'liquidaity.card-script.header.v1',
         selectedTools: ['canvas.inspect'],
       });
+      const headerCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/card-script/header',
+      );
+      const headerBody = JSON.parse(String(headerCall?.[1]?.body || '{}'));
+      expect(headerBody).toEqual(expect.objectContaining({
+        selectedTools: ['canvas.inspect'],
+        defaultAgentTools: ['canvas.inspect'],
+      }));
     } finally { await closeServer(server); }
   });
 
@@ -882,6 +890,7 @@ describe('coder routes', () => {
       expect(validationBody).toEqual(expect.objectContaining({
         script,
         selectedTools: ['canvas.inspect'],
+        defaultAgentTools: ['canvas.inspect'],
         nativeAvailable: true,
         paletteFingerprint: payload.paletteFingerprint,
       }));

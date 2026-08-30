@@ -159,6 +159,31 @@ output.emit({"agent": {"run": True}})
     ]
 
 
+def test_authorized_all_healthy_tools_default_off_unless_saved_or_script_owned() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.cbm.search_graph = SCRIPT
+tools.call("cbm.search_graph")
+output.emit({"agent": {"run": False}})
+'''
+    presentation = script_presentation(
+        {"enabled": True, "source": source},
+        selected_tools=["cbm.search_graph", "constellation.remember", "web_search"],
+        default_agent_tools=["constellation.remember"],
+    )
+    assert presentation["mode"] == "script"
+    assert presentation["presentedTools"] == ["constellation.remember"]
+    assert presentation["script"]["compiled"]["toolStates"] == {
+        "cbm.search_graph": 1,
+        "constellation.remember": 2,
+        "web_search": 0,
+    }
+
+
 def test_ungranted_tool_cannot_be_enabled_or_called() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "outer_controller",
@@ -208,6 +233,15 @@ def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None
     assert "role: Literal['team'] = 'team'" in ordinary["source"]
     assert "leaf" not in ordinary["source"]
     assert "This file is not saved, executed, or sent to a model" in header["source"]
+    implicit = generate_card_script_header(
+        catalog_tools=catalog,
+        selected_tools=["cbm.search_graph"],
+        default_agent_tools=[],
+        card_id="card_research",
+    )
+    assert "search_graph: SelectedToolHandle" in implicit["source"]
+    assert "cbm.search_graph | READ | AVAILABLE | OFF" in implicit["source"]
+    assert implicit["hash"] != ordinary["hash"]
     changed = generate_card_script_header(
         catalog_tools=catalog,
         selected_tools=["cbm.search_graph", "cbm.delete_project"],
