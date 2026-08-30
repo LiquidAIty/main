@@ -159,6 +159,7 @@ _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
+_PUBLIC_TOOL_NAMESPACE = "liquidaity."
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
     "ThinkGraph, KnowGraph, and supported agent runtimes."
@@ -253,6 +254,7 @@ def _trace(event: str, **fields: Any) -> None:
         "source_revision",
         "source_sha256",
         "subject_hash",
+        "canonical_tool_name",
         "tool_name",
         "user_agent",
     }
@@ -928,10 +930,31 @@ def _bind_idd_access(tool: Tool) -> Tool:
     return Tool.model_validate(payload)
 
 
-def _gpt_public_catalog(tools: list[Tool]) -> list[Tool]:
-    """Project the canonical catalog through the IDD external-MCP policy."""
+def _external_mcp_catalog(tools: list[Tool]) -> list[Tool]:
+    """Select the IDD external-MCP catalog while retaining canonical IDs."""
     published = external_mcp_tool_ids()
     return [tool for tool in tools if tool.name in published]
+
+
+def _gpt_public_catalog(tools: list[Tool]) -> list[Tool]:
+    """Project canonical external tools into the one public connector namespace."""
+    result: list[Tool] = []
+    for tool in _external_mcp_catalog(tools):
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        payload["name"] = f"{_PUBLIC_TOOL_NAMESPACE}{tool.name}"
+        result.append(Tool.model_validate(payload))
+    return result
+
+
+def _canonical_public_tool_name(name: str) -> str | None:
+    """Resolve one published connector name without creating handler aliases."""
+    public_name = str(name or "").strip()
+    if not public_name.startswith(_PUBLIC_TOOL_NAMESPACE):
+        return None
+    canonical_name = public_name.removeprefix(_PUBLIC_TOOL_NAMESPACE)
+    if not canonical_name or canonical_name not in external_mcp_tool_ids():
+        return None
+    return canonical_name
 
 
 @server.list_resources()
@@ -3318,14 +3341,22 @@ async def _initialize_http_catalog_once() -> None:
         _LATEST_CATALOG_DIAGNOSTIC = None
     try:
         tools = tuple(await _materialize_complete_catalog())
-        names = [tool.name for tool in tools]
-        if not tools or len(set(names)) != len(names):
+        canonical_names = [tool.name for tool in tools]
+        if not tools or len(set(canonical_names)) != len(canonical_names):
             raise RuntimeError(
                 "public_catalog_invalid: "
                 f"actual={len(tools)} "
-                f"unique={len(set(names))}"
+                f"unique={len(set(canonical_names))}"
             )
-        catalog_count, catalog_hash = _catalog_identity(list(tools))
+        public_tools = _gpt_public_catalog(list(tools))
+        public_names = [tool.name for tool in public_tools]
+        if not public_tools or len(set(public_names)) != len(public_names):
+            raise RuntimeError(
+                "public_connector_catalog_invalid: "
+                f"actual={len(public_tools)} "
+                f"unique={len(set(public_names))}"
+            )
+        catalog_count, catalog_hash = _catalog_identity(public_tools)
     except asyncio.CancelledError:
         with _CATALOG_DIAGNOSTIC_LOCK:
             if _CATALOG_STATE == "initializing":
@@ -3366,7 +3397,7 @@ async def _initialize_http_catalog_once() -> None:
         _HTTP_CATALOG_TOOLS = tools
         _LATEST_CATALOG_DIAGNOSTIC = {
             "publicToolCount": catalog_count,
-            "publicToolUniqueCount": len(set(names)),
+            "publicToolUniqueCount": len(set(public_names)),
             "catalogHash": catalog_hash,
         }
         _CATALOG_FAILURE = None
@@ -3463,8 +3494,10 @@ async def list_tools() -> list[Tool]:
     if MCP_TRANSPORT == "streamable-http":
         tools = _http_catalog_or_error()
         principal = _internal_mcp_principal()
-        if principal is None or principal.get("kind") == "catalog-reader":
+        if principal is None:
             return _gpt_public_catalog(tools)
+        if principal.get("kind") == "catalog-reader":
+            return _external_mcp_catalog(tools)
         if principal.get("kind") == "materializer-read":
             readable = readable_tool_ids()
             return [tool for tool in tools if tool.name in readable]
@@ -4079,11 +4112,20 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
 async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     started_clock = time.monotonic()
     context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(None)
-    receipt = _execution_receipt(str(name or ""))
+    requested_name = str(name or "").strip()
+    canonical_name = requested_name
+    public_request = (
+        MCP_TRANSPORT == "streamable-http"
+        and _internal_mcp_principal() is None
+    )
+    if public_request:
+        canonical_name = _canonical_public_tool_name(requested_name) or ""
+    receipt = _execution_receipt(requested_name)
     receipt_token = _ACTIVE_EXECUTION_RECEIPT.set(receipt)
     trace_fields = {
         "mcp_method": "tools/call",
-        "tool_name": str(name or "")[:160],
+        "tool_name": requested_name[:160],
+        "canonical_tool_name": canonical_name[:160],
         **_oauth_trace_fields(),
     }
     _trace("tool_call_started", **trace_fields)
@@ -4091,11 +4133,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         resolved_context = _request_execution_context()
         _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
         context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(resolved_context)
-        if not _request_tool_is_allowed(name):
-            raise PermissionError(f"tool_not_granted: {name}")
+        if public_request and not canonical_name:
+            raise ValueError("public_tool_name_invalid")
+        if not _request_tool_is_allowed(canonical_name):
+            raise PermissionError(f"tool_not_granted: {canonical_name}")
         result = await asyncio.wait_for(
-            _dispatch_tool(name, arguments),
-            timeout=_mcp_tool_timeout_seconds(name),
+            _dispatch_tool(canonical_name, arguments),
+            timeout=_mcp_tool_timeout_seconds(canonical_name),
         )
         result_category = _tool_result_category(result)
         native_attention = None
@@ -4105,15 +4149,15 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
             attention_context = _authenticated_main_context()
             native_attention = (
                 (result.meta or {}).get("nativeAttention")
-                if name == "graphiti.add_memory" and isinstance(result, CallToolResult) else None
+                if canonical_name == "graphiti.add_memory" and isinstance(result, CallToolResult) else None
             )
             already_observed = native_attention is not None
             native_arguments = dict(arguments or {})
-            if name == "graphiti.clear_graph" and attention_context:
+            if canonical_name == "graphiti.clear_graph" and attention_context:
                 native_arguments["group_ids"] = [graphiti_project_group_id(str(attention_context["projectId"]))]
             if native_attention is None:
                 native_attention = build_native_attention_event(
-                    name, result, attention_context, arguments=native_arguments,
+                    canonical_name, result, attention_context, arguments=native_arguments,
                 )
             if native_attention is not None:
                 telemetry_written = (native_attention.get("persisted") is not False

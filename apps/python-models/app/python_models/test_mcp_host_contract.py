@@ -565,9 +565,19 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
     )}
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == ["canvas.inspect"]
-    current["token"] = None
+    current["token"] = AccessToken(
+        token="catalog",
+        client_id="liquidaity-internal-runtime",
+        scopes=["liquidaity.main"],
+        expires_at=int(time.time()) + 60,
+        claims={"internal": {"kind": "catalog-reader"}},
+    )
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
         "canvas.inspect", "run_mag_one",
+    ]
+    current["token"] = None
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
+        "liquidaity.canvas.inspect", "liquidaity.run_mag_one",
     ]
 
 
@@ -1443,7 +1453,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
     assert len(catalog) == len(set(catalog))
 
 
-def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_metadata(
+def test_gpt_tools_list_projects_one_public_namespace_without_rewriting_metadata(
     monkeypatch,
 ):
     import asyncio
@@ -1539,22 +1549,33 @@ def test_gpt_tools_list_projects_the_unchanged_idd_catalog_without_rewriting_met
 
     published = asyncio.run(mcp_host.list_tools())
     published_names = [tool.name for tool in published]
-    assert set(published_names) == external_ids
+    expected_public_ids = {f"liquidaity.{name}" for name in external_ids}
+    assert set(published_names) == expected_public_ids
     assert len(published_names) == len(set(published_names))
-    assert private_only.isdisjoint(published_names)
+    assert {f"liquidaity.{name}" for name in private_only}.isdisjoint(published_names)
     assert len(mcp_host._http_catalog_or_error()) == len(complete_internal)
-    assert all(canonical_by_name[tool.name] is tool for tool in published)
+    for public_tool in published:
+        canonical_name = public_tool.name.removeprefix("liquidaity.")
+        canonical_payload = canonical_by_name[canonical_name].model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
+        public_payload = public_tool.model_dump(by_alias=True, exclude_none=True)
+        assert public_payload.pop("name") == f"liquidaity.{canonical_name}"
+        assert public_payload == {
+            key: value for key, value in canonical_payload.items() if key != "name"
+        }
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
     assert {
-        "cbm.delete_project",
-        "cbm.detect_changes",
-        "cbm.index_repository",
-        "cbm.ingest_traces",
-        "cbm.manage_adr",
-        "constellation.context",
-        "constellation.inspect",
-        "constellation.remember",
-        "graphiti.clear_graph",
+        "liquidaity.cbm.delete_project",
+        "liquidaity.cbm.detect_changes",
+        "liquidaity.cbm.index_repository",
+        "liquidaity.cbm.ingest_traces",
+        "liquidaity.cbm.manage_adr",
+        "liquidaity.constellation.context",
+        "liquidaity.constellation.inspect",
+        "liquidaity.constellation.remember",
+        "liquidaity.graphiti.clear_graph",
     }.issubset(published_names)
 
 
@@ -2496,25 +2517,45 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     ) as streams:
                         async with ClientSession(streams[0], streams[1]) as session:
                             await session.initialize()
-                            actual = sorted(
-                                tool.name for tool in (await session.list_tools()).tools
-                            )
-                            result = await session.call_tool("main.context", {})
+                            listed_tools = (await session.list_tools()).tools
+                            actual = sorted(tool.name for tool in listed_tools)
+                            catalog_identity = mcp_host._catalog_identity(listed_tools)
+                            result = await session.call_tool("liquidaity.main.context", {})
                             visible_context = json.loads(result.content[0].text)["context"]
+                            receipt = json.loads(result.content[-1].text)["executionReceipt"]
+                            invalid = await session.call_tool("liquidaity.not_a_real_tool", {})
+                            invalid_receipt = json.loads(
+                                invalid.content[-1].text
+                            )["executionReceipt"]
                 assert response_session_ids
                 assert all(value is None for value in response_session_ids)
-                return actual, visible_context
+                assert receipt["tool"] == "liquidaity.main.context"
+                assert receipt["state"] == "completed"
+                assert invalid.isError is True
+                assert invalid_receipt["tool"] == "liquidaity.not_a_real_tool"
+                assert invalid_receipt["state"] == "failed"
+                assert invalid_receipt["failureCode"]
+                return actual, visible_context, catalog_identity
 
-            first_catalog, first_context = await fresh_client()
-            second_catalog, second_context = await fresh_client()
+            first_catalog, first_context, first_identity = await fresh_client()
+            second_catalog, second_context, second_identity = await fresh_client()
             assert first_catalog == second_catalog
             assert first_catalog
             assert len(first_catalog) == len(set(first_catalog))
-            assert "main.context" in first_catalog
-            assert "agentgraph.inspect" in first_catalog
-            assert "write_mag_one_instructions" in first_catalog
-            assert "coder.status" not in first_catalog
+            assert all(name.startswith("liquidaity.") for name in first_catalog)
+            assert "liquidaity.main.context" in first_catalog
+            assert "liquidaity.agentgraph.inspect" in first_catalog
+            assert "liquidaity.write_mag_one_instructions" in first_catalog
+            assert "liquidaity.coder.status" not in first_catalog
+            assert not any(
+                name == "main.context" or name.startswith("mcp__")
+                for name in first_catalog
+            )
             assert first_context == second_context == context
+            assert first_identity == second_identity
+            assert readiness.json()["publicToolCount"] == first_identity[0]
+            assert readiness.json()["publicToolUniqueCount"] == first_identity[0]
+            assert readiness.json()["catalogHash"] == first_identity[1]
         finally:
             server_task.cancel()
             try:
@@ -2965,52 +3006,33 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     }
 
 
-def test_tunnel_requires_ready_canonical_projection_before_publication():
-    script = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-        "scripts",
-        "start-mcp-tunnel.ps1",
+def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
+    from urllib.parse import urlsplit
+
+    repo_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     )
-    source = open(script, encoding="utf-8").read()
-    assert "TimeoutSeconds" not in source
-    assert '$readinessUrl = "$localBaseUrl/health/ready"' in source
-    assert "$catalogCount -gt 0" in source
-    assert "$catalogUniqueCount -eq $catalogCount" in source
-    assert "$catalogReady" in source
-    assert "$publicationReady" in source
-    assert "$runtimeReady" in source
-    assert "$daemonAttached" in source
-    assert "$frontendAttached" in source
-    assert "$projectReady" in source
-    assert "$indexReady" in source
-    assert "$watcherActive" in source
-    loop_start = source.index("    while ($true)")
-    loop_end = source.index("\n    $metadata = $null", loop_start)
-    readiness_loop = source[loop_start:loop_end]
-    assert "$http.GetAsync($readinessUrl)" in readiness_loop
-    assert "$metadataUrl" not in readiness_loop
-    assert "$mcpUrl" not in readiness_loop
-    publication_start = source.index("            $publicationReady = (", loop_start)
-    publication_end = source.index("\n            )", publication_start)
-    publication_gate = source[publication_start:publication_end]
-    assert "$catalogReady" in publication_gate
-    assert "[int]$readiness.StatusCode -eq 200" in publication_gate
-    assert "[bool]$readinessPayload.ok" in publication_gate
-    assert "[bool]$readinessPayload.codeGraphReady" in publication_gate
-    assert source.count("$http.GetAsync($metadataUrl)") == 1
-    assert source.count("$http.SendAsync($request)") == 1
-    assert 'Write-Host "MCP readiness: $lastState"' in readiness_loop
-    assert "$maximumPollMilliseconds" in readiness_loop
-    assert "[string]$metadataPayload.resource -ceq $PublicResourceUrl" in source
-    assert "@($metadataPayload.scopes_supported) -contains 'liquidaity.main'" in source
-    assert "$challenge.Contains('resource_metadata=" in source
-    assert source.count("$http.GetAsync($catalogUrl)") == 1
-    authenticated_read = source.index("$http.GetAsync($catalogUrl)")
-    assert authenticated_read < source.index("if ($ReadyOnly)")
-    assert authenticated_read < source.index("& ngrok http")
-    assert "[int]$catalog.StatusCode -eq 200" in source
-    assert "$catalogPayload.ok -eq $true" in source
-    assert "    & ngrok http $localBaseUrl --url $tunnelUrl\n" in source
+    with open(os.path.join(repo_root, "package.json"), encoding="utf-8") as package_file:
+        package = json.load(package_file)
+
+    resource_url = package["config"]["mcp_public_resource_url"]
+    parsed = urlsplit(resource_url)
+    assert parsed.scheme == "https"
+    assert parsed.path == "/mcp"
+    assert not parsed.query and not parsed.fragment
+    public_origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    tunnel_command = package["scripts"]["dev:tunnel"]
+    assert tunnel_command == (
+        f"ngrok http http://127.0.0.1:8765 --url {public_origin}"
+    )
+    assert "start-mcp-tunnel.ps1" not in tunnel_command
+    assert not os.path.exists(os.path.join(repo_root, "scripts", "start-mcp-tunnel.ps1"))
+
+    mcp_command = package["scripts"]["dev:mcp"]
+    assert "MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%" in mcp_command
+    assert "MCP_AUTH0_AUDIENCE=%npm_package_config_mcp_public_resource_url%" in mcp_command
+    assert "MCP_OAUTH_ENFORCED=true" in mcp_command
 
 
 def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypatch):

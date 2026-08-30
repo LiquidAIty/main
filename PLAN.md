@@ -40,7 +40,13 @@ they do not select a runtime implementation.
   and runtime homes.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
-  documentation and tests must not promise a permanent numeric tool count.
+  documentation and tests must not promise a permanent numeric tool count. The external GPT connector
+  projects each IDD `external-mcp` operation once as `liquidaity.<canonical-id>` and resolves that exact
+  public name back to the unchanged canonical dispatcher. Internal Card/catalog-reader/stdio catalogs retain
+  canonical unprefixed IDs; neither surface contains aliases or duplicate handlers. Source/SDK proof is not
+  a substitute for a loaded-process readback and a genuinely fresh selected-plugin conversation.
+  The MCP host owns OAuth/resource metadata and readiness; canonical startup launches ngrok directly as
+  transport and does not place catalog or application policy in a tunnel helper.
 - The published catalog preserves disabled/unavailable tools. `all_healthy` grants broad healthy
   read/search/discovery access while every write/effect remains an explicit saved Card grant with its
   confirmation contract.
