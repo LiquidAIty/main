@@ -339,6 +339,25 @@ def attach_host_execution_requester(agent: Any, requester: Any, session_id: str)
     setattr(agent, "_host_execution_session_id", str(session_id or ""))
 
 
+def attach_host_execution_context(agent: Any, execution_context_id: str) -> None:
+    """Attach only the opaque host execution identity to an existing agent.
+
+    LIQUIDAITY VENDOR PATCH: this is the transport-neutral half of the existing
+    generic ACP child-lifecycle seam for an already-constructed native agent.
+    Alternate native input surfaces can bind the same generic child lifecycle
+    without replacing the agent's prompt, tools, Script, or other trusted host
+    session configuration.
+    """
+
+    context_id = _bounded_text(
+        execution_context_id,
+        "executionContextId",
+        limit=128,
+        required=True,
+    )
+    setattr(agent, "_host_execution_context_id", context_id)
+
+
 def allocate_host_native_execution(
     parent_agent: Any,
     *,

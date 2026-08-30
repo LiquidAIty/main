@@ -89,8 +89,14 @@ decomposition and the resumed root's separate review/synthesis pass to
 `openai-codex/gpt-5.6-terra`, pins two to four decomposed workers to
 `openai-codex/gpt-5.6-luna`, and caps the current recipe at four workers and one level. Every Luna task
 is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Terra
-pass all worker reports. That pass returns one native task result to the existing originating ACP
-session and Card Run. Existing Hermes SQLite dependencies, retries, recovery, notifications, Stop and
+pass all worker reports. That pass returns one native task result to the existing originating Hermes
+session and Card Run. ACP Card sessions and persistent Main CLI turns use one backend-owned host child
+lifecycle for exact-once Run allocation, native-root correlation, terminal closure and recovery. Main
+binds that opaque lifecycle to the already-live CLI agent before injecting the accepted turn, then the
+same CLI owner appends the terminal Team result with native-task idempotence once the session is idle.
+If bounded delivery retries expire, the native completion and active child Run remain available for the
+existing restart-rejoin owner rather than being converted into a false failure.
+Existing Hermes SQLite dependencies, retries, recovery, notifications, Stop and
 rejoin remain the execution substrate; no board controls or UI state are exposed.
 
 LiquidAIty's Card-facing IDD/Script and trusted ACP session projections expose `team` generally and add
@@ -630,8 +636,10 @@ OAuth storage. The registered files, proof, contribution plan, and rollback live
 The headless per-Card Team doorway is a separate contained divergence over Hermes' same native
 `delegate_task`, Auto-Kanban SQLite graph, decomposer, dispatcher and worker context. The generic host
 allocation callback accepts the durable native root ID before activation; LiquidAIty creates one child
-Card Run for that root and monitors/rejoins it through the existing Kanban read path. Hermes appends the
-terminal native result to the exact idle originating session before the child Run closes. Team-specific
+Card Run for that root and monitors/rejoins it through the existing Kanban read path. ACP and persistent
+Main both enter the same backend host lifecycle. Persistent Main binds the lifecycle to its live CLI
+agent before turn injection, and the live CLI transcript owner appends the terminal native result to the
+exact idle originating session before the child Run closes. Team-specific
 task markers carry Terra/Luna model overrides, final-stage identity and a durable spawn receipt; the
 stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
 sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.

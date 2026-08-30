@@ -9,13 +9,15 @@ import {
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveSavedMcpConnections } from './mcpConnections';
 import {
-  createHermesChildExecutionContext,
   bindHermesRootExecutionSession,
   executionToolCallMeta,
   finishHermesExecutionContext,
   registerHermesRootExecutionContext,
-  type HermesExecutionContext,
 } from './childExecutionContext';
+import {
+  handleHermesHostExecutionRequest,
+  startHermesHostTeamMonitor,
+} from './hostExecutionLifecycle';
 import {
   HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
   sameNativeSubagentModel,
@@ -713,27 +715,6 @@ export class AcpProcess {
     this.send({ jsonrpc: '2.0', method, params });
   }
 
-  private startNativeTeamMonitor(context: HermesExecutionContext): void {
-    if (!/^t_[A-Za-z0-9_-]+$/.test(String(context.nativeChildId || ''))) return;
-    // LIQUIDAITY VENDOR PATCH counterpart: load the host monitor lazily so
-    // the existing Kanban route -> adapter dependency remains acyclic.
-    void import('./kanbanRunRecovery.js').then(({ startHermesTeamRunMonitor }) => {
-      startHermesTeamRunMonitor(context, async (result: {
-        sessionId: string;
-        taskId: string;
-        result: string;
-        state: 'completed' | 'blocked' | 'failed' | 'cancelled';
-      }) => {
-        await this.request('_session/append_native_team_result', result);
-      });
-    }).catch((error) => {
-      this.stderrTail.push(
-        `hermes_team_monitor_start_failed:${error instanceof Error ? error.message : String(error)}`,
-      );
-      this.stderrTail = this.stderrTail.slice(-30);
-    });
-  }
-
   private consumeStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
     for (;;) {
@@ -774,48 +755,41 @@ export class AcpProcess {
       this.receivePermission(message.id, message.params);
       return;
     }
-    if (message.method === '_session/create_execution_context' && Object.prototype.hasOwnProperty.call(message, 'id')) {
+    if (
+      ['_session/create_execution_context', '_session/finish_execution_context'].includes(message.method)
+      && Object.prototype.hasOwnProperty.call(message, 'id')
+    ) {
       const sessionId = String(message.params?.sessionId || '');
-      const turn = this.turns.get(sessionId);
-      if (!turn) {
+      if (message.method === '_session/create_execution_context' && !this.turns.get(sessionId)) {
         this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'hermes_turn_context_unavailable' } });
         return;
       }
-      void createHermesChildExecutionContext({
-        sessionId,
-        parentExecutionContextId: String(message.params?.parentExecutionContextId || ''),
-        nativeChildId: String(message.params?.nativeChildId || ''),
-        provider: String(message.params?.provider || ''),
-        model: String(message.params?.model || ''),
-      }).then((context) => {
+      const method = message.method === '_session/create_execution_context'
+        ? 'session/create_execution_context'
+        : 'session/finish_execution_context';
+      void handleHermesHostExecutionRequest({
+        method,
+        params: message.params && typeof message.params === 'object' ? message.params : {},
+      }).then((outcome) => {
+        this.send({ jsonrpc: '2.0', id: message.id, result: outcome.result });
+        if (outcome.nativeContext) {
+          startHermesHostTeamMonitor({
+            context: outcome.nativeContext,
+            appendTeamResult: async (result) => {
+              await this.request('_session/append_native_team_result', result);
+            },
+          });
+        }
+      }).catch((error) => {
         this.send({
-          jsonrpc: '2.0', id: message.id, result: {
-            executionContextId: context.contextId,
-            runId: context.runId,
-            toolCallMeta: executionToolCallMeta(context.contextId),
+          jsonrpc: '2.0',
+          id: message.id,
+          error: {
+            code: method === 'session/create_execution_context' ? -32002 : -32003,
+            message: error instanceof Error ? error.message : 'hermes_execution_context_failed',
           },
         });
-        this.startNativeTeamMonitor(context);
-      }).catch((error) => {
-        this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: error instanceof Error ? error.message : 'hermes_child_context_failed' } });
       });
-      return;
-    }
-    if (message.method === '_session/finish_execution_context' && Object.prototype.hasOwnProperty.call(message, 'id')) {
-      void finishHermesExecutionContext({
-        contextId: String(message.params?.executionContextId || ''),
-        state: ['completed', 'failed', 'cancelled'].includes(String(message.params?.state || ''))
-          ? message.params.state
-          : 'failed',
-        errorSummary: String(message.params?.errorSummary || '') || undefined,
-        usage: message.params?.usage && typeof message.params.usage === 'object'
-          ? message.params.usage
-          : undefined,
-        configuration: message.params?.configuration && typeof message.params.configuration === 'object'
-          ? message.params.configuration
-          : undefined,
-      }).then((closed) => this.send({ jsonrpc: '2.0', id: message.id, result: { closed } }))
-        .catch((error) => this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32003, message: error instanceof Error ? error.message : 'hermes_child_context_finish_failed' } }));
       return;
     }
     if (Object.prototype.hasOwnProperty.call(message, 'id')) {

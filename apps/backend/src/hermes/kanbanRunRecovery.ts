@@ -6,7 +6,7 @@ import {
   type HermesKanbanProgress,
   type HermesKanbanUsageTotals,
 } from '../routes/hermesKanban.routes';
-import { requestHermesExtension } from './mainAdapter';
+import { mainCliBridge } from './mainCliBridge';
 import {
   finishHermesExecutionContext,
   type HermesExecutionContext,
@@ -118,6 +118,12 @@ export function startHermesTeamRunMonitor(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'hermes_team_monitor_failed';
+      if (message === 'hermes_team_session_turn_in_progress') {
+        logHarnessTrace(
+          `[harness] native Team result delivery deferred run=${context.runId} task=${nativeRootId}`,
+        );
+        return;
+      }
       const state = message === 'hermes_kanban_card_blocked' ? 'blocked' : 'failed';
       const progress = latestProgress as HermesKanbanProgress | null;
       const closed = await finishContext({
@@ -213,13 +219,32 @@ async function recoverOneKanbanRun(
   const readUsage = dependencies.readUsage ?? readHermesKanbanSessionUsage;
   const teamDelegation = run.runtimeMode !== 'kanban';
   const appendTeamResult = dependencies.appendTeamResult ?? (async (args) => {
-    await requestHermesExtension('_session/append_native_team_result', {
-      sessionId: args.sessionId,
-      taskId: args.taskId,
-      result: args.result,
-      state: args.state,
-    }, args.profile);
+    if (run.runtimeMode === 'main' && run.cardId === 'card_main_chat') {
+      await mainCliBridge.queueTeamResult({
+        sessionId: args.sessionId,
+        taskId: args.taskId,
+        result: args.result,
+        state: args.state,
+      });
+      return;
+    }
+    const { requestHermesExtension } = await import('./mainAdapter.js');
+    await requestHermesExtension(
+      '_session/append_native_team_result',
+      {
+        sessionId: args.sessionId,
+        taskId: args.taskId,
+        result: args.result,
+        state: args.state,
+      },
+      args.profile,
+    );
   });
+  const deliveryDependencies = (
+    run.runtimeMode === 'main'
+    && run.cardId === 'card_main_chat'
+    && dependencies.appendRetryAttempts === undefined
+  ) ? { ...dependencies, appendRetryAttempts: 900 } : dependencies;
   let latestProgress: HermesKanbanProgress | null = null;
   try {
     const completed = await rejoin({
@@ -261,7 +286,7 @@ async function recoverOneKanbanRun(
           taskId: run.nativeRootId,
           result: completed.finalText,
           state: 'completed',
-        }), dependencies);
+        }), deliveryDependencies);
     }
     await request('/domain/runs/finish', {
       method: 'POST',
@@ -283,6 +308,12 @@ async function recoverOneKanbanRun(
   } catch (error) {
     const message = error instanceof Error ? error.message : 'kanban_run_recovery_failed';
     const blocked = message === 'hermes_kanban_card_blocked';
+    if (message === 'hermes_team_session_turn_in_progress') {
+      logHarnessTrace(
+        `[harness] recovered Team result delivery deferred run=${run.runId} task=${run.nativeRootId}`,
+      );
+      return;
+    }
     if (reconcileNativeTerminal && !blocked) {
       logHarnessTrace(
         `[harness] terminal configured-card reconciliation deferred run=${run.runId} reason=${redactTrace(message)}`,

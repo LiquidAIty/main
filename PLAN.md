@@ -95,8 +95,11 @@ they do not select a runtime implementation.
 ### Still requiring live proof
 
 - Native Main-to-Agent-Builder delegation with truthful child Run, tool, native-reference, and AGE lineage.
-- One live ordinary-Card headless Team run with exact Terra/Luna/Terra native receipts, same-session
-  result return, retry/rejoin behavior, and no recursive delegation.
+- Native headless Team execution is live-proven through exact Terra decomposition, two Luna workers,
+  and distinct Terra synthesis with no recursive delegation. The persistent Main acceptance exposed a
+  missing host lifecycle binding: no child Run or same-session result was created. Source now routes ACP
+  and Main through one child-Run/recovery contract, but its exact same-session return remains unproven
+  until one separately authorized canonical reload and acceptance.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - A canonical reload must load the saved subagent selector chain, child receipt migration,

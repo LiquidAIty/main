@@ -2114,6 +2114,137 @@ class PluginContext:
         except Exception:
             return None
 
+    def bind_cli_host_execution(
+        self,
+        execution_context_id: str,
+        requester: Callable[[str, dict[str, Any]], dict[str, Any]],
+        session_id: str,
+    ) -> bool:
+        """Bind the active CLI agent to a generic host child lifecycle.
+
+        LIQUIDAITY VENDOR PATCH: permit a trusted alternate CLI input driver to
+        reuse the same opaque host lifecycle already used by ACP.
+        The exact live CLI agent may be bound while idle, before an alternate
+        input driver injects its accepted turn.  During a turn, Hermes' active
+        parent binding must resolve to that same object.  The operation changes
+        no prompt, tool, Script, profile, credential, or persistence config.
+        """
+
+        from agent.subagent_lifecycle import get_active_subagent_parent
+        from acp_adapter.host_profiles import (
+            attach_host_execution_context,
+            attach_host_execution_requester,
+        )
+
+        cli = self._manager._cli_ref
+        parent = get_active_subagent_parent()
+        agent = getattr(cli, "agent", None) if cli is not None else None
+        if (
+            cli is None
+            or agent is None
+            or (getattr(cli, "_agent_running", False) and parent is not agent)
+            or (parent is not None and parent is not agent)
+        ):
+            return False
+        attach_host_execution_context(agent, execution_context_id)
+        attach_host_execution_requester(agent, requester, session_id)
+        return True
+
+    def clear_cli_host_execution(self, execution_context_id: str) -> bool:
+        """Remove one matching alternate-driver lifecycle from the CLI agent."""
+
+        cli = self._manager._cli_ref
+        agent = getattr(cli, "agent", None) if cli is not None else None
+        expected = str(execution_context_id or "").strip()
+        if agent is None or not expected:
+            return False
+        if str(getattr(agent, "_host_execution_context_id", "") or "") != expected:
+            return False
+        setattr(agent, "_host_execution_context_id", "")
+        setattr(agent, "_host_execution_requester", None)
+        setattr(agent, "_host_execution_session_id", "")
+        return True
+
+    def append_cli_native_team_result(
+        self,
+        session_id: str,
+        *,
+        task_id: str,
+        result: str,
+        terminal_state: str,
+    ) -> bool:
+        """Persist one Team result through the idle interactive CLI owner.
+
+        LIQUIDAITY VENDOR PATCH: share only validation/message construction with
+        ACP while this live CLI remains the sole persistence owner.
+        The requested session may resolve to the CLI's current compression
+        descendant.  Busy, queued, foreign, and unavailable sessions fail
+        closed so the host can retry without racing a user turn.
+        """
+
+        cli = self._manager._cli_ref
+        if cli is None:
+            raise RuntimeError("hermes_team_session_not_found")
+        if (
+            getattr(cli, "_agent_running", False)
+            or not getattr(cli, "_pending_input", queue.Queue()).empty()
+            or not getattr(cli, "_interrupt_queue", queue.Queue()).empty()
+        ):
+            raise RuntimeError("hermes_team_session_turn_in_progress")
+        agent = getattr(cli, "agent", None)
+        history = getattr(cli, "conversation_history", None)
+        session_db = getattr(cli, "_session_db", None)
+        current_session_id = str(getattr(cli, "session_id", "") or "").strip()
+        requested_session_id = str(session_id or "").strip()
+        if (
+            agent is None
+            or not isinstance(history, list)
+            or session_db is None
+            or not current_session_id
+            or not requested_session_id
+        ):
+            raise RuntimeError("hermes_team_session_store_unavailable")
+        try:
+            resolved_session_id = str(
+                session_db.resolve_resume_session_id(requested_session_id)
+                or requested_session_id
+            )
+        except Exception as exc:
+            raise RuntimeError("hermes_team_session_lineage_unavailable") from exc
+        if resolved_session_id != current_session_id:
+            raise RuntimeError("hermes_team_session_identity_mismatch")
+
+        from agent.message_metadata import append_message
+        from agent.native_team_result import prepare_native_team_result
+
+        persist_lock = getattr(agent, "_session_persist_lock", None)
+
+        def _append_and_persist() -> bool:
+            if getattr(cli, "_agent_running", False):
+                raise RuntimeError("hermes_team_session_turn_in_progress")
+            message = prepare_native_team_result(
+                history,
+                task_id=task_id,
+                result=result,
+                terminal_state=terminal_state,
+            )
+            if message is None:
+                return False
+            prior_history = list(history)
+            append_message(history, message)
+            try:
+                agent._persist_session(history, prior_history)
+            except Exception:
+                if history and history[-1] is message:
+                    history.pop()
+                raise
+            return True
+
+        if persist_lock is None:
+            return _append_and_persist()
+        with persist_lock:
+            return _append_and_persist()
+
     def _gateway_injection_allowed(self) -> bool:
         """Return whether this plugin may trigger gateway session turns."""
         try:

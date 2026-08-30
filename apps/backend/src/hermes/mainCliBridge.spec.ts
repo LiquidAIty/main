@@ -10,6 +10,7 @@ describe('MainCliBridge', () => {
 
     const done = bridge.submit({
       runId: 'run-1',
+      executionContextId: 'context-1',
       driverSource: 'internal_chat',
       message: 'hello',
       onEvent,
@@ -17,6 +18,7 @@ describe('MainCliBridge', () => {
     const candidate = bridge.take();
     expect(candidate).toMatchObject({
       runId: 'run-1',
+      executionContextId: 'context-1',
       driverSource: 'internal_chat',
       contextAuthorityMode: 'main_native_honcho',
       message: 'hello',
@@ -59,6 +61,7 @@ describe('MainCliBridge', () => {
     bridge.notePoll();
     const first = bridge.submit({
       runId: 'run-external',
+      executionContextId: 'context-external',
       driverSource: 'external_plugin',
       message: 'external message',
       onEvent: vi.fn(),
@@ -72,6 +75,7 @@ describe('MainCliBridge', () => {
     expect(bridge.requestCancel('run-external')).toBe(true);
     expect(() => bridge.submit({
       runId: 'run-internal',
+      executionContextId: 'context-internal',
       driverSource: 'internal_chat',
       message: 'internal message',
       onEvent: vi.fn(),
@@ -92,6 +96,7 @@ describe('MainCliBridge', () => {
     expect(bridge.ready()).toBe(false);
     expect(() => bridge.submit({
       runId: 'run-1',
+      executionContextId: 'context-1',
       driverSource: 'internal_chat',
       message: 'hello',
       onEvent: vi.fn(),
@@ -118,5 +123,48 @@ describe('MainCliBridge', () => {
       sessionId: 'session-1',
       messages: [{ role: 'tool', text: 'private tool output' }],
     })).toThrow('main_cli_history_invalid');
+  });
+
+  it('delivers one native Team result with exact task idempotence and visible retry', async () => {
+    const bridge = new MainCliBridge();
+    const first = bridge.queueTeamResult({
+      sessionId: 'session-1',
+      taskId: 't_team',
+      result: 'reviewed result',
+      state: 'completed',
+    }, 5_000);
+    expect(bridge.queueTeamResult({
+      sessionId: 'session-1',
+      taskId: 't_team',
+      result: 'reviewed result',
+      state: 'completed',
+    }, 5_000)).toBe(first);
+    const delivery = bridge.takeTeamResult();
+    expect(delivery).toMatchObject({
+      sessionId: 'session-1',
+      taskId: 't_team',
+      result: 'reviewed result',
+      state: 'completed',
+    });
+    expect(bridge.takeTeamResult()).toBeNull();
+    bridge.acknowledgeTeamResult({
+      deliveryId: delivery!.deliveryId,
+      delivered: false,
+      retry: true,
+    });
+    await expect(first).rejects.toThrow('hermes_team_session_turn_in_progress');
+
+    const retry = bridge.queueTeamResult({
+      sessionId: 'session-1',
+      taskId: 't_team',
+      result: 'reviewed result',
+      state: 'completed',
+    }, 5_000);
+    const retriedDelivery = bridge.takeTeamResult()!;
+    bridge.acknowledgeTeamResult({
+      deliveryId: retriedDelivery.deliveryId,
+      delivered: true,
+    });
+    await expect(retry).resolves.toBeUndefined();
   });
 });

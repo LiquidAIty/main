@@ -161,7 +161,19 @@ class _MainCliBridge:
         except urllib.error.HTTPError as error:
             if error.code == 204:
                 return None
-            raise RuntimeError(f"liquidaity_main_bridge_http_{error.code}") from error
+            body = error.read(_MAX_RESPONSE_BYTES + 1)
+            try:
+                decoded_error = json.loads(body.decode("utf-8"))
+                reason = (
+                    str(decoded_error.get("error") or "").strip()
+                    if isinstance(decoded_error, dict)
+                    else ""
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                reason = ""
+            raise RuntimeError(
+                reason or f"liquidaity_main_bridge_http_{error.code}"
+            ) from error
         if len(body) > _MAX_RESPONSE_BYTES:
             raise RuntimeError("liquidaity_main_bridge_response_too_large")
         if not body:
@@ -194,7 +206,80 @@ class _MainCliBridge:
 
     def _clear(self) -> None:
         with self._lock:
+            active = dict(self._active) if self._active is not None else None
             self._active = None
+        clear = getattr(self._ctx, "clear_cli_host_execution", None)
+        if callable(clear) and active is not None:
+            clear(str(active.get("executionContextId") or ""))
+
+    def _host_requester(self, method: str, params: dict) -> dict:
+        response = self._request("/execution", {
+            "method": method,
+            "params": params,
+        })
+        result = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(response, dict) or response.get("ok") is not True \
+                or not isinstance(result, dict):
+            raise RuntimeError("liquidaity_main_execution_response_invalid")
+        return result
+
+    def _bind_active_execution(self, **payload) -> None:
+        with self._lock:
+            active = dict(self._active) if self._active is not None else None
+        if active is None:
+            return
+        session_id = str(payload.get("session_id") or "").strip()
+        execution_context_id = str(
+            active.get("executionContextId") or ""
+        ).strip()
+        if not session_id or not execution_context_id:
+            raise RuntimeError("liquidaity_main_execution_binding_incomplete")
+        response = self._request("/execution/bind", {
+            "requestId": active["requestId"],
+            "runId": active["runId"],
+            "executionContextId": execution_context_id,
+            "sessionId": session_id,
+        })
+        if not isinstance(response, dict) or response.get("ok") is not True:
+            raise RuntimeError("liquidaity_main_execution_binding_rejected")
+        if not self._ctx.bind_cli_host_execution(
+            execution_context_id,
+            self._host_requester,
+            session_id,
+        ):
+            raise RuntimeError("liquidaity_main_execution_parent_unavailable")
+
+    def _deliver_team_result(self) -> None:
+        delivery = self._request("/team-results/next")
+        if not delivery:
+            return
+        required = ("deliveryId", "sessionId", "taskId", "result", "state")
+        if any(
+            not isinstance(delivery.get(key), str) or not delivery[key]
+            for key in required
+        ):
+            return
+        try:
+            self._ctx.append_cli_native_team_result(
+                delivery["sessionId"],
+                task_id=delivery["taskId"],
+                result=delivery["result"],
+                terminal_state=delivery["state"],
+            )
+            self._request("/team-results/ack", {
+                "deliveryId": delivery["deliveryId"],
+                "delivered": True,
+            })
+            self._last_history_json = None
+            self._sync_history()
+        except Exception as error:
+            reason = str(error)
+            self._request("/team-results/ack", {
+                "deliveryId": delivery["deliveryId"],
+                "delivered": False,
+                "retry": reason == "hermes_team_session_turn_in_progress",
+                "error": reason[:512],
+            })
 
     @staticmethod
     def _message_text(content) -> str | None:
@@ -245,13 +330,14 @@ class _MainCliBridge:
                 if now - self._last_history_sync_at >= 1.0:
                     self._sync_history()
                     self._last_history_sync_at = now
+                self._deliver_team_result()
                 candidate = self._request("/next")
                 if not candidate:
                     self._stop.wait(_MAIN_BRIDGE_POLL_SECONDS)
                     continue
                 required = (
                     "requestId", "runId", "driverSource", "message",
-                    "contextAuthorityMode",
+                    "contextAuthorityMode", "executionContextId",
                 )
                 if any(not isinstance(candidate.get(key), str) or not candidate[key]
                        for key in required):
@@ -265,6 +351,18 @@ class _MainCliBridge:
                     continue
                 with self._lock:
                     self._active = candidate
+                snapshot = self._ctx.cli_conversation_snapshot()
+                session_id = (
+                    str(snapshot.get("session_id") or "").strip()
+                    if isinstance(snapshot, dict)
+                    else ""
+                )
+                try:
+                    self._bind_active_execution(session_id=session_id)
+                except Exception as error:
+                    self._event("rejected", error=str(error)[:512])
+                    self._clear()
+                    continue
                 accepted = self._ctx.inject_message(
                     candidate["message"],
                     interrupt_running=False,

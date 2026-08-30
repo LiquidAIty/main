@@ -29,6 +29,7 @@ export type MainCliHistoryMessage = {
 type MainCliTurn = {
   requestId: string;
   runId: string;
+  executionContextId: string;
   driverSource: Exclude<MainDriverSource, 'native_cli'>;
   message: string;
   contextAuthorityMode: MainContextAuthorityMode;
@@ -39,10 +40,27 @@ type MainCliTurn = {
   reject: (error: Error) => void;
 };
 
+export type MainCliTeamDelivery = {
+  deliveryId: string;
+  sessionId: string;
+  taskId: string;
+  result: string;
+  state: 'completed' | 'blocked' | 'failed' | 'cancelled';
+};
+
+type PendingTeamDelivery = MainCliTeamDelivery & {
+  claimed: boolean;
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+};
+
 export class MainCliBridge {
   private active: MainCliTurn | null = null;
   private lastPollAt = 0;
   private historySnapshot: { sessionId: string | null; messages: MainCliHistoryMessage[] } | null = null;
+  private teamDeliveries = new Map<string, PendingTeamDelivery>();
 
   notePoll(): void {
     this.lastPollAt = Date.now();
@@ -64,6 +82,7 @@ export class MainCliBridge {
 
   submit(args: {
     runId: string;
+    executionContextId: string;
     driverSource: Exclude<MainDriverSource, 'native_cli'>;
     message: string;
     onEvent: (event: MainCliBridgeEvent) => void;
@@ -71,11 +90,14 @@ export class MainCliBridge {
     contextAuthorityMode: MainContextAuthorityMode }> {
     if (!this.ready()) throw new Error('main_cli_bridge_unavailable');
     if (this.active) throw new Error('main_driver_turn_already_running');
+    const executionContextId = String(args.executionContextId || '').trim();
+    if (!executionContextId) throw new Error('main_cli_execution_context_required');
     const requestId = `main_cli_${randomUUID()}`;
     return new Promise((resolve, reject) => {
       this.active = {
         requestId,
         runId: args.runId,
+        executionContextId,
         driverSource: args.driverSource,
         contextAuthorityMode: contextAuthorityModeForDriver(args.driverSource),
         message: args.message,
@@ -91,8 +113,91 @@ export class MainCliBridge {
     this.notePoll();
     if (!this.active || this.active.delivered) return null;
     this.active.delivered = true;
-    const { requestId, runId, driverSource, message, contextAuthorityMode } = this.active;
-    return { requestId, runId, driverSource, message, contextAuthorityMode };
+    const { requestId, runId, executionContextId, driverSource, message, contextAuthorityMode } = this.active;
+    return { requestId, runId, executionContextId, driverSource, message, contextAuthorityMode };
+  }
+
+  authorizeExecutionBinding(args: {
+    requestId: string;
+    runId: string;
+    executionContextId: string;
+  }): void {
+    const active = this.active;
+    if (
+      !active
+      || args.requestId !== active.requestId
+      || args.runId !== active.runId
+      || args.executionContextId !== active.executionContextId
+    ) {
+      throw new Error('main_cli_execution_binding_identity_mismatch');
+    }
+  }
+
+  queueTeamResult(
+    args: Omit<MainCliTeamDelivery, 'deliveryId'>,
+    timeoutMs = 1_000,
+  ): Promise<void> {
+    const taskId = String(args.taskId || '').trim();
+    const sessionId = String(args.sessionId || '').trim();
+    const result = String(args.result || '').trim();
+    if (!taskId || !sessionId || !result) throw new Error('main_cli_team_delivery_incomplete');
+    const existing = this.teamDeliveries.get(taskId);
+    if (existing) return existing.promise;
+    const deliveryId = `main_team_${randomUUID()}`;
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((accept, decline) => {
+      resolve = accept;
+      reject = decline;
+    });
+    const delivery: PendingTeamDelivery = {
+      ...args,
+      taskId,
+      sessionId,
+      result,
+      deliveryId,
+      claimed: false,
+      promise,
+      resolve,
+      reject,
+      timeout: setTimeout(() => {
+        if (this.teamDeliveries.get(taskId)?.deliveryId !== deliveryId) return;
+        this.teamDeliveries.delete(taskId);
+        reject(new Error('hermes_team_session_turn_in_progress'));
+      }, Math.max(100, Math.min(5_000, timeoutMs))),
+    };
+    this.teamDeliveries.set(taskId, delivery);
+    return promise;
+  }
+
+  takeTeamResult(): MainCliTeamDelivery | null {
+    this.notePoll();
+    const delivery = [...this.teamDeliveries.values()].find((item) => !item.claimed);
+    if (!delivery) return null;
+    delivery.claimed = true;
+    const { deliveryId, sessionId, taskId, result, state } = delivery;
+    return { deliveryId, sessionId, taskId, result, state };
+  }
+
+  acknowledgeTeamResult(args: {
+    deliveryId: string;
+    delivered: boolean;
+    retry?: boolean;
+    error?: string;
+  }): void {
+    const match = [...this.teamDeliveries.entries()]
+      .find(([, delivery]) => delivery.deliveryId === args.deliveryId);
+    if (!match) throw new Error('main_cli_team_delivery_unknown');
+    const [taskId, delivery] = match;
+    clearTimeout(delivery.timeout);
+    this.teamDeliveries.delete(taskId);
+    if (args.delivered) {
+      delivery.resolve();
+      return;
+    }
+    delivery.reject(new Error(args.retry
+      ? 'hermes_team_session_turn_in_progress'
+      : String(args.error || 'main_cli_team_delivery_failed')));
   }
 
   acceptEvent(event: MainCliBridgeEvent): void {

@@ -86,6 +86,40 @@ describe('durable Kanban Run recovery', () => {
     expect(order).toEqual(['append', 'finish']);
   });
 
+  it('keeps a completed native Team child recoverable when its session stays busy', async () => {
+    const appendResult = vi.fn(async () => {
+      throw new Error('hermes_team_session_turn_in_progress');
+    });
+    const finishContext = vi.fn(async () => true);
+    const context = {
+      contextId: 'ctx-team-deferred', sessionId: 'acp-session-busy',
+      runId: 'child-run-team-deferred', rootRunId: 'main-run', parentRunId: 'main-run',
+      projectId: 'project-1', deckId: 'deck-1', conversationId: 'conversation-1',
+      cardId: 'card-main', runtimeMode: 'main' as const,
+      nativeChildId: 't_team_deferred', childProvider: 'openai-codex',
+      childModel: 'gpt-5.6-terra', grantedTools: [],
+      expiresAt: Date.now() + 60_000, state: 'active' as const,
+    };
+
+    expect(startHermesTeamRunMonitor(context, appendResult, {
+      request: vi.fn(async () => ({ ok: true })),
+      rejoin: vi.fn(async () => ({
+        finalText: 'Completed native synthesis.', nativeRunId: 23,
+        sessionId: 'acp-session-busy',
+        progress: {
+          nativeRootId: 't_team_deferred', nativeRunId: 23,
+          phase: 'complete' as const, tasksCompleted: 3, tasksTotal: 3,
+          activeWorkers: 0, workerSessionIds: [],
+        },
+      })),
+      finishContext,
+      appendRetryAttempts: 2,
+      appendRetryPause: vi.fn(async () => undefined),
+    })).toBe(true);
+    await vi.waitFor(() => expect(appendResult).toHaveBeenCalledTimes(2));
+    expect(finishContext).not.toHaveBeenCalled();
+  });
+
   it('rejoins an active Team child after backend replacement and appends by saved Card profile', async () => {
     const writes: Array<{ endpoint: string; body: any }> = [];
     const request = vi.fn(async (endpoint: string, init: RequestInit) => {
@@ -123,6 +157,43 @@ describe('durable Kanban Run recovery', () => {
     await vi.waitFor(() => expect(writes.some((write) => (
       write.endpoint === '/domain/runs/finish' && write.body?.state === 'completed'
     ))).toBe(true));
+  });
+
+  it('leaves a recovered Team Run active when terminal delivery is still busy', async () => {
+    const writes: Array<{ endpoint: string; body: any }> = [];
+    const request = vi.fn(async (endpoint: string, init: RequestInit) => {
+      const body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
+      writes.push({ endpoint, body });
+      if (endpoint === '/domain/runs/active-kanban') {
+        return { runs: [{
+          runId: 'child-run-team-busy', projectId: 'project-1', deckId: 'deck-1',
+          cardId: 'card_main_chat', nativeRootId: 't_team_busy_recovery',
+          runtimeProfile: 'default', runtimeMode: 'main',
+        }] };
+      }
+      return { ok: true };
+    });
+    const appendTeamResult = vi.fn(async () => {
+      throw new Error('hermes_team_session_turn_in_progress');
+    });
+
+    await expect(recoverActiveKanbanRunMonitors({
+      request,
+      rejoin: vi.fn(async () => ({
+        finalText: 'Recovered native synthesis.', nativeRunId: 32,
+        sessionId: 'session-busy',
+        progress: {
+          nativeRootId: 't_team_busy_recovery', nativeRunId: 32,
+          phase: 'complete' as const, tasksCompleted: 3, tasksTotal: 3,
+          activeWorkers: 0, workerSessionIds: [],
+        },
+      })),
+      appendTeamResult,
+      appendRetryAttempts: 2,
+      appendRetryPause: vi.fn(async () => undefined),
+    })).resolves.toEqual({ discovered: 1, started: 1 });
+    await vi.waitFor(() => expect(appendTeamResult).toHaveBeenCalledTimes(2));
+    expect(writes.filter((write) => write.endpoint === '/domain/runs/finish')).toEqual([]);
   });
 
   it('rejoins one exact native root after backend replacement and finalizes the original Run once', async () => {

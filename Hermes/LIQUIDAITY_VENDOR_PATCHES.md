@@ -497,9 +497,12 @@ Files and symbols:
 - `acp_adapter/host_profiles.py`: generalizes the existing opaque host child-allocation callback to accept
   any durable native execution ID; the previous leaf helper delegates to it unchanged. A trusted
   per-session host projection narrows the model-visible native role enum without changing Hermes' native
-  tool contract when that projection is absent.
-- `acp_adapter/session.py` and `acp_adapter/server.py`: append one completed native Team result to an exact
-  idle originating session with task-ID idempotence and the existing session database/history owner.
+  tool contract when that projection is absent. The transport-neutral context attachment lets an
+  already-live native CLI agent enter the same opaque host lifecycle without replacing its configuration.
+- `agent/native_team_result.py`, `acp_adapter/session.py`, and `acp_adapter/server.py`: share bounded
+  result validation/message construction while ACP retains its exact idle-session database/history owner.
+- `hermes_cli/plugins.py`: exposes generic trusted-plugin operations that bind the already-live CLI agent
+  to an opaque host lifecycle and append a terminal result through that CLI's own native session owner.
 
 Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
 temporary-agent construction, depth, provider/model and result behavior. Batch entries still accept only
@@ -514,12 +517,15 @@ fewer than two or more than the configured maximum, rejects fan-in as a single t
 worker plus the root with a process-only recursion guard. Native dependency links make every Luna task a
 parent of the original root. A durable `spawned` event records the exact step/provider/model used at the
 process boundary. Host correlation is committed before activation; terminal session append occurs before
-the child Card Run is closed.
+the child Card Run is closed. A busy originating session receives bounded idempotent retries; if that
+window expires, the completed native root and active child Run remain recoverable instead of being
+relabeled as failed.
 
 Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
-`tests/acp/test_session.py`, and `tests/acp_adapter/test_host_profiles.py` prove the one-tool branch,
-two-to-four bound, Terra/Luna/Terra task and spawn receipts, all-worker synthesis context, non-recursion,
-opaque host allocation, same-session idempotent result append and unchanged native roles. Downstream
+`tests/hermes_cli/test_plugin_message_injection.py`, `tests/acp/test_session.py`, and
+`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, two-to-four bound,
+Terra/Luna/Terra task and spawn receipts, all-worker synthesis context, non-recursion, opaque host
+allocation, ACP/CLI same-session idempotent result append and unchanged native roles. Downstream
 LiquidAIty lifecycle, recovery and Run-correlation tests live beside the backend/Python owners.
 
 Fork cost and contribution plan: seven narrow native files, one new adapter module and focused tests.

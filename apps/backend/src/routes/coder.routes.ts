@@ -47,7 +47,11 @@ import {
 } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
-import { resolveHermesExecutionContext } from '../hermes/childExecutionContext';
+import {
+  finishHermesExecutionContext,
+  registerHermesRootExecutionContext,
+  resolveHermesExecutionContext,
+} from '../hermes/childExecutionContext';
 import {
   reconcileTerminalKanbanRun,
   startKanbanRunMonitor,
@@ -161,6 +165,7 @@ async function executePreparedMainCliRun(
   onEvent: (event: MainCliBridgeEvent) => void,
 ) {
   let result: Awaited<ReturnType<typeof mainCliBridge.submit>>;
+  let rootExecutionContextId = '';
   try {
     const turnArgs = resolveHermesTurnArgs({
       prepared: run.prepared,
@@ -171,13 +176,36 @@ async function executePreparedMainCliRun(
       onEvent: () => undefined,
     }, run.prepared.hermesTransport);
     run.profileMaterialization = await materializeHermesProfileSelections(turnArgs);
+    const rootContext = registerHermesRootExecutionContext({
+      sessionId: `main:${run.runId}`,
+      runId: run.runId,
+      projectId: run.projectId,
+      deckId: run.deckId,
+      conversationId: run.conversationId,
+      cardId: run.cardId,
+      runtimeMode: turnArgs.runtime.mode,
+      grantedTools: (turnArgs.grantedTools ?? turnArgs.tools)
+        .filter((name) => name !== 'web_search'),
+    });
+    rootExecutionContextId = rootContext.contextId;
     result = await mainCliBridge.submit({
       runId: run.runId,
+      executionContextId: rootContext.contextId,
       driverSource: run.driverSource,
       message: String(run.prepared.hermesTransport.request.message || ''),
       onEvent,
     });
+    await finishHermesExecutionContext({
+      contextId: rootContext.contextId,
+      state: 'completed',
+    });
   } catch (error) {
+    if (rootExecutionContextId) {
+      await finishHermesExecutionContext({
+        contextId: rootExecutionContextId,
+        state: 'failed',
+      }).catch(() => undefined);
+    }
     const rawReason = error instanceof Error ? error.message : 'main_cli_turn_failed';
     const reason = rawReason.includes('cancel')
       ? 'main_cli_turn_cancelled'

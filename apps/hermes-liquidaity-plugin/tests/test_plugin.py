@@ -333,12 +333,19 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
         def cli_conversation_snapshot(self):
             return {"session_id": "session-1", "messages": []}
 
+        def bind_cli_host_execution(self, *_args):
+            return True
+
+        def clear_cli_host_execution(self, *_args):
+            return True
+
     context = Context()
     bridge = plugin._MainCliBridge(context, "http://127.0.0.1:4000", "token")
     calls = []
     candidate = {
         "requestId": "request-1",
         "runId": "run-1",
+        "executionContextId": "context-1",
         "driverSource": "external_plugin",
         "contextAuthorityMode": "plugin_context_only",
         "message": "hello",
@@ -411,6 +418,82 @@ def test_main_bridge_projects_live_cli_history_without_tool_messages(monkeypatch
             {"role": "assistant", "text": "answer"},
         ],
     })]
+
+
+def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
+    calls = []
+
+    class Context:
+        def bind_cli_host_execution(self, context_id, requester, session_id):
+            calls.append(("bind-native", context_id, requester, session_id))
+            return True
+
+    bridge = plugin._MainCliBridge(Context(), "http://127.0.0.1:4000", "token")
+    bridge._active = {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "executionContextId": "context-1",
+        "driverSource": "internal_chat",
+        "message": "hello",
+    }
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: calls.append((path, payload)) or {"ok": True},
+    )
+
+    bridge._bind_active_execution(session_id="session-1")
+
+    assert calls[0] == ("/execution/bind", {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "executionContextId": "context-1",
+        "sessionId": "session-1",
+    })
+    assert calls[1][0:2] == ("bind-native", "context-1")
+    assert calls[1][3] == "session-1"
+
+
+def test_main_bridge_delivers_team_result_once_then_syncs_history(monkeypatch):
+    delivered = []
+
+    class Context:
+        def append_cli_native_team_result(self, session_id, **kwargs):
+            delivered.append((session_id, kwargs))
+            return True
+
+        def cli_conversation_snapshot(self):
+            return {"session_id": "session-1", "messages": []}
+
+    bridge = plugin._MainCliBridge(Context(), "http://127.0.0.1:4000", "token")
+    calls = []
+    delivery = {
+        "deliveryId": "delivery-1",
+        "sessionId": "session-1",
+        "taskId": "t_team",
+        "result": "reviewed result",
+        "state": "completed",
+    }
+
+    def request(path, payload=None):
+        calls.append((path, payload))
+        if path == "/team-results/next":
+            return delivery
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "_request", request)
+    bridge._deliver_team_result()
+
+    assert delivered == [("session-1", {
+        "task_id": "t_team",
+        "result": "reviewed result",
+        "terminal_state": "completed",
+    })]
+    assert ("/team-results/ack", {
+        "deliveryId": "delivery-1",
+        "delivered": True,
+    }) in calls
+    assert any(path == "/history" for path, _payload in calls)
 
 
 @pytest.mark.parametrize("status", [401, 403, 409, 503])

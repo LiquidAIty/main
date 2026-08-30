@@ -1,9 +1,11 @@
 """Tests for plugin message injection across CLI and gateway hosts."""
 
 from queue import SimpleQueue
+from threading import RLock
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
@@ -90,6 +92,103 @@ def test_cli_conversation_snapshot_is_idle_read_only_and_detached():
     assert context.cli_conversation_snapshot() is None
     manager._cli_ref = None
     assert context.cli_conversation_snapshot() is None
+
+
+def test_cli_host_execution_binding_targets_only_the_live_cli_agent():
+    from agent.subagent_lifecycle import bind_subagent_parent
+
+    context, manager = _context()
+    agent = SimpleNamespace()
+    manager._cli_ref = SimpleNamespace(agent=agent, _agent_running=False)
+    requester = MagicMock()
+
+    assert context.bind_cli_host_execution("context-1", requester, "session-1") is True
+    with bind_subagent_parent(agent):
+        assert context.bind_cli_host_execution(
+            "context-1", requester, "session-1"
+        ) is True
+
+    assert agent._host_execution_context_id == "context-1"
+    assert agent._host_execution_requester is requester
+    assert agent._host_execution_session_id == "session-1"
+    assert context.clear_cli_host_execution("other-context") is False
+    assert context.clear_cli_host_execution("context-1") is True
+    assert agent._host_execution_context_id == ""
+    assert agent._host_execution_requester is None
+
+
+def test_cli_native_team_result_uses_live_session_owner_and_is_idempotent():
+    context, manager = _context()
+    history = [{"role": "user", "content": "mission"}]
+    persisted = []
+    agent = SimpleNamespace(
+        _session_persist_lock=RLock(),
+        _persist_session=lambda messages, prior: persisted.append(
+            (list(messages), list(prior))
+        ),
+    )
+    session_db = SimpleNamespace(
+        resolve_resume_session_id=lambda session_id: (
+            "session-current" if session_id == "session-original" else session_id
+        )
+    )
+    manager._cli_ref = SimpleNamespace(
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        agent=agent,
+        session_id="session-current",
+        conversation_history=history,
+        _session_db=session_db,
+    )
+
+    assert context.append_cli_native_team_result(
+        "session-original",
+        task_id="t_team",
+        result="reviewed result",
+        terminal_state="completed",
+    ) is True
+    assert context.append_cli_native_team_result(
+        "session-original",
+        task_id="t_team",
+        result="reviewed result",
+        terminal_state="completed",
+    ) is False
+    assert len(persisted) == 1
+    assert persisted[0][1] == [{"role": "user", "content": "mission"}]
+    assert history[-1]["display_metadata"] == {
+        "nativeTaskId": "t_team",
+        "terminalState": "completed",
+    }
+
+
+def test_cli_native_team_result_retries_busy_and_rejects_foreign_session():
+    context, manager = _context()
+    manager._cli_ref = SimpleNamespace(
+        _agent_running=True,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+    )
+    with pytest.raises(RuntimeError, match="hermes_team_session_turn_in_progress"):
+        context.append_cli_native_team_result(
+            "session-1", task_id="t_team", result="result",
+            terminal_state="completed",
+        )
+
+    manager._cli_ref = SimpleNamespace(
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        agent=SimpleNamespace(_persist_session=MagicMock()),
+        session_id="session-current",
+        conversation_history=[],
+        _session_db=SimpleNamespace(resolve_resume_session_id=lambda value: value),
+    )
+    with pytest.raises(RuntimeError, match="hermes_team_session_identity_mismatch"):
+        context.append_cli_native_team_result(
+            "session-foreign", task_id="t_team", result="result",
+            terminal_state="completed",
+        )
 
 
 def test_gateway_injection_requires_session_key(tmp_path, monkeypatch):
