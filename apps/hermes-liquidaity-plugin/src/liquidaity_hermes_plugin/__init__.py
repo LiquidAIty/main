@@ -22,6 +22,16 @@ _DEFAULT_ENDPOINT = "http://127.0.0.1:4000/api/internal/hermes-kanban/worker-bea
 _TIMEOUT_SECONDS = 3.0
 _MAX_RESPONSE_BYTES = 64 * 1024
 _MAIN_BRIDGE_POLL_SECONDS = 0.2
+_SCRIPT_OUTPUT_PREFIX = "HERMES_CARD_SCRIPT_OUTPUT:"
+_HOST_SCRIPT_SCHEMA = {
+    "name": "execute_host_script",
+    "description": "Run the immutable Python composition Script supplied by the trusted Card host.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    },
+}
 
 
 def _endpoint() -> str:
@@ -300,8 +310,166 @@ class _MainCliBridge:
         self._clear()
 
 
+def _schema_type_matches(value, expected) -> bool:
+    if isinstance(expected, list):
+        return any(_schema_type_matches(value, item) for item in expected)
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "boolean": isinstance(value, bool),
+        "null": value is None,
+    }.get(expected, True)
+
+
+def _validate_value(value: object, schema: dict, field: str) -> None:
+    expected = schema.get("type")
+    if expected is not None and not _schema_type_matches(value, expected):
+        raise ValueError(f"liquidaity_card_script_{field}_type")
+    if isinstance(value, dict) and (expected == "object" or "properties" in schema):
+        _validate_object(value, schema, field)
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(value):
+            _validate_value(item, schema["items"], f"{field}.{index}")
+
+
+def _validate_object(value: object, schema: dict, field: str) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"liquidaity_card_script_{field}_must_be_object")
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    missing = [name for name in required if name not in value]
+    if missing:
+        raise ValueError(f"liquidaity_card_script_{field}_required:{missing[0]}")
+    if schema.get("additionalProperties") is False:
+        unknown = sorted(set(value) - set(properties))
+        if unknown:
+            raise ValueError(f"liquidaity_card_script_{field}_unknown:{unknown[0]}")
+    for name, item in value.items():
+        definition = properties.get(name)
+        if isinstance(definition, dict):
+            _validate_value(item, definition, f"{field}.{name}")
+
+
+def _handle_execute_host_script(
+    args: dict,
+    *,
+    task_id: str | None = None,
+    session_id: str | None = None,
+    **_kwargs,
+) -> str:
+    """Execute only the trusted session's immutable saved Card Script."""
+
+    from acp_adapter.host_profiles import (
+        activate_host_script_fallback,
+        current_host_script_config,
+    )
+    from tools.code_execution_tool import execute_code
+
+    config = current_host_script_config()
+    if not isinstance(config, dict):
+        return json.dumps({
+            "ok": False,
+            "error": "liquidaity_card_script_not_configured",
+        }, separators=(",", ":"))
+    def receipt(execution: dict | None = None) -> dict:
+        execution = execution or {}
+        return {
+            "schemaVersion": "liquidaity.card-script.receipt.v1",
+            "version": config["version"],
+            "sourceHash": config["sourceHash"],
+            "compiledHash": config["compiledHash"],
+            "mode": config["mode"],
+            "status": execution.get("status", "validation_error"),
+            "exitCode": execution.get("exit_code"),
+            "durationSeconds": execution.get("duration_seconds"),
+            "toolCallsMade": execution.get("tool_calls_made", 0),
+            "toolCalls": execution.get("tool_calls", []),
+        }
+
+    def failed(error: str, native_receipt: dict) -> str:
+        try:
+            fallback_tools = activate_host_script_fallback()
+            fallback = {
+                "activated": True,
+                "presentationMode": "selected-mcp",
+                "tools": fallback_tools,
+            }
+        except Exception as fallback_error:
+            fallback = {
+                "activated": False,
+                "presentationMode": "script-failed",
+                "error": str(fallback_error)[:2048],
+            }
+        return json.dumps({
+            "ok": False,
+            "error": error[:2048],
+            "fallback": fallback,
+            "receipt": native_receipt,
+        }, ensure_ascii=False, separators=(",", ":"))
+
+    try:
+        _validate_object(args, config["inputSchema"], "input")
+    except ValueError as error:
+        return failed(str(error), receipt())
+    raw = execute_code(
+        config["source"],
+        task_id=session_id or task_id,
+        enabled_tools=list(config["toolAliases"].values()),
+        host_script={
+            "toolAliases": config["toolAliases"],
+            "toolStates": config["toolStates"],
+            "input": args,
+            "timeoutSeconds": config["timeoutSeconds"],
+            "maxToolCalls": config["maxToolCalls"],
+        },
+    )
+    try:
+        execution = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        execution = {"status": "error", "error": "native_execution_result_invalid"}
+    native_receipt = receipt(execution)
+    if execution.get("status") != "success":
+        return failed(
+            str(execution.get("error") or "card_script_execution_failed"),
+            native_receipt,
+        )
+    output_text = str(execution.get("output") or "")
+    emitted = [
+        line[len(_SCRIPT_OUTPUT_PREFIX):]
+        for line in output_text.splitlines()
+        if line.startswith(_SCRIPT_OUTPUT_PREFIX)
+    ]
+    if len(emitted) != 1:
+        return failed(
+            "liquidaity_card_script_output_emit_once_required", native_receipt
+        )
+    if len(emitted[0].encode("utf-8")) > config["maxOutputBytes"]:
+        return failed("liquidaity_card_script_output_too_large", native_receipt)
+    try:
+        output_value = json.loads(emitted[0])
+        _validate_object(output_value, config["outputSchema"], "output")
+    except (json.JSONDecodeError, ValueError) as error:
+        return failed(str(error), native_receipt)
+    return json.dumps({
+        "ok": True,
+        "output": output_value,
+        "receipt": native_receipt,
+    }, ensure_ascii=False, separators=(",", ":"))
+
+
 def register(ctx) -> None:
     ctx.register_kanban_worker_environment_provider(_worker_environment)
+    ctx.register_tool(
+        name="execute_host_script",
+        toolset="liquidaity-card-script",
+        schema=_HOST_SCRIPT_SCHEMA,
+        handler=_handle_execute_host_script,
+        description=_HOST_SCRIPT_SCHEMA["description"],
+        emoji="🐍",
+    )
     endpoint = os.environ.get("LIQUIDAITY_MAIN_BRIDGE_URL", "").strip()
     token = os.environ.get("LIQUIDAITY_MAIN_BRIDGE_TOKEN", "").strip()
     if endpoint and token:

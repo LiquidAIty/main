@@ -19,6 +19,7 @@ export type InternalMcpPrincipal =
       callerRuntimeKind: 'hermes' | 'autogen';
       callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
       grantedTools: string[];
+      presentedTools?: string[];
       requiresExecutionContext?: boolean;
       executionContextId?: string;
       // Signed native attribution only; these do not grant permissions or
@@ -72,6 +73,7 @@ export function createInternalMcpBearer(
         callerRuntimeKind: String(principal.callerRuntimeKind || '').trim() as typeof principal.callerRuntimeKind,
         callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
         grantedTools: uniqueStrings(principal.grantedTools),
+        presentedTools: uniqueStrings(principal.presentedTools ?? principal.grantedTools),
         requiresExecutionContext: principal.requiresExecutionContext === true,
         executionContextId: String(principal.executionContextId || '').trim() || undefined,
       };
@@ -86,6 +88,9 @@ export function createInternalMcpBearer(
       normalized.callerRuntimeMode,
     ];
     if (required.some((value) => !value)) throw new Error('internal_mcp_principal_incomplete');
+    if (normalized.presentedTools.some((name) => !normalized.grantedTools.includes(name))) {
+      throw new Error('internal_mcp_presentation_exceeds_grant');
+    }
   }
   const header = base64UrlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64UrlJson({

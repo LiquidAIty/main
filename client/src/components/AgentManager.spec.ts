@@ -251,7 +251,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Runtime', 'Terminal'] as const;",
+      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Script', 'Runtime', 'Terminal'] as const;",
     );
     expect(source).toContain("activeTab === 'Terminal' && showTaskComposer");
     expect(source).not.toContain("activeTab === 'Task'");
@@ -421,6 +421,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(chatSource).toContain("'nativeEvents'");
+    expect(source).toContain('card-script-native-receipts');
     expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent']");
     expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent']");
     expect(chatSource).toContain('onCardReviewStaged');

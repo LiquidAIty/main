@@ -39,6 +39,8 @@ export type HermesSessionEvent =
   | { kind: 'tool_result'; toolName: string; toolUseId: string; output: string; isError: boolean }
   | { kind: 'tool_progress'; toolName: string; toolUseId: string; output: string }
   | { kind: 'permission'; promptId: string; question: string; promptType: string }
+  | { kind: 'script_start'; version: number; sourceHash: string; compiledHash: string }
+  | { kind: 'script_result'; ok: boolean; output: string; receipt: Record<string, unknown> | null; fallback: Record<string, unknown> | null }
   | { kind: 'done'; fullText: string; usage: HermesTurnUsage }
   | { kind: 'error'; message: string; code?: string };
 
@@ -59,7 +61,10 @@ export type HermesRuntimeConfig = {
     fallbackReason: string | null;
   };
   accessMode: CardAccessMode;
+  /** Model-visible tools for this turn. */
   tools: string[];
+  /** Complete saved authorization ceiling; never inferred from presentation. */
+  grantedTools?: string[];
   toolCatalogPolicy?: 'selected' | 'all_healthy';
   disabledTools?: string[];
   mcpConnectionIds: string[];
@@ -67,6 +72,24 @@ export type HermesRuntimeConfig = {
   toolsets?: string[];
   nativeProfileToolsets?: string[];
   nativeProfileMcpServerNames?: string[];
+  script?: {
+    version: number;
+    source: string;
+    sourceHash: string;
+    compiledHash: string;
+    mode: 'outer_controller';
+    inputSchema: Record<string, unknown>;
+    outputSchema: Record<string, unknown>;
+    toolHandles: string[];
+    toolStates: Record<string, number>;
+    offToolIds: string[];
+    scriptToolIds: string[];
+    agentToolIds: string[];
+    timeoutSeconds: number;
+    maxToolCalls: number;
+    maxOutputBytes: number;
+  };
+  scriptInput?: Record<string, unknown>;
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
@@ -166,6 +189,9 @@ export type HermesTurnHandle = {
       turnId: string | null;
       authMode: string | null;
       planType: string | null;
+      scriptReceipt?: Record<string, unknown> | null;
+      scriptFallback?: Record<string, unknown> | null;
+      scriptControl?: Record<string, unknown> | null;
       nativeTaskId?: string;
       nativeRunId?: string | number | null;
       nativeStatus?: string;
@@ -286,12 +312,16 @@ export function buildHermesOfficialMcpServer(
     | 'cardId'
     | 'runtime'
     | 'tools'
+    | 'grantedTools'
+    | 'script'
   >,
   env: NodeJS.ProcessEnv = process.env,
   executionContextId = '',
 ): Record<string, unknown> | null {
-  const granted = args.tools.filter((name) => name !== 'web_search');
-  if (granted.length === 0) return null;
+  const granted = (args.grantedTools ?? args.tools).filter((name) => name !== 'web_search');
+  const presented = uniqueStrings(args.script ? granted : args.tools)
+    .filter((name) => name !== 'web_search');
+  if (presented.length === 0) return null;
   const shared = resolvePythonAgentMcpServerSpec({
     kind: 'card-runtime',
     projectId: args.projectId,
@@ -302,6 +332,7 @@ export function buildHermesOfficialMcpServer(
     callerRuntimeKind: args.runtime.kind,
     callerRuntimeMode: args.runtime.mode,
     grantedTools: granted,
+    presentedTools: presented,
     requiresExecutionContext: true,
     executionContextId: String(executionContextId || '').trim() || undefined,
   }, env);
@@ -314,8 +345,159 @@ export function buildHermesOfficialMcpServer(
   };
 }
 
+function hermesMcpToolName(serverName: string, toolName: string): string {
+  const sanitize = (value: string) => value.replace(/[^A-Za-z0-9_]/g, '_');
+  return `mcp__${sanitize(serverName)}__${sanitize(toolName)}`;
+}
+
 function uniqueStrings(values: string[]): string[] {
   return values.filter((value, index, all) => Boolean(value) && all.indexOf(value) === index);
+}
+
+type CardProgramBlock = { id: string; content: string };
+
+function boundedProgramBlock(value: unknown, field: string): CardProgramBlock {
+  if (!value || typeof value !== 'object') throw new Error(`hermes_host_script_overlay_${field}_invalid`);
+  const record = value as Record<string, unknown>;
+  const id = String(record.id || '').trim();
+  const content = typeof record.content === 'string' ? record.content : '';
+  if (!/^script\.[A-Za-z0-9._-]{1,120}$/.test(id)) {
+    throw new Error(`hermes_host_script_overlay_${field}_id_invalid`);
+  }
+  if (Buffer.byteLength(content, 'utf8') > 32_768) {
+    throw new Error(`hermes_host_script_overlay_${field}_too_large`);
+  }
+  return { id, content };
+}
+
+function applyCardScriptAgentStage(
+  args: HermesTurnArgs,
+  agent: Record<string, unknown>,
+): { prompt: string; receipt: Record<string, unknown> } {
+  const hasPrompt = Object.hasOwn(agent, 'prompt');
+  const overlay = agent.overlay;
+  if (hasPrompt && overlay !== undefined) throw new Error('hermes_host_script_agent_prompt_overlay_conflict');
+  if (hasPrompt) {
+    if (typeof agent.prompt !== 'string' || !agent.prompt.trim()) {
+      throw new Error('hermes_host_script_agent_prompt_invalid');
+    }
+    return {
+      prompt: agent.prompt,
+      receipt: {
+        agentInvoked: true,
+        promptMode: 'replace',
+        promptSha256: createHash('sha256').update(agent.prompt, 'utf8').digest('hex'),
+      },
+    };
+  }
+  if (overlay === undefined) {
+    return {
+      prompt: args.message,
+      receipt: {
+        agentInvoked: true,
+        promptMode: 'preserved-default',
+        promptSha256: createHash('sha256').update(args.message, 'utf8').digest('hex'),
+      },
+    };
+  }
+  if (!overlay || typeof overlay !== 'object' || Array.isArray(overlay)) {
+    throw new Error('hermes_host_script_agent_overlay_invalid');
+  }
+  const control = overlay as Record<string, unknown>;
+  const allowed = new Set(['order', 'select', 'exclude', 'replace', 'prepend', 'append', 'maxChars']);
+  const unknown = Object.keys(control).find((name) => !allowed.has(name));
+  if (unknown) throw new Error(`hermes_host_script_agent_overlay_field_invalid:${unknown}`);
+  const inputCard = args.scriptInput?.card;
+  const rawBlocks = inputCard && typeof inputCard === 'object'
+    ? (inputCard as Record<string, unknown>).blocks
+    : null;
+  if (!Array.isArray(rawBlocks) || rawBlocks.length < 1 || rawBlocks.length > 16) {
+    throw new Error('hermes_host_script_agent_overlay_blocks_unavailable');
+  }
+  const base = rawBlocks.map((item) => {
+    if (!item || typeof item !== 'object') throw new Error('hermes_host_script_agent_overlay_block_invalid');
+    const record = item as Record<string, unknown>;
+    const id = String(record.id || '').trim();
+    const content = typeof record.content === 'string' ? record.content : '';
+    if (!id || Buffer.byteLength(content, 'utf8') > 65_536) {
+      throw new Error('hermes_host_script_agent_overlay_block_invalid');
+    }
+    return { id, content };
+  });
+  if (new Set(base.map((item) => item.id)).size !== base.length) {
+    throw new Error('hermes_host_script_agent_overlay_block_duplicate');
+  }
+  const baseIds = new Set(base.map((item) => item.id));
+  const idList = (name: 'order' | 'select' | 'exclude'): string[] => {
+    const value = control[name];
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 16 || value.some((item) => typeof item !== 'string')) {
+      throw new Error(`hermes_host_script_agent_overlay_${name}_invalid`);
+    }
+    const ids = value.map((item) => String(item));
+    const invalid = ids.find((id) => !baseIds.has(id));
+    if (invalid) throw new Error(`hermes_host_script_agent_overlay_reference_unknown:${invalid}`);
+    if (new Set(ids).size !== ids.length) throw new Error(`hermes_host_script_agent_overlay_${name}_duplicate`);
+    return ids;
+  };
+  const selected = idList('select');
+  const excluded = new Set(idList('exclude'));
+  const ordered = idList('order');
+  let blocks = selected.length > 0 ? base.filter((item) => selected.includes(item.id)) : [...base];
+  blocks = blocks.filter((item) => !excluded.has(item.id));
+  if (ordered.length > 0) {
+    const positions = new Map(ordered.map((id, index) => [id, index]));
+    blocks = blocks
+      .map((item, index) => ({ item, index }))
+      .sort((left, right) => (
+        (positions.get(left.item.id) ?? ordered.length + left.index)
+        - (positions.get(right.item.id) ?? ordered.length + right.index)
+      ))
+      .map(({ item }) => item);
+  }
+  const replace = control.replace;
+  if (replace !== undefined) {
+    if (!replace || typeof replace !== 'object' || Array.isArray(replace)) {
+      throw new Error('hermes_host_script_agent_overlay_replace_invalid');
+    }
+    for (const [id, content] of Object.entries(replace as Record<string, unknown>)) {
+      if (!baseIds.has(id)) throw new Error(`hermes_host_script_agent_overlay_reference_unknown:${id}`);
+      if (typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > 32_768) {
+        throw new Error(`hermes_host_script_agent_overlay_replace_invalid:${id}`);
+      }
+      blocks = blocks.map((item) => item.id === id ? { ...item, content } : item);
+    }
+  }
+  const prepend = control.prepend === undefined ? [] : control.prepend;
+  const append = control.append === undefined ? [] : control.append;
+  if (!Array.isArray(prepend) || !Array.isArray(append) || prepend.length > 8 || append.length > 8) {
+    throw new Error('hermes_host_script_agent_overlay_additions_invalid');
+  }
+  blocks = [
+    ...prepend.map((item) => boundedProgramBlock(item, 'prepend')),
+    ...blocks,
+    ...append.map((item) => boundedProgramBlock(item, 'append')),
+  ];
+  let prompt = blocks.map((item) => item.content).filter(Boolean).join('\n\n');
+  if (control.maxChars !== undefined) {
+    if (!Number.isInteger(control.maxChars) || Number(control.maxChars) < 256 || Number(control.maxChars) > 65_536) {
+      throw new Error('hermes_host_script_agent_overlay_budget_invalid');
+    }
+    prompt = prompt.slice(0, Number(control.maxChars));
+  }
+  if (!prompt.trim()) throw new Error('hermes_host_script_agent_overlay_empty');
+  return {
+    prompt,
+    receipt: {
+      agentInvoked: true,
+      promptMode: 'sparse-overlay',
+      blockOrder: blocks.map((item) => item.id),
+      excluded: [...excluded],
+      replaced: replace && typeof replace === 'object' ? Object.keys(replace) : [],
+      promptSha256: createHash('sha256').update(prompt, 'utf8').digest('hex'),
+      promptBytes: Buffer.byteLength(prompt, 'utf8'),
+    },
+  };
 }
 
 function mcpToolsetNames(servers: Record<string, unknown>[]): string[] {
@@ -335,6 +517,37 @@ export function buildHermesHostSessionProjection(
   const rootServers: Record<string, unknown>[] = rootOfficial
     ? [rootOfficial, ...rootSaved]
     : rootSaved;
+  const officialServerName = String(rootOfficial?.name || '');
+  const hostScript = args.script && (rootOfficial || args.script.toolHandles.length === 0) ? {
+    version: args.script.version,
+    source: args.script.source,
+    sourceHash: args.script.sourceHash,
+    compiledHash: args.script.compiledHash,
+    mode: args.script.mode,
+    inputSchema: args.script.inputSchema,
+    outputSchema: args.script.outputSchema,
+    toolAliases: Object.fromEntries(args.script.scriptToolIds.map((canonicalId) => [
+      canonicalId,
+      hermesMcpToolName(officialServerName, canonicalId),
+    ])),
+    fallbackToolAliases: Object.fromEntries(
+      (args.grantedTools ?? args.tools)
+        .filter((canonicalId) => canonicalId !== 'web_search')
+        .map((canonicalId) => [
+          canonicalId,
+          hermesMcpToolName(officialServerName, canonicalId),
+        ]),
+    ),
+    toolStates: args.script.toolStates,
+    timeoutSeconds: args.script.timeoutSeconds,
+    maxToolCalls: args.script.maxToolCalls,
+    maxOutputBytes: args.script.maxOutputBytes,
+  } : null;
+  const rawOfficialTools = hostScript && rootOfficial
+    ? args.tools
+        .filter((name) => name !== 'web_search')
+        .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
+    : [];
   return {
     mcpServers: rootServers,
     sessionMeta: {
@@ -348,15 +561,17 @@ export function buildHermesHostSessionProjection(
             ...(args.toolsets || []),
             ...(args.nativeProfileToolsets || []),
             ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),
-            ...mcpToolsetNames(rootServers),
+            ...(!hostScript ? mcpToolsetNames(rootServers) : []),
           ]),
           enabledTools: uniqueStrings([
             ...(args.nativeTools || []),
             // Existing saved web_search selection uses Hermes' native tool.
             ...args.tools.filter((name) => name === 'web_search'),
+            ...rawOfficialTools,
           ]),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
+          ...(hostScript ? { hostScript } : {}),
           ...(executionContextId ? {
             executionContextId,
             toolCallMeta: executionToolCallMeta(executionContextId),
@@ -959,7 +1174,7 @@ export class AcpProcess {
       conversationId: args.conversationId,
       cardId: args.cardId,
       runtimeMode: args.runtime.mode,
-      grantedTools: args.tools.filter((name) => name !== 'web_search'),
+      grantedTools: (args.grantedTools ?? args.tools).filter((name) => name !== 'web_search'),
     });
     let sessionId: string;
     let active: ActiveTurn;
@@ -998,7 +1213,7 @@ export class AcpProcess {
         permissionRequestIds: new Map(),
         rootExecutionContextId: rootContext.contextId,
         configuration: { provider: args.provider, model: args.providerModelId, profile: args.runtime.profile,
-          grantedTools: [...args.tools], loadedSkills: null,
+          grantedTools: [...(args.grantedTools ?? args.tools)], loadedSkills: null,
           subagentModel: args.effectiveSubagentModel || null },
         modelBlocks: [],
         lastPublicKind: '',
@@ -1010,12 +1225,83 @@ export class AcpProcess {
     } finally {
       if (configuringSessionId) this.configuringSessions.delete(configuringSessionId);
     }
+    let promptText = args.message;
+    let directFinalText: string | null = null;
+    let scriptReceipt: Record<string, unknown> | null = null;
+    let scriptFallback: Record<string, unknown> | null = null;
+    let scriptControl: Record<string, unknown> | null = null;
+    if (args.script) {
+      onEvent({
+        kind: 'script_start',
+        version: args.script.version,
+        sourceHash: args.script.sourceHash,
+        compiledHash: args.script.compiledHash,
+      });
+      let controller: any;
+      try {
+        controller = await this.request('_session/execute_host_script', {
+          sessionId,
+          input: args.scriptInput || { mission: args.message },
+        });
+      } catch (error) {
+        this.turns.delete(sessionId);
+        await finishHermesExecutionContext({ contextId: rootContext.contextId, state: 'failed' });
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        onEvent({ kind: 'error', message: normalized.message, code: 'hermes_host_script_failed' });
+        throw normalized;
+      }
+      scriptReceipt = controller?.receipt && typeof controller.receipt === 'object'
+        ? controller.receipt as Record<string, unknown>
+        : null;
+      scriptFallback = controller?.fallback && typeof controller.fallback === 'object'
+        ? controller.fallback as Record<string, unknown>
+        : null;
+      onEvent({
+        kind: 'script_result',
+        ok: controller?.ok === true,
+        output: JSON.stringify(controller?.output ?? null),
+        receipt: scriptReceipt,
+        fallback: scriptFallback,
+      });
+      if (controller?.ok === true) {
+        const output = controller.output;
+        const agent = output?.agent;
+        if (!output || typeof output !== 'object' || !agent || typeof agent !== 'object'
+          || typeof agent.run !== 'boolean') {
+          this.turns.delete(sessionId);
+          await finishHermesExecutionContext({ contextId: rootContext.contextId, state: 'failed' });
+          throw new Error('hermes_host_script_agent_stage_invalid');
+        }
+        if (agent.run) {
+          const applied = applyCardScriptAgentStage(args, agent);
+          promptText = applied.prompt;
+          scriptControl = applied.receipt;
+        } else {
+          const finalValue = Object.hasOwn(output, 'result') ? output.result : output;
+          directFinalText = typeof finalValue === 'string'
+            ? finalValue
+            : JSON.stringify(finalValue);
+          scriptControl = { agentInvoked: false, promptMode: 'none' };
+        }
+      } else if (scriptFallback?.activated !== true) {
+        this.turns.delete(sessionId);
+        await finishHermesExecutionContext({ contextId: rootContext.contextId, state: 'failed' });
+        throw new Error(String(controller?.error || 'hermes_host_script_failed'));
+      }
+    }
     let rootTerminalState: 'completed' | 'failed' | 'cancelled' = 'failed';
-    const done = this.request('session/prompt', {
-      sessionId,
-      messageId: randomUUID(),
-      prompt: [{ type: 'text', text: args.message }],
-    }).then((result) => {
+    const nativeStage = directFinalText === null
+      ? this.request('session/prompt', {
+          sessionId,
+          messageId: randomUUID(),
+          prompt: [{ type: 'text', text: promptText }],
+        })
+      : Promise.resolve({
+          _meta: { hermes: { finalAssistantText: directFinalText } },
+          usage: null,
+          stopReason: 'end_turn',
+        });
+    const done = nativeStage.then((result) => {
       const raw = result?.usage;
       const usage: HermesTurnUsage = {
         providerInputTokens: Number.isFinite(raw?.inputTokens) ? Number(raw.inputTokens) : null,
@@ -1041,6 +1327,9 @@ export class AcpProcess {
           turnId: null,
           authMode: null,
           planType: null,
+          scriptReceipt,
+          scriptFallback,
+          scriptControl,
         },
       };
     }).catch((error) => {

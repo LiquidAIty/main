@@ -92,6 +92,7 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "modelKey": "gpt-5.6-luna",
     "providerModelId": "gpt-5.6-luna",
 }
+_AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
 
 
 class ControlPlaneError(Exception):
@@ -548,7 +549,9 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
+async def card_update_configuration(
+    args: dict[str, Any], *, caller_card_id: str = ""
+) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "cardId")
     updates = args.get("updates")
     if not isinstance(updates, dict) or not updates:
@@ -586,8 +589,13 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
     if "script" in updates:
         from app.python_models.card_script import saved_script
         from app.python_models.idd import IddValidationError
+        if not isinstance(updates["script"], dict):
+            raise ControlPlaneError("card_script_configuration_invalid")
         try:
-            updates = {**updates, "script": saved_script(updates["script"])}
+            updates = {**updates, "script": saved_script({
+                **updates["script"],
+                "author": {"kind": "agent-builder", "id": caller_card_id},
+            })}
         except IddValidationError as error:
             raise ControlPlaneError(str(error)) from error
     if (
@@ -617,6 +625,24 @@ async def card_update_configuration(args: dict[str, Any]) -> dict[str, Any]:
 
     def _apply() -> dict[str, Any]:
         deck, revision = _load_deck(project_id, deck_id)
+        if "script" in updates:
+            try:
+                caller = _find_card(deck, caller_card_id)
+            except ControlPlaneError as error:
+                raise ControlPlaneError(
+                    "card_script_update_requires_agent_builder"
+                ) from error
+            caller_runtime = caller.get("runtime") or {}
+            if (
+                caller_runtime.get("kind") != "hermes"
+                or str(caller_runtime.get("profile") or "").strip()
+                != _AGENT_BUILDER_PROFILE
+            ):
+                raise ControlPlaneError(
+                    "card_script_update_requires_agent_builder"
+                )
+            if card_id == caller_card_id:
+                raise ControlPlaneError("card_script_self_mutation_forbidden")
         card = _find_card(deck, card_id)
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")

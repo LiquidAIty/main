@@ -25,6 +25,7 @@
     "d3-force": "3.0.0",
     "force-graph": "1.51.4",
     "graphology": "0.26.0",
+    "monaco-editor": "0.52.2",
     "postprocessing": "6.39.0",
     "prop-types": "15.8.1",
     "radix-ui": "1.4.3",

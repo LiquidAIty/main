@@ -1,0 +1,347 @@
+.card-script-ide {
+  --script-bg: #0d1112;
+  --script-panel: #12191b;
+  --script-border: #2c3e41;
+  --script-border-soft: #213033;
+  --script-text: #dce5e3;
+  --script-muted: #829699;
+  --script-orange: #ff9d45;
+  --script-turquoise: #65d9d1;
+  --script-error: #ff817b;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.card-script-ide__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.card-script-ide__identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.card-script-ide__identity strong {
+  color: var(--script-text);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.card-script-ide__identity span,
+.card-script-ide__activation,
+.card-script-ide__notice {
+  color: var(--script-muted);
+  font-size: 10.5px;
+}
+
+.card-script-ide__activation {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.card-script-ide__activation input {
+  accent-color: var(--script-turquoise);
+}
+
+.card-script-ide__notice {
+  color: #f3be78;
+}
+
+.card-script-ide__frame {
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid var(--script-border);
+  border-radius: 7px;
+  background: var(--script-bg);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 18%);
+}
+
+.card-script-ide__tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 30px;
+  border-bottom: 1px solid var(--script-border-soft);
+  background: #101718;
+}
+
+.card-script-ide__tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 11px;
+  border: 0;
+  border-right: 1px solid var(--script-border-soft);
+  border-radius: 0;
+  background: transparent;
+  color: #819497;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 30px;
+}
+
+.card-script-ide__tabs > button:hover:not(:disabled) {
+  background: #151e20;
+  color: var(--script-text);
+}
+
+.card-script-ide__tabs > button.is-active {
+  box-shadow: inset 0 2px 0 var(--script-orange);
+  background: var(--script-bg);
+  color: var(--script-text);
+}
+
+.card-script-ide__tabs > button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.card-script-ide__file-dot,
+.card-script-ide__dirty-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.card-script-ide__file-dot {
+  background: var(--script-turquoise);
+  box-shadow: 0 0 8px rgb(101 217 209 / 35%);
+}
+
+.card-script-ide__dirty-dot {
+  background: var(--script-orange);
+}
+
+.card-script-ide__readonly {
+  color: #607477;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.card-script-ide__grant-key {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+  padding: 0 10px;
+  color: var(--script-muted);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.card-script-ide__grant-key span::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  border-radius: 50%;
+  content: '';
+  vertical-align: 1px;
+}
+
+.card-script-ide__grant-key .is-selected::before {
+  background: var(--script-turquoise);
+}
+
+.card-script-ide__grant-key .is-ungranted::before {
+  border: 1px solid #69777a;
+  background: transparent;
+}
+
+.card-script-ide__commands {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 6px;
+  border-bottom: 1px solid #192628;
+  background: #0f1516;
+}
+
+.card-script-ide__commands button {
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #6f8588;
+  font-size: 9.5px;
+}
+
+.card-script-ide__commands button:hover {
+  background: #1b282a;
+  color: #c8d6d4;
+}
+
+.card-script-ide__commands button:disabled {
+  cursor: wait;
+  opacity: 0.4;
+}
+
+.card-script-ide__editor-shell {
+  position: relative;
+  min-width: 0;
+  background: var(--script-bg);
+}
+
+.card-script-ide__monaco {
+  width: 100%;
+  height: clamp(360px, 52vh, 600px);
+  min-height: 320px;
+}
+
+.card-script-ide__editor-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--script-bg);
+  color: var(--script-muted);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+}
+
+.card-script-ide__status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 23px;
+  padding: 0 8px;
+  border-top: 1px solid var(--script-border-soft);
+  background: #11191a;
+  color: #768a8d;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 9.5px;
+  line-height: 23px;
+}
+
+.card-script-ide__status > div {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.card-script-ide__status span,
+.card-script-ide__status button {
+  overflow: hidden;
+  max-width: 200px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-script-ide__status button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.card-script-ide__status button:hover,
+.card-script-ide__status .is-active {
+  color: var(--script-turquoise);
+}
+
+.card-script-ide__status .has-diagnostics {
+  color: var(--script-error);
+}
+
+.card-script-ide__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--script-muted);
+  font-size: 10.5px;
+}
+
+.card-script-ide__actions button {
+  padding: 5px 9px;
+  border: 1px solid #3b5154;
+  border-radius: 4px;
+  background: #172123;
+  color: #cbd8d6;
+  font-size: 10.5px;
+}
+
+.card-script-ide__actions button:hover:not(:disabled) {
+  border-color: #587377;
+  background: #1b292b;
+}
+
+.card-script-ide__actions button:first-child {
+  border-color: #a96632;
+  color: #ffd0a1;
+}
+
+.card-script-ide__actions .is-error,
+.card-script-ide__diagnostics {
+  color: var(--script-error);
+}
+
+.card-script-ide__diagnostics {
+  max-height: 72px;
+  overflow: auto;
+  padding: 7px 9px;
+  border-left: 2px solid #ba5a57;
+  background: #261718;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10px;
+}
+
+.card-script-ide__receipt summary {
+  color: var(--script-muted);
+  cursor: pointer;
+  font-size: 10.5px;
+}
+
+.card-script-ide__receipt pre {
+  overflow: auto;
+  max-height: 280px;
+  color: #b8c8c6;
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.monaco-editor .card-script-header-tool-selected {
+  box-shadow: inset 2px 0 0 rgb(101 217 209 / 65%);
+  background: rgb(45 103 100 / 10%);
+}
+
+.monaco-editor .card-script-header-tool-ungranted {
+  box-shadow: inset 2px 0 0 rgb(99 117 119 / 25%);
+  opacity: 0.5;
+}
+
+@media (max-width: 760px) {
+  .card-script-ide__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .card-script-ide__grant-key {
+    display: none;
+  }
+
+  .card-script-ide__tabs > button {
+    padding-inline: 8px;
+  }
+
+  .card-script-ide__status > div:first-child span:nth-child(n + 3) {
+    display: none;
+  }
+}

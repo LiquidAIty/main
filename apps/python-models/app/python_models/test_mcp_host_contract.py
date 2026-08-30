@@ -554,7 +554,8 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
         "callerCardId": "card-helper",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "kanban",
-        "grantedTools": ["canvas.inspect"],
+        "grantedTools": ["canvas.inspect", "run_mag_one"],
+        "presentedTools": ["canvas.inspect"],
     }
     current = {"token": AccessToken(
         token="internal",
@@ -1689,7 +1690,8 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
 
     calls = 0
 
-    catalog_size = 5
+    published_names = sorted(mcp_host.external_mcp_tool_ids())[:5]
+    catalog_size = len(published_names)
 
     async def complete_catalog():
         nonlocal calls
@@ -1697,11 +1699,11 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
         await asyncio.sleep(0)
         return [
             Tool(
-                name=f"ready.tool_{index}",
+                name=name,
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for index in range(catalog_size)
+            for name in published_names
         ]
 
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", complete_catalog)

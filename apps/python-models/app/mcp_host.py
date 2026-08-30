@@ -3479,7 +3479,9 @@ async def list_tools() -> list[Tool]:
             return [tool for tool in tools if tool.name in readable]
         if principal.get("kind") == "system-root":
             return [tool for tool in tools if tool.name == "card.run_assistant_agent"]
-        grants = principal.get("grantedTools")
+        grants = principal.get("presentedTools")
+        if not isinstance(grants, list):
+            grants = principal.get("grantedTools")
         allowed = {
             str(value).strip() for value in grants or [] if str(value).strip()
         } if isinstance(grants, list) else set()
@@ -3980,7 +3982,13 @@ async def _dispatch_tool(
         from app import control_plane
 
         try:
-            result = await getattr(control_plane, handler_name)(args)
+            result = await (
+                control_plane.card_update_configuration(
+                    args, caller_card_id=caller_card_id
+                )
+                if name == "card.update_configuration"
+                else getattr(control_plane, handler_name)(args)
+            )
             return [TextContent(type="text", text=json.dumps(result))]
         except control_plane.ControlPlaneError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]

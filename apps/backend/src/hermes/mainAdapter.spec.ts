@@ -47,6 +47,7 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
 let heldPromptId;
 let heldConfigureId;
+let controllerPrompt;
 rl.on('line', (line) => {
   const message = JSON.parse(line);
   const method = message.method;
@@ -62,6 +63,20 @@ rl.on('line', (line) => {
   if (method === '_session/configure_host') {
     ${holdConfiguration ? 'heldConfigureId = message.id; return;' : ''}
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
+  }
+  if (method === '_session/execute_host_script') {
+    const mission = message.params?.input?.mission || '';
+    const overlay = mission === 'overlay mission'
+      ? { order: ['run.mission', 'graph.context'], exclude: ['card.output_requirements'], replace: { 'graph.context': 'replacement graph' } }
+      : undefined;
+    controllerPrompt = overlay
+      ? ['overlay mission', 'replacement graph'].join(String.fromCharCode(10, 10))
+      : mission;
+    return send({ jsonrpc: '2.0', id: message.id, result: {
+      ok: true,
+      output: { agent: { run: true, ...(overlay ? { overlay } : {}) }, result: { prepared: true } },
+      receipt: { schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'success', toolCalls: [] },
+    } });
   }
   if (method === '_session/delete_history') {
     return send({ jsonrpc: '2.0', id: message.id, result: { deleted: true } });
@@ -82,6 +97,9 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
+    if (controllerPrompt && message.params?.prompt?.[0]?.text !== controllerPrompt) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'fixture_controller_prompt_not_used' } });
+    }
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'deterministic local status' } } } });
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' }, _meta: { hermes: { messageSource: 'model' } } } } });
     ${holdTerminalTurn ? `
@@ -143,6 +161,111 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
+  it('enters the immutable Script before the native agent stage and preserves its default prompt on omission', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-controller-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      hermesHome: root,
+    });
+    const events: Array<{ kind: string; [key: string]: unknown }> = [];
+    try {
+      const handle = await owner.startTurn({
+        ...providerFreeTurnArgs(0),
+        tools: [],
+        grantedTools: [],
+        script: {
+          version: 8,
+          source: 'exact source bytes\n',
+          sourceHash: 'a'.repeat(64),
+          compiledHash: 'b'.repeat(64),
+          mode: 'outer_controller',
+          inputSchema: {
+            type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'],
+          },
+          outputSchema: {
+            type: 'object',
+            properties: {
+              agent: {
+                type: 'object', properties: { run: { type: 'boolean' }, prompt: { type: 'string' } },
+                required: ['run'],
+              },
+            },
+            required: ['agent'],
+          },
+          toolHandles: [],
+          toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
+          timeoutSeconds: 12,
+          maxToolCalls: 3,
+          maxOutputBytes: 4096,
+        },
+      }, (event) => events.push(event));
+      const result = await handle.done;
+      expect(events.map((event) => event.kind)).toEqual([
+        'script_start', 'script_result', 'text', 'done',
+      ]);
+      expect(result.finalText).toBe('provider-free terminal result');
+      expect(result.transport.scriptReceipt).toMatchObject({
+        schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'success',
+      });
+      expect(result.transport.scriptControl).toMatchObject({
+        agentInvoked: true, promptMode: 'preserved-default',
+      });
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
+  it('applies a bounded sparse prompt overlay while preserving the stable system prompt', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-overlay-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
+      hermesHome: root,
+    });
+    try {
+      const args = providerFreeTurnArgs(0);
+      const handle = await owner.startTurn({
+        ...args,
+        message: 'ordinary default prompt',
+        scriptInput: {
+          mission: 'overlay mission',
+          card: {
+            blocks: [
+              { id: 'graph.context', content: 'original graph' },
+              { id: 'card.output_requirements', content: 'output requirements' },
+              { id: 'run.mission', content: 'overlay mission' },
+            ],
+          },
+        },
+        script: {
+          version: 9,
+          source: 'exact overlay source\n',
+          sourceHash: 'c'.repeat(64),
+          compiledHash: 'd'.repeat(64),
+          mode: 'outer_controller',
+          inputSchema: { type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'] },
+          outputSchema: { type: 'object', properties: { agent: { type: 'object' } }, required: ['agent'] },
+          toolHandles: [], toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
+          timeoutSeconds: 12, maxToolCalls: 3, maxOutputBytes: 4096,
+        },
+      }, () => undefined);
+      const result = await handle.done;
+      expect(result.transport.scriptControl).toMatchObject({
+        agentInvoked: true,
+        promptMode: 'sparse-overlay',
+        blockOrder: ['run.mission', 'graph.context'],
+        excluded: ['card.output_requirements'],
+        replaced: ['graph.context'],
+      });
+      expect(args.prompt).toBe('Saved Main prompt');
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
   it('excludes transcript deletion throughout asynchronous native session configuration', async () => {
     const root = path.join(tmpdir(), `liquidaity-acp-configure-history-${randomUUID()}`);
     mkdirSync(root, { recursive: true });
@@ -560,6 +683,7 @@ describe('Hermes ACP transport identity', () => {
       cardId: 'card_main_chat',
       runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       tools: ['canvas.inspect', 'card.run_assistant_agent', 'web_search'],
+      grantedTools: ['canvas.inspect', 'card.run_assistant_agent', 'cbm.search_graph', 'web_search'],
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
       LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
@@ -671,6 +795,7 @@ describe('Hermes ACP transport identity', () => {
       principal: expect.objectContaining({
         callerCardId: 'card_main_chat',
         grantedTools: ['canvas.inspect'],
+        presentedTools: ['canvas.inspect'],
         requiresExecutionContext: true,
       }),
     }));
@@ -708,6 +833,90 @@ describe('Hermes ACP transport identity', () => {
     ]);
     expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.executionContextId).toBe('coder-context');
+  });
+
+  it('registers Script component tools for host execution without presenting a Script tool', () => {
+    const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
+      tools: [],
+      grantedTools: ['think.context', 'know.context'],
+      script: {
+        version: 4,
+        source: 'from hermes_tools import output\noutput.emit({})\n',
+        sourceHash: 'a'.repeat(64),
+        compiledHash: 'b'.repeat(64),
+        mode: 'outer_controller',
+        inputSchema: {
+          type: 'object', properties: { focus: { type: 'string' } }, required: ['focus'],
+        },
+        outputSchema: { type: 'object', properties: {} },
+        toolHandles: ['think.context'],
+        toolStates: { 'think.context': 1, 'know.context': 0 },
+        offToolIds: ['know.context'],
+        scriptToolIds: ['think.context'],
+        agentToolIds: [],
+        timeoutSeconds: 12,
+        maxToolCalls: 3,
+        maxOutputBytes: 4096,
+      },
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    }, 'script-context');
+
+    expect(projection.mcpServers).toHaveLength(1);
+    const serverName = String((projection.mcpServers[0] as any).name);
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.enabledToolsets).toEqual([]);
+    expect(config.enabledTools).toEqual([]);
+    expect(config.hostScript.version).toBe(4);
+    expect(config.hostScript.toolAliases).toEqual({
+      'think.context': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__think_context`,
+    });
+    const bearer = String((projection.mcpServers[0] as any).headers[0].value)
+      .replace(/^Bearer /, '');
+    const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.principal.grantedTools).toEqual(['know.context', 'think.context']);
+    expect(claims.principal.presentedTools).toEqual(['know.context', 'think.context']);
+  });
+
+  it('keeps selected tools not consumed by the Script available as exact MCP schemas', () => {
+    const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
+      tools: ['know.context'],
+      grantedTools: ['think.context', 'know.context'],
+      script: {
+        version: 2,
+        source: 'from hermes_tools import output\noutput.emit({})\n',
+        sourceHash: 'a'.repeat(64),
+        compiledHash: 'b'.repeat(64),
+        mode: 'outer_controller',
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: { type: 'object', properties: {} },
+        toolHandles: ['think.context'],
+        toolStates: { 'think.context': 1, 'know.context': 2 },
+        offToolIds: [],
+        scriptToolIds: ['think.context'],
+        agentToolIds: ['know.context'],
+        timeoutSeconds: 12,
+        maxToolCalls: 3,
+        maxOutputBytes: 4096,
+      },
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    }, 'hybrid-script-context');
+
+    const serverName = String((projection.mcpServers[0] as any).name);
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.enabledToolsets).toEqual([]);
+    expect(config.enabledTools).toEqual([
+      `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__know_context`,
+    ]);
+    const bearer = String((projection.mcpServers[0] as any).headers[0].value)
+      .replace(/^Bearer /, '');
+    const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.principal.presentedTools).toEqual(['know.context', 'think.context']);
   });
 
   it('keeps an empty native and Card selection empty', () => {

@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, materialize_runtime_options, template_objects
 from app.python_models.tool_registry import materialize_tool_catalog, required_tool_caller_runtime
-from app.python_models.card_script import saved_script, assert_script_execution_available
+from app.python_models.card_script import compile_card_script, generate_card_script_header, saved_script, script_presentation
 from app.python_models.orchestration_contracts import HermesRuntime
 
 
@@ -22,7 +22,16 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
 def test_markdown_and_sql_are_data_not_a_second_island_language() -> None:
     from app.python_models import idd
     assert not hasattr(idd, "validate_input_islands")
-    source = 'query = "SELECT title WHERE id = :id"\n# ordinary Markdown and SQL stay inert'
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+query = "SELECT title WHERE id = :id"
+# ordinary Markdown and SQL stay inert
+from hermes_tools import output
+output.emit({"agent": {"run": False}, "query": query})
+'''
     saved = saved_script({"source": source})
     assert saved["source"] == source
     assert saved["lastValidation"]["executionTested"] is False
@@ -44,16 +53,158 @@ def test_runtime_errors_remain_at_the_executable_contract() -> None:
     assert secret not in str(error.value)
 
 
-def test_script_storage_is_inert_and_execution_fails_closed() -> None:
+def test_invalid_script_is_saved_but_degrades_to_exact_selected_mcp_tools() -> None:
     script = saved_script({"source": "not valid Python is inert", "version": 2})
     assert script["source"] == "not valid Python is inert"
     assert script["version"] == 2
-    assert script["lastValidation"] == {"status": "unvalidated", "executionTested": False}
+    assert script["lastValidation"]["status"] == "invalid"
+    assert script["lastValidation"]["errors"][0].startswith("card_script_syntax_invalid")
     assert script["nativeSupport"]["available"] is False
-    with pytest.raises(IddValidationError, match="card_script_isolated_native_execution_unavailable"):
-        assert_script_execution_available({"enabled": True, "source": "return InvocationPreparation()"})
-    assert_script_execution_available(None)
-    assert_script_execution_available({"enabled": False, "source": "not valid Python is inert"})
+    presentation = script_presentation(
+        {"enabled": True, "source": "return InvocationPreparation()"},
+        selected_tools=["calculator"],
+    )
+    assert presentation["mode"] == "selected-mcp"
+    assert presentation["presentedTools"] == ["calculator"]
+    assert presentation["fallbackReason"] == "card_script_validation_failed"
+
+
+def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"context": {"type": "object"}, "agent": {"type": "object", "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}}, "required": ["run"]}}, "required": ["context", "agent"]},
+    "max_tool_calls": 3,
+}
+from hermes_tools import SCRIPT, input, output, tools
+tools.think.context = SCRIPT
+context = tools.call("think.context", focus=input.mission)
+output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}})
+'''
+    compiled = compile_card_script(source, selected_tools=["think.context"])
+    assert compiled["mode"] == "outer_controller"
+    assert compiled["toolHandles"] == ["think.context"]
+    assert compiled["toolStates"] == {"think.context": 1}
+    assert compiled["scriptToolIds"] == ["think.context"]
+    assert compiled["agentToolIds"] == []
+    assert compiled["maxToolCalls"] == 3
+    presentation = script_presentation(
+        {"enabled": True, "source": source},
+        selected_tools=["think.context"],
+    )
+    assert presentation["mode"] == "script"
+    assert presentation["presentedTools"] == []
+    assert presentation["script"]["nativeSupport"]["active"] is True
+    with pytest.raises(ValueError, match="card_script_tool_not_selected:think.context"):
+        compile_card_script(source, selected_tools=["know.context"])
+
+
+def test_valid_script_wraps_only_literal_handles_and_leaves_other_selected_mcp_tools_visible() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.think.context = SCRIPT
+tools.call("think.context")
+output.emit({"agent": {"run": False}})
+'''
+    presentation = script_presentation(
+        {"enabled": True, "source": source},
+        selected_tools=["think.context", "know.context"],
+    )
+    assert presentation["mode"] == "script"
+    assert presentation["presentedTools"] == ["know.context"]
+
+
+def test_selected_tools_compile_off_script_agent_and_both_without_mutating_grants() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+from hermes_tools import AGENT, BOTH, OFF, SCRIPT, output, tools
+tools.cbm.delete_project = 0
+tools.cbm.search_graph = SCRIPT
+tools.graphiti.get_status = AGENT
+tools.constellation.context = BOTH
+tools.call("cbm.search_graph")
+tools.call("constellation.context")
+output.emit({"agent": {"run": True}})
+'''
+    selected = [
+        "cbm.delete_project", "cbm.search_graph",
+        "graphiti.get_status", "constellation.context",
+    ]
+    compiled = compile_card_script(source, selected_tools=selected)
+    assert compiled["toolStates"] == {
+        "cbm.delete_project": 0,
+        "cbm.search_graph": 1,
+        "graphiti.get_status": 2,
+        "constellation.context": 3,
+    }
+    assert compiled["offToolIds"] == ["cbm.delete_project"]
+    assert compiled["scriptToolIds"] == ["cbm.search_graph", "constellation.context"]
+    assert compiled["agentToolIds"] == ["graphiti.get_status", "constellation.context"]
+    presentation = script_presentation(
+        {"enabled": True, "source": source}, selected_tools=selected,
+    )
+    assert presentation["presentedTools"] == [
+        "graphiti.get_status", "constellation.context",
+    ]
+    assert selected == [
+        "cbm.delete_project", "cbm.search_graph",
+        "graphiti.get_status", "constellation.context",
+    ]
+
+
+def test_ungranted_tool_cannot_be_enabled_or_called() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.cbm.delete_project = SCRIPT
+output.emit({"agent": {"run": False}})
+'''
+    with pytest.raises(ValueError, match="card_script_tool_not_selected:cbm.delete_project"):
+        compile_card_script(source, selected_tools=["cbm.search_graph"])
+
+
+def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None:
+    catalog = [
+        {
+            "canonicalId": "cbm.search_graph", "access": "read",
+            "availability": "available", "contracts": [{"inputSchema": {"type": "object"}}],
+        },
+        {
+            "canonicalId": "cbm.delete_project", "access": "write",
+            "availability": "available", "contracts": [{"inputSchema": {"type": "object"}}],
+        },
+    ]
+    header = generate_card_script_header(
+        catalog_tools=catalog,
+        selected_tools=["cbm.search_graph"],
+        card_id="card_main_chat",
+    )
+    assert header["schemaVersion"] == "liquidaity.card-script.header.v1"
+    assert header["hash"] == generate_card_script_header(
+        catalog_tools=catalog,
+        selected_tools=["cbm.search_graph"],
+        card_id="card_main_chat",
+    )["hash"]
+    assert "tools: Final[ToolControls]" in header["source"]
+    assert "search_graph: SelectedToolHandle" in header["source"]
+    assert "delete_project: UngrantedToolHandle" in header["source"]
+    assert "This file is not saved, executed, or sent to a model" in header["source"]
+    changed = generate_card_script_header(
+        catalog_tools=catalog,
+        selected_tools=["cbm.search_graph", "cbm.delete_project"],
+        card_id="card_main_chat",
+    )
+    assert changed["hash"] != header["hash"]
 
 
 def test_card_editor_projects_current_models_and_executable_bounds() -> None:

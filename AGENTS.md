@@ -453,9 +453,16 @@ MCP and model discovery own their current catalogs. IDD is not runtime authority
 a checksum gate or an IDF validator, and no copied dictionary belongs in TypeScript or Python.
 Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
 Main after user approval. Ordinary Runs and Local Coder receive selected values/references, never the
-whole palette. Ordinary
-prompt prose stays Markdown. Script data and its fail-closed guard may be retained, but the Script
-tab/editor is deferred to the second pass; no substitute executor is approved.
+whole palette. Ordinary prompt prose stays Markdown. Every Card has the same visible Python Script tab
+only in the Agent Builder workspace. IDD supplies current tool contracts, while the Card's effective
+Tools-tab grants limit autocomplete and execution. The user or the authenticated Agent Builder profile
+may validate, save and activate the next Script version; a running Card receives one immutable saved
+version/hash and cannot rewrite it. Valid Hermes Scripts execute through Hermes' existing child-process
+Python runner and native tool dispatcher. Literal `tools.call()` handles are replaced by one compact
+Script tool while selected tools not wrapped by the Script remain ordinary MCP tools. Blank/invalid
+Scripts keep the exact selected MCP presentation; runtime failure removes the compact tool and restores
+only its pre-registered wrapped handles for the next model iteration. Never widen to IDD or the complete
+catalog, never add another executor, and never activate Script execution for a non-Hermes Card.
 
 Authority is:
 

@@ -20,6 +20,10 @@ DECK = {
         {"id": "worker", "title": "Worker",
          "runtime": {"kind": "autogen", "mode": "assistant"},
          "prompt": "", "runtimeOptions": None},
+        {"id": "builder-card", "title": "Agent Builder",
+         "runtime": {"kind": "hermes", "mode": "delegate",
+                     "profile": "liquidaity-agent-builder"},
+         "prompt": "Build saved Cards.", "runtimeOptions": {"tools": []}},
     ],
     "edges": [{"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}],
 }
@@ -372,6 +376,37 @@ class TestCardCreate:
 
 
 class TestCardUpdateConfiguration:
+    def test_script_update_requires_agent_builder_and_cannot_self_modify(self, fake_backend):
+        script = {
+            "enabled": False,
+            "source": "",
+            "version": 1,
+        }
+        with pytest.raises(
+            cp.ControlPlaneError, match="card_script_update_requires_agent_builder"
+        ):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"script": script},
+            }, caller_card_id="card_main_chat"))
+        with pytest.raises(
+            cp.ControlPlaneError, match="card_script_self_mutation_forbidden"
+        ):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "builder-card",
+                "updates": {"script": script},
+            }, caller_card_id="builder-card"))
+
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {"script": script},
+        }, caller_card_id="builder-card"))
+        assert result["ok"] is True
+        saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
+        assert saved["runtimeOptions"]["script"]["author"] == {
+            "kind": "agent-builder", "id": "builder-card",
+        }
+
     def test_arbitrary_runtime_and_authority_fields_rejected(self, fake_backend):
         for field in ("runtimeCode", "shell", "hiddenTools", "runAuthority", "magenticWorkers"):
             with pytest.raises(cp.ControlPlaneError, match="card_update_fields_rejected"):

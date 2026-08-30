@@ -10,6 +10,7 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
+import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import {
   applyNativeHermesOperation,
   loadNativeHermesCard,
@@ -25,12 +26,31 @@ import AdaptiveCardTerminal, {
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
+type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
   accessMode: 'chatgpt-account',
   modelKey: 'gpt-5.6-luna',
   providerModelId: 'gpt-5.6-luna',
 };
+
+function blankCardScript(): SavedCardScript {
+  return {
+    enabled: false,
+    source: '',
+    version: 1,
+    author: {},
+    sourceHash: '',
+    compiledHash: '',
+    paletteFingerprint: '',
+    compiled: {},
+    lastValidation: {
+      status: 'blank', executionTested: false, errors: [], toolHandles: [],
+    },
+    nativeSupport: { available: false, active: false, executor: null },
+    rollback: {},
+  };
+}
 
 function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] {
   return provider === 'openrouter' ? 'openrouter-api'
@@ -326,6 +346,7 @@ export type StandaloneCardTestResult = {
     cardIdentity: { cardId: string; title?: string };
   } | null;
   receipt?: Record<string, unknown> | null;
+  nativeEvents?: Array<Record<string, unknown>>;
 };
 
 export type RetainedRunInputs = {
@@ -560,6 +581,9 @@ export function AgentManager({
   >('');
   const [modelKey, setModelKey] = useState('');
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
+  const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
+  const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
+  const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
   const [hermesProfile, setHermesProfile] = useState('');
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
@@ -755,6 +779,25 @@ export function AgentManager({
         ? savedSubagentModel
         : DEFAULT_SUBAGENT_MODEL,
     );
+    const savedScript = localConfig.runtime_options?.script
+      ? structuredClone(localConfig.runtime_options.script)
+      : blankCardScript();
+    const cachedScript = scriptDraftCacheRef.current.get(cardId);
+    const preserveUnsavedScript = Boolean(
+      cachedScript
+      && dirtyScriptCardsRef.current.has(cardId)
+      && (
+        cachedScript.source !== savedScript.source
+        || cachedScript.enabled !== savedScript.enabled
+      ),
+    );
+    if (preserveUnsavedScript && cachedScript) {
+      setScriptDraft(structuredClone(cachedScript));
+    } else {
+      scriptDraftCacheRef.current.set(cardId, structuredClone(savedScript));
+      dirtyScriptCardsRef.current.delete(cardId);
+      setScriptDraft(savedScript);
+    }
     setHermesProfile(localConfig.runtime.kind === 'hermes' ? localConfig.runtime.profile : '');
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
@@ -874,6 +917,29 @@ export function AgentManager({
     draftDirtyRef.current = true;
   };
 
+  const updateScriptDraft = (next: SavedCardScript) => {
+    const saved = localConfig?.runtime_options?.script || null;
+    const changed = !saved
+      ? Boolean(next.source.trim() || next.enabled)
+      : next.source !== saved.source || next.enabled !== saved.enabled;
+    const nextDraft = {
+      ...next,
+      version: changed ? Number(saved?.version || 0) + 1 : Number(saved?.version || next.version || 1),
+      author: changed ? { kind: 'user', id: 'card-editor' } : (next.author || {}),
+      rollback: changed && saved ? {
+        version: saved.version,
+        sourceHash: saved.sourceHash || '',
+        compiledHash: saved.compiledHash || '',
+        enabled: saved.enabled,
+      } : (next.rollback || {}),
+    };
+    scriptDraftCacheRef.current.set(cardId, structuredClone(nextDraft));
+    if (changed) dirtyScriptCardsRef.current.add(cardId);
+    else dirtyScriptCardsRef.current.delete(cardId);
+    setScriptDraft(nextDraft);
+    markDraftDirty();
+  };
+
   const buildCurrentLocalPayload = useCallback((): AgentManagerLocalConfig => {
     if (!localConfig) throw new Error('card_config_missing');
     const editedConfig = buildActiveAgentManagerLocalConfig({
@@ -899,6 +965,11 @@ export function AgentManager({
         toolCatalogPolicy: runtimeKind === 'hermes' ? 'all_healthy' : 'selected',
         disabledTools: runtimeKind === 'hermes' ? parseListText(disabledToolsText) : [],
         subagentModel: runtimeKind === 'hermes' ? subagentModel : null,
+        ...(
+          localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
+            ? { script: scriptDraft }
+            : {}
+        ),
       },
       role: promptParts.role,
     };
@@ -912,6 +983,7 @@ export function AgentManager({
     accessMode,
     modelKey,
     subagentModel,
+    scriptDraft,
     reasoningEffort,
     temperature,
     maxTokens,
@@ -1482,6 +1554,19 @@ export function AgentManager({
           </div>
 
         </div>
+      );
+    }
+    if (activeTab === 'Script') {
+      return (
+        <CardScriptEditor
+          cardId={cardId}
+          runtimeKind={runtimeKind}
+          script={scriptDraft}
+          toolCatalogPolicy={runtimeKind === 'hermes' ? 'all_healthy' : 'selected'}
+          selectedTools={savedToolNames}
+          disabledTools={disabledToolNames}
+          onChange={updateScriptDraft}
+        />
       );
     }
 
@@ -2832,6 +2917,16 @@ export function AgentManager({
               </div>
             ) : null}
           </div>
+        ) : null}
+        {activeTab === 'Terminal' && runResult?.nativeEvents?.length ? (
+          <details data-testid="card-script-native-receipts" style={{ color: '#B8C8CD', fontSize: 11 }}>
+            <summary style={{ cursor: 'pointer' }}>
+              Native tool and Script receipts ({runResult.nativeEvents.length})
+            </summary>
+            <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
+              {JSON.stringify(runResult.nativeEvents, null, 2)}
+            </pre>
+          </details>
         ) : null}
       </div>
     </div>

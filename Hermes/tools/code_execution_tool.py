@@ -428,8 +428,14 @@ def _sandbox_failure_hint(stderr_text: str, enabled_tools=None) -> Optional[str]
     return None
 
 
-def generate_hermes_tools_module(enabled_tools: List[str],
-                                 transport: str = "uds") -> str:
+def generate_hermes_tools_module(
+    enabled_tools: List[str],
+    transport: str = "uds",
+    *,
+    tool_aliases: Optional[Dict[str, str]] = None,
+    script_input: Optional[Dict[str, Any]] = None,
+    tool_states: Optional[Dict[str, int]] = None,
+) -> str:
     """
     Build the source code for the hermes_tools.py stub module.
 
@@ -460,7 +466,84 @@ def generate_hermes_tools_module(enabled_tools: List[str],
     else:
         header = _UDS_TRANSPORT_HEADER
 
-    return header + "\n".join(stub_functions)
+    source = header + "\n".join(stub_functions)
+    if tool_aliases is not None:
+        # LIQUIDAITY VENDOR PATCH: trusted ACP hosts may expose one immutable
+        # saved Script with canonical aliases. The child receives data, never
+        # credentials or registry names, and every call still crosses the
+        # existing RPC allow-list/approval/receipt path.
+        source += _host_script_helpers(script_input or {}, tool_states or {})
+    return source
+
+
+def _host_script_helpers(
+    script_input: Dict[str, Any], tool_states: Dict[str, int]
+) -> str:
+    encoded_input = json.dumps(
+        script_input, ensure_ascii=False, separators=(",", ":")
+    )
+    encoded_tool_states = json.dumps(
+        tool_states, ensure_ascii=False, separators=(",", ":")
+    )
+    return f'''\n
+class _AttrMap(dict):
+    def __getattr__(self, name):
+        try:
+            value = self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+        return _wrap(value)
+
+def _wrap(value):
+    if isinstance(value, dict):
+        return _AttrMap(value)
+    if isinstance(value, list):
+        return [_wrap(item) for item in value]
+    return value
+
+OFF = 0
+SCRIPT = 1
+AGENT = 2
+BOTH = 3
+_tool_states = json.loads({encoded_tool_states!r})
+
+class _ToolNamespace:
+    def __init__(self, path):
+        object.__setattr__(self, "_path", path)
+
+    def __getattr__(self, name):
+        path = object.__getattribute__(self, "_path")
+        return _ToolNamespace(path + [name])
+
+    def __setattr__(self, name, value):
+        path = object.__getattribute__(self, "_path") + [name]
+        canonical_id = ".".join(path)
+        if canonical_id not in _tool_states:
+            raise ValueError("tool is not selected on this Card: " + canonical_id)
+        if not isinstance(value, int) or isinstance(value, bool) or value != _tool_states[canonical_id]:
+            raise ValueError("tool mode differs from compiled Card Script: " + canonical_id)
+
+class _Tools:
+    def __getattr__(self, name):
+        return _ToolNamespace([name])
+
+    @staticmethod
+    def call(canonical_id, **arguments):
+        if not isinstance(canonical_id, str) or not canonical_id.strip():
+            raise ValueError("tool canonical id required")
+        return _call(canonical_id, arguments)
+
+class _Output:
+    @staticmethod
+    def emit(value):
+        print("HERMES_CARD_SCRIPT_OUTPUT:" + json.dumps(
+            value, ensure_ascii=False, separators=(",", ":")
+        ))
+
+input = _wrap(json.loads({encoded_input!r}))
+tools = _Tools()
+output = _Output()
+'''
 
 
 # ---- Shared helpers section (embedded in both transport headers) ----------
@@ -658,6 +741,7 @@ def _rpc_server_loop(
     allowed_tools: frozenset,
     stop_event: threading.Event,
     rpc_token: str,
+    tool_aliases: Optional[Dict[str, str]] = None,
 ):
     """
     Accept one client connection and dispatch tool-call requests until
@@ -715,10 +799,17 @@ def _rpc_server_loop(
 
                 tool_name = request.get("tool", "")
                 tool_args = request.get("args", {})
+                dispatch_name = (
+                    tool_aliases.get(tool_name, "")
+                    if tool_aliases is not None
+                    else tool_name
+                )
 
                 # Enforce the allow-list
-                if tool_name not in allowed_tools:
-                    available = ", ".join(sorted(allowed_tools))
+                if not dispatch_name or dispatch_name not in allowed_tools:
+                    available = ", ".join(sorted(
+                        tool_aliases if tool_aliases is not None else allowed_tools
+                    ))
                     resp = tool_error(
                         f"Tool '{tool_name}' is not available in execute_code. "
                         f"Available: {available}"
@@ -736,7 +827,7 @@ def _rpc_server_loop(
                     continue
 
                 # Strip forbidden terminal parameters
-                if tool_name == "terminal" and isinstance(tool_args, dict):
+                if dispatch_name == "terminal" and isinstance(tool_args, dict):
                     for param in _TERMINAL_BLOCKED_PARAMS:
                         tool_args.pop(param, None)
 
@@ -746,7 +837,7 @@ def _rpc_server_loop(
                 try:
                     with thread_scoped_silence():
                         result = handle_function_call(
-                            tool_name, tool_args, task_id=task_id
+                            dispatch_name, tool_args, task_id=task_id
                         )
                 except Exception as exc:
                     logger.error("Tool call failed in sandbox: %s", exc, exc_info=True)
@@ -759,6 +850,7 @@ def _rpc_server_loop(
                 args_preview = str(tool_args)[:80]
                 tool_call_log.append({
                     "tool": tool_name,
+                    "native_tool": dispatch_name,
                     "args_preview": args_preview,
                     "duration": round(call_duration, 2),
                 })
@@ -1269,6 +1361,7 @@ def execute_code(
     code: str,
     task_id: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
+    host_script: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Run a Python script in a sandboxed child process with RPC access
@@ -1320,6 +1413,10 @@ def execute_code(
     from tools.terminal_tool import _get_env_config, _docker_has_host_access
     _env_config = _get_env_config()
     env_type = _env_config["env_type"]
+    if host_script is not None and env_type != "local":
+        return tool_error(
+            "Trusted host Scripts require Hermes' local child-process backend."
+        )
 
     # execute_code runs arbitrary Python (subprocess/os.system/...) that never
     # passes through terminal()/DANGEROUS_PATTERNS, so guard the whole script
@@ -1362,12 +1459,46 @@ def execute_code(
     _cfg = _load_config()
     timeout = _cfg.get("timeout", DEFAULT_TIMEOUT)
     max_tool_calls = _cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
+    tool_aliases: Optional[Dict[str, str]] = None
+    script_input: Dict[str, Any] = {}
+    if host_script is not None:
+        raw_aliases = host_script.get("toolAliases")
+        raw_input = host_script.get("input")
+        raw_tool_states = host_script.get("toolStates")
+        if (
+            not isinstance(raw_aliases, dict)
+            or not isinstance(raw_input, dict)
+            or not isinstance(raw_tool_states, dict)
+        ):
+            return tool_error("Trusted host Script configuration is invalid.")
+        tool_aliases = {
+            str(alias): str(native)
+            for alias, native in raw_aliases.items()
+            if str(alias).strip() and str(native).strip()
+        }
+        if len(tool_aliases) != len(raw_aliases):
+            return tool_error("Trusted host Script aliases are invalid.")
+        script_input = raw_input
+        tool_states = {
+            str(name): int(mode) for name, mode in raw_tool_states.items()
+            if isinstance(mode, int) and not isinstance(mode, bool) and mode in {0, 1, 2, 3}
+        }
+        if len(tool_states) != len(raw_tool_states):
+            return tool_error("Trusted host Script tool states are invalid.")
+        timeout = int(host_script.get("timeoutSeconds") or 15)
+        max_tool_calls = int(host_script.get("maxToolCalls") or 6)
+        if not 1 <= timeout <= 60 or not 1 <= max_tool_calls <= 32:
+            return tool_error("Trusted host Script budgets are invalid.")
 
     # Determine which tools the sandbox can call
     session_tools = set(enabled_tools) if enabled_tools else set()
-    sandbox_tools = frozenset(SANDBOX_ALLOWED_TOOLS & session_tools)
+    sandbox_tools = (
+        frozenset(tool_aliases.values())
+        if tool_aliases is not None
+        else frozenset(SANDBOX_ALLOWED_TOOLS & session_tools)
+    )
 
-    if not sandbox_tools:
+    if not sandbox_tools and tool_aliases is None:
         sandbox_tools = SANDBOX_ALLOWED_TOOLS
 
     # --- Set up temp directory with hermes_tools.py and script.py ---
@@ -1409,7 +1540,12 @@ def execute_code(
         # Python source files are decoded as UTF-8 by default (PEP 3120).
         # sandbox_tools is already the correct set (intersection with session
         # tools, or SANDBOX_ALLOWED_TOOLS as fallback — see lines above).
-        tools_src = generate_hermes_tools_module(list(sandbox_tools))
+        tools_src = generate_hermes_tools_module(
+            list(sandbox_tools),
+            tool_aliases=tool_aliases,
+            script_input=script_input,
+            tool_states=tool_states if host_script is not None else None,
+        )
         with open(os.path.join(tmpdir, "hermes_tools.py"), "w", encoding="utf-8") as f:
             f.write(tools_src)
 
@@ -1446,6 +1582,7 @@ def execute_code(
             args=(
                 server_sock, task_id, tool_call_log,
                 tool_call_counter, max_tool_calls, sandbox_tools, stop_event, rpc_token,
+                tool_aliases,
             ),
             daemon=True,
         )
@@ -1703,6 +1840,14 @@ def execute_code(
             "output": stdout_text,
             "exit_code": exit_code,
             "tool_calls_made": tool_call_counter[0],
+            "tool_calls": [
+                {
+                    "canonicalId": item.get("tool"),
+                    "nativeTool": item.get("native_tool", item.get("tool")),
+                    "durationSeconds": item.get("duration"),
+                }
+                for item in tool_call_log
+            ],
             "duration_seconds": duration,
         }
         result.update(stdout_metadata)

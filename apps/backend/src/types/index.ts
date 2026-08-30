@@ -27,10 +27,25 @@ export type AgentCardRuntimeOptions = {
     enabled: boolean;
     source: string;
     version: number;
+    author?: Record<string, string>;
     sourceHash?: string;
+    compiledHash?: string;
     paletteFingerprint?: string;
+    compiled?: {
+      schemaVersion?: string;
+      mode?: 'context_preflight' | 'model_callable' | 'handoff';
+      inputSchema?: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
+      toolHandles?: string[];
+      timeoutSeconds?: number;
+      maxToolCalls?: number;
+      maxOutputBytes?: number;
+      outputEmitCalls?: number;
+      compiledHash?: string;
+    };
     lastValidation?: Record<string, unknown>;
     nativeSupport?: Record<string, unknown>;
+    rollback?: Record<string, unknown>;
   } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;

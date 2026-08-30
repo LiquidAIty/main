@@ -1529,6 +1529,57 @@ class HermesACPAgent(acp.Agent):
                 "sessionId": session_id,
             }
 
+        if method == "session/execute_host_script":
+            if not isinstance(params, dict):
+                raise ValueError("hermes_host_script_extension_params_must_be_object")
+            unknown = sorted(set(params) - {"sessionId", "input"})
+            if unknown:
+                raise ValueError(
+                    f"hermes_host_script_extension_unknown_field:{unknown[0]}"
+                )
+            session_id = str(params.get("sessionId") or "").strip()
+            script_input = params.get("input")
+            if not session_id:
+                raise ValueError("hermes_host_script_extension_session_id_required")
+            if not isinstance(script_input, dict):
+                raise ValueError("hermes_host_script_extension_input_must_be_object")
+            state = self.session_manager.get_session(session_id)
+            if state is None:
+                raise ValueError("hermes_host_script_extension_session_not_found")
+            host_config = getattr(state.agent, "_host_session_config", None)
+            if not isinstance(host_config, dict) or not isinstance(
+                host_config.get("hostScript"), dict
+            ):
+                raise ValueError("hermes_host_script_extension_not_configured")
+            with state.runtime_lock:
+                if state.is_running:
+                    raise RuntimeError("hermes_host_script_extension_session_busy")
+                state.is_running = True
+            try:
+                from acp_adapter.host_profiles import host_execution_scope
+                from model_tools import handle_function_call
+
+                with host_execution_scope(state.agent):
+                    raw_result = await asyncio.to_thread(
+                        handle_function_call,
+                        "execute_host_script",
+                        script_input,
+                        task_id=session_id,
+                        session_id=session_id,
+                        enabled_tools=[
+                            "execute_host_script",
+                            *list(getattr(state.agent, "valid_tool_names", set())),
+                        ],
+                        enabled_toolsets=list(getattr(state.agent, "enabled_toolsets", [])),
+                    )
+                result = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+                if not isinstance(result, dict):
+                    raise ValueError("hermes_host_script_extension_result_invalid")
+                return result
+            finally:
+                with state.runtime_lock:
+                    state.is_running = False
+
         if method != "session/configure_host":
             raise RequestError.method_not_found(f"_{method}")
         if not isinstance(params, dict):

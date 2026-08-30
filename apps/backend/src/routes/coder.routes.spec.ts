@@ -243,6 +243,18 @@ const orchestratorMocks = vi.hoisted(() => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
     if (endpoint === '/tools/manifest') return { tools: [] };
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
+    if (endpoint === '/card-script/header') {
+      return {
+        schemaVersion: 'liquidaity.card-script.header.v1',
+        version: 4,
+        hash: 'a'.repeat(64),
+        source: '# generated header',
+        definitions: {},
+        selectedTools: body.selectedTools,
+        catalogToolCount: body.catalogTools?.length || 0,
+        cardId: body.cardId || '',
+      };
+    }
     if (endpoint === '/card-editor/options') {
       return {
         fields: [{ name: 'provider', label: 'Provider', path: 'provider', control: 'select' }],
@@ -754,6 +766,126 @@ describe('coder routes', () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  it('limits the Script IDE palette to the exact selected Card tools', async () => {
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
+      name: 'canvas.inspect',
+      title: 'Inspect canvas',
+      description: 'Read the saved canvas.',
+      sourceId: 'liquidaity',
+      namespace: 'canvas',
+      nativeName: 'canvas.inspect',
+      connectionKind: 'application-mcp',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
+    }, {
+      name: 'card.update_configuration',
+      title: 'Update Card',
+      description: 'Update saved Card configuration.',
+      sourceId: 'liquidaity',
+      namespace: 'card',
+      nativeName: 'card.update_configuration',
+      connectionKind: 'application-mcp',
+      inputSchema: { type: 'object', properties: { cardId: { type: 'string' } } },
+      annotations: { readOnlyHint: false },
+    }]);
+    orchestratorMocks.requestPythonRailsJson
+      .mockResolvedValueOnce({ tools: [] })
+      .mockResolvedValueOnce({
+        references: [{
+          canonicalId: 'canvas.inspect', kind: 'tool', namespace: 'canvas',
+          sourceIds: ['liquidaity'], displayName: 'Inspect canvas',
+          shortDescription: 'Read the saved canvas.', availability: 'available', access: 'read',
+          contracts: [{
+            sourceId: 'liquidaity', nativeName: 'canvas.inspect', connectionKind: 'application-mcp',
+            available: true, description: 'Read the saved canvas.', inputSchema: { type: 'object', properties: {} },
+            annotations: { readOnlyHint: true },
+          }],
+        }, {
+          canonicalId: 'card.update_configuration', kind: 'tool', namespace: 'card',
+          sourceIds: ['liquidaity'], displayName: 'Update Card',
+          shortDescription: 'Update saved Card configuration.', availability: 'available', access: 'write',
+          contracts: [{
+            sourceId: 'liquidaity', nativeName: 'card.update_configuration', connectionKind: 'application-mcp',
+            available: true, description: 'Update saved Card configuration.',
+            inputSchema: { type: 'object', properties: { cardId: { type: 'string' } } },
+            annotations: { readOnlyHint: false },
+          }],
+        }],
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/input-data-dictionary/script-tools?policy=selected&selectedIds=canvas.inspect`);
+      expect(response.status).toBe(200);
+      const payload = await response.json() as any;
+      expect(payload.ok).toBe(true);
+      expect(payload.references.map((entry: any) => entry.canonicalId)).toEqual(['canvas.inspect']);
+      expect(payload.paletteFingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(payload.header).toMatchObject({
+        schemaVersion: 'liquidaity.card-script.header.v1',
+        selectedTools: ['canvas.inspect'],
+      });
+    } finally { await closeServer(server); }
+  });
+
+  it('validates Card Python against the same selected-tool palette used by the editor', async () => {
+    mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
+      name: 'canvas.inspect', title: 'Inspect canvas', description: 'Read the saved canvas.',
+      sourceId: 'liquidaity', namespace: 'canvas', nativeName: 'canvas.inspect',
+      connectionKind: 'application-mcp', inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
+    }]);
+    orchestratorMocks.requestPythonRailsJson
+      .mockResolvedValueOnce({ tools: [] })
+      .mockResolvedValueOnce({
+        references: [{
+          canonicalId: 'canvas.inspect', kind: 'tool', namespace: 'canvas', sourceIds: ['liquidaity'],
+          displayName: 'Inspect canvas', shortDescription: 'Read the saved canvas.',
+          availability: 'available', access: 'read', contracts: [{
+            sourceId: 'liquidaity', nativeName: 'canvas.inspect', connectionKind: 'application-mcp',
+            available: true, description: 'Read the saved canvas.', inputSchema: { type: 'object', properties: {} },
+            annotations: { readOnlyHint: true },
+          }],
+        }],
+      })
+      .mockResolvedValueOnce({
+        enabled: true, version: 3, sourceHash: 'source-hash', compiledHash: 'compiled-hash',
+        validation: { valid: true, errors: [], warnings: [] },
+        compiled: { toolHandles: ['canvas.inspect'] },
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const script = {
+        enabled: true,
+        version: 3,
+        source: 'def run(input, tools, output):\n    output.emit(tools.call("canvas.inspect", {}))',
+      };
+      const response = await fetch(`${baseUrl}/card-script/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script,
+          selectedTools: ['canvas.inspect'],
+          toolCatalogPolicy: 'selected',
+          runtimeKind: 'hermes',
+        }),
+      });
+      expect(response.status).toBe(200);
+      const payload = await response.json() as any;
+      expect(payload.script.validation.valid).toBe(true);
+      expect(payload.references.map((entry: any) => entry.canonicalId)).toEqual(['canvas.inspect']);
+      const validationCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/card-script/validate',
+      );
+      const validationBody = JSON.parse(String(validationCall?.[1]?.body || '{}'));
+      expect(validationBody).toEqual(expect.objectContaining({
+        script,
+        selectedTools: ['canvas.inspect'],
+        nativeAvailable: true,
+        paletteFingerprint: payload.paletteFingerprint,
+      }));
+    } finally { await closeServer(server); }
   });
 
   it('serves ordinary card-editor options without a Card read, full palette, or native tool discovery', async () => {

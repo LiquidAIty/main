@@ -320,18 +320,29 @@ One Hermes Card configures one native agent/profile; native subagents remain chi
 not newly saved Cards. Native prompt/model/tool/profile sections retain their native owners. Further
 section consolidation and aliases are deferred; existing non-Hermes saved bindings are preserved.
 
-Optional Python Card Script data and its fail-closed guard are retained in the existing Card
-runtime-extension field. Script analysis endpoints, generated names/types, lint, static previews,
-autocomplete, formatting and the Script tab are deferred to the second pass. Source identity and
-validation/support status never grant authority. Missing/disabled Script preserves materialization.
+Python Card Script source is retained in the existing Card runtime-extension field with version,
+source/compiled hashes, palette fingerprint, compiled bounds, validation state, native support and
+rollback identity. The same Monaco Python editor appears on every Card only in Agent Builder. It obtains
+current IDD/native contracts through a bounded backend projection, but autocomplete and executable
+handles are limited by the Card's effective Tools-tab selection. Human Card Save remains the existing
+deck/revision path. Script mutation through MCP additionally requires the authenticated caller to be the
+saved Hermes Card whose profile is `liquidaity-agent-builder`; it cannot rewrite its own active Script.
 
-Script execution is unavailable and an enabled Script fails before graph loading or IDF materialization.
-The inspected native `Hermes/tools/code_execution_tool.py::execute_code` runs arbitrary local Python,
-permits environment passthrough and broadens an empty tool intersection to its sandbox allowlist;
-it is not the required proxy-only isolation seam. No substitute executor or vendor patch was added.
-The native tools.show projection supplies names but not parameter schemas; those tools remain visible
-with a missing-schema diagnostic. Script preparation, safe execution and its IDF integration remain
-unavailable. Future static call-site previews must never be described as executed plans or dry runs.
+Python rails parses the source without execution, requires one literal `CARD_SCRIPT` object, safe imports,
+one or more `output.emit()` calls and literal `tools.call()` IDs, then validates those IDs against the
+effective saved Card grants. A valid Hermes Script projects one compact `execute_host_script` definition
+plus any selected tools it does not wrap; wrapped component schemas are absent from the model request.
+Blank, disabled or invalid source projects the exact selected MCP schemas. A native Script failure removes
+the compact definition and activates only its already-registered wrapped handles for the next model
+iteration. Neither mode exposes IDD, `all_healthy`, or the complete catalog.
+
+Hermes freezes the source/version/hashes/schemas/aliases/budgets in trusted session configuration before
+the turn. The external LiquidAIty plugin executes that immutable source through Hermes'
+`tools.code_execution_tool.execute_code`, existing local child process, tool RPC, approval gates, timeout,
+termination and secret scrubbing. Canonical aliases are mapped to already-registered native tool names;
+the child receives no registry, token, filesystem, shell, network, database or credential handle. Ordinary
+`execute_code`, CLI and remote execution behavior remain unchanged. Native tool events return the Script
+identity, timings, output status and underlying canonical/native tool-call receipts on the Card Run.
 
 IDD responsibility reduction:
 
@@ -662,6 +673,16 @@ Signed native task/attempt IDs are observation metadata, not additional permissi
 worker graph events from direct root-Card materialization without creating another worker identity.
 Do not describe this as automatic revocation at Run completion. The grant refactor needs a canonical
 reload and live worker proof before it is described as the loaded runtime's behavior.
+
+The current Hermes base also lacks a trusted host-supplied immutable Script contract over its existing
+Python child runner. The contained divergence adds optional host Script aliases/input to
+`tools/code_execution_tool.py`, validates/fixes the session projection in
+`acp_adapter/host_profiles.py`, and exposes one `_session/execute_host_script` operation in
+`acp_adapter/server.py`. LiquidAIty's external plugin registers the single compact
+`execute_host_script` tool and delegates to the same native `execute_code` function. It does not add a
+second executor, sandbox, MCP host, workflow engine or credential path. Sessions without trusted host
+Script metadata and all ordinary `execute_code`/CLI callers retain upstream behavior. Exact files,
+contracts, proof, fork cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.

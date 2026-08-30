@@ -44,6 +44,16 @@ describe('internal MCP Card authentication', () => {
     });
   });
 
+  it('keeps presentation bounded by the signed authorization ceiling', () => {
+    expect(() => createInternalMcpBearer({
+      kind: 'card-runtime',
+      projectId: 'project-1', deckId: 'deck-1', conversationId: 'conversation-1',
+      parentRunId: 'run-1', callerCardId: 'card-1', callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'main', grantedTools: ['canvas.inspect'],
+      presentedTools: ['cbm.search_graph'],
+    }, env, 100)).toThrow('internal_mcp_presentation_exceeds_grant');
+  });
+
   it('keeps the signing secret out of model runtime environments', () => {
     const child = withoutInternalMcpSecret({ ...env, SAFE: 'yes' });
     expect(child.LIQUIDAITY_INTERNAL_MCP_SECRET).toBeUndefined();

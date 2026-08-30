@@ -407,3 +407,58 @@ Rollback: remove the optional arguments, their guards, the turn/sync gates and t
 external Main drivers and Chat history must then fail closed because the stock plugin contract cannot
 prove single-driver ownership or observe the live CLI conversation; no ACP process, direct database
 read, input queue, or terminal-scraping fallback is permitted.
+
+## Patch: immutable trusted-host Script on the existing Python child runner
+
+Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
+
+Purpose: execute one host-supplied, saved and immutable Card Python Script through Hermes' existing
+child-process runner and tool-RPC dispatcher. The model sees one compact `execute_host_script` contract
+instead of the component schemas the Script wraps. The host receives exact version/hash, timing, native
+tool-call and fallback receipts.
+
+External alternative check: stock `execute_code` accepts model-authored source and its normal sandbox
+tool names, but ACP has no contract for immutable host source, canonical tool aliases, typed input/output,
+or exact host-session execution. A second runner, sandbox, workflow engine, MCP host, shell/CLI adapter and
+direct database call were rejected. The downstream plugin alone cannot safely supply canonical aliases to
+the generated `hermes_tools` module without the contained generic runner seam.
+
+Files and symbols:
+
+- `tools/code_execution_tool.py`: optional `host_script` input to `execute_code`, canonical-alias dispatch,
+  compact `input`/`tools.call`/`output.emit` generation, and canonical/native/duration receipts. The local
+  child process, approval context, RPC server, timeout, process-tree termination and secret scrub are the
+  existing owners.
+- `acp_adapter/host_profiles.py`: strict host Script version/hash/schema/alias/budget validation,
+  immutable turn-scoped lookup, compact tool schema projection, and exact pre-registered MCP fallback after
+  a Script failure.
+- `acp_adapter/server.py`: bounded `_session/execute_host_script` against an already-configured idle native
+  session, using the existing session lock and `model_tools.handle_function_call` dispatcher.
+- `tests/tools/test_code_execution.py` and `tests/acp_adapter/test_host_profiles.py`: generated-module
+  isolation, real Python child execution, canonical/native receipt, configuration validation and exact
+  failure fallback proof.
+- `apps/hermes-liquidaity-plugin/`: downstream entry-point registration, typed input/output validation,
+  one-call/output limits, Script receipt and dynamic fallback. Its tests prove installed discovery plus
+  load/reload/unload and failure handling.
+
+Upstream behavior preserved: omission of `host_script` takes the original branch. Ordinary CLI,
+`execute_code`, remote environments, sandbox tools, toolsets, approvals, timeouts, termination, environment
+scrubbing and result formatting are unchanged. The host path is local-only, requires exact aliases supplied
+by trusted ACP metadata, never exposes native registry names to the child, and supplies no shell,
+filesystem, network, database or credential capability unless an already-authorized native tool itself owns
+that operation. LiquidAIty still enforces saved Card grants before configuration.
+
+Contracts and proof: the saved Script version, source/compiled hashes, JSON schemas, literal handle set and
+budgets are validated before session configuration. The child may call only the alias values already
+registered for that session. Failed validation/execution removes the compact Script tool and reveals only
+those same pre-registered component tools for the next model iteration. Focused proof uses the pinned Hermes
+environment; no production requirement or test assertion is weakened.
+
+Fork cost and contribution plan: three narrow vendor files plus two focused test files. Propose the generic
+trusted-host immutable-code/alias seam and host-session operation upstream without LiquidAIty Card types or
+policy. Keep compiler, IDD projection, saved authority and downstream plugin outside Hermes.
+
+Rollback: remove the optional host arguments/helpers, host-profile Script validation/fallback and bounded
+session operation together, then remove the downstream compact tool registration. Saved Script source may
+remain inspectable but must fail closed as unavailable; never replace this path with direct `exec`, a second
+sandbox or raw MCP schema suppression.

@@ -330,9 +330,10 @@ async def run_configured_card(context: RuntimeRequest) -> OrchestratorRunRespons
             ),
             runtime_mode="assistant",
         )
-        # The exact reloaded IDF carries this Run's selected capability ceiling.
-        # Public readability is not a grant; unknown selections fail in the owner.
-        selected_tools = list(context.idf.selectedToolsAndGrants.enabledTools)
+        # The exact reloaded IDF carries both the saved authorization ceiling
+        # and the smaller model-visible surface. Internal Python composition
+        # never needs JSON schemas; the model receives only presented tools.
+        selected_tools = list(context.idf.selectedToolsAndGrants.presentedTools)
         tools = DEFAULT_TOOL_REGISTRY.resolve_selected(selected_tools)
         agent = AssistantAgent(
             name="Configured_Card",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -11,8 +12,10 @@ import pytest
 
 from acp_adapter.host_profiles import (
     HostSessionConfigError,
+    activate_host_script_fallback,
     allocate_host_child_execution,
     apply_host_session_config,
+    current_host_script_config,
     current_host_tool_call_meta,
     finish_host_child_execution,
     host_execution_scope,
@@ -52,6 +55,27 @@ def _metadata() -> dict:
     }
 
 
+def _host_script() -> dict:
+    source = '''CARD_SCRIPT = {"mode": "outer_controller"}\nfrom hermes_tools import output\noutput.emit({"agent": {"run": False}})\n'''
+    return {
+        "version": 3,
+        "source": source,
+        "sourceHash": hashlib.sha256(source.encode()).hexdigest(),
+        "compiledHash": "b" * 64,
+        "mode": "outer_controller",
+        "inputSchema": {
+            "type": "object", "properties": {"focus": {"type": "string"}},
+        },
+        "outputSchema": {"type": "object", "properties": {}},
+        "toolAliases": {"think.context": "mcp__liquidaity-card__think_context"},
+        "fallbackToolAliases": {"think.context": "mcp__liquidaity-card__think_context"},
+        "toolStates": {"think.context": 1},
+        "timeoutSeconds": 12,
+        "maxToolCalls": 3,
+        "maxOutputBytes": 4096,
+    }
+
+
 def test_parser_accepts_only_namespaced_bounded_noncredential_configuration() -> None:
     assert parse_host_session_config({}) is None
     parsed = parse_host_session_config(_metadata())
@@ -87,6 +111,102 @@ def test_parser_accepts_only_namespaced_bounded_noncredential_configuration() ->
         match="hermes_host_session_config_unknown_field:apiKey",
     ):
         parse_host_session_config(forged)
+
+
+def test_parser_binds_host_script_hash_and_execution_scope() -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"]["hostScript"] = _host_script()
+    parsed = parse_host_session_config(metadata)
+    assert parsed["hostScript"]["toolAliases"] == {
+        "think.context": "mcp__liquidaity-card__think_context"
+    }
+    assert parsed["hostScript"]["version"] == 3
+    agent = SimpleNamespace(_host_tool_call_meta={}, _host_session_config=parsed)
+    assert current_host_script_config() is None
+    with host_execution_scope(agent):
+        assert current_host_script_config()["sourceHash"] == _host_script()["sourceHash"]
+    assert current_host_script_config() is None
+
+    tampered = _metadata()
+    tampered_script = _host_script()
+    tampered_script["source"] += "# changed"
+    tampered["hermes"]["sessionConfig"]["hostScript"] = tampered_script
+    with pytest.raises(
+        HostSessionConfigError,
+        match="hermes_host_config_host_script_hash_mismatch",
+    ):
+        parse_host_session_config(tampered)
+
+
+def test_outer_controller_is_host_entered_and_never_presented_to_the_model(monkeypatch) -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"]["hostScript"] = _host_script()
+    definitions = {
+        "delegate_task": _definition("delegate_task"),
+    }
+    monkeypatch.setitem(
+        sys.modules,
+        "model_tools",
+        SimpleNamespace(get_tool_definitions=lambda **_kwargs: []),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.registry",
+        SimpleNamespace(registry=SimpleNamespace(
+            get_definitions=lambda names, quiet=True: [
+                copy.deepcopy(definitions[name]) for name in names
+            ],
+        )),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "agent.memory_manager",
+        SimpleNamespace(inject_memory_provider_tools=lambda _agent: None),
+    )
+    agent = SimpleNamespace(disabled_toolsets=[])
+    apply_host_session_config(agent, parse_host_session_config(metadata))
+    by_name = {item["function"]["name"]: item for item in agent.tools}
+    assert "execute_host_script" not in by_name
+    assert by_name["delegate_task"]["function"]["parameters"] == {
+        "type": "object", "properties": {},
+    }
+
+
+def test_failed_host_script_reveals_only_its_pre_registered_saved_aliases(monkeypatch) -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"]["enabledTools"] = []
+    metadata["hermes"]["sessionConfig"]["hostScript"] = _host_script()
+    definitions = {
+        "mcp__liquidaity-card__think_context": _definition(
+            "mcp__liquidaity-card__think_context"
+        ),
+    }
+    monkeypatch.setitem(
+        sys.modules,
+        "tools.registry",
+        SimpleNamespace(registry=SimpleNamespace(
+            get_definitions=lambda names, quiet=True: [
+                copy.deepcopy(definitions[name]) for name in names
+            ],
+        )),
+    )
+    invalidate = MagicMock()
+    agent = SimpleNamespace(
+        tools=[],
+        valid_tool_names=set(),
+        _host_tool_call_meta={},
+        _host_session_config=parse_host_session_config(metadata),
+        _invalidate_system_prompt=invalidate,
+    )
+
+    with host_execution_scope(agent):
+        assert activate_host_script_fallback() == ["think.context"]
+
+    assert agent.valid_tool_names == {"mcp__liquidaity-card__think_context"}
+    assert [item["function"]["name"] for item in agent.tools] == [
+        "mcp__liquidaity-card__think_context"
+    ]
+    invalidate.assert_called_once_with()
 
 
 def test_saved_card_surface_is_the_exact_native_and_mcp_surface(

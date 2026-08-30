@@ -206,7 +206,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Runtime', 'Terminal'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Script', 'Runtime', 'Terminal'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -955,6 +955,7 @@ export default function AgentBuilder(): React.ReactElement {
     runtimeLabel: selectedCard ? `${selectedCard.runtime.kind}/${selectedCard.runtime.mode}` : null,
     invocation: result?.invocation || null,
     receipt: result?.receipt || null,
+    nativeEvents: Array.isArray(result?.nativeEvents) ? result.nativeEvents : [],
   }), [selectedCard]);
 
   const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string }) => {
@@ -1574,7 +1575,9 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'Terminal' ||
           tab === 'Prompt' ||
           tab === 'Knowledge' ||
+          tab === 'Skills' ||
           tab === 'Tools' ||
+          tab === 'Script' ||
           tab === 'Runtime'
         ) {
           return (
@@ -1598,7 +1601,7 @@ export default function AgentBuilder(): React.ReactElement {
                 >
                   <AgentManager
                     cardKind={selectedCard.kind}
-                    key={`deck-card:${selectedCard.id}:${tab}`}
+                    key="deck-card-editor"
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
                     deckId={BUILDER_DECK_ID}

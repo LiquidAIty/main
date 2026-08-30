@@ -57,8 +57,13 @@ they do not select a runtime implementation.
   full palette. This interaction awaits live proof.
 - Hermes is the runtime platform; LiquidAIty composes native capabilities and contextualizes Runs.
   Native catalogs, profiles, tools and worker lifecycle remain Hermes-owned.
-- Optional Card Script data and a fail-closed guard are retained. Script analysis, generated types,
-  static preview, the Script tab and editor polish are deferred. No substitute executor is approved.
+- Every Card has one saved Python Script field and the same Monaco editor in Agent Builder. IDD and the
+  effective Tools-tab selection supply exact autocomplete/schema contracts. A valid Hermes Script wraps
+  only its literal `tools.call()` handles behind one compact tool and runs through Hermes' existing
+  child-process Python/tool-RPC path; unwrapped selected tools remain ordinary MCP tools. Blank/invalid
+  source keeps exact selected MCP schemas, and runtime failure restores only the Script's pre-registered
+  wrapped handles for the next model iteration. The active version/hash is immutable during a Run.
+  AutoGen Cards retain the editor but cannot activate this Hermes-native execution path.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
 - Python rails own the one Constellation child and database adapter. The official MCP host proxies its
   Constellation calls through that existing owner and never starts another engine process or database.
@@ -90,6 +95,10 @@ they do not select a runtime implementation.
   Constellation operation route, bounded KnowGraph/profile readback, and the corrected Main-only Honcho
   Inspector status. Local proof must record the startup-specific catalog count/hash and retain one actual
   account-Luna child receipt without issuing a duplicate paid call.
+- The new Card Script path still requires one canonical loaded-process proof: saved Main, Kanban and
+  Agent Builder Scripts must retain their normal prompts/profiles/grants, one real account-backed Luna
+  turn must return the compact Script/native receipt, and blank/broken exact-selected MCP fallback must
+  be observed without a catalog-wide leak.
 - Direct Main routing and fail-open completion are live-proven. Actual Honcho recall/write success remains
   unavailable until the intended service and account credential/base URL are present.
 
@@ -252,7 +261,7 @@ alternate startup instructions.
 4. Prove Main → Kanban with separate session/memory.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
-7. Complete one loaded-runtime selector/receipt proof, rebuild the canonical IDD/application/MCP
+7. Complete the loaded Card Script/selector/receipt proof, rebuild the canonical IDD/application/MCP
    catalogs, preserve disabled entries, and prove real local read/write/readback lifecycles before the
    separate external GPT-plugin acceptance.
 8. Only then consider prompt/skill/recipe recommendations and later catalog reduction; recommendations

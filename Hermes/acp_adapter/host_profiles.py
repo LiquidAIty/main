@@ -16,6 +16,8 @@ accepted contract.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -33,6 +35,7 @@ _SESSION_FIELDS = {
     "hostSessionKey",
     "systemPrompt",
     "toolCallMeta",
+    "hostScript",
 }
 
 
@@ -42,6 +45,12 @@ class HostSessionConfigError(ValueError):
 
 _ACTIVE_TOOL_CALL_META: ContextVar[dict[str, str] | None] = ContextVar(
     "hermes_host_tool_call_meta", default=None
+)
+_ACTIVE_HOST_SCRIPT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "hermes_host_script", default=None
+)
+_ACTIVE_HOST_AGENT: ContextVar[Any | None] = ContextVar(
+    "hermes_host_agent", default=None
 )
 
 
@@ -73,6 +82,134 @@ def _bounded_string_list(value: Any, field: str) -> list[str]:
             seen.add(text)
             result.append(text)
     return result
+
+
+def _host_script(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HostSessionConfigError("hermes_host_config_host_script_must_be_object")
+    allowed = {
+        "version", "source", "sourceHash", "compiledHash", "mode", "inputSchema",
+        "outputSchema", "toolAliases", "timeoutSeconds", "maxToolCalls",
+        "maxOutputBytes", "fallbackToolAliases", "toolStates",
+    }
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise HostSessionConfigError(
+            f"hermes_host_config_host_script_unknown_field:{unknown[0]}"
+        )
+    version = value.get("version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise HostSessionConfigError(
+            "hermes_host_config_host_script_version_invalid"
+        )
+    source = value.get("source")
+    if not isinstance(source, str):
+        raise HostSessionConfigError(
+            "hermes_host_config_hostScript.source_must_be_string"
+        )
+    if not source.strip():
+        raise HostSessionConfigError("hermes_host_config_hostScript.source_required")
+    if len(source) > 32_768:
+        raise HostSessionConfigError("hermes_host_config_hostScript.source_too_long")
+    source_hash = _bounded_text(
+        value.get("sourceHash"), "hostScript.sourceHash", limit=64, required=True
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", source_hash) or not secrets_compare_hash(
+        source_hash, hashlib.sha256(source.encode("utf-8")).hexdigest()
+    ):
+        raise HostSessionConfigError("hermes_host_config_host_script_hash_mismatch")
+    compiled_hash = _bounded_text(
+        value.get("compiledHash"), "hostScript.compiledHash", limit=64, required=True
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", compiled_hash):
+        raise HostSessionConfigError("hermes_host_config_host_script_compiled_hash_invalid")
+    mode = _bounded_text(value.get("mode"), "hostScript.mode", limit=32, required=True)
+    if mode != "outer_controller":
+        raise HostSessionConfigError("hermes_host_config_host_script_mode_invalid")
+    input_schema = value.get("inputSchema")
+    output_schema = value.get("outputSchema")
+    if not all(
+        isinstance(schema, dict) and schema.get("type") == "object"
+        for schema in (input_schema, output_schema)
+    ):
+        raise HostSessionConfigError("hermes_host_config_host_script_schema_invalid")
+    if len(json.dumps([input_schema, output_schema], separators=(",", ":"))) > 32_768:
+        raise HostSessionConfigError("hermes_host_config_host_script_schema_too_large")
+    def normalize_aliases(raw: Any, field: str) -> dict[str, str]:
+        if not isinstance(raw, dict) or len(raw) > _MAX_LIST_ITEMS:
+            raise HostSessionConfigError(
+                f"hermes_host_config_host_script_{field}_invalid"
+            )
+        normalized: dict[str, str] = {}
+        for raw_alias, raw_native in raw.items():
+            alias = _bounded_text(raw_alias, "hostScript.alias", limit=256, required=True)
+            native = _bounded_text(raw_native, "hostScript.nativeTool", limit=256, required=True)
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", alias) or not re.fullmatch(
+                r"[A-Za-z0-9_.-]+", native
+            ):
+                raise HostSessionConfigError("hermes_host_config_host_script_alias_invalid")
+            normalized[alias] = native
+        return normalized
+
+    normalized_aliases = normalize_aliases(value.get("toolAliases"), "aliases")
+    fallback_aliases = normalize_aliases(
+        value.get("fallbackToolAliases"), "fallback_aliases"
+    )
+    raw_states = value.get("toolStates")
+    if not isinstance(raw_states, dict) or len(raw_states) > _MAX_LIST_ITEMS:
+        raise HostSessionConfigError("hermes_host_config_host_script_tool_states_invalid")
+    tool_states: dict[str, int] = {}
+    for raw_name, raw_mode in raw_states.items():
+        name = _bounded_text(raw_name, "hostScript.toolState", limit=256, required=True)
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_.-]+", name)
+            or not isinstance(raw_mode, int)
+            or isinstance(raw_mode, bool)
+            or raw_mode not in {0, 1, 2, 3}
+        ):
+            raise HostSessionConfigError("hermes_host_config_host_script_tool_state_invalid")
+        tool_states[name] = raw_mode
+    if set(fallback_aliases) != set(tool_states):
+        raise HostSessionConfigError("hermes_host_config_host_script_tool_state_scope_invalid")
+    expected_script_aliases = {
+        name for name, mode_value in tool_states.items() if mode_value in {1, 3}
+    }
+    if set(normalized_aliases) != expected_script_aliases or any(
+        fallback_aliases[name] != native for name, native in normalized_aliases.items()
+    ):
+        raise HostSessionConfigError("hermes_host_config_host_script_alias_scope_invalid")
+    timeout = value.get("timeoutSeconds", 15)
+    max_calls = value.get("maxToolCalls", 6)
+    max_output = value.get("maxOutputBytes", 20_000)
+    if not isinstance(timeout, int) or not 1 <= timeout <= 60:
+        raise HostSessionConfigError("hermes_host_config_host_script_timeout_invalid")
+    if not isinstance(max_calls, int) or not 1 <= max_calls <= 32:
+        raise HostSessionConfigError("hermes_host_config_host_script_max_calls_invalid")
+    if not isinstance(max_output, int) or not 256 <= max_output <= 50_000:
+        raise HostSessionConfigError("hermes_host_config_host_script_max_output_invalid")
+    return {
+        "version": version,
+        "source": source,
+        "sourceHash": source_hash,
+        "compiledHash": compiled_hash,
+        "mode": mode,
+        "inputSchema": copy.deepcopy(input_schema),
+        "outputSchema": copy.deepcopy(output_schema),
+        "toolAliases": normalized_aliases,
+        "fallbackToolAliases": fallback_aliases,
+        "toolStates": tool_states,
+        "timeoutSeconds": timeout,
+        "maxToolCalls": max_calls,
+        "maxOutputBytes": max_output,
+    }
+
+
+def secrets_compare_hash(left: str, right: str) -> bool:
+    import secrets
+
+    return secrets.compare_digest(left.encode("ascii"), right.encode("ascii"))
 
 
 def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -129,6 +266,7 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
             raw.get("systemPrompt"), "systemPrompt", limit=_MAX_PROMPT_CHARS
         ),
         "toolCallMeta": normalized_tool_meta,
+        "hostScript": _host_script(raw.get("hostScript")),
     }
 
 
@@ -243,16 +381,62 @@ def finish_host_child_execution(
 @contextmanager
 def host_execution_scope(agent: Any):
     meta = getattr(agent, "_host_tool_call_meta", None)
+    script = getattr(agent, "_host_session_config", None)
+    script = script.get("hostScript") if isinstance(script, dict) else None
     token = _ACTIVE_TOOL_CALL_META.set(dict(meta) if isinstance(meta, dict) else None)
+    script_token = _ACTIVE_HOST_SCRIPT.set(copy.deepcopy(script) if script else None)
+    agent_token = _ACTIVE_HOST_AGENT.set(agent)
     try:
         yield
     finally:
+        _ACTIVE_HOST_AGENT.reset(agent_token)
+        _ACTIVE_HOST_SCRIPT.reset(script_token)
         _ACTIVE_TOOL_CALL_META.reset(token)
 
 
 def current_host_tool_call_meta() -> dict[str, str] | None:
     meta = _ACTIVE_TOOL_CALL_META.get()
     return dict(meta) if meta else None
+
+
+def current_host_script_config() -> dict[str, Any] | None:
+    script = _ACTIVE_HOST_SCRIPT.get()
+    return copy.deepcopy(script) if script else None
+
+
+def activate_host_script_fallback() -> list[str]:
+    """Replace the compact Script tool with its exact saved MCP handles.
+
+    This runs only inside the active native conversation scope after a Script
+    failure. The MCP definitions were already registered from the same signed
+    Card grant; this function cannot discover or add another capability.
+    """
+
+    agent = _ACTIVE_HOST_AGENT.get()
+    script = _ACTIVE_HOST_SCRIPT.get()
+    if agent is None or not isinstance(script, dict):
+        raise HostSessionConfigError("hermes_host_script_fallback_scope_unavailable")
+    aliases = script.get("fallbackToolAliases")
+    if not isinstance(aliases, dict):
+        raise HostSessionConfigError("hermes_host_script_fallback_aliases_unavailable")
+    canonical_ids = list(aliases)
+    native_names = list(aliases.values())
+    definitions = [
+        copy.deepcopy(item)
+        for item in list(getattr(agent, "tools", []) or [])
+        if str((item.get("function") or {}).get("name") or "") != "execute_host_script"
+    ]
+    definitions = _merge_definitions(definitions, _explicit_tool_definitions(native_names))
+    agent.tools = definitions
+    agent.valid_tool_names = {
+        str((item.get("function") or {}).get("name") or "")
+        for item in definitions
+        if str((item.get("function") or {}).get("name") or "")
+    }
+    invalidate = getattr(agent, "_invalidate_system_prompt", None)
+    if callable(invalidate):
+        invalidate()
+    return canonical_ids
 
 
 def initial_toolsets(config: dict[str, Any] | None) -> list[str]:

@@ -386,8 +386,9 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
     assert grants["enabledTools"] == [
         "cbm.search_graph", "constellation.remember", "web_search",
     ]
+    assert grants["presentedTools"] == ["constellation.remember"]
     assert [tool["canonicalId"] for tool in grants["toolDefinitions"]] == [
-        "cbm.search_graph", "constellation.remember", "web_search",
+        "constellation.remember",
     ]
     assert "cbm.index_repository" not in grants["enabledTools"]
 
@@ -1531,29 +1532,41 @@ def _destination_payload(card_id: str) -> dict:
     }
 
 
-def test_enabled_script_stops_before_graph_reads_or_idf(monkeypatch):
+def test_invalid_enabled_script_falls_back_to_exact_saved_tool_schema(monkeypatch):
     loaded = _destination_fixture(monkeypatch)
     card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
     card["runtimeOptions"]["script"] = {"enabled": True, "source": "return InvocationPreparation()"}
-    def forbidden(*_args, **_kwargs):
-        raise AssertionError("Script must fail before graph reads/materialization")
-    monkeypatch.setattr(card_domain, "resolve_data_anchors", forbidden)
-    monkeypatch.setattr(card_domain, "materialize_idf", forbidden)
-    with pytest.raises(card_domain.CardDomainError, match="card_script_isolated_native_execution_unavailable"):
-        card_domain.materialize_invocation(_destination_payload("hermes"))
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    script = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
+    assert grants["presentedTools"] == ["calculator"]
+    assert grants["scriptPresentation"] == {
+        "mode": "selected-mcp", "fallbackReason": "card_script_validation_failed",
+    }
+    assert script["lastValidation"]["status"] == "invalid"
 
 
-def test_disabled_script_preserves_input_and_saved_configuration(monkeypatch):
+def test_disabled_script_preserves_model_input_and_remains_visible_saved_configuration(monkeypatch):
     loaded = _destination_fixture(monkeypatch)
     card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
     before = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
     card["runtimeOptions"]["script"] = {"enabled": False, "source": "not executable"}
     after = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
-    assert before == after
+    assert before["actualGraphData"] == after["actualGraphData"]
+    assert before["dynamicContext"] == after["dynamicContext"]
+    assert before["selectedToolsAndGrants"] == after["selectedToolsAndGrants"]
+    before_stable = dict(before["stableSavedCardContext"])
+    after_stable = dict(after["stableSavedCardContext"])
+    before_options = dict(before_stable.pop("runtimeOptions"))
+    after_options = dict(after_stable.pop("runtimeOptions"))
+    assert before_stable == after_stable
+    assert before_options == {
+        key: value for key, value in after_options.items() if key != "script"
+    }
     stable = card_domain._stable_card(card)
     assert stable["runtimeExtensions"]["script"]["enabled"] is False
     assert stable["runtimeExtensions"]["script"]["source"] == "not executable"
-    assert stable["runtimeExtensions"]["script"]["nativeSupport"]["available"] is False
+    assert stable["runtimeExtensions"]["script"]["nativeSupport"]["available"] is True
     assert stable["grants"]["tools"] == ["calculator"]
 
 

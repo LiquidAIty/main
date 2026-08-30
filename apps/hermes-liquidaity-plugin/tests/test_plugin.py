@@ -162,13 +162,127 @@ def test_invalid_bearer_response_fails_closed(monkeypatch, payload):
 
 def test_register_uses_stock_plugin_api():
     callbacks = []
+    tools = []
     ctx = SimpleNamespace(
-        register_kanban_worker_environment_provider=callbacks.append
+        register_kanban_worker_environment_provider=callbacks.append,
+        register_tool=lambda **kwargs: tools.append(kwargs),
     )
 
     plugin.register(ctx)
 
     assert callbacks == [plugin._worker_environment]
+    assert len(tools) == 1
+    assert tools[0]["name"] == "execute_host_script"
+    assert tools[0]["handler"] is plugin._handle_execute_host_script
+
+
+def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch):
+    import acp_adapter.host_profiles as host_profiles
+    import tools.code_execution_tool as code_execution_tool
+
+    config = {
+        "version": 7,
+        "source": "source",
+        "sourceHash": "a" * 64,
+        "compiledHash": "b" * 64,
+        "mode": "outer_controller",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"focus": {"type": "string"}},
+            "required": ["focus"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "context": {"type": "object"},
+                "agent": {
+                    "type": "object",
+                    "properties": {"run": {"type": "boolean"}},
+                    "required": ["run"],
+                },
+            },
+            "required": ["context", "agent"],
+        },
+        "toolAliases": {"think.context": "mcp__card__think_context"},
+        "fallbackToolAliases": {"think.context": "mcp__card__think_context"},
+        "toolStates": {"think.context": 1},
+        "timeoutSeconds": 10,
+        "maxToolCalls": 2,
+        "maxOutputBytes": 4096,
+    }
+    monkeypatch.setattr(host_profiles, "current_host_script_config", lambda: config)
+    calls = []
+
+    def execute(code, **kwargs):
+        calls.append((code, kwargs))
+        return json.dumps({
+            "status": "success",
+            "output": 'HERMES_CARD_SCRIPT_OUTPUT:{"context":{"id":"n1"},"agent":{"run":false}}',
+            "exit_code": 0,
+            "duration_seconds": 0.1,
+            "tool_calls_made": 1,
+            "tool_calls": [{
+                "canonicalId": "think.context",
+                "nativeTool": "mcp__card__think_context",
+                "durationSeconds": 0.05,
+            }],
+        })
+
+    monkeypatch.setattr(code_execution_tool, "execute_code", execute)
+    result = json.loads(plugin._handle_execute_host_script(
+        {"focus": "launch"}, task_id="session-one"
+    ))
+
+    assert result["ok"] is True
+    assert result["output"] == {
+        "context": {"id": "n1"}, "agent": {"run": False},
+    }
+    assert result["receipt"]["sourceHash"] == "a" * 64
+    assert result["receipt"]["version"] == 7
+    assert result["receipt"]["toolCalls"][0]["canonicalId"] == "think.context"
+    assert calls[0][0] == "source"
+    assert calls[0][1]["host_script"]["toolAliases"] == config["toolAliases"]
+
+
+def test_host_script_validation_failure_activates_exact_selected_mcp_fallback(monkeypatch):
+    import acp_adapter.host_profiles as host_profiles
+
+    config = {
+        "version": 9,
+        "source": "source",
+        "sourceHash": "a" * 64,
+        "compiledHash": "b" * 64,
+        "mode": "outer_controller",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"focus": {"type": "string"}},
+            "required": ["focus"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "properties": {}},
+        "toolAliases": {"think.context": "mcp__card__think_context"},
+        "fallbackToolAliases": {"think.context": "mcp__card__think_context"},
+        "toolStates": {"think.context": 1},
+        "timeoutSeconds": 10,
+        "maxToolCalls": 2,
+        "maxOutputBytes": 4096,
+    }
+    monkeypatch.setattr(host_profiles, "current_host_script_config", lambda: config)
+    monkeypatch.setattr(
+        host_profiles, "activate_host_script_fallback", lambda: ["think.context"]
+    )
+
+    result = json.loads(plugin._handle_execute_host_script({}, task_id="session-one"))
+
+    assert result["ok"] is False
+    assert result["fallback"] == {
+        "activated": True,
+        "presentationMode": "selected-mcp",
+        "tools": ["think.context"],
+    }
+    assert result["receipt"]["version"] == 9
+    assert result["receipt"]["status"] == "validation_error"
 
 
 def test_main_bridge_emits_only_structured_native_hook_events(monkeypatch):

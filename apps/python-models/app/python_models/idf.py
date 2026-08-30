@@ -17,7 +17,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 IDF_FILENAME = "in.idf"
@@ -81,18 +81,29 @@ class ActualGraphData(BaseModel):
 
 
 class SelectedToolsAndGrants(BaseModel):
-    """Effective saved Card tool grants and schemas, distinct from graph data."""
+    """Effective Card grants and the smaller model-visible tool surface."""
 
     model_config = ConfigDict(extra="forbid")
 
     enabledTools: list[str] = Field(default_factory=list)
+    presentedTools: list[str] = Field(default_factory=list)
     toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
+    scriptPresentation: dict[str, Any] = Field(default_factory=dict)
     toolCatalogPolicy: str = "selected"
     disabledTools: list[str] = Field(default_factory=list)
     nativeTools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     toolsets: list[str] = Field(default_factory=list)
     mcpConnectionIds: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_pre_presentation_idfs(cls, value: Any) -> Any:
+        """Old retained Runs used one list for both grant and presentation."""
+
+        if isinstance(value, dict) and "presentedTools" not in value:
+            value = {**value, "presentedTools": list(value.get("enabledTools") or [])}
+        return value
 
 
 class DynamicContext(BaseModel):
@@ -371,9 +382,16 @@ def materialize_idf(
         provider=dict(stable.get("provider") or {}),
         runtimeOptions=dict(stable.get("runtimeOptions") or {}),
     )
+    enabled_tools = list(capabilities.get("enabledTools") or [])
     tools_and_grants = SelectedToolsAndGrants(
-        enabledTools=list(capabilities.get("enabledTools") or []),
+        enabledTools=enabled_tools,
+        presentedTools=list(
+            capabilities.get("presentedTools")
+            if "presentedTools" in capabilities
+            else enabled_tools
+        ),
         toolDefinitions=list(capabilities.get("toolDefinitions") or []),
+        scriptPresentation=dict(capabilities.get("scriptPresentation") or {}),
         toolCatalogPolicy=str(capabilities.get("toolCatalogPolicy") or "selected"),
         disabledTools=list(capabilities.get("disabledTools") or []),
         nativeTools=list(capabilities.get("nativeTools") or []),
@@ -524,7 +542,9 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "provider": dict(stable.provider),
         "runtimeOptions": dict(stable.runtimeOptions),
         "enabledTools": list(grants.enabledTools),
+        "presentedTools": list(grants.presentedTools),
         "toolDefinitions": list(grants.toolDefinitions),
+        "scriptPresentation": dict(grants.scriptPresentation),
         "toolCatalogPolicy": grants.toolCatalogPolicy,
         "disabledTools": list(grants.disabledTools),
         "nativeTools": list(grants.nativeTools),

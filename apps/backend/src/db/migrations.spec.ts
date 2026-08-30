@@ -33,6 +33,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '027_verify_explicit_card_deletion_grants.sql', applied: true }),
       expect.objectContaining({ filename: '028_agentgraph_materialized_read.sql', applied: true }),
       expect.objectContaining({ filename: '029_child_model_receipt.sql', applied: true }),
+      expect.objectContaining({ filename: '030_card_script_run_receipt.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([

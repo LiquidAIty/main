@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import {
   coderTerminalSessionManager,
 } from '../hermes/coderTerminal';
@@ -41,6 +41,7 @@ import {
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import {
   indexToolCatalogReferences,
+  resolveScriptToolReferences,
   searchToolCatalogReferences,
   type ToolCatalogReference,
 } from '../cards/toolCatalogProjection';
@@ -61,6 +62,34 @@ import {
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
 const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
+
+function commaSeparatedIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
+  return typeof value === 'string'
+    ? value.split(',').map((item) => item.trim()).filter(Boolean)
+    : [];
+}
+
+async function loadInputDictionaryToolCatalog() {
+  const canonicalMcpTools = await listPythonAgentMcpCatalog();
+  const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
+    method: 'GET',
+  }) as { tools?: unknown };
+  if (!Array.isArray(privateRuntimeManifest?.tools)) {
+    throw new Error('python_runtime_tool_manifest_invalid');
+  }
+  const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tools: [...canonicalMcpTools, ...privateRuntimeManifest.tools],
+    }),
+  }) as { references?: unknown };
+  if (!Array.isArray(materialized?.references)) {
+    throw new Error('input_data_dictionary_tool_catalog_invalid');
+  }
+  return indexToolCatalogReferences(materialized.references as ToolCatalogReference[]);
+}
 
 type RemoteMainDriverSource = Exclude<MainDriverSource, 'native_cli'>;
 
@@ -298,34 +327,8 @@ router.get('/input-data-dictionary/card-editor', async (req, res) => {
 
 router.get('/input-data-dictionary/tools', async (req, res) => {
   try {
-    const canonicalMcpTools = await listPythonAgentMcpCatalog();
-    const privateRuntimeManifest = await requestPythonRailsJson('/tools/manifest', {
-      method: 'GET',
-    }) as { tools?: unknown };
-    if (!Array.isArray(privateRuntimeManifest?.tools)) {
-      throw new Error('python_runtime_tool_manifest_invalid');
-    }
-    const materialized = await requestPythonRailsJson('/idd/tools/materialize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tools: [
-          ...canonicalMcpTools,
-          ...privateRuntimeManifest.tools,
-        ],
-      }),
-    }) as { references?: unknown };
-    if (!Array.isArray(materialized?.references)) {
-      throw new Error('input_data_dictionary_tool_catalog_invalid');
-    }
-    const catalog = indexToolCatalogReferences(
-      materialized.references as ToolCatalogReference[],
-    );
-    const selectedIds = Array.isArray(req.query.selectedIds)
-      ? req.query.selectedIds.map(String)
-      : typeof req.query.selectedIds === 'string'
-        ? req.query.selectedIds.split(',').map((value) => value.trim()).filter(Boolean)
-        : [];
+    const catalog = await loadInputDictionaryToolCatalog();
+    const selectedIds = commaSeparatedIds(req.query.selectedIds);
     return res.json({
       ok: true,
       ...searchToolCatalogReferences(catalog, {
@@ -351,6 +354,79 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
       offset: 0,
       limit: 0,
       hasMore: false,
+    });
+  }
+});
+
+router.get('/input-data-dictionary/script-tools', async (req, res) => {
+  try {
+    const catalog = await loadInputDictionaryToolCatalog();
+    const references = resolveScriptToolReferences(catalog, {
+      policy: req.query.policy === 'all_healthy' ? 'all_healthy' : 'selected',
+      selectedIds: commaSeparatedIds(req.query.selectedIds),
+      disabledIds: commaSeparatedIds(req.query.disabledIds),
+    });
+    const fingerprint = createHash('sha256').update(JSON.stringify(
+      references.map((reference) => ({
+        canonicalId: reference.canonicalId,
+        access: reference.access,
+        availability: reference.availability,
+        contracts: reference.contracts,
+      })),
+    )).digest('hex');
+    const header = await requestPythonRailsJson('/card-script/header', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        catalogTools: catalog.references,
+        selectedTools: references.map((reference) => reference.canonicalId),
+        cardId: typeof req.query.cardId === 'string' ? req.query.cardId : '',
+      }),
+    });
+    return res.json({ ok: true, references, paletteFingerprint: fingerprint, header });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_script_tools_unavailable',
+      references: [],
+      paletteFingerprint: '',
+      header: null,
+    });
+  }
+});
+
+router.post('/card-script/validate', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const catalog = await loadInputDictionaryToolCatalog();
+    const references = resolveScriptToolReferences(catalog, {
+      policy: body.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
+      selectedIds: Array.isArray(body.selectedTools) ? body.selectedTools.map(String) : [],
+      disabledIds: Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : [],
+    });
+    const paletteFingerprint = createHash('sha256').update(JSON.stringify(
+      references.map((reference) => ({
+        canonicalId: reference.canonicalId,
+        access: reference.access,
+        availability: reference.availability,
+        contracts: reference.contracts,
+      })),
+    )).digest('hex');
+    const script = await requestPythonRailsJson('/card-script/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        script: body.script,
+        selectedTools: references.map((reference) => reference.canonicalId),
+        paletteFingerprint,
+        nativeAvailable: body.runtimeKind === 'hermes',
+      }),
+    });
+    return res.json({ ok: true, script, references, paletteFingerprint });
+  } catch (error) {
+    return res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_script_validation_failed',
     });
   }
 });
@@ -511,6 +587,43 @@ function resolveHermesTurnArgs(
     throw new Error('prepared_hermes_transport_invalid');
   }
   const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
+  const scriptState = input.runtimeOptions?.script;
+  const scriptCompiled = scriptState?.compiled;
+  const scriptPresentation = input.scriptPresentation;
+  const script = scriptPresentation?.mode === 'script'
+    && scriptState?.nativeSupport?.active === true
+    && typeof scriptState?.source === 'string'
+    && typeof scriptState?.sourceHash === 'string'
+    && typeof scriptState?.compiledHash === 'string'
+    && Number.isInteger(scriptState?.version)
+    && Number(scriptState.version) >= 1
+    && scriptCompiled && typeof scriptCompiled === 'object'
+    && scriptCompiled.mode === 'outer_controller'
+    ? {
+        version: Number(scriptState.version),
+        source: scriptState.source,
+        sourceHash: scriptState.sourceHash,
+        compiledHash: scriptState.compiledHash,
+        mode: scriptCompiled.mode,
+        inputSchema: scriptCompiled.inputSchema,
+        outputSchema: scriptCompiled.outputSchema,
+        toolHandles: Array.isArray(scriptCompiled.toolHandles) ? scriptCompiled.toolHandles : [],
+        toolStates: scriptCompiled.toolStates && typeof scriptCompiled.toolStates === 'object'
+          ? scriptCompiled.toolStates : {},
+        offToolIds: Array.isArray(scriptCompiled.offToolIds) ? scriptCompiled.offToolIds : [],
+        scriptToolIds: Array.isArray(scriptCompiled.scriptToolIds) ? scriptCompiled.scriptToolIds : [],
+        agentToolIds: Array.isArray(scriptCompiled.agentToolIds) ? scriptCompiled.agentToolIds : [],
+        timeoutSeconds: Number(scriptCompiled.timeoutSeconds),
+        maxToolCalls: Number(scriptCompiled.maxToolCalls),
+        maxOutputBytes: Number(scriptCompiled.maxOutputBytes),
+      }
+    : undefined;
+  const scriptDeclaresCardInput = Boolean(
+    script
+    && script.inputSchema
+    && typeof script.inputSchema === 'object'
+    && (script.inputSchema as any).properties?.card,
+  );
   return {
     cardId: String(identity.cardId || ''),
     title: String(identity.title || ''),
@@ -523,12 +636,32 @@ function resolveHermesTurnArgs(
       ? { subagentModel: savedSubagentModel }
       : {}),
     accessMode: provider?.accessMode,
-    tools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    tools: Array.isArray(input.presentedTools)
+      ? input.presentedTools
+      : Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    grantedTools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
     toolCatalogPolicy: input.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
     disabledTools: Array.isArray(input.disabledTools) ? input.disabledTools : [],
     mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
+    ...(script ? { script } : {}),
+    ...(script ? {
+      scriptInput: {
+        mission: String(input.task || input.message || ''),
+        ...(scriptDeclaresCardInput ? {
+          card: {
+            revisionId: String(args.prepared?.cardRevisionId || ''),
+            defaultPrompt: String(input.message || ''),
+            blocks: [
+              { id: 'graph.context', content: String(input.graphContext || '') },
+              { id: 'card.output_requirements', content: String(input.outputRequirements || '') },
+              { id: 'run.mission', content: String(input.task || '') },
+            ],
+          },
+        } : {}),
+      },
+    } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -1103,7 +1236,12 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           onEvent: (event) => {
             // Preserve real child tool effects for the parent/UI observer. Text,
             // reasoning, and memory remain inside the child Hermes session.
-            if (event.kind === 'tool_start' || event.kind === 'tool_result') {
+            if (
+              event.kind === 'tool_start'
+              || event.kind === 'tool_result'
+              || event.kind === 'script_start'
+              || event.kind === 'script_result'
+            ) {
               nativeEvents.push(event);
             }
           },
@@ -1128,6 +1266,35 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         providerOutputTokens,
         totalCostUsd,
         finalResult: output,
+        ...(prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script'
+          ? {
+              cardScriptExecution: {
+                schemaVersion: 'liquidaity.card-script.run-execution.v1',
+                presentationMode: transport?.scriptFallback ? 'degraded-script-mcp' : 'script',
+                version: prepared.hermesTransport.request.runtimeOptions?.script?.version,
+                sourceHash: prepared.hermesTransport.request.runtimeOptions?.script?.sourceHash,
+                compiledHash: prepared.hermesTransport.request.runtimeOptions?.script?.compiledHash,
+                takenOverTools: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.scriptToolIds || [],
+                toolStates: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.toolStates || {},
+                orderedToolStages: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.toolHandles || [],
+                presentedTools: prepared.hermesTransport.request.presentedTools || [],
+                executor: 'hermes-native-python-child',
+                timeoutSeconds: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.timeoutSeconds,
+                maxToolCalls: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.maxToolCalls,
+                maxOutputBytes: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.maxOutputBytes,
+                receipt: transport?.scriptReceipt || null,
+                fallback: transport?.scriptFallback || null,
+                controller: transport?.scriptControl || null,
+                agentStage: {
+                  invoked: providerInputTokens !== null || providerOutputTokens !== null,
+                  provider: prepared.hermesTransport.request.provider?.provider || null,
+                  model: prepared.hermesTransport.request.provider?.providerModelId || null,
+                  inputTokens: providerInputTokens,
+                  outputTokens: providerOutputTokens,
+                },
+              },
+            }
+          : {}),
       }) as any;
       if (res.destroyed || res.writableEnded) return undefined;
       return res.json({
@@ -1162,11 +1329,34 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
       const cancelled = message === 'hermes_turn_cancelled';
+      const scriptResultEvent = [...nativeEvents].reverse().find((event) => event.kind === 'script_result') as
+        | Extract<HermesSessionEvent, { kind: 'script_result' }>
+        | undefined;
       await finishRun(cancelled ? 'cancelled' : 'failed', {
         providerThreadRef: hermesHandle?.runtime?.sessionId || null,
         nativePhase: cancelled ? 'cancelled' : 'failed',
         errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
         errorSummary: message,
+        ...(transport?.scriptReceipt || transport?.scriptFallback || scriptResultEvent
+          ? {
+              cardScriptExecution: {
+                schemaVersion: 'liquidaity.card-script.run-execution.v1',
+                presentationMode: transport?.scriptFallback ? 'degraded-script-mcp' : 'script-failed',
+                version: prepared.hermesTransport?.request?.runtimeOptions?.script?.version,
+                sourceHash: prepared.hermesTransport?.request?.runtimeOptions?.script?.sourceHash,
+                compiledHash: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiledHash,
+                takenOverTools: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiled?.scriptToolIds || [],
+                toolStates: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiled?.toolStates || {},
+                orderedToolStages: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiled?.toolHandles || [],
+                presentedTools: prepared.hermesTransport?.request?.presentedTools || [],
+                executor: 'hermes-native-python-child',
+                receipt: transport?.scriptReceipt || scriptResultEvent?.receipt || null,
+                fallback: transport?.scriptFallback || scriptResultEvent?.fallback || null,
+                controller: transport?.scriptControl || null,
+                agentStage: { invoked: false },
+              },
+            }
+          : {}),
       }).catch(() => undefined);
       throw error;
     }
