@@ -139,6 +139,7 @@ class _MainCliBridge:
 
     def stop(self) -> None:
         self._stop.set()
+        self._clear()
         self._thread.join(timeout=1.0)
 
     def _request(self, path: str, payload: dict | None = None) -> dict | None:
@@ -242,10 +243,17 @@ class _MainCliBridge:
         })
         if not isinstance(response, dict) or response.get("ok") is not True:
             raise RuntimeError("liquidaity_main_execution_binding_rejected")
+        external_memory_mode = (
+            "bypass_automatic"
+            if active["contextAuthorityMode"] == "plugin_context_only"
+            else "normal"
+        )
         if not self._ctx.bind_cli_host_execution(
             execution_context_id,
             self._host_requester,
             session_id,
+            request_id=active["requestId"],
+            external_memory_mode=external_memory_mode,
         ):
             raise RuntimeError("liquidaity_main_execution_parent_unavailable")
 
@@ -331,6 +339,15 @@ class _MainCliBridge:
                     self._sync_history()
                     self._last_history_sync_at = now
                 self._deliver_team_result()
+                snapshot = self._ctx.cli_conversation_snapshot()
+                session_id = (
+                    str(snapshot.get("session_id") or "").strip()
+                    if isinstance(snapshot, dict)
+                    else ""
+                )
+                if not session_id:
+                    self._stop.wait(_MAIN_BRIDGE_POLL_SECONDS)
+                    continue
                 candidate = self._request("/next")
                 if not candidate:
                     self._stop.wait(_MAIN_BRIDGE_POLL_SECONDS)
@@ -351,12 +368,6 @@ class _MainCliBridge:
                     continue
                 with self._lock:
                     self._active = candidate
-                snapshot = self._ctx.cli_conversation_snapshot()
-                session_id = (
-                    str(snapshot.get("session_id") or "").strip()
-                    if isinstance(snapshot, dict)
-                    else ""
-                )
                 try:
                     self._bind_active_execution(session_id=session_id)
                 except Exception as error:
@@ -371,6 +382,7 @@ class _MainCliBridge:
                         if candidate["contextAuthorityMode"] == "plugin_context_only"
                         else "normal"
                     ),
+                    host_execution_request_id=candidate["requestId"],
                 )
                 if not accepted:
                     self._event("rejected", error="main_driver_turn_already_running")

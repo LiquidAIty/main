@@ -501,8 +501,12 @@ Files and symbols:
   already-live native CLI agent enter the same opaque host lifecycle without replacing its configuration.
 - `agent/native_team_result.py`, `acp_adapter/session.py`, and `acp_adapter/server.py`: share bounded
   result validation/message construction while ACP retains its exact idle-session database/history owner.
-- `hermes_cli/plugins.py`: exposes generic trusted-plugin operations that bind the already-live CLI agent
-  to an opaque host lifecycle and append a terminal result through that CLI's own native session owner.
+- `hermes_cli/plugins.py`: exposes generic trusted-plugin operations that bind an already-live CLI agent
+  to an opaque host lifecycle, or hold one immutable execution/request/session binding while the first
+  native CLI agent is constructed, and append a terminal result through that CLI's own native session owner.
+- `hermes_cli/cli_agent_setup_mixin.py` and `cli.py`: consume the exact pending binding onto the newly
+  constructed agent before provider inference, and reject/clear it on initialization, route or credential
+  failure instead of allowing an uncorrelated first turn.
 
 Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
 temporary-agent construction, depth, provider/model and result behavior. Batch entries still accept only
@@ -519,16 +523,27 @@ parent of the original root. A durable `spawned` event records the exact step/pr
 process boundary. Host correlation is committed before activation; terminal session append occurs before
 the child Card Run is closed. A busy originating session receives bounded idempotent retries; if that
 window expires, the completed native root and active child Run remain recoverable instead of being
-relabeled as failed.
+relabeled as failed. Fresh-CLI staging contains no prompt, configuration or credential, invokes neither
+the host requester nor native task creation, preserves any unsent local prompt buffer, and is consumed only
+after exact CLI/profile/session/request validation. Competing bindings and every mismatch fail closed and
+clear the slot; teardown and cancellation clear it as well. The initialized-agent binding path remains
+unchanged apart from carrying the same request identity.
 
 Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
 `tests/hermes_cli/test_plugin_message_injection.py`, `tests/acp/test_session.py`, and
 `tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, two-to-four bound,
 Terra/Luna/Terra task and spawn receipts, all-worker synthesis context, non-recursion, opaque host
-allocation, ACP/CLI same-session idempotent result append and unchanged native roles. Downstream
+allocation, ACP/CLI same-session idempotent result append, first-turn construction at the real
+`HermesCLI`/`AIAgent` provider boundary, competing/mismatch/teardown cleanup, preservation of unsent local
+input and unchanged native roles. Downstream
 LiquidAIty lifecycle, recovery and Run-correlation tests live beside the backend/Python owners.
 
-Fork cost and contribution plan: seven narrow native files, one new adapter module and focused tests.
+Live proof: the first remote turn after one canonical restart bound before inference and produced native
+root `t_0c8618b6`, exactly two Luna workers (`t_0a5610dc`, `t_91562520`), one Terra synthesis run, one
+host-correlated child Run and one same-session result append. The parent, child and native root all completed;
+readback found no provider fallback, duplicate task/Run/message, nested delegation or retry.
+
+Fork cost and contribution plan: nine narrow existing native files, two new adapter modules and focused tests.
 Propose a generic durable `team` delegation recipe upstream using workflow metadata and the existing
 Auto-Kanban lifecycle, independently propose the generic durable native-execution host allocation and
 idle session-result append operations, and keep LiquidAIty Card/IDD/Run policy downstream. Remove each

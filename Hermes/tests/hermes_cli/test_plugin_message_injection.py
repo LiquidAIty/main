@@ -99,7 +99,11 @@ def test_cli_host_execution_binding_targets_only_the_live_cli_agent():
 
     context, manager = _context()
     agent = SimpleNamespace()
-    manager._cli_ref = SimpleNamespace(agent=agent, _agent_running=False)
+    manager._cli_ref = SimpleNamespace(
+        agent=agent,
+        _agent_running=False,
+        session_id="session-1",
+    )
     requester = MagicMock()
 
     assert context.bind_cli_host_execution("context-1", requester, "session-1") is True
@@ -115,6 +119,305 @@ def test_cli_host_execution_binding_targets_only_the_live_cli_agent():
     assert context.clear_cli_host_execution("context-1") is True
     assert agent._host_execution_context_id == ""
     assert agent._host_execution_requester is None
+
+
+def test_fresh_cli_stages_one_immutable_host_binding_and_preserves_draft():
+    context, manager = _context()
+    cli = SimpleNamespace(
+        agent=None,
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        session_id="session-1",
+        local_draft="unsent terminal draft",
+    )
+    manager._cli_ref = cli
+    requester = MagicMock()
+
+    assert context.bind_cli_host_execution(
+        "context-1",
+        requester,
+        "session-1",
+        request_id="request-1",
+        external_memory_mode="bypass_automatic",
+    ) is True
+    assert context.bind_cli_host_execution(
+        "context-2",
+        requester,
+        "session-1",
+        request_id="request-2",
+        external_memory_mode="bypass_automatic",
+    ) is False
+    assert context.inject_message(
+        "remote mission",
+        interrupt_running=False,
+        external_memory_mode="bypass_automatic",
+        host_execution_request_id="request-1",
+    ) is True
+    assert cli._pending_input.get_nowait() == "remote mission"
+    assert cli.local_draft == "unsent terminal draft"
+    requester.assert_not_called()
+
+    agent = SimpleNamespace()
+    cli.agent = agent
+    assert manager.materialize_cli_host_execution(
+        cli,
+        agent,
+        session_id="session-1",
+    ) is True
+    assert agent._host_execution_context_id == "context-1"
+    assert agent._host_execution_request_id == "request-1"
+    assert agent._host_execution_session_id == "session-1"
+    assert agent._next_turn_external_memory_mode == "bypass_automatic"
+    assert manager._pending_cli_host_execution is None
+    requester.assert_not_called()
+
+
+def test_fresh_cli_rejects_wrong_request_and_clears_session_mismatch():
+    context, manager = _context()
+    cli = SimpleNamespace(
+        agent=None,
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        session_id="session-1",
+    )
+    manager._cli_ref = cli
+    requester = MagicMock()
+    assert context.bind_cli_host_execution(
+        "context-1", requester, "session-1", request_id="request-1"
+    ) is True
+    assert context.inject_message(
+        "wrong owner",
+        interrupt_running=False,
+        host_execution_request_id="request-2",
+    ) is False
+    assert cli._pending_input.empty()
+
+    cli.session_id = "session-2"
+    cli.agent = SimpleNamespace()
+    assert manager.materialize_cli_host_execution(
+        cli,
+        cli.agent,
+        session_id="session-2",
+    ) is False
+    assert manager._pending_cli_host_execution is None
+    assert not hasattr(cli.agent, "_host_execution_context_id")
+    requester.assert_not_called()
+
+
+def test_busy_cli_rejects_new_host_binding_without_disturbing_active_agent():
+    context, manager = _context()
+    agent = SimpleNamespace()
+    cli = SimpleNamespace(
+        agent=agent,
+        _agent_running=True,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        session_id="session-1",
+    )
+    manager._cli_ref = cli
+    requester = MagicMock()
+
+    assert context.bind_cli_host_execution(
+        "context-busy", requester, "session-1", request_id="request-busy"
+    ) is False
+    assert not hasattr(agent, "_host_execution_context_id")
+    assert manager._pending_cli_host_execution is None
+    requester.assert_not_called()
+
+
+def test_route_rejection_clears_direct_binding_and_emits_one_visible_failure():
+    context, manager = _context()
+    agent = SimpleNamespace()
+    cli = SimpleNamespace(
+        agent=agent,
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        session_id="session-1",
+    )
+    manager._cli_ref = cli
+    requester = MagicMock()
+    events = []
+    manager._hooks["on_stream_end"] = [lambda **payload: events.append(payload)]
+    assert context.bind_cli_host_execution(
+        "context-route", requester, "session-1", request_id="request-route"
+    ) is True
+
+    assert cli.agent._host_execution_context_id == "context-route"
+    assert manager.reject_cli_host_execution(cli) is True
+    manager.invoke_hook(
+        "on_stream_end",
+        session_id="session-1",
+        turn_id="",
+        finished=False,
+        error="cli_host_execution_route_changed",
+    )
+    assert cli.agent._host_execution_context_id == ""
+    assert len(events) == 1
+    assert events[0]["error"] == "cli_host_execution_route_changed"
+    requester.assert_not_called()
+
+
+def test_pending_cli_host_binding_clears_on_cancel_and_manager_teardown():
+    context, manager = _context()
+    cli = SimpleNamespace(
+        agent=None,
+        _agent_running=False,
+        _pending_input=SimpleQueue(),
+        _interrupt_queue=SimpleQueue(),
+        session_id="session-1",
+    )
+    manager._cli_ref = cli
+    requester = MagicMock()
+
+    assert context.bind_cli_host_execution(
+        "context-1", requester, "session-1", request_id="request-1"
+    ) is True
+    assert context.clear_cli_host_execution("context-1") is True
+    assert manager._pending_cli_host_execution is None
+
+    assert context.bind_cli_host_execution(
+        "context-2", requester, "session-1", request_id="request-2"
+    ) is True
+    manager.unload()
+    assert manager._pending_cli_host_execution is None
+    requester.assert_not_called()
+
+
+def test_real_cli_initialization_failure_rejects_and_clears_staged_binding(
+    tmp_path,
+    monkeypatch,
+):
+    import cli as cli_mod
+    import hermes_cli.plugins as plugins_mod
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    plugins_mod._reset_plugin_managers_for_tests()
+    manager = plugins_mod.get_plugin_manager()
+    cli = cli_mod.HermesCLI(
+        model="provider-free-model",
+        provider="openrouter",
+        api_key="provider-free-key",
+        base_url="http://127.0.0.1:9/v1",
+    )
+    manager._cli_ref = cli
+    context = PluginContext(
+        PluginManifest(name="integration-plugin", key="integration-plugin", source="user"),
+        manager,
+    )
+    events = []
+    manager._hooks["on_stream_end"] = [lambda **payload: events.append(payload)]
+    requester = MagicMock()
+    assert context.bind_cli_host_execution(
+        "context-init-failure",
+        requester,
+        cli.session_id,
+        request_id="request-init-failure",
+    ) is True
+    monkeypatch.setattr(cli, "_ensure_runtime_credentials", lambda: False)
+
+    assert cli._init_agent() is False
+    assert cli.agent is None
+    assert manager._pending_cli_host_execution is None
+    assert len(events) == 1
+    assert events[0]["finished"] is False
+    assert events[0]["error"] == "cli_agent_credentials_unavailable"
+    requester.assert_not_called()
+
+
+def test_real_cli_agent_materializes_staged_binding_before_provider_boundary(
+    tmp_path,
+    monkeypatch,
+):
+    """Boot the real CLI/PluginContext/AIAgent path without inference."""
+
+    import cli as cli_mod
+    import hermes_cli.mcp_startup as mcp_startup
+    import hermes_cli.plugins as plugins_mod
+    import run_agent
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setattr(
+        mcp_startup,
+        "ensure_mcp_discovery_before_agent_build",
+        lambda **_kwargs: None,
+    )
+    plugins_mod._reset_plugin_managers_for_tests()
+    manager = plugins_mod.get_plugin_manager()
+    cli = cli_mod.HermesCLI(
+        model="provider-free-model",
+        provider="openrouter",
+        api_key="provider-free-key",
+        base_url="http://127.0.0.1:9/v1",
+    )
+    manager._cli_ref = cli
+    context = PluginContext(
+        PluginManifest(name="integration-plugin", key="integration-plugin", source="user"),
+        manager,
+    )
+    requester = MagicMock()
+    assert context.bind_cli_host_execution(
+        "context-integration",
+        requester,
+        cli.session_id,
+        request_id="request-integration",
+    ) is True
+    assert context.inject_message(
+        "provider-free mission",
+        interrupt_running=False,
+        host_execution_request_id="request-integration",
+    ) is True
+    message = cli._pending_input.get_nowait()
+    observed = []
+
+    def provider_boundary(agent, **_kwargs):
+        observed.append({
+            "agent": agent,
+            "context": agent._host_execution_context_id,
+            "request": agent._host_execution_request_id,
+            "session": agent._host_execution_session_id,
+        })
+        return {
+            "final_response": "provider-free result",
+            "messages": [],
+            "api_calls": 0,
+            "completed": True,
+        }
+
+    monkeypatch.setattr(run_agent.AIAgent, "run_conversation", provider_boundary)
+    monkeypatch.setattr(cli, "_ensure_runtime_credentials", lambda: True)
+    runtime = {
+        "api_key": "provider-free-key",
+        "base_url": "http://127.0.0.1:9/v1",
+        "provider": "openrouter",
+        "requested_provider": "openrouter",
+        "api_mode": "chat_completions",
+        "command": None,
+        "args": [],
+        "credential_pool": None,
+    }
+    monkeypatch.setattr(cli, "_resolve_turn_agent_config", lambda _message: {
+        "signature": None,
+        "model": "provider-free-model",
+        "runtime": runtime,
+        "request_overrides": None,
+    })
+    cli._agent_running = True
+
+    assert cli.chat(message) == "provider-free result"
+    assert len(observed) == 1
+    assert type(observed[0]["agent"]).__name__ == "AIAgent"
+    assert observed[0]["context"] == "context-integration"
+    assert observed[0]["request"] == "request-integration"
+    assert observed[0]["session"] == cli.session_id
+    assert manager._pending_cli_host_execution is None
+    requester.assert_not_called()
 
 
 def test_cli_native_team_result_uses_live_session_owner_and_is_idempotent():

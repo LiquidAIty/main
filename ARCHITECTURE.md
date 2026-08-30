@@ -92,12 +92,22 @@ is a dependency of the original root, so Hermes' existing parent-result context 
 pass all worker reports. That pass returns one native task result to the existing originating Hermes
 session and Card Run. ACP Card sessions and persistent Main CLI turns use one backend-owned host child
 lifecycle for exact-once Run allocation, native-root correlation, terminal closure and recovery. Main
-binds that opaque lifecycle to the already-live CLI agent before injecting the accepted turn, then the
-same CLI owner appends the terminal Team result with native-task idempotence once the session is idle.
+binds that opaque lifecycle before injecting the accepted turn. If the persistent CLI has not lazily
+constructed its native agent yet, the profile-scoped native plugin manager holds one immutable pending
+execution/request/session binding and consumes it onto the exact new agent immediately after construction,
+before provider inference. An already-initialized agent keeps direct binding. The same CLI owner then
+appends the terminal Team result with native-task idempotence once the session is idle.
 If bounded delivery retries expire, the native completion and active child Run remain available for the
 existing restart-rejoin owner rather than being converted into a false failure.
 Existing Hermes SQLite dependencies, retries, recovery, notifications, Stop and
 rejoin remain the execution substrate; no board controls or UI state are exposed.
+
+The first canonical post-repair acceptance exercised this exact fresh-process path: parent Run
+`req_f4dc226f` bound before inference, created one correlated child Run
+`hermes_child_ca3d74c5-0e66-4e9a-88f3-cb543946f36b` and one native root `t_0c8618b6`, completed exactly
+two Luna workers (`t_0a5610dc`, `t_91562520`), ran one Terra synthesis, and appended that synthesis once
+to originating native session `20260830_170231_2b1e6f`. Native and host owners both reached terminal
+success without provider fallback, duplicate allocation, nested delegation or a second acceptance call.
 
 LiquidAIty's Card-facing IDD/Script and trusted ACP session projections expose `team` generally and add
 `leaf` only for Main's existing direct Agent Builder doorway. They do not expose `orchestrator`. Native Hermes keeps
@@ -641,8 +651,12 @@ The headless per-Card Team doorway is a separate contained divergence over Herme
 allocation callback accepts the durable native root ID before activation; LiquidAIty creates one child
 Card Run for that root and monitors/rejoins it through the existing Kanban read path. ACP and persistent
 Main both enter the same backend host lifecycle. Persistent Main binds the lifecycle to its live CLI
-agent before turn injection, and the live CLI transcript owner appends the terminal native result to the
-exact idle originating session before the child Run closes. Team-specific
+agent before turn injection; on the first post-launch turn, the native plugin owner instead stages one
+minimal immutable binding until lazy agent construction completes, verifies CLI/profile/session/request
+identity, and consumes it before provider inference. Initialization, route, session, request, teardown,
+or cancellation mismatches clear or reject the staging slot without allocating a child. The live CLI
+transcript owner appends the terminal native result to the exact idle originating session before the child
+Run closes. Team-specific
 task markers carry Terra/Luna model overrides, final-stage identity and a durable spawn receipt; the
 stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
 sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
@@ -675,6 +689,9 @@ The same external plugin drives the one persistent native Main CLI through Herme
 injection and structured stream/turn hooks. One generic optional argument on
 `PluginContext.inject_message` makes an external human input driver fail closed while the agent is
 running or another input is pending; omission preserves Hermes' interrupting upstream behavior. The
+paired host-request identity argument proves that a queued remote message matches the directly attached
+or single pending host lifecycle. The bridge does not claim `/next` until the CLI exposes its native
+session identity, so canonical readiness cannot race the CLI owner. The
 same call may carry the trusted one-turn `external_memory_mode=bypass_automatic` marker used by the
 contextualized GPT/plugin Main entrance. That marker suppresses only automatic external-memory
 turn-start, prefetch, and sync for the injected root turn. A direct Main turn keeps the profile's

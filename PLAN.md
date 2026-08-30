@@ -97,11 +97,6 @@ they do not select a runtime implementation.
 ### Still requiring live proof
 
 - Native Main-to-Agent-Builder delegation with truthful child Run, tool, native-reference, and AGE lineage.
-- Native headless Team execution is live-proven through exact Terra decomposition, two Luna workers,
-  and distinct Terra synthesis with no recursive delegation. The persistent Main acceptance exposed a
-  missing host lifecycle binding: no child Run or same-session result was created. Source now routes ACP
-  and Main through one child-Run/recovery contract, but its exact same-session return remains unproven
-  until one separately authorized canonical reload and acceptance.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - A canonical reload must load the saved subagent selector chain, child receipt migration,
@@ -119,6 +114,12 @@ Live proof already completed before this integration pass: one direct saved Main
 one saved Local Coder account-backed Run; a real Holographic add/search/remove lifecycle with zero retained
 test facts; and one deduplicated asynchronous Luna background-review child whose valid result was no new
 skill. The prior child does not by itself prove the new saved-Card selector and actual-model receipt chain.
+Native headless Team is now additionally live-proven through the fresh persistent-Main doorway: parent Run
+`req_f4dc226f` bound before inference, allocated child Run
+`hermes_child_ca3d74c5-0e66-4e9a-88f3-cb543946f36b`, attached native root `t_0c8618b6`, completed exactly
+two Luna workers (`t_0a5610dc`, `t_91562520`), ran one Terra synthesis, and appended it once to originating
+session `20260830_170231_2b1e6f`. No provider fallback, duplicate root/child/message, nested delegation or
+acceptance retry occurred.
 
 Structural tests are not substitutes for these live proofs.
 

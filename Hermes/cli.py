@@ -16298,10 +16298,15 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         # Refresh provider credentials if needed (handles key rotation transparently)
         if not self._ensure_runtime_credentials():
+            self._reject_cli_host_execution("cli_agent_credentials_unavailable")
             return None
 
         turn_route = self._resolve_turn_agent_config(message)
         if turn_route["signature"] != self._active_agent_route_signature:
+            if self.agent is not None and self._reject_cli_host_execution(
+                "cli_host_execution_route_changed"
+            ):
+                return None
             self.agent = None
 
         # Initialize agent if needed

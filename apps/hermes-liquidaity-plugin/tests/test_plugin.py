@@ -323,17 +323,23 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
             self.messages = []
 
         def inject_message(
-            self, message, *, interrupt_running, external_memory_mode
+            self, message, *, interrupt_running, external_memory_mode,
+            host_execution_request_id
         ):
             self.messages.append(
-                (message, interrupt_running, external_memory_mode)
+                (
+                    message,
+                    interrupt_running,
+                    external_memory_mode,
+                    host_execution_request_id,
+                )
             )
             return False
 
         def cli_conversation_snapshot(self):
             return {"session_id": "session-1", "messages": []}
 
-        def bind_cli_host_execution(self, *_args):
+        def bind_cli_host_execution(self, *_args, **_kwargs):
             return True
 
         def clear_cli_host_execution(self, *_args):
@@ -361,10 +367,35 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
     monkeypatch.setattr(bridge, "_request", request)
     bridge._poll()
 
-    assert context.messages == [("hello", False, "bypass_automatic")]
+    assert context.messages == [(
+        "hello", False, "bypass_automatic", "request-1",
+    )]
     assert calls[-1][1]["kind"] == "rejected"
     assert calls[-1][1]["error"] == "main_driver_turn_already_running"
     assert bridge._active is None
+
+
+def test_main_bridge_does_not_claim_first_remote_turn_before_cli_identity_exists(
+    monkeypatch,
+):
+    class Context:
+        def cli_conversation_snapshot(self):
+            bridge._stop.set()
+            return None
+
+    bridge = plugin._MainCliBridge(
+        Context(), "http://127.0.0.1:4000", "token"
+    )
+    calls = []
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: calls.append((path, payload)) or None,
+    )
+
+    bridge._poll()
+
+    assert not any(path == "/next" for path, _payload in calls)
 
 
 def test_main_bridge_marks_unfinished_native_stream_cancelled(monkeypatch):
@@ -424,8 +455,12 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
     calls = []
 
     class Context:
-        def bind_cli_host_execution(self, context_id, requester, session_id):
-            calls.append(("bind-native", context_id, requester, session_id))
+        def bind_cli_host_execution(
+            self, context_id, requester, session_id, **kwargs
+        ):
+            calls.append(
+                ("bind-native", context_id, requester, session_id, kwargs)
+            )
             return True
 
     bridge = plugin._MainCliBridge(Context(), "http://127.0.0.1:4000", "token")
@@ -434,6 +469,7 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
         "runId": "run-1",
         "executionContextId": "context-1",
         "driverSource": "internal_chat",
+        "contextAuthorityMode": "main_native_honcho",
         "message": "hello",
     }
     monkeypatch.setattr(
@@ -452,6 +488,10 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
     })
     assert calls[1][0:2] == ("bind-native", "context-1")
     assert calls[1][3] == "session-1"
+    assert calls[1][4] == {
+        "request_id": "request-1",
+        "external_memory_mode": "normal",
+    }
 
 
 def test_main_bridge_delivers_team_result_once_then_syncs_history(monkeypatch):

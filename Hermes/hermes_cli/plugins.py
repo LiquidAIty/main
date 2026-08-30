@@ -1151,6 +1151,20 @@ class _QueuedPluginEvent:
     generation: int
 
 
+# LIQUIDAITY VENDOR PATCH: one immutable pre-agent host lifecycle binding.
+@dataclass(frozen=True)
+class _PendingCliHostExecution:
+    """Minimal identity needed to bind one accepted remote CLI turn."""
+
+    execution_context_id: str
+    request_id: str
+    session_id: str
+    profile_key: str
+    cli_identity: int
+    requester: Callable[[str, dict[str, Any]], dict[str, Any]]
+    external_memory_mode: str
+
+
 # LIQUIDAITY VENDOR PATCH: generic registered pre-spawn child environment seam.
 @dataclass(frozen=True)
 class KanbanWorkerEnvironmentContext:
@@ -2016,6 +2030,9 @@ class PluginContext:
         # LIQUIDAITY VENDOR PATCH: one-turn external-memory policy selected by
         # a trusted input-driver plugin before the message is accepted.
         external_memory_mode: str = "normal",
+        # LIQUIDAITY VENDOR PATCH: when present, the queued input must match
+        # the exact host lifecycle already bound or staged for this CLI.
+        host_execution_request_id: str | None = None,
     ) -> bool:
         """Inject a message into a CLI or gateway conversation.
 
@@ -2050,7 +2067,17 @@ class PluginContext:
                 if not interrupt_running and not cli._pending_input.empty():
                     return False
                 agent = getattr(cli, "agent", None)
-                if external_memory_mode != "normal" and agent is None:
+                if host_execution_request_id and not self._manager.cli_host_execution_matches(
+                    cli,
+                    request_id=host_execution_request_id,
+                    external_memory_mode=external_memory_mode,
+                ):
+                    return False
+                if (
+                    external_memory_mode != "normal"
+                    and agent is None
+                    and not host_execution_request_id
+                ):
                     # A bypass request must never fall through to a freshly
                     # initialized agent whose policy could not be staged.
                     return False
@@ -2119,6 +2146,9 @@ class PluginContext:
         execution_context_id: str,
         requester: Callable[[str, dict[str, Any]], dict[str, Any]],
         session_id: str,
+        *,
+        request_id: str = "",
+        external_memory_mode: str = "normal",
     ) -> bool:
         """Bind the active CLI agent to a generic host child lifecycle.
 
@@ -2130,40 +2160,42 @@ class PluginContext:
         no prompt, tool, Script, profile, credential, or persistence config.
         """
 
-        from agent.subagent_lifecycle import get_active_subagent_parent
-        from acp_adapter.host_profiles import (
-            attach_host_execution_context,
-            attach_host_execution_requester,
-        )
-
         cli = self._manager._cli_ref
-        parent = get_active_subagent_parent()
-        agent = getattr(cli, "agent", None) if cli is not None else None
+        context_id = str(execution_context_id or "").strip()
+        resolved_session_id = str(session_id or "").strip()
+        resolved_request_id = str(request_id or "").strip()
         if (
             cli is None
-            or agent is None
-            or (getattr(cli, "_agent_running", False) and parent is not agent)
-            or (parent is not None and parent is not agent)
+            or not context_id
+            or not resolved_session_id
+            or not callable(requester)
+            or external_memory_mode not in {"normal", "bypass_automatic"}
         ):
             return False
-        attach_host_execution_context(agent, execution_context_id)
-        attach_host_execution_requester(agent, requester, session_id)
-        return True
+        return self._manager.bind_cli_host_execution(
+            cli,
+            _PendingCliHostExecution(
+                execution_context_id=context_id,
+                request_id=resolved_request_id,
+                session_id=resolved_session_id,
+                profile_key=hermes_home_key(),
+                cli_identity=id(cli),
+                requester=requester,
+                external_memory_mode=external_memory_mode,
+            ),
+        )
 
     def clear_cli_host_execution(self, execution_context_id: str) -> bool:
         """Remove one matching alternate-driver lifecycle from the CLI agent."""
 
         cli = self._manager._cli_ref
-        agent = getattr(cli, "agent", None) if cli is not None else None
         expected = str(execution_context_id or "").strip()
-        if agent is None or not expected:
+        if cli is None or not expected:
             return False
-        if str(getattr(agent, "_host_execution_context_id", "") or "") != expected:
-            return False
-        setattr(agent, "_host_execution_context_id", "")
-        setattr(agent, "_host_execution_requester", None)
-        setattr(agent, "_host_execution_session_id", "")
-        return True
+        return self._manager.clear_cli_host_execution(
+            cli,
+            execution_context_id=expected,
+        )
 
     def append_cli_native_team_result(
         self,
@@ -3714,6 +3746,10 @@ class PluginManager:
         self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
         self._discovered: bool = False
         self._cli_ref = None  # Set by CLI after plugin discovery
+        # LIQUIDAITY VENDOR PATCH: the native plugin manager owns at most one
+        # pre-agent host binding for its exact interactive CLI/profile.
+        self._cli_host_execution_lock = threading.RLock()
+        self._pending_cli_host_execution: _PendingCliHostExecution | None = None
         self._gateway_message_injector: tuple[object, Callable] | None = None
         # Plugin skill registry: qualified name → metadata dict.
         self._plugin_skills: Dict[str, Dict[str, Any]] = {}
@@ -4054,6 +4090,11 @@ class PluginManager:
         self._forget_registrations(registrations)
 
         if unload_all:
+            # A force reload or CLI teardown must not leave an accepted remote
+            # turn's transient host identity available to a later local turn.
+            cli = self._cli_ref
+            if cli is not None:
+                self.clear_cli_host_execution(cli)
             # The handles are authoritative for global registries, while the
             # manager-local containers are also reset to clear legacy/manual
             # state that predates the ledger.
@@ -4143,6 +4184,201 @@ class PluginManager:
     # -----------------------------------------------------------------------
     # Public
     # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _clear_cli_agent_host_execution(agent: Any) -> None:
+        setattr(agent, "_host_execution_context_id", "")
+        setattr(agent, "_host_execution_requester", None)
+        setattr(agent, "_host_execution_session_id", "")
+        setattr(agent, "_host_execution_request_id", "")
+        setattr(agent, "_host_execution_profile_key", "")
+
+    def _attach_cli_host_execution(
+        self,
+        cli: Any,
+        agent: Any,
+        binding: _PendingCliHostExecution,
+        *,
+        allow_pre_run_active: bool = False,
+    ) -> bool:
+        from agent.subagent_lifecycle import get_active_subagent_parent
+        from acp_adapter.host_profiles import (
+            attach_host_execution_context,
+            attach_host_execution_requester,
+        )
+
+        parent = get_active_subagent_parent()
+        current_context = str(
+            getattr(agent, "_host_execution_context_id", "") or ""
+        ).strip()
+        if (
+            self._cli_ref is not cli
+            or id(cli) != binding.cli_identity
+            or getattr(cli, "agent", None) is not agent
+            or str(getattr(cli, "session_id", "") or "").strip()
+            != binding.session_id
+            or binding.profile_key != self.scope_key
+            or binding.profile_key != hermes_home_key()
+            or (current_context and current_context != binding.execution_context_id)
+            or (
+                getattr(cli, "_agent_running", False)
+                and parent is not agent
+                and not (allow_pre_run_active and parent is None)
+            )
+            or (parent is not None and parent is not agent)
+        ):
+            return False
+        attach_host_execution_context(agent, binding.execution_context_id)
+        attach_host_execution_requester(
+            agent,
+            binding.requester,
+            binding.session_id,
+        )
+        setattr(agent, "_host_execution_request_id", binding.request_id)
+        setattr(agent, "_host_execution_profile_key", binding.profile_key)
+        return True
+
+    def bind_cli_host_execution(
+        self,
+        cli: Any,
+        binding: _PendingCliHostExecution,
+    ) -> bool:
+        """Attach now, or stage one immutable binding for a fresh idle CLI."""
+
+        with self._cli_host_execution_lock:
+            if (
+                self._cli_ref is not cli
+                or id(cli) != binding.cli_identity
+                or binding.profile_key != self.scope_key
+                or binding.profile_key != hermes_home_key()
+                or str(getattr(cli, "session_id", "") or "").strip()
+                != binding.session_id
+            ):
+                return False
+            agent = getattr(cli, "agent", None)
+            if agent is not None:
+                try:
+                    return self._attach_cli_host_execution(cli, agent, binding)
+                except Exception:
+                    logger.debug("CLI host execution attach failed", exc_info=True)
+                    return False
+            if (
+                getattr(cli, "_agent_running", False)
+                or not binding.request_id
+                or not getattr(cli, "_pending_input", queue.Queue()).empty()
+            ):
+                return False
+            pending = self._pending_cli_host_execution
+            if pending is not None:
+                return pending == binding
+            self._pending_cli_host_execution = binding
+            return True
+
+    def cli_host_execution_matches(
+        self,
+        cli: Any,
+        *,
+        request_id: str,
+        external_memory_mode: str,
+    ) -> bool:
+        """Verify that one injected message owns the current bound identity."""
+
+        expected_request = str(request_id or "").strip()
+        with self._cli_host_execution_lock:
+            if self._cli_ref is not cli or not expected_request:
+                return False
+            agent = getattr(cli, "agent", None)
+            if agent is not None:
+                return (
+                    str(getattr(agent, "_host_execution_request_id", "") or "")
+                    == expected_request
+                    and str(getattr(agent, "_host_execution_profile_key", "") or "")
+                    == hermes_home_key()
+                )
+            pending = self._pending_cli_host_execution
+            return bool(
+                pending is not None
+                and pending.cli_identity == id(cli)
+                and pending.request_id == expected_request
+                and pending.session_id
+                == str(getattr(cli, "session_id", "") or "").strip()
+                and pending.profile_key == hermes_home_key()
+                and pending.external_memory_mode == external_memory_mode
+            )
+
+    def materialize_cli_host_execution(
+        self,
+        cli: Any,
+        agent: Any,
+        *,
+        session_id: str,
+    ) -> bool | None:
+        """Atomically consume the pending binding onto the exact new agent."""
+
+        with self._cli_host_execution_lock:
+            pending = self._pending_cli_host_execution
+            if pending is None:
+                return None
+            valid = (
+                self._cli_ref is cli
+                and pending.cli_identity == id(cli)
+                and pending.session_id == str(session_id or "").strip()
+                and pending.profile_key == self.scope_key
+                and pending.profile_key == hermes_home_key()
+            )
+            try:
+                attached = valid and self._attach_cli_host_execution(
+                    cli,
+                    agent,
+                    pending,
+                    allow_pre_run_active=True,
+                )
+            except Exception:
+                logger.debug("pending CLI host execution attach failed", exc_info=True)
+                attached = False
+            if not attached:
+                self._pending_cli_host_execution = None
+                return False
+            setattr(
+                agent,
+                "_next_turn_external_memory_mode",
+                pending.external_memory_mode,
+            )
+            self._pending_cli_host_execution = None
+            return True
+
+    def clear_cli_host_execution(
+        self,
+        cli: Any,
+        *,
+        execution_context_id: str = "",
+    ) -> bool:
+        """Clear only the matching pending or attached CLI host lifecycle."""
+
+        expected = str(execution_context_id or "").strip()
+        cleared = False
+        with self._cli_host_execution_lock:
+            if self._cli_ref is not cli:
+                return False
+            pending = self._pending_cli_host_execution
+            if pending is not None and (
+                not expected or pending.execution_context_id == expected
+            ):
+                self._pending_cli_host_execution = None
+                cleared = True
+            agent = getattr(cli, "agent", None)
+            attached = str(
+                getattr(agent, "_host_execution_context_id", "") or ""
+            ).strip() if agent is not None else ""
+            if agent is not None and attached and (not expected or attached == expected):
+                self._clear_cli_agent_host_execution(agent)
+                cleared = True
+        return cleared
+
+    def reject_cli_host_execution(self, cli: Any) -> bool:
+        """Drop one pending/attached binding before an uncorrelated turn."""
+
+        return self.clear_cli_host_execution(cli)
 
     @property
     def has_gateway_message_injector(self) -> bool:
