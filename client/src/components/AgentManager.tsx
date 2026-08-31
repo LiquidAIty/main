@@ -962,8 +962,13 @@ export function AgentManager({
       ...editedConfig,
       runtime_options: {
         ...(localConfig.runtime_options || {}),
-        toolCatalogPolicy: runtimeKind === 'hermes' ? 'all_healthy' : 'selected',
-        disabledTools: runtimeKind === 'hermes' ? parseListText(disabledToolsText) : [],
+        toolCatalogPolicy: runtimeKind === 'hermes'
+          ? (localConfig.runtime_options?.toolCatalogPolicy === 'selected' ? 'selected' : 'all_healthy')
+          : 'selected',
+        disabledTools: runtimeKind === 'hermes'
+          && localConfig.runtime_options?.toolCatalogPolicy !== 'selected'
+          ? parseListText(disabledToolsText)
+          : [],
         subagentModel: runtimeKind === 'hermes' ? subagentModel : null,
         ...(
           localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
@@ -1352,8 +1357,8 @@ export function AgentManager({
     toolDictionaryQuery,
   ]);
 
-  const sectionBody = (() => {
-    if (activeTab === 'Terminal') {
+  const renderSectionBody = (sectionTab: string) => {
+    if (sectionTab === 'Terminal') {
       if (localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'main' && onOpenMainChat) {
         return <>{terminalContent || null}
           <button type="button" data-testid="open-main-chat" onClick={onOpenMainChat}>
@@ -1366,7 +1371,7 @@ export function AgentManager({
       // empty-section guard before their real Run controls are mounted.
       return <>{terminalContent || null}</>;
     }
-    if (activeTab === 'Prompt') {
+    if (sectionTab === 'Prompt') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {onChangeCardName || onChangeCardSubtext ? (
@@ -1556,13 +1561,15 @@ export function AgentManager({
         </div>
       );
     }
-    if (activeTab === 'Script') {
+    if (sectionTab === 'Script') {
       return (
         <CardScriptEditor
           cardId={cardId}
           runtimeKind={runtimeKind}
           script={scriptDraft}
-          toolCatalogPolicy={runtimeKind === 'hermes' ? 'all_healthy' : 'selected'}
+          toolCatalogPolicy={runtimeKind === 'hermes'
+            ? (localConfig.runtime_options?.toolCatalogPolicy === 'selected' ? 'selected' : 'all_healthy')
+            : 'selected'}
           selectedTools={savedToolNames}
           disabledTools={disabledToolNames}
           onChange={updateScriptDraft}
@@ -1570,7 +1577,7 @@ export function AgentManager({
       );
     }
 
-    if (activeTab === 'Skills') {
+    if (sectionTab === 'Skills') {
       return (
         <section
           data-testid="native-learning-graph"
@@ -1718,7 +1725,7 @@ export function AgentManager({
       );
     }
 
-    if (activeTab === 'Knowledge') {
+    if (sectionTab === 'Knowledge') {
       return (
         <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
           {runInputs ? (
@@ -1907,7 +1914,7 @@ export function AgentManager({
       );
     }
 
-    if (activeTab === 'Runtime') {
+    if (sectionTab === 'Runtime') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {!runtimeDictionaryReady ? (
@@ -2253,7 +2260,7 @@ export function AgentManager({
       );
     }
 
-    if (activeTab === 'Tools') {
+    if (sectionTab === 'Tools') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
@@ -2652,7 +2659,29 @@ export function AgentManager({
     }
 
     return null;
-  })();
+  };
+
+  const sectionBody = activeTab === 'CLI'
+    ? renderSectionBody('Terminal')
+    : activeTab === 'Prompt'
+      ? (
+          <div data-testid="agent-manager-prompt-surface" style={{ display: 'grid', gap: 16 }}>
+            <section aria-label="Prompt configuration">{renderSectionBody('Prompt')}</section>
+            <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
+          </div>
+        )
+      : activeTab === 'Context'
+        ? (
+            <div data-testid="agent-manager-context-surface" style={{ display: 'grid', gap: 16 }}>
+              <section aria-label="Knowledge and graph context">{renderSectionBody('Knowledge')}</section>
+              <section aria-label="Skills and memory">{renderSectionBody('Skills')}</section>
+            </div>
+          )
+        : activeTab === 'Tools'
+          ? renderSectionBody('Tools')
+          : activeTab === 'Script'
+            ? renderSectionBody('Script')
+            : null;
 
   if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) {
     return (
@@ -2730,7 +2759,7 @@ export function AgentManager({
           ) : null}
         </div>
 
-        {activeTab === 'Terminal' && showTaskComposer ? <AdaptiveCardTerminal
+        {activeTab === 'CLI' && showTaskComposer ? <AdaptiveCardTerminal
           enabled={adaptiveTerminal} projectId={projectId} deckId={deckId} cardId={cardId}
           runtime={localConfig.runtime} run={runResult} busy={runBusy}
           onStop={onStopCard} onRejoin={onRejoinCard}
@@ -2810,7 +2839,7 @@ export function AgentManager({
           </div>
         </div></AdaptiveCardTerminal> : null}
 
-        {activeTab === 'Terminal' && runInputs ? (
+        {activeTab === 'CLI' && runInputs ? (
           <section
             data-testid="selected-run-idf"
             style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
@@ -2859,7 +2888,7 @@ export function AgentManager({
           </section>
         ) : null}
 
-        {activeTab === 'Terminal' && runResult && !adaptiveTerminal && cardKind !== 'agent' ? (
+        {activeTab === 'CLI' && runResult && !adaptiveTerminal && cardKind !== 'agent' ? (
           <div
             data-testid="agent-manager-run-result"
             style={{ display: 'grid', gap: 6, fontSize: 11.5 }}
@@ -2918,7 +2947,7 @@ export function AgentManager({
             ) : null}
           </div>
         ) : null}
-        {activeTab === 'Terminal' && runResult?.nativeEvents?.length ? (
+        {activeTab === 'CLI' && runResult?.nativeEvents?.length ? (
           <details data-testid="card-script-native-receipts" style={{ color: '#B8C8CD', fontSize: 11 }}>
             <summary style={{ cursor: 'pointer' }}>
               Native tool and Script receipts ({runResult.nativeEvents.length})

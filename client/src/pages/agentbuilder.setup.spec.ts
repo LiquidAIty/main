@@ -130,9 +130,8 @@ describe('agentbuilder authoring flow', () => {
       'cbm.search_graph',
       'cbm.trace_path',
       'cbm.get_code_snippet',
-      'cbm.check_index_coverage',
-      'cbm.detect_changes',
     ]);
+    expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.runtimeOptions?.skills).toEqual(['hermes-agent']);
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');

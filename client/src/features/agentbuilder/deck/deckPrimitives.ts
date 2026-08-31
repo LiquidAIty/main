@@ -42,6 +42,15 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'card.update_configuration',
   'canvas.upsert_wire',
 ] as const;
+// Agent Builder needs only the structural source-understanding recipe. It may
+// find similar symbols, trace relevant relationships, and then read the exact
+// returned implementation. Projection diagnostics and diff maintenance remain
+// Local Coder concerns.
+export const AGENT_BUILDER_CODEBASE_MEMORY_TOOLS = [
+  'cbm.search_graph',
+  'cbm.trace_path',
+  'cbm.get_code_snippet',
+] as const;
 // Shared non-administrative CodeGraph corridor for repository-owning Cards.
 // Indexing, trace ingestion, ADR mutation, and project deletion stay outside
 // ordinary Card grants.

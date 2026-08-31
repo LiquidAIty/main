@@ -1,6 +1,5 @@
 import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
-import type { HermesLearningIndicator } from '../../../features/agentbuilder/nativeHermesCard';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 
@@ -13,7 +12,6 @@ type AgentCardNodeData = AgentCardInstance & {
   isFlowLinked?: boolean;
   isInspecting?: boolean;
   activeAgentCount?: number;
-  learningIndicator?: HermesLearningIndicator;
 };
 
 export default function AgentCardNode({
@@ -147,29 +145,6 @@ export default function AgentCardNode({
               }}
             >
               {activeAgentCount}
-            </span>
-          ) : null}
-          {data.runtime.kind === 'hermes' && data.learningIndicator ? (
-            <span
-              data-testid="hermes-learning-indicator"
-              title={`${data.learningIndicator.learnedSkillCount} native learned skills${data.learningIndicator.recentChange ? ' · recent profile learning' : ''}`}
-              aria-label={`${data.learningIndicator.learnedSkillCount} native learned skills${data.learningIndicator.recentChange ? ', recently changed' : ''}`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 3,
-                marginLeft: 'auto',
-                color: data.learningIndicator.recentChange
-                  ? GRAPH_THEME.accent.solar
-                  : GRAPH_THEME.surface.mutedText,
-                fontSize: 9,
-                fontWeight: 750,
-                lineHeight: 1,
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              <span aria-hidden>✦</span>
-              <span>{data.learningIndicator.learnedSkillCount}</span>
             </span>
           ) : null}
         </div>

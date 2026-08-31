@@ -20,6 +20,19 @@ type XtermViewProps = {
   transparent?: boolean;
 };
 
+function syncTerminalInputState(term: Terminal, interactive: boolean): void {
+  const textarea = term.textarea;
+  if (!textarea) return;
+  if (interactive) {
+    textarea.removeAttribute('aria-hidden');
+    textarea.tabIndex = 0;
+    return;
+  }
+  textarea.setAttribute('aria-hidden', 'true');
+  textarea.tabIndex = -1;
+  textarea.blur();
+}
+
 export default function XtermView({
   interactive,
   connectOutput,
@@ -57,7 +70,9 @@ export default function XtermView({
     const outputController = new AbortController();
     let term: Terminal | null = null;
     let lastSize = '';
-    const focusTerminal = () => term?.focus();
+    const focusTerminal = () => {
+      if (interactiveRef.current) term?.focus();
+    };
     const fit = () => {
       if (!term) return;
       const bounds = container.getBoundingClientRect();
@@ -99,6 +114,7 @@ export default function XtermView({
       });
       term.loadAddon(fitAddon);
       term.open(container);
+      syncTerminalInputState(term, interactiveRef.current);
       inputDisposable = term.onData((data) => {
         if (!interactiveRef.current) return;
         try {
@@ -161,6 +177,7 @@ export default function XtermView({
     if (!state) return;
     state.term.options.disableStdin = !interactive;
     state.term.options.cursorBlink = interactive;
+    syncTerminalInputState(state.term, interactive);
     if (interactive) state.term.focus();
   }, [interactive]);
 

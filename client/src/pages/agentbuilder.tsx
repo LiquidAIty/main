@@ -26,7 +26,7 @@ import type { GraphProjectionNode } from '../components/knowledge/NativeAuthorit
 import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
-import { reconcileCardTerminal, RuntimeEventList } from '../features/agentbuilder/console/AdaptiveCardTerminal';
+import { reconcileCardTerminal } from '../features/agentbuilder/console/AdaptiveCardTerminal';
 import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
@@ -102,15 +102,10 @@ import type {
   RetainedRunInputs,
   StandaloneCardTestResult,
 } from '../components/AgentManager';
-import {
-  loadNativeHermesCard,
-  summarizeHermesLearning,
-  type HermesLearningIndicator,
-} from '../features/agentbuilder/nativeHermesCard';
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
-// AgentPage (MVP): left icon rail + main chat + right tabs (Plan, Links, Knowledge, Dashboard)
+// Agent Builder page: left workspace rail, Main Chat, canvas, and one five-tab Card inspector.
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
 
 const C = {
@@ -206,7 +201,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Script', 'Runtime', 'Terminal'] as const;
+const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -293,9 +288,6 @@ export default function AgentBuilder(): React.ReactElement {
     createInitialDeck: buildProjectlessDeckDocument,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
-  const [hermesLearningIndicators, setHermesLearningIndicators] = useState<
-    Record<string, HermesLearningIndicator>
-  >({});
   const canonicalDeckReady = Boolean(
     canvasProjectId
       && stateLoaded
@@ -309,42 +301,6 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   });
 
-  useEffect(() => {
-    if (!canonicalDeckReady || !canvasProjectId) {
-      setHermesLearningIndicators({});
-      return;
-    }
-    const controller = new AbortController();
-    const hermesCards = deck.nodes.filter((node) => node.runtime.kind === 'hermes');
-    const refresh = async () => {
-      const entries = await Promise.all(hermesCards.map(async (card) => {
-        try {
-          const view = await loadNativeHermesCard({
-            projectId: canvasProjectId,
-            deckId: deck.id,
-            cardId: card.id,
-            signal: controller.signal,
-          });
-          return [card.id, summarizeHermesLearning(view)] as const;
-        } catch (error) {
-          if (isAbortLikeError(error)) return null;
-          return null;
-        }
-      }));
-      if (!controller.signal.aborted) {
-        setHermesLearningIndicators(Object.fromEntries(
-          entries.filter((entry): entry is readonly [string, HermesLearningIndicator] => Boolean(entry)),
-        ));
-      }
-    };
-    void refresh();
-    const onProfileUpdated = () => void refresh();
-    window.addEventListener('liquidaity:hermes-profile-updated', onProfileUpdated);
-    return () => {
-      controller.abort();
-      window.removeEventListener('liquidaity:hermes-profile-updated', onProfileUpdated);
-    };
-  }, [canonicalDeckReady, canvasProjectId, deck.id, deck.nodes]);
   const currentDeckRef = useRef(deck);
   useEffect(() => {
     currentDeckRef.current = deck;
@@ -569,7 +525,7 @@ export default function AgentBuilder(): React.ReactElement {
       invocation: null,
     });
     setSelectedCardId(target.id);
-    setTab('Terminal');
+    setTab('CLI');
     setDeckStatusMessage(`${target.title} mission and graph data are ready for review. Nothing ran.`);
   }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
@@ -593,10 +549,10 @@ export default function AgentBuilder(): React.ReactElement {
       };
     });
     // A new native reference invalidates any older completed-Run projection.
-    // The Knowledge tab must never label unresolved editor state as model-bound.
+    // Context must never label unresolved editor state as model-bound.
     setStandaloneTestResult(null);
     setSelectedCardId(target.id);
-    setTab('Knowledge');
+    setTab('Context');
     setDeckStatusMessage(
       loaded.ready
         ? `${target.title} graph context is loaded for review.`
@@ -700,8 +656,6 @@ export default function AgentBuilder(): React.ReactElement {
     nativeSessionConnecting,
     mainDriverSource,
     sessionHistoryLoading,
-    technicalEvents: mainTechnicalEvents,
-    technicalError: mainTechnicalError,
     stopMainTurn,
   } = useAgentBuilderMainChat({
     canvasProjectId,
@@ -1411,7 +1365,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Terminal');
+      setTab('CLI');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -1452,7 +1406,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab('Terminal');
+        setTab('CLI');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1572,13 +1526,11 @@ export default function AgentBuilder(): React.ReactElement {
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
         if (
-          tab === 'Terminal' ||
+          tab === 'CLI' ||
           tab === 'Prompt' ||
-          tab === 'Knowledge' ||
-          tab === 'Skills' ||
+          tab === 'Context' ||
           tab === 'Tools' ||
-          tab === 'Script' ||
-          tab === 'Runtime'
+          tab === 'Script'
         ) {
           return (
             <>
@@ -1609,10 +1561,8 @@ export default function AgentBuilder(): React.ReactElement {
                     activeTab={tab}
                     cardName={selectedCard.title}
                     terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main'
-                      ? <div data-testid="main-card-technical">
-                          {mainTechnicalError ? <div role="alert">{mainTechnicalError}</div> : null}
-                          {mainTechnicalEvents.length ? <RuntimeEventList events={mainTechnicalEvents} main />
-                            : <div>No public runtime events observed in this conversation.</div>}
+                      ? <div data-testid="main-card-cli-location">
+                          Main conversation and native CLI execution are shown in the Main workspace.
                         </div>
                       : selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
                         ? <div data-testid="local-coder-card-terminal">
@@ -1646,7 +1596,7 @@ export default function AgentBuilder(): React.ReactElement {
                       clearTransientCardInvocation(selectedCard.id);
                     }}
                     onOpenCoderTerminal={() => {
-                      setTab('Terminal');
+                      setTab('CLI');
                     }}
                     onOpenHermesKanban={openHermesKanban}
                     onOpenMainChat={openMainChat}
@@ -1671,22 +1621,15 @@ export default function AgentBuilder(): React.ReactElement {
                     runDisabled={
                       !showStandaloneTestControls ||
                       !standaloneTestPrompt.trim() ||
-                      (((selectedCard.runtime.kind === 'hermes' &&
-                        selectedCard.runtime.mode === 'delegate') ||
-                        (selectedCard.runtime.kind === 'autogen' &&
-                          selectedCard.runtime.mode === 'magentic_one')) &&
+                      (selectedCard.runtime.kind === 'autogen' &&
+                        selectedCard.runtime.mode === 'magentic_one' &&
                         (
-                          (transientCardGraphContext[selectedCard.id] || []).length === 0 ||
-                          (selectedCard.runtime.kind === 'autogen' &&
-                            selectedCard.runtime.mode === 'magentic_one' &&
-                            (
-                              selectedMagOneWorkers.length === 0 ||
-                              selectedMagOneWorkers.some((worker) => !worker.ready)
-                            )) ||
-                          (transientCardGraphContext[selectedCard.id] || []).some(
-                            (item) => item.reference.required && !item.ready,
-                          )
-                        ))
+                          selectedMagOneWorkers.length === 0 ||
+                          selectedMagOneWorkers.some((worker) => !worker.ready)
+                        )) ||
+                      (transientCardGraphContext[selectedCard.id] || []).some(
+                        (item) => item.reference.required && !item.ready,
+                      )
                     }
                     runResult={standaloneTestResult}
                     runInputs={standaloneRunInputs}
@@ -1867,9 +1810,11 @@ export default function AgentBuilder(): React.ReactElement {
               <CoderTerminalPanel
                 open
                 placement="docked"
-                title="Main CLI"
+                title="Main CLI Terminal"
                 testIdPrefix="main-cli"
                 ownerCardId={mainCardId || 'card_main_chat'}
+                readOnly
+                activityState={nativeSessionConnecting ? 'connecting' : nativeSessionActive ? 'running' : 'idle'}
               />
             }
           />
@@ -1892,7 +1837,6 @@ export default function AgentBuilder(): React.ReactElement {
         onPersistGraphMutation={recordDeckWriteReason}
         activeCardIds={cardActivity.activeCardIds}
         activeAgentCounts={cardActivity.activeAgentCounts}
-        learningIndicators={hermesLearningIndicators}
         activeEdgeIds={[]}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

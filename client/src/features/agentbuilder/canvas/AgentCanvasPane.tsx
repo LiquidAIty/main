@@ -2,7 +2,6 @@ import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 
 import BuilderCanvas from '../../../components/builder/BuilderCanvas';
 import type { DeckDocument } from '../../../types/agentgraph';
-import type { HermesLearningIndicator } from '../nativeHermesCard';
 
 type AgentCanvasPaneProps = {
   surfaceRole: 'large' | 'companion';
@@ -15,7 +14,6 @@ type AgentCanvasPaneProps = {
   ) => void;
   activeCardIds: string[];
   activeAgentCounts?: Record<string, number>;
-  learningIndicators?: Record<string, HermesLearningIndicator>;
   activeEdgeIds: string[];
   selectedCardId: string | null;
   selectedEdgeId: string | null;
@@ -34,7 +32,6 @@ export default function AgentCanvasPane({
   onPersistGraphMutation,
   activeCardIds,
   activeAgentCounts,
-  learningIndicators,
   activeEdgeIds,
   selectedCardId,
   selectedEdgeId,
@@ -55,7 +52,6 @@ export default function AgentCanvasPane({
         onPersistGraphMutation={onPersistGraphMutation}
         activeCardIds={activeCardIds}
         activeAgentCounts={activeAgentCounts}
-        learningIndicators={learningIndicators}
         activeEdgeIds={activeEdgeIds}
         selectedCardId={selectedCardId}
         selectedEdgeId={selectedEdgeId}

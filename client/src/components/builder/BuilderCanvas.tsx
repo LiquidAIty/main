@@ -48,7 +48,6 @@ import {
 } from '../graph/graphWorkspaceContract';
 import TurboFlowEdge from './edges/TurboFlowEdge';
 import AgentCardNode from './nodes/AgentCardNode';
-import type { HermesLearningIndicator } from '../../features/agentbuilder/nativeHermesCard';
 import MagenticBusNode from './nodes/MagenticBusNode';
 
 const DEV_MODE = import.meta.env.DEV;
@@ -123,7 +122,11 @@ export function syncFlowNodesForRender(currentNodes: Node[], nextNodes: Node[]):
     return {
       ...currentNode,
       ...nextNode,
-      position: nextNode.position,
+      // ReactFlow owns the pointer position for the duration of a drag. Deck,
+      // selection, edge, and runtime-status refreshes may update presentation
+      // data, but they must not snap the node back to its last saved position
+      // before onNodeDragStop commits the exact final coordinates.
+      position: currentNode.dragging ? currentNode.position : nextNode.position,
       data: nextNode.data,
       style: nextNode.style,
       selected: nextNode.selected,
@@ -198,7 +201,6 @@ export function toFlowNodes(
   inspectMode: boolean,
   activeCardIds: Set<string>,
   activeAgentCounts: Record<string, number> = {},
-  learningIndicators: Record<string, HermesLearningIndicator> = {},
 ): Node[] {
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
@@ -226,7 +228,6 @@ export function toFlowNodes(
         ...node,
         isRuntimeActive: activeCardIds.has(node.id),
         activeAgentCount: activeAgentCounts[node.id] ?? 0,
-        learningIndicator: learningIndicators[node.id],
         isInspecting: inspectMode && selectedCardId === node.id,
       },
       selected: node.id === selectedCardId,
@@ -560,7 +561,6 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge,
   activeCardIds = [],
   activeAgentCounts = {},
-  learningIndicators = {},
   activeEdgeIds = [],
   inspectMode = false,
   focusZone = null,
@@ -575,7 +575,6 @@ export default function BuilderCanvas({
   onDeleteSelectedEdge?: () => void;
   activeCardIds?: string[];
   activeAgentCounts?: Record<string, number>;
-  learningIndicators?: Record<string, HermesLearningIndicator>;
   activeEdgeIds?: string[];
   inspectMode?: boolean;
   // Camera focus zone from the left rail (camera-only): pan/zoom to fit the
@@ -597,9 +596,8 @@ export default function BuilderCanvas({
         inspectMode,
         activeCardIdSet,
         activeAgentCounts,
-        learningIndicators,
       ),
-    [activeAgentCounts, activeCardIdSet, document, hoveredCardId, inspectMode, learningIndicators, selectedCardId],
+    [activeAgentCounts, activeCardIdSet, document, hoveredCardId, inspectMode, selectedCardId],
   );
   const flowEdges = useMemo(
     () =>
@@ -1159,8 +1157,6 @@ export default function BuilderCanvas({
           interactionWidth: 32,
           markerEnd: 'agent-edge-circle',
         }}
-        snapToGrid
-        snapGrid={[GRAPH_THEME.graphPaper.minorStep, GRAPH_THEME.graphPaper.minorStep]}
       >
         <Background
           variant={BackgroundVariant.Lines}

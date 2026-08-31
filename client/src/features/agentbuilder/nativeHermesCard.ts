@@ -110,25 +110,6 @@ export type NativeHermesOperation =
   | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.test'; params: { name: string } };
 
-export type HermesLearningIndicator = {
-  learnedSkillCount: number;
-  recentChange: boolean;
-};
-
-export function summarizeHermesLearning(
-  view: NativeHermesCardView,
-  nowMs = Date.now(),
-): HermesLearningIndicator {
-  const skills = view.native.learning.graph.nodes.filter((node) => node.kind === 'skill');
-  const recentCutoffSeconds = Math.floor(nowMs / 1000) - (7 * 24 * 60 * 60);
-  return {
-    learnedSkillCount: skills.length,
-    recentChange: view.native.learning.graph.nodes.some((node) => (
-      typeof node.timestamp === 'number' && node.timestamp >= recentCutoffSeconds
-    )),
-  };
-}
-
 async function responseJson(response: Response): Promise<Record<string, any>> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body?.ok !== true) {

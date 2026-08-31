@@ -3,7 +3,14 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { editorOptions, SCRIPT_SECTIONS, STARTER_SCRIPT } from './CardScriptEditor';
+import {
+  editorOptions,
+  SCRIPT_EXAMPLES,
+  SCRIPT_SECTIONS,
+  STARTER_SCRIPT,
+  TOOL_MODE_COMPLETIONS,
+  symbolAtPosition,
+} from './CardScriptEditor';
 
 describe('CardScriptEditor Monaco contract', () => {
   it('keeps the executable starter organized around the five Card control sections', () => {
@@ -14,6 +21,20 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(STARTER_SCRIPT.match(/# endregion/g)).toHaveLength(5);
     expect(STARTER_SCRIPT).toContain('"mode": "outer_controller"');
     expect(STARTER_SCRIPT).toContain('output.emit({');
+  });
+
+  it('offers disabled-by-default examples using only canonical graph operations', () => {
+    expect(SCRIPT_EXAMPLES.map((example) => example.id)).toEqual([
+      'thinkgraph-context', 'knowgraph-evidence',
+    ]);
+    const examples = SCRIPT_EXAMPLES.map((example) => example.source).join('\n');
+    expect(examples).toContain('constellation.context');
+    expect(examples).toContain('constellation.inspect');
+    expect(examples).toContain('graphiti.search_nodes');
+    expect(examples).toContain('graphiti.search_memory_facts');
+    expect(examples).toContain('graphiti.get_episodes');
+    expect(examples).not.toContain('think.context');
+    expect(examples).not.toContain('know.context');
   });
 
   it('uses the compact code-first Monaco feature set', () => {
@@ -37,6 +58,22 @@ describe('CardScriptEditor Monaco contract', () => {
       indentation: true,
       highlightActiveIndentation: true,
     });
+  });
+
+  it('documents the exact Python-owned tool modes for completion and hover', () => {
+    expect(TOOL_MODE_COMPLETIONS.map(({ label, value }) => ({ label, value }))).toEqual([
+      { label: 'OFF', value: 0 },
+      { label: 'SCRIPT', value: 1 },
+      { label: 'AGENT', value: 2 },
+      { label: 'BOTH', value: 3 },
+    ]);
+    expect(TOOL_MODE_COMPLETIONS.every((mode) => mode.documentation.length > 40)).toBe(true);
+    for (const mode of TOOL_MODE_COMPLETIONS) {
+      expect(symbolAtPosition({
+        getLineContent: () => mode.label,
+        getWordAtPosition: () => ({ word: mode.label }),
+      } as never, { lineNumber: 1, column: 2 })).toBe(mode.label);
+    }
   });
 
   it('lazy-loads one pinned Monaco engine and owns bounded model disposal', () => {
@@ -70,7 +107,7 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(source).toContain('sourceModel.dispose()');
     expect(source).toContain('entry.model.dispose()');
     expect(source).not.toContain('{header.source}');
-    expect(builderPage).toContain("tab === 'Skills'");
+    expect(builderPage).toContain("tab === 'Context'");
     expect(builderPage).toContain("tab === 'Script'");
     expect(builderPage).toContain('key="deck-card-editor"');
     expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');

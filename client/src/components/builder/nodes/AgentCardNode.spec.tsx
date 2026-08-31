@@ -92,30 +92,16 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(card.style.boxShadow).not.toBe(activeShadow);
   });
 
-  it('shows only native Hermes learning count and a subtle recent-change state', () => {
-    const { rerender } = render(
+  it('does not project historical learning counts as live Card activity', () => {
+    render(
       <AgentCardNode
         data={{
           ...baseCard,
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-          learningIndicator: { learnedSkillCount: 4, recentChange: true },
-        }}
-      />,
-    );
-
-    const indicator = screen.getByTestId('hermes-learning-indicator');
-    expect(indicator.textContent).toContain('4');
-    expect(indicator.getAttribute('aria-label')).toContain('recently changed');
-
-    rerender(
-      <AgentCardNode
-        data={{
-          ...baseCard,
-          runtime: { kind: 'autogen', mode: 'assistant' },
-          learningIndicator: { learnedSkillCount: 9, recentChange: true },
         }}
       />,
     );
     expect(screen.queryByTestId('hermes-learning-indicator')).toBeNull();
+    expect(screen.queryByTestId('active-agent-count')).toBeNull();
   });
 });

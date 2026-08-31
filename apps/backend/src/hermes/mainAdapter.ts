@@ -521,6 +521,14 @@ export function buildHermesHostSessionProjection(
     ? [rootOfficial, ...rootSaved]
     : rootSaved;
   const officialServerName = String(rootOfficial?.name || '');
+  if (args.script?.scriptToolIds.includes('web_search')) {
+    throw new Error('hermes_host_script_native_tool_takeover_unsupported:web_search');
+  }
+  const mcpScriptToolStates = args.script
+    ? Object.fromEntries(
+        Object.entries(args.script.toolStates).filter(([canonicalId]) => canonicalId !== 'web_search'),
+      )
+    : {};
   const hostScript = args.script && (rootOfficial || args.script.toolHandles.length === 0) ? {
     version: args.script.version,
     source: args.script.source,
@@ -541,7 +549,10 @@ export function buildHermesHostSessionProjection(
           hermesMcpToolName(officialServerName, canonicalId),
         ]),
     ),
-    toolStates: args.script.toolStates,
+    // web_search is a native Hermes tool, not an alias on LiquidAIty's MCP
+    // server. Keep it outside the host Script alias/state scope just as the
+    // granted and presented MCP projections already do.
+    toolStates: mcpScriptToolStates,
     timeoutSeconds: args.script.timeoutSeconds,
     maxToolCalls: args.script.maxToolCalls,
     maxOutputBytes: args.script.maxOutputBytes,

@@ -70,9 +70,20 @@ they do not select a runtime implementation.
   effective Tools-tab selection supply exact autocomplete/schema contracts. A valid Hermes Script wraps
   only its literal `tools.call()` handles behind one compact tool and runs through Hermes' existing
   child-process Python/tool-RPC path; unwrapped selected tools remain ordinary MCP tools. Blank/invalid
-  source keeps exact selected MCP schemas, and runtime failure restores only the Script's pre-registered
-  wrapped handles for the next model iteration. The active version/hash is immutable during a Run.
+  source keeps exact selected MCP schemas. A runtime failure before any operation begins may restore only
+  the Script's pre-registered wrapped handles for the current model iteration; a failure after any tool
+  operation begins is terminal and cannot replay through the model. The active version/hash is immutable during a Run.
   AutoGen Cards retain the editor but cannot activate this Hermes-native execution path.
+- The Card Inspector has exactly five top-level surfaces: CLI, Prompt, Context, Tools, and Script. Prompt
+  contains the existing prompt plus provider/model/runtime controls; Context contains the existing graph,
+  memory, selected references, and native skills/learning controls. This is presentation consolidation,
+  not another persistence owner or execution path. Optional ThinkGraph and KnowGraph Script examples call
+  only the canonical `constellation.*` and `graphiti.*` operations and remain inactive until explicitly inserted.
+- After the repaired host-Script boundary is loaded, the first real Agent Builder Script acceptance should
+  be one small graph-context recipe: leave unrelated authorized reads `OFF`, claim only the most useful
+  bounded native graph reads, and assemble their native references into context for one ordinary Hermes
+  turn. The recipe may wrap repeatable sequencing but cannot create a graph owner, widen grants, or run
+  before the Card's explicit CLI/Run task starts.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
 - Python rails own the one Constellation child and database adapter. The official MCP host proxies its
   Constellation calls through that existing owner and never starts another engine process or database.
@@ -84,8 +95,8 @@ they do not select a runtime implementation.
   meaning.
 - The Agent Builder Graphs workspace uses the embedded CodeGraph renderer with bounded native CBM
   projections. The removed standalone CBM demo/package shell is not part of the product.
-- Every Hermes-profile Card reads its real native Learning Journey/SkillGraph in the existing Skills
-  tab. The graph is a projection of profile skills, usage and curated-memory chunks, not another store.
+- Every Hermes-profile Card reads its real native Learning Journey/SkillGraph in the Context tab. The
+  graph is a projection of profile skills, usage and curated-memory chunks, not another store.
 - Eligible completed Hermes Runs may launch one deduplicated, asynchronous native background review.
   The owning Card's subagent selector configures both native delegation and this review; new Hermes
   Cards default to account-backed `gpt-5.6-luna`. It can patch only the owning profile's native
@@ -152,6 +163,9 @@ the transient Card call. The call carries task meaning and selected context, not
 - Card: saved dedicated Agent Builder identity
 - Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
 - Owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
+- Its saved CBM surface is the selected structural recipe only: `cbm.search_graph`, `cbm.trace_path`,
+  and `cbm.get_code_snippet`. Projection coverage and working-tree change detection remain Local Coder
+  concerns and are not implicit Agent Builder reads.
 - Has no Magentic-One connection and receives no Local Coder state.
 
 ### Local Coder

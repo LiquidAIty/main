@@ -25,6 +25,9 @@ type CoderTerminalPanelProps = {
   cardIdentity?: { projectId: string; deckId: string; cardId: string; profile: string };
   onStopCardRun?: () => void;
   onRejoinCardRun?: () => void;
+  /** Keep the actual PTY attached while preventing this projection from becoming another composer. */
+  readOnly?: boolean;
+  activityState?: 'idle' | 'connecting' | 'running';
 };
 
 function CoderTerminalPanelInner({
@@ -41,6 +44,8 @@ function CoderTerminalPanelInner({
   cardIdentity,
   onStopCardRun,
   onRejoinCardRun,
+  readOnly = false,
+  activityState,
 }: CoderTerminalPanelProps) {
   const [projection, setProjection] = useState<'cli' | 'run'>('cli');
   useEffect(() => {
@@ -182,18 +187,33 @@ function CoderTerminalPanelInner({
         <button type="button" aria-pressed={showingRun} onClick={() => setProjection('run')}>Card Run</button>
         <button type="button" aria-pressed={!showingRun} onClick={() => setProjection('cli')}>Native CLI</button>
       </div> : null}
+      {readOnly ? (
+        <div
+          data-testid={`${testIdPrefix}-connection-status`}
+          role="status"
+          style={{ padding: '5px 8px', color: '#8fa6bc', borderBottom: '1px solid #1c2733' }}
+        >
+          {session
+            ? activityState === 'running'
+              ? 'Working'
+              : activityState === 'connecting'
+                ? 'Starting turn'
+                : 'Ready · idle'
+            : `${title} connecting`}
+        </div>
+      ) : null}
       {showingRun && cardIdentity ? <div data-testid="coder-console-card-run" style={{ overflow: 'auto', minHeight: 0 }}>
         <AdaptiveCardTerminal enabled projectId={cardIdentity.projectId} deckId={cardIdentity.deckId}
           cardId={cardIdentity.cardId} runtime={{ kind: 'hermes', mode: 'delegate', profile: cardIdentity.profile }}
           run={cardRun} busy={cardRunBusy} onStop={onStopCardRun} onRejoin={onRejoinCardRun}>
-          <div>Supply the mission from this Card's Terminal tab.</div>
+          <div>Supply the mission from this Card's CLI tab.</div>
         </AdaptiveCardTerminal>
       </div> : null}
       <div style={{ display: showingRun ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {session ? (
         <XtermView
           key={session.id}
-          interactive={status === 'starting' || status === 'running'}
+          interactive={!readOnly && (status === 'starting' || status === 'running')}
           connectOutput={status === 'starting' || status === 'running' ? connectOutput : undefined}
           onData={sendData}
           onResize={status === 'starting' || status === 'running' ? resizeTerminal : undefined}

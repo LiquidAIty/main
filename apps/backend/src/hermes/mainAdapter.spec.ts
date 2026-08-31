@@ -40,7 +40,12 @@ function providerFreeTurnArgs(toolCount = 57) {
   };
 }
 
-function fakeAcpScript(exitAfterRegistration: boolean, holdTerminalTurn = false, holdConfiguration = false): string {
+function fakeAcpScript(
+  exitAfterRegistration: boolean,
+  holdTerminalTurn = false,
+  holdConfiguration = false,
+  failScriptAfterOperation = false,
+): string {
   return `
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -65,6 +70,12 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
   if (method === '_session/execute_host_script') {
+    ${failScriptAfterOperation ? `return send({ jsonrpc: '2.0', id: message.id, result: {
+      ok: false,
+      error: 'script_failed_after_operation',
+      fallback: { activated: false, presentationMode: 'script-failed-after-operation', reason: 'operation_started_no_replay' },
+      receipt: { schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'error', toolCallsMade: 1 },
+    } });` : ''}
     const mission = message.params?.input?.mission || '';
     const overlay = mission === 'overlay mission'
       ? { order: ['run.mission', 'graph.context'], exclude: ['card.output_requirements'], replace: { 'graph.context': 'replacement graph' } }
@@ -97,6 +108,7 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
+    ${failScriptAfterOperation ? "return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'fixture_model_replay_forbidden' } });" : ''}
     if (controllerPrompt && message.params?.prompt?.[0]?.text !== controllerPrompt) {
       return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'fixture_controller_prompt_not_used' } });
     }
@@ -211,6 +223,51 @@ describe('Hermes ACP transport identity', () => {
       expect(result.transport.scriptControl).toMatchObject({
         agentInvoked: true, promptMode: 'preserved-default',
       });
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
+  it('does not replay through the model when Script execution fails after a tool operation', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-no-replay-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false, false, false, true)] },
+      hermesHome: root,
+    });
+    const events: Array<{ kind: string; [key: string]: unknown }> = [];
+    try {
+      await expect(owner.startTurn({
+        ...providerFreeTurnArgs(0),
+        tools: [],
+        grantedTools: [],
+        script: {
+          version: 9,
+          source: 'exact source bytes\n',
+          sourceHash: 'a'.repeat(64),
+          compiledHash: 'b'.repeat(64),
+          mode: 'outer_controller',
+          inputSchema: {
+            type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'],
+          },
+          outputSchema: { type: 'object', properties: {} },
+          toolHandles: [],
+          toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
+          timeoutSeconds: 12,
+          maxToolCalls: 3,
+          maxOutputBytes: 4096,
+        },
+      }, (event) => events.push(event))).rejects.toThrow('script_failed_after_operation');
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: 'script_result',
+        ok: false,
+        fallback: expect.objectContaining({
+          activated: false,
+          presentationMode: 'script-failed-after-operation',
+        }),
+      }));
+      expect(events.some((event) => event.kind === 'text')).toBe(false);
     } finally {
       owner.close();
       await owner.closed;
@@ -841,7 +898,7 @@ describe('Hermes ACP transport identity', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: [],
-      grantedTools: ['think.context', 'know.context'],
+      grantedTools: ['constellation.context', 'graphiti.get_status'],
       script: {
         version: 4,
         source: 'from hermes_tools import output\noutput.emit({})\n',
@@ -852,10 +909,10 @@ describe('Hermes ACP transport identity', () => {
           type: 'object', properties: { focus: { type: 'string' } }, required: ['focus'],
         },
         outputSchema: { type: 'object', properties: {} },
-        toolHandles: ['think.context'],
-        toolStates: { 'think.context': 1, 'know.context': 0 },
-        offToolIds: ['know.context'],
-        scriptToolIds: ['think.context'],
+        toolHandles: ['constellation.context'],
+        toolStates: { 'constellation.context': 1, 'graphiti.get_status': 0 },
+        offToolIds: ['graphiti.get_status'],
+        scriptToolIds: ['constellation.context'],
         agentToolIds: [],
         timeoutSeconds: 12,
         maxToolCalls: 3,
@@ -873,20 +930,20 @@ describe('Hermes ACP transport identity', () => {
     expect(config.enabledTools).toEqual([]);
     expect(config.hostScript.version).toBe(4);
     expect(config.hostScript.toolAliases).toEqual({
-      'think.context': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__think_context`,
+      'constellation.context': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__constellation_context`,
     });
     const bearer = String((projection.mcpServers[0] as any).headers[0].value)
       .replace(/^Bearer /, '');
     const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
-    expect(claims.principal.grantedTools).toEqual(['know.context', 'think.context']);
-    expect(claims.principal.presentedTools).toEqual(['know.context', 'think.context']);
+    expect(claims.principal.grantedTools).toEqual(['constellation.context', 'graphiti.get_status']);
+    expect(claims.principal.presentedTools).toEqual(['constellation.context', 'graphiti.get_status']);
   });
 
   it('keeps selected tools not consumed by the Script available as exact MCP schemas', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
-      tools: ['know.context'],
-      grantedTools: ['think.context', 'know.context'],
+      tools: ['graphiti.get_status'],
+      grantedTools: ['constellation.context', 'graphiti.get_status'],
       script: {
         version: 2,
         source: 'from hermes_tools import output\noutput.emit({})\n',
@@ -895,11 +952,11 @@ describe('Hermes ACP transport identity', () => {
         mode: 'outer_controller',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: { type: 'object', properties: {} },
-        toolHandles: ['think.context'],
-        toolStates: { 'think.context': 1, 'know.context': 2 },
+        toolHandles: ['constellation.context'],
+        toolStates: { 'constellation.context': 1, 'graphiti.get_status': 2 },
         offToolIds: [],
-        scriptToolIds: ['think.context'],
-        agentToolIds: ['know.context'],
+        scriptToolIds: ['constellation.context'],
+        agentToolIds: ['graphiti.get_status'],
         timeoutSeconds: 12,
         maxToolCalls: 3,
         maxOutputBytes: 4096,
@@ -913,12 +970,77 @@ describe('Hermes ACP transport identity', () => {
     const config = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(config.enabledToolsets).toEqual([]);
     expect(config.enabledTools).toEqual([
-      `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__know_context`,
+      `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__graphiti_get_status`,
     ]);
     const bearer = String((projection.mcpServers[0] as any).headers[0].value)
       .replace(/^Bearer /, '');
     const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
-    expect(claims.principal.presentedTools).toEqual(['know.context', 'think.context']);
+    expect(claims.principal.presentedTools).toEqual(['constellation.context', 'graphiti.get_status']);
+  });
+
+  it('keeps native web_search outside the host Script MCP alias and state scope', () => {
+    const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
+      tools: ['graphiti.get_status'],
+      grantedTools: ['graphiti.get_status', 'web_search'],
+      script: {
+        version: 2,
+        source: 'from hermes_tools import output\noutput.emit({})\n',
+        sourceHash: 'a'.repeat(64),
+        compiledHash: 'b'.repeat(64),
+        mode: 'outer_controller',
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: { type: 'object', properties: {} },
+        toolHandles: [],
+        toolStates: { 'graphiti.get_status': 2, web_search: 0 },
+        offToolIds: ['web_search'],
+        scriptToolIds: [],
+        agentToolIds: ['graphiti.get_status'],
+        timeoutSeconds: 12,
+        maxToolCalls: 3,
+        maxOutputBytes: 4096,
+      },
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    }, 'hybrid-script-native-context');
+
+    const serverName = String((projection.mcpServers[0] as any).name);
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.hostScript.toolStates).toEqual({ 'graphiti.get_status': 2 });
+    expect(config.hostScript.fallbackToolAliases).toEqual({
+      'graphiti.get_status': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__graphiti_get_status`,
+    });
+    expect(config.enabledTools).toEqual([
+      `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__graphiti_get_status`,
+    ]);
+  });
+
+  it('rejects native web_search takeover by a host Script explicitly', () => {
+    expect(() => buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
+      tools: [],
+      grantedTools: ['web_search'],
+      script: {
+        version: 2,
+        source: 'from hermes_tools import output\noutput.emit({})\n',
+        sourceHash: 'a'.repeat(64),
+        compiledHash: 'b'.repeat(64),
+        mode: 'outer_controller',
+        inputSchema: { type: 'object', properties: {} },
+        outputSchema: { type: 'object', properties: {} },
+        toolHandles: ['web_search'],
+        toolStates: { web_search: 1 },
+        offToolIds: [],
+        scriptToolIds: ['web_search'],
+        agentToolIds: [],
+        timeoutSeconds: 12,
+        maxToolCalls: 3,
+        maxOutputBytes: 4096,
+      },
+    }, {}, 'native-script-context')).toThrow(
+      'hermes_host_script_native_tool_takeover_unsupported:web_search',
+    );
   });
 
   it('keeps an empty native and Card selection empty', () => {

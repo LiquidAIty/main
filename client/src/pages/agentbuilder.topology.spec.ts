@@ -193,7 +193,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
     expect(main?.prompt).toContain('Do not copy this conversation or Main memory into another Card');
     expect(main?.prompt).toContain('A normal handoff executes immediately');
-    expect(main?.prompt).toContain('existing Card Invocation and Knowledge editors');
+    expect(main?.prompt).toContain('existing Card CLI input and Context editors');
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
     expect(coder).toMatchObject({
@@ -231,14 +231,14 @@ describe('Main / Hermes / graph authority topology', () => {
         nativeTools: ['memory'],
         skills: ['hermes-agent'],
         toolsets: ['hermes-acp', 'computer_use'],
-        toolCatalogPolicy: 'all_healthy',
+        toolCatalogPolicy: 'selected',
         tools: [
           'card.create', 'card.update_configuration', 'canvas.upsert_wire',
           'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
-          'cbm.check_index_coverage', 'cbm.detect_changes',
         ],
       },
     });
+    expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.prompt).toContain('Load the full LiquidAIty.idd only');
     expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
 

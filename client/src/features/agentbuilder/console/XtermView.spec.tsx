@@ -17,12 +17,13 @@ vi.mock('@xterm/xterm', () => ({
     cols = 120;
     rows = 30;
     options = terminalMocks.options;
+    textarea = document.createElement('textarea');
     constructor(options: Record<string, unknown>) {
       terminalMocks.options = { ...options };
       this.options = terminalMocks.options;
     }
     loadAddon() {}
-    open() {}
+    open(container: HTMLElement) { container.appendChild(this.textarea); }
     focus() { terminalMocks.focus(); }
     write(data: string) { terminalMocks.writes.push(data); }
     dispose() { terminalMocks.dispose(); }
@@ -84,5 +85,20 @@ describe('XtermView real PTY transport', () => {
     });
     expect(onData).toHaveBeenCalledWith('abc\u007f\r');
     expect(terminalMocks.writes).toEqual(['\u001b[32mnative\u001b[0m\r\n']);
+  });
+
+  it('removes the terminal input affordance from a read-only PTY projection', async () => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(<XtermView interactive={false} connectOutput={async () => undefined} />);
+    });
+
+    const textarea = host.querySelector('textarea');
+    expect(terminalMocks.options.disableStdin).toBe(true);
+    expect(textarea?.getAttribute('aria-hidden')).toBe('true');
+    expect(textarea?.tabIndex).toBe(-1);
+    expect(terminalMocks.focus).not.toHaveBeenCalled();
   });
 });

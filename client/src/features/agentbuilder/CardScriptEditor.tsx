@@ -49,6 +49,24 @@ type HeaderModelCacheEntry = {
 
 const THEME_NAME = 'liquidaity-sublime';
 const HEADER_CACHE_LIMIT = 4;
+const TOOL_MODE_COMPLETIONS = [
+  {
+    label: 'OFF', value: 0, detail: 'OFF (0) · unavailable to Script and agent',
+    documentation: 'The Card may authorize this tool, but this Scripted Run exposes it to neither Python nor the Hermes agent.',
+  },
+  {
+    label: 'SCRIPT', value: 1, detail: 'SCRIPT (1) · Python only',
+    documentation: 'The saved Python Script may call this authorized tool. Its schema is omitted from the Hermes agent request.',
+  },
+  {
+    label: 'AGENT', value: 2, detail: 'AGENT (2) · Hermes agent only',
+    documentation: 'Hermes receives the authorized tool normally. The Python Script cannot call it directly.',
+  },
+  {
+    label: 'BOTH', value: 3, detail: 'BOTH (3) · Python and Hermes agent',
+    documentation: 'Both the saved Python Script and the Hermes agent may call this authorized tool. Use only when duplicate access is intentional.',
+  },
+] as const;
 const headerModelCache = new Map<string, HeaderModelCacheEntry>();
 let headerUseSequence = 0;
 let monacoLoadPromise: Promise<MonacoApi> | null = null;
@@ -133,6 +151,119 @@ output.emit({
 })
 # endregion
 `;
+
+const SCRIPT_EXAMPLES = [
+  {
+    id: 'thinkgraph-context',
+    label: 'ThinkGraph context',
+    description: 'Read bounded Constellation context plus one exact native memory.',
+    source: `CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {
+        "type": "object",
+        "properties": {
+            "mission": {"type": "string"},
+            "nativeId": {"type": "string"},
+        },
+        "required": ["mission", "nativeId"],
+        "additionalProperties": False,
+    },
+    "output": {
+        "type": "object",
+        "properties": {
+            "agent": {
+                "type": "object",
+                "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}},
+                "required": ["run", "prompt"],
+                "additionalProperties": False,
+            },
+            "result": {"type": "object"},
+        },
+        "required": ["agent", "result"],
+        "additionalProperties": False,
+    },
+    "timeout_seconds": 15,
+    "max_tool_calls": 2,
+    "max_output_bytes": 20000,
+}
+
+import json
+from hermes_tools import SCRIPT, input, output, tools
+
+tools.constellation.context = SCRIPT
+tools.constellation.inspect = SCRIPT
+
+bounded_context = tools.call(
+    "constellation.context", focus=input.mission, budget=1600, maxDepth=2, maxL2=8
+)
+exact_memory = tools.call(
+    "constellation.inspect", nativeId=input.nativeId, budget=1200, maxDepth=1, maxL2=6
+)
+result = {"context": bounded_context, "exactMemory": exact_memory}
+output.emit({
+    "agent": {
+        "run": True,
+        "prompt": input.mission + "\n\nBounded native ThinkGraph evidence:\n" + json.dumps(result),
+    },
+    "result": result,
+})
+`,
+  },
+  {
+    id: 'knowgraph-evidence',
+    label: 'KnowGraph evidence',
+    description: 'Read bounded native entities, facts, and episode provenance.',
+    source: `CARD_SCRIPT = {
+    "mode": "outer_controller",
+    "input": {
+        "type": "object",
+        "properties": {"mission": {"type": "string"}},
+        "required": ["mission"],
+        "additionalProperties": False,
+    },
+    "output": {
+        "type": "object",
+        "properties": {
+            "agent": {
+                "type": "object",
+                "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}},
+                "required": ["run", "prompt"],
+                "additionalProperties": False,
+            },
+            "result": {"type": "object"},
+        },
+        "required": ["agent", "result"],
+        "additionalProperties": False,
+    },
+    "timeout_seconds": 15,
+    "max_tool_calls": 3,
+    "max_output_bytes": 20000,
+}
+
+import json
+from hermes_tools import SCRIPT, input, output, tools
+
+tools.graphiti.search_nodes = SCRIPT
+tools.graphiti.search_memory_facts = SCRIPT
+tools.graphiti.get_episodes = SCRIPT
+
+nodes = tools.call("graphiti.search_nodes", query=input.mission, max_nodes=8)
+facts = tools.call("graphiti.search_memory_facts", query=input.mission, max_facts=12)
+episodes = tools.call(
+    "graphiti.get_episodes", max_episodes=10, include_body=False,
+    body_preview_chars=300, max_response_chars=12000
+)
+result = {"nodes": nodes, "facts": facts, "episodes": episodes}
+output.emit({
+    "agent": {
+        "run": True,
+        "prompt": input.mission + "\n\nBounded native KnowGraph evidence with provenance:\n" + json.dumps(result),
+    },
+    "result": result,
+})
+`,
+  },
+] as const;
 
 async function loadMonaco(): Promise<MonacoApi> {
   if (!monacoLoadPromise) {
@@ -344,6 +475,8 @@ function symbolAtPosition(model: MonacoModel, position: { lineNumber: number; co
     const quotedStart = (callMatch.index || 0) + callMatch[0].indexOf(callMatch[1]);
     if (offset >= quotedStart && offset <= quotedStart + callMatch[1].length) return `tools.${callMatch[1]}`;
   }
+  const word = model.getWordAtPosition(position)?.word || '';
+  if (TOOL_MODE_COMPLETIONS.some((mode) => mode.label === word)) return word;
   return null;
 }
 
@@ -528,10 +661,37 @@ export function CardScriptEditor({
         setCursorPosition({ line: event.position.lineNumber, column: event.position.column });
       }));
       disposables.push(monaco.languages.registerCompletionItemProvider('python', {
-        triggerCharacters: ['"', "'", '.'],
+        triggerCharacters: ['"', "'", '.', '='],
         provideCompletionItems(currentModel, position) {
           if (currentModel.uri.toString() !== sourceModel.uri.toString()) return { suggestions: [] };
           const line = currentModel.getLineContent(position.lineNumber).slice(0, position.column - 1);
+          const modeMatch = line.match(
+            /tools\.([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)\s*=\s*([A-Za-z_]*)$/,
+          );
+          if (modeMatch) {
+            const [, canonicalId, fragment] = modeMatch;
+            const authorized = toolsRef.current.some((reference) => reference.canonicalId === canonicalId);
+            if (!authorized) return { suggestions: [] };
+            const range = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: Math.max(1, position.column - fragment.length),
+              endColumn: position.column,
+            };
+            return {
+              suggestions: TOOL_MODE_COMPLETIONS
+                .filter((mode) => !fragment || mode.label.startsWith(fragment.toUpperCase()))
+                .map((mode) => ({
+                  label: mode.label,
+                  kind: monaco.languages.CompletionItemKind.EnumMember,
+                  detail: mode.detail,
+                  documentation: `${mode.documentation}\n\nThe Card's Tools tab remains the authorization ceiling.`,
+                  insertText: mode.label,
+                  range,
+                  sortText: String(mode.value),
+                })),
+            };
+          }
           const handleMatch = line.match(/tools\.call\(\s*["']([^"']*)$/);
           const fragment = handleMatch?.[1] || '';
           const range = {
@@ -619,6 +779,14 @@ export function CardScriptEditor({
       disposables.push(monaco.languages.registerHoverProvider('python', {
         provideHover(currentModel, position) {
           const symbol = symbolAtPosition(currentModel, position);
+          const mode = TOOL_MODE_COMPLETIONS.find((candidate) => candidate.label === symbol);
+          if (mode) {
+            return {
+              contents: [{
+                value: `**${mode.detail}**\n\n${mode.documentation}\n\nThe Card's Tools tab remains the authorization ceiling.`,
+              }],
+            };
+          }
           const target = symbol ? headerRef.current?.definitions[symbol] : null;
           if (!symbol || !target) return null;
           const authority = target.kind === 'tool'
@@ -914,9 +1082,21 @@ export function CardScriptEditor({
           {validationBusy ? 'Validating…' : 'Validate draft'}
         </button>
         {!script.source.trim() ? (
-          <button type="button" onClick={() => onChange(changedSourceDraft(script, STARTER_SCRIPT, runtimeKind))}>
-            Insert bounded starter
-          </button>
+          <>
+            <button type="button" onClick={() => onChange(changedSourceDraft(script, STARTER_SCRIPT, runtimeKind))}>
+              Insert bounded starter
+            </button>
+            {SCRIPT_EXAMPLES.map((example) => (
+              <button
+                key={example.id}
+                type="button"
+                title={example.description}
+                onClick={() => onChange(changedSourceDraft(script, example.source, runtimeKind))}
+              >
+                Insert {example.label} example
+              </button>
+            ))}
+          </>
         ) : null}
         <span className={toolStatus === 'failed' ? 'is-error' : ''}>
           {toolStatus === 'loading' ? 'Loading Card tool definitions…'
@@ -947,4 +1127,11 @@ export function CardScriptEditor({
   );
 }
 
-export { STARTER_SCRIPT, SCRIPT_SECTIONS, editorOptions };
+export {
+  SCRIPT_EXAMPLES,
+  STARTER_SCRIPT,
+  SCRIPT_SECTIONS,
+  TOOL_MODE_COMPLETIONS,
+  editorOptions,
+  symbolAtPosition,
+};

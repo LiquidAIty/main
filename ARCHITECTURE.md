@@ -157,7 +157,7 @@ is a projection over items 2 and 4, not an eighth store.
 4. **Native profile skills — `skills/*/SKILL.md` plus `.usage.json`, per profile.** Serves reusable how-to
    knowledge learned or installed for that Card. The bounded native background-review child may create or
    patch only the owning profile's skills. `build_learning_graph()` reads these files and curated-memory
-   chunks under that profile's `HERMES_HOME`; the Card Skills tab stores no copy.
+   chunks under that profile's `HERMES_HOME`; the Card Context tab stores no copy.
 5. **ThinkGraph — one Constellation SQLite authority.** Serves project reasoning, hypotheses, relationships,
    operational knowledge, semantic embeddings, identity segments, and its launcher outbox. The pinned engine
    is its sole writer.
@@ -309,10 +309,14 @@ Unknown tools, missing grants, unsupported runtimes, provider failures, and miss
 honestly. There is no server-side app prefix, prefix-stripping alias, provider substitution, duplicate
 registry, or direct-database shortcut.
 
-## Card Terminal projections
+## Card Inspector projections
 
-The Card editor has Prompt, Knowledge, Tools, Runtime, and Terminal tabs. Terminal replaces the Task
-input/output tab; it does not add a second invocation path. Main still uses chat for input and responses.
+The Card editor has exactly five top-level tabs: CLI, Prompt, Context, Tools, and Script. CLI replaces the
+former Terminal label and remains the one Card Run/session projection; it does not add a second invocation
+path. Prompt contains the existing prompt, provider, model, and runtime controls. Context contains the
+existing bounded graph selections, saved references, memory, and native Skills/Learning Journey projection.
+Tools retains saved grants and modes, and Script retains the one Monaco-backed saved Python controller plus
+its generated read-only header. Main still uses chat for input and responses.
 Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
 Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
 Coder's Card. Kanban keeps its native board and one aggregate Run view; task actions retain their native
@@ -326,6 +330,13 @@ Main's graph callbacks and technical events use the backend-issued Run identity;
 mint a competing Run. Native tool-call IDs are shared across live events, status and replay, with changed
 partial output updating in place. Transcript commands verify Project, Deck, Card and Run identity and
 serialize against native session configuration and execution inside the existing ACP owner.
+
+The Script editor's optional ThinkGraph and KnowGraph examples are source templates only. They call the
+canonical `constellation.context`, `constellation.inspect`, `graphiti.search_nodes`,
+`graphiti.search_memory_facts`, and `graphiti.get_episodes` operations through the existing Script tool
+contract. There is no `think.context`, `know.context`, `code.context`, graph-recipe registry, or second graph
+execution owner. Script failure may restore the exact selected MCP presentation only before any operation
+has begun; once a tool receipt records an operation, failure is terminal so the model cannot replay it.
 
 Current limits are explicit: some native sessions contain multiple Runs without per-Run transcript
 boundaries; exact Run transcript read/deletion is unavailable in that case. Main technical replay after a
@@ -343,7 +354,9 @@ metadata; ordinary Runs do not load the builder palette or use its visibility as
 
 Main leads Chat and may propose composing agents. After user agreement, Main directs the dedicated
 Agent Builder Card to perform IDD-backed construction/configuration with reusable templates or custom
-typed objects. Local Coder remains repository-focused and never receives the full IDD. Live proof of
+typed objects. Agent Builder's saved CodeGraph authority uses `selected` catalog policy and only the
+structural `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet` recipe; coverage and diff
+diagnostics remain Local Coder capabilities. Local Coder remains repository-focused and never receives the full IDD. Live proof of
 the guided Agent Builder interaction remains outstanding.
 
 Hermes is the runtime platform. LiquidAIty composes and contextualizes its native systems through
@@ -368,9 +381,11 @@ default to `OFF`; only explicitly saved tools default to `AGENT`, and a literal 
 an authorized tool to `SCRIPT` or `BOTH`. A valid Hermes Script projects one compact
 `execute_host_script` definition plus the `AGENT`/`BOTH` tools it does not wrap; wrapped component schemas
 are absent from the model request. Blank, disabled or invalid source projects the Card's ordinary saved MCP
-presentation. A native Script failure removes
-the compact definition and activates only its already-registered wrapped handles for the next model
-iteration. Neither mode exposes IDD, `all_healthy`, or the complete catalog.
+presentation. A native Script failure before any operation begins may remove the compact definition and
+activate only its already-registered wrapped handles for the current model iteration. Once an operation has
+begun, failure is terminal and cannot replay through the model. Neither mode exposes IDD, `all_healthy`, or
+the complete catalog. Hermes' native `web_search` remains outside the MCP alias/state projection; a Script
+cannot take it over as a LiquidAIty MCP handle.
 
 Hermes freezes the source/version/hashes/schemas/aliases/budgets in trusted session configuration before
 the turn. The external LiquidAIty plugin executes that immutable source through Hermes'
@@ -401,7 +416,7 @@ Routing IDs and telemetry remain outside `in.idf`. PostgreSQL retains the existi
 the artifact path identifies the one exact retained input file.
 
 `write_mag_one_instructions` loads exact text directly into the saved Mag One Card's transient
-Invocation editor. It is not a proposal document, materializer, or store. It resolves the one saved
+CLI input editor. It is not a proposal document, materializer, or store. It resolves the one saved
 Mag One Card read-only and returns that Card identity with the exact mission. In an active Agent Builder
 session, the existing Hermes tool-result/SSE path places the text in unsaved per-Card React state.
 It creates no Run, revision, hash, approval object, or saved prompt and never starts AutoGen.
@@ -409,7 +424,7 @@ It creates no Run, revision, hash, approval object, or saved prompt and never st
 `card.load_graph_references` is the review-only Card-editor loader for native graph pointers. The MCP host injects
 the trusted source Card/Run/project/deck identity; the caller supplies one target Card, native identity,
 reason, order, and bounds. Python rereads the current native authority, returns actual transient context
-to the target Card's existing Knowledge tab, and records the proven read/handoff on the source Run in
+to the target Card's existing Context tab, and records the proven read/handoff on the source Run in
 AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is materialized only when an
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.

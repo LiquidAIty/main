@@ -77,26 +77,26 @@ def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> N
     "max_tool_calls": 3,
 }
 from hermes_tools import SCRIPT, input, output, tools
-tools.think.context = SCRIPT
-context = tools.call("think.context", focus=input.mission)
+tools.constellation.context = SCRIPT
+context = tools.call("constellation.context", focus=input.mission)
 output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}})
 '''
-    compiled = compile_card_script(source, selected_tools=["think.context"])
+    compiled = compile_card_script(source, selected_tools=["constellation.context"])
     assert compiled["mode"] == "outer_controller"
-    assert compiled["toolHandles"] == ["think.context"]
-    assert compiled["toolStates"] == {"think.context": 1}
-    assert compiled["scriptToolIds"] == ["think.context"]
+    assert compiled["toolHandles"] == ["constellation.context"]
+    assert compiled["toolStates"] == {"constellation.context": 1}
+    assert compiled["scriptToolIds"] == ["constellation.context"]
     assert compiled["agentToolIds"] == []
     assert compiled["maxToolCalls"] == 3
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["think.context"],
+        selected_tools=["constellation.context"],
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == []
     assert presentation["script"]["nativeSupport"]["active"] is True
-    with pytest.raises(ValueError, match="card_script_tool_not_selected:think.context"):
-        compile_card_script(source, selected_tools=["know.context"])
+    with pytest.raises(ValueError, match="card_script_tool_not_selected:constellation.context"):
+        compile_card_script(source, selected_tools=["graphiti.get_status"])
 
 
 def test_valid_script_wraps_only_literal_handles_and_leaves_other_selected_mcp_tools_visible() -> None:
@@ -106,16 +106,16 @@ def test_valid_script_wraps_only_literal_handles_and_leaves_other_selected_mcp_t
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
 from hermes_tools import SCRIPT, output, tools
-tools.think.context = SCRIPT
-tools.call("think.context")
+tools.constellation.context = SCRIPT
+tools.call("constellation.context")
 output.emit({"agent": {"run": False}})
 '''
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["think.context", "know.context"],
+        selected_tools=["constellation.context", "graphiti.get_status"],
     )
     assert presentation["mode"] == "script"
-    assert presentation["presentedTools"] == ["know.context"]
+    assert presentation["presentedTools"] == ["graphiti.get_status"]
 
 
 def test_selected_tools_compile_off_script_agent_and_both_without_mutating_grants() -> None:

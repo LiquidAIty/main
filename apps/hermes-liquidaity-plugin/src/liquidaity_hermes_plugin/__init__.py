@@ -500,19 +500,32 @@ def _handle_execute_host_script(
         }
 
     def failed(error: str, native_receipt: dict) -> str:
-        try:
-            fallback_tools = activate_host_script_fallback()
-            fallback = {
-                "activated": True,
-                "presentationMode": "selected-mcp",
-                "tools": fallback_tools,
-            }
-        except Exception as fallback_error:
+        tool_calls_made = native_receipt.get("toolCallsMade", 0)
+        operation_started = (
+            isinstance(tool_calls_made, (int, float))
+            and not isinstance(tool_calls_made, bool)
+            and tool_calls_made > 0
+        )
+        if operation_started:
             fallback = {
                 "activated": False,
-                "presentationMode": "script-failed",
-                "error": str(fallback_error)[:2048],
+                "presentationMode": "script-failed-after-operation",
+                "reason": "operation_started_no_replay",
             }
+        else:
+            try:
+                fallback_tools = activate_host_script_fallback()
+                fallback = {
+                    "activated": True,
+                    "presentationMode": "selected-mcp",
+                    "tools": fallback_tools,
+                }
+            except Exception as fallback_error:
+                fallback = {
+                    "activated": False,
+                    "presentationMode": "script-failed",
+                    "error": str(fallback_error)[:2048],
+                }
         return json.dumps({
             "ok": False,
             "error": error[:2048],

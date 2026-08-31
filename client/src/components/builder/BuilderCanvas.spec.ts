@@ -523,6 +523,28 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
   });
 
+  it('keeps pointer-owned coordinates during non-layout refreshes', () => {
+    const currentNodes: Node[] = [{
+      id: 'card_main',
+      type: 'agentCard',
+      position: { x: 318.5, y: -42.25 },
+      dragging: true,
+      data: { title: 'Main', activeAgentCount: 0 },
+    }];
+    const nextNodes: Node[] = [{
+      id: 'card_main',
+      type: 'agentCard',
+      position: { x: -24, y: -24 },
+      data: { title: 'Main', activeAgentCount: 1 },
+    }];
+
+    const synced = syncFlowNodesForRender(currentNodes, nextNodes);
+
+    expect(synced[0].position).toEqual({ x: 318.5, y: -42.25 });
+    expect(synced[0].data).toMatchObject({ activeAgentCount: 1 });
+    expect(synced[0].dragging).toBe(true);
+  });
+
   it('preserves computed edge state during hover-only render sync', () => {
     const currentEdges: Edge[] = [
       {

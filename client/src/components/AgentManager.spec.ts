@@ -71,7 +71,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const before = JSON.stringify(savedConfig);
     const { container } = render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      agentType: 'agent_builder', activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     const provider = screen.getByLabelText('Saved Card provider') as HTMLSelectElement;
@@ -103,7 +103,7 @@ describe('AgentManager active builder config', () => {
     const before = JSON.stringify(config);
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', localConfig: config, onSaveLocalConfig: onSave,
+      agentType: 'agent_builder', activeTab: 'Prompt', localConfig: config, onSaveLocalConfig: onSave,
     }));
     await waitFor(() => expect(screen.queryByText('Loading runtime options… Saved values are unchanged.')).toBeNull());
     const provider = screen.getByLabelText('Saved Card provider') as HTMLSelectElement;
@@ -238,9 +238,11 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("runtimeMode === 'main' && nativeHermesState.native.honcho");
     expect(source).toContain('subagentCatalogOptions.map');
     expect(source).not.toContain('Use account Luna');
+    expect(source).toContain("localConfig.runtime_options?.toolCatalogPolicy === 'selected'");
+    expect(source).not.toContain("toolCatalogPolicy={runtimeKind === 'hermes' ? 'all_healthy'");
   });
 
-  it('replaces Task with Terminal while retaining exactly one mission composer', () => {
+  it('uses CLI while retaining exactly one mission composer', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -251,9 +253,11 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Prompt', 'Knowledge', 'Skills', 'Tools', 'Script', 'Runtime', 'Terminal'] as const;",
+      "const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script'] as const;",
     );
-    expect(source).toContain("activeTab === 'Terminal' && showTaskComposer");
+    expect(source).toContain("activeTab === 'CLI' && showTaskComposer");
+    expect(source).toContain('agent-manager-prompt-surface');
+    expect(source).toContain('agent-manager-context-surface');
     expect(source).not.toContain("activeTab === 'Task'");
     expect(source.match(/aria-label="Dynamic context \/ input"/g)).toHaveLength(1);
     expect(source.match(/data-testid="agent-manager-run"/g)).toHaveLength(1);
@@ -311,7 +315,7 @@ describe('AgentManager active builder config', () => {
     const idfText = '{"actualGraphData":{},"stableSavedCardContext":{},"selectedToolsAndGrants":{},"dynamicContext":{}}\n';
     render(React.createElement(AgentManager, {
       agentType: 'agent_builder',
-      activeTab: 'Terminal',
+      activeTab: 'CLI',
       cardId: 'card-one',
       localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
       onSaveLocalConfig: vi.fn(),
@@ -357,7 +361,7 @@ describe('AgentManager active builder config', () => {
     })));
     render(React.createElement(AgentManager, {
       agentType: 'agent_builder',
-      activeTab: 'Knowledge',
+      activeTab: 'Context',
       cardId: 'card-one',
       localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
       onSaveLocalConfig: vi.fn(),
@@ -434,6 +438,8 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('invocation: null');
     expect(chatSource).not.toContain('reviewContext.idf');
     expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[selectedCard.id] || [])');
+    expect(pageSource).not.toContain('(transientCardGraphContext[selectedCard.id] || []).length === 0');
+    expect(pageSource).toContain('(item) => item.reference.required && !item.ready');
     expect(source).toContain('Exact model-bound native graph context');
     expect(source).toContain('NativeGraphProjectionSurface');
     expect(source).toContain('loadedGraphProjection');

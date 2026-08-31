@@ -74,6 +74,11 @@ export default function useAgentBuilderAutosave({
     if (lastPersistedBoardFingerprintRef.current === boardFingerprint) return;
 
     const timer = window.setTimeout(() => {
+      // Deck writes use compare-and-swap revisions, so overlapping requests
+      // cannot be made safe by aborting the older browser request: the server
+      // may already have committed it. Keep one write in flight. Its returned
+      // revision rerenders this hook and schedules the latest unsaved board.
+      if (layoutAutosaveAbortRef.current) return;
       const reason = lastDeckPersistReasonRef.current || 'board-autosave';
       const integrity = evaluateBoardIntegrityForSave(deck, reason);
       if (!integrity.ok) {
@@ -94,7 +99,6 @@ export default function useAgentBuilderAutosave({
       }
       const revisionBefore = deckRevision;
       const controller = new AbortController();
-      layoutAutosaveAbortRef.current?.abort();
       layoutAutosaveAbortRef.current = controller;
       void (async () => {
         try {
@@ -193,6 +197,10 @@ export default function useAgentBuilderAutosave({
           });
           if (builderDev) {
             console.warn('[builder] layout autosave exception', error);
+          }
+        } finally {
+          if (layoutAutosaveAbortRef.current === controller) {
+            layoutAutosaveAbortRef.current = null;
           }
         }
       })();

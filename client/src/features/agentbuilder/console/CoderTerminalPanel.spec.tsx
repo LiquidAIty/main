@@ -104,6 +104,29 @@ describe('CoderTerminalPanel', () => {
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });
 
+  it('keeps Main attached and idle without exposing another PTY composer', async () => {
+    const terminalClient = client({ listSessions: vi.fn(async () => [
+      { ...session(), ownerCardId: 'card_main_chat', profile: 'liquidaity-main' },
+    ]) });
+    await render(
+      <CoderTerminalPanel
+        open
+        client={terminalClient}
+        ownerCardId="card_main_chat"
+        testIdPrefix="main-cli"
+        title="Main CLI Terminal"
+        readOnly
+        activityState="idle"
+      />,
+    );
+    await act(async () => Promise.resolve());
+
+    expect(terminalClient.listSessions).toHaveBeenCalledOnce();
+    expect(host?.querySelector('[data-testid="main-cli-connection-status"]')?.textContent).toBe('Ready · idle');
+    expect(xtermProps.current?.interactive).toBe(false);
+    expect(xtermProps.current?.connectOutput).toBeTypeOf('function');
+  });
+
   it('reports a missing startup-owned terminal without trying to create one from the UI', async () => {
     const terminalClient = client();
     await render(<CoderTerminalPanel open client={terminalClient} />);

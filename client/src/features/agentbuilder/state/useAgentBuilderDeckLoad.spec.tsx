@@ -177,6 +177,92 @@ describe('canonical deck write guards', () => {
     expect(evaluateBoardIntegrityForSave).not.toHaveBeenCalled();
   });
 
+  it('serializes rapid position saves and advances the latest board from the committed revision', async () => {
+    vi.useFakeTimers();
+    const firstDeck = canonicalDeck();
+    firstDeck.nodes[0] = {
+      ...firstDeck.nodes[0],
+      position: { x: 101, y: 203 },
+    };
+    const latestDeck = canonicalDeck();
+    latestDeck.nodes[0] = {
+      ...latestDeck.nodes[0],
+      position: { x: 137, y: 211 },
+    };
+    let resolveFirst: ((value: Response) => void) | null = null;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ meta: { deckRevision: 'revision-3' } }),
+      } as Response);
+    const layoutAutosaveAbortRef = { current: null as AbortController | null };
+    const lastPersistedBoardFingerprintRef = { current: JSON.stringify({ nodes: [], edges: [] }) };
+    const lastPersistedBoardSnapshotRef = { current: null as unknown };
+    const setDeckRevision = vi.fn();
+    const shared = {
+      builderDev: false,
+      canvasProjectId: 'project-canonical',
+      projectsApi: '/api/projects',
+      builderDeckId: 'deck_builder',
+      deckLoadBusy: false,
+      deckLoadError: null,
+      stateLoaded: true,
+      layoutAutosaveAbortRef,
+      lastPersistedBoardFingerprintRef,
+      lastPersistedBoardSnapshotRef,
+      lastDeckPersistReasonRef: { current: 'node-position' },
+      evaluateBoardIntegrityForSave: vi.fn(() => ({ ok: true, removedNodeIds: [] })),
+      snapshotDeckBoard: vi.fn((deck: DeckDocument) => ({ nodes: deck.nodes, edges: deck.edges })),
+      formatBuilderStatusMessage: (_value: unknown, fallback: string) => fallback,
+      isAbortLikeError: () => false,
+      setDeckRevision,
+      setDeckStatusMessage: vi.fn(),
+    };
+    const { rerender } = renderHook(
+      ({ deck, deckRevision }) => useAgentBuilderAutosave({ ...shared, deck, deckRevision }),
+      { initialProps: { deck: firstDeck, deckRevision: 'revision-1' as string | null } },
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).expectedRevision).toBe('revision-1');
+
+    rerender({ deck: latestDeck, deckRevision: 'revision-1' });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveFirst?.({
+        ok: true,
+        text: async () => JSON.stringify({ meta: { deckRevision: 'revision-2' } }),
+      } as Response);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(setDeckRevision).toHaveBeenCalledWith('revision-2');
+
+    rerender({ deck: latestDeck, deckRevision: 'revision-2' });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const latestBody = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body));
+    expect(latestBody.expectedRevision).toBe('revision-2');
+    expect(latestBody.document.nodes[0].position).toEqual({ x: 137, y: 211 });
+    expect(fetchSpy.mock.calls[0][1]?.signal).not.toBe(fetchSpy.mock.calls[1][1]?.signal);
+  });
+
   it('does not manually save any deck without a loaded canonical revision', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const setDeckStatusMessage = vi.fn();
