@@ -179,7 +179,6 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
 
     from agent import auxiliary_client
     from hermes_cli import kanban_decompose as decompose
-    from hermes_cli import profiles
 
     with kb.connect_closing() as conn:
         root_id = kb.create_task(
@@ -211,23 +210,21 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
                 "max_depth": 1,
             })
 
-    roster = [
-        SimpleNamespace(
-            name="auto-worker", is_default=True, description="Auto worker",
-            description_auto=False, model="unused", provider="unused", skill_count=0,
+    monkeypatch.setattr(
+        decompose,
+        "_build_roster",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("Team must not read the global Hermes profile roster")
         ),
-    ]
-    monkeypatch.setattr(profiles, "list_profiles", lambda: roster)
-    monkeypatch.setattr(profiles, "profile_exists", lambda name: name == "auto-worker")
-    monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "auto-worker")
+    )
     monkeypatch.setattr(decompose, "_load_config", _policy_config)
     response = MagicMock()
     response.choices = [MagicMock()]
     response.choices[0].message.content = json.dumps({
         "fanout": True,
         "tasks": [
-            {"title": "Evidence A", "body": "Read source A", "assignee": "auto-worker", "parents": []},
-            {"title": "Evidence B", "body": "Read source B", "assignee": "auto-worker", "parents": []},
+            {"title": "Evidence A", "body": "Read source A", "assignee": "other-card", "parents": []},
+            {"title": "Evidence B", "body": "Read source B", "assignee": None, "parents": []},
         ],
     })
     llm_calls = []
@@ -248,8 +245,11 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
     assert root.model_override == "gpt-5.6-terra"
     assert llm_calls[0]["provider"] == "openai-codex"
     assert llm_calls[0]["model"] == "gpt-5.6-terra-card"
+    assert "card-main" in llm_calls[0]["messages"][1]["content"]
+    assert "other-card" not in llm_calls[0]["messages"][1]["content"]
     assert all(child.workflow_template_id == "delegate-team-v1" for child in children)
     assert all(child.current_step_key == "worker" for child in children)
+    assert all(child.assignee == "card-main" for child in children)
     assert all(child.provider_override == "openai-codex" for child in children)
     assert all(child.model_override == "gpt-5.6-luna-card" for child in children)
     assert all(child.max_retries == 1 for child in children)
@@ -290,9 +290,12 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     kb._default_spawn(terra_root, str(team_board.parent))
     command = captured["cmd"]
+    assert command[command.index("-p") + 1] == "card-main"
+    assert "--resume" not in command
     assert command[command.index("-m") + 1] == "gpt-5.6-terra"
     assert command[command.index("--provider") + 1] == "openai-codex"
     assert captured["env"]["HERMES_KANBAN_TEAM_WORKER"] == "1"
+    assert captured["env"]["HERMES_SESSION_SOURCE"] == "kanban"
 
     with kb.connect_closing() as conn:
         claimed_root = kb.claim_task(conn, root_id)
@@ -311,6 +314,35 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
         "provider": "openai-codex",
         "model": "gpt-5.6-terra",
     }
+
+
+def test_team_db_boundary_pins_foreign_child_and_root_assignees_to_origin(
+    team_board,
+):
+    with kb.connect_closing() as conn:
+        root_id = kb.create_task(
+            conn,
+            title="Private Team root",
+            assignee="origin-card",
+            triage=True,
+            workflow_template_id="delegate-team-v1",
+        )
+        child_ids = kb.decompose_triage_task(
+            conn,
+            root_id,
+            root_assignee="foreign-orchestrator",
+            children=[
+                {"title": "First", "assignee": "foreign-card", "parents": []},
+                {"title": "Second", "assignee": None, "parents": [0]},
+            ],
+            auto_promote=False,
+        )
+        root = kb.get_task(conn, root_id)
+        children = [kb.get_task(conn, child_id) for child_id in child_ids or []]
+
+    assert len(children) == 2
+    assert root.assignee == "origin-card"
+    assert all(child.assignee == "origin-card" for child in children)
 
 
 @pytest.mark.parametrize("worker_count", [1, 5])

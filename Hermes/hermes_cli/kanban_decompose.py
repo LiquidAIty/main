@@ -22,7 +22,8 @@ Design notes
   descriptions plus the default fallback. Profiles without a
   description are still listed (with a note) so the decomposer can
   match on name as a fallback, but the user has an obvious incentive
-  to describe them.
+  to describe them. The LiquidAIty Team workflow is the narrow exception:
+  it sees only the originating profile already persisted on its root.
 
 * ``fanout=false`` collapses to the same effect as ``kanban specify``:
   we tighten the body and flip ``triage -> todo`` as a single task,
@@ -299,15 +300,20 @@ def decompose_task(
 
     cfg = _load_config()
     # LIQUIDAITY VENDOR PATCH: delegate_task(role="team") marks one native
-    # workflow root.  Auto-Kanban still owns decomposition and profile routing;
-    # this branch only applies the recipe's bounded native task/model fields.
+    # workflow root. Auto-Kanban still owns decomposition, while the Team path
+    # is private self-fanout for the profile already persisted on that root.
+    # Ordinary Kanban retains its global profile routing below.
     is_team = task.workflow_template_id == "delegate-team-v1"
-    orchestrator = (
-        task.assignee
-        if is_team and task.assignee
-        else _resolve_orchestrator_profile(cfg)
-    )
-    default_assignee = _resolve_default_assignee(cfg)
+    if is_team:
+        orchestrator = str(task.assignee or "").strip()
+        if not orchestrator:
+            return DecomposeOutcome(
+                task_id, False, "team root is missing its originating profile",
+            )
+        default_assignee = orchestrator
+    else:
+        orchestrator = _resolve_orchestrator_profile(cfg)
+        default_assignee = _resolve_default_assignee(cfg)
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     auto_promote = bool(kanban_cfg.get("auto_promote_children", True))
     team_max_workers = 4
@@ -339,7 +345,15 @@ def decompose_task(
             team_lead_provider = str(task.provider_override or "").strip()
             team_lead_model = str(task.model_override or "").strip()
         team_worker_reasoning = kanban_cfg.get("team_worker_reasoning_effort")
-    roster, valid_names = _build_roster()
+    if is_team:
+        roster = [{
+            "name": orchestrator,
+            "description": "originating profile for this private Team mission",
+            "has_description": True,
+        }]
+        valid_names = {orchestrator}
+    else:
+        roster, valid_names = _build_roster()
 
     try:
         from agent.auxiliary_client import call_llm  # type: ignore
@@ -369,7 +383,9 @@ def decompose_task(
                 "genuinely independent evidence or implementation slices. The "
                 "worker graph is depth one: workers may depend on siblings but "
                 "must not create or delegate further work. The root will perform "
-                "the final review and synthesis after every child finishes."
+                "the final review and synthesis after every child finishes. "
+                f"Every child assignee must be the originating profile "
+                f"{orchestrator!r}; no other profile is available to this Team."
             )
         resp = call_llm(
             task="kanban_decomposer",
@@ -456,8 +472,8 @@ def decompose_task(
             f"(received {len(raw_tasks)})",
         )
 
-    # Rewrite invalid assignees to the default fallback. Never leave a
-    # task with assignee=None — the user explicitly does not want that.
+    # Team is pinned to its origin; ordinary Kanban rewrites invalid
+    # assignees to the configured default. Never leave a task unassigned.
     children: list[dict] = []
     for idx, entry in enumerate(raw_tasks):
         if not isinstance(entry, dict):
@@ -473,10 +489,14 @@ def decompose_task(
         if not isinstance(body, str):
             body = ""
         assignee = entry.get("assignee")
-        chosen = _normalize_assignee_choice(
-            assignee,
-            default_assignee=default_assignee,
-            valid_names=valid_names,
+        chosen = (
+            orchestrator
+            if is_team
+            else _normalize_assignee_choice(
+                assignee,
+                default_assignee=default_assignee,
+                valid_names=valid_names,
+            )
         )
         if (
             isinstance(assignee, str)

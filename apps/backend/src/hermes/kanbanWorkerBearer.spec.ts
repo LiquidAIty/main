@@ -101,6 +101,19 @@ describe('native Kanban worker Card bearer', () => {
     })).rejects.toThrow('hermes_kanban_worker_native_claim_mismatch');
   });
 
+  it('fails closed when a Team worker profile differs from its Card runtime profile', async () => {
+    const graph = snapshots();
+    const crossProfile = resolvedContext('team-child-run');
+    crossProfile.context.rootRunId = 'root-card-run';
+    crossProfile.context.runtimeProfile = 'another-card';
+    await expect(issueHermesKanbanWorkerBearer({
+      identity,
+      show: async (taskId) => graph[taskId],
+      resolveRun: vi.fn(async () => crossProfile),
+      mint: vi.fn(() => 'never'),
+    })).rejects.toThrow('hermes_kanban_worker_native_claim_mismatch');
+  });
+
   it('distinguishes absent correlation without minting', async () => {
     const graph = snapshots();
     const mint = vi.fn(() => 'never');

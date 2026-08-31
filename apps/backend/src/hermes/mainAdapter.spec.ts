@@ -694,7 +694,7 @@ describe('Hermes ACP transport identity', () => {
       expect.stringMatching(/^mcp-main-runtime-/),
     ]);
     expect(sessionConfig.enabledTools).toEqual([]);
-    expect(sessionConfig.delegationRoles).toEqual(['leaf']);
+    expect(sessionConfig.delegationRoles).toEqual([]);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');

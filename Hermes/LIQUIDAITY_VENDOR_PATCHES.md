@@ -495,12 +495,14 @@ Files and symbols:
   correlates it before activation and then hands ownership to native Auto-Kanban.
 - `hermes_cli/config_defaults.py`: declares the generic maximum-worker and worker provider/model settings.
 - `hermes_cli/kanban_decompose.py`: reads the root's applied policy, applies the depth-one
-  two-to-four-worker recipe, retains the originating profile and lead provider/model on the root, and
-  assigns exact per-task worker provider/model and retry overrides.
+  two-to-four-worker recipe, exposes only the persisted originating profile to Team decomposition, pins
+  every parsed child to that profile, retains the lead provider/model on the root, and assigns exact
+  per-task worker provider/model and retry overrides.
 - `hermes_cli/kanban_db.py`: persists the generic workflow/step fields already present in the schema,
-  activates the correlated root, propagates the Team marker and retry/model fields, blocks nested task
-  creation, gives the resumed root every completed worker handoff plus an explicit synthesis contract, and
-  records exact Team provider/model at the native spawn boundary.
+  activates the correlated root, independently canonicalizes every Team child/root assignee to the
+  persisted root owner inside the atomic decomposition transaction, propagates the Team marker and
+  retry/model fields, blocks nested task creation, gives the resumed root every completed worker handoff
+  plus an explicit synthesis contract, and records exact Team provider/model at the native spawn boundary.
 - `acp_adapter/host_profiles.py`: strictly validates the Card-scoped Team policy, generalizes the existing
   opaque host child-allocation callback to accept
   any durable native execution ID; the previous leaf helper delegates to it unchanged. A trusted
@@ -517,10 +519,10 @@ Files and symbols:
   failure instead of allowing an uncorrelated first turn.
 
 Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
-temporary-agent construction, depth, provider/model and result behavior. Main's Team-plus-Leaf projection
-keeps the complete native Leaf batch/output schema; a Team-only Card hides those inapplicable fields without
-rewriting `delegate_task`. Ordinary Kanban tasks keep their existing event shape, decomposition freedom,
-manual controls, models, and prompts. Team markers and limits apply only to
+temporary-agent construction, depth, provider/model and result behavior. LiquidAIty Card sessions project
+only Team when enabled and remove `delegate_task` when Team is Off; this narrows one trusted session without
+rewriting the native tool. Ordinary Kanban tasks keep their existing event shape, profile roster,
+decomposition freedom, manual controls, models, and prompts. Team markers and limits apply only to
 `workflow_template_id="delegate-team-v1"`; no profile, global configuration, credential or user-global
 Hermes home is rewritten by a Team run.
 
@@ -541,9 +543,10 @@ unchanged apart from carrying the same request identity.
 
 Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
 `tests/hermes_cli/test_plugin_message_injection.py`, `tests/acp/test_session.py`, and
-`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, strict Card policy, Team-only versus
-Team-plus-Leaf schemas, two-to-four bound, exact lead/worker/retry application, all-worker synthesis
-context, non-recursion, opaque host
+`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, strict Card policy, host projection
+narrowing without changing the native compatibility schema, two-to-four bound, origin-profile-only
+decomposition and database pinning, exact lead/worker/retry application, all-worker synthesis context,
+non-recursion, opaque host
 allocation, ACP/CLI same-session idempotent result append, first-turn construction at the real
 `HermesCLI`/`AIAgent` provider boundary, competing/mismatch/teardown cleanup, preservation of unsent local
 input and unchanged native roles. Downstream

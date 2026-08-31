@@ -92,7 +92,12 @@ Auto-Kanban root owned by the originating profile/session. Each saved Hermes Car
 with an Off/Auto policy plus maximum workers, retry limit, worker provider/model, and one Team-lead
 provider/model. Auto means Hermes may call the native model tool; it never starts Team merely because
 a Card Run began. The Team-lead model owns native decomposition and the resumed root's final synthesis,
-while the worker model owns the bounded decomposed tasks. Every worker task
+while the worker model owns the bounded decomposed tasks. Team never receives the global Hermes profile
+roster: the decomposer sees only the root's already-persisted originating profile, and the atomic native
+decomposition boundary pins every child back to that profile even if a malformed response supplies another
+assignee. Card-facing Hermes sessions therefore expose either no delegation tool or the Team-only role;
+native Leaf, Orchestrator, and general Kanban profile routing remain available only outside that narrower
+LiquidAIty Card projection. Every worker task
 is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Team-lead
 pass all worker reports. That pass returns one native task result to the existing originating Hermes
 session and Card Run. ACP Card sessions and persistent Main CLI turns use one backend-owned host child
@@ -684,7 +689,9 @@ or cancellation mismatches clear or reject the staging slot without allocating a
 transcript owner appends the terminal native result to the exact idle originating session before the child
 Run closes. Team-specific
 task markers carry the exact Card-projected lead/worker models, retry and worker bounds, final-stage
-identity and durable internal execution evidence; the
+identity and durable internal execution evidence. The Team root and every child retain the root's existing
+profile assignee; the Team decomposer never reads the global profile roster, and the SQLite decomposition
+transaction independently canonicalizes foreign assignees to the persisted root owner. The
 stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
 sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 

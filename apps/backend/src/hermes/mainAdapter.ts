@@ -416,10 +416,7 @@ export function buildHermesHostSessionProjection(
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
     : [];
   const nativeTeam = args.team ? toNativeTeamPolicy(args.team) : null;
-  const delegationRoles = uniqueStrings([
-    ...(nativeTeam ? ['team'] : []),
-    ...(args.cardId === 'card_main_chat' ? ['leaf'] : []),
-  ]);
+  const delegationRoles = nativeTeam ? ['team'] : [];
   return {
     mcpServers: rootServers,
     sessionMeta: {
