@@ -23,8 +23,8 @@ const deck: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' }, position: { x: 0, y: 0 },
     },
     {
-      id: 'card_hermes_steward', templateId: 'template_hermes_steward', title: 'Kanban',
-      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' }, position: { x: 100, y: 0 },
+      id: 'card_hermes_steward', templateId: 'template_hermes_steward', title: 'Graph Agent',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' }, position: { x: 100, y: 0 },
     },
   ],
   edges: [],

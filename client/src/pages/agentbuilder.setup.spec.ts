@@ -59,7 +59,7 @@ describe('agentbuilder authoring flow', () => {
       'Agent Builder',
       'Magentic-One',
       'Local Coder',
-      'Kanban',
+      'Graph Agent',
       'Trading Agent',
       'WorldSignals Agent',
     ]);
@@ -69,7 +69,7 @@ describe('agentbuilder authoring flow', () => {
       { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       { kind: 'autogen', mode: 'magentic_one' },
       { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-      { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
       { kind: 'autogen', mode: 'assistant' },
       { kind: 'autogen', mode: 'assistant' },
     ]);
@@ -148,7 +148,7 @@ describe('agentbuilder authoring flow', () => {
       source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
     }));
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtime).toEqual({ kind: 'hermes', mode: 'main', profile: 'liquidaity-main' });
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' });
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
   });
 

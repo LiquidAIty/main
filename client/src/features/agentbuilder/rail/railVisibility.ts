@@ -15,12 +15,6 @@ function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean
   return card?.id === 'card_trading_workbench';
 }
 
-export function isHermesStewardCard(
-  card: AgentCardInstance | null | undefined,
-): boolean {
-  return Boolean(card?.runtime.kind === 'hermes' && card.runtime.mode === 'kanban');
-}
-
 export function isWorldSignalsAgentCard(
   card: AgentCardInstance | null | undefined,
 ): boolean {
@@ -31,7 +25,6 @@ type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showHermesKanban: boolean;
 };
 
 function buildBusConnectedCardIds(
@@ -117,14 +110,6 @@ export function deriveVisibleRailItems({
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),
-    showHermesKanban:
-      workspaceView === 'hermes' ||
-      hasDirectedCardConnection(
-        deck.nodes,
-        deck.edges,
-        (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
-        (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'kanban',
-      ),
   };
 }
 

@@ -59,6 +59,22 @@ def test_saved_card_reference_exposes_explicit_runtime() -> None:
     assert reference["role"] == ""
 
 
+def test_team_defaults_are_strict_card_configuration() -> None:
+    model = {
+        "provider": "openai", "accessMode": "chatgpt-account",
+        "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
+    }
+    assert cp._team_config({
+        "mode": "auto", "maxWorkers": 4, "retryLimit": 1,
+        "workerModel": model, "leadModel": model,
+    })["maxWorkers"] == 4
+    with pytest.raises(cp.ControlPlaneError, match="card_team_config_invalid"):
+        cp._team_config({
+            "mode": "auto", "maxWorkers": 8, "retryLimit": 1,
+            "workerModel": model, "leadModel": model,
+        })
+
+
 def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend) -> None:
     result = asyncio.run(cp.canvas_inspect({"projectId": "p", "deckId": "d"}))
 
@@ -124,7 +140,7 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
     ])
     deck["nodes"].append({
         "id": "helper", "title": "Helper",
-        "runtime": {"kind": "hermes", "mode": "kanban", "profile": "helper"},
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "helper"},
         "runtimeOptions": {"tools": ["write_mag_one_instructions"]},
     })
     calls = []
@@ -216,7 +232,7 @@ def test_grounded_staging_requires_source_card_write_grant(monkeypatch, fake_bac
         }))
 
 
-def test_grounded_staging_rejects_a_non_kanban_source_even_with_the_tool(monkeypatch) -> None:
+def test_grounded_staging_rejects_a_non_delegate_source_even_with_the_tool(monkeypatch) -> None:
     import copy
 
     deck = copy.deepcopy(DECK)
@@ -229,7 +245,7 @@ def test_grounded_staging_rejects_a_non_kanban_source_even_with_the_tool(monkeyp
         lambda *_args, **_kwargs: {"ok": True, "deck": deck, "meta": {}},
     )
 
-    with pytest.raises(cp.ControlPlaneError, match="grounded_staging_source_must_be_kanban"):
+    with pytest.raises(cp.ControlPlaneError, match="grounded_staging_source_must_be_hermes_delegate"):
         asyncio.run(cp.write_mag_one_instructions({
             "projectId": "p", "deckId": "d", "targetCardId": "worker",
             "mission": "bounded", "dataAnchors": [{"nativeId": "one"}],

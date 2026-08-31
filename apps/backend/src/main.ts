@@ -237,7 +237,7 @@ async function startServer() {
     isActive: () => globalThis.__liquidaityBackendServer__ === server,
   })
     .then(({ discovered, started }) => {
-      console.log(`[BOOT] Kanban Run recovery discovered=${discovered} started=${started}`);
+      console.log(`[BOOT] native Team Run recovery discovered=${discovered} started=${started}`);
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);

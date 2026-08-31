@@ -26,6 +26,18 @@ def test_public_mcp_identity_is_liquidaity():
     )
 
 
+def test_card_team_schema_exposes_only_proven_saved_fields():
+    import mcp_host
+
+    schema = mcp_host._card_team_schema()
+    assert set(schema["properties"]) == {
+        "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
+    }
+    assert schema["properties"]["mode"]["enum"] == ["off", "auto"]
+    assert schema["properties"]["maxWorkers"]["enum"] == [2, 3, 4]
+    assert "concurrency" not in schema["properties"]
+
+
 def test_execution_receipt_observes_the_actual_provider_client_boundary():
     import asyncio
     import mcp_host
@@ -74,7 +86,7 @@ def test_caller_enforcement_reads_explicit_idd_permissions():
     denied = {
         "_callerCardId": "card-hermes",
         "_callerRuntimeKind": "hermes",
-        "_callerRuntimeMode": "kanban",
+        "_callerRuntimeMode": "delegate",
     }
     assert mcp_host._enforce_tool_caller("run_mag_one", denied) == (
         "tool_caller_not_authorized: run_mag_one requires hermes/main"
@@ -472,13 +484,13 @@ def test_required_child_execution_meta_fails_closed_when_missing(monkeypatch):
         mcp_host._request_execution_context()
 
 
-def test_signed_execution_context_id_supports_native_kanban_worker(monkeypatch):
+def test_signed_execution_context_id_supports_native_team_worker(monkeypatch):
     import mcp_host
 
     principal = {
         "kind": "card-runtime",
         "requiresExecutionContext": True,
-        "executionContextId": "context-kanban-root",
+        "executionContextId": "context-team-root",
     }
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
     monkeypatch.setattr(
@@ -499,7 +511,7 @@ def test_signed_execution_context_id_supports_native_kanban_worker(monkeypatch):
                 "runId": "saved-card-run",
                 "rootRunId": "saved-card-run",
                 "cardId": "card_hermes_steward",
-                "runtimeMode": "kanban",
+                "runtimeMode": "delegate",
                 "nativeChildId": None,
                 "grantedTools": ["graphiti.add_memory"],
             },
@@ -512,7 +524,7 @@ def test_signed_execution_context_id_supports_native_kanban_worker(monkeypatch):
     assert context["nativeChildId"] == ""
     assert bridge_calls == [(
         "internal_execution_context",
-        {"contextId": "context-kanban-root", "principal": principal},
+        {"contextId": "context-team-root", "principal": principal},
     )]
 
 
@@ -551,9 +563,9 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
         "deckId": "deck_builder",
         "conversationId": "conversation-1",
         "parentRunId": "run-1",
-        "callerCardId": "card-helper",
+        "callerCardId": "card-graph-agent",
         "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "kanban",
+        "callerRuntimeMode": "delegate",
         "grantedTools": ["canvas.inspect", "run_mag_one"],
         "presentedTools": ["canvas.inspect"],
     }
@@ -694,7 +706,7 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     assert mcp_host._configured_tool_allowlist() is None
 
 
-def test_trusted_hermes_stdio_context_enforces_main_and_helper_tool_roles(monkeypatch):
+def test_trusted_hermes_stdio_context_enforces_main_and_graph_agent_tool_roles(monkeypatch):
     import mcp_host
 
     helper_context = {
@@ -704,7 +716,7 @@ def test_trusted_hermes_stdio_context_enforces_main_and_helper_tool_roles(monkey
         "parentRunId": "parent-1",
         "mainCardId": "card_hermes_steward",
         "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "kanban",
+        "callerRuntimeMode": "delegate",
     }
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
     monkeypatch.setenv("MCP_TRUSTED_MAIN_CONTEXT", json.dumps(helper_context))
@@ -715,7 +727,7 @@ def test_trusted_hermes_stdio_context_enforces_main_and_helper_tool_roles(monkey
         {
             "_callerCardId": "card_hermes_steward",
             "_callerRuntimeKind": "hermes",
-            "_callerRuntimeMode": "kanban",
+            "_callerRuntimeMode": "delegate",
         },
         authenticated_external=True,
     ) == "tool_caller_not_authorized: run_mag_one requires hermes/main"
@@ -1409,7 +1421,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert "memoryProvider" not in by_name["card.create"].inputSchema["properties"]
         assert by_name["card.create"].inputSchema["properties"]["runtime"]["properties"]["mode"] == {
             "type": "string",
-            "enum": ["main", "delegate", "kanban", "assistant", "magentic_one"],
+            "enum": ["main", "delegate", "assistant", "magentic_one"],
         }
         assert "minProperties" not in str(
             by_name["card.update_configuration"].inputSchema
@@ -2283,7 +2295,7 @@ def test_native_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
     monkeypatch.setattr(mcp_host, "_initialize_native_cbm_sync", lambda: None)
     result = mcp_host._call_native_cbm(
         "search_graph",
-        {"project": "C-Projects-LiquidAIty-main", "query": "HermesKanbanWorkspace"},
+        {"project": "C-Projects-LiquidAIty-main", "query": "Graph Agent continuity"},
     )
 
     assert calls == [
@@ -2291,7 +2303,7 @@ def test_native_cbm_dispatch_uses_the_initialized_stdio_client(monkeypatch):
             "search_graph",
             {
                 "project": "C-Projects-LiquidAIty-main",
-                "query": "HermesKanbanWorkspace",
+                "query": "Graph Agent continuity",
             },
         )
     ]

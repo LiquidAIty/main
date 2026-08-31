@@ -125,6 +125,38 @@ describe('MainCliBridge', () => {
     })).toThrow('main_cli_history_invalid');
   });
 
+  it('delivers each semantic projection ID exactly once without text comparison', async () => {
+    const bridge = new MainCliBridge();
+    const onEvent = vi.fn();
+    bridge.notePoll();
+    const done = bridge.submit({
+      runId: 'run-projection', executionContextId: 'context-projection',
+      driverSource: 'internal_chat', message: 'hello', onEvent,
+    });
+    const candidate = bridge.take()!;
+    const projection = {
+      schemaVersion: 'liquidaity.main.projection.v1' as const,
+      id: 'tool-1:started',
+      category: 'execution.tool' as const,
+      sequence: 1,
+      timestamp: '2026-08-31T12:00:00.000Z',
+      state: 'started',
+      toolName: 'main.context',
+      operationId: 'tool-1',
+    };
+    bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
+      kind: 'projection', projection });
+    bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
+      kind: 'projection', projection: { ...projection, state: 'changed-with-same-id' } });
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(() => bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
+      kind: 'projection', projection: { ...projection, id: '', sequence: 2 } }))
+      .toThrow('main_cli_projection_invalid');
+    bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
+      kind: 'completed', finalText: 'done', nativeSessionId: 'session-1', nativeTurnId: 'turn-1' });
+    await expect(done).resolves.toMatchObject({ finalText: 'done' });
+  });
+
   it('delivers one native Team result with exact task idempotence and visible retry', async () => {
     const bridge = new MainCliBridge();
     const first = bridge.queueTeamResult({

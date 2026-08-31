@@ -5,7 +5,11 @@ import {
   type CoderTerminalClient,
 } from './coderTerminalClient';
 import XtermView from './XtermView';
-import AdaptiveCardTerminal, { type TerminalRun } from './AdaptiveCardTerminal';
+import AdaptiveCardTerminal, {
+  RuntimeEventList,
+  type CardTerminalEvent,
+  type TerminalRun,
+} from './AdaptiveCardTerminal';
 
 /** A saved Hermes Card's genuine CLI pseudoterminal. */
 
@@ -28,6 +32,9 @@ type CoderTerminalPanelProps = {
   /** Keep the actual PTY attached while preventing this projection from becoming another composer. */
   readOnly?: boolean;
   activityState?: 'idle' | 'connecting' | 'running';
+  /** Main-only semantic execution projection from this same native session. */
+  semanticEvents?: CardTerminalEvent[];
+  semanticError?: string | null;
 };
 
 function CoderTerminalPanelInner({
@@ -46,6 +53,8 @@ function CoderTerminalPanelInner({
   onRejoinCardRun,
   readOnly = false,
   activityState,
+  semanticEvents,
+  semanticError = null,
 }: CoderTerminalPanelProps) {
   const [projection, setProjection] = useState<'cli' | 'run'>('cli');
   useEffect(() => {
@@ -59,6 +68,7 @@ function CoderTerminalPanelInner({
   const lastResizeRef = useRef('');
 
   const status = session?.state ?? 'idle';
+  const showingSemanticProjection = readOnly && semanticEvents !== undefined;
   sessionRef.current = session;
   useEffect(() => {
     if (!open || session) return;
@@ -211,19 +221,32 @@ function CoderTerminalPanelInner({
       </div> : null}
       <div style={{ display: showingRun ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {session ? (
-        <XtermView
-          key={session.id}
-          interactive={!readOnly && (status === 'starting' || status === 'running')}
-          connectOutput={status === 'starting' || status === 'running' ? connectOutput : undefined}
-          onData={sendData}
-          onResize={status === 'starting' || status === 'running' ? resizeTerminal : undefined}
-          onOutputClosed={refreshSession}
-          onError={(message) => {
-            if (message === 'The operation was aborted.') return;
-            setTerminalError(message);
-          }}
-          launchError={session.error || terminalError}
-        />
+        showingSemanticProjection ? (
+          <div
+            data-testid={`${testIdPrefix}-semantic-output`}
+            data-session-id={session.id}
+            role="log"
+            aria-live="polite"
+            style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 8 }}
+          >
+            <RuntimeEventList main events={semanticEvents} />
+            {semanticError ? <div role="alert">{semanticError}</div> : null}
+          </div>
+        ) : (
+          <XtermView
+            key={session.id}
+            interactive={!readOnly && (status === 'starting' || status === 'running')}
+            connectOutput={status === 'starting' || status === 'running' ? connectOutput : undefined}
+            onData={sendData}
+            onResize={status === 'starting' || status === 'running' ? resizeTerminal : undefined}
+            onOutputClosed={refreshSession}
+            onError={(message) => {
+              if (message === 'The operation was aborted.') return;
+              setTerminalError(message);
+            }}
+            launchError={session.error || terminalError}
+          />
+        )
       ) : null}
 
       {!session ? (

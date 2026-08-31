@@ -23,7 +23,7 @@ def test_markdown_and_sql_are_data_not_a_second_island_language() -> None:
     from app.python_models import idd
     assert not hasattr(idd, "validate_input_islands")
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -71,7 +71,7 @@ def test_invalid_script_is_saved_but_degrades_to_exact_selected_mcp_tools() -> N
 
 def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> None:
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"context": {"type": "object"}, "agent": {"type": "object", "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}}, "required": ["run"]}}, "required": ["context", "agent"]},
     "max_tool_calls": 3,
@@ -82,7 +82,7 @@ context = tools.call("constellation.context", focus=input.mission)
 output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}})
 '''
     compiled = compile_card_script(source, selected_tools=["constellation.context"])
-    assert compiled["mode"] == "outer_controller"
+    assert compiled["mode"] == "tool_recipe"
     assert compiled["toolHandles"] == ["constellation.context"]
     assert compiled["toolStates"] == {"constellation.context": 1}
     assert compiled["scriptToolIds"] == ["constellation.context"]
@@ -101,7 +101,7 @@ output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}
 
 def test_valid_script_wraps_only_literal_handles_and_leaves_other_selected_mcp_tools_visible() -> None:
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -120,7 +120,7 @@ output.emit({"agent": {"run": False}})
 
 def test_selected_tools_compile_off_script_agent_and_both_without_mutating_grants() -> None:
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -161,7 +161,7 @@ output.emit({"agent": {"run": True}})
 
 def test_authorized_all_healthy_tools_default_off_unless_saved_or_script_owned() -> None:
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -186,7 +186,7 @@ output.emit({"agent": {"run": False}})
 
 def test_ungranted_tool_cannot_be_enabled_or_called() -> None:
     source = '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -223,15 +223,14 @@ def test_generated_python_header_is_complete_read_only_and_grant_aware() -> None
     assert "tools: Final[ToolControls]" in header["source"]
     assert "search_graph: SelectedToolHandle" in header["source"]
     assert "delete_project: UngrantedToolHandle" in header["source"]
-    assert "role: Literal['leaf', 'team'] = 'team'" in header["source"]
-    assert "orchestrator" not in header["source"]
+    assert "card.subagents" not in header["source"]
+    assert "delegate_task" not in header["source"]
     ordinary = generate_card_script_header(
         catalog_tools=catalog,
         selected_tools=["cbm.search_graph"],
         card_id="card_research",
     )
-    assert "role: Literal['team'] = 'team'" in ordinary["source"]
-    assert "leaf" not in ordinary["source"]
+    assert "card.subagents" not in ordinary["source"]
     assert "This file is not saved, executed, or sent to a model" in header["source"]
     implicit = generate_card_script_header(
         catalog_tools=catalog,
@@ -260,7 +259,7 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     assert fields["modelKey"]["catalog"] == "configured-models"
     assert fields["tools"]["catalog"] == "native-tools"
     assert [item["value"] for item in fields["runtimeMode"]["options"]] == [
-        "main", "delegate", "kanban", "assistant", "magentic_one",
+        "main", "delegate", "assistant", "magentic_one",
     ]
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1

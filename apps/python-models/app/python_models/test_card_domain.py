@@ -46,6 +46,31 @@ def _expected_delegate(card_id: str = "child") -> dict:
     }
 
 
+def test_saved_hermes_card_preserves_exact_team_defaults_and_rejects_non_hermes() -> None:
+    team = {
+        "mode": "auto", "maxWorkers": 3, "retryLimit": 2,
+        "workerModel": {
+            "provider": "openai", "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
+        },
+        "leadModel": {
+            "provider": "openai", "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-terra", "providerModelId": "gpt-5.6-terra",
+        },
+    }
+    hermes = _agent(
+        "hermes-team",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "research"},
+        runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
+    )
+    assert card_domain._stable_card(hermes)["runtimeExtensions"]["team"] == team
+    with pytest.raises(card_domain.CardDomainError, match="card_team_requires_hermes"):
+        card_domain._stable_card(_agent(
+            "autogen-team",
+            runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
+        ))
+
+
 def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() -> None:
     duplicate = {
         "id": "deck-two",
@@ -219,25 +244,16 @@ def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
         "orchestrator": _agent(
             "orchestrator", runtime={"kind": "autogen", "mode": "magentic_one"}
         ),
-        "kanban": _agent(
-            "kanban",
-            runtime={"kind": "hermes", "mode": "kanban", "profile": "steward"},
-        ),
     }
     edges = [
         {"source": "parent", "target": "enabled", "edgeType": "flow"},
         {"source": "parent", "target": "disabled-option", "edgeType": "flow"},
         {"source": "parent", "target": "nested", "edgeType": "flow"},
         {"source": "parent", "target": "orchestrator", "edgeType": "flow"},
-        {"source": "parent", "target": "kanban", "edgeType": "flow"},
         {"source": "enabled", "target": "parent", "edgeType": "flow"},
     ]
     assert card_domain._direct_card_targets("parent", cards, edges) == [
         _expected_delegate("enabled"),
-        {
-            **_expected_delegate("kanban"),
-            "runtime": {"kind": "hermes", "mode": "kanban", "profile": "steward"},
-        },
     ]
 
 
@@ -346,7 +362,7 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
         "script": {
             "enabled": True,
             "source": '''CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
@@ -724,103 +740,29 @@ def test_mag_one_participant_validation_still_fails_before_run_creation(
         card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
 
 
-def test_exact_kanban_retry_rejoins_without_duplicate_run_or_attention(
+def test_retired_kanban_card_mode_cannot_create_a_new_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     prepared = _prepared_kanban_runtime()
-    inserted = []
     monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
-    monkeypatch.setattr(card_domain, "_retain_run_idf", _fake_retain_idf)
     monkeypatch.setattr(
         card_domain,
         "_insert_run",
-        lambda _prepared, **kwargs: (
-            inserted.append(kwargs) or ("run-original", "correlation-original", False)
-        ),
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "_observe_run_start",
-        lambda *_args, **_kwargs: pytest.fail("retry duplicated Run attention"),
-    )
-    monkeypatch.setattr(
-        card_domain,
-        "observe_materialized_anchor_reads",
-        lambda *_args, **_kwargs: pytest.fail("retry duplicated anchor attention"),
+        lambda *_args, **_kwargs: pytest.fail("retired Card mode created a Run"),
     )
 
-    result = card_domain.begin_run({
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "cardId": "kanban-one",
-        "runId": "run-retry",
-        "correlationId": "correlation-retry",
-        "assignment": "Exact mission",
-    })
-
-    assert result["runId"] == "run-original"
-    assert result["correlationId"] == "correlation-original"
-    assert result["rejoined"] is True
-    assert len(inserted) == 1
-    assert inserted[0]["request_fingerprint"] == card_domain._run_request_fingerprint({
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "cardId": "kanban-one",
-        "cardRevisionId": "revision-one",
-        "conversationId": "",
-        "senderCardId": "",
-        "originatingRunId": "",
-        "assignment": "Exact mission",
-        "dataAnchors": [],
-        "images": [],
-    })
-
-
-def test_same_parent_kanban_rewording_rejoins_the_existing_child_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _prepared_kanban_runtime()
-    fingerprints: dict[str, tuple[str, str]] = {}
-    observed: list[str] = []
-
-    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
-    monkeypatch.setattr(card_domain, "_retain_run_idf", _fake_retain_idf)
-
-    def insert(_prepared: dict, **kwargs):
-        fingerprint = kwargs["request_fingerprint"]
-        existing = fingerprints.get(fingerprint)
-        if existing is not None:
-            return (*existing, False)
-        identity = (kwargs["run_id"], kwargs["correlation_id"])
-        fingerprints[fingerprint] = identity
-        return (*identity, True)
-
-    monkeypatch.setattr(card_domain, "_insert_run", insert)
-    monkeypatch.setattr(
-        card_domain,
-        "_observe_run_start",
-        lambda *_args, **kwargs: observed.append(kwargs["run_id"]) or True,
-    )
-    monkeypatch.setattr(card_domain, "observe_materialized_anchor_reads", lambda *_args, **_kwargs: True)
-
-    first = card_domain.begin_run({
-        "projectId": "project-one", "deckId": "deck-one", "cardId": "kanban-one",
-        "runId": "run-first", "correlationId": "correlation-first",
-        "originatingRunId": "main-run", "assignment": "Original mission",
-        "dataAnchors": [{"authority": "CodeGraph", "nativeId": "symbol-one"}],
-    })
-    second = card_domain.begin_run({
-        "projectId": "project-one", "deckId": "deck-one", "cardId": "kanban-one",
-        "runId": "run-second", "correlationId": "correlation-second",
-        "originatingRunId": "main-run", "assignment": "Reworded mission",
-        "dataAnchors": [{"authority": "CodeGraph", "nativeId": "symbol-two"}],
-    })
-
-    assert first["runId"] == second["runId"] == "run-first"
-    assert first["rejoined"] is False
-    assert second["rejoined"] is True
-    assert observed == ["run-first"]
-    assert len(fingerprints) == 1
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="hermes_kanban_card_mode_retired",
+    ):
+        card_domain.begin_run({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "kanban-one",
+            "runId": "run-retired",
+            "correlationId": "correlation-retired",
+            "assignment": "Do not start",
+        })
 
 
 def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
@@ -952,7 +894,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
                     "target_card_revision_id": "revision-one",
                     "card_id": "card_hermes_steward",
                     "runtime_kind": "hermes",
-                    "runtime_mode": "kanban",
+                    "runtime_mode": "delegate",
                     "runtime_profile": "liquidaity-hermes-steward",
                     "enabled": True,
                 }]
@@ -1004,7 +946,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
         "rootRunId": "run-one",
         "cardId": "card_hermes_steward",
         "cardRevisionId": "revision-one",
-        "runtimeMode": "kanban",
+        "runtimeMode": "delegate",
         "runtimeProfile": "liquidaity-hermes-steward",
         "nativeRootId": "t_root",
         "grantedTools": expected_tools,
@@ -2019,7 +1961,7 @@ def test_explicit_card_mission_is_transient_and_retaskable(
 ) -> None:
     loaded = _destination_fixture(monkeypatch)
     target = next(card for card in loaded["deck"]["nodes"] if card["id"] == "hermes")
-    target["runtime"] = {"kind": "hermes", "mode": "kanban", "profile": "knowledge"}
+    target["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "knowledge"}
     target["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
 
     first = card_domain.materialize_invocation({
@@ -2030,37 +1972,37 @@ def test_explicit_card_mission_is_transient_and_retaskable(
     second = card_domain.materialize_invocation({
         **_destination_payload("hermes"),
         "runId": "run-second",
-        "assignment": "Retask the same saved Kanban Card with a second question.",
+        "assignment": "Retask the same saved Graph Agent Card with a second question.",
     })
 
     assert first["cardIdentity"]["cardId"] == second["cardIdentity"]["cardId"] == "hermes"
     assert second["idf"]["stableSavedCardContext"]["runtime"]["profile"] == "knowledge"
-    assert "Retask the same saved Kanban Card" in second["idf"]["dynamicContext"]["task"]
+    assert "Retask the same saved Graph Agent Card" in second["idf"]["dynamicContext"]["task"]
     assert "Research the first bounded question" not in second["idf"]["dynamicContext"]["task"]
     assert second["delegationTargets"] == []
     assert "card.run_assistant_agent" not in second["idf"]["selectedToolsAndGrants"]["enabledTools"]
 
 
-def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
+def test_main_and_coder_can_explicitly_retask_one_non_delegating_graph_agent_card(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     coder = _agent("coder", runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"})
-    kanban = _agent("kanban", runtime={"kind": "hermes", "mode": "kanban", "profile": "knowledge"})
+    graph_agent = _agent("graph-agent", runtime={"kind": "hermes", "mode": "delegate", "profile": "knowledge"})
     main["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
     coder["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
-    kanban["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
-    for index, card in enumerate((main, coder, kanban), start=1):
+    graph_agent["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
+    for index, card in enumerate((main, coder, graph_agent), start=1):
         card["_cardRevisionId"] = f"revision-{index}"
         card["_cardRevision"] = 1
         card["_cardRevisionSha256"] = f"sha-{index}"
     loaded = {
         "projectId": "project-one",
         "deck": {
-            "nodes": [main, coder, kanban],
+            "nodes": [main, coder, graph_agent],
             "edges": [
-                {"source": "main", "target": "kanban", "edgeType": "flow"},
-                {"source": "coder", "target": "kanban", "edgeType": "flow"},
+                {"source": "main", "target": "graph-agent", "edgeType": "flow"},
+                {"source": "coder", "target": "graph-agent", "edgeType": "flow"},
             ],
         },
     }
@@ -2070,11 +2012,11 @@ def test_main_and_coder_can_explicitly_retask_one_non_delegating_kanban_card(
         return card_domain.materialize_invocation({
             "projectId": "project-one", "deckId": "deck_builder",
             "runId": f"run-{sender}-{len(task)}",
-            "cardId": "kanban", "senderCardId": sender,
+            "cardId": "graph-agent", "senderCardId": sender,
             "assignment": task,
         })
 
-    assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "kanban"
+    assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "graph-agent"
     assert invoke("coder", "Retask the missing evidence.")["delegationTargets"] == []
     loaded["deck"]["edges"] = loaded["deck"]["edges"][:1]
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
@@ -2303,7 +2245,7 @@ def test_native_hermes_ephemeral_child_keeps_originating_card_revision(
     assert insert[3] == "main-revision"
     assert insert[4:6] == ("hermes", "main")
     assert len(insert) == 12
-    # Only durable native Kanban task ids are valid rejoin selectors. Native
+    # Only durable native Team task ids are valid rejoin selectors. Native
     # one-shot leaf ids retain the pre-existing unbound child-Run behavior.
     assert insert[11] is None
     assert result["cardId"] == "card_main_chat"

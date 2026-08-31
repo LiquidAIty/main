@@ -66,6 +66,9 @@ SUBAGENT_MODEL_FIELDS = {
 SUBAGENT_ACCESS_MODES = {
     "chatgpt-account", "openai-api", "openrouter-api",
 }
+TEAM_CONFIG_FIELDS = {
+    "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
+}
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
     "parentGraphId", "prompt", "outputContract", "runtime",
@@ -110,30 +113,6 @@ def _required_text(value: Any, field: str) -> str:
 
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _run_request_fingerprint(payload: dict[str, Any]) -> str:
-    """Hash one caller request identity without persisting its transient input."""
-
-    originating_run_id = str(payload.get("originatingRunId") or "").strip()
-    identity = {
-        "projectId": str(payload.get("projectId") or "").strip(),
-        "deckId": str(payload.get("deckId") or "").strip(),
-        "cardId": str(payload.get("cardId") or "").strip(),
-        "cardRevisionId": str(payload.get("cardRevisionId") or "").strip(),
-        "conversationId": str(payload.get("conversationId") or "").strip(),
-        "senderCardId": str(payload.get("senderCardId") or "").strip(),
-        "originatingRunId": originating_run_id,
-        # One invoking Run may own only one durable Kanban child for a saved
-        # Card revision. A model rewording the assignment after status/readback
-        # is a rejoin of that child, not authority to create another mission.
-        # Direct/external submissions have no originating Run, so their exact
-        # transient request still participates in idempotency as before.
-        "assignment": "" if originating_run_id else str(payload.get("assignment") or ""),
-        "dataAnchors": [] if originating_run_id else payload.get("dataAnchors") or [],
-        "images": [] if originating_run_id else payload.get("images") or [],
-    }
-    return sha256(_canonical_json(identity).encode("utf-8")).hexdigest()
 
 
 def _sha(value: str) -> str:
@@ -441,6 +420,7 @@ def _load_age_edges(cursor: Any, project_id: str, deck_id: str) -> list[dict[str
 
 def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    runtime = _card_runtime(card)
     grants = {
         field: _string_list(options.get(field, card.get(field)), field)
         for field in GRANT_FIELDS.values()
@@ -450,6 +430,10 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         extensions["subagentModel"] = _subagent_model_selection(
             extensions["subagentModel"]
         )
+    if "team" in extensions:
+        if runtime.get("kind") != "hermes":
+            raise CardDomainError("card_team_requires_hermes")
+        extensions["team"] = _team_config(extensions["team"])
     if "script" in extensions:
         try:
             extensions["script"] = saved_script(
@@ -470,7 +454,7 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         "parentGraphId": card.get("parentGraphId"),
         "basePrompt": str(card.get("prompt") or ""),
         "stableOutputContract": card.get("outputContract"),
-        "runtime": _card_runtime(card),
+        "runtime": runtime,
         "provider": options.get("provider") or card.get("provider"),
         "modelKey": options.get("modelKey"),
         "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
@@ -512,6 +496,38 @@ def _subagent_model_selection(value: Any) -> dict[str, str] | None:
     if normalized["accessMode"] not in SUBAGENT_ACCESS_MODES:
         raise CardDomainError("card_subagent_model_access_mode_invalid")
     return normalized
+
+
+def _team_config(value: Any) -> dict[str, Any] | None:
+    """Validate durable Card Team defaults without consulting native state."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != TEAM_CONFIG_FIELDS:
+        raise CardDomainError("card_team_config_invalid")
+    mode = str(value.get("mode") or "").strip()
+    max_workers = value.get("maxWorkers")
+    retry_limit = value.get("retryLimit")
+    if (
+        mode not in {"off", "auto"}
+        or isinstance(max_workers, bool)
+        or max_workers not in {2, 3, 4}
+        or isinstance(retry_limit, bool)
+        or not isinstance(retry_limit, int)
+        or not 0 <= retry_limit <= 4
+    ):
+        raise CardDomainError("card_team_config_invalid")
+    models = {
+        key: _subagent_model_selection(value.get(key))
+        for key in ("workerModel", "leadModel")
+    }
+    if any(model is None for model in models.values()):
+        raise CardDomainError("card_team_config_invalid")
+    return {
+        "mode": mode,
+        "maxWorkers": max_workers,
+        "retryLimit": retry_limit,
+        **models,
+    }
 
 
 def _insert_revision(
@@ -1713,7 +1729,7 @@ def _direct_card_targets(
         ):
             continue
         runtime = _card_runtime(target)
-        if runtime.get("kind") != "hermes" or runtime.get("mode") not in {"delegate", "kanban"}:
+        if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
             continue
         options = _json_object(target.get("runtimeOptions"), "delegate_runtime_options")
         provider = _required_text(options.get("provider"), "delegate_provider")
@@ -2086,6 +2102,11 @@ def _prepare_invocation(
     subagent_model = _subagent_model_selection(options.get("subagentModel"))
     if subagent_model is not None:
         runtime_options["subagentModel"] = subagent_model
+    team = _team_config(options.get("team"))
+    if team is not None:
+        if runtime.get("kind") != "hermes":
+            raise CardDomainError("card_team_requires_hermes")
+        runtime_options["team"] = team
     if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:
@@ -2779,11 +2800,8 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
     runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
-    durable_kanban = (
-        owner == "hermes"
-        and runtime.get("kind") == "hermes"
-        and runtime.get("mode") == "kanban"
-    )
+    if owner == "hermes" and runtime.get("mode") == "kanban":
+        raise CardDomainError("hermes_kanban_card_mode_retired")
     participants: list[dict[str, Any]] = []
     if owner == "mag_one":
         loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
@@ -2810,20 +2828,14 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         participants = [_saved_card_participant(cards[worker_id]) for worker_id in worker_ids]
         if not participants:
             raise CardDomainError("magentic_runtime_no_connected_participants")
-    request_fingerprint = _run_request_fingerprint({
-        **payload,
-        "projectId": prepared["projectId"],
-        "deckId": prepared["deckId"],
-        "cardId": card_identity["cardId"],
-        "cardRevisionId": prepared["cardRevisionId"],
-    }) if durable_kanban else None
+    request_fingerprint = None
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
         run_id=run_id,
         correlation_id=correlation_id,
         request_fingerprint=request_fingerprint,
     )
-    if not created and not durable_kanban:
+    if not created:
         raise CardDomainError("run_identity_conflict")
     public, input_files, runtime_input = _retain_required_run_idf(
         prepared,
@@ -3228,9 +3240,9 @@ def resolve_native_hermes_task_context(payload: dict[str, Any]) -> dict[str, Any
 
 
 def list_active_kanban_runs() -> dict[str, Any]:
-    """Return native Kanban roots that still need aggregate monitoring.
+    """Return native task roots that still need aggregate monitoring.
 
-    This includes saved Kanban Card roots and execution-only Team child Runs.
+    This includes legacy saved Kanban roots and execution-only Team child Runs.
     Ordinary Hermes Card sessions use non-task provider refs and are excluded
     by the exact native ``t_`` identity filter below.
     """

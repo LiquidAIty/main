@@ -88,7 +88,7 @@ describe('canonical Agent Builder deck hydration', () => {
     await waitFor(() => expect(args.setDeck).toHaveBeenCalledWith(deck));
     expect(args.setDeckRevision).toHaveBeenLastCalledWith('revision-canonical');
     expect(args.setStateLoaded).toHaveBeenLastCalledWith(true);
-    expect(deck.nodes).toHaveLength(6);
+    expect(deck.nodes).toHaveLength(7);
     expect(args.setDeck).toHaveBeenCalledWith(deck);
   });
 

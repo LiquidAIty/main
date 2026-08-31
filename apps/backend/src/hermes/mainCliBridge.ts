@@ -1,7 +1,29 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { MainProjectionCategory } from '../contracts/runtimeEvents';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 export type MainContextAuthorityMode = 'main_native_honcho' | 'plugin_context_only';
+
+export type MainCliProjection = {
+  schemaVersion: 'liquidaity.main.projection.v1';
+  id: string;
+  category: MainProjectionCategory;
+  sequence: number;
+  timestamp: string;
+  nativeSessionId?: string;
+  nativeTurnId?: string;
+  nativeTaskId?: string;
+  nativeChildId?: string;
+  agentId?: string;
+  operationId?: string;
+  state?: string;
+  text?: string;
+  toolName?: string;
+  detail?: unknown;
+  provider?: string;
+  model?: string;
+  fallback?: unknown;
+};
 
 export function contextAuthorityModeForDriver(
   driverSource: MainDriverSource,
@@ -12,13 +34,14 @@ export function contextAuthorityModeForDriver(
 export type MainCliBridgeEvent = {
   requestId: string;
   runId: string;
-  kind: 'accepted' | 'started' | 'text' | 'completed' | 'failed' | 'rejected' | 'cancel_requested';
+  kind: 'accepted' | 'started' | 'text' | 'projection' | 'completed' | 'failed' | 'rejected' | 'cancel_requested';
   delta?: string;
   finalText?: string;
   error?: string;
   nativeSessionId?: string;
   nativeTurnId?: string;
   contextAuthorityMode?: MainContextAuthorityMode;
+  projection?: MainCliProjection;
 };
 
 export type MainCliHistoryMessage = {
@@ -34,6 +57,7 @@ type MainCliTurn = {
   message: string;
   contextAuthorityMode: MainContextAuthorityMode;
   delivered: boolean;
+  projectionIds: Set<string>;
   onEvent: (event: MainCliBridgeEvent) => void;
   resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string;
     contextAuthorityMode: MainContextAuthorityMode }) => void;
@@ -102,6 +126,7 @@ export class MainCliBridge {
         contextAuthorityMode: contextAuthorityModeForDriver(args.driverSource),
         message: args.message,
         delivered: false,
+        projectionIds: new Set(),
         onEvent: args.onEvent,
         resolve,
         reject,
@@ -109,7 +134,7 @@ export class MainCliBridge {
     });
   }
 
-  take(): Omit<MainCliTurn, 'onEvent' | 'resolve' | 'reject' | 'delivered'> | null {
+  take(): Omit<MainCliTurn, 'onEvent' | 'resolve' | 'reject' | 'delivered' | 'projectionIds'> | null {
     this.notePoll();
     if (!this.active || this.active.delivered) return null;
     this.active.delivered = true;
@@ -207,6 +232,26 @@ export class MainCliBridge {
     }
     if (event.contextAuthorityMode && event.contextAuthorityMode !== active.contextAuthorityMode) {
       throw new Error('main_cli_bridge_context_authority_mismatch');
+    }
+    if (event.kind === 'projection') {
+      const projection = event.projection;
+      if (
+        !projection
+        || projection.schemaVersion !== 'liquidaity.main.projection.v1'
+        || !projection.id
+        || ![
+          'conversation.input', 'conversation.answer', 'execution.progress',
+          'execution.tool', 'execution.command', 'execution.child',
+          'execution.receipt', 'execution.error',
+        ].includes(projection.category)
+        || !Number.isSafeInteger(projection.sequence)
+        || projection.sequence < 1
+        || !Number.isFinite(Date.parse(projection.timestamp))
+      ) {
+        throw new Error('main_cli_projection_invalid');
+      }
+      if (active.projectionIds.has(projection.id)) return;
+      active.projectionIds.add(projection.id);
     }
     active.onEvent(event);
     if (event.kind === 'completed') {

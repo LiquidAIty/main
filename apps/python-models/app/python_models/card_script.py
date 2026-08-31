@@ -1,4 +1,4 @@
-"""Compile the one saved, visible Python composition Script owned by a Card.
+"""Compile the one saved, visible Python model-tool recipe owned by a Card.
 
 The compiler is structural: it validates Python syntax, a literal
 ``CARD_SCRIPT`` contract, and literal ``tools.call`` handles. It never executes
@@ -19,7 +19,7 @@ from app.python_models.idd import IddValidationError, load_input_data_dictionary
 
 
 SCRIPT_MAX_BYTES = 32_768
-SCRIPT_MODES = frozenset({"outer_controller"})
+SCRIPT_MODES = frozenset({"tool_recipe"})
 TOOL_MODE_VALUES = {"OFF": 0, "SCRIPT": 1, "AGENT": 2, "BOTH": 3}
 SAFE_IMPORT_ROOTS = frozenset({
     "collections", "datetime", "decimal", "fractions", "functools",
@@ -113,8 +113,6 @@ def generate_card_script_header(
         "cardId": card_id,
     }
     header_hash = sha256(_canonical(identity).encode("utf-8")).hexdigest()
-    card_delegation_roles = ["leaf", "team"] if card_id == "card_main_chat" else ["team"]
-    role_literal = ", ".join(repr(value) for value in card_delegation_roles)
     lines = [
         "# Generated from LiquidAIty.idd + live native catalog + saved Card selection.",
         "# Read-only editor/compiler metadata. This file is not saved, executed, or sent to a model.",
@@ -141,30 +139,6 @@ def generate_card_script_header(
         "    canonical_id: str",
         "    available: bool  # always False for this Card revision",
         "",
-        "class PromptBlock(TypedDict):",
-        "    id: str",
-        "    content: str",
-        "",
-        "class SparseOverlay(TypedDict, total=False):",
-        "    order: list[str]",
-        "    select: list[str]",
-        "    exclude: list[str]",
-        "    replace: dict[str, str]",
-        "    prepend: list[PromptBlock]",
-        "    append: list[PromptBlock]",
-        "    maxChars: int",
-        "",
-        "class CardAgentStage(TypedDict, total=False):",
-        "    run: bool",
-        "    prompt: str",
-        "    overlay: SparseOverlay",
-        "",
-        "class CardDelegation(Protocol):",
-        "    def delegate_task(",
-        "        self, *, goal: str, context: str | None = None,",
-        f"        role: Literal[{role_literal}] = 'team',",
-        "    ) -> Any: ...",
-        "",
     ]
     definitions: dict[str, dict[str, Any]] = {}
     idd_type_names = {
@@ -183,27 +157,6 @@ def generate_card_script_header(
             lines.append("    value: Any")
         definitions[f"types.{name}"] = {"line": len(lines) - 1, "kind": "idd-type"}
         lines.append("")
-    lines.append("class CardControl(Protocol):")
-    for name in sorted(dictionary.get("objects", {})):
-        definition = dictionary["objects"][name]
-        type_name = idd_type_names.get(str(definition.get("type") or ""), "Any")
-        lines.append(f"    {_python_identifier(name)}: {type_name}")
-        definitions[f"card.{name}"] = {"line": len(lines), "kind": "idd-object"}
-    lines.extend((
-        "    prompt_blocks: list[PromptBlock]",
-        "    context_blocks: list[PromptBlock]",
-        "    idf: Any  # canonical retained Run input; sparse controls are Run-only",
-        "    runtime: Any  # stable-only provider/model/profile authority",
-        "    memory: Any  # native profile input; no credential material",
-        "    skills: Any  # native profile input",
-        "    agent: Any  # native Hermes stage",
-        "    subagents: CardDelegation  # one native delegate_task; bounded Card roles only",
-        "    handoffs: Any  # typed persisted artifacts and authorized edges",
-        "    receipts: Any  # immutable Run evidence",
-        "",
-        "card: Final[CardControl]",
-        "",
-    ))
     grouped: dict[str, list[str]] = {}
     for canonical_id in sorted(catalog_by_id):
         namespace, _, leaf = canonical_id.rpartition(".")
@@ -264,48 +217,6 @@ def _json_schema(value: Any, field: str) -> dict[str, Any]:
     return value
 
 
-def _require_outer_controller_contract(contract: dict[str, Any]) -> None:
-    """Require the one host-entered controller boundary used by every Card.
-
-    The host always supplies the current mission, and the controller must make
-    an explicit typed decision about the native agent stage.  The prompt stays
-    optional in the schema because it is required only when ``run`` is true;
-    that dependent check is enforced immediately before ``session/prompt``.
-    """
-
-    input_schema = contract["inputSchema"]
-    mission = (input_schema.get("properties") or {}).get("mission")
-    if (
-        not isinstance(mission, dict)
-        or mission.get("type") != "string"
-        or "mission" not in (input_schema.get("required") or [])
-    ):
-        raise ValueError("card_script_outer_controller_mission_required")
-
-    output_schema = contract["outputSchema"]
-    agent = (output_schema.get("properties") or {}).get("agent")
-    if (
-        not isinstance(agent, dict)
-        or agent.get("type") != "object"
-        or "agent" not in (output_schema.get("required") or [])
-    ):
-        raise ValueError("card_script_outer_controller_agent_required")
-    agent_properties = agent.get("properties") or {}
-    agent_required = agent.get("required") or []
-    if (
-        not isinstance(agent_properties, dict)
-        or not isinstance(agent_required, list)
-        or (agent_properties.get("run") or {}).get("type") != "boolean"
-        or "run" not in agent_required
-    ):
-        raise ValueError("card_script_outer_controller_agent_run_required")
-    prompt = agent_properties.get("prompt")
-    if prompt is not None and (
-        not isinstance(prompt, dict) or prompt.get("type") != "string"
-    ):
-        raise ValueError("card_script_outer_controller_agent_prompt_invalid")
-
-
 def _literal_contract(tree: ast.Module) -> dict[str, Any]:
     declarations: list[ast.Assign | ast.AnnAssign] = []
     for node in tree.body:
@@ -358,7 +269,6 @@ def _literal_contract(tree: ast.Module) -> dict[str, Any]:
         "maxToolCalls": max_tool_calls,
         "maxOutputBytes": max_output_bytes,
     }
-    _require_outer_controller_contract(contract)
     return contract
 
 

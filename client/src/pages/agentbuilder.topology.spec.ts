@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import {
@@ -6,16 +7,26 @@ import {
   hasDirectedCardConnection,
 } from '../features/agentbuilder/rail/railVisibility';
 
-const mainToHermesConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeof INITIAL_DECK.edges) =>
+const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeof INITIAL_DECK.edges) =>
   hasDirectedCardConnection(
     nodes,
     edges,
     (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
-    (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'kanban',
+    (card) => card.id === 'card_hermes_steward'
+      && card.runtime.kind === 'hermes'
+      && card.runtime.mode === 'delegate',
   );
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('defines no graph-agent card, template, prompt, or runtime binding', () => {
+  it('keeps Main CLI execution in the workspace and out of the Inspector', () => {
+    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const mainInspectorProjection = /terminalContent=\{selectedCard\.runtime\.kind === 'hermes'[\s\S]*?runtime\.mode === 'main'\s*\?([\s\S]*?)\s*: selectedCard\.runtime\.kind/.exec(source)?.[1] || '';
+    expect(mainInspectorProjection).toContain('main-card-cli-location');
+    expect(mainInspectorProjection).not.toContain('CoderTerminalPanel');
+    expect(source).toContain('semanticEvents={technicalEvents}');
+    expect(source).toContain('ownerCardId={mainCardId || \'card_main_chat\'}');
+  });
+  it('preserves the stable steward identity as the temporary Graph Agent', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
     expect(serialized).not.toMatch(/thinkgraph_agent|codegraph_agent|knowgraph_agent/);
     expect(INITIAL_DECK.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
@@ -25,42 +36,21 @@ describe('Main / Hermes / graph authority topology', () => {
       'card_local_coder',
       'card_agent_builder',
     ]));
+    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')).toMatchObject({
+      title: 'Graph Agent',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
+    });
   });
 
-  it('keeps the graph workspace owner-visible regardless of Hermes topology', () => {
-    expect(mainToHermesConnected(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
+  it('keeps the graph workspace owner-visible regardless of Graph Agent topology', () => {
+    expect(mainToGraphAgentConnected(INITIAL_DECK.nodes, INITIAL_DECK.edges)).toBe(true);
     expect(deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' }).showKnowledge).toBe(true);
     const disconnected = { ...INITIAL_DECK, edges: INITIAL_DECK.edges.filter((edge) => edge.target !== 'card_hermes_steward') };
-    expect(mainToHermesConnected(disconnected.nodes, disconnected.edges)).toBe(false);
+    expect(mainToGraphAgentConnected(disconnected.nodes, disconnected.edges)).toBe(false);
     expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
   });
 
-  it('shows the Hermes rail destination only for a typed, connected runtime card', () => {
-    const visible = deriveVisibleRailItems({ deck: INITIAL_DECK, workspaceView: 'chat' });
-    expect(visible.showHermesKanban).toBe(true);
-
-    const withoutHermes = {
-      ...INITIAL_DECK,
-      nodes: INITIAL_DECK.nodes.filter((node) => node.id !== 'card_hermes_steward'),
-    };
-    expect(
-      deriveVisibleRailItems({ deck: withoutHermes, workspaceView: 'chat' }).showHermesKanban,
-    ).toBe(false);
-    const disconnected = {
-      ...INITIAL_DECK,
-      edges: INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes'),
-    };
-    expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showHermesKanban).toBe(false);
-    const renamed = {
-      ...INITIAL_DECK,
-      nodes: INITIAL_DECK.nodes.map((node) =>
-        node.id === 'card_hermes_steward' ? { ...node, title: 'Operations' } : node
-      ),
-    };
-    expect(deriveVisibleRailItems({ deck: renamed, workspaceView: 'chat' }).showHermesKanban).toBe(true);
-  });
-
-  it('requires the directed Main to Hermes flow edge', () => {
+  it('requires the directed Main to Graph Agent flow edge', () => {
     const withoutHermesFlow = INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes');
     const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_hermes_steward') => ({
       id: `test:${edgeType}:${source}:${target}`,
@@ -68,11 +58,11 @@ describe('Main / Hermes / graph authority topology', () => {
       target,
       edgeType,
     });
-    expect(mainToHermesConnected(INITIAL_DECK.nodes, [
+    expect(mainToGraphAgentConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('flow', 'card_hermes_steward', 'card_main_chat'),
     ] as any)).toBe(false);
-    expect(mainToHermesConnected(INITIAL_DECK.nodes, [
+    expect(mainToGraphAgentConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('invalid'),
     ] as any)).toBe(false);
@@ -95,7 +85,7 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
   });
 
-  it('uses wires only as explicit help authority and gives Kanban no outward flow', () => {
+  it('uses wires only as explicit help authority and gives Graph Agent no outward flow', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
@@ -142,18 +132,18 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(hermesTools).not.toEqual(expect.arrayContaining(['web_search', 'run_mag_one']));
     expect(byId.has('card_research_agent')).toBe(false);
     const hermesPrompt = byId.get('card_hermes_steward')?.prompt ?? '';
-    expect(hermesPrompt).toContain('saved Hermes steward');
-    expect(hermesPrompt).toContain('Kanban is an execution mode on an ordinary card, not your identity');
+    expect(hermesPrompt).toContain('You are Graph Agent');
+    expect(hermesPrompt).toContain('Team is a capability, not your identity');
     expect(hermesPrompt).toContain('Before Magentic-One');
     expect(hermesPrompt).toContain('After Magentic-One');
-    expect(byId.get('card_hermes_steward')?.title).toBe('Kanban');
+    expect(byId.get('card_hermes_steward')?.title).toBe('Graph Agent');
     expect(hermesPrompt).not.toContain('external Hermes agent runtime');
   });
 
   it('publishes explicit role grants that are filtered before Python MCP startup', () => {
     const cards = INITIAL_DECK.nodes.filter((node) =>
       node.runtime.kind === 'hermes'
-      && (node.runtime.mode === 'main' || node.runtime.mode === 'kanban')
+      && (node.runtime.mode === 'main' || node.runtime.mode === 'delegate')
     );
     const granted = [...new Set(cards.flatMap((card) => card.runtimeOptions?.tools ?? []))];
     expect(granted.length).toBeGreaterThan(0);
@@ -181,6 +171,17 @@ describe('Main / Hermes / graph authority topology', () => {
         accessMode: 'chatgpt-account',
         modelKey: 'gpt-5.6-luna',
         providerModelId: 'gpt-5.6-luna',
+      });
+      expect(card?.runtimeOptions?.team).toEqual({
+        mode: 'auto', maxWorkers: 4, retryLimit: 1,
+        workerModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+        leadModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+        },
       });
     }
 
@@ -259,7 +260,7 @@ describe('Main / Hermes / graph authority topology', () => {
     });
     expect(INITIAL_DECK.nodes.filter(
       (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',
-    ).map((node) => node.id)).toEqual(['card_hermes_steward']);
+    )).toEqual([]);
   });
 
 });

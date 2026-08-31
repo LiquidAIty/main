@@ -414,8 +414,9 @@ Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
 
 Purpose: execute one host-supplied, saved and immutable Card Python Script through Hermes' existing
 child-process runner and tool-RPC dispatcher. The model sees one compact `execute_host_script` contract
-instead of the component schemas the Script wraps. The host receives exact version/hash, timing, native
-tool-call and fallback receipts.
+instead of the component schemas the Script wraps, and Hermes decides whether to call it through the
+ordinary native model-tool path. Internal execution evidence retains exact version/hash, timing, native
+tool-call and fallback state without becoming a separate product result authority.
 
 External alternative check: stock `execute_code` accepts model-authored source and its normal sandbox
 tool names, but ACP has no contract for immutable host source, canonical tool aliases, typed input/output,
@@ -430,10 +431,10 @@ Files and symbols:
   child process, approval context, RPC server, timeout, process-tree termination and secret scrub are the
   existing owners.
 - `acp_adapter/host_profiles.py`: strict host Script version/hash/schema/alias/budget validation,
-  immutable turn-scoped lookup, compact tool schema projection, and exact pre-registered MCP fallback after
-  a Script failure.
-- `acp_adapter/server.py`: bounded `_session/execute_host_script` against an already-configured idle native
-  session, using the existing session lock and `model_tools.handle_function_call` dispatcher.
+  immutable turn-scoped lookup, compact model-tool registration/schema projection, and exact
+  pre-registered MCP fallback after a Script failure before any wrapped operation begins.
+- `acp_adapter/server.py`: retains ordinary ACP prompt/tool dispatch; the retired host pre-execution
+  `_session/execute_host_script` doorway is absent.
 - `tests/tools/test_code_execution.py` and `tests/acp_adapter/test_host_profiles.py`: generated-module
   isolation, real Python child execution, canonical/native receipt, configuration validation and exact
   failure fallback proof.
@@ -450,16 +451,18 @@ that operation. LiquidAIty still enforces saved Card grants before configuration
 
 Contracts and proof: the saved Script version, source/compiled hashes, JSON schemas, literal handle set and
 budgets are validated before session configuration. The child may call only the alias values already
-registered for that session. Failed validation/execution removes the compact Script tool and reveals only
-those same pre-registered component tools for the next model iteration. Focused proof uses the pinned Hermes
-environment; no production requirement or test assertion is weakened.
+registered for that session. Failure before any wrapped operation begins removes the compact Script tool
+and reveals only those same pre-registered component tools for the next model iteration; failure after an
+operation is terminal and cannot replay. Focused proof uses the pinned Hermes environment; no production
+requirement or test assertion is weakened.
 
-Fork cost and contribution plan: three narrow vendor files plus two focused test files. Propose the generic
-trusted-host immutable-code/alias seam and host-session operation upstream without LiquidAIty Card types or
-policy. Keep compiler, IDD projection, saved authority and downstream plugin outside Hermes.
+Fork cost and contribution plan: the existing child-runner seam plus the narrow host-profile projection and
+focused tests. Propose the generic trusted-host immutable-code/alias and typed model-tool projection upstream
+without LiquidAIty Card types or policy. Keep compiler, IDD projection, saved authority and downstream plugin
+outside Hermes.
 
-Rollback: remove the optional host arguments/helpers, host-profile Script validation/fallback and bounded
-session operation together, then remove the downstream compact tool registration. Saved Script source may
+Rollback: remove the optional host arguments/helpers and host-profile Script validation/projection/fallback,
+then remove the downstream compact model-tool registration. Saved Script source may
 remain inspectable but must fail closed as unavailable; never replace this path with direct `exec`, a second
 sandbox or raw MCP schema suppression.
 
@@ -470,13 +473,15 @@ Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
 Purpose: add `role="team"` to the one native `delegate_task` tool as a headless durable recipe over
 Hermes' existing Auto-Kanban SQLite graph, decomposer, dispatcher, task workers, dependency handoffs,
 retries, recovery, notifications and rejoin. One originating Card mission/context packet becomes two to
-four Luna tasks; the original root then resumes as a separate Terra review/synthesis pass and returns one
-result to the exact originating Hermes session. Team is not a Card, board UI, profile UI, scheduler,
+four bounded worker tasks; the original root then resumes under the Card-projected Team-lead model for final
+synthesis and returns one result to the exact originating Hermes session. Team is not a Card, board UI,
+profile UI, scheduler,
 transcript store, or second Hermes tool.
 
 External alternative check: native `leaf` is one ephemeral child and native `orchestrator` owns a
-recursive dynamic delegation strategy, while the existing explicit Kanban Card route requires a separate
-saved Card Run. None gives an ordinary authorized Card a bounded, durable, depth-one Auto-Team that rejoins
+recursive dynamic delegation strategy. The former explicit Kanban Card route required a separate saved
+Card Run and is now retired as a product doorway. Neither native alternative gives an ordinary authorized
+Card a bounded, durable, depth-one Auto-Team that rejoins
 its own session. A LiquidAIty-owned task database, scheduler, model fan-out, polling loop or synthesis call
 was rejected because it would duplicate Hermes' native execution owners. The contained adapter is the
 smallest upstream-shaped seam.
@@ -485,16 +490,19 @@ Files and symbols:
 
 - `tools/delegate_tool.py`: preserves native `leaf` and `orchestrator`, adds only the top-level `team`
   branch, validates one goal/context packet and blocks nested delegation in Team processes.
-- `hermes_cli/kanban_team.py`: validates the repository-root Team policy, creates one blocked/idempotent
-  native root, correlates it before activation and then hands ownership to native Auto-Kanban.
+- `hermes_cli/kanban_team.py`: validates the trusted Card/session Team projection over the bounded native
+  defaults, records the exact applied policy on the native root, creates one blocked/idempotent root,
+  correlates it before activation and then hands ownership to native Auto-Kanban.
 - `hermes_cli/config_defaults.py`: declares the generic maximum-worker and worker provider/model settings.
-- `hermes_cli/kanban_decompose.py`: applies the depth-one two-to-four-worker recipe, retains the originating
-  profile on the root and assigns exact per-task worker provider/model overrides.
+- `hermes_cli/kanban_decompose.py`: reads the root's applied policy, applies the depth-one
+  two-to-four-worker recipe, retains the originating profile and lead provider/model on the root, and
+  assigns exact per-task worker provider/model and retry overrides.
 - `hermes_cli/kanban_db.py`: persists the generic workflow/step fields already present in the schema,
   activates the correlated root, propagates the Team marker and retry/model fields, blocks nested task
   creation, gives the resumed root every completed worker handoff plus an explicit synthesis contract, and
   records exact Team provider/model at the native spawn boundary.
-- `acp_adapter/host_profiles.py`: generalizes the existing opaque host child-allocation callback to accept
+- `acp_adapter/host_profiles.py`: strictly validates the Card-scoped Team policy, generalizes the existing
+  opaque host child-allocation callback to accept
   any durable native execution ID; the previous leaf helper delegates to it unchanged. A trusted
   per-session host projection narrows the model-visible native role enum without changing Hermes' native
   tool contract when that projection is absent. The transport-neutral context attachment lets an
@@ -509,16 +517,18 @@ Files and symbols:
   failure instead of allowing an uncorrelated first turn.
 
 Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
-temporary-agent construction, depth, provider/model and result behavior. Batch entries still accept only
-the two upstream roles. Ordinary Kanban tasks keep their existing event shape, decomposition freedom,
-manual controls, models, prompts and UI. Team markers and limits apply only to
+temporary-agent construction, depth, provider/model and result behavior. Main's Team-plus-Leaf projection
+keeps the complete native Leaf batch/output schema; a Team-only Card hides those inapplicable fields without
+rewriting `delegate_task`. Ordinary Kanban tasks keep their existing event shape, decomposition freedom,
+manual controls, models, and prompts. Team markers and limits apply only to
 `workflow_template_id="delegate-team-v1"`; no profile, global configuration, credential or user-global
 Hermes home is rewritten by a Team run.
 
-Contracts: repository-owned `Hermes/.hermes/config.yaml` pins decomposition and the resumed root to
-`openai-codex/gpt-5.6-terra`, workers to `openai-codex/gpt-5.6-luna`, and the maximum to four. Team rejects
-fewer than two or more than the configured maximum, rejects fan-in as a single task, and stamps every
-worker plus the root with a process-only recursion guard. Native dependency links make every Luna task a
+Contracts: the saved Card/PostgreSQL policy owns Off/Auto, maximum workers, retry limit, worker model and
+one Team-lead model. The trusted session projection applies those values without mutating a profile-global
+default: Off omits only the Team role; Auto lets Hermes decide whether to call it. Team rejects fewer than
+two or more than four workers, maps user retries to the native attempt count, rejects fan-in as a single task,
+and stamps every worker plus the root with a process-only recursion guard. Native dependency links make every worker task a
 parent of the original root. A durable `spawned` event records the exact step/provider/model used at the
 process boundary. Host correlation is committed before activation; terminal session append occurs before
 the child Card Run is closed. A busy originating session receives bounded idempotent retries; if that
@@ -531,17 +541,19 @@ unchanged apart from carrying the same request identity.
 
 Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
 `tests/hermes_cli/test_plugin_message_injection.py`, `tests/acp/test_session.py`, and
-`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, two-to-four bound,
-Terra/Luna/Terra task and spawn receipts, all-worker synthesis context, non-recursion, opaque host
+`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, strict Card policy, Team-only versus
+Team-plus-Leaf schemas, two-to-four bound, exact lead/worker/retry application, all-worker synthesis
+context, non-recursion, opaque host
 allocation, ACP/CLI same-session idempotent result append, first-turn construction at the real
 `HermesCLI`/`AIAgent` provider boundary, competing/mismatch/teardown cleanup, preservation of unsent local
 input and unchanged native roles. Downstream
 LiquidAIty lifecycle, recovery and Run-correlation tests live beside the backend/Python owners.
 
-Live proof: the first remote turn after one canonical restart bound before inference and produced native
+Historical live proof: the first remote turn before the Card-scoped policy layer bound before inference and produced native
 root `t_0c8618b6`, exactly two Luna workers (`t_0a5610dc`, `t_91562520`), one Terra synthesis run, one
 host-correlated child Run and one same-session result append. The parent, child and native root all completed;
-readback found no provider fallback, duplicate task/Run/message, nested delegation or retry.
+readback found no provider fallback, duplicate task/Run/message, nested delegation or retry. That run does
+not prove the later editable Card-scoped settings; their current proof is provider-free.
 
 Fork cost and contribution plan: nine narrow existing native files, two new adapter modules and focused tests.
 Propose a generic durable `team` delegation recipe upstream using workflow metadata and the existing
@@ -549,8 +561,8 @@ Auto-Kanban lifecycle, independently propose the generic durable native-executio
 idle session-result append operations, and keep LiquidAIty Card/IDD/Run policy downstream. Remove each
 piece only when an upstream equivalent exists in a separately authorized Hermes refresh.
 
-Rollback: remove the `team` branch, Team adapter/policy keys/workflow handling, generic host allocation
+Rollback: remove the `team` branch, trusted session Team policy, Team adapter/workflow handling, generic host allocation
 extension and native session append together; restore the previous leaf helper body and unchanged Kanban
-event/context behavior. Native leaf/orchestrator and explicit Kanban operation continue. LiquidAIty must
+event/context behavior. Native leaf/orchestrator and internal native Kanban operation continue. LiquidAIty must
 then remove only its `team` projection and fail closed for Team rather than route through a standalone
 helper Card, another database, direct model fan-out or a synthetic result.

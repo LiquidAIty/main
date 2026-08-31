@@ -287,6 +287,10 @@ export default function useAgentBuilderMainChat({
     controller: AbortController;
     runId: string | null;
   } | null>(null);
+  const observedProjectionIdsRef = useRef<{ key: string; ids: Set<string> }>({
+    key: conversationKey,
+    ids: new Set(),
+  });
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
   const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
@@ -324,6 +328,7 @@ export default function useAgentBuilderMainChat({
     }
     setTranscript({ key: conversationKey, messages: [] });
     setTechnical({ key: conversationKey, events: [], error: null });
+    observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
     setTurnState({ key: conversationKey, phase: 'idle' });
     if (!projectId) {
       setHistoryState({ key: conversationKey, loading: false });
@@ -437,6 +442,7 @@ export default function useAgentBuilderMainChat({
           })),
           signal: streamController.signal,
           onEvent: (event) => {
+            const projection = event.projection;
             const publicEvent = event.terminalEvent as CardTerminalEvent | undefined;
             const observedRunId = typeof event.runId === 'string' ? event.runId : publicEvent?.runId;
             if ((event.projectId && event.projectId !== canvasProjectId)
@@ -446,6 +452,15 @@ export default function useAgentBuilderMainChat({
               || (observedRunId && runId && observedRunId !== runId)
               || (publicEvent && observedRunId && publicEvent.runId !== observedRunId)) {
               throw new SessionStreamError({ code: 'main_run_identity_mismatch', message: 'Main stream Run identity changed.' });
+            }
+            if (projection?.id) {
+              const observed = observedProjectionIdsRef.current;
+              if (observed.key !== conversationKey) {
+                observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
+              } else if (observed.ids.has(projection.id)) {
+                return;
+              }
+              observedProjectionIdsRef.current.ids.add(projection.id);
             }
             // UI pending state is local; graph/Run identity is issued only by
             // the canonical backend Run, never a second browser-generated ID.
@@ -463,7 +478,8 @@ export default function useAgentBuilderMainChat({
               setTechnical((current) => current.key === conversationKey
                 ? { ...current, events: reconcileTerminalEvents([...current.events, publicEvent]) } : current);
             }
-            if (event.kind === 'session' || event.kind === 'text') {
+            if (event.kind === 'session' || event.kind === 'text'
+              || projection?.category === 'conversation.answer') {
               setTurnState((current) => current.key === conversationKey
                 ? { ...current, phase: 'active' }
                 : current);
@@ -476,24 +492,36 @@ export default function useAgentBuilderMainChat({
               observedAt: new Date().toISOString(),
             });
             if (
-              event.kind === 'tool_result'
-              && event.isError !== true
-              && typeof event.toolName === 'string'
-              && ['write_mag_one_instructions', 'card.run_assistant_agent'].includes(event.toolName)
+              ((event.kind === 'tool_result' && event.isError !== true)
+                || (projection
+                  && ['execution.tool', 'execution.command'].includes(projection.category)
+                  && projection.status === 'completed'))
+              && typeof (projection?.toolName || event.toolName) === 'string'
+              && ['write_mag_one_instructions', 'card.run_assistant_agent'].includes(
+                String(projection?.toolName || event.toolName),
+              )
             ) {
-              const loaded = parseStagedCardReviewLoaded(event.output);
+              const loaded = parseStagedCardReviewLoaded(projection?.detail || event.output);
               if (loaded) notifyObserver(onCardReviewStaged, loaded);
             }
             if (
-              event.kind === 'tool_result'
-              && event.isError !== true
-              && typeof event.toolName === 'string'
-              && ['card.load_graph_references', 'card.run_assistant_agent'].includes(event.toolName)
+              ((event.kind === 'tool_result' && event.isError !== true)
+                || (projection
+                  && ['execution.tool', 'execution.command'].includes(projection.category)
+                  && projection.status === 'completed'))
+              && typeof (projection?.toolName || event.toolName) === 'string'
+              && ['card.load_graph_references', 'card.run_assistant_agent'].includes(
+                String(projection?.toolName || event.toolName),
+              )
             ) {
-              const loaded = parseLoadedCardGraphReference(event.output);
+              const loaded = parseLoadedCardGraphReference(projection?.detail || event.output);
               if (loaded) notifyObserver(onCardGraphReferenceLoaded, loaded);
             }
-            if (event.kind === 'text') {
+            if (projection?.category === 'conversation.answer' && projection.status === 'completed') {
+              finalizeModelText(projection.text || '');
+            } else if (projection?.category === 'conversation.answer') {
+              appendModelText(projection.text || '');
+            } else if (event.kind === 'text') {
               appendModelText(
                 String((event as { text?: unknown }).text || ''),
               );

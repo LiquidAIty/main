@@ -56,13 +56,13 @@ def _metadata() -> dict:
 
 
 def _host_script() -> dict:
-    source = '''CARD_SCRIPT = {"mode": "outer_controller"}\nfrom hermes_tools import output\noutput.emit({"agent": {"run": False}})\n'''
+    source = '''CARD_SCRIPT = {"mode": "tool_recipe"}\nfrom hermes_tools import output\noutput.emit({"result": {}})\n'''
     return {
         "version": 3,
         "source": source,
         "sourceHash": hashlib.sha256(source.encode()).hexdigest(),
         "compiledHash": "b" * 64,
-        "mode": "outer_controller",
+        "mode": "tool_recipe",
         "inputSchema": {
             "type": "object", "properties": {"focus": {"type": "string"}},
         },
@@ -138,11 +138,12 @@ def test_parser_binds_host_script_hash_and_execution_scope() -> None:
         parse_host_session_config(tampered)
 
 
-def test_outer_controller_is_host_entered_and_never_presented_to_the_model(monkeypatch) -> None:
+def test_saved_script_is_one_typed_model_tool_and_not_a_lifecycle_controller(monkeypatch) -> None:
     metadata = _metadata()
     metadata["hermes"]["sessionConfig"]["hostScript"] = _host_script()
     definitions = {
         "delegate_task": _definition("delegate_task"),
+        "execute_host_script": _definition("execute_host_script"),
     }
     monkeypatch.setitem(
         sys.modules,
@@ -166,10 +167,45 @@ def test_outer_controller_is_host_entered_and_never_presented_to_the_model(monke
     agent = SimpleNamespace(disabled_toolsets=[])
     apply_host_session_config(agent, parse_host_session_config(metadata))
     by_name = {item["function"]["name"]: item for item in agent.tools}
-    assert "execute_host_script" not in by_name
+    assert by_name["execute_host_script"]["function"]["parameters"] == _host_script()["inputSchema"]
     assert by_name["delegate_task"]["function"]["parameters"] == {
         "type": "object", "properties": {},
     }
+
+
+def test_team_policy_is_bounded_and_off_can_remove_only_team_delegation(monkeypatch) -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"]["delegationRoles"] = ["leaf"]
+    metadata["hermes"]["sessionConfig"]["team"] = {
+        "mode": "auto", "maxWorkers": 3, "retryLimit": 2,
+        "worker": {"provider": "openai-codex", "model": "gpt-5.6-luna"},
+        "lead": {"provider": "openai-codex", "model": "gpt-5.6-terra"},
+    }
+    parsed = parse_host_session_config(metadata)
+    assert parsed["team"]["maxWorkers"] == 3
+    assert parsed["team"]["lead"]["model"] == "gpt-5.6-terra"
+
+    native = _definition("delegate_task")
+    native["function"]["parameters"]["properties"] = {
+        "goal": {"type": "string"},
+        "role": {"type": "string", "enum": ["leaf", "orchestrator", "team"]},
+    }
+    monkeypatch.setitem(sys.modules, "model_tools", SimpleNamespace(
+        get_tool_definitions=lambda **_kwargs: [],
+    ))
+    monkeypatch.setitem(sys.modules, "tools.registry", SimpleNamespace(
+        registry=SimpleNamespace(get_definitions=lambda names, quiet=True: [
+            copy.deepcopy(native) for name in names if name == "delegate_task"
+        ]),
+    ))
+    agent = SimpleNamespace(disabled_toolsets=[])
+    apply_host_session_config(agent, parsed)
+    assert agent.tools[0]["function"]["parameters"]["properties"]["role"]["enum"] == ["leaf"]
+
+    off = _metadata()
+    off["hermes"]["sessionConfig"]["delegationRoles"] = []
+    apply_host_session_config(agent, parse_host_session_config(off))
+    assert all(item["function"]["name"] != "delegate_task" for item in agent.tools)
 
 
 def test_host_delegation_roles_narrow_only_the_session_schema(monkeypatch) -> None:
@@ -203,7 +239,7 @@ def test_host_delegation_roles_narrow_only_the_session_schema(monkeypatch) -> No
     projected = agent.tools[0]["function"]["parameters"]["properties"]
     assert projected["role"]["enum"] == ["team", "leaf"]
     assert projected["role"]["default"] == "team"
-    assert "tasks" not in projected
+    assert "tasks" in projected
     assert native["function"]["parameters"]["properties"]["role"]["enum"] == [
         "leaf", "orchestrator", "team",
     ]

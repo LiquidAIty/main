@@ -283,6 +283,13 @@ def decompose_task(
     """
     with kb.connect_closing() as conn:
         task = kb.get_task(conn, task_id)
+        team_policy = next((
+            event.payload
+            for event in reversed(kb.list_events(conn, task_id))
+            if event.kind == "team_policy_applied"
+            and isinstance(event.payload, dict)
+            and event.payload.get("schema_version") == "hermes.team.policy.v1"
+        ), None)
     if task is None:
         return DecomposeOutcome(task_id, False, "unknown task id")
     if task.status != "triage":
@@ -307,19 +314,30 @@ def decompose_task(
     team_worker_provider = ""
     team_worker_model = ""
     team_worker_reasoning = None
+    team_lead_provider = ""
+    team_lead_model = ""
     if is_team:
-        try:
-            team_max_workers = max(
-                2, min(4, int(kanban_cfg.get("team_max_workers", 4)))
-            )
-        except (TypeError, ValueError):
-            team_max_workers = 4
-        team_worker_provider = str(
-            kanban_cfg.get("team_worker_provider") or ""
-        ).strip()
-        team_worker_model = str(
-            kanban_cfg.get("team_worker_model") or ""
-        ).strip()
+        if isinstance(team_policy, dict):
+            team_max_workers = int(team_policy["max_workers"])
+            team_worker_provider = str(team_policy["worker_provider"]).strip()
+            team_worker_model = str(team_policy["worker_model"]).strip()
+            team_lead_provider = str(team_policy["lead_provider"]).strip()
+            team_lead_model = str(team_policy["lead_model"]).strip()
+        else:
+            try:
+                team_max_workers = max(
+                    2, min(4, int(kanban_cfg.get("team_max_workers", 4)))
+                )
+            except (TypeError, ValueError):
+                team_max_workers = 4
+            team_worker_provider = str(
+                kanban_cfg.get("team_worker_provider") or ""
+            ).strip()
+            team_worker_model = str(
+                kanban_cfg.get("team_worker_model") or ""
+            ).strip()
+            team_lead_provider = str(task.provider_override or "").strip()
+            team_lead_model = str(task.model_override or "").strip()
         team_worker_reasoning = kanban_cfg.get("team_worker_reasoning_effort")
     roster, valid_names = _build_roster()
 
@@ -362,6 +380,11 @@ def decompose_task(
             temperature=0.3,
             max_tokens=4000,
             timeout=timeout or 180,
+            **(
+                {"provider": team_lead_provider, "model": team_lead_model}
+                if is_team and team_lead_provider and team_lead_model
+                else {}
+            ),
         )
     except Exception as exc:
         logger.info(

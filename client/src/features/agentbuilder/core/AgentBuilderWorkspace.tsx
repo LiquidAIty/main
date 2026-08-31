@@ -105,7 +105,7 @@ export default function AgentBuilderWorkspace({
               }}
             />
           ) : null}
-          {workspaceView === 'canvas' || workspaceView === 'hermes' ? (
+          {workspaceView === 'canvas' ? (
             <div
               data-testid="workspace-canvas-region"
               className="h-full flex-1 min-w-0 relative"

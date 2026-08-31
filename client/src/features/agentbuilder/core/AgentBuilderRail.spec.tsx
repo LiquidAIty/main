@@ -91,7 +91,7 @@ describe('AgentBuilderRail hex-plus quick-add', () => {
   });
 });
 
-describe('AgentBuilderRail Hermes Kanban icon', () => {
+describe('AgentBuilderRail product destinations', () => {
   it('shows the graph launcher with the stable rail treatment', () => {
     const host = render(
       <AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />,
@@ -130,79 +130,14 @@ describe('AgentBuilderRail Hermes Kanban icon', () => {
     expect(onOpen).toHaveBeenCalledOnce();
   });
 
-  it('shows the Hermes Kanban icon when the Hermes app surface is available', () => {
+  it('exposes no Kanban product or Hermes terminal launcher in the rail', () => {
     const host = render(
       <AgentBuilderRail
         {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: true }}
-      />,
-    );
-    expect(host.querySelector('[data-testid="rail-hermes-kanban-button"]')).not.toBeNull();
-  });
-
-  it('labels the product surface as Kanban, not the implementation runtime', () => {
-    const host = render(
-      <AgentBuilderRail
-        {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: true }}
-      />,
-    );
-    const button = host.querySelector(
-      '[data-testid="rail-hermes-kanban-button"]',
-    ) as HTMLButtonElement;
-    expect(button.getAttribute('aria-label')).toBe('Kanban');
-    expect(button.getAttribute('title')).toBe('Kanban');
-  });
-
-  it('hides the Kanban icon when the Hermes card is not on the canvas', () => {
-    const host = render(
-      <AgentBuilderRail
-        {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: false }}
+        visibleRailItems={baseVisibility}
       />,
     );
     expect(host.querySelector('[data-testid="rail-hermes-kanban-button"]')).toBeNull();
-  });
-
-  it('invokes the open handler when the Hermes Kanban icon is clicked', () => {
-    const onOpen = vi.fn();
-    const host = render(
-      <AgentBuilderRail
-        {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: true }}
-        onOpenHermesKanban={onOpen}
-      />,
-    );
-    const button = host.querySelector(
-      '[data-testid="rail-hermes-kanban-button"]',
-    ) as HTMLButtonElement;
-    act(() => {
-      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(onOpen).toHaveBeenCalled();
-  });
-
-  it('uses the normal rail selected treatment while the Hermes surface is open', () => {
-    const host = render(
-      <AgentBuilderRail
-        {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: true }}
-        hermesKanbanActive
-      />,
-    );
-    const button = host.querySelector(
-      '[data-testid="rail-hermes-kanban-button"]',
-    ) as HTMLButtonElement;
-    expect(button.style.color).toBe('rgb(0, 170, 255)');
-  });
-
-  it('never exposes a Hermes terminal launcher in the rail', () => {
-    const host = render(
-      <AgentBuilderRail
-        {...baseProps}
-        visibleRailItems={{ ...baseVisibility, showHermesKanban: true }}
-      />,
-    );
     expect(host.querySelector('[data-testid="rail-hermes-terminal-button"]')).toBeNull();
   });
 });

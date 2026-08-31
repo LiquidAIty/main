@@ -13,7 +13,6 @@ type RailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
   showTrading: boolean;
-  showHermesKanban?: boolean;
 };
 
 type AgentBuilderRailProps = {
@@ -27,8 +26,6 @@ type AgentBuilderRailProps = {
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
-  hermesKanbanActive?: boolean;
-  onOpenHermesKanban?: () => void;
 };
 
 function Icon({ d, size = 22 }: { d: string; size?: number }) {
@@ -78,8 +75,6 @@ export default function AgentBuilderRail({
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onOpenNavigationDrawer,
-  hermesKanbanActive,
-  onOpenHermesKanban,
 }: AgentBuilderRailProps) {
   return (
     <aside
@@ -166,20 +161,6 @@ export default function AgentBuilderRail({
           <Icon d="M4 18h16M6 15l3-3 3 2 4-6 2 2" />
         </button>
       ) : null}
-      {visibleRailItems.showHermesKanban ? (
-        <button
-          type="button"
-          title="Kanban"
-          aria-label="Kanban"
-          data-testid="rail-hermes-kanban-button"
-          onClick={onOpenHermesKanban}
-          className="p-2 rounded"
-          style={{ color: hermesKanbanActive ? colors.primary : colors.text }}
-        >
-          <Icon d="M4 5h16v14H4z M4 11h16 M4 17h16 M9 5v6 M15 5v6" />
-        </button>
-      ) : null}
-
       <div className="flex-1" />
 
       <button

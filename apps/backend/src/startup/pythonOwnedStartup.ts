@@ -69,7 +69,7 @@ export async function runPythonOwnedStartupTasks(
   // Readiness is the only retried operation. Once the supervised Python rails
   // process is ready, each stateful startup task runs at most once for this
   // backend listener; failures remain visible instead of replaying Deck reads
-  // or Kanban recovery inside the readiness loop.
+  // or native Team recovery inside the readiness loop.
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
   await logModels();
   if (!isActive()) throw new Error('python_owned_startup_cancelled');

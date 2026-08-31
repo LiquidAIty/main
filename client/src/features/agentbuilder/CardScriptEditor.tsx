@@ -75,49 +75,24 @@ let activeEditor: MonacoEditor | null = null;
 let sourceModelSequence = 0;
 
 const SCRIPT_SECTIONS = [
-  'Card Configuration',
-  'Runtime — Tools',
-  'Runtime — Graph and Context',
-  'Runtime — Agent and Dynamic Prompt Assembly',
-  'Output, Handoff, and Receipts',
+  'Optimized Tool Configuration',
+  'Authorized Tool Operations',
+  'Typed Result',
 ] as const;
 
-const STARTER_SCRIPT = `# region Card Configuration
+const STARTER_SCRIPT = `# region Optimized Tool Configuration
 CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {
         "type": "object",
-        "properties": {
-            "mission": {"type": "string"},
-            "card": {
-                "type": "object",
-                "properties": {
-                    "revisionId": {"type": "string"},
-                    "defaultPrompt": {"type": "string"},
-                    "blocks": {"type": "array", "items": {"type": "object"}},
-                },
-                "required": ["revisionId", "defaultPrompt", "blocks"],
-                "additionalProperties": False,
-            },
-        },
-        "required": ["mission"],
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
         "additionalProperties": False,
     },
     "output": {
         "type": "object",
-        "properties": {
-            "agent": {
-                "type": "object",
-                "properties": {
-                    "run": {"type": "boolean"},
-                    "prompt": {"type": "string"},
-                },
-                "required": ["run"],
-                "additionalProperties": False,
-            },
-            "result": {},
-        },
-        "required": ["agent"],
+        "properties": {"result": {}},
+        "required": ["result"],
         "additionalProperties": False,
     },
     "timeout_seconds": 15,
@@ -126,29 +101,17 @@ CARD_SCRIPT = {
 }
 # endregion
 
-# region Runtime — Tools
-from hermes_tools import AGENT, BOTH, OFF, SCRIPT, input, output, tools
+# region Authorized Tool Operations
+from hermes_tools import SCRIPT, input, output, tools
 
-# Selected tools default to AGENT. Override with generated-header symbols:
+# Selected tools default to AGENT. Mark only recipe-owned handles SCRIPT:
 # tools.cbm.search_graph = SCRIPT
-# tools.cbm.delete_project = OFF
 # endregion
 
-# region Runtime — Graph and Context
-# Read bounded graph/context input here. Omission preserves saved Card context.
-result = {"mission": input.mission}
-# endregion
-
-# region Runtime — Agent and Dynamic Prompt Assembly
-# Add a sparse agent overlay only when this Script needs one.
-agent_stage = {"run": True}
-# endregion
-
-# region Output, Handoff, and Receipts
-output.emit({
-    "agent": agent_stage,
-    "result": result,
-})
+# region Typed Result
+# Hermes chooses whether to call this optimized tool. The function cannot
+# rewrite the Card prompt, context, memory, lifecycle, or native Team.
+output.emit({"result": {"query": input.query}})
 # endregion
 `;
 
@@ -158,28 +121,22 @@ const SCRIPT_EXAMPLES = [
     label: 'ThinkGraph context',
     description: 'Read bounded Constellation context plus one exact native memory.',
     source: `CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {
         "type": "object",
         "properties": {
-            "mission": {"type": "string"},
+            "query": {"type": "string"},
             "nativeId": {"type": "string"},
         },
-        "required": ["mission", "nativeId"],
+        "required": ["query", "nativeId"],
         "additionalProperties": False,
     },
     "output": {
         "type": "object",
         "properties": {
-            "agent": {
-                "type": "object",
-                "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}},
-                "required": ["run", "prompt"],
-                "additionalProperties": False,
-            },
             "result": {"type": "object"},
         },
-        "required": ["agent", "result"],
+        "required": ["result"],
         "additionalProperties": False,
     },
     "timeout_seconds": 15,
@@ -187,26 +144,19 @@ const SCRIPT_EXAMPLES = [
     "max_output_bytes": 20000,
 }
 
-import json
 from hermes_tools import SCRIPT, input, output, tools
 
 tools.constellation.context = SCRIPT
 tools.constellation.inspect = SCRIPT
 
 bounded_context = tools.call(
-    "constellation.context", focus=input.mission, budget=1600, maxDepth=2, maxL2=8
+    "constellation.context", focus=input.query, budget=1600, maxDepth=2, maxL2=8
 )
 exact_memory = tools.call(
     "constellation.inspect", nativeId=input.nativeId, budget=1200, maxDepth=1, maxL2=6
 )
 result = {"context": bounded_context, "exactMemory": exact_memory}
-output.emit({
-    "agent": {
-        "run": True,
-        "prompt": input.mission + "\n\nBounded native ThinkGraph evidence:\n" + json.dumps(result),
-    },
-    "result": result,
-})
+output.emit({"result": result})
 `,
   },
   {
@@ -214,25 +164,19 @@ output.emit({
     label: 'KnowGraph evidence',
     description: 'Read bounded native entities, facts, and episode provenance.',
     source: `CARD_SCRIPT = {
-    "mode": "outer_controller",
+    "mode": "tool_recipe",
     "input": {
         "type": "object",
-        "properties": {"mission": {"type": "string"}},
-        "required": ["mission"],
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
         "additionalProperties": False,
     },
     "output": {
         "type": "object",
         "properties": {
-            "agent": {
-                "type": "object",
-                "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}},
-                "required": ["run", "prompt"],
-                "additionalProperties": False,
-            },
             "result": {"type": "object"},
         },
-        "required": ["agent", "result"],
+        "required": ["result"],
         "additionalProperties": False,
     },
     "timeout_seconds": 15,
@@ -240,27 +184,20 @@ output.emit({
     "max_output_bytes": 20000,
 }
 
-import json
 from hermes_tools import SCRIPT, input, output, tools
 
 tools.graphiti.search_nodes = SCRIPT
 tools.graphiti.search_memory_facts = SCRIPT
 tools.graphiti.get_episodes = SCRIPT
 
-nodes = tools.call("graphiti.search_nodes", query=input.mission, max_nodes=8)
-facts = tools.call("graphiti.search_memory_facts", query=input.mission, max_facts=12)
+nodes = tools.call("graphiti.search_nodes", query=input.query, max_nodes=8)
+facts = tools.call("graphiti.search_memory_facts", query=input.query, max_facts=12)
 episodes = tools.call(
     "graphiti.get_episodes", max_episodes=10, include_body=False,
     body_preview_chars=300, max_response_chars=12000
 )
 result = {"nodes": nodes, "facts": facts, "episodes": episodes}
-output.emit({
-    "agent": {
-        "run": True,
-        "prompt": input.mission + "\n\nBounded native KnowGraph evidence with provenance:\n" + json.dumps(result),
-    },
-    "result": result,
-})
+output.emit({"result": result})
 `,
   },
 ] as const;

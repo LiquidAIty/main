@@ -37,6 +37,7 @@ _SESSION_FIELDS = {
     "toolCallMeta",
     "hostScript",
     "delegationRoles",
+    "team",
 }
 
 
@@ -127,7 +128,7 @@ def _host_script(value: Any) -> dict[str, Any] | None:
     if not re.fullmatch(r"[0-9a-f]{64}", compiled_hash):
         raise HostSessionConfigError("hermes_host_config_host_script_compiled_hash_invalid")
     mode = _bounded_text(value.get("mode"), "hostScript.mode", limit=32, required=True)
-    if mode != "outer_controller":
+    if mode != "tool_recipe":
         raise HostSessionConfigError("hermes_host_config_host_script_mode_invalid")
     input_schema = value.get("inputSchema")
     output_schema = value.get("outputSchema")
@@ -269,10 +270,13 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         "toolCallMeta": normalized_tool_meta,
         "hostScript": _host_script(raw.get("hostScript")),
         "delegationRoles": _delegation_roles(raw.get("delegationRoles")),
+        "team": _team_policy(raw.get("team")),
     }
 
 
-def _delegation_roles(value: Any) -> list[str]:
+def _delegation_roles(value: Any) -> list[str] | None:
+    if value is None:
+        return None
     roles = _bounded_string_list(value, "delegationRoles")
     unknown = [role for role in roles if role not in {"leaf", "orchestrator", "team"}]
     if unknown:
@@ -282,15 +286,68 @@ def _delegation_roles(value: Any) -> list[str]:
     return roles
 
 
+def _team_model(value: Any, field: str) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != {"provider", "model"}:
+        raise HostSessionConfigError(f"hermes_host_config_team_{field}_invalid")
+    return {
+        "provider": _bounded_text(
+            value.get("provider"), f"team.{field}.provider", limit=256, required=True
+        ),
+        "model": _bounded_text(
+            value.get("model"), f"team.{field}.model", limit=256, required=True
+        ),
+    }
+
+
+def _team_policy(value: Any) -> dict[str, Any] | None:
+    """Validate one Card/session-scoped native Team policy.
+
+    LIQUIDAITY VENDOR PATCH: this is bounded execution configuration supplied
+    by the trusted ACP host. It contains no Card identity or credentials and
+    never edits Hermes' shared config or SQLite execution truth.
+    """
+
+    if value is None:
+        return None
+    allowed = {"mode", "maxWorkers", "retryLimit", "worker", "lead"}
+    if not isinstance(value, dict) or set(value) != allowed:
+        raise HostSessionConfigError("hermes_host_config_team_invalid")
+    max_workers = value.get("maxWorkers")
+    retry_limit = value.get("retryLimit")
+    if (
+        value.get("mode") != "auto"
+        or not isinstance(max_workers, int)
+        or isinstance(max_workers, bool)
+        or max_workers not in {2, 3, 4}
+        or not isinstance(retry_limit, int)
+        or isinstance(retry_limit, bool)
+        or not 0 <= retry_limit <= 4
+    ):
+        raise HostSessionConfigError("hermes_host_config_team_invalid")
+    return {
+        "mode": "auto",
+        "maxWorkers": max_workers,
+        "retryLimit": retry_limit,
+        "worker": _team_model(value.get("worker"), "worker"),
+        "lead": _team_model(value.get("lead"), "lead"),
+    }
+
+
 def _project_delegation_roles(
     definitions: list[dict[str, Any]],
-    roles: list[str],
+    roles: list[str] | None,
 ) -> list[dict[str, Any]]:
     """Narrow only the host session's view of native ``delegate_task``."""
 
-    if not roles:
+    if roles is None:
         return definitions
     projected = copy.deepcopy(definitions)
+    if not roles:
+        return [
+            definition for definition in projected
+            if str((definition.get("function") or {}).get("name") or "")
+            != "delegate_task"
+        ]
     for definition in projected:
         function = definition.get("function") if isinstance(definition, dict) else None
         if not isinstance(function, dict) or function.get("name") != "delegate_task":
@@ -303,15 +360,40 @@ def _project_delegation_roles(
         role["enum"] = list(roles)
         role["default"] = "team" if "team" in roles else roles[0]
         role["description"] = "Authorized delegation mode for this host session."
-        # LiquidAIty's Card doorway is one explicit mission, not Hermes' batch
-        # orchestration surface. Native Hermes keeps its full schema whenever
-        # the trusted host omits delegationRoles.
-        properties.pop("tasks", None)
+        # A Team-only Card accepts one durable mission because native Team
+        # rejects temporary batches and output schemas. Main keeps Hermes'
+        # complete Leaf batch/output contract alongside Team; the host narrows
+        # roles but does not replace native delegate_task semantics.
+        if roles == ["team"]:
+            properties.pop("tasks", None)
+            properties.pop("output_schema", None)
         function["description"] = (
             "Delegate one explicit task using this host session's authorized "
             f"native role(s): {', '.join(roles)}."
         )
     return projected
+
+
+def _project_host_script_tool(
+    definitions: list[dict[str, Any]],
+    script: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Publish the immutable Script as one typed model-callable tool."""
+
+    if script is None:
+        return definitions
+    projected = copy.deepcopy(definitions)
+    for definition in projected:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        if not isinstance(function, dict) or function.get("name") != "execute_host_script":
+            continue
+        function["description"] = (
+            "Run this Card's immutable optimized Python tool recipe using only "
+            "the saved Card-authorized operations."
+        )
+        function["parameters"] = copy.deepcopy(script["inputSchema"])
+        return projected
+    raise HostSessionConfigError("hermes_host_script_tool_unavailable")
 
 
 def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> None:
@@ -619,8 +701,15 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
             f"hermes_host_config_tool_blocked:{blocked_explicit[0]}"
         )
     definitions = _merge_definitions(definitions, _explicit_tool_definitions(explicit_names))
+    script = config.get("hostScript")
+    if isinstance(script, dict):
+        definitions = _merge_definitions(
+            definitions,
+            _explicit_tool_definitions(["execute_host_script"]),
+        )
+        definitions = _project_host_script_tool(definitions, script)
     definitions = _project_delegation_roles(
-        definitions, list(config.get("delegationRoles") or [])
+        definitions, config.get("delegationRoles")
     )
 
     # Memory-provider tools are injected only when the trusted host selected

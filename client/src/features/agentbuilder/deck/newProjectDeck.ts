@@ -26,6 +26,23 @@ const DEFAULT_HERMES_SUBAGENT_MODEL = {
   providerModelId: 'gpt-5.6-luna',
 };
 
+const DEFAULT_HERMES_TEAM_LEAD_MODEL = {
+  provider: 'openai',
+  accessMode: 'chatgpt-account' as const,
+  modelKey: 'gpt-5.6-terra',
+  providerModelId: 'gpt-5.6-terra',
+};
+
+function defaultHermesTeam() {
+  return {
+    mode: 'auto' as const,
+    maxWorkers: 4 as const,
+    retryLimit: 1,
+    workerModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+    leadModel: { ...DEFAULT_HERMES_TEAM_LEAD_MODEL },
+  };
+}
+
 function buildPromptTemplate(parts: {
   role: string;
   goal: string;
@@ -64,7 +81,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Use only the approved prompt and workers actually connected to the bus.',
         'Do not invent graph agents, hidden workers, tools, or graph writes.',
-        'Do not change Main Chat, Kanban, or user approval authority.',
+        'Do not change Main Chat, Graph Agent, or user approval authority.',
       ].join('\n'),
       ioSchema: [
         'Input: the approved task plus the real connected worker roster.',
@@ -83,7 +100,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     content: [
       'You are Main Chat, the project principal and only user-facing voice, running in one persistent account-authenticated session.',
       'Own the conversation: reason with the user, ask useful clarifying questions, discuss options and tradeoffs, and answer directly.',
-      'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Coder, Kanban, and Magentic-One boundaries.',
+      'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Coder, native Team, and Magentic-One boundaries.',
       '',
       'Your working context is the current project conversation, your persistent Hermes memory, and the granted ThinkGraph/KnowGraph MCP tools. There is no replacement graph API and no ordinary web search.',
       'Use card.run_assistant_agent only when you explicitly need bounded help from a connected saved Card. A wire grants authority but never starts work by itself.',
@@ -163,7 +180,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     id: 'prompt_hermes_steward',
     content: buildPromptTemplate({
       role: [
-        'You are the saved Hermes steward and persistent planning, memory, and KnowGraph helper for Main.',
+        'You are Graph Agent, the saved persistent planning, memory, and KnowGraph helper for Main.',
       ].join('\n'),
       goal: [
         'Assist Main with progressive KnowGraph/Graphiti research and run preparation using your saved card instructions, memory scope, skills, and grants.',
@@ -174,14 +191,14 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Run only after an explicit current request from Main. Saved wires, queued tasks, startup, and profile existence never start work.',
         'Inspect the supplied current native graph data first. Use web_search or web_extract through the configured Firecrawl backend only when the mission requires missing, stale, contradictory, or explicitly requested verification.',
-        'Keep candidate links temporary in Kanban; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
+        'Keep candidate links in Run-scoped working context; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
         'Use card.run_assistant_agent for a normal automatic handoff: pass one exact mission plus the selected native graph references, and let the receiving saved Card materialize and run its own in.idf.',
         'Use card.load_graph_references and write_mag_one_instructions only when Main or the user requests review first. They stage the mission and graph selection in the existing target Card CLI input and Context editors; they never create a second input or execute the Card.',
         'After optional review, Main submits the target Card through the same one-run path used by automatic handoff.',
-        'Do not invent sources, graph writes, tool results, worker results, or Kanban activity.',
+        'Do not invent sources, graph writes, tool results, worker results, or Team activity.',
         'Use only one bounded connected-Card handoff when the current mission requires it. Do not create recursive workers, promote queued work, or run historical tasks.',
-        'Your direct execution remains one real persistent saved-card session. Kanban is an execution mode on an ordinary card, not your identity.',
+        'Your direct execution remains one real persistent saved-card session. Use native Team delegation only when bounded parallel help is useful; Team is a capability, not your identity.',
         'Never treat staged review state as a retained model input or a completed run.',
         'Do not indiscriminately copy Magentic-One transcripts into memory or KnowGraph.',
       ].join('\n'),
@@ -229,7 +246,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'WorldSignals is the real-time physical-world data substrate (markets, energy, transport, supply chains, shipping, aviation, weather, infrastructure, news, geographic events, entities). You read it through your tools and turn a FOCUSED subject into a leverage-first briefing.',
       ].join('\n'),
       goal: [
-        'Investigate ONE subject of interest at a time — the one Kanban, Main, or the user hands you — and answer the only question that matters: how can the user leverage this?',
+        'Investigate ONE subject of interest at a time — the one Graph Agent, Main, or the user hands you — and answer the only question that matters: how can the user leverage this?',
         'Set watches so the subject is re-checked over time, and record durable, source-grounded findings so each briefing compounds on the last instead of starting from zero.',
       ].join('\n'),
       constraints: [
@@ -240,7 +257,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Every claim cites which tool/command and which WorldSignals layer produced it. No source, no claim.',
       ].join('\n'),
       ioSchema: [
-        'Input: a focused subject of interest (entity, area, market, theme) from Kanban, Main, or the user — plus any prior findings for that subject.',
+        'Input: a focused subject of interest (entity, area, market, theme) from Graph Agent, Main, or the user — plus any prior findings for that subject.',
         'Output: a leverage-first briefing on that subject, in this order:',
         '1. Leverageable Ideas — 3-5, each with: thesis, instrument/sector/geography, why now, horizon (days/weeks/months), catalyst(s) to watch, invalidation criteria, confidence (High/Medium/Low).',
         '2. What Changed — the material deltas since the last briefing on this subject (from what_changed / drained watches).',
@@ -250,7 +267,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Then append ONE JSON object with graphWriteProposals for the durable findings, each: {"target":"KnowGraph","operation":"upsert_node|upsert_edge|annotate_node|flag_uncertainty","confidence":0.0,"reason":"plain reason","payload":{...,"source":"<tool/command + layer>","observedAt":"<iso>"}}',
       ].join('\n'),
       memoryPolicy: [
-        'Durable knowledge lives in KnowGraph, reached only through graphWriteProposals — you never write graphs directly. Kanban reviews and promotes them.',
+        'Durable knowledge lives in KnowGraph, reached only through graphWriteProposals — you never write graphs directly. Graph Agent or Main reviews and promotes them.',
         'A KnowGraph proposal REQUIRES source + evidence in its payload (which WorldSignals command/layer, when observed). Findings without provenance are not proposed.',
         'Read prior findings for this subject before briefing so Pattern & Correlation is grounded in accumulated evidence, not one-shot guesses. This is what makes the briefing sharper every cycle.',
       ].join('\n'),
@@ -335,7 +352,7 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
   },
   {
     id: 'template_hermes_steward',
-    name: 'Kanban',
+    name: 'Graph Agent',
     promptTemplate: 'prompt_hermes_steward',
     model: DEFAULT_CARD_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
@@ -390,6 +407,7 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        team: defaultHermesTeam(),
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -416,6 +434,7 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        team: defaultHermesTeam(),
         tools: [...AGENT_BUILDER_CONTROLLER_TOOLS, ...AGENT_BUILDER_CODEBASE_MEMORY_TOOLS],
         toolCatalogPolicy: 'selected',
         disabledTools: [],
@@ -464,6 +483,7 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        team: defaultHermesTeam(),
         tools: [...CODEBASE_MEMORY_CODER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -489,9 +509,10 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_hermes_steward',
         )?.content || '',
-      runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        team: defaultHermesTeam(),
         tools: [...HERMES_CARD_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -502,8 +523,8 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
       },
       parentGraphId: null,
-      title: 'Kanban',
-      subtitle: 'Board and KnowGraph research agent',
+      title: 'Graph Agent',
+      subtitle: 'Planning, memory, and KnowGraph research',
       position: { x: 260, y: 480 },
       status: 'ready',
     },

@@ -11,6 +11,7 @@ const REQUIRED_MIGRATIONS = [
   '028_agentgraph_materialized_read.sql',
   '029_child_model_receipt.sql',
   '030_card_script_run_receipt.sql',
+  '031_graph_agent_continuity.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

@@ -10,7 +10,7 @@ Git history, not active Markdown.
 Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
      ├─ flow → Agent Builder Card (Hermes delegate, profile liquidaity-agent-builder)
-     ├─ flow → Hermes planning/memory helper Card (profile liquidaity-hermes-steward)
+     ├─ flow → Graph Agent Card (Hermes delegate, profile liquidaity-hermes-steward)
      ├─ native delegate_task(team) → headless Auto-Team inside Main's existing Card Run/session
      └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
         └─ magentic_option → Local Coder Card (Hermes delegate, profile coder)
@@ -35,16 +35,18 @@ they do not select a runtime implementation.
   selection into the same native profile, reads it back, and records actual child provider/model plus
   fallback state without rewriting the parent model. Memory-provider choice remains native profile
   configuration; only Main exposes the bounded Honcho setup/status control.
-- `runtime.kind` plus `runtime.mode` selects Hermes Main/delegate/Kanban, AutoGen Assistant, or native
+- `runtime.kind` plus `runtime.mode` selects Hermes Main/delegate, AutoGen Assistant, or native
   Magentic-One. Card names and template text do not select runtimes.
-- Main, Agent Builder, Local Coder, and the Hermes planning/memory helper are separate saved Hermes Cards with separate profiles
+- Main, Agent Builder, Local Coder, and Graph Agent are separate saved Hermes Cards with separate profiles
   and runtime homes.
 - Any authorized ordinary Hermes Card may use native `delegate_task(role="team")` as a headless
-  capability. The MVP recipe submits one explicit mission/context packet, uses Terra for native
-  decomposition, creates two to four Luna tasks, then re-runs the original root on Terra for review
-  and one synthesized report in the originating Card session. Team has no saved Card, board, tab,
-  embedded CLI, or execution authority of its own. The LiquidAIty projection exposes `team`
-  generally, `leaf` only for Main's existing direct Agent Builder doorway, and no `orchestrator`.
+  capability. Each saved Hermes Card owns a small Team policy: Off/Auto, maximum workers, retry limit,
+  worker model, and one Team-lead model for decomposition and final synthesis. Auto authorizes Hermes
+  to decide whether to call the native tool; it does not launch Team when a Card Run starts. The
+  Subagents tab edits that saved policy and projects the current or last Card Run plus bounded native
+  activity. It is not a board, task editor, receipt product, or runtime authority. Main's existing
+  `leaf` delegation remains available independently; native recursive delegation remains internal and
+  has no new product control.
 - Main delegates only across saved AGE/ReactFlow relationships.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count. The external GPT connector
@@ -176,15 +178,19 @@ the transient Card call. The call carries task meaning and selected context, not
 - Uses CodeGraph/CBM first, then direct source and focused proof.
 - Remains a Magentic-One worker option and has no direct Main flow.
 
-### Hermes planning/memory helper
+### Graph Agent
 
 - Card: `card_hermes_steward`
-- Hermes mode/profile: `kanban` / `liquidaity-hermes-steward`
+- Hermes mode/profile: `delegate` / `liquidaity-hermes-steward`
 - Owns planning, research, memory, and KnowGraph work within its grants. It is an ordinary Card, not
   the execution authority for Team; like other authorized Hermes Cards it may use the headless native
   Auto-Team capability internally.
 - Has separate saved-Card identity, prompt, model, grants, stable native session, and native profile home.
-  Main, Coder, and the helper keep separate native memory and sessions. The ACP adapter reuses a process
+  Its existing identity and saved history are preserved while its later graph boundary remains unsettled.
+  Migration `031_graph_agent_continuity.sql` creates a new current revision for an existing
+  `card_hermes_steward` instead of rewriting historical revisions or Runs; only the product title and
+  current runtime mode change.
+  Main, Coder, and Graph Agent keep separate native memory and sessions. The ACP adapter reuses a process
   owner per profile; shared integration code does not imply a shared memory database.
 
 ### AutoGen
@@ -246,7 +252,7 @@ These are recommendations for later saved-prompt review, not grant changes or ca
 - Local Coder should follow `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet -> complete direct
   source read -> inverse caller/residue audit -> focused tests/typecheck`. Literal `search_code`/`rg`
   remains the fallback for imports, configuration, ignored files, and coverage gaps.
-- The Hermes planning/memory helper should use native Hermes task/history state for planning and KnowGraph/Graphiti bounded
+- Graph Agent should use native Hermes task/history state for its current planning and KnowGraph/Graphiti bounded
   reads for sourced knowledge. Any Graphiti write remains an explicit saved grant and confirmed effect.
 - Any Card may use healthy read/search/discovery tools when the saved `all_healthy` policy permits them;
   prompts should name the desired authority and ask for native IDs/provenance instead of copying graph
@@ -302,7 +308,7 @@ alternate startup instructions.
 
 - One Card authority, one IDD, one transient Python call materializer, one official Python MCP host.
 - One canonical `dev:fresh` tree and one root npm workspace lock.
-- Hermes Main/Agent Builder/Local Coder/planning helper, the per-Card headless Auto-Team capability,
+- Hermes Main/Agent Builder/Local Coder/Graph Agent, the per-Card headless Auto-Team capability,
   AutoGen Assistant/Mag One, and four graph authorities remain distinct.
 - Memory projections are named honestly: Learning Journey/native SkillGraph, episodic labels,
   attention, and Run artifacts do not become duplicate stores.

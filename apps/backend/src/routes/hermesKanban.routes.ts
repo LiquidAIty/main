@@ -1,68 +1,37 @@
-import { Router } from 'express';
 import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
-  configureHermesHostSession,
   requestHermesExtension,
-  type HermesSessionEvent,
-  type HermesTurnArgs,
-  type HermesTurnHandle,
-  type HermesTurnUsage,
 } from '../hermes/mainAdapter';
-import {
-  finishHermesExecutionContext,
-  registerHermesRootExecutionContext,
-} from '../hermes/childExecutionContext';
 import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 
 /*
- * Hermes Kanban proxy — thin read/persistence adapter (AGENTS.md runtime boundary).
+ * Internal native Team task projection/rejoin adapter.
  *
- * This router shells out to the repo-owned Hermes CLI for the LIVE kanban
- * system (kanban.db is owned by Hermes, not by LiquidAIty).
- * TS is transport only: every value shown is the native `hermes kanban ...`
- * JSON / plain output verbatim-shaped. No logic, no fallbacks, no fake data.
- *
- * Read routes are safe (list/show/stats/boards/profiles/config). Mutation
- * routes (create/block/comment/...) run the real CLI from explicit user action
- * in the Hermes Kanban app. Saved Cards whose runtime mode is `kanban` submit
- * exactly one native Triage task here and join its root result; the persistent
- * gateway remains the sole decomposer/dispatcher.
+ * Native Hermes keeps its internal kanban/task/dispatcher vocabulary and
+ * SQLite ownership. LiquidAIty retains only the bounded task reads, SQL Run
+ * correlation, rejoin, recovery, and worker-bearer projection required by
+ * ordinary Cards using delegate_task(role="team"). There is no product board,
+ * public route, manual dispatcher control, or special Kanban Card start path.
  */
 
 const HERMES_ROOT = path.join(resolveRepoRoot(), 'Hermes');
 const HERMES_HOME = path.join(HERMES_ROOT, '.hermes');
 const HERMES_BIN = path.join(HERMES_ROOT, 'venv', 'Scripts', 'hermes.exe');
-const HERMES_EXEC_TIMEOUT_MS = 20_000;
 const HERMES_STATUS_TIMEOUT_MS = 60_000;
 
-export type HermesExecResult = {
+type HermesExecResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
 };
 
-export function isHermesGatewayRunning(stdout: string): boolean {
-  return /Gateway(?: process)? (?:is )?running/i.test(stdout);
-}
-
-export function hermesGatewayPids(stdout: string): number[] {
-  const match = /Gateway(?: process)? (?:is )?running[^\r\n]*\(PID:\s*([\d,\s]+)\)/i.exec(stdout);
-  if (!match?.[1]) return [];
-  return match[1]
-    .split(',')
-    .map((value) => Number.parseInt(value.trim(), 10))
-    .filter((value) => Number.isSafeInteger(value) && value > 0);
-}
-
-export function runHermes(
+function runHermes(
   args: readonly string[],
   bin: string = HERMES_BIN,
-  timeoutMs: number = HERMES_EXEC_TIMEOUT_MS,
-  envOverrides: NodeJS.ProcessEnv = {},
+  timeoutMs: number = HERMES_STATUS_TIMEOUT_MS,
 ): Promise<HermesExecResult> {
   return new Promise((resolve) => {
     let settled = false;
@@ -79,24 +48,16 @@ export function runHermes(
       bin,
       [...args],
       {
-        // The manual watchdog below owns descendant-tree termination. Node's
-        // direct-child timeout can race it and hide the bounded native error.
         timeout: 0,
         maxBuffer: 16 * 1024 * 1024,
         windowsHide: true,
         shell: false,
-        env: {
-          ...withoutInternalMcpSecret(process.env),
-          ...envOverrides,
-          HERMES_HOME,
-        },
+        env: { ...withoutInternalMcpSecret(process.env), HERMES_HOME },
       },
       (error, stdout, stderr) => {
         const rawCode = (error as { code?: unknown } | null)?.code;
-        const exitCode =
-          typeof rawCode === 'number' ? rawCode : error ? 1 : 0;
         finish({
-          exitCode,
+          exitCode: typeof rawCode === 'number' ? rawCode : error ? 1 : 0,
           stdout: String(stdout || ''),
           stderr: String(stderr || ''),
         });
@@ -112,11 +73,9 @@ export function runHermes(
     timeout = setTimeout(() => {
       const pid = child.pid;
       if (pid && process.platform === 'win32') {
-        const terminator = spawn(
-          'taskkill.exe',
-          ['/PID', String(pid), '/T', '/F'],
-          { shell: false, stdio: 'ignore', windowsHide: true },
-        );
+        const terminator = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+          shell: false, stdio: 'ignore', windowsHide: true,
+        });
         terminator.unref();
       } else if (!child.killed) {
         child.kill('SIGKILL');
@@ -131,6 +90,15 @@ export function runHermes(
     }, timeoutMs);
     timeout.unref?.();
   });
+}
+
+function parseHermesJson<T>(stdout: string): T {
+  const trimmed = stdout.trim();
+  const start = trimmed.search(/[[{]/);
+  if (start < 0) {
+    throw new Error(`hermes_cli_json_not_found: ${trimmed.slice(0, 120)}`);
+  }
+  return JSON.parse(trimmed.slice(start)) as T;
 }
 
 export type HermesKanbanTaskSnapshot = {
@@ -156,6 +124,21 @@ export type HermesKanbanProgress = {
   tasksTotal: number;
   activeWorkers: number;
   workerSessionIds: string[];
+  teamReceipt: HermesTeamReceipt | null;
+};
+
+export type HermesTeamReceipt = {
+  schemaVersion: 'hermes.team.policy.v1';
+  source: string;
+  mode: 'auto';
+  maxWorkers: number;
+  retryLimit: number;
+  maxRetries: number;
+  workerProvider: string;
+  workerModel: string;
+  leadProvider: string;
+  leadModel: string;
+  maxDepth: number;
 };
 
 export type HermesKanbanUsageTotals = {
@@ -194,6 +177,48 @@ function nativeTaskStatus(snapshot: HermesKanbanTaskSnapshot): string {
   return String(snapshot.task.status || '').trim().toLowerCase();
 }
 
+export function readHermesTeamReceipt(
+  snapshots: readonly HermesKanbanTaskSnapshot[],
+): HermesTeamReceipt | null {
+  for (const snapshot of snapshots) {
+    for (const event of [...snapshot.events].reverse()) {
+      if (String(event.kind || '') !== 'team_policy_applied') continue;
+      const payload = event.payload && typeof event.payload === 'object'
+        ? event.payload as Record<string, unknown>
+        : {};
+      if (payload.schema_version !== 'hermes.team.policy.v1' || payload.mode !== 'auto') {
+        throw new Error('hermes_team_policy_receipt_invalid');
+      }
+      const requiredText = (key: string): string => {
+        const value = String(payload[key] || '').trim();
+        if (!value) throw new Error('hermes_team_policy_receipt_invalid');
+        return value;
+      };
+      const requiredInteger = (key: string): number => {
+        const value = Number(payload[key]);
+        if (!Number.isSafeInteger(value) || value < 0) {
+          throw new Error('hermes_team_policy_receipt_invalid');
+        }
+        return value;
+      };
+      return {
+        schemaVersion: 'hermes.team.policy.v1',
+        source: requiredText('source'),
+        mode: 'auto',
+        maxWorkers: requiredInteger('max_workers'),
+        retryLimit: requiredInteger('retry_limit'),
+        maxRetries: requiredInteger('max_retries'),
+        workerProvider: requiredText('worker_provider'),
+        workerModel: requiredText('worker_model'),
+        leadProvider: requiredText('lead_provider'),
+        leadModel: requiredText('lead_model'),
+        maxDepth: requiredInteger('max_depth'),
+      };
+    }
+  }
+  return null;
+}
+
 export function deriveHermesKanbanProgress(
   taskId: string,
   snapshots: readonly HermesKanbanTaskSnapshot[],
@@ -229,6 +254,7 @@ export function deriveHermesKanbanProgress(
     tasksTotal: snapshots.length,
     activeWorkers,
     workerSessionIds,
+    teamReceipt: readHermesTeamReceipt(snapshots),
   };
 }
 
@@ -259,13 +285,14 @@ async function readHermesKanbanTaskGraph(
 
 /** Read the retained native root; this path never dispatches or rejoins workers. */
 export async function readHermesKanbanCardSnapshots(args: {
-  nativeRootId: string; cardId: string; projectId: string;
+  nativeRootId: string; cardId: string; projectId: string; teamRoot?: boolean;
 }, show: (taskId: string) => Promise<HermesKanbanTaskSnapshot> = async (taskId) => (
   requestHermesExtension('_kanban/show', { taskId }) as Promise<HermesKanbanTaskSnapshot>
 )): Promise<HermesKanbanTaskSnapshot[]> {
   if (!/^t_[A-Za-z0-9_-]+$/.test(args.nativeRootId)) throw new Error('hermes_kanban_card_task_id_invalid');
   const root = requireNativeTaskSnapshot(args.nativeRootId, JSON.stringify(await show(args.nativeRootId)));
-  if (root.task.created_by !== args.cardId || (root.task.project_id && root.task.project_id !== args.projectId)) {
+  const expectedCreator = args.teamRoot ? 'delegate_task:team' : args.cardId;
+  if (root.task.created_by !== expectedCreator || (root.task.project_id && root.task.project_id !== args.projectId)) {
     throw new Error('hermes_kanban_terminal_identity_mismatch');
   }
   return readHermesKanbanTaskGraph(args.nativeRootId, root, show, true);
@@ -576,816 +603,7 @@ export async function terminateNativeHermesKanbanRun(
   return requireNativeTaskSnapshot(taskId, JSON.stringify(snapshot));
 }
 
-async function requireNativeKanbanConfig(runner: typeof runHermes): Promise<void> {
-  const config = await runner(['config', 'get', 'kanban']);
-  if (config.exitCode !== 0) throw new Error('hermes_kanban_config_unavailable');
-  const values = parseYamlishConfig(config.stdout);
-  if (values.dispatch_in_gateway === false) throw new Error('hermes_kanban_gateway_dispatch_disabled');
-  if (values.auto_decompose === false) throw new Error('hermes_kanban_auto_decompose_disabled');
-}
-
-export async function startNativeHermesKanbanTurn(
-  args: HermesTurnArgs & { nativeMission: string },
-  onEvent: (event: HermesSessionEvent) => void,
-  options: {
-    runner?: typeof runHermes;
-    requestExtension?: typeof requestHermesExtension;
-    configureHostSession?: typeof configureHermesHostSession;
-    onProgress?: (progress: HermesKanbanProgress) => Promise<void> | void;
-  } = {},
-): Promise<HermesTurnHandle> {
-  if (args.runtime.mode !== 'kanban') throw new Error('hermes_native_kanban_mode_required');
-  const profile = String(args.runtime.profile || '').trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile)) {
-    throw new Error('hermes_kanban_card_profile_invalid');
-  }
-  const runner = options.runner ?? runHermes;
-  const acpRequest = options.requestExtension ?? requestHermesExtension;
-  await requireNativeKanbanConfig(runner);
-  const context = registerHermesRootExecutionContext({
-    sessionId: `kanban:${args.parentRunId}`,
-    runId: args.parentRunId,
-    projectId: args.projectId,
-    deckId: args.deckId,
-    conversationId: args.conversationId,
-    cardId: args.cardId,
-    runtimeMode: 'kanban',
-    grantedTools: args.tools,
-  });
-  let contextState: 'completed' | 'failed' = 'failed';
-  const releaseContext = (): Promise<void> => finishHermesExecutionContext({
-    contextId: context.contextId,
-    state: contextState,
-  }).then(() => undefined);
-  try {
-    await (options.configureHostSession ?? configureHermesHostSession)(args, context.contextId);
-
-    const idempotencyKey = `liquidaity-${createHash('sha256')
-      .update([args.projectId, args.deckId, args.cardId, args.nativeMission].join('\u0000'))
-      .digest('hex')}`;
-    const rootIdentity = {
-      title: args.title,
-      body: args.nativeMission,
-      createdBy: args.cardId,
-    };
-    let found: any;
-    try {
-      found = await acpRequest('_kanban/find', rootIdentity);
-    } catch {
-      throw new Error('hermes_kanban_card_find_failed');
-    }
-    let taskId = String(found?.id || '').trim();
-    if (!taskId) {
-      let created: any;
-      try {
-        created = await acpRequest('_kanban/create', {
-          ...rootIdentity,
-          assignee: profile,
-          idempotencyKey,
-        });
-      } catch {
-        throw new Error('hermes_kanban_card_create_failed');
-      }
-      try { taskId = String(created?.id || '').trim(); } catch {
-        throw new Error('hermes_kanban_card_create_response_invalid');
-      }
-    }
-    if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
-    const usage: HermesTurnUsage = {
-      providerInputTokens: null,
-      providerOutputTokens: null,
-      totalCostUsd: null,
-      usageAvailable: false,
-      usageSource: 'hermes_native_kanban_unavailable',
-      contextBreakdownJson: '',
-    };
-    const show = async (nativeTaskId: string) => (
-      acpRequest('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
-    );
-    const done: HermesTurnHandle['done'] = waitForHermesKanbanCardTask(profile, taskId, {
-      show,
-      onSnapshot: async (rootSnapshot) => {
-        if (!options.onProgress) return;
-        const snapshots = await readHermesKanbanTaskGraph(taskId, rootSnapshot, show);
-        await options.onProgress(deriveHermesKanbanProgress(taskId, snapshots));
-      },
-    })
-      .then((completed) => {
-        const finalText = String(completed.snapshot.latest_summary || completed.snapshot.task.result || '').trim();
-        contextState = 'completed';
-        onEvent({ kind: 'text', text: finalText });
-        onEvent({ kind: 'done', fullText: finalText, usage });
-        return {
-          finalText,
-          usage,
-          transport: {
-            threadId: taskId,
-            turnId: completed.runId === null ? null : String(completed.runId),
-            authMode: null,
-            planType: 'hermes-native-kanban',
-            nativeTaskId: taskId,
-            nativeRunId: completed.runId,
-            nativeStatus: String(completed.snapshot.task.status || ''),
-          },
-        };
-      })
-      .catch((error) => {
-        contextState = 'failed';
-        const message = error instanceof Error ? error.message : String(error);
-        onEvent({ kind: 'error', message, code: 'hermes_kanban_turn_failed' });
-        throw error;
-      })
-      .finally(releaseContext);
-    return {
-      answer: () => undefined,
-      cancel: () => {
-        throw new Error('hermes_kanban_stop_requires_native_task_control');
-      },
-      done,
-      runtime: {
-        executable: HERMES_BIN,
-        pid: null,
-        hermesHome: HERMES_HOME,
-        sessionId: taskId,
-        transport: 'hermes-kanban',
-      },
-    };
-  } catch (error) {
-    await releaseContext();
-    throw error;
-  }
-}
-
-/** Parse `hermes ... --json` stdout, tolerating a leading warning line. */
-export function parseHermesJson<T>(stdout: string): T {
-  const trimmed = stdout.trim();
-  const start = trimmed.search(/[[{]/);
-  if (start < 0) {
-    throw new Error(`hermes_cli_json_not_found: ${trimmed.slice(0, 120)}`);
-  }
-  return JSON.parse(trimmed.slice(start)) as T;
-}
-
-export function parseYamlishConfig(block: string): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const raw of block.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#') || !line.includes(':')) continue;
-    const idx = line.indexOf(':');
-    const key = line.slice(0, idx).trim();
-    let value = line.slice(idx + 1).trim();
-    if (value === '' || value === 'null' || value === 'None') {
-      out[key] = null;
-    } else if (value === 'true') {
-      out[key] = true;
-    } else if (value === 'false') {
-      out[key] = false;
-    } else if (/^-?\d+$/.test(value)) {
-      out[key] = Number(value);
-    } else if (/^-?\d+\.\d+$/.test(value)) {
-      out[key] = Number(value);
-    } else if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      out[key] = value.slice(1, -1);
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-/** Slice a plain-text `hermes profile list` table by header column offsets. */
-export function parseProfileTable(text: string): {
-  name: string;
-  active: boolean;
-  model: string;
-  gateway: string;
-  alias: string;
-  distribution: string;
-}[] {
-  const rows: {
-    name: string;
-    active: boolean;
-    model: string;
-    gateway: string;
-    alias: string;
-    distribution: string;
-  }[] = [];
-  const lines = text.split(/\r?\n/);
-  const headerIdx = lines.findIndex((l) => l.trimStart().startsWith('Profile'));
-  if (headerIdx < 0) return rows;
-  const header = lines[headerIdx];
-  const offsets: { name: string; start: number }[] = [];
-  for (const col of ['Profile', 'Model', 'Gateway', 'Alias', 'Distribution']) {
-    const at = header.indexOf(col);
-    if (at >= 0) offsets.push({ name: col, start: at });
-  }
-  if (offsets.length === 0) return rows;
-  // Slice by ascending column offsets against the RAW line (both header and
-  // data rows share the same leading column padding, so untrimmed slicing
-  // keeps glyph alignment).
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i].replace(/\s+$/, '');
-    if (!line.trim()) continue;
-    // Skip only separator lines made of dash/box-drawing glyphs — data rows
-    // may legitimately contain an em-dash in the Alias/Distribution columns.
-    if (/^[\s─—\-·.]+$/.test(line)) continue;
-    const slice = (col: string): string => {
-      const idx = offsets.findIndex((o) => o.name === col);
-      if (idx < 0) return '';
-      const start = offsets[idx].start;
-      const end = idx < offsets.length - 1 ? offsets[idx + 1].start : line.length;
-      return line.slice(start, end).trim();
-    };
-    const rawName = slice('Profile');
-    const active = rawName.includes('◆');
-    rows.push({
-      name: rawName.replace(/^[◆]/, '').trim(),
-      active,
-      model: slice('Model'),
-      gateway: slice('Gateway'),
-      alias: slice('Alias'),
-      distribution: slice('Distribution'),
-    });
-  }
-  return rows;
-}
-
-const router = Router();
-
-function ok(res: Parameters<Parameters<Router['get']>[1]>[1], data: unknown) {
-  res.json({ ok: true, data });
-}
-
-function fail(
-  res: Parameters<Parameters<Router['get']>[1]>[1],
-  status: number,
-  error: string,
-  detail?: unknown,
-) {
-  res.status(status).json({ ok: false, error, detail: detail ?? null });
-}
-
-// ── Read surface ─────────────────────────────────────────────────────────
-router.get('/boards', async (_req, res) => {
-  try {
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'boards',
-      'list',
-      '--json',
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_boards_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_boards_failed',
-    );
-  }
-});
-
-router.get('/tasks', async (req, res) => {
-  try {
-    const board = String(req.query.board || '').trim();
-    const includeArchived = req.query.includeArchived === 'true';
-    const tenant = String(req.query.tenant || '').trim();
-    const assignee = String(req.query.assignee || '').trim();
-    const args = ['kanban'];
-    if (board) args.push('--board', board);
-    args.push('list', '--json');
-    if (includeArchived) args.push('--archived');
-    if (tenant) args.push('--tenant', tenant);
-    if (assignee) args.push('--assignee', assignee);
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_list_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson<unknown[]>(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_list_failed',
-    );
-  }
-});
-
-router.get('/tasks/:id', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    if (!id) return fail(res, 400, 'hermes_kanban_task_id_required');
-    const { exitCode, stdout, stderr } = await runHermes(['kanban', 'show', id, '--json']);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_show_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_show_failed',
-    );
-  }
-});
-
-router.get('/tasks/:id/runs', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    if (!id) return fail(res, 400, 'hermes_kanban_task_id_required');
-    const { exitCode, stdout, stderr } = await runHermes(['kanban', 'runs', id, '--json']);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_runs_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_runs_failed',
-    );
-  }
-});
-
-router.get('/tasks/:id/attachments', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    if (!id) return fail(res, 400, 'hermes_kanban_task_id_required');
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'attachments',
-      id,
-      '--json',
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_attachments_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_attachments_failed',
-    );
-  }
-});
-
-router.get('/stats', async (req, res) => {
-  try {
-    const board = String(req.query.board || '').trim();
-    const args = ['kanban'];
-    if (board) args.push('--board', board);
-    args.push('stats', '--json');
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_stats_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_stats_failed',
-    );
-  }
-});
-
-router.get('/system', async (_req, res) => {
-  try {
-    // Each value is an independent native read. Start the cold CLI processes
-    // together so gateway startup time does not delay every other probe, and
-    // do not retry or cache an inconclusive result.
-    const [gatewayRes, configRes, statsRes, diagRes, profilesRes] = await Promise.all([
-      runHermes(['gateway', 'status'], HERMES_BIN, HERMES_STATUS_TIMEOUT_MS),
-      runHermes(['config', 'get', 'kanban']),
-      runHermes(['kanban', 'stats', '--json']),
-      runHermes(['kanban', 'diagnostics', '--json']),
-      runHermes(['profile', 'list']),
-    ]);
-    const gatewayOut = gatewayRes.stdout.trim();
-    // The native status line is the authoritative running signal. The Hermes
-    // CLI may exit non-zero even while it prints "Gateway process running"
-    // (it also checks the Windows login-item, which can fail independently),
-    // so exit code alone is not a reliable proxy for process liveness.
-    const running = isHermesGatewayRunning(gatewayOut);
-    const pidMatch = gatewayOut.match(/PID:\s*(\d+)/i);
-    const kanbanCfg = parseYamlishConfig(configRes.stdout);
-    return ok(res, {
-      gateway: {
-        running,
-        pid: pidMatch ? Number(pidMatch[1]) : null,
-        raw: gatewayOut.slice(0, 400),
-      },
-      dispatcher: {
-        running: running && kanbanCfg.dispatch_in_gateway !== false,
-        dispatchInGateway: kanbanCfg.dispatch_in_gateway !== false,
-        intervalSeconds: kanbanCfg.dispatch_interval_seconds ?? null,
-        staleTimeoutSeconds: kanbanCfg.dispatch_stale_timeout_seconds ?? null,
-      },
-      stats: statsRes.exitCode === 0 ? parseHermesJson(statsRes.stdout) : null,
-      diagnostics:
-        diagRes.exitCode === 0 ? parseHermesJson<unknown[]>(diagRes.stdout) : [],
-      profiles: parseProfileTable(profilesRes.stdout),
-      now: Math.floor(Date.now() / 1000),
-    });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_system_failed',
-    );
-  }
-});
-
-router.get('/profiles', async (_req, res) => {
-  try {
-    const [listRes, configRes] = await Promise.all([
-      runHermes(['profile', 'list']),
-      runHermes(['config', 'get', 'kanban']),
-    ]);
-    const profiles = parseProfileTable(listRes.stdout);
-    const kanbanCfg = parseYamlishConfig(configRes.stdout);
-    const enriched: Record<string, unknown>[] = await Promise.all(
-      profiles.map(async (p) => {
-        let description = '';
-        const desc = await runHermes(['profile', 'describe', p.name]);
-        if (desc.exitCode === 0) description = desc.stdout.trim();
-        return {
-          ...p,
-          description: description || null,
-          defaultProfile: Boolean(p.active),
-          concurrency:
-            kanbanCfg.max_in_progress_per_profile ?? null,
-        };
-      }),
-    );
-    return ok(res, enriched);
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_profiles_failed',
-    );
-  }
-});
-
-router.get('/config', async (_req, res) => {
-  try {
-    const [kanbanRes, delegationRes] = await Promise.all([
-      runHermes(['config', 'get', 'kanban']),
-      runHermes(['config', 'get', 'delegation']),
-    ]);
-    return ok(res, {
-      kanban:
-        kanbanRes.exitCode === 0 ? parseYamlishConfig(kanbanRes.stdout) : {},
-      delegation:
-        delegationRes.exitCode === 0
-          ? parseYamlishConfig(delegationRes.stdout)
-          : {},
-    });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_config_failed',
-    );
-  }
-});
-
-// ── Mutation surface (explicit user action only) ─────────────────────────
-type PostBody = Record<string, unknown>;
-
-function requireAnchor(body: PostBody, name: string): string | null {
-  const value = String(body[name] ?? '').trim();
-  return value || null;
-}
-
-router.post('/create', async (req, res) => {
-  try {
-    const b = (req.body || {}) as PostBody;
-    const board = requireAnchor(b, 'board');
-    const title = requireAnchor(b, 'title');
-    if (!title) return fail(res, 400, 'hermes_kanban_create_title_required');
-    const args = ['kanban'];
-    if (board) args.push('--board', board);
-    args.push('create', title, '--body', requireAnchor(b, 'body') ?? '');
-    const assignee = requireAnchor(b, 'assignee');
-    if (assignee) args.push('--assignee', assignee);
-    const priority = Number(b.priority ?? 0);
-    if (Number.isFinite(priority) && priority !== 0) {
-      args.push('--priority', String(Math.trunc(priority)));
-    }
-    const parent = requireAnchor(b, 'parent');
-    if (parent) args.push('--parent', parent);
-    args.push('--json');
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_create_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_create_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/reclaim', async (req, res) => {
-  try {
-    const data = await reclaimNativeHermesKanbanTask(
-      String(req.params.id || ''),
-      String(req.body?.reason || 'LiquidAIty operator reclaim'),
-    );
-    return res.json({ ok: true, data });
-  } catch (error) {
-    return res.status(409).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'hermes_kanban_reclaim_failed',
-    });
-  }
-});
-
-router.post('/runs/:runId/terminate', async (req, res) => {
-  try {
-    const data = await terminateNativeHermesKanbanRun(
-      String(req.params.runId || ''),
-      String(req.body?.reason || 'LiquidAIty operator terminate'),
-    );
-    return res.json({ ok: true, data });
-  } catch (error) {
-    return res.status(409).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'hermes_kanban_terminate_failed',
-    });
-  }
-});
-
-router.post('/tasks/:id/block', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const reason = String(b.reason ?? '').trim();
-    const args = ['kanban', 'block', id, '--kind', String(b.kind ?? 'needs_input')];
-    if (reason) args.push(reason);
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_block_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_block_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/unblock', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const reason = String(b.reason ?? '');
-    const args = ['kanban', 'unblock'];
-    if (reason.trim()) args.push('--reason', reason.trim());
-    args.push(id);
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_unblock_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_unblock_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/archive', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const { exitCode, stdout, stderr } = await runHermes(['kanban', 'archive', id]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_archive_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_archive_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/promote', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const { exitCode, stdout, stderr } = await runHermes(['kanban', 'promote', id]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_promote_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_promote_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/complete', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const args = ['kanban', 'complete', id];
-    const result = requireAnchor(b, 'result');
-    if (result) args.push('--result', result);
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_complete_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_complete_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/edit', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const result = requireAnchor(b, 'result');
-    if (!result) return fail(res, 400, 'hermes_kanban_edit_result_required');
-    const args = ['kanban', 'edit', id, '--result', result];
-    const summary = requireAnchor(b, 'summary');
-    if (summary) args.push('--summary', summary);
-    const metadata = requireAnchor(b, 'metadata');
-    if (metadata) args.push('--metadata', metadata);
-    const { exitCode, stdout, stderr } = await runHermes(args);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_edit_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_edit_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/comment', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const text = requireAnchor(b, 'text');
-    if (!text) return fail(res, 400, 'hermes_kanban_comment_text_required');
-    const author = requireAnchor(b, 'author') || 'user';
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'comment',
-      id,
-      text,
-      '--author',
-      author,
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_comment_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_comment_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/assign', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const assignee = requireAnchor(b, 'assignee');
-    if (!assignee) return fail(res, 400, 'hermes_kanban_assignee_required');
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'assign',
-      id,
-      assignee,
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_assign_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_assign_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/link', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const parent = requireAnchor(b, 'parent');
-    if (!parent) return fail(res, 400, 'hermes_kanban_link_parent_required');
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'link',
-      parent,
-      id,
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_link_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_link_failed',
-    );
-  }
-});
-
-router.post('/tasks/:id/unlink', async (req, res) => {
-  try {
-    const id = String(req.params.id || '').trim();
-    const b = (req.body || {}) as PostBody;
-    const parent = requireAnchor(b, 'parent');
-    if (!parent) return fail(res, 400, 'hermes_kanban_unlink_parent_required');
-    const { exitCode, stdout, stderr } = await runHermes([
-      'kanban',
-      'unlink',
-      parent,
-      id,
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_unlink_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_unlink_failed',
-    );
-  }
-});
-
-router.post('/dispatch', async (_req, res) => {
-  try {
-    const { exitCode, stdout, stderr } = await runHermes(['kanban', 'dispatch', '--json']);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_kanban_dispatch_failed`, stderr.trim());
-    }
-    return ok(res, parseHermesJson(stdout));
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_kanban_dispatch_failed',
-    );
-  }
-});
-
-router.post('/gateway/restart', async (_req, res) => {
-  try {
-    const { exitCode, stdout, stderr } = await runHermes([
-      'gateway',
-      'restart',
-    ]);
-    if (exitCode !== 0) {
-      return fail(res, 502, `hermes_gateway_restart_failed`, stderr.trim());
-    }
-    return ok(res, { stdout: stdout.trim() });
-  } catch (error) {
-    return fail(
-      res,
-      502,
-      error instanceof Error ? error.message : 'hermes_gateway_restart_failed',
-    );
-  }
-});
-
-export default router;
+// Product Kanban Card startup and the board/manual-control router were removed.
+// The functions above remain internal because ordinary Card Team runs still
+// need exact native task projection, worker correlation, bounded rejoin, and
+// recovery across process restarts.

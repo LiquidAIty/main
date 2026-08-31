@@ -2222,6 +2222,41 @@ def _grounded_data_anchors_schema() -> dict[str, Any]:
     }
 
 
+def _card_team_schema() -> dict[str, Any]:
+    model = {
+        "type": "object",
+        "properties": {
+            "provider": {"type": "string", "minLength": 1},
+            "accessMode": {
+                "type": "string",
+                "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
+            },
+            "modelKey": {"type": "string", "minLength": 1},
+            "providerModelId": {"type": "string", "minLength": 1},
+        },
+        "required": ["provider", "accessMode", "modelKey", "providerModelId"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "description": (
+            "Saved Hermes Team defaults and ceilings. Hermes decides whether and "
+            "when to invoke Team; Python Script cannot invoke it."
+        ),
+        "properties": {
+            "mode": {"type": "string", "enum": ["off", "auto"]},
+            "maxWorkers": {"type": "integer", "enum": [2, 3, 4]},
+            "retryLimit": {"type": "integer", "minimum": 0, "maximum": 4},
+            "workerModel": copy.deepcopy(model),
+            "leadModel": copy.deepcopy(model),
+        },
+        "required": [
+            "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
+        ],
+        "additionalProperties": False,
+    }
+
+
 async def _materialize_complete_catalog() -> list[Tool]:
     global _LATEST_CATALOG_DIAGNOSTIC
 
@@ -2392,7 +2427,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "kind": {"type": "string", "enum": ["hermes", "autogen"]},
                             "mode": {
                                 "type": "string",
-                                "enum": ["main", "delegate", "kanban", "assistant", "magentic_one"],
+                                "enum": ["main", "delegate", "assistant", "magentic_one"],
                             },
                             "profile": {"type": "string", "minLength": 1},
                         },
@@ -2432,6 +2467,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "required": ["provider", "accessMode", "modelKey", "providerModelId"],
                         "additionalProperties": False,
                     },
+                    "team": _card_team_schema(),
                     "tools": {
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
@@ -2478,7 +2514,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "User-directed strict-allowlist update of one persisted card: prompt, title, "
                 "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
-                "temperature, maxTokens, the Hermes subagent model, explicit "
+                "temperature, maxTokens, the Hermes subagent model, saved Team "
+                "defaults and ceilings, explicit "
                 "tool/native-tool/skill/toolset/MCP selections, "
                 "optional Python Card Script source. "
                 "Everything else (runtime code, "
@@ -2524,6 +2561,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                                 "required": ["provider", "accessMode", "modelKey", "providerModelId"],
                                 "additionalProperties": False,
                             },
+                            "team": _card_team_schema(),
                             "script": CardScript.model_json_schema(),
                             "tools": {
                                 "type": "array",
@@ -2615,9 +2653,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 "conversationId is the real live "
                 "conversation this run belongs to, when one exists. Python re-resolves that "
                 "exact bounded graph selection and the receiving Card materializes, retains, "
-                "and reloads one graph-first in.idf before its selected runtime receives it. A Kanban "
-                "submission returns its durable Run and native root promptly; use action=status "
-                "with runId or nativeRootId to rejoin that same Run."
+                "and reloads one graph-first in.idf before its selected runtime receives it. Native "
+                "Team delegation remains inside that Card Run and is rejoined through its persisted "
+                "Run lineage rather than a separate product Card mode."
             ),
             inputSchema={
                 "type": "object",
@@ -3629,7 +3667,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.inspect": {"projectId", "deckId"},
     "card.create": {
         "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
-        "runtime", "model", "subagentModel", "tools", "nativeTools",
+        "runtime", "model", "subagentModel", "team", "tools", "nativeTools",
         "skills", "toolsets", "mcpConnectionIds", "position", "templateId",
     },
     "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},

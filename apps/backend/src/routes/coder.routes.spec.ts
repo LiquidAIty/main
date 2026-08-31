@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
+import { once } from 'node:events';
 import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
@@ -134,59 +135,10 @@ const mainCliBridgeMocks = vi.hoisted(() => ({
 }));
 
 const kanbanMocks = vi.hoisted(() => ({
-  readHermesKanbanSessionUsage: vi.fn(async () => ({
-    toolCallCount: 7,
-    providerInputTokens: 120,
-    providerOutputTokens: 45,
-    providerCachedTokens: 30,
-    providerReasoningTokens: 12,
-    totalCostUsd: 0,
-  })),
-  startNativeHermesKanbanTurn: vi.fn(async (params: any, _onEvent?: unknown, _options?: unknown) => ({
-    done: Promise.resolve({
-      finalText: 'Native root synthesis.',
-      usage: {
-        providerInputTokens: null,
-        providerOutputTokens: null,
-        totalCostUsd: null,
-        usageAvailable: false,
-        usageSource: 'hermes_native_kanban_unavailable',
-        contextBreakdownJson: '',
-      },
-      transport: {
-        threadId: 't_native_root',
-        turnId: '41',
-        authMode: null,
-        planType: 'hermes-native-kanban',
-        nativeTaskId: 't_native_root',
-        nativeRunId: 41,
-        nativeStatus: 'done',
-      },
-    }),
-    cancel: vi.fn(),
-    answer: vi.fn(),
-    resolved: {
-      cardId: params.cardId,
-      provider: params.provider,
-      modelKey: params.modelKey,
-      providerModelId: params.providerModelId,
-    },
-    runtime: {
-      executable: 'hermes-acp.exe',
-      pid: 42,
-      hermesHome: 'Hermes/.hermes',
-      sessionId: 't_native_root',
-      transport: 'hermes-kanban',
-    },
-  })),
+  readHermesKanbanCardSnapshots: vi.fn(async () => []),
 }));
-
 const kanbanRecoveryMocks = vi.hoisted(() => ({
   reconcileTerminalKanbanRun: vi.fn(() => true),
-  startKanbanRunMonitor: vi.fn((_runId: string, monitor: () => Promise<void>) => {
-    void monitor();
-    return true;
-  }),
 }));
 
 const mcpClientMocks = vi.hoisted(() => ({
@@ -563,8 +515,7 @@ vi.mock('../hermes/mainCliBridge', () => ({
 }));
 
 vi.mock('./hermesKanban.routes', () => ({
-  readHermesKanbanSessionUsage: kanbanMocks.readHermesKanbanSessionUsage,
-  startNativeHermesKanbanTurn: kanbanMocks.startNativeHermesKanbanTurn,
+  readHermesKanbanCardSnapshots: kanbanMocks.readHermesKanbanCardSnapshots,
 }));
 
 vi.mock('../hermes/kanbanRunRecovery', () => kanbanRecoveryMocks);
@@ -1156,245 +1107,45 @@ describe('coder routes', () => {
     }
   });
 
-  it('uses ACP to create and join one native Hermes Kanban root task', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
+  it('rejects the retired Kanban Card mode without creating a native root', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
-    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
-    const { server, baseUrl } = await createApiServer();
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/coder', router);
+    const server = app.listen(0);
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_unavailable');
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/coder/mcp-bridge/run_configured_card`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId: 'project-1',
-          deckId: 'deck_builder',
+          projectId: 'project-one',
+          deckId: 'deck-one',
           cardId: 'card_hermes_steward',
-          correlationId: 'corr-steward-1',
-          conversationId: 'conversation-main-1',
-          originatingRunId: 'run-main-parent-1',
-          senderCardId: 'card_main_chat',
-          input: 'Prepare one bounded documentation result.',
           action: 'execute',
-          cardRevisionId: 'revision:card_hermes_steward',
+          input: 'This mode is retired.',
+          runId: 'run-retired',
+          correlationId: 'correlation-retired',
         }),
       });
-      const payload = await response.json();
-      expect(response.status, JSON.stringify(payload)).toBe(202);
-      expect(payload).toMatchObject({
-        ok: true,
-        result: {
-          status: 'queued',
-          state: 'running',
-          runId: 'corr-steward-1',
-          nativeRootId: 't_native_root',
-          runtimeOwner: 'hermes',
-          transport: expect.objectContaining({
-            nativeTaskId: 't_native_root',
-            planType: 'hermes-native-kanban',
-          }),
-          resultReady: false,
-        },
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        error: 'hermes_kanban_card_mode_retired',
       });
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
-      expect(kanbanMocks.startNativeHermesKanbanTurn).toHaveBeenCalledTimes(1);
-      expect(kanbanMocks.startNativeHermesKanbanTurn.mock.calls[0]?.[0]).toMatchObject({
-        cardId: 'card_hermes_steward',
-        title: 'Hermes steward',
-        prompt: 'Saved prompt',
-        runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-        provider: 'openai',
-        providerModelId: 'gpt-5.6-luna',
-        nativeMission: [
-          '## Resolved ThinkGraph',
-          'Native bounded context for think-root-1.',
-          '',
-          'Prepare one bounded documentation result.',
-        ].join('\n'),
-      });
-      await vi.waitFor(() => expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
-        ([endpoint, init]) => endpoint === '/domain/runs/finish'
-          && JSON.parse(String(init?.body || '{}')).state === 'completed',
-      )).toBe(true));
-      const finishCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
-        ([endpoint, init]) => endpoint === '/domain/runs/finish'
-          && JSON.parse(String(init?.body || '{}')).state === 'completed',
-      );
-      expect(JSON.parse(String(finishCall?.[1]?.body || '{}'))).toMatchObject({
-        runId: 'corr-steward-1',
-        providerThreadRef: 't_native_root',
-        providerTurnRef: '41',
-        finalResult: 'Native root synthesis.',
-      });
     } finally {
-      await closeServer(server);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
-
-  it('keeps one Kanban Card Run alive across disconnect, progress, exact retry, and rejoin', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    orchestratorMocks.runRecords.clear();
-    orchestratorMocks.requestFingerprints.clear();
-    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
-    let resolveNative: (value: any) => void = () => undefined;
-    let completed = false;
-    let progressListener: ((progress: any) => Promise<void> | void) | undefined;
-    const cancel = vi.fn();
-    const done = new Promise<any>((resolve) => {
-      resolveNative = (value) => {
-        completed = true;
-        resolve(value);
-      };
-    });
-    kanbanMocks.startNativeHermesKanbanTurn.mockImplementationOnce(
-      async (params: any, _onEvent: unknown, options: any) => {
-        progressListener = options?.onProgress;
-        return {
-          done,
-          cancel,
-          answer: vi.fn(),
-          resolved: {
-            cardId: params.cardId,
-            provider: params.provider,
-            modelKey: params.modelKey,
-            providerModelId: params.providerModelId,
-          },
-          runtime: {
-            executable: 'hermes-acp.exe',
-            pid: 42,
-            hermesHome: 'Hermes/.hermes',
-            sessionId: 't_625de6e8',
-            transport: 'hermes-kanban',
-          },
-        };
-      },
-    );
-    const { server, baseUrl } = await createApiServer();
-    const submission = {
-      projectId: 'project-async',
-      deckId: 'deck_builder',
-      cardId: 'card_hermes_steward',
-      correlationId: 'run-kanban-durable',
-      conversationId: 'conversation-main-async',
-      input: 'Use the retained provider-free lifecycle fixture.',
-      action: 'execute',
-      cardRevisionId: 'revision:card_hermes_steward',
-    };
-    try {
-      const controller = new AbortController();
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify(submission),
-      });
-      expect(response.status).toBe(202);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: true,
-        result: {
-          runId: 'run-kanban-durable',
-          nativeRootId: 't_625de6e8',
-          state: 'running',
-          resultReady: false,
-        },
-      });
-      expect(completed).toBe(false);
-      controller.abort();
-      expect(cancel).not.toHaveBeenCalled();
-
-      await progressListener?.({
-        nativeRootId: 't_625de6e8',
-        nativeRunId: 4,
-        phase: 'working',
-        tasksCompleted: 2,
-        tasksTotal: 5,
-        activeWorkers: 2,
-        workerSessionIds: ['worker-luna-1', 'worker-luna-2'],
-      });
-      const runningResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'status',
-          projectId: 'project-async',
-          deckId: 'deck_builder',
-          runId: 'run-kanban-durable',
-        }),
-      });
-      await expect(runningResponse.json()).resolves.toMatchObject({
-        result: {
-          runId: 'run-kanban-durable',
-          nativeRootId: 't_625de6e8',
-          status: 'working',
-          tasksCompleted: 2,
-          tasksTotal: 5,
-          activeWorkers: 2,
-          graphReads: 2,
-          graphWrites: 1,
-          resultReady: false,
-        },
-      });
-
-      const retryResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...submission, correlationId: 'retry-correlation-must-not-win' }),
-      });
-      await expect(retryResponse.json()).resolves.toMatchObject({
-        result: { runId: 'run-kanban-durable', nativeRootId: 't_625de6e8' },
-      });
-      expect(kanbanMocks.startNativeHermesKanbanTurn).toHaveBeenCalledTimes(1);
-
-      resolveNative({
-        finalText: 'Retained native root synthesis.',
-        usage: chatSessionMocks.usage,
-        transport: { threadId: 't_625de6e8', turnId: '4' },
-      });
-      await vi.waitFor(() => {
-        expect(orchestratorMocks.runRecords.get('run-kanban-durable')).toMatchObject({
-          state: 'completed',
-          finalResult: 'Retained native root synthesis.',
-          toolCallCount: 7,
-          providerCachedTokens: 30,
-          providerReasoningTokens: 12,
-        });
-      });
-      const completeResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'status',
-          projectId: 'project-async',
-          deckId: 'deck_builder',
-          nativeRootId: 't_625de6e8',
-        }),
-      });
-      await expect(completeResponse.json()).resolves.toMatchObject({
-        result: {
-          runId: 'run-kanban-durable',
-          status: 'complete',
-          state: 'completed',
-          output: 'Retained native root synthesis.',
-          toolCallCount: 7,
-          inputTokens: 120,
-          outputTokens: 45,
-          cachedTokens: 30,
-          reasoningTokens: 12,
-          resultReady: true,
-        },
-      });
-      expect(orchestratorMocks.runRecords).toHaveLength(1);
-      expect(cancel).not.toHaveBeenCalled();
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('starts same-ID terminal reconciliation from status without creating another Run or root', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
     kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
-    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
     orchestratorMocks.runRecords.set('run-failed-transport', {
       runId: 'run-failed-transport',
       correlationId: 'run-failed-transport',
@@ -1438,7 +1189,6 @@ describe('coder routes', () => {
         runtimeProfile: 'liquidaity-hermes-steward',
       });
       expect(orchestratorMocks.runRecords).toHaveLength(1);
-      expect(kanbanMocks.startNativeHermesKanbanTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -1448,7 +1198,6 @@ describe('coder routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
-    kanbanMocks.startNativeHermesKanbanTurn.mockClear();
     orchestratorMocks.runRecords.set('run-failed-transport', {
       runId: 'run-failed-transport',
       correlationId: 'run-failed-transport',
@@ -1485,47 +1234,42 @@ describe('coder routes', () => {
         },
       });
       expect(kanbanRecoveryMocks.reconcileTerminalKanbanRun).not.toHaveBeenCalled();
-      expect(kanbanMocks.startNativeHermesKanbanTurn).not.toHaveBeenCalled();
       expect(orchestratorMocks.runRecords).toHaveLength(1);
     } finally {
       await closeServer(server);
     }
   });
 
-  it('fails Kanban closed without retrying through ordinary ACP', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
+  it('does not fall back to ordinary ACP for the retired Kanban Card mode', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
-    kanbanMocks.startNativeHermesKanbanTurn.mockRejectedValueOnce(
-      new Error('hermes_kanban_gateway_not_running'),
-    );
-    const { server, baseUrl } = await createApiServer();
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/coder', router);
+    const server = app.listen(0);
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('server_address_unavailable');
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/coder/mcp-bridge/run_configured_card`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectId: 'project-1',
-          deckId: 'deck_builder',
+          projectId: 'project-one',
+          deckId: 'deck-one',
           cardId: 'card_hermes_steward',
-          correlationId: 'corr-steward-failed',
-          conversationId: 'conversation-main-1',
-          senderCardId: 'card_main_chat',
-          input: 'Fail closed.',
           action: 'execute',
+          input: 'No fallback.',
+          runId: 'run-retired-no-fallback',
+          correlationId: 'correlation-retired-no-fallback',
         }),
       });
       expect(response.status).toBe(502);
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
-      const failedFinish = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
-        ([endpoint, init]) => endpoint === '/domain/runs/finish'
-          && JSON.parse(String(init?.body || '{}')).state === 'failed',
-      );
-      expect(failedFinish).toBeTruthy();
     } finally {
-      await closeServer(server);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
-
   it('runs the preserved Coder Card through one Python materialization', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();

@@ -29,7 +29,7 @@ const runtimeOptions = {
   ok: true,
   fields: [
     { name: 'runtimeKind', options: ['hermes', 'autogen'] },
-    { name: 'runtimeMode', options: ['main', 'delegate', 'kanban', 'assistant', 'magentic_one'] },
+    { name: 'runtimeMode', options: ['main', 'delegate', 'assistant', 'magentic_one'] },
     { name: 'provider', options: ['openai', 'openrouter'] },
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
     { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
@@ -253,7 +253,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script'] as const;",
+      "const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script', 'Subagents'] as const;",
     );
     expect(source).toContain("activeTab === 'CLI' && showTaskComposer");
     expect(source).toContain('agent-manager-prompt-surface');
@@ -425,7 +425,7 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(chatSource).toContain("'nativeEvents'");
-    expect(source).toContain('card-script-native-receipts');
+    expect(source).toContain('card-native-telemetry');
     expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent']");
     expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent']");
     expect(chatSource).toContain('onCardReviewStaged');

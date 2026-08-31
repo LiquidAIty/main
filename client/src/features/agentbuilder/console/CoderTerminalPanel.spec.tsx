@@ -127,6 +127,34 @@ describe('CoderTerminalPanel', () => {
     expect(xtermProps.current?.connectOutput).toBeTypeOf('function');
   });
 
+  it('renders only Main execution projections and never subscribes to raw PTY output', async () => {
+    const live = { ...session(), ownerCardId: 'card_main_chat', profile: 'liquidaity-main' };
+    const terminalClient = client({ listSessions: vi.fn(async () => [live]) });
+    const base = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
+      cardName: 'Main Chat', runId: 'run-1', parentRunId: null, nativeChildId: null,
+      schemaVersion: 'liquidaity.main.projection.v1' as const, nativeTurnId: 'turn-1' };
+    await render(<CoderTerminalPanel open client={terminalClient} ownerCardId="card_main_chat"
+      testIdPrefix="main-cli" title="Main CLI Terminal" readOnly activityState="running"
+      semanticEvents={[
+        { ...base, id: 'answer-1', category: 'conversation.answer', kind: 'model',
+          sequence: 1, timestamp: null, text: 'Do not render this final answer.' },
+        { ...base, id: 'tool-1', category: 'execution.tool', kind: 'tool_call',
+          sequence: 2, timestamp: null, toolName: 'main.context', status: 'started', detail: 'read-only context' },
+        { ...base, id: 'progress-1', category: 'execution.progress', kind: 'task',
+          sequence: 3, timestamp: null, text: 'Visible execution progress' },
+      ]} />);
+    await act(async () => Promise.resolve());
+
+    expect(host?.querySelector('[data-testid="main-cli-semantic-output"]')?.getAttribute('data-session-id'))
+      .toBe(live.id);
+    expect(host?.textContent).toContain('main.context');
+    expect(host?.textContent).toContain('Visible execution progress');
+    expect(host?.textContent).not.toContain('Do not render this final answer.');
+    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).toBeNull();
+    expect(terminalClient.streamOutput).not.toHaveBeenCalled();
+    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+  });
+
   it('reports a missing startup-owned terminal without trying to create one from the UI', async () => {
     const terminalClient = client();
     await render(<CoderTerminalPanel open client={terminalClient} />);

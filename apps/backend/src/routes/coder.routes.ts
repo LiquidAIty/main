@@ -26,7 +26,9 @@ import {
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
 import { readSavedSubagentModel } from '../hermes/subagentModel';
+import { readSavedTeamConfig } from '../hermes/teamConfig';
 import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
+import { projectMainRuntimeEvent } from '../hermes/mainProjection';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { listConversations } from '../conversations/store';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
@@ -54,13 +56,10 @@ import {
 } from '../hermes/childExecutionContext';
 import {
   reconcileTerminalKanbanRun,
-  startKanbanRunMonitor,
 } from '../hermes/kanbanRunRecovery';
 import {
-  readHermesKanbanSessionUsage,
   readHermesKanbanCardSnapshots,
-  startNativeHermesKanbanTurn,
-  type HermesKanbanProgress,
+  readHermesTeamReceipt,
 } from './hermesKanban.routes';
 
 const router = Router();
@@ -605,7 +604,6 @@ type PreparedHermesTransportArgs = {
   parentRunId?: string;
   workingDirectory?: string;
   onEvent: (event: HermesSessionEvent) => void;
-  onKanbanProgress?: (progress: HermesKanbanProgress) => Promise<void> | void;
 };
 
 function resolveHermesTurnArgs(
@@ -626,6 +624,7 @@ function resolveHermesTurnArgs(
     throw new Error('prepared_hermes_transport_invalid');
   }
   const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
+  const savedTeam = readSavedTeamConfig(input.runtimeOptions?.team);
   const scriptState = input.runtimeOptions?.script;
   const scriptCompiled = scriptState?.compiled;
   const scriptPresentation = input.scriptPresentation;
@@ -637,7 +636,7 @@ function resolveHermesTurnArgs(
     && Number.isInteger(scriptState?.version)
     && Number(scriptState.version) >= 1
     && scriptCompiled && typeof scriptCompiled === 'object'
-    && scriptCompiled.mode === 'outer_controller'
+    && scriptCompiled.mode === 'tool_recipe'
     ? {
         version: Number(scriptState.version),
         source: scriptState.source,
@@ -657,12 +656,6 @@ function resolveHermesTurnArgs(
         maxOutputBytes: Number(scriptCompiled.maxOutputBytes),
       }
     : undefined;
-  const scriptDeclaresCardInput = Boolean(
-    script
-    && script.inputSchema
-    && typeof script.inputSchema === 'object'
-    && (script.inputSchema as any).properties?.card,
-  );
   return {
     cardId: String(identity.cardId || ''),
     title: String(identity.title || ''),
@@ -674,6 +667,7 @@ function resolveHermesTurnArgs(
     ...(savedSubagentModel
       ? { subagentModel: savedSubagentModel }
       : {}),
+    ...(savedTeam ? { team: savedTeam } : {}),
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.presentedTools)
       ? input.presentedTools
@@ -685,22 +679,6 @@ function resolveHermesTurnArgs(
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     ...(script ? { script } : {}),
-    ...(script ? {
-      scriptInput: {
-        mission: String(input.task || input.message || ''),
-        ...(scriptDeclaresCardInput ? {
-          card: {
-            revisionId: String(args.prepared?.cardRevisionId || ''),
-            defaultPrompt: String(input.message || ''),
-            blocks: [
-              { id: 'graph.context', content: String(input.graphContext || '') },
-              { id: 'card.output_requirements', content: String(input.outputRequirements || '') },
-              { id: 'run.mission', content: String(input.task || '') },
-            ],
-          },
-        } : {}),
-      },
-    } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -738,13 +716,7 @@ async function startPreparedHermesTransport(
       .join('\n\n');
   }
   if (turnArgs.runtime.mode === 'kanban') {
-    const mission = String(input.kanbanMission || '');
-    if (!mission.trim()) throw new Error('prepared_hermes_kanban_mission_missing');
-    return startNativeHermesKanbanTurn(
-      { ...turnArgs, nativeMission: mission },
-      args.onEvent,
-      { onProgress: args.onKanbanProgress },
-    );
+    throw new Error('hermes_kanban_card_mode_retired');
   }
   return startHermesTurn(turnArgs, args.onEvent);
 }
@@ -763,6 +735,7 @@ type ConfiguredCardRunStatus = {
   tasksCompleted: number;
   tasksTotal: number;
   activeWorkers: number;
+  teamReceipt: ReturnType<typeof readHermesTeamReceipt>;
   elapsedMs: number;
   toolCallCount: number;
   graphReads: number;
@@ -782,6 +755,34 @@ type ConfiguredCardRunStatus = {
 function nonNegativeNumber(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+function readCardScriptToolExecution(events: HermesSessionEvent[]): {
+  invoked: boolean;
+  isError: boolean;
+  receipt: Record<string, unknown> | null;
+  fallback: Record<string, unknown> | null;
+} {
+  const result = [...events].reverse().find((event) => (
+    event.kind === 'tool_result' && event.toolName === 'execute_host_script'
+  ));
+  const invoked = events.some((event) => (
+    event.kind === 'tool_start' && event.toolName === 'execute_host_script'
+  ));
+  if (!result || result.kind !== 'tool_result') {
+    return { invoked, isError: false, receipt: null, fallback: null };
+  }
+  try {
+    const parsed = JSON.parse(result.output);
+    return {
+      invoked: true,
+      isError: result.isError || parsed?.ok === false,
+      receipt: parsed?.receipt && typeof parsed.receipt === 'object' ? parsed.receipt : null,
+      fallback: parsed?.fallback && typeof parsed.fallback === 'object' ? parsed.fallback : null,
+    };
+  } catch {
+    return { invoked: true, isError: result.isError, receipt: null, fallback: null };
+  }
 }
 
 async function readConfiguredCardRunStatus(args: {
@@ -804,13 +805,14 @@ async function readConfiguredCardRunStatus(args: {
   const runId = String(run.runId || '').trim();
   const state = String(run.state || 'running');
   const nativeRootId = String(run.nativeRootId || '').trim();
+  const nativeTeamRoot = /^t_[A-Za-z0-9_-]+$/.test(nativeRootId);
   if (
     args.reconcileTerminal !== false
     && (state === 'failed' || state === 'cancelled')
     && nativeRootId
     && !String(run.result || '').trim()
     && String(run.runtimeKind || '') === 'hermes'
-    && String(run.runtimeMode || '') === 'kanban'
+    && nativeTeamRoot
   ) {
     reconcileTerminalKanbanRun({
       runId,
@@ -853,14 +855,18 @@ async function readConfiguredCardRunStatus(args: {
     ? run.result
     : null;
   let terminal: ReturnType<typeof buildCardTerminal> | undefined;
+  let teamReceipt: ReturnType<typeof readHermesTeamReceipt> = null;
   if (args.includeTerminal) {
     terminal = buildCardTerminal(run, run.runtimeKind === 'hermes'
       ? readHermesRunSnapshot(String(run.runtimeProfile || ''), runId) : null);
-    if (run.runtimeKind === 'hermes' && run.runtimeMode === 'kanban' && nativeRootId) {
+    if (run.runtimeKind === 'hermes' && nativeTeamRoot) {
       try {
-        terminal = projectKanbanTerminal(run, await readHermesKanbanCardSnapshots({
+        const snapshots = await readHermesKanbanCardSnapshots({
           nativeRootId, projectId: String(run.projectId), cardId: String(run.cardId),
-        }));
+          teamRoot: run.runtimeMode !== 'kanban',
+        });
+        teamReceipt = readHermesTeamReceipt(snapshots);
+        terminal = projectKanbanTerminal(run, snapshots);
       } catch (error) {
         terminal = { ...terminal, observation: 'unavailable',
           unavailableReason: terminalText(error instanceof Error ? error.message : 'kanban_observation_failed') };
@@ -893,6 +899,7 @@ async function readConfiguredCardRunStatus(args: {
     tasksCompleted: nonNegativeNumber(run.tasksCompleted),
     tasksTotal: nonNegativeNumber(run.tasksTotal),
     activeWorkers: nonNegativeNumber(run.activeWorkers),
+    teamReceipt,
     elapsedMs,
     toolCallCount: nonNegativeNumber(run.toolCallCount),
     graphReads,
@@ -1093,155 +1100,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.json({ ok: true, result: status });
     }
 
-    const runtimeMode = String(prepared?.hermesTransport?.request?.runtime?.mode || '').trim();
-    if (prepared.runtimeOwner === 'hermes' && runtimeMode === 'kanban') {
-      let latestProgress: HermesKanbanProgress | null = null;
-      const persistProgress = async (progress: HermesKanbanProgress): Promise<void> => {
-        latestProgress = progress;
-        await requestPythonRailsJson('/domain/runs/progress', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            runId,
-            nativeRootId: progress.nativeRootId,
-            nativeRunId: progress.nativeRunId,
-            nativePhase: progress.phase,
-            tasksCompleted: progress.tasksCompleted,
-            tasksTotal: progress.tasksTotal,
-            activeWorkers: progress.activeWorkers,
-          }),
-        });
-      };
-      let hermesHandle: HermesTurnHandle;
-      try {
-        hermesHandle = await startPreparedHermesTransport({
-          prepared,
-          projectId,
-          deckId,
-          conversationId,
-          parentRunId: runId,
-          onEvent: () => undefined,
-          onKanbanProgress: (progress) => persistProgress(progress).catch((error) => {
-            logHarnessTrace(
-              `[harness] configured-card progress persistence failed run=${runId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-            );
-          }),
-        });
-        const nativeRootId = String(hermesHandle.runtime.sessionId || '').trim();
-        if (!nativeRootId) throw new Error('hermes_kanban_card_task_id_missing');
-        latestProgress = {
-          nativeRootId,
-          nativeRunId: null,
-          phase: 'queued',
-          tasksCompleted: 0,
-          tasksTotal: 1,
-          activeWorkers: 0,
-          workerSessionIds: [],
-        };
-        await persistProgress(latestProgress);
-
-        const monitor = async (): Promise<void> => {
-          try {
-            const response = await hermesHandle.done;
-            const progress = latestProgress ?? {
-              nativeRootId,
-              nativeRunId: null,
-              phase: 'complete' as const,
-              tasksCompleted: 1,
-              tasksTotal: 1,
-              activeWorkers: 0,
-              workerSessionIds: [],
-            };
-            let usage = {
-              toolCallCount: 0,
-              providerInputTokens: 0,
-              providerOutputTokens: 0,
-              providerCachedTokens: 0,
-              providerReasoningTokens: 0,
-              totalCostUsd: 0,
-            };
-            try {
-              usage = await readHermesKanbanSessionUsage(
-                String(prepared.hermesTransport.request.runtime.profile || ''),
-                progress.workerSessionIds,
-              );
-            } catch (error) {
-              logHarnessTrace(
-                `[harness] configured-card usage read failed run=${runId} reason=${redactTrace(error instanceof Error ? error.message : String(error))}`,
-              );
-            }
-            await requestPythonRailsJson('/domain/runs/finish', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                runId,
-                state: 'completed',
-                providerThreadRef: nativeRootId,
-                providerTurnRef: response.transport?.turnId || progress.nativeRunId,
-                nativePhase: 'complete',
-                tasksCompleted: Math.max(progress.tasksCompleted, progress.tasksTotal),
-                tasksTotal: progress.tasksTotal,
-                activeWorkers: 0,
-                ...usage,
-                finalResult: response.finalText,
-              }),
-            });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
-            const blocked = message === 'hermes_kanban_card_blocked';
-            await requestPythonRailsJson('/domain/runs/finish', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                runId,
-                state: blocked ? 'blocked' : 'failed',
-                providerThreadRef: nativeRootId,
-                providerTurnRef: latestProgress?.nativeRunId || null,
-                nativePhase: blocked ? 'blocked' : 'failed',
-                tasksCompleted: latestProgress?.tasksCompleted || 0,
-                tasksTotal: latestProgress?.tasksTotal || 1,
-                activeWorkers: 0,
-                errorCode: 'configured_card_transport_failed',
-                errorSummary: message,
-              }),
-            }).catch(() => undefined);
-          }
-        };
-        startKanbanRunMonitor(runId, monitor);
-        return res.status(202).json({
-          ok: true,
-          result: {
-            status: 'queued',
-            state: 'running',
-            runId,
-            correlationId: String(prepared.correlationId || correlationId),
-            cardId,
-            runtimeOwner: prepared.runtimeOwner,
-            cardRevisionId: prepared.cardRevisionId,
-            nativeRootId,
-            transport: {
-              nativeTaskId: nativeRootId,
-              planType: 'hermes-native-kanban',
-            },
-            resultReady: false,
-          },
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
-        await requestPythonRailsJson('/domain/runs/finish', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            runId,
-            state: 'failed',
-            nativePhase: 'failed',
-            errorCode: 'configured_card_transport_failed',
-            errorSummary: message,
-          }),
-        }).catch(() => undefined);
-        throw error;
-      }
-    }
 
     let hermesHandle: HermesTurnHandle | null = null;
     let runFinalized = false;
@@ -1278,8 +1136,6 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             if (
               event.kind === 'tool_start'
               || event.kind === 'tool_result'
-              || event.kind === 'script_start'
-              || event.kind === 'script_result'
             ) {
               nativeEvents.push(event);
             }
@@ -1298,6 +1154,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       } else {
         throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
       }
+      const scriptToolExecution = readCardScriptToolExecution(nativeEvents);
       const finished = await finishRun('completed', {
         providerThreadRef: hermesHandle?.runtime?.sessionId || transport?.threadId || null,
         providerTurnRef: transport?.turnId || null,
@@ -1309,7 +1166,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           ? {
               cardScriptExecution: {
                 schemaVersion: 'liquidaity.card-script.run-execution.v1',
-                presentationMode: transport?.scriptFallback ? 'degraded-script-mcp' : 'script',
+                presentationMode: scriptToolExecution.fallback?.activated
+                  ? 'selected-mcp-fallback'
+                  : scriptToolExecution.invoked ? 'model-tool-invoked' : 'model-tool-available',
                 version: prepared.hermesTransport.request.runtimeOptions?.script?.version,
                 sourceHash: prepared.hermesTransport.request.runtimeOptions?.script?.sourceHash,
                 compiledHash: prepared.hermesTransport.request.runtimeOptions?.script?.compiledHash,
@@ -1321,16 +1180,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
                 timeoutSeconds: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.timeoutSeconds,
                 maxToolCalls: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.maxToolCalls,
                 maxOutputBytes: prepared.hermesTransport.request.runtimeOptions?.script?.compiled?.maxOutputBytes,
-                receipt: transport?.scriptReceipt || null,
-                fallback: transport?.scriptFallback || null,
-                controller: transport?.scriptControl || null,
-                agentStage: {
-                  invoked: providerInputTokens !== null || providerOutputTokens !== null,
-                  provider: prepared.hermesTransport.request.provider?.provider || null,
-                  model: prepared.hermesTransport.request.provider?.providerModelId || null,
-                  inputTokens: providerInputTokens,
-                  outputTokens: providerOutputTokens,
-                },
+                modelTool: { name: 'execute_host_script', invoked: scriptToolExecution.invoked },
+                receipt: scriptToolExecution.receipt,
+                fallback: scriptToolExecution.fallback,
               },
             }
           : {}),
@@ -1368,19 +1220,20 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
       const cancelled = message === 'hermes_turn_cancelled';
-      const scriptResultEvent = [...nativeEvents].reverse().find((event) => event.kind === 'script_result') as
-        | Extract<HermesSessionEvent, { kind: 'script_result' }>
-        | undefined;
+      const scriptToolExecution = readCardScriptToolExecution(nativeEvents);
+      const scriptConfigured = prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script';
       await finishRun(cancelled ? 'cancelled' : 'failed', {
         providerThreadRef: hermesHandle?.runtime?.sessionId || null,
         nativePhase: cancelled ? 'cancelled' : 'failed',
         errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
         errorSummary: message,
-        ...(transport?.scriptReceipt || transport?.scriptFallback || scriptResultEvent
+        ...(scriptConfigured
           ? {
               cardScriptExecution: {
                 schemaVersion: 'liquidaity.card-script.run-execution.v1',
-                presentationMode: transport?.scriptFallback ? 'degraded-script-mcp' : 'script-failed',
+                presentationMode: scriptToolExecution.fallback?.activated
+                  ? 'selected-mcp-fallback'
+                  : scriptToolExecution.invoked ? 'model-tool-invoked' : 'model-tool-available',
                 version: prepared.hermesTransport?.request?.runtimeOptions?.script?.version,
                 sourceHash: prepared.hermesTransport?.request?.runtimeOptions?.script?.sourceHash,
                 compiledHash: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiledHash,
@@ -1389,10 +1242,9 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
                 orderedToolStages: prepared.hermesTransport?.request?.runtimeOptions?.script?.compiled?.toolHandles || [],
                 presentedTools: prepared.hermesTransport?.request?.presentedTools || [],
                 executor: 'hermes-native-python-child',
-                receipt: transport?.scriptReceipt || scriptResultEvent?.receipt || null,
-                fallback: transport?.scriptFallback || scriptResultEvent?.fallback || null,
-                controller: transport?.scriptControl || null,
-                agentStage: { invoked: false },
+                modelTool: { name: 'execute_host_script', invoked: scriptToolExecution.invoked },
+                receipt: scriptToolExecution.receipt,
+                fallback: scriptToolExecution.fallback,
               },
             }
           : {}),
@@ -1656,6 +1508,17 @@ router.post('/main/session/chat', async (req, res) => {
     cardId: run.cardId,
     runId: run.runId,
   };
+  const projectionIdentity = {
+    projectId,
+    deckId,
+    cardId: run.cardId,
+    cardName: String(
+      run.prepared.hermesTransport?.cardIdentity?.title
+      || run.prepared.hermesTransport?.cardIdentity?.cardName
+      || 'Main Chat',
+    ),
+    runId: run.runId,
+  };
   const writeSse = (eventName: string, payload: Record<string, unknown>): boolean => {
     if (res.destroyed || res.writableEnded) return false;
     res.write(`event: ${eventName}\ndata: ${JSON.stringify({ ...payload, ...eventIdentity })}\n\n`);
@@ -1688,8 +1551,14 @@ router.post('/main/session/chat', async (req, res) => {
               honchoTurnStatus: 'native_fail_open',
             },
           });
-        } else if (event.kind === 'text' && event.delta) {
-          writeSse('text', { text: event.delta });
+        } else if (event.kind === 'projection' && event.projection) {
+          const projection = projectMainRuntimeEvent(projectionIdentity, event.projection);
+          writeSse('projection', {
+            projection,
+            ...(projection.category.startsWith('execution.')
+              ? { terminalEvent: projection }
+              : {}),
+          });
         }
       },
     );

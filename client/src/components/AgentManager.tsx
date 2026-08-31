@@ -23,9 +23,11 @@ import AdaptiveCardTerminal, {
   usesAdaptiveCardTerminal,
   type CardTerminalObservation,
 } from '../features/agentbuilder/console/AdaptiveCardTerminal';
+import CardSubagentsTab from '../features/agentbuilder/team/CardTeamTab';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
+type SavedTeamConfig = NonNullable<AgentCardRuntimeOptions['team']>;
 type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
@@ -33,6 +35,19 @@ const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   modelKey: 'gpt-5.6-luna',
   providerModelId: 'gpt-5.6-luna',
 };
+
+function defaultTeamConfig(
+  model: SavedSubagentModel = DEFAULT_SUBAGENT_MODEL,
+  mode: SavedTeamConfig['mode'] = 'off',
+): SavedTeamConfig {
+  return {
+    mode,
+    maxWorkers: 2,
+    retryLimit: 1,
+    workerModel: { ...model },
+    leadModel: { ...model },
+  };
+}
 
 function blankCardScript(): SavedCardScript {
   return {
@@ -238,7 +253,6 @@ interface AgentManagerProps {
   onRejoinCard?: () => void;
   onClearInvocation?: () => void;
   onOpenCoderTerminal?: () => void;
-  onOpenHermesKanban?: () => void;
   onOpenMainChat?: () => void;
   terminalContent?: React.ReactNode;
   onRemoveGraphReference?: (authority: string, nativeId: string) => void;
@@ -312,6 +326,19 @@ export type StandaloneCardTestResult = {
   tasksCompleted?: number;
   tasksTotal?: number;
   activeWorkers?: number;
+  teamReceipt?: {
+    schemaVersion: string;
+    source: string;
+    mode: 'auto';
+    maxWorkers: number;
+    retryLimit: number;
+    maxRetries: number;
+    workerProvider: string;
+    workerModel: string;
+    leadProvider: string;
+    leadModel: string;
+    maxDepth: number;
+  } | null;
   resultReady?: boolean;
   inputTokens?: number;
   outputTokens?: number;
@@ -546,7 +573,6 @@ export function AgentManager({
   onRejoinCard,
   onClearInvocation,
   onOpenCoderTerminal,
-  onOpenHermesKanban,
   onOpenMainChat,
   onRemoveGraphReference,
   onMoveGraphReference,
@@ -581,6 +607,7 @@ export function AgentManager({
   >('');
   const [modelKey, setModelKey] = useState('');
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
+  const [teamConfig, setTeamConfig] = useState<SavedTeamConfig>(defaultTeamConfig());
   const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
@@ -779,6 +806,25 @@ export function AgentManager({
         ? savedSubagentModel
         : DEFAULT_SUBAGENT_MODEL,
     );
+    const parentModel: SavedSubagentModel | null = (
+      localConfig.runtime.kind === 'hermes'
+      && localConfig.provider
+      && localConfig.model_key
+    ) ? {
+        provider: localConfig.provider,
+        accessMode: localConfig.access_mode === 'openrouter-api'
+          || localConfig.access_mode === 'openai-api'
+          || localConfig.access_mode === 'chatgpt-account'
+          ? localConfig.access_mode
+          : subagentAccessMode(localConfig.provider),
+        modelKey: localConfig.model_key,
+        providerModelId: localConfig.runtime_options?.providerModelId || localConfig.model_key,
+      } : null;
+    setTeamConfig(
+      localConfig.runtime.kind === 'hermes' && localConfig.runtime_options?.team
+        ? structuredClone(localConfig.runtime_options.team)
+        : defaultTeamConfig(parentModel || savedSubagentModel || DEFAULT_SUBAGENT_MODEL),
+    );
     const savedScript = localConfig.runtime_options?.script
       ? structuredClone(localConfig.runtime_options.script)
       : blankCardScript();
@@ -970,6 +1016,7 @@ export function AgentManager({
           ? parseListText(disabledToolsText)
           : [],
         subagentModel: runtimeKind === 'hermes' ? subagentModel : null,
+        team: runtimeKind === 'hermes' ? teamConfig : null,
         ...(
           localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
             ? { script: scriptDraft }
@@ -988,6 +1035,7 @@ export function AgentManager({
     accessMode,
     modelKey,
     subagentModel,
+    teamConfig,
     scriptDraft,
     reasoningEffort,
     temperature,
@@ -1249,7 +1297,7 @@ export function AgentManager({
   const accessModeOptions = accessModeField?.options || [];
   const runtimeModeOptions = (runtimeModeField?.options || []).filter((option) =>
     runtimeKind === 'hermes'
-      ? ['main', 'delegate', 'kanban'].includes(option.value)
+      ? ['main', 'delegate'].includes(option.value)
       : ['assistant', 'magentic_one'].includes(option.value),
   );
   const runtimeDictionaryReady = Boolean(
@@ -1568,7 +1616,7 @@ export function AgentManager({
           runtimeKind={runtimeKind}
           script={scriptDraft}
           toolCatalogPolicy={runtimeKind === 'hermes'
-            ? (localConfig.runtime_options?.toolCatalogPolicy === 'selected' ? 'selected' : 'all_healthy')
+            ? (localConfig?.runtime_options?.toolCatalogPolicy === 'selected' ? 'selected' : 'all_healthy')
             : 'selected'}
           selectedTools={savedToolNames}
           disabledTools={disabledToolNames}
@@ -2245,11 +2293,6 @@ export function AgentManager({
                       Open Coder terminal
                     </button>
                   ) : null}
-                  {localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'kanban' && onOpenHermesKanban ? (
-                    <button type="button" data-testid="open-hermes-kanban" onClick={onOpenHermesKanban}>
-                      Open native Kanban
-                    </button>
-                  ) : null}
                 </>
               ) : (
                 <div style={{ color: '#80969F', fontSize: 11 }}>Profile state has not been read yet.</div>
@@ -2681,6 +2724,19 @@ export function AgentManager({
           ? renderSectionBody('Tools')
           : activeTab === 'Script'
             ? renderSectionBody('Script')
+            : activeTab === 'Subagents' && localConfig
+              ? (
+                  <CardSubagentsTab
+                    runtime={buildEditedCardRuntime(runtimeKind, runtimeMode, hermesProfile || cardId)}
+                    team={teamConfig}
+                    modelOptions={subagentCatalogOptions}
+                    onChange={(next) => {
+                      setTeamConfig(next);
+                      markDraftDirty();
+                    }}
+                    currentRun={runResult}
+                  />
+                )
             : null;
 
   if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) {
@@ -2948,9 +3004,9 @@ export function AgentManager({
           </div>
         ) : null}
         {activeTab === 'CLI' && runResult?.nativeEvents?.length ? (
-          <details data-testid="card-script-native-receipts" style={{ color: '#B8C8CD', fontSize: 11 }}>
+          <details data-testid="card-native-telemetry" style={{ color: '#B8C8CD', fontSize: 11 }}>
             <summary style={{ cursor: 'pointer' }}>
-              Native tool and Script receipts ({runResult.nativeEvents.length})
+              Native tool and Script telemetry ({runResult.nativeEvents.length})
             </summary>
             <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
               {JSON.stringify(runResult.nativeEvents, null, 2)}

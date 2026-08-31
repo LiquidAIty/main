@@ -33,7 +33,7 @@ export type AgentCardRuntimeOptions = {
     paletteFingerprint?: string;
     compiled?: {
       schemaVersion?: string;
-      mode?: 'outer_controller';
+      mode?: 'tool_recipe';
       inputSchema?: Record<string, unknown>;
       outputSchema?: Record<string, unknown>;
       toolHandles?: string[];
@@ -62,6 +62,24 @@ export type AgentCardRuntimeOptions = {
     accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
     modelKey: string;
     providerModelId: string;
+  } | null;
+  /** Saved Card-owned defaults and ceilings for native Hermes Team. */
+  team?: {
+    mode: 'off' | 'auto';
+    maxWorkers: 2 | 3 | 4;
+    retryLimit: number;
+    workerModel: {
+      provider: string;
+      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
+      modelKey: string;
+      providerModelId: string;
+    };
+    leadModel: {
+      provider: string;
+      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
+      modelKey: string;
+      providerModelId: string;
+    };
   } | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;

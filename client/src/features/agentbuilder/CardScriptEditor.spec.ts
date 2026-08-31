@@ -13,14 +13,16 @@ import {
 } from './CardScriptEditor';
 
 describe('CardScriptEditor Monaco contract', () => {
-  it('keeps the executable starter organized around the five Card control sections', () => {
+  it('keeps the executable starter limited to the three model-tool recipe sections', () => {
     for (const section of SCRIPT_SECTIONS) {
       expect(STARTER_SCRIPT).toContain(`# region ${section}`);
     }
-    expect(STARTER_SCRIPT.match(/# region /g)).toHaveLength(5);
-    expect(STARTER_SCRIPT.match(/# endregion/g)).toHaveLength(5);
-    expect(STARTER_SCRIPT).toContain('"mode": "outer_controller"');
+    expect(STARTER_SCRIPT.match(/# region /g)).toHaveLength(3);
+    expect(STARTER_SCRIPT.match(/# endregion/g)).toHaveLength(3);
+    expect(STARTER_SCRIPT).toContain('"mode": "tool_recipe"');
     expect(STARTER_SCRIPT).toContain('output.emit({');
+    expect(STARTER_SCRIPT).not.toContain('card.subagents');
+    expect(STARTER_SCRIPT).not.toContain('delegate_task');
   });
 
   it('offers disabled-by-default examples using only canonical graph operations', () => {

@@ -77,6 +77,38 @@ describe('Main chat live observation callbacks', () => {
     expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
     expect(result.current.messages).toEqual([{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Actual reply' }]);
   });
+
+  it('projects input and final answer into Chat exactly once while execution stays terminal-only', async () => {
+    const base = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
+      cardName: 'Main Chat', runId: 'server-run', parentRunId: null, nativeChildId: null,
+      schemaVersion: 'liquidaity.main.projection.v1' as const, nativeTurnId: 'turn-1',
+      timestamp: '2026-08-31T12:00:00.000Z' };
+    const input = { ...base, id: 'input-1', category: 'conversation.input' as const,
+      kind: 'mission' as const, sequence: 1, text: 'Question' };
+    const tool = { ...base, id: 'tool-1', category: 'execution.tool' as const,
+      kind: 'tool_call' as const, sequence: 2, toolName: 'main.context', status: 'started', detail: 'context read' };
+    const answer = { ...base, id: 'answer-1', category: 'conversation.answer' as const,
+      kind: 'model' as const, sequence: 3, status: 'completed', text: 'Short answer.' };
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({ kind: 'projection', runId: 'server-run', projection: input });
+      onEvent({ kind: 'projection', runId: 'server-run', projection: input });
+      onEvent({ kind: 'projection', runId: 'server-run', projection: tool, terminalEvent: tool });
+      onEvent({ kind: 'projection', runId: 'server-run', projection: tool, terminalEvent: tool });
+      onEvent({ kind: 'projection', runId: 'server-run', projection: answer });
+      onEvent({ kind: 'projection', runId: 'server-run', projection: answer });
+      return { finalText: 'Short answer.' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({ canvasProjectId: 'project-1',
+      deckId: 'deck_builder', conversationId: 'main' }));
+    await act(async () => { await result.current.requestMainText('Question'); });
+
+    expect(result.current.messages).toEqual([
+      { role: 'user', text: 'Question' },
+      { role: 'assistant', text: 'Short answer.' },
+    ]);
+    expect(result.current.technicalEvents).toEqual([tool]);
+    expect(JSON.stringify(result.current.technicalEvents)).not.toContain('Short answer.');
+  });
   it('accepts optional editor review with no selected graph data and no IDF', () => {
     expect(parseStagedCardReviewLoaded({
       ok: true,

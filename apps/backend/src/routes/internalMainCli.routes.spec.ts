@@ -65,7 +65,21 @@ describe('internal Main CLI bridge routes', () => {
       });
 
       for (const event of [
-        { ...candidate, kind: 'text', delta: 'answer' },
+        {
+          ...candidate,
+          kind: 'projection',
+          projection: {
+            schemaVersion: 'liquidaity.main.projection.v1',
+            id: 'turn-1:conversation.answer:completed',
+            category: 'conversation.answer',
+            sequence: 1,
+            timestamp: '2026-08-31T12:00:00.000Z',
+            nativeSessionId: 'session-1',
+            nativeTurnId: 'turn-1',
+            state: 'completed',
+            text: 'answer',
+          },
+        },
         {
           ...candidate,
           kind: 'completed',

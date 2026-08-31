@@ -23,9 +23,11 @@ _TIMEOUT_SECONDS = 3.0
 _MAX_RESPONSE_BYTES = 64 * 1024
 _MAIN_BRIDGE_POLL_SECONDS = 0.2
 _SCRIPT_OUTPUT_PREFIX = "HERMES_CARD_SCRIPT_OUTPUT:"
+_MAIN_PROJECTION_SCHEMA = "liquidaity.main.projection.v1"
+_COMMAND_TOOL_NAMES = {"terminal", "execute_code", "execute_host_script"}
 _HOST_SCRIPT_SCHEMA = {
     "name": "execute_host_script",
-    "description": "Run the immutable Python composition Script supplied by the trusted Card host.",
+    "description": "Run the immutable optimized Python tool supplied by the trusted Card host.",
     "parameters": {
         "type": "object",
         "properties": {},
@@ -126,6 +128,7 @@ class _MainCliBridge:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._active: dict | None = None
+        self._projection_sequence = 0
         self._last_history_json: str | None = None
         self._last_history_sync_at = 0.0
         self._thread = threading.Thread(
@@ -204,6 +207,56 @@ class _MainCliBridge:
         except Exception:
             # The native turn continues even if its observer disconnects.
             pass
+
+    @staticmethod
+    def _bounded_detail(value):
+        if value is None:
+            return None
+        try:
+            encoded = json.dumps(
+                value, ensure_ascii=False, default=str, separators=(",", ":")
+            )
+        except (TypeError, ValueError):
+            encoded = str(value)
+        if len(encoded) <= 24000:
+            try:
+                return json.loads(encoded)
+            except json.JSONDecodeError:
+                return encoded
+        return {
+            "truncated": True,
+            "preview": encoded[:24000],
+            "originalChars": len(encoded),
+        }
+
+    def _projection(
+        self, category: str, *, event_id: str | None = None, **payload
+    ) -> None:
+        with self._lock:
+            if self._active is None:
+                return
+            active = dict(self._active)
+            self._projection_sequence += 1
+            sequence = self._projection_sequence
+        stable_id = event_id or (
+            f"{active['requestId']}:{category}:{sequence}"
+        )
+        self._event("projection", projection={
+            "schemaVersion": _MAIN_PROJECTION_SCHEMA,
+            "id": stable_id,
+            "category": category,
+            "sequence": sequence,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **payload,
+        })
+
+    @staticmethod
+    def _operation_category(tool_name: str) -> str:
+        return (
+            "execution.command"
+            if tool_name in _COMMAND_TOOL_NAMES
+            else "execution.tool"
+        )
 
     def _clear(self) -> None:
         with self._lock:
@@ -368,6 +421,7 @@ class _MainCliBridge:
                     continue
                 with self._lock:
                     self._active = candidate
+                    self._projection_sequence = 0
                 try:
                     self._bind_active_execution(session_id=session_id)
                 except Exception as error:
@@ -388,24 +442,65 @@ class _MainCliBridge:
                     self._event("rejected", error="main_driver_turn_already_running")
                     self._clear()
                 else:
+                    self._projection(
+                        "conversation.input",
+                        event_id=(
+                            f"{candidate['requestId']}:conversation.input"
+                        ),
+                        text=candidate["message"],
+                        state="accepted",
+                        nativeSessionId=session_id,
+                    )
                     self._event("accepted")
             except Exception:
                 self._stop.wait(_MAIN_BRIDGE_POLL_SECONDS)
 
     def on_stream_start(self, **payload) -> None:
+        session_id = str(payload.get("session_id") or "")
+        turn_id = str(payload.get("turn_id") or "")
         self._event(
             "started",
-            nativeSessionId=str(payload.get("session_id") or ""),
-            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeSessionId=session_id,
+            nativeTurnId=turn_id,
+        )
+        self._projection(
+            "execution.receipt",
+            event_id=f"{turn_id or 'turn'}:receipt:started",
+            nativeSessionId=session_id,
+            nativeTurnId=turn_id,
+            state="started",
         )
 
     def on_stream_delta(self, **payload) -> None:
         if payload.get("kind") == "text" and isinstance(payload.get("delta"), str):
-            self._event("text", delta=payload["delta"])
+            self._projection(
+                "conversation.answer",
+                text=payload["delta"],
+                state="streaming",
+                nativeSessionId=str(payload.get("session_id") or ""),
+                nativeTurnId=str(payload.get("turn_id") or ""),
+            )
+        elif payload.get("kind") == "reasoning" and isinstance(
+            payload.get("delta"), str
+        ):
+            self._projection(
+                "execution.progress",
+                text=payload["delta"],
+                state="streaming",
+                nativeSessionId=str(payload.get("session_id") or ""),
+                nativeTurnId=str(payload.get("turn_id") or ""),
+            )
 
     def on_stream_end(self, **payload) -> None:
         error = payload.get("error")
         if error or payload.get("finished") is False:
+            self._projection(
+                "execution.error",
+                text=str(error or "main_cli_turn_cancelled"),
+                state="failed",
+                nativeSessionId=str(payload.get("session_id") or ""),
+                nativeTurnId=str(payload.get("turn_id") or ""),
+            )
             self._event(
                 "failed",
                 error=str(error or "main_cli_turn_cancelled"),
@@ -414,10 +509,174 @@ class _MainCliBridge:
 
     def on_turn_complete(self, **payload) -> None:
         response = payload.get("assistant_response")
+        session_id = str(payload.get("session_id") or "")
+        turn_id = str(payload.get("turn_id") or "")
+        self._projection(
+            "conversation.answer",
+            event_id=f"{turn_id or 'turn'}:conversation.answer:completed",
+            text=str(response or ""),
+            state="completed",
+            nativeSessionId=session_id,
+            nativeTurnId=turn_id,
+        )
+        self._projection(
+            "execution.receipt",
+            event_id=f"{turn_id or 'turn'}:receipt:completed",
+            nativeSessionId=session_id,
+            nativeTurnId=turn_id,
+            state="completed",
+        )
         self._event("completed", finalText=str(response or ""),
-                    nativeSessionId=str(payload.get("session_id") or ""),
-                    nativeTurnId=str(payload.get("turn_id") or ""))
+                    nativeSessionId=session_id, nativeTurnId=turn_id)
         self._clear()
+
+    def on_pre_tool_call(self, **payload) -> None:
+        tool_name = str(payload.get("tool_name") or "")
+        operation_id = str(payload.get("tool_call_id") or "")
+        self._projection(
+            self._operation_category(tool_name),
+            event_id=(
+                f"{operation_id}:started" if operation_id else None
+            ),
+            state="started",
+            toolName=tool_name,
+            operationId=operation_id,
+            nativeSessionId=str(payload.get("session_id") or ""),
+            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeTaskId=str(payload.get("task_id") or ""),
+            detail=self._bounded_detail({"args": payload.get("args")}),
+        )
+
+    def on_post_tool_call(self, **payload) -> None:
+        tool_name = str(payload.get("tool_name") or "")
+        operation_id = str(payload.get("tool_call_id") or "")
+        status = str(payload.get("status") or "completed")
+        failed = status not in {"ok", "completed", "success"}
+        result = payload.get("result")
+        fallback = result.get("fallback") if isinstance(result, dict) else None
+        self._projection(
+            "execution.error" if failed else self._operation_category(tool_name),
+            event_id=(
+                f"{operation_id}:finished" if operation_id else None
+            ),
+            state="failed" if failed else "completed",
+            toolName=tool_name,
+            operationId=operation_id,
+            nativeSessionId=str(payload.get("session_id") or ""),
+            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeTaskId=str(payload.get("task_id") or ""),
+            detail=self._bounded_detail({
+                "result": result,
+                "durationMs": payload.get("duration_ms"),
+                "errorType": payload.get("error_type"),
+                "errorMessage": payload.get("error_message"),
+            }),
+            **({"fallback": self._bounded_detail(fallback)}
+               if fallback is not None else {}),
+        )
+
+    def on_subagent_start(self, **payload) -> None:
+        child_id = str(
+            payload.get("child_session_id")
+            or payload.get("child_subagent_id")
+            or ""
+        )
+        self._projection(
+            "execution.child",
+            event_id=f"{child_id or 'child'}:started",
+            state="started",
+            nativeSessionId=str(payload.get("parent_session_id") or ""),
+            nativeTurnId=str(payload.get("parent_turn_id") or ""),
+            nativeChildId=child_id,
+            agentId=str(payload.get("child_role") or ""),
+            detail=self._bounded_detail({
+                "goal": payload.get("child_goal"),
+                "parentSubagentId": payload.get("parent_subagent_id"),
+            }),
+        )
+
+    def on_subagent_stop(self, **payload) -> None:
+        child_id = str(payload.get("child_session_id") or "")
+        status = str(payload.get("child_status") or "completed")
+        self._projection(
+            "execution.child",
+            event_id=f"{child_id or 'child'}:finished",
+            state=status,
+            nativeSessionId=str(payload.get("parent_session_id") or ""),
+            nativeTurnId=str(payload.get("parent_turn_id") or ""),
+            nativeChildId=child_id,
+            agentId=str(payload.get("child_role") or ""),
+            detail=self._bounded_detail({
+                "summary": payload.get("child_summary"),
+                "durationMs": payload.get("duration_ms"),
+                "toolCallHistory": payload.get("tool_call_history"),
+            }),
+        )
+
+    def on_pre_api_request(self, **payload) -> None:
+        operation_id = str(payload.get("api_request_id") or "")
+        self._projection(
+            "execution.receipt",
+            event_id=f"{operation_id or 'api'}:started",
+            state="started",
+            operationId=operation_id,
+            nativeSessionId=str(payload.get("session_id") or ""),
+            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeTaskId=str(payload.get("task_id") or ""),
+            provider=str(payload.get("provider") or ""),
+            model=str(payload.get("model") or ""),
+            detail=self._bounded_detail({
+                "apiCallCount": payload.get("api_call_count"),
+                "retryCount": payload.get("retry_count"),
+                "messageCount": payload.get("message_count"),
+                "toolCount": payload.get("tool_count"),
+            }),
+        )
+
+    def on_post_api_request(self, **payload) -> None:
+        operation_id = str(payload.get("api_request_id") or "")
+        self._projection(
+            "execution.receipt",
+            event_id=f"{operation_id or 'api'}:completed",
+            state="completed",
+            operationId=operation_id,
+            nativeSessionId=str(payload.get("session_id") or ""),
+            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeTaskId=str(payload.get("task_id") or ""),
+            provider=str(payload.get("provider") or ""),
+            model=str(payload.get("model") or ""),
+            detail=self._bounded_detail({
+                "apiCallCount": payload.get("api_call_count"),
+                "duration": payload.get("api_duration"),
+                "finishReason": payload.get("finish_reason"),
+                "usage": payload.get("usage"),
+            }),
+        )
+
+    def on_api_request_error(self, **payload) -> None:
+        operation_id = str(payload.get("api_request_id") or "")
+        self._projection(
+            "execution.error",
+            event_id=(
+                f"{operation_id or 'api'}:error:"
+                f"{payload.get('retry_count') or 0}"
+            ),
+            state="retrying" if payload.get("retryable") else "failed",
+            operationId=operation_id,
+            nativeSessionId=str(payload.get("session_id") or ""),
+            nativeTurnId=str(payload.get("turn_id") or ""),
+            nativeTaskId=str(payload.get("task_id") or ""),
+            provider=str(payload.get("provider") or ""),
+            model=str(payload.get("model") or ""),
+            detail=self._bounded_detail({
+                "statusCode": payload.get("status_code"),
+                "retryCount": payload.get("retry_count"),
+                "maxRetries": payload.get("max_retries"),
+                "retryable": payload.get("retryable"),
+                "reason": payload.get("reason"),
+                "error": payload.get("error"),
+            }),
+        )
 
 
 def _schema_type_matches(value, expected) -> bool:
@@ -470,7 +729,7 @@ def _handle_execute_host_script(
     session_id: str | None = None,
     **_kwargs,
 ) -> str:
-    """Execute only the trusted session's immutable saved Card Script."""
+    """Execute only the trusted session's immutable saved optimized tool."""
 
     from acp_adapter.host_profiles import (
         activate_host_script_fallback,
@@ -601,5 +860,12 @@ def register(ctx) -> None:
         ctx.register_hook("on_stream_delta", bridge.on_stream_delta)
         ctx.register_hook("on_stream_end", bridge.on_stream_end)
         ctx.register_hook("post_llm_call", bridge.on_turn_complete)
+        ctx.register_hook("pre_tool_call", bridge.on_pre_tool_call)
+        ctx.register_hook("post_tool_call", bridge.on_post_tool_call)
+        ctx.register_hook("subagent_start", bridge.on_subagent_start)
+        ctx.register_hook("subagent_stop", bridge.on_subagent_stop)
+        ctx.register_hook("pre_api_request", bridge.on_pre_api_request)
+        ctx.register_hook("post_api_request", bridge.on_post_api_request)
+        ctx.register_hook("api_request_error", bridge.on_api_request_error)
         ctx.on_unload(bridge.stop)
         bridge.start()

@@ -60,7 +60,7 @@ def _origin_session_id(parent_agent: Any) -> str:
     return current or str(getattr(parent_agent, "session_id", "") or "").strip()
 
 
-def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
+def _team_policy(config: dict[str, Any], parent_agent: Any | None = None) -> dict[str, Any]:
     kanban = config.get("kanban") if isinstance(config.get("kanban"), dict) else {}
     auxiliary = (
         config.get("auxiliary") if isinstance(config.get("auxiliary"), dict) else {}
@@ -70,10 +70,38 @@ def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
         if isinstance(auxiliary.get("kanban_decomposer"), dict)
         else {}
     )
-    root_provider = str(decomposer.get("provider") or "").strip()
-    root_model = str(decomposer.get("model") or "").strip()
-    worker_provider = str(kanban.get("team_worker_provider") or "").strip()
-    worker_model = str(kanban.get("team_worker_model") or "").strip()
+    host_config = getattr(parent_agent, "_host_session_config", None)
+    host_team = host_config.get("team") if isinstance(host_config, dict) else None
+    if isinstance(host_team, dict):
+        lead = host_team.get("lead") if isinstance(host_team.get("lead"), dict) else {}
+        worker = (
+            host_team.get("worker")
+            if isinstance(host_team.get("worker"), dict)
+            else {}
+        )
+        root_provider = str(lead.get("provider") or "").strip()
+        root_model = str(lead.get("model") or "").strip()
+        worker_provider = str(worker.get("provider") or "").strip()
+        worker_model = str(worker.get("model") or "").strip()
+        max_workers = int(host_team.get("maxWorkers"))
+        retry_limit = int(host_team.get("retryLimit"))
+        max_retries = retry_limit + 1
+        source = "host_session"
+    else:
+        root_provider = str(decomposer.get("provider") or "").strip()
+        root_model = str(decomposer.get("model") or "").strip()
+        worker_provider = str(kanban.get("team_worker_provider") or "").strip()
+        worker_model = str(kanban.get("team_worker_model") or "").strip()
+        try:
+            max_workers = max(2, min(4, int(kanban.get("team_max_workers", 4))))
+        except (TypeError, ValueError):
+            max_workers = 4
+        try:
+            max_retries = max(1, int(kanban.get("failure_limit", 2)))
+        except (TypeError, ValueError):
+            max_retries = 2
+        retry_limit = max_retries - 1
+        source = "shared_config"
     if not root_provider or not root_model:
         raise RuntimeError(
             "Team requires auxiliary.kanban_decomposer.provider/model before task creation."
@@ -86,14 +114,6 @@ def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("Team requires kanban.auto_decompose=true.")
     if kanban.get("dispatch_in_gateway", True) is False:
         raise RuntimeError("Team requires kanban.dispatch_in_gateway=true.")
-    try:
-        max_workers = max(2, min(4, int(kanban.get("team_max_workers", 4))))
-    except (TypeError, ValueError):
-        max_workers = 4
-    try:
-        max_retries = max(1, int(kanban.get("failure_limit", 2)))
-    except (TypeError, ValueError):
-        max_retries = 2
     return {
         "root_provider": root_provider,
         "root_model": root_model,
@@ -101,6 +121,8 @@ def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
         "worker_model": worker_model,
         "max_workers": max_workers,
         "max_retries": max_retries,
+        "retry_limit": retry_limit,
+        "source": source,
     }
 
 
@@ -120,7 +142,7 @@ def submit_team(
         raise ValueError("Team goal/context exceeds the native bounded packet limit.")
 
     shared_config = _shared_config()
-    policy = _team_policy(shared_config)
+    policy = _team_policy(shared_config, parent_agent)
     from hermes_cli.kanban import _check_dispatcher_presence
 
     repository_home = Path(get_default_hermes_root())
@@ -166,6 +188,26 @@ def submit_team(
         task = kb.get_task(conn, task_id)
         if task is None:
             raise RuntimeError(f"Team root {task_id} was committed but cannot be read back.")
+        with kb.write_txn(conn):
+            kb._append_event(
+                conn,
+                task_id,
+                "team_policy_applied",
+                {
+                    "schema_version": "hermes.team.policy.v1",
+                    "source": policy["source"],
+                    "mode": "auto",
+                    "auto_decompose": True,
+                    "max_workers": policy["max_workers"],
+                    "retry_limit": policy["retry_limit"],
+                    "max_retries": policy["max_retries"],
+                    "worker_provider": policy["worker_provider"],
+                    "worker_model": policy["worker_model"],
+                    "lead_provider": policy["root_provider"],
+                    "lead_model": policy["root_model"],
+                    "max_depth": 1,
+                },
+            )
 
     # LIQUIDAITY VENDOR PATCH: this generic host callback carries only opaque
     # native/session ids and model receipts.  Standalone Hermes has no host and
@@ -218,7 +260,10 @@ def submit_team(
             "worker_provider": policy["worker_provider"],
             "worker_model": policy["worker_model"],
             "max_workers": policy["max_workers"],
+            "retry_limit": policy["retry_limit"],
             "max_depth": 1,
+            "lead_provider": policy["root_provider"],
+            "lead_model": policy["root_model"],
             "synthesis_provider": policy["root_provider"],
             "synthesis_model": policy["root_model"],
         },

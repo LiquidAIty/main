@@ -62,7 +62,7 @@ describe('loadMainDriverStatus', () => {
 });
 
 describe('streamSession', () => {
-  it('delivers changed partial output with the same native tool event ID', async () => {
+  it('delivers a stable native event ID exactly once without comparing its content', async () => {
     const frame = (output: string) => `event: tool_progress\ndata: ${JSON.stringify({ output,
       projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([frame('first'), frame('first'), frame('second'),
@@ -70,7 +70,7 @@ describe('streamSession', () => {
     const onEvent = vi.fn();
     await streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'tool_progress').map(([event]) => event.output))
-      .toEqual(['first', 'second']);
+      .toEqual(['first']);
   });
   it('reconciles replayed event IDs without dropping distinct equal text chunks', async () => {
     const event = (id: string) => `event: text\ndata: ${JSON.stringify({ text: 'ha', projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id } })}\n\n`;
@@ -81,6 +81,30 @@ describe('streamSession', () => {
     const onEvent = vi.fn();
     await expect(streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent })).resolves.toEqual({ finalText: 'haha' });
     expect(onEvent.mock.calls.filter(([event]) => event.kind === 'text')).toHaveLength(2);
+  });
+
+  it('routes repeated typed projection IDs once while preserving distinct equal deltas', async () => {
+    const frame = (id: string, category: string, text: string) => `event: projection\ndata: ${JSON.stringify({
+      projectId: 'p', deckId: 'd', runId: 'r', projection: {
+        schemaVersion: 'liquidaity.main.projection.v1', id, category,
+        sequence: Number(id.replace(/\D/g, '')) || 1,
+        timestamp: '2026-08-31T12:00:00.000Z', text,
+        projectId: 'p', deckId: 'd', cardId: 'card_main_chat', cardName: 'Main Chat',
+        runId: 'r', parentRunId: null, nativeChildId: null, nativeTurnId: 'turn-1',
+        kind: category === 'conversation.input' ? 'mission' : 'model',
+      },
+    })}\n\n`;
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      frame('event-1', 'conversation.input', 'question'),
+      frame('event-1', 'conversation.input', 'changed but same identity'),
+      frame('event-2', 'conversation.answer', 'ha'),
+      frame('event-3', 'conversation.answer', 'ha'),
+      'event: done\ndata: {"fullText":"haha"}\n\nevent: end\ndata: {}\n\n',
+    ])));
+    const onEvent = vi.fn();
+    await streamSession({ projectId: 'p', conversationId: 'main', message: 'question', onEvent });
+    expect(onEvent.mock.calls.filter(([event]) => event.kind === 'projection'))
+      .toHaveLength(3);
   });
   it('surfaces a rejected native start as typed status instead of model text', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(

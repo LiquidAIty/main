@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { applyBackendMigrations, listenAfterRequiredMigrations } from './migrations';
 
 const migration = `
@@ -34,6 +35,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '028_agentgraph_materialized_read.sql', applied: true }),
       expect.objectContaining({ filename: '029_child_model_receipt.sql', applied: true }),
       expect.objectContaining({ filename: '030_card_script_run_receipt.sql', applied: true }),
+      expect.objectContaining({ filename: '031_graph_agent_continuity.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -43,6 +45,22 @@ describe('canonical backend migrations', () => {
       'COMMIT',
     ]));
     expect(statements).not.toContain(migration.trim());
+  });
+
+  it('migrates Graph Agent through a new current revision without rewriting history', async () => {
+    const source = await readFile(
+      new URL('../../migrations/031_graph_agent_continuity.sql', import.meta.url),
+      'utf8',
+    );
+
+    expect(source).toContain("card.card_id = 'card_hermes_steward'");
+    expect(source).toContain("revision.title <> 'Graph Agent'");
+    expect(source).toContain("revision.runtime_mode <> 'delegate'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
   it('does not open backend readiness when migration application fails', async () => {

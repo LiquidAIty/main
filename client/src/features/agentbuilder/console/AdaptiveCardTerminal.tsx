@@ -83,6 +83,12 @@ function RuntimeEventRow({ event, conversationOnly }: { event: RuntimeEvent; con
     {event.taskId ? <small>{event.taskId} · {event.agentId || 'unattributed'}</small> : null}
     <BoundedText text={event.text || ''} />
   </div>;
+  if ((event as RuntimeEvent & { category?: string }).category === 'execution.progress') {
+    return <div data-event-id={event.id}>
+      {event.taskId ? <small>{event.taskId} · {event.agentId || 'unattributed'}</small> : null}
+      <BoundedText text={event.text || ''} />
+    </div>;
+  }
   const label = event.toolName ? `${event.toolName} · ${event.kind === 'tool_call' ? 'called' : event.status}`
     : ['child_started', 'child_finished'].includes(event.kind)
       ? `${event.nativeChildId || event.runId} · ${event.kind === 'child_started' ? 'started' : event.status}`
@@ -111,7 +117,7 @@ export function RuntimeEventList({ events, taskId = null, main = false }: {
   return <div data-testid="runtime-event-list" style={{ display: 'grid', gap: 8 }}>
     {selected.length > visible ? <button type="button" onClick={() => setVisible((value) => value + 100)}>Show earlier events</button> : null}
     {selected.slice(-visible).map((event) => <RuntimeEventRow key={`${event.runId}:${event.taskId || ''}:${event.agentId || ''}:${event.id}`}
-      event={event} conversationOnly={main} />)}
+      event={event} conversationOnly={false} />)}
   </div>;
 }
 

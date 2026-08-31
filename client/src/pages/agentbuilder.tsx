@@ -27,7 +27,6 @@ import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPa
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
 import { reconcileCardTerminal } from '../features/agentbuilder/console/AdaptiveCardTerminal';
-import HermesKanbanWorkspace from '../features/hermeskanban/HermesKanbanWorkspace';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
   LoadedCardGraphReference,
@@ -72,7 +71,6 @@ import {
 } from '../features/agentbuilder/deck/deckDocument';
 import {
   deriveVisibleRailItems,
-  isHermesStewardCard,
   isWorldSignalsAgentCard,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -105,7 +103,7 @@ import type {
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
-// Agent Builder page: left workspace rail, Main Chat, canvas, and one five-tab Card inspector.
+// Agent Builder page: left workspace rail, Main Chat, canvas, and one six-tab Card inspector.
 // No external deps. Persists per-project to localStorage. Includes mini force-graph.
 
 const C = {
@@ -201,7 +199,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script'] as const;
+const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Context', 'Tools', 'Script', 'Subagents'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -229,13 +227,11 @@ export default function AgentBuilder(): React.ReactElement {
     | 'knowledge'
     | 'trading'
     | 'worldsignal'
-    | 'hermes'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
-  const [hermesKanbanFocusedTaskId, setHermesKanbanFocusedTaskId] = useState<string | null>(null);
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
   // bumping nonce re-triggers the camera fit without swapping node sets.
   const [canvasFocusZone, setCanvasFocusZone] = useState<
@@ -305,7 +301,6 @@ export default function AgentBuilder(): React.ReactElement {
   useEffect(() => {
     currentDeckRef.current = deck;
   }, [deck]);
-  const priorWorkspaceViewRef = useRef<'chat' | 'canvas' | 'knowledge' | 'trading' | 'worldsignal'>('canvas');
   const visibleRailItems = useMemo(
     () =>
       deriveVisibleRailItems({
@@ -657,6 +652,8 @@ export default function AgentBuilder(): React.ReactElement {
     mainDriverSource,
     sessionHistoryLoading,
     stopMainTurn,
+    technicalError,
+    technicalEvents,
   } = useAgentBuilderMainChat({
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
@@ -888,6 +885,9 @@ export default function AgentBuilder(): React.ReactElement {
     tasksCompleted: typeof result?.tasksCompleted === 'number' ? result.tasksCompleted : undefined,
     tasksTotal: typeof result?.tasksTotal === 'number' ? result.tasksTotal : undefined,
     activeWorkers: typeof result?.activeWorkers === 'number' ? result.activeWorkers : undefined,
+    teamReceipt: result?.teamReceipt && typeof result.teamReceipt === 'object'
+      ? result.teamReceipt
+      : null,
     resultReady: result?.resultReady === true,
     inputTokens: typeof result?.inputTokens === 'number' ? result.inputTokens : undefined,
     outputTokens: typeof result?.outputTokens === 'number' ? result.outputTokens : undefined,
@@ -1180,7 +1180,6 @@ export default function AgentBuilder(): React.ReactElement {
     if (
       !selectedCard ||
       selectedCard.runtime.kind !== 'hermes' ||
-      selectedCard.runtime.mode === 'kanban' ||
       standaloneTestBusy ||
       standaloneTestUnavailableReason ||
       !standaloneTestPrompt.trim()
@@ -1418,35 +1417,11 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes, recordUiOnlyAction, tab],
   );
 
-  const openHermesKanban = useCallback(() => {
-    const hermesCard = deck.nodes.find(isHermesStewardCard);
-    if (!hermesCard) return;
-    setHermesKanbanFocusedTaskId(
-      standaloneTestResult?.cardId === hermesCard.id
-        ? standaloneTestResult.nativeRootId || null
-        : null,
-    );
-    // Keep the chat panel on the left; the Kanban board renders in the canvas
-    // region to its right, exactly like the Agent Canvas. The canvas pane stays
-    // mounted beneath it (hidden), so closing Hermes restores the exact prior
-    // viewport/selection. The installed Hermes terminal starts only from its
-    // explicit button inside the Hermes workspace.
-    priorWorkspaceViewRef.current =
-      workspaceView === 'hermes' ? 'canvas' : workspaceView;
-    setInspectorDrawerOpen(false);
-    setWorldSignalInspectorSection(null);
-    setWorkspaceView('hermes');
-  }, [deck.nodes, standaloneTestResult, workspaceView]);
-
   const openMainChat = useCallback(() => {
     setWorkspaceView('chat');
     window.setTimeout(() => {
       document.querySelector<HTMLInputElement>('[data-testid="builder-chat-input"]')?.focus();
     }, 0);
-  }, []);
-
-  const closeHermesKanban = useCallback(() => {
-    setWorkspaceView(priorWorkspaceViewRef.current);
   }, []);
 
   const handleSelectEdge = useCallback(
@@ -1598,7 +1573,6 @@ export default function AgentBuilder(): React.ReactElement {
                     onOpenCoderTerminal={() => {
                       setTab('CLI');
                     }}
-                    onOpenHermesKanban={openHermesKanban}
                     onOpenMainChat={openMainChat}
                     onRemoveGraphReference={(authority, nativeId) => {
                       removeTransientGraphReference(selectedCard.id, authority, nativeId);
@@ -1609,12 +1583,10 @@ export default function AgentBuilder(): React.ReactElement {
                     onRunCard={() => {
                       void runStandaloneCardTest();
                     }}
-                    onLearnCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode !== 'kanban'
+                    onLearnCard={selectedCard.runtime.kind === 'hermes'
                       ? () => { void learnFromStandaloneCardInput(); }
                       : undefined}
-                    onStopCard={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'kanban'
-                      ? undefined
-                      : stopStandaloneCardTest}
+                    onStopCard={stopStandaloneCardTest}
                     onRejoinCard={rejoinStandaloneCardRun}
                     runBusy={standaloneTestBusy}
                     showTaskComposer={showStandaloneTestControls}
@@ -1814,6 +1786,8 @@ export default function AgentBuilder(): React.ReactElement {
                 testIdPrefix="main-cli"
                 ownerCardId={mainCardId || 'card_main_chat'}
                 readOnly
+                semanticEvents={technicalEvents}
+                semanticError={technicalError}
                 activityState={nativeSessionConnecting ? 'connecting' : nativeSessionActive ? 'running' : 'idle'}
               />
             }
@@ -1827,7 +1801,6 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    const isHermesWorkspace = workspaceView === 'hermes';
     const canvasPane = canonicalDeckReady ? (
       <AgentCanvasPane
         surfaceRole={surfaceRole}
@@ -1871,39 +1844,7 @@ export default function AgentBuilder(): React.ReactElement {
         data-testid="workspace-canvas-surface"
         style={{ position: 'relative', height: '100%', minHeight: 0, overflow: 'hidden' }}
       >
-        {/* Always keep the AgentCanvasPane mounted (hidden while Hermes is
-            open) so closing Hermes restores the exact prior viewport/selection. */}
-        <div
-          aria-hidden={isHermesWorkspace ? true : undefined}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            visibility: isHermesWorkspace ? 'hidden' : 'visible',
-            pointerEvents: isHermesWorkspace ? 'none' : 'auto',
-          }}
-        >
-          {canvasPane}
-        </div>
-        {isHermesWorkspace ? (
-          <div
-            data-testid="hermes-kanban-region"
-            style={{ position: 'absolute', inset: 0 }}
-          >
-            <HermesKanbanWorkspace
-              onClose={closeHermesKanban}
-              focusedTaskId={hermesKanbanFocusedTaskId}
-              observation={selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'kanban'
-                ? standaloneTestResult?.terminal : null}
-              onRefreshObservation={async () => {
-                const runId = standaloneTestResult?.runId;
-                if (!runId || selectedCard?.runtime.kind !== 'hermes' || selectedCard.runtime.mode !== 'kanban') return;
-                const refreshed = toStandaloneRunResult(await readStandaloneRunStatus({ runId }));
-                setStandaloneTestResult((current) => current?.runId === runId
-                  ? { ...refreshed, terminal: reconcileCardTerminal(current.terminal, refreshed.terminal) } : current);
-              }}
-            />
-          </div>
-        ) : null}
+        <div style={{ position: 'absolute', inset: 0 }}>{canvasPane}</div>
       </div>
     );
   };
@@ -1997,8 +1938,6 @@ export default function AgentBuilder(): React.ReactElement {
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
-      hermesKanbanActive={workspaceView === 'hermes'}
-      onOpenHermesKanban={openHermesKanban}
     />
   );
 

@@ -25,6 +25,31 @@ export type RuntimeEvent = RuntimeIdentity & {
   toolUseId?: string;
   detail?: string;
   reference?: { id: string; path?: string; sha256?: string };
+  category?: MainProjectionCategory;
+};
+
+/**
+ * Main-only semantic view of the startup-owned Hermes CLI event stream.
+ * This is a projection of native events, not another transcript or event log.
+ */
+export type MainProjectionCategory =
+  | 'conversation.input'
+  | 'conversation.answer'
+  | 'execution.progress'
+  | 'execution.tool'
+  | 'execution.command'
+  | 'execution.child'
+  | 'execution.receipt'
+  | 'execution.error';
+
+export type MainProjectionEvent = RuntimeEvent & {
+  schemaVersion: 'liquidaity.main.projection.v1';
+  category: MainProjectionCategory;
+  nativeTurnId: string | null;
+  operationId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  fallback?: unknown;
 };
 
 export type RuntimeConfiguration = {

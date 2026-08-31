@@ -21,7 +21,7 @@ React/Vite Agent Builder and Chat
         ├─ Main: stable native session, home/profile liquidaity-main
         ├─ Agent Builder: stable native session, home/profile liquidaity-agent-builder
         ├─ Coder: stable native session, home/profile coder
-        └─ Hermes planning/memory helper: stable native session, home/profile liquidaity-hermes-steward
+        └─ Graph Agent: stable native session, home/profile liquidaity-hermes-steward
      → official Python MCP client boundary
         → one official Python HTTP MCP host on :8765/mcp
            ├─ Card call/IDD/AGE deterministic rails
@@ -48,15 +48,19 @@ Current internal Cards:
 | Main Chat | `card_main_chat` | Hermes `main` | `liquidaity-main` |
 | Agent Builder | saved server-minted Card ID | Hermes `delegate` | `liquidaity-agent-builder` |
 | Local Coder | `card_local_coder` | Hermes `delegate` | `coder` |
-| Hermes planning/memory helper | `card_hermes_steward` | Hermes `kanban` | `liquidaity-hermes-steward` |
+| Graph Agent | `card_hermes_steward` | Hermes `delegate` | `liquidaity-hermes-steward` |
 
 `card_local_coder` and `template_local_coder` are retained identities and now present the Hermes-backed
 Local Coder. They do not imply the removed standalone LocalCoder/OpenClaude runtime.
+`031_graph_agent_continuity.sql` gives an existing `card_hermes_steward` one new current revision named
+Graph Agent with Hermes `delegate` mode. It copies the prior revision's prompt, profile, provider/model,
+grants, runtime extensions, and presentation state, then advances only the current-revision/deck pointers.
+Historical revisions, Runs, memory/session homes, and AGE relationships are not rewritten or deleted.
 
 The current default topology preserves:
 
 - Main → Agent Builder: `flow`
-- Main → Hermes planning/memory helper: `flow`
+- Main → Graph Agent: `flow`
 - Main → Magentic-One: `magentic_control`
 - Magentic-One → Local Coder: `magentic_option`
 - Main → Local Coder: no direct connection
@@ -72,7 +76,7 @@ start runtimes.
 `apps/backend/src/hermes/coderTerminal.ts` owns the Coder terminal lifecycle. The ACP adapter reuses
 one process owner per normalized native profile. Named profiles select
 `Hermes/.hermes/profiles/<profile>` as `HERMES_HOME`; the unprofiled extension owner uses the root home.
-Main, Agent Builder, Local Coder, and the Hermes planning/memory helper retain separate profile homes, native memory, sessions,
+Main, Agent Builder, Local Coder, and Graph Agent retain separate profile homes, native memory, sessions,
 and configuration.
 They share the vendored Hermes installation and integration code, not one merged memory database.
 Native profile configuration and Hermes' auth resolver remain authoritative. A native `delegate_task` child is ephemeral inside its owning Card's
@@ -84,11 +88,12 @@ transcript lifecycle; that is not independent Card memory or identity.
 
 Native `delegate_task(role="team")` is a headless capability of an authorized ordinary Hermes Card;
 it is not a Card type or a standalone Kanban/Team Card authority. The adapter creates one durable native
-Auto-Kanban root owned by the originating profile/session. The repository-root policy pins native
-decomposition and the resumed root's separate review/synthesis pass to
-`openai-codex/gpt-5.6-terra`, pins two to four decomposed workers to
-`openai-codex/gpt-5.6-luna`, and caps the current recipe at four workers and one level. Every Luna task
-is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Terra
+Auto-Kanban root owned by the originating profile/session. Each saved Hermes Card may authorize Team
+with an Off/Auto policy plus maximum workers, retry limit, worker provider/model, and one Team-lead
+provider/model. Auto means Hermes may call the native model tool; it never starts Team merely because
+a Card Run began. The Team-lead model owns native decomposition and the resumed root's final synthesis,
+while the worker model owns the bounded decomposed tasks. Every worker task
+is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Team-lead
 pass all worker reports. That pass returns one native task result to the existing originating Hermes
 session and Card Run. ACP Card sessions and persistent Main CLI turns use one backend-owned host child
 lifecycle for exact-once Run allocation, native-root correlation, terminal closure and recovery. Main
@@ -109,9 +114,10 @@ two Luna workers (`t_0a5610dc`, `t_91562520`), ran one Terra synthesis, and appe
 to originating native session `20260830_170231_2b1e6f`. Native and host owners both reached terminal
 success without provider fallback, duplicate allocation, nested delegation or a second acceptance call.
 
-LiquidAIty's Card-facing IDD/Script and trusted ACP session projections expose `team` generally and add
-`leaf` only for Main's existing direct Agent Builder doorway. They do not expose `orchestrator`. Native Hermes keeps
-`leaf`, `orchestrator`, and `team` on its one `delegate_task` contract for compatibility. A process-only
+LiquidAIty's trusted ACP session projection exposes `team` when the saved Card policy is Auto and adds
+`leaf` only for Main's existing direct Agent Builder doorway. Team Off does not remove Main's leaf
+contract. Native Hermes keeps `leaf`, `orchestrator`, and `team` on its one `delegate_task` implementation
+for compatibility; recursive delegation has no new LiquidAIty UI. A process-only
 Team marker blocks every Team worker and synthesis pass from calling any nested delegation role or
 creating another native task, so the first-party MVP recipe cannot recurse.
 
@@ -185,7 +191,7 @@ Cross-authority handoff passes native IDs and provenance, never copied subgraphs
 plugin Main bypasses automatic Honcho prefetch/observe/write for that turn; direct native Main uses its own
 Honcho fail-open. Workers and background-review children never inherit Main's Honcho context.
 
-PostgreSQL Card configuration, Runs/artifact metadata, AgentGraph telemetry/topology, Kanban tasks, the Hermes
+PostgreSQL Card configuration, Runs/artifact metadata, AgentGraph telemetry/topology, native Hermes Team tasks, the Hermes
 project registry, attention events, the Run-scoped `in.idf`, browser state, and IDD are operational or transport
 state. They may preserve evidence, but they are deliberately **not counted as memory/knowledge authorities**.
 
@@ -297,8 +303,8 @@ unprefixed catalog and dispatcher are the source-side repair. The official MCP S
 dispatch and bounded invalid-name receipts, but a loaded-process readback and a genuinely fresh selected-plugin
 conversation remain separate product proof. ChatGPT owns its approved app-action snapshot;
 refresh or recreate/publish that app definition through the applicable workspace control after a public schema
-change, then test from a fresh chat with LiquidAIty selected. Browser rendering and one real Codex-account
-Kanban Run also remain unproven. Do not call the complete launch path live-ready.
+  change, then test from a fresh chat with LiquidAIty selected. Browser rendering and one real Codex-account
+  Team Run also remain unproven. Do not call the complete launch path live-ready.
 
 Backend routes containing `/api/coder/mcp-bridge/` are retained transport names used by the official
 Python MCP host to reach server-owned Card, conversation, Run, and persistence operations. They are not
@@ -311,19 +317,23 @@ registry, or direct-database shortcut.
 
 ## Card Inspector projections
 
-The Card editor has exactly five top-level tabs: CLI, Prompt, Context, Tools, and Script. CLI replaces the
+The Card editor has exactly six top-level tabs: CLI, Prompt, Context, Tools, Script, and Subagents. CLI replaces the
 former Terminal label and remains the one Card Run/session projection; it does not add a second invocation
 path. Prompt contains the existing prompt, provider, model, and runtime controls. Context contains the
 existing bounded graph selections, saved references, memory, and native Skills/Learning Journey projection.
-Tools retains saved grants and modes, and Script retains the one Monaco-backed saved Python controller plus
-its generated read-only header. Main still uses chat for input and responses.
+Tools retains saved grants and modes. Script compiles the saved Python recipe into one typed optimized model
+tool that may call only Card-authorized operations; Hermes decides whether to call it. Subagents currently
+configures only native Team defaults and limits, then presents the current or last Card Run state and bounded
+native Team activity. It does not expose raw internal receipt JSON, copy SQLite rows, or own another timeline.
+Main still uses chat for input and responses.
 Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
 Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
-Coder's Card. Kanban keeps its native board and one aggregate Run view; task actions retain their native
-command owner. Ordinary agent Cards use the shared adaptive terminal, while Mag One remains an orchestrator.
+Coder's Card. There is no global Kanban workspace, manual task movement, or Card `kanban` execution doorway.
+Native Team workers remain execution processes observed through the existing Card Run and telemetry paths.
+Ordinary agent Cards use the shared adaptive terminal, while Mag One remains an orchestrator.
 
 `apps/backend/src/contracts/runtimeEvents.d.ts` is the shared public presentation contract.
-`hermes/cardTerminal.ts` projects existing ACP turns, native transcript replay, Kanban task/attempt records,
+`hermes/cardTerminal.ts` projects existing ACP turns, native transcript replay, native Team task/attempt records,
 and Python Run/AGE lineage. The frontend renderer does not become a runtime, transcript store, or source
 of agent capability. Native memory, tools, skills, orchestration, and grants remain with their existing owners.
 Main's graph callbacks and technical events use the backend-issued Run identity; the browser does not
@@ -340,7 +350,7 @@ has begun; once a tool receipt records an operation, failure is terminal so the 
 
 Current limits are explicit: some native sessions contain multiple Runs without per-Run transcript
 boundaries; exact Run transcript read/deletion is unavailable in that case. Main technical replay after a
-full refresh, public skill/autoskill events, and full Kanban worker tool output are not yet integrated.
+full refresh, public skill/autoskill events, and full Team worker tool output are not yet integrated.
 The AutoGen adapter returns completion output rather than a live public terminal stream. These are
 observation gaps, not restrictions on native execution. Loaded-runtime proof remains separate from tests.
 
@@ -403,7 +413,7 @@ IDD responsibility reduction:
 | Fixed model list and editor-control dictionary | Native/configured models and transport schema projection |
 | Bracket-island parser | Deleted; Markdown and Python source are not a second mixed-language runtime |
 | Native tool descriptions/schemas/availability | Current native discovery; IDD retains only host effect annotations |
-| Global readable-tool allocation | Deleted from host, ordinary Card, registry and Kanban worker paths |
+| Global readable-tool allocation | Deleted from host, ordinary Card, registry and native Team worker paths |
 | Runtime template defaults/override writer in selected-Card editing | Removed; saved configuration wins, old overrides read only |
 | Initial new-Project/quick-add templates | Retained seed compatibility; not runtime authority |
 | Random card.create template IDs | Explicit construction reference or compatible custom-assistant template; persistence does not reload IDD |
@@ -429,10 +439,10 @@ AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is ma
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.
 
-Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and the Hermes planning/memory helper. A saved `flow`
+Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Graph Agent. A saved `flow`
 edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
-call Agent Builder or the helper through `card.run_assistant_agent`. Local Coder is instead eligible only
-through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. The helper has no
+call Agent Builder or Graph Agent through `card.run_assistant_agent`. Local Coder is instead eligible only
+through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. Graph Agent has no
 outgoing saved-Card delegation grant. Each direct call uses the receiving Card's saved Hermes profile and
 one explicit mission plus selected native graph references. This is the normal automatic handoff and it
 executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
@@ -654,8 +664,9 @@ ACP has no standard native-Kanban task method. The LiquidAIty-owned subclass in
 idempotent Triage creation, and task readback over the stock Hermes ACP agent. It never calls
 `session/prompt`, decomposes work, dispatches workers, or synthesizes a response. The persistent
 Hermes gateway remains the sole automatic decomposer and dispatcher; native child tasks and profile
-workers remain internal to the receiving saved Card Run. The explicit `kanban`-mode Card route remains
-available for compatibility, but it is not the authority or required doorway for headless Team. One focused vendor correction lets Hermes'
+workers remain internal to the receiving saved Card Run. LiquidAIty rejects new Card execution through
+the retired `kanban` mode; legacy values remain readable only where saved-history continuity and recovery
+require them. One focused vendor correction lets Hermes'
 first-run guard recognize an explicitly selected provider only when the normal Hermes auth resolver
 reports that exact provider logged in; it does not change provider, model, temperature, profile, or
 OAuth storage. The registered files, proof, contribution plan, and rollback live in
@@ -672,7 +683,8 @@ identity, and consumes it before provider inference. Initialization, route, sess
 or cancellation mismatches clear or reject the staging slot without allocating a child. The live CLI
 transcript owner appends the terminal native result to the exact idle originating session before the child
 Run closes. Team-specific
-task markers carry Terra/Luna model overrides, final-stage identity and a durable spawn receipt; the
+task markers carry the exact Card-projected lead/worker models, retry and worker bounds, final-stage
+identity and durable internal execution evidence; the
 stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
 sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
@@ -736,7 +748,7 @@ reads back the exact native fields before inference.
 
 Current authorization limits: internal Card tokens have a 12-hour lifetime. Current source restricts
 ordinary Card reads and effects to explicit grants; only the dedicated internal materializer retains
-its bounded read role. Kanban worker grants intersect the exact root IDF and saved revision. Worker
+  its bounded read role. Native Team worker grants intersect the exact root IDF and saved revision. Worker
 tokens use the saved root Run identity but do not require the separate live ACP execution-context check. A native claim is
 validated when the bearer is issued; immediate per-worker revocation is not implemented.
 Signed native task/attempt IDs are observation metadata, not additional permissions; they distinguish
@@ -746,13 +758,14 @@ reload and live worker proof before it is described as the loaded runtime's beha
 
 The current Hermes base also lacks a trusted host-supplied immutable Script contract over its existing
 Python child runner. The contained divergence adds optional host Script aliases/input to
-`tools/code_execution_tool.py`, validates/fixes the session projection in
-`acp_adapter/host_profiles.py`, and exposes one `_session/execute_host_script` operation in
-`acp_adapter/server.py`. LiquidAIty's external plugin registers the single compact
-`execute_host_script` tool and delegates to the same native `execute_code` function. It does not add a
-second executor, sandbox, MCP host, workflow engine or credential path. Sessions without trusted host
-Script metadata and all ordinary `execute_code`/CLI callers retain upstream behavior. Exact files,
-contracts, proof, fork cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+`tools/code_execution_tool.py` and validates/projects the session tool in
+`acp_adapter/host_profiles.py`. LiquidAIty's external plugin registers the single compact
+`execute_host_script` model tool and delegates to the same native `execute_code` function through Hermes'
+ordinary tool dispatcher. There is no host pre-execution extension: Hermes decides whether to call the
+tool. The change does not add a second executor, sandbox, MCP host, workflow engine or credential path.
+Sessions without trusted host Script metadata and all ordinary `execute_code`/CLI callers retain upstream
+behavior. Exact files, contracts, proof, fork cost and rollback are recorded in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.

@@ -77,6 +77,8 @@ kanban:
 def test_submit_team_commits_one_blocked_root_before_host_then_activates(
     team_board, monkeypatch,
 ):
+    from types import SimpleNamespace
+
     from acp_adapter import host_profiles
     from hermes_cli import kanban, kanban_team
     from tools import kanban_tools
@@ -106,26 +108,34 @@ def test_submit_team_commits_one_blocked_root_before_host_then_activates(
 
     monkeypatch.setattr(host_profiles, "allocate_host_native_execution", allocate)
 
+    parent = SimpleNamespace(_host_session_config={"team": {
+        "mode": "auto", "maxWorkers": 3, "retryLimit": 0,
+        "worker": {"provider": "openai-codex", "model": "gpt-5.6-luna-card"},
+        "lead": {"provider": "openai-codex", "model": "gpt-5.6-terra-card"},
+    }})
     result = kanban_team.submit_team(
         goal="Inspect the native execution path and synthesize one report.",
         context="Use explicit source evidence only.",
-        parent_agent=object(),
+        parent_agent=parent,
     )
     assert observed == {
         "status": "blocked",
         "step": "correlation",
         "provider": "openai-codex",
-        "model": "gpt-5.6-terra",
+        "model": "gpt-5.6-terra-card",
     }
     assert result["policy"] == {
         "decomposition_provider": "openai-codex",
-        "decomposition_model": "gpt-5.6-terra",
+        "decomposition_model": "gpt-5.6-terra-card",
         "worker_provider": "openai-codex",
-        "worker_model": "gpt-5.6-luna",
-        "max_workers": 4,
+        "worker_model": "gpt-5.6-luna-card",
+        "max_workers": 3,
+        "retry_limit": 0,
         "max_depth": 1,
+        "lead_provider": "openai-codex",
+        "lead_model": "gpt-5.6-terra-card",
         "synthesis_provider": "openai-codex",
-        "synthesis_model": "gpt-5.6-terra",
+        "synthesis_model": "gpt-5.6-terra-card",
     }
     with kb.connect_closing() as conn:
         root = kb.get_task(conn, result["task_id"])
@@ -138,7 +148,27 @@ def test_submit_team_commits_one_blocked_root_before_host_then_activates(
     assert root.current_step_key == "decomposition"
     assert root.assignee == "card-main"
     assert root.provider_override == "openai-codex"
-    assert root.model_override == "gpt-5.6-terra"
+    assert root.model_override == "gpt-5.6-terra-card"
+    assert root.max_retries == 1
+    with kb.connect_closing() as conn:
+        receipt = next(
+            event.payload for event in kb.list_events(conn, root.id)
+            if event.kind == "team_policy_applied"
+        )
+    assert receipt == {
+        "schema_version": "hermes.team.policy.v1",
+        "source": "host_session",
+        "mode": "auto",
+        "auto_decompose": True,
+        "max_workers": 3,
+        "retry_limit": 0,
+        "max_retries": 1,
+        "worker_provider": "openai-codex",
+        "worker_model": "gpt-5.6-luna-card",
+        "lead_provider": "openai-codex",
+        "lead_model": "gpt-5.6-terra-card",
+        "max_depth": 1,
+    }
 
 
 def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
@@ -161,9 +191,25 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
             triage=True,
             model_override="gpt-5.6-terra",
             provider_override="openai-codex",
+            max_retries=1,
             workflow_template_id="delegate-team-v1",
             current_step_key="decomposition",
         )
+        with kb.write_txn(conn):
+            kb._append_event(conn, root_id, "team_policy_applied", {
+                "schema_version": "hermes.team.policy.v1",
+                "source": "host_session",
+                "mode": "auto",
+                "auto_decompose": True,
+                "max_workers": 2,
+                "retry_limit": 0,
+                "max_retries": 1,
+                "worker_provider": "openai-codex",
+                "worker_model": "gpt-5.6-luna-card",
+                "lead_provider": "openai-codex",
+                "lead_model": "gpt-5.6-terra-card",
+                "max_depth": 1,
+            })
 
     roster = [
         SimpleNamespace(
@@ -184,7 +230,12 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
             {"title": "Evidence B", "body": "Read source B", "assignee": "auto-worker", "parents": []},
         ],
     })
-    monkeypatch.setattr(auxiliary_client, "call_llm", lambda **_kwargs: response)
+    llm_calls = []
+    monkeypatch.setattr(
+        auxiliary_client,
+        "call_llm",
+        lambda **kwargs: llm_calls.append(kwargs) or response,
+    )
 
     outcome = decompose.decompose_task(root_id, author="terra")
     assert outcome.ok is True
@@ -195,10 +246,13 @@ def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
     assert root.assignee == "card-main"
     assert root.current_step_key == "synthesis"
     assert root.model_override == "gpt-5.6-terra"
+    assert llm_calls[0]["provider"] == "openai-codex"
+    assert llm_calls[0]["model"] == "gpt-5.6-terra-card"
     assert all(child.workflow_template_id == "delegate-team-v1" for child in children)
     assert all(child.current_step_key == "worker" for child in children)
     assert all(child.provider_override == "openai-codex" for child in children)
-    assert all(child.model_override == "gpt-5.6-luna" for child in children)
+    assert all(child.model_override == "gpt-5.6-luna-card" for child in children)
+    assert all(child.max_retries == 1 for child in children)
 
     with kb.connect_closing() as conn:
         for index, child in enumerate(children, start=1):

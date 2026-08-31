@@ -176,6 +176,32 @@ def test_register_uses_stock_plugin_api():
     assert tools[0]["handler"] is plugin._handle_execute_host_script
 
 
+def test_registers_existing_native_hooks_for_main_semantic_projection(
+    monkeypatch,
+):
+    hooks = {}
+    unload = []
+    monkeypatch.setenv("LIQUIDAITY_MAIN_BRIDGE_URL", "http://127.0.0.1:4000")
+    monkeypatch.setenv("LIQUIDAITY_MAIN_BRIDGE_TOKEN", "token")
+    monkeypatch.setattr(plugin._MainCliBridge, "start", lambda self: None)
+    ctx = SimpleNamespace(
+        register_kanban_worker_environment_provider=lambda _callback: None,
+        register_tool=lambda **_kwargs: None,
+        register_hook=lambda name, callback: hooks.setdefault(name, callback),
+        on_unload=unload.append,
+    )
+
+    plugin.register(ctx)
+
+    assert set(hooks) == {
+        "on_stream_start", "on_stream_delta", "on_stream_end",
+        "post_llm_call", "pre_tool_call", "post_tool_call",
+        "subagent_start", "subagent_stop", "pre_api_request",
+        "post_api_request", "api_request_error",
+    }
+    assert len(unload) == 1
+
+
 def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch):
     import acp_adapter.host_profiles as host_profiles
     import tools.code_execution_tool as code_execution_tool
@@ -185,7 +211,7 @@ def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch
         "source": "source",
         "sourceHash": "a" * 64,
         "compiledHash": "b" * 64,
-        "mode": "outer_controller",
+        "mode": "tool_recipe",
         "inputSchema": {
             "type": "object",
             "properties": {"focus": {"type": "string"}},
@@ -253,7 +279,7 @@ def test_host_script_validation_failure_activates_exact_selected_mcp_fallback(mo
         "source": "source",
         "sourceHash": "a" * 64,
         "compiledHash": "b" * 64,
-        "mode": "outer_controller",
+        "mode": "tool_recipe",
         "inputSchema": {
             "type": "object",
             "properties": {"focus": {"type": "string"}},
@@ -294,7 +320,7 @@ def test_host_script_failure_after_tool_call_is_terminal_without_fallback(monkey
         "source": "source",
         "sourceHash": "a" * 64,
         "compiledHash": "b" * 64,
-        "mode": "outer_controller",
+        "mode": "tool_recipe",
         "inputSchema": {
             "type": "object",
             "properties": {"focus": {"type": "string"}},
@@ -367,11 +393,79 @@ def test_main_bridge_emits_only_structured_native_hook_events(monkeypatch):
     )
 
     assert [event[1]["kind"] for event in events] == [
-        "started", "text", "completed"
+        "started", "projection", "projection", "projection",
+        "projection", "projection", "completed"
     ]
-    assert events[1][1]["delta"] == "public delta"
-    assert events[2][1]["finalText"] == "public final"
+    projections = [event[1]["projection"] for event in events
+                   if event[1]["kind"] == "projection"]
+    assert [event["category"] for event in projections] == [
+        "execution.receipt", "conversation.answer", "execution.progress",
+        "conversation.answer", "execution.receipt",
+    ]
+    assert projections[1]["text"] == "public delta"
+    assert projections[3]["text"] == "public final"
+    assert events[-1][1]["finalText"] == "public final"
+    assert [event["sequence"] for event in projections] == [1, 2, 3, 4, 5]
     assert bridge._active is None
+
+
+def test_main_bridge_projects_tool_child_receipt_and_error_identity(monkeypatch):
+    bridge = plugin._MainCliBridge(
+        SimpleNamespace(), "http://127.0.0.1:4000", "token"
+    )
+    bridge._active = {
+        "requestId": "request-1",
+        "runId": "run-1",
+        "driverSource": "internal_chat",
+        "message": "hello",
+    }
+    events = []
+    monkeypatch.setattr(
+        bridge,
+        "_request",
+        lambda path, payload=None: events.append((path, payload))
+        or {"ok": True},
+    )
+
+    bridge.on_pre_tool_call(
+        tool_name="terminal", args={"command": "pwd"},
+        tool_call_id="tool-1", session_id="session-1", turn_id="turn-1",
+        task_id="task-1",
+    )
+    bridge.on_post_tool_call(
+        tool_name="terminal", result="C:/workspace", status="ok",
+        tool_call_id="tool-1", session_id="session-1", turn_id="turn-1",
+        task_id="task-1", duration_ms=8,
+    )
+    bridge.on_subagent_start(
+        parent_session_id="session-1", parent_turn_id="turn-1",
+        child_session_id="child-1", child_role="researcher",
+        child_goal="read only",
+    )
+    bridge.on_subagent_stop(
+        parent_session_id="session-1", parent_turn_id="turn-1",
+        child_session_id="child-1", child_role="researcher",
+        child_status="completed", child_summary="done",
+    )
+    bridge.on_api_request_error(
+        api_request_id="api-1", session_id="session-1", turn_id="turn-1",
+        task_id="task-1", provider="openai-codex", model="gpt-5.6",
+        retry_count=1, max_retries=2, retryable=True,
+        error={"type": "rate_limit", "message": "retry"},
+    )
+
+    projections = [event[1]["projection"] for event in events]
+    assert [event["category"] for event in projections] == [
+        "execution.command", "execution.command", "execution.child",
+        "execution.child", "execution.error",
+    ]
+    assert [event["id"] for event in projections[:2]] == [
+        "tool-1:started", "tool-1:finished",
+    ]
+    assert projections[2]["nativeChildId"] == "child-1"
+    assert projections[3]["state"] == "completed"
+    assert projections[4]["state"] == "retrying"
+    assert projections[4]["provider"] == "openai-codex"
 
 
 def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):

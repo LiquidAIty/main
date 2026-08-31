@@ -89,7 +89,12 @@ def _editor_fields(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if name == "runtimeKind":
             values = [item["properties"]["kind"]["const"] for item in runtime_schemas]
         elif name == "runtimeMode":
-            values = [value for item in runtime_schemas for value in item["properties"]["mode"]["enum"]]
+            values = [
+                value
+                for item in runtime_schemas
+                for value in item["properties"]["mode"]["enum"]
+                if value != "kanban"
+            ]
         elif name == "provider":
             values = sorted({item["provider"] for item in models})
         field = {

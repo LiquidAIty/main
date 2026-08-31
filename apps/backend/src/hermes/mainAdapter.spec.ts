@@ -44,7 +44,6 @@ function fakeAcpScript(
   exitAfterRegistration: boolean,
   holdTerminalTurn = false,
   holdConfiguration = false,
-  failScriptAfterOperation = false,
 ): string {
   return `
 const readline = require('node:readline');
@@ -52,7 +51,6 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
 let heldPromptId;
 let heldConfigureId;
-let controllerPrompt;
 rl.on('line', (line) => {
   const message = JSON.parse(line);
   const method = message.method;
@@ -70,24 +68,7 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
   if (method === '_session/execute_host_script') {
-    ${failScriptAfterOperation ? `return send({ jsonrpc: '2.0', id: message.id, result: {
-      ok: false,
-      error: 'script_failed_after_operation',
-      fallback: { activated: false, presentationMode: 'script-failed-after-operation', reason: 'operation_started_no_replay' },
-      receipt: { schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'error', toolCallsMade: 1 },
-    } });` : ''}
-    const mission = message.params?.input?.mission || '';
-    const overlay = mission === 'overlay mission'
-      ? { order: ['run.mission', 'graph.context'], exclude: ['card.output_requirements'], replace: { 'graph.context': 'replacement graph' } }
-      : undefined;
-    controllerPrompt = overlay
-      ? ['overlay mission', 'replacement graph'].join(String.fromCharCode(10, 10))
-      : mission;
-    return send({ jsonrpc: '2.0', id: message.id, result: {
-      ok: true,
-      output: { agent: { run: true, ...(overlay ? { overlay } : {}) }, result: { prepared: true } },
-      receipt: { schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'success', toolCalls: [] },
-    } });
+    return send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'host_script_preexecution_retired' } });
   }
   if (method === '_session/delete_history') {
     return send({ jsonrpc: '2.0', id: message.id, result: { deleted: true } });
@@ -108,10 +89,6 @@ rl.on('line', (line) => {
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
   }
   if (method === 'session/prompt') {
-    ${failScriptAfterOperation ? "return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'fixture_model_replay_forbidden' } });" : ''}
-    if (controllerPrompt && message.params?.prompt?.[0]?.text !== controllerPrompt) {
-      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'fixture_controller_prompt_not_used' } });
-    }
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'deterministic local status' } } } });
     send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'provider-free-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'provider-free terminal result' }, _meta: { hermes: { messageSource: 'model' } } } } });
     ${holdTerminalTurn ? `
@@ -173,8 +150,8 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
-  it('enters the immutable Script before the native agent stage and preserves its default prompt on omission', async () => {
-    const root = path.join(tmpdir(), `liquidaity-acp-controller-${randomUUID()}`);
+  it('keeps the saved Script model-callable without pre-executing it before Hermes', async () => {
+    const root = path.join(tmpdir(), `liquidaity-acp-script-tool-${randomUUID()}`);
     mkdirSync(root, { recursive: true });
     const owner = new AcpProcess(() => undefined, {
       install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
@@ -184,139 +161,19 @@ describe('Hermes ACP transport identity', () => {
     try {
       const handle = await owner.startTurn({
         ...providerFreeTurnArgs(0),
-        tools: [],
-        grantedTools: [],
+        tools: [], grantedTools: [],
         script: {
           version: 8,
-          source: 'exact source bytes\n',
-          sourceHash: 'a'.repeat(64),
-          compiledHash: 'b'.repeat(64),
-          mode: 'outer_controller',
-          inputSchema: {
-            type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'],
-          },
-          outputSchema: {
-            type: 'object',
-            properties: {
-              agent: {
-                type: 'object', properties: { run: { type: 'boolean' }, prompt: { type: 'string' } },
-                required: ['run'],
-              },
-            },
-            required: ['agent'],
-          },
-          toolHandles: [],
-          toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
-          timeoutSeconds: 12,
-          maxToolCalls: 3,
-          maxOutputBytes: 4096,
-        },
-      }, (event) => events.push(event));
-      const result = await handle.done;
-      expect(events.map((event) => event.kind)).toEqual([
-        'script_start', 'script_result', 'text', 'done',
-      ]);
-      expect(result.finalText).toBe('provider-free terminal result');
-      expect(result.transport.scriptReceipt).toMatchObject({
-        schemaVersion: 'liquidaity.card-script.receipt.v1', status: 'success',
-      });
-      expect(result.transport.scriptControl).toMatchObject({
-        agentInvoked: true, promptMode: 'preserved-default',
-      });
-    } finally {
-      owner.close();
-      await owner.closed;
-    }
-  });
-
-  it('does not replay through the model when Script execution fails after a tool operation', async () => {
-    const root = path.join(tmpdir(), `liquidaity-acp-no-replay-${randomUUID()}`);
-    mkdirSync(root, { recursive: true });
-    const owner = new AcpProcess(() => undefined, {
-      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false, false, false, true)] },
-      hermesHome: root,
-    });
-    const events: Array<{ kind: string; [key: string]: unknown }> = [];
-    try {
-      await expect(owner.startTurn({
-        ...providerFreeTurnArgs(0),
-        tools: [],
-        grantedTools: [],
-        script: {
-          version: 9,
-          source: 'exact source bytes\n',
-          sourceHash: 'a'.repeat(64),
-          compiledHash: 'b'.repeat(64),
-          mode: 'outer_controller',
-          inputSchema: {
-            type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'],
-          },
-          outputSchema: { type: 'object', properties: {} },
-          toolHandles: [],
-          toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
-          timeoutSeconds: 12,
-          maxToolCalls: 3,
-          maxOutputBytes: 4096,
-        },
-      }, (event) => events.push(event))).rejects.toThrow('script_failed_after_operation');
-      expect(events).toContainEqual(expect.objectContaining({
-        kind: 'script_result',
-        ok: false,
-        fallback: expect.objectContaining({
-          activated: false,
-          presentationMode: 'script-failed-after-operation',
-        }),
-      }));
-      expect(events.some((event) => event.kind === 'text')).toBe(false);
-    } finally {
-      owner.close();
-      await owner.closed;
-    }
-  });
-
-  it('applies a bounded sparse prompt overlay while preserving the stable system prompt', async () => {
-    const root = path.join(tmpdir(), `liquidaity-acp-overlay-${randomUUID()}`);
-    mkdirSync(root, { recursive: true });
-    const owner = new AcpProcess(() => undefined, {
-      install: { root, executable: process.execPath, args: ['-e', fakeAcpScript(false)] },
-      hermesHome: root,
-    });
-    try {
-      const args = providerFreeTurnArgs(0);
-      const handle = await owner.startTurn({
-        ...args,
-        message: 'ordinary default prompt',
-        scriptInput: {
-          mission: 'overlay mission',
-          card: {
-            blocks: [
-              { id: 'graph.context', content: 'original graph' },
-              { id: 'card.output_requirements', content: 'output requirements' },
-              { id: 'run.mission', content: 'overlay mission' },
-            ],
-          },
-        },
-        script: {
-          version: 9,
-          source: 'exact overlay source\n',
-          sourceHash: 'c'.repeat(64),
-          compiledHash: 'd'.repeat(64),
-          mode: 'outer_controller',
-          inputSchema: { type: 'object', properties: { mission: { type: 'string' } }, required: ['mission'] },
-          outputSchema: { type: 'object', properties: { agent: { type: 'object' } }, required: ['agent'] },
+          source: 'from hermes_tools import output\noutput.emit({"result": {}})\n',
+          sourceHash: 'a'.repeat(64), compiledHash: 'b'.repeat(64), mode: 'tool_recipe',
+          inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+          outputSchema: { type: 'object', properties: { result: {} }, required: ['result'] },
           toolHandles: [], toolStates: {}, offToolIds: [], scriptToolIds: [], agentToolIds: [],
           timeoutSeconds: 12, maxToolCalls: 3, maxOutputBytes: 4096,
         },
-      }, () => undefined);
-      const result = await handle.done;
-      expect(result.transport.scriptControl).toMatchObject({
-        agentInvoked: true,
-        promptMode: 'sparse-overlay',
-        blockOrder: ['run.mission', 'graph.context'],
-        excluded: ['card.output_requirements'],
-        replaced: ['graph.context'],
-      });
-      expect(args.prompt).toBe('Saved Main prompt');
+      }, (event) => events.push(event));
+      await expect(handle.done).resolves.toMatchObject({ finalText: 'provider-free terminal result' });
+      expect(events.map((event) => event.kind)).toEqual(['text', 'done']);
     } finally {
       owner.close();
       await owner.closed;
@@ -837,7 +694,7 @@ describe('Hermes ACP transport identity', () => {
       expect.stringMatching(/^mcp-main-runtime-/),
     ]);
     expect(sessionConfig.enabledTools).toEqual([]);
-    expect(sessionConfig.delegationRoles).toEqual(['team', 'leaf']);
+    expect(sessionConfig.delegationRoles).toEqual(['leaf']);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
     expect(sessionConfig.executionContextId).toBe('root-context');
@@ -878,6 +735,17 @@ describe('Hermes ACP transport identity', () => {
       mcpConnectionIds: [],
       nativeProfileToolsets: ['terminal', 'file'],
       nativeTools: ['read_file'],
+      team: {
+        mode: 'auto', maxWorkers: 2, retryLimit: 0,
+        workerModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+        leadModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+        },
+      },
       message: 'Inspect one symbol.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
@@ -891,10 +759,15 @@ describe('Hermes ACP transport identity', () => {
     ]);
     expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.delegationRoles).toEqual(['team']);
+    expect(sessionConfig.team).toEqual({
+      mode: 'auto', maxWorkers: 2, retryLimit: 0,
+      worker: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
+      lead: { provider: 'openai-codex', model: 'gpt-5.6-terra' },
+    });
     expect(sessionConfig.executionContextId).toBe('coder-context');
   });
 
-  it('registers Script component tools for host execution without presenting a Script tool', () => {
+  it('projects one typed Script model tool while keeping wrapped operations private', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: [],
@@ -904,7 +777,7 @@ describe('Hermes ACP transport identity', () => {
         source: 'from hermes_tools import output\noutput.emit({})\n',
         sourceHash: 'a'.repeat(64),
         compiledHash: 'b'.repeat(64),
-        mode: 'outer_controller',
+        mode: 'tool_recipe',
         inputSchema: {
           type: 'object', properties: { focus: { type: 'string' } }, required: ['focus'],
         },
@@ -949,7 +822,7 @@ describe('Hermes ACP transport identity', () => {
         source: 'from hermes_tools import output\noutput.emit({})\n',
         sourceHash: 'a'.repeat(64),
         compiledHash: 'b'.repeat(64),
-        mode: 'outer_controller',
+        mode: 'tool_recipe',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: { type: 'object', properties: {} },
         toolHandles: ['constellation.context'],
@@ -988,7 +861,7 @@ describe('Hermes ACP transport identity', () => {
         source: 'from hermes_tools import output\noutput.emit({})\n',
         sourceHash: 'a'.repeat(64),
         compiledHash: 'b'.repeat(64),
-        mode: 'outer_controller',
+        mode: 'tool_recipe',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: { type: 'object', properties: {} },
         toolHandles: [],
@@ -1026,7 +899,7 @@ describe('Hermes ACP transport identity', () => {
         source: 'from hermes_tools import output\noutput.emit({})\n',
         sourceHash: 'a'.repeat(64),
         compiledHash: 'b'.repeat(64),
-        mode: 'outer_controller',
+        mode: 'tool_recipe',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: { type: 'object', properties: {} },
         toolHandles: ['web_search'],
