@@ -139,6 +139,32 @@ describe('Main chat live observation callbacks', () => {
     });
   });
 
+  it('stages exact unresolved references from a delegated native tool start', () => {
+    expect(parseStagedCardReviewLoaded({
+      result: JSON.stringify({
+        nativeEvents: [{
+          kind: 'tool_start',
+          toolName: 'mcp__main_runtime_one__write_mag_one_instructions',
+          argsJson: JSON.stringify({
+            targetCardId: 'card_agent_builder',
+            mission: 'Exact unsent mission.',
+            dataAnchors: [{
+              authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
+              priority: 1, boundedExpansion: 0, resultLimit: 1,
+            }],
+          }),
+        }],
+      }),
+    })).toEqual({
+      targetCardId: 'card_agent_builder',
+      mission: 'Exact unsent mission.',
+      dataAnchors: [{
+        authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
+        priority: 1, boundedExpansion: 0, resultLimit: 1, required: true,
+      }],
+    });
+  });
+
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
     let resolveHistory!: (history: {
       messages: Array<{ role: 'assistant' | 'user'; text: string }>;
@@ -287,7 +313,7 @@ describe('Main chat live observation callbacks', () => {
     mocks.streamSession.mockImplementation(async (args) => {
       args.onEvent({
         kind: 'tool_result',
-        toolName: 'card.run_assistant_agent',
+        toolName: 'delegate_task',
         isError: false,
         output: {
           result: {

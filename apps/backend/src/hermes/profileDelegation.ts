@@ -55,7 +55,13 @@ export async function runHermesProfileDelegation(
   params: HermesProfileDelegationParams,
   runSystemTool: SystemRunner = callPythonAgentSystemTool,
   readDeck: DeckReader = getDeckDocument,
-): Promise<{ nativeChildId: string; targetProfile: string; runId: string; result: string }> {
+): Promise<{
+  nativeChildId: string;
+  targetProfile: string;
+  runId: string;
+  result: string;
+  nativeEvents: unknown[];
+}> {
   const parentContext = bounded(
     params.parentExecutionContextId,
     'parent_execution_context_id',
@@ -150,5 +156,6 @@ export async function runHermesProfileDelegation(
   const record = result as Record<string, unknown>;
   const runId = bounded(record.runId, 'child_run_id', 128, true);
   const output = bounded(record.output, 'result', 2_000_000);
-  return { nativeChildId, targetProfile, runId, result: output };
+  const nativeEvents = Array.isArray(record.nativeEvents) ? record.nativeEvents : [];
+  return { nativeChildId, targetProfile, runId, result: output, nativeEvents };
 }

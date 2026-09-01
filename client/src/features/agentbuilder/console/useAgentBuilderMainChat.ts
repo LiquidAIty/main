@@ -48,8 +48,8 @@ export type MainChatTurnEvent = {
 
 export type StagedCardReviewLoaded = {
   targetCardId: string;
-  targetCardTitle: string;
-  sourceCardId: string;
+  targetCardTitle?: string;
+  sourceCardId?: string;
   mission: string;
   dataAnchors: Array<{
     authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
@@ -60,7 +60,7 @@ export type StagedCardReviewLoaded = {
     resultLimit: number;
     required: true;
   }>;
-  reviewContext: {
+  reviewContext?: {
     resolvedNativeReads?: Array<Record<string, unknown>>;
     resolvedGraphProjection: GraphProjectionV1;
   };
@@ -128,6 +128,42 @@ export function parseStagedCardReviewLoaded(
   }
   if (typeof output !== 'object') return null;
   const record = output as Record<string, unknown>;
+  const toolName = typeof record.toolName === 'string' ? record.toolName : '';
+  if (
+    record.kind === 'tool_start'
+    && (toolName === 'write_mag_one_instructions' || toolName.endsWith('__write_mag_one_instructions'))
+    && typeof record.argsJson === 'string'
+  ) {
+    try {
+      const args = JSON.parse(record.argsJson) as Record<string, unknown>;
+      const stagedAnchors = Array.isArray(args.dataAnchors) ? args.dataAnchors : [];
+      if (
+        typeof args.targetCardId === 'string' && args.targetCardId.length > 0
+        && typeof args.mission === 'string' && args.mission.trim().length > 0
+        && stagedAnchors.every((anchor) => {
+          if (!anchor || typeof anchor !== 'object') return false;
+          const value = anchor as Record<string, unknown>;
+          return ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(value.authority))
+            && typeof value.nativeId === 'string' && value.nativeId.length > 0
+            && typeof value.reason === 'string' && value.reason.length > 0
+            && Number.isInteger(value.priority)
+            && Number.isInteger(value.boundedExpansion)
+            && Number.isInteger(value.resultLimit);
+        })
+      ) {
+        return {
+          targetCardId: args.targetCardId,
+          mission: args.mission,
+          dataAnchors: stagedAnchors.map((anchor) => ({
+            ...(anchor as Omit<StagedCardReviewLoaded['dataAnchors'][number], 'required'>),
+            required: true,
+          })),
+        };
+      }
+    } catch {
+      return null;
+    }
+  }
   const reviewContext = record.reviewContext as Record<string, unknown> | undefined;
   const projection = reviewContext?.resolvedGraphProjection as Record<string, unknown> | undefined;
   const anchors = Array.isArray(record.dataAnchors) ? record.dataAnchors : [];
@@ -506,7 +542,7 @@ export default function useAgentBuilderMainChat({
                   && ['execution.tool', 'execution.command'].includes(projection.category)
                   && projection.status === 'completed'))
               && typeof (projection?.toolName || event.toolName) === 'string'
-              && ['write_mag_one_instructions', 'card.run_assistant_agent'].includes(
+              && ['write_mag_one_instructions', 'card.run_assistant_agent', 'delegate_task'].includes(
                 String(projection?.toolName || event.toolName),
               )
             ) {
@@ -519,7 +555,7 @@ export default function useAgentBuilderMainChat({
                   && ['execution.tool', 'execution.command'].includes(projection.category)
                   && projection.status === 'completed'))
               && typeof (projection?.toolName || event.toolName) === 'string'
-              && ['card.load_graph_references', 'card.run_assistant_agent'].includes(
+              && ['card.load_graph_references', 'card.run_assistant_agent', 'delegate_task'].includes(
                 String(projection?.toolName || event.toolName),
               )
             ) {

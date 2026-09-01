@@ -407,7 +407,7 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
   });
 
-  it('places one staged Coder or Mag One mission and exact graph data in transient Card state', () => {
+  it('places one staged delegate or Mag One mission and exact graph data in transient Card state', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -426,8 +426,8 @@ describe('AgentManager active builder config', () => {
 
     expect(chatSource).toContain("'nativeEvents'");
     expect(source).toContain('card-native-telemetry');
-    expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent']");
-    expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent']");
+    expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent', 'delegate_task']");
+    expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent', 'delegate_task']");
     expect(chatSource).toContain('onCardReviewStaged');
     expect(chatSource).toContain('onCardGraphReferenceLoaded');
     expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
@@ -438,6 +438,10 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('invocation: null');
     expect(chatSource).not.toContain('reviewContext.idf');
     expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[selectedCard.id] || [])');
+    const sendOnceGuard = pageSource.indexOf('standaloneTestRequestRef.current\n      || !selectedCard');
+    const correlationAllocation = pageSource.indexOf('const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;');
+    expect(sendOnceGuard).toBeGreaterThan(-1);
+    expect(correlationAllocation).toBeGreaterThan(sendOnceGuard);
     expect(pageSource).not.toContain('(transientCardGraphContext[selectedCard.id] || []).length === 0');
     expect(pageSource).toContain('(item) => item.reference.required && !item.ready');
     expect(source).toContain('Exact model-bound native graph context');
@@ -448,6 +452,9 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('onMoveGraphReference');
     expect(source).not.toContain('Read-only Mag One proposal');
     expect(pageSource).toContain('onCardReviewStaged: handleCardReviewStaged');
+    expect(pageSource).toContain('hasPendingStandaloneInvocation');
+    expect(pageSource).toContain('standaloneHydrationGenerationRef.current');
+    expect(source).toContain('Exact native references are selected below. Python rereads and materializes them when Run starts; no graph preview is shown before invocation.');
     expect(pageSource).toContain('onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded');
     expect(pageSource).not.toContain('persistTransientCardInputs');
     expect(pageSource).not.toContain('proposalHash');

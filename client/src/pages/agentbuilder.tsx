@@ -472,20 +472,30 @@ export default function AgentBuilder(): React.ReactElement {
   }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
   const [standaloneTestResult, setStandaloneTestResult] = useState<StandaloneCardTestResult | null>(null);
   const [standaloneRunInputs, setStandaloneRunInputs] = useState<RetainedRunInputs | null>(null);
+  const standaloneHydrationGenerationRef = useRef(0);
   const handleCardReviewStaged = useCallback((loaded: StagedCardReviewLoaded) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
-    const graphProjection = loaded.reviewContext.resolvedGraphProjection;
+    const graphProjection = loaded.reviewContext?.resolvedGraphProjection;
     const supportedTarget = target && (
       (target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate')
       || (target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one')
     );
-    if (!target || !supportedTarget || !graphProjection) {
-      setDeckStatusMessage('Grounded invocation target is not an active saved Coder or Mag One Card.');
+    if (!target || !supportedTarget) {
+      setDeckStatusMessage('Grounded invocation target is not an active saved delegate or Mag One Card.');
       return;
     }
+    const selectedProjection: GraphProjectionV1 = graphProjection || {
+      schemaVersion: 'native-card-context.v1',
+      authority: '',
+      projectId: canvasProjectId,
+      nodes: [],
+      edges: [],
+      counts: { nodes: 0, edges: 0 },
+    };
+    const previewResolved = Boolean(graphProjection);
     const graphContext: LoadedCardGraphReference[] = loaded.dataAnchors.map((anchor, order) => ({
       targetCardId: target.id,
-      sourceCardId: loaded.sourceCardId,
+      ...(loaded.sourceCardId ? { sourceCardId: loaded.sourceCardId } : {}),
       reference: {
         authority: anchor.authority,
         nativeId: anchor.nativeId,
@@ -495,10 +505,10 @@ export default function AgentBuilder(): React.ReactElement {
         resultLimit: anchor.resultLimit,
         required: true,
       },
-      resolvedReferences: loaded.reviewContext.resolvedNativeReads || [],
+      resolvedReferences: loaded.reviewContext?.resolvedNativeReads || [],
       resolvedContextMarkdown: '',
-      graphProjection,
-      resolved: true,
+      graphProjection: selectedProjection,
+      resolved: previewResolved,
       ready: true,
     }));
     setTransientCardInputs((current) => ({
@@ -506,6 +516,7 @@ export default function AgentBuilder(): React.ReactElement {
       [target.id]: loaded.mission,
     }));
     setTransientCardGraphContext((current) => ({ ...current, [target.id]: graphContext }));
+    standaloneHydrationGenerationRef.current += 1;
     setStandaloneTestResult({
       status: 'ready',
       output: '',
@@ -518,11 +529,12 @@ export default function AgentBuilder(): React.ReactElement {
       model: String(target.runtimeOptions?.modelKey || ''),
       runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
       invocation: null,
+      cardId: target.id,
     });
     setSelectedCardId(target.id);
     setTab('CLI');
-    setDeckStatusMessage(`${target.title} mission and graph data are ready for review. Nothing ran.`);
-  }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
+    setDeckStatusMessage(`${target.title} mission and exact graph references are ready for review. Nothing ran.`);
+  }, [canvasProjectId, deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
   const handleCardGraphReferenceLoaded = useCallback((loaded: LoadedCardGraphReference) => {
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
@@ -866,6 +878,13 @@ export default function AgentBuilder(): React.ReactElement {
     () => getStandaloneCardUnavailableReason(selectedCard),
     [selectedCard],
   );
+  const hasPendingStandaloneInvocation = Boolean(
+    selectedCard
+    && (
+      String(transientCardInputs[selectedCard.id] || '').trim()
+      || (transientCardGraphContext[selectedCard.id] || []).length > 0
+    )
+  );
   // Main's ordinary Chat input + Send control is its only invocation composer.
   // The Inspector can display Main, but must not expose a second self-test input.
   const showStandaloneTestControls =
@@ -1037,7 +1056,13 @@ export default function AgentBuilder(): React.ReactElement {
   const executeStandaloneInvocation = useCallback(async (
     input: string,
   ) => {
-    if (!selectedCard || !canvasProjectId || standaloneTestBusy || standaloneTestUnavailableReason) return;
+    if (
+      standaloneTestRequestRef.current
+      || !selectedCard
+      || !canvasProjectId
+      || standaloneTestBusy
+      || standaloneTestUnavailableReason
+    ) return;
     const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
     standaloneTestRequestRef.current = correlationId;
     standaloneActiveRunRef.current = { runId: correlationId, correlationId, cardId: selectedCard.id };
@@ -1253,16 +1278,18 @@ export default function AgentBuilder(): React.ReactElement {
   }, [pollStandaloneRun, selectedCard, setDeckStatusMessage, standaloneTestResult]);
 
   useEffect(() => {
+    const hydrationGeneration = ++standaloneHydrationGenerationRef.current;
     standaloneTestRequestRef.current = null;
     standaloneActiveRunRef.current = null;
     setStandaloneTestBusy(false);
     setStandaloneTestResult(null);
     if (!selectedCard || !canvasProjectId) return;
+    if (hasPendingStandaloneInvocation) return;
     const token = `card-hydrate-${selectedCard.id}-${crypto.randomUUID().slice(0, 8)}`;
     let cancelled = false;
     void readStandaloneRunStatus({ cardId: selectedCard.id })
       .then(async (result) => {
-        if (cancelled) return;
+        if (cancelled || hydrationGeneration !== standaloneHydrationGenerationRef.current) return;
         const mapped = toStandaloneRunResult(result);
         setStandaloneTestResult(mapped);
         const state = String(result.state || '');
@@ -1279,14 +1306,18 @@ export default function AgentBuilder(): React.ReactElement {
         }
       })
       .catch((error) => {
-        if (cancelled || String(error instanceof Error ? error.message : error).includes('card_run_not_found')) return;
+        if (
+          cancelled
+          || hydrationGeneration !== standaloneHydrationGenerationRef.current
+          || String(error instanceof Error ? error.message : error).includes('card_run_not_found')
+        ) return;
         setDeckStatusMessage(error instanceof Error ? error.message : 'Card run hydration failed.');
       });
     return () => {
       cancelled = true;
       if (standaloneTestRequestRef.current === token) standaloneTestRequestRef.current = null;
     };
-  }, [canvasProjectId, pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setDeckStatusMessage, toStandaloneRunResult]);
+  }, [canvasProjectId, hasPendingStandaloneInvocation, pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setDeckStatusMessage, toStandaloneRunResult]);
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [...BUILDER_NODE_TABS];

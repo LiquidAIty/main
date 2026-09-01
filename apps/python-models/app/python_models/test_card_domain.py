@@ -1737,7 +1737,13 @@ def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
 ) -> None:
     source = _agent("helper", runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"})
     source["runtimeOptions"]["tools"] = ["card.load_graph_references"]
-    target = _agent("mag-one", runtime={"kind": "autogen", "mode": "magentic_one"})
+    target = _agent(
+        "mag-one",
+        runtime={"kind": "autogen", "mode": "magentic_one"},
+        _cardRevisionId="revision-mag-one",
+        _cardRevision=3,
+        _cardRevisionSha256="sha-mag-one",
+    )
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
         "projectId": "project-one",
         "deck": {"nodes": [source, target], "edges": []},
@@ -1773,6 +1779,9 @@ def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
     assert result["ready"] is True
     assert result["persisted"] is False
     assert result["started"] is False
+    assert result["cardRevisionId"] == "revision-mag-one"
+    assert result["cardRevision"] == 3
+    assert result["cardRevisionSha256"] == "sha-mag-one"
     assert result["reference"] == {
         "authority": "KnowGraph", "nativeId": "episode:one",
         "reason": "Use the sourced evidence", "boundedExpansion": 1,

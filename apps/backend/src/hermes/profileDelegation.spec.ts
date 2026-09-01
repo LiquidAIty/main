@@ -41,7 +41,14 @@ describe('native profile delegation host adapter', () => {
   it('maps one authorized native profile to the canonical saved-Card tool', async () => {
     const runner = vi.fn(async () => ({
       ok: true,
-      result: { runId: 'child-run', output: 'bounded graph result' },
+      result: {
+        runId: 'child-run',
+        output: 'bounded graph result',
+        nativeEvents: [{
+          kind: 'tool_result', toolName: 'write_mag_one_instructions', isError: false,
+          output: { ok: true, targetCardId: 'card_agent_builder' },
+        }],
+      },
     }));
     await expect(runHermesProfileDelegation(authority, {
       parentExecutionContextId: 'root-context',
@@ -62,6 +69,10 @@ describe('native profile delegation host adapter', () => {
       targetProfile: 'liquidaity-hermes-steward',
       runId: 'child-run',
       result: 'bounded graph result',
+      nativeEvents: [{
+        kind: 'tool_result', toolName: 'write_mag_one_instructions', isError: false,
+        output: { ok: true, targetCardId: 'card_agent_builder' },
+      }],
     });
     expect(runner).toHaveBeenCalledWith(
       expect.objectContaining({

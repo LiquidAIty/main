@@ -1483,8 +1483,8 @@ export function AgentManager({
             <textarea
               value={promptParts.role}
               onChange={(event) => {
-                      setPromptParts((current) => ({ ...current, role: event.target.value }));
-                      setPromptPartsTouched(true);
+                setPromptParts((current) => ({ ...current, role: event.target.value }));
+                setPromptPartsTouched(true);
                 markDraftDirty();
               }}
               rows={5}
@@ -1883,7 +1883,9 @@ export function AgentManager({
           </div>
           {knowledgeGraphProjection.nodes.length === 0 ? (
             <div style={{ color: '#80969F', fontSize: 11.5 }}>
-              No transient graph references are loaded for this Card invocation.
+              {loadedGraphContext.length > 0
+                ? 'Exact native references are selected below. Python rereads and materializes them when Run starts; no graph preview is shown before invocation.'
+                : 'No transient graph references are loaded for this Card invocation.'}
             </div>
           ) : (
             <div
