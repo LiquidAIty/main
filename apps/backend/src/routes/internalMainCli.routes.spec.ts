@@ -44,6 +44,7 @@ describe('internal Main CLI bridge routes', () => {
       expect(mainCliBridge.history()).toEqual({
         sessionId: 'session-1',
         messages: [{ role: 'assistant', text: 'prior answer' }],
+        projections: [],
       });
 
       const onEvent = vi.fn();

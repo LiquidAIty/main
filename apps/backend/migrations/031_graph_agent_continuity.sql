@@ -3,7 +3,6 @@
 -- only a new current revision is created for the existing stable Card.
 BEGIN;
 
-LOAD 'age';
 SET LOCAL search_path = ag_catalog, "$user", public;
 
 DO $$

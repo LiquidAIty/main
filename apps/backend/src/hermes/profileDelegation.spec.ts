@@ -62,14 +62,8 @@ describe('native profile delegation host adapter', () => {
       }),
       'card.run_assistant_agent',
       {
-        projectId: 'project-one',
-        deckId: 'deck_builder',
         cardId: 'card_hermes_steward',
         cardRevisionId: 'graph-revision-one',
-        correlationId: 'profile-abcdef123456',
-        conversationId: 'conversation-one',
-        originatingAgentId: 'card_main_chat',
-        originatingRunId: 'parent-run',
         input: 'Inspect the requested graph.\n\n## Delegated context\nReturn native provenance.',
       },
     );

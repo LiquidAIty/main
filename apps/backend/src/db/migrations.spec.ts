@@ -59,6 +59,7 @@ describe('canonical backend migrations', () => {
     expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
     expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
     expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toMatch(/\bLOAD\s+'age'/i);
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });

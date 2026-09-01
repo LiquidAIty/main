@@ -127,14 +127,8 @@ export async function runHermesProfileDelegation(
     grantedTools: ['card.run_assistant_agent'],
     presentedTools: [],
   }, 'card.run_assistant_agent', {
-    projectId: authority.projectId,
-    deckId: authority.deckId,
     cardId: target.cardId,
     cardRevisionId: target.cardRevisionId,
-    correlationId: nativeChildId,
-    conversationId: authority.conversationId,
-    originatingAgentId: authority.sourceCardId,
-    originatingRunId: authority.parentRunId,
     input,
   });
   if (response.ok !== true) {
