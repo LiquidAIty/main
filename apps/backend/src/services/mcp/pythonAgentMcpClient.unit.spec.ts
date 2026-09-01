@@ -71,4 +71,24 @@ describe('Python Agent MCP request deadlines', () => {
       { timeout: 310_000 },
     );
   });
+
+  it('preserves a native MCP validation error instead of JSON-parsing it', async () => {
+    mcpMocks.callTool.mockResolvedValueOnce({
+      isError: true,
+      content: [{ type: 'text', text: 'Input validation error: required is missing' }],
+    });
+    await expect(callPythonAgentSystemTool(
+      {
+        kind: 'system-root', projectId: 'project-1', deckId: 'deck-1',
+        conversationId: 'conversation-1', parentRunId: 'run-1', callerCardId: 'card-main',
+        callerRuntimeKind: 'hermes', callerRuntimeMode: 'main',
+        grantedTools: ['card.run_assistant_agent'],
+      },
+      'card.run_assistant_agent',
+      { cardId: 'card-1', input: 'bounded mission' },
+    )).resolves.toEqual({
+      ok: false,
+      error: 'Input validation error: required is missing',
+    });
+  });
 });

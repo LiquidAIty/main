@@ -69,6 +69,8 @@ type MainCliTurn = {
   delivered: boolean;
   projectionIds: Set<string>;
   profileTargets: HermesProfileTarget[];
+  mcpServers: Record<string, unknown>[];
+  sessionConfig: Record<string, unknown>;
   profileAuthority: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
   projectionIdentity: MainCliHistoryProjection['identity'];
   onEvent: (event: MainCliBridgeEvent) => void;
@@ -125,6 +127,8 @@ export class MainCliBridge {
     driverSource: Exclude<MainDriverSource, 'native_cli'>;
     message: string;
     profileTargets?: HermesProfileTarget[];
+    mcpServers?: Record<string, unknown>[];
+    sessionConfig?: Record<string, unknown>;
     profileAuthority?: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
     projectionIdentity?: MainCliHistoryProjection['identity'];
     onEvent: (event: MainCliBridgeEvent) => void;
@@ -146,6 +150,8 @@ export class MainCliBridge {
         delivered: false,
         projectionIds: new Set(),
         profileTargets: [...(args.profileTargets || [])],
+        mcpServers: structuredClone(args.mcpServers || []),
+        sessionConfig: structuredClone(args.sessionConfig || {}),
         profileAuthority: args.profileAuthority ? { ...args.profileAuthority } : {
           projectId: '', deckId: '', deckRevision: '', conversationId: '', parentRunId: args.runId,
           sourceCardId: '', sourceRuntimeMode: 'main', parentExecutionContextId: executionContextId,
@@ -168,19 +174,23 @@ export class MainCliBridge {
     message: string;
     contextAuthorityMode: MainContextAuthorityMode;
     profileTargets: Array<Omit<HermesProfileTarget, 'cardId' | 'cardRevisionId'>>;
+    mcpServers: Record<string, unknown>[];
+    sessionConfig: Record<string, unknown>;
   } | null {
     this.notePoll();
     if (!this.active || this.active.delivered) return null;
     this.active.delivered = true;
     const {
       requestId, runId, executionContextId, driverSource, message,
-      contextAuthorityMode, profileTargets,
+      contextAuthorityMode, profileTargets, mcpServers, sessionConfig,
     } = this.active;
     return {
       requestId, runId, executionContextId, driverSource, message, contextAuthorityMode,
       profileTargets: profileTargets.map(({ profile, title, description }) => ({
         profile, title, description,
       })),
+      mcpServers: structuredClone(mcpServers),
+      sessionConfig: structuredClone(sessionConfig),
     };
   }
 

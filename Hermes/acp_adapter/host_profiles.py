@@ -348,10 +348,11 @@ def _profile_data_anchors_schema() -> dict[str, Any]:
                 "priority": {"type": "integer"},
                 "boundedExpansion": {"type": "integer", "minimum": 0, "maximum": 3},
                 "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
+                "required": {"type": "boolean"},
             },
             "required": [
                 "authority", "nativeId", "reason", "priority",
-                "boundedExpansion", "resultLimit",
+                "boundedExpansion", "resultLimit", "required",
             ],
             "additionalProperties": False,
         },
@@ -899,3 +900,51 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
     invalidate = getattr(agent, "_invalidate_system_prompt", None)
     if callable(invalidate):
         invalidate()
+
+
+def apply_cli_host_session_config(agent: Any, config: dict[str, Any]) -> None:
+    """Apply one trusted host surface to a persistent CLI for one turn.
+
+    The interactive CLI agent outlives the Card Run, unlike an ACP agent. Keep
+    an exact reversible snapshot so the accepted host turn cannot persist its
+    prompt, tools, or graph grants into the next native terminal turn.
+    """
+
+    if hasattr(agent, "_cli_host_session_original"):
+        raise HostSessionConfigError("hermes_cli_host_session_already_active")
+
+    names = (
+        "tools", "valid_tool_names", "enabled_toolsets",
+        "ephemeral_system_prompt", "_host_session_config",
+        "_host_execution_context_id", "_host_tool_call_meta",
+        "_host_profile_targets",
+    )
+    original = {
+        name: (hasattr(agent, name), copy.deepcopy(getattr(agent, name, None)))
+        for name in names
+    }
+    setattr(agent, "_cli_host_session_original", original)
+    try:
+        apply_host_session_config(agent, config)
+    except Exception:
+        clear_cli_host_session_config(agent)
+        raise
+
+
+def clear_cli_host_session_config(agent: Any) -> bool:
+    """Restore the exact persistent CLI surface saved for a host turn."""
+
+    original = getattr(agent, "_cli_host_session_original", None)
+    if not isinstance(original, dict):
+        return False
+    delattr(agent, "_cli_host_session_original")
+    for name, state in original.items():
+        existed, value = state
+        if existed:
+            setattr(agent, name, copy.deepcopy(value))
+        elif hasattr(agent, name):
+            delattr(agent, name)
+    invalidate = getattr(agent, "_invalidate_system_prompt", None)
+    if callable(invalidate):
+        invalidate()
+    return True

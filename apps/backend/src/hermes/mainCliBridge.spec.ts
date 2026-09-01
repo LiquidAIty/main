@@ -13,6 +13,8 @@ describe('MainCliBridge', () => {
       executionContextId: 'context-1',
       driverSource: 'internal_chat',
       message: 'hello',
+      mcpServers: [{ type: 'http', name: 'main-runtime', url: 'http://127.0.0.1:4000/mcp' }],
+      sessionConfig: { enabledToolsets: ['mcp-main-runtime'], systemPrompt: 'saved prompt' },
       onEvent,
     });
     const candidate = bridge.take();
@@ -22,6 +24,8 @@ describe('MainCliBridge', () => {
       driverSource: 'internal_chat',
       contextAuthorityMode: 'main_native_honcho',
       message: 'hello',
+      mcpServers: [{ type: 'http', name: 'main-runtime', url: 'http://127.0.0.1:4000/mcp' }],
+      sessionConfig: { enabledToolsets: ['mcp-main-runtime'], systemPrompt: 'saved prompt' },
     });
     expect(bridge.take()).toBeNull();
     expect(() => bridge.acceptEvent({

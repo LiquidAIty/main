@@ -178,7 +178,13 @@ export async function callPythonAgentSystemTool(
     const content = Array.isArray(result?.content) ? result.content : [];
     const raw = String((content[0] as { text?: unknown })?.text ?? '').trim();
     if (!raw) throw new Error(`python_agent_mcp_empty_result: ${name}`);
-    const parsed = JSON.parse(raw) as unknown;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      if (result.isError) return { ok: false, error: raw };
+      throw new Error(`python_agent_mcp_invalid_json_result: ${name}`);
+    }
     if (!parsed || typeof parsed !== 'object') {
       throw new Error(`python_agent_mcp_invalid_result: ${name}`);
     }

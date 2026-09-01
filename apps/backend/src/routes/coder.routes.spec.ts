@@ -492,6 +492,20 @@ vi.mock('../conversations/store', () => ({
 }));
 
 vi.mock('../hermes/mainAdapter', () => ({
+  buildHermesHostSessionProjection: (args: any, _env: unknown, executionContextId: string) => ({
+    mcpServers: [{
+      name: 'main-runtime-test', url: 'http://127.0.0.1:4000/mcp', headers: [],
+    }],
+    sessionMeta: { hermes: { sessionConfig: {
+      enabledToolsets: ['mcp-main-runtime-test'],
+      enabledTools: [],
+      delegationRoles: [],
+      hostSessionKey: args.sessionKey,
+      systemPrompt: args.prompt,
+      executionContextId,
+      toolCallMeta: { 'host/execution-context': executionContextId },
+    } } },
+  }),
   deriveHermesSessionKey: (projectId: string, conversationId: string, cardId: string) => `${projectId}:${conversationId}:${cardId}`,
   providerForHermes: (provider: string, accessMode?: string) => (
     provider === 'openai' && accessMode === 'chatgpt-account'

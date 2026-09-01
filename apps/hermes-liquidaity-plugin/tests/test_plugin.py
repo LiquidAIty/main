@@ -506,6 +506,8 @@ def test_main_bridge_rejects_remote_turn_when_native_cli_is_busy(monkeypatch):
         "driverSource": "external_plugin",
         "contextAuthorityMode": "plugin_context_only",
         "message": "hello",
+        "mcpServers": [],
+        "sessionConfig": {},
     }
 
     def request(path, payload=None):
@@ -556,6 +558,8 @@ def test_main_bridge_marks_unfinished_native_stream_cancelled(monkeypatch):
         "runId": "run-1",
         "driverSource": "internal_chat",
         "message": "hello",
+        "mcpServers": [],
+        "sessionConfig": {},
     }
     events = []
     monkeypatch.setattr(
@@ -622,6 +626,8 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
         "driverSource": "internal_chat",
         "contextAuthorityMode": "main_native_honcho",
         "message": "hello",
+        "mcpServers": [],
+        "sessionConfig": {},
     }
     monkeypatch.setattr(
         bridge,
@@ -643,6 +649,7 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
         "request_id": "request-1",
         "external_memory_mode": "normal",
         "profile_targets": [],
+        "session_config": {},
     }
 
 

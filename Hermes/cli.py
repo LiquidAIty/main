@@ -16625,14 +16625,19 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 )
                 self._pending_one_turn_model_restore = None
                 try:
-                    result = self.agent.run_conversation(
-                        user_message=agent_message,
-                        conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
-                        stream_callback=stream_callback,
-                        task_id=self.session_id,
-                        persist_user_message=_persist_clean_user_message,
-                        moa_config=_moa_cfg,
-                    )
+                    # LIQUIDAITY VENDOR PATCH: an accepted Card-driven Main
+                    # turn uses the same execution metadata/Script scope as
+                    # ACP. Native terminal turns enter an inert empty scope.
+                    from acp_adapter.host_profiles import host_execution_scope
+                    with host_execution_scope(self.agent):
+                        result = self.agent.run_conversation(
+                            user_message=agent_message,
+                            conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
+                            stream_callback=stream_callback,
+                            task_id=self.session_id,
+                            persist_user_message=_persist_clean_user_message,
+                            moa_config=_moa_cfg,
+                        )
                     if getattr(self, "_pending_moa_disable_after_turn", False):
                         _restore = getattr(self, "_pending_moa_restore_model", None) or {}
                         for _key, _value in _restore.items():

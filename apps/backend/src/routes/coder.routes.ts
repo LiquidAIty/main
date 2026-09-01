@@ -11,6 +11,7 @@ import {
 } from '../hermes/mainCliBridge';
 import {
   cancelHermesRun,
+  buildHermesHostSessionProjection,
   deleteHermesHistory,
   deriveHermesSessionKey,
   dispatchHermesLearnCommand,
@@ -175,6 +176,28 @@ async function executePreparedMainCliRun(
       onEvent: () => undefined,
     }, run.prepared.hermesTransport);
     run.profileMaterialization = await materializeHermesProfileSelections(turnArgs);
+    const native = run.profileMaterialization.native;
+    const projectedTurnArgs: HermesTurnArgs = {
+      ...turnArgs,
+      ...(run.profileMaterialization.effectiveSubagentModel
+        ? { effectiveSubagentModel: run.profileMaterialization.effectiveSubagentModel }
+        : {}),
+      // The persistent native Main CLI reuses one MCP client identity while
+      // each accepted Run still receives a newly signed Card-scoped bearer.
+      sessionKey: `hermes-main-cli:${run.projectId}:${run.cardId}:${turnArgs.runtime.profile}`,
+      nativeProfileToolsets: Array.isArray(native?.toolsets)
+        ? native.toolsets
+          .filter((item: any) => item?.enabled === true)
+          .map((item: any) => String(item.name || '').trim())
+          .filter(Boolean)
+        : [],
+      nativeProfileMcpServerNames: Array.isArray(native?.mcp_servers)
+        ? native.mcp_servers
+          .filter((item: any) => item?.enabled === true)
+          .map((item: any) => String(item.name || '').trim())
+          .filter(Boolean)
+        : [],
+    };
     const rootContext = registerHermesRootExecutionContext({
       sessionId: `main:${run.runId}`,
       runId: run.runId,
@@ -187,12 +210,23 @@ async function executePreparedMainCliRun(
         .filter((name) => name !== 'web_search'),
     });
     rootExecutionContextId = rootContext.contextId;
+    const hostProjection = buildHermesHostSessionProjection(
+      projectedTurnArgs,
+      process.env,
+      rootContext.contextId,
+    );
+    const sessionConfig = (hostProjection.sessionMeta as any)?.hermes?.sessionConfig;
+    if (!sessionConfig || typeof sessionConfig !== 'object' || Array.isArray(sessionConfig)) {
+      throw new Error('main_cli_host_session_config_invalid');
+    }
     result = await mainCliBridge.submit({
       runId: run.runId,
       executionContextId: rootContext.contextId,
       driverSource: run.driverSource,
       message: String(run.prepared.hermesTransport.request.message || ''),
       profileTargets: turnArgs.profileTargets || [],
+      mcpServers: hostProjection.mcpServers,
+      sessionConfig,
       profileAuthority: {
         projectId: run.projectId,
         deckId: run.deckId,

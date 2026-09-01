@@ -156,6 +156,8 @@ def test_profile_targets_are_bounded_and_projected_only_into_delegate_task() -> 
     assert properties["role"]["enum"] == ["leaf", "orchestrator", "team", "profile"]
     assert properties["target_profile"]["enum"] == ["graph-agent"]
     assert properties["dataAnchors"]["maxItems"] == 16
+    assert "required" in properties["dataAnchors"]["items"]["properties"]
+    assert "required" in properties["dataAnchors"]["items"]["required"]
     assert properties["dataAnchors"]["items"]["properties"]["authority"]["enum"] == [
         "ThinkGraph", "KnowGraph", "CodeGraph",
     ]

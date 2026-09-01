@@ -136,6 +136,23 @@ def _neo4j_rows(result: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _without_native_embedding_vectors(value: Any) -> Any:
+    """Remove Graphiti's derived vector payloads from model-facing native reads."""
+
+    if isinstance(value, dict):
+        return {
+            key: _without_native_embedding_vectors(item)
+            for key, item in value.items()
+            if not (
+                str(key).lower().endswith("_embedding")
+                and isinstance(item, list)
+            )
+        }
+    if isinstance(value, list):
+        return [_without_native_embedding_vectors(item) for item in value]
+    return value
+
+
 def read_knowgraph_exact(
     project_id: str,
     native_id: str,
@@ -204,10 +221,10 @@ def read_knowgraph_exact(
             if not center_rows:
                 return None
 
-            center = _json_safe(center_rows[0])
+            center = _without_native_embedding_vectors(_json_safe(center_rows[0]))
             paths: list[dict[str, Any]] = []
             if bounded_expansion and not relationship_center:
-                paths = _neo4j_rows(session.run(
+                paths = _without_native_embedding_vectors(_neo4j_rows(session.run(
                     f"""
                     MATCH (center)
                     WHERE (elementId(center) = $nativeId OR toString(center.uuid) = $nativeId)
@@ -230,7 +247,7 @@ def read_knowgraph_exact(
                     nativeId=native_id,
                     scopeIds=scope_ids,
                     limit=result_limit,
-                ))
+                )))
     except Exception as error:
         if isinstance(error, DataAnchorError):
             raise

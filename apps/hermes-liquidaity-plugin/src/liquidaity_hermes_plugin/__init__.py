@@ -292,6 +292,11 @@ class _MainCliBridge:
         ).strip()
         if not session_id or not execution_context_id:
             raise RuntimeError("liquidaity_main_execution_binding_incomplete")
+        session_config = active.get("sessionConfig")
+        mcp_servers = active.get("mcpServers")
+        if not isinstance(session_config, dict) or not isinstance(mcp_servers, list):
+            raise RuntimeError("liquidaity_main_host_session_config_invalid")
+        self._register_turn_mcp_servers(mcp_servers, session_config)
         response = self._request("/execution/bind", {
             "requestId": active["requestId"],
             "runId": active["runId"],
@@ -316,8 +321,78 @@ class _MainCliBridge:
                 if isinstance(active.get("profileTargets"), list)
                 else []
             ),
+            session_config=session_config,
         ):
             raise RuntimeError("liquidaity_main_execution_parent_unavailable")
+
+    @staticmethod
+    def _register_turn_mcp_servers(
+        descriptors: list, session_config: dict
+    ) -> None:
+        """Register the backend-signed Card MCP surface before model input."""
+
+        if len(descriptors) > 16:
+            raise RuntimeError("liquidaity_main_mcp_servers_too_many")
+        configs = {}
+        for descriptor in descriptors:
+            if not isinstance(descriptor, dict):
+                raise RuntimeError("liquidaity_main_mcp_server_invalid")
+            name = str(descriptor.get("name") or "").strip()
+            if not name or len(name) > 128 or name in configs:
+                raise RuntimeError("liquidaity_main_mcp_server_name_invalid")
+            headers = descriptor.get("headers", [])
+            env = descriptor.get("env", [])
+
+            def pairs(value, field):
+                if not isinstance(value, list) or len(value) > 64:
+                    raise RuntimeError(
+                        f"liquidaity_main_mcp_server_{field}_invalid"
+                    )
+                result = {}
+                for item in value:
+                    if not isinstance(item, dict) or set(item) != {"name", "value"}:
+                        raise RuntimeError(
+                            f"liquidaity_main_mcp_server_{field}_invalid"
+                        )
+                    key = str(item["name"] or "").strip()
+                    value_text = str(item["value"] or "")
+                    if not key or key in result:
+                        raise RuntimeError(
+                            f"liquidaity_main_mcp_server_{field}_invalid"
+                        )
+                    result[key] = value_text
+                return result
+
+            url = str(descriptor.get("url") or "").strip()
+            command = str(descriptor.get("command") or "").strip()
+            if bool(url) == bool(command):
+                raise RuntimeError("liquidaity_main_mcp_server_transport_invalid")
+            if url:
+                configs[name] = {"url": url, "headers": pairs(headers, "headers")}
+            else:
+                args = descriptor.get("args", [])
+                if not isinstance(args, list) or any(
+                    not isinstance(item, str) for item in args
+                ):
+                    raise RuntimeError("liquidaity_main_mcp_server_args_invalid")
+                configs[name] = {
+                    "command": command,
+                    "args": list(args),
+                    "env": pairs(env, "env"),
+                }
+
+        from tools.mcp_tool import (
+            get_registered_mcp_server_names,
+            register_mcp_servers,
+        )
+
+        register_mcp_servers(configs, replace_changed=True)
+        registered = get_registered_mcp_server_names()
+        missing = [name for name in configs if name not in registered]
+        if missing:
+            raise RuntimeError(
+                f"liquidaity_main_mcp_server_unavailable:{missing[0]}"
+            )
 
     def _deliver_team_result(self) -> None:
         delivery = self._request("/team-results/next")
@@ -417,9 +492,17 @@ class _MainCliBridge:
                 required = (
                     "requestId", "runId", "driverSource", "message",
                     "contextAuthorityMode", "executionContextId",
+                    "mcpServers", "sessionConfig",
                 )
-                if any(not isinstance(candidate.get(key), str) or not candidate[key]
-                       for key in required):
+                if any(
+                    key not in candidate
+                    or (
+                        key not in {"mcpServers", "sessionConfig"}
+                        and (not isinstance(candidate.get(key), str) or not candidate[key])
+                    )
+                    for key in required
+                ) or not isinstance(candidate.get("mcpServers"), list) \
+                        or not isinstance(candidate.get("sessionConfig"), dict):
                     continue
                 expected_context_mode = (
                     "plugin_context_only"

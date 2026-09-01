@@ -625,3 +625,34 @@ Run, IDF, or LiquidAIty policy. Keep saved-edge authority and Card mapping downs
 Rollback: remove the `profile` branch, target roster projection and plugin-carried roster together. Leave
 Leaf, Orchestrator, Team and native Kanban machinery unchanged; downstream must then fail closed rather than
 restore a duplicate model-facing Card-run tool.
+
+## Patch: reversible trusted host session surface on the persistent native CLI
+
+Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
+
+Purpose: let LiquidAIty's already-running Main CLI consume the same exact, validated, Card-scoped prompt,
+tools, MCP definitions, execution metadata, profile roster and Team policy used by the ACP doorway. The CLI
+continues to own its native conversation and provider call; this closes a transport omission that previously
+left a correctly materialized Main IDF with no model-visible Card graph tools.
+
+External alternative check: `apply_host_session_config` and `host_execution_scope` already own this trusted
+surface for ACP. A second runner, tool wrapper, router or runtime was rejected. The existing CLI plugin input
+bridge now transports and applies those same structures.
+
+Files and symbols:
+
+- `acp_adapter/host_profiles.py` snapshots, applies and exactly restores one persistent CLI turn surface.
+- `hermes_cli/plugins.py` carries and validates the immutable session config through the existing host binding.
+- `cli.py` enters the existing host execution scope around the native interactive provider turn.
+- Downstream `apps/hermes-liquidaity-plugin` registers the backend-signed MCP descriptors before binding the
+  accepted turn and fails closed if their real tools are unavailable.
+
+Upstream behavior preserved: ordinary terminal input enters an inert host scope and retains its original
+prompt, tools and persistence behavior. The Card surface exists only between one accepted remote turn's bind
+and clear. MCP registration reuses upstream `register_mcp_servers(..., replace_changed=True)` and its native
+registry; no credential, Card configuration or tool definition is persisted by this patch.
+
+Contracts and tests: malformed session/MCP structures, unavailable registered servers, competing bindings
+and nested active surfaces fail closed. Focused host-profile, plugin-injection and LiquidAIty plugin tests
+cover binding and restoration; downstream backend tests cover exact private bridge transport. Rollback is to
+remove the session-config field/registration/snapshot while retaining the older lifecycle-only CLI binding.

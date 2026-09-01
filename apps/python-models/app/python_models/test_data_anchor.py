@@ -128,9 +128,12 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
             "name": "Bounded entity",
             "group_id": "liquidaity-project-1",
             "source": "native-test",
+            "name_embedding": [0.1] * 4096,
         },
     }], [{
-        "nodes": [{"nativeId": "entity-1", "labels": ["Entity"], "properties": {}}],
+        "nodes": [{"nativeId": "entity-1", "labels": ["Entity"], "properties": {
+            "name_embedding": [0.1] * 4096,
+        }}],
         "relationships": [],
     }]])
 
@@ -145,6 +148,8 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
     assert record["nativeId"] == "entity-1"
     assert record["provenance"]["group_id"] == "liquidaity-project-1"
     assert record["relationshipEvidence"][0]["nodes"][0]["nativeId"] == "entity-1"
+    assert "name_embedding" not in record["properties"]
+    assert "name_embedding" not in record["relationshipEvidence"][0]["nodes"][0]["properties"]
     assert driver.closed is True
 
 
