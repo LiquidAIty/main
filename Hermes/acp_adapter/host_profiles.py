@@ -325,6 +325,39 @@ def _profile_targets(value: Any) -> list[dict[str, str]]:
     return result
 
 
+def _profile_data_anchors_schema() -> dict[str, Any]:
+    """Project the existing Card-run anchor shape for profile handoff only.
+
+    Canonical validation and native reads remain downstream with the receiving
+    Card/IDF owner; this is only the model-visible trusted-host tool schema.
+    """
+
+    return {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 16,
+        "items": {
+            "type": "object",
+            "properties": {
+                "authority": {
+                    "type": "string",
+                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
+                },
+                "nativeId": {"type": "string", "minLength": 1},
+                "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "priority": {"type": "integer"},
+                "boundedExpansion": {"type": "integer", "minimum": 0, "maximum": 3},
+                "resultLimit": {"type": "integer", "minimum": 1, "maximum": 24},
+            },
+            "required": [
+                "authority", "nativeId", "reason", "priority",
+                "boundedExpansion", "resultLimit",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
+
 def _team_model(value: Any, field: str) -> dict[str, str]:
     if not isinstance(value, dict) or set(value) != {"provider", "model"}:
         raise HostSessionConfigError(f"hermes_host_config_team_{field}_invalid")
@@ -413,8 +446,10 @@ def _project_delegation_roles(
                     for target in targets
                 ),
             }
+            properties["dataAnchors"] = _profile_data_anchors_schema()
         else:
             properties.pop("target_profile", None)
+            properties.pop("dataAnchors", None)
         # A Team-only Card accepts one durable mission because native Team
         # rejects temporary batches and output schemas. Main keeps Hermes'
         # complete Leaf batch/output contract alongside Team; the host narrows

@@ -3660,6 +3660,7 @@ def delegate_task(
     max_iterations: Optional[int] = None,
     role: Optional[str] = None,
     target_profile: Optional[str] = None,
+    data_anchors: Optional[List[Dict[str, Any]]] = None,
     background: Optional[bool] = None,
     output_schema: Optional[Dict[str, Any]] = None,
     action: Optional[str] = None,
@@ -3725,6 +3726,12 @@ def delegate_task(
 
     # Normalise the top-level role once; per-task overrides re-normalise.
     top_role = _normalize_role(role)
+
+    # LIQUIDAITY VENDOR PATCH: canonical Card-run data anchors are available
+    # only on the trusted profile-to-profile branch. The receiving host/Python
+    # IDF owner performs the authoritative native-reference validation/read.
+    if top_role != "profile" and data_anchors is not None:
+        return tool_error("dataAnchors is accepted only for role='profile'.")
 
     # Background (async) delegation now applies to BOTH single tasks and
     # batches. A batch is dispatched as ONE async unit: the whole fan-out runs
@@ -3808,6 +3815,13 @@ def delegate_task(
             return tool_error("role='profile' context must be a string when provided.")
         if output_schema is not None:
             return tool_error("role='profile' does not accept output_schema.")
+        if data_anchors is not None:
+            if not isinstance(data_anchors, list):
+                return tool_error("role='profile' dataAnchors must be an array.")
+            if len(data_anchors) > 16:
+                return tool_error("role='profile' accepts at most 16 dataAnchors.")
+            if not all(isinstance(anchor, dict) for anchor in data_anchors):
+                return tool_error("role='profile' dataAnchors entries must be objects.")
         profile = str(target_profile or "").strip().lower()
         allowed = {
             str(item.get("profile") or "").strip().lower()
@@ -3835,6 +3849,7 @@ def delegate_task(
                 "targetProfile": profile,
                 "goal": goal.strip(),
                 "context": context or "",
+                **({"dataAnchors": data_anchors} if data_anchors is not None else {}),
             })
         except Exception as exc:
             return tool_error(f"Profile delegation failed: {exc}")
@@ -5102,6 +5117,7 @@ registry.register(
         max_iterations=args.get("max_iterations"),
         role=args.get("role"),
         target_profile=args.get("target_profile"),
+        data_anchors=args.get("dataAnchors"),
         background=_model_background_value(args, kw.get("parent_agent")),
         output_schema=args.get("output_schema"),
         action=args.get("action"),

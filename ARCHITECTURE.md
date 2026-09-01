@@ -123,7 +123,9 @@ LiquidAIty's trusted session projection exposes `team` when the saved Card polic
 `profile` only when the current Card revision has an enabled outgoing orange edge to another enabled,
 top-level Hermes `delegate` Card. The model sees compact target profile/title/description choices; the host
 keeps Card and revision identity private, revalidates the current deck revision, direction, target profile,
-and enabled state, then uses the canonical saved-Card Run/IDF handler. Native Hermes keeps `leaf`,
+and enabled state, then forwards any optional canonical `dataAnchors` selection unchanged to the
+canonical saved-Card Run/IDF handler. Python remains the sole native-reference resolver and IDF
+materializer. Native Hermes keeps `leaf`,
 `orchestrator`, `team`, and `profile` on its one `delegate_task` implementation; Leaf/recursive delegation
 has no new LiquidAIty UI. A process-only
 Team marker blocks every Team worker and synthesis pass from calling any nested delegation role or
@@ -464,7 +466,8 @@ the selected native profile back to its saved Card outside model input, and the 
 second model-facing tool. Local Coder is eligible only through Magentic-One's saved `magentic_option`;
 Agent Builder has no Magentic-One edge, and Graph Agent has no outgoing saved-Card delegation grant.
 Each direct call uses the receiving Card's saved Hermes profile and
-one explicit mission plus selected native graph references. This is the normal automatic handoff and it
+one explicit mission plus selected native graph references carried as the existing optional `dataAnchors`
+selection. This is the normal automatic handoff and it
 executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
 message windows, prior-result packets, and caller-authored native-reference bodies; it rereads each
 selected native identity and resolves current graph data before the one graph-first IDF materialization.

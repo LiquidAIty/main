@@ -588,11 +588,13 @@ because the canonical receiving-Card Run/IDF owner already exists downstream.
 Files and symbols:
 
 - `tools/delegate_tool.py` validates `target_profile` against the exact trusted host roster, rejects batching,
-  output schemas and Team-worker nesting, then requests one synchronous host profile handoff.
-- `run_agent.py` forwards the exact native parameter without interpreting profile or Card meaning.
+  output schemas and Team-worker nesting, then requests one synchronous host profile handoff. Its optional
+  canonical `dataAnchors` field is bounded to this profile branch and forwarded without resolving graph data.
+- `run_agent.py` forwards the exact native profile and `dataAnchors` parameters without interpreting profile,
+  graph, Card, or IDF meaning.
 - `acp_adapter/host_profiles.py` validates compact profile/title/description targets and projects them into
-  the existing `delegate_task` role enum and `target_profile` enum. Empty/cleared projection restores the
-  previous tool definition.
+  the existing `delegate_task` role enum, `target_profile` enum, and existing bounded Card-run
+  `dataAnchors` shape. Empty/cleared projection restores the previous tool definition.
 - `hermes_cli/plugins.py` carries the same immutable roster through first-turn CLI staging and clears the
   projection with the existing host execution binding.
 - Downstream `apps/hermes-liquidaity-plugin` forwards only the compact roster; LiquidAIty backend code maps
@@ -606,7 +608,9 @@ profile, select a different target configuration, or expose another public model
 Contracts: a profile choice must be an exact enum member. The host revalidates the current saved deck
 revision, directed enabled orange edge, enabled top-level Hermes `delegate` target, and exact target profile;
 the downstream canonical runner independently checks the target Card revision and edge before creating the
-child Run and IDF. The target executes as its own profile and may independently use its own private Team.
+child Run and IDF. When supplied, `dataAnchors` remain one optional Run-scoped selection: Python rereads and
+validates their native identities through the existing graph owners before materializing the receiving
+Card's one canonical IDF. The target executes as its own profile and may independently use its own private Team.
 
 Tests: `tests/tools/test_delegate_team.py` covers authorized profile dispatch, forged-profile rejection and
 preserved Team-worker recursion blocking. `tests/acp_adapter/test_host_profiles.py` covers strict roster

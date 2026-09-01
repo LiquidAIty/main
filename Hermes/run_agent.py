@@ -8410,6 +8410,7 @@ class AIAgent:
             max_iterations=function_args.get("max_iterations"),
             role=function_args.get("role"),
             target_profile=function_args.get("target_profile"),
+            data_anchors=function_args.get("dataAnchors"),
             background=(not _is_subagent),
             output_schema=function_args.get("output_schema"),
             action=function_args.get("action"),

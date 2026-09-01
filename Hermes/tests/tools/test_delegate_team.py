@@ -126,6 +126,14 @@ def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch)
         context="Return bounded provenance.",
         role="profile",
         target_profile="graph-agent",
+        data_anchors=[{
+            "authority": "ThinkGraph",
+            "nativeId": "memory-project-frame",
+            "reason": "Use the accepted project frame",
+            "priority": 10,
+            "boundedExpansion": 1,
+            "resultLimit": 8,
+        }],
         parent_agent=parent,
     ))
 
@@ -135,6 +143,14 @@ def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch)
     assert calls[0][1]["parentExecutionContextId"] == "root-context"
     assert calls[0][1]["goal"] == "Inspect the selected native graph."
     assert calls[0][1]["context"] == "Return bounded provenance."
+    assert calls[0][1]["dataAnchors"] == [{
+        "authority": "ThinkGraph",
+        "nativeId": "memory-project-frame",
+        "reason": "Use the accepted project frame",
+        "priority": 10,
+        "boundedExpansion": 1,
+        "resultLimit": 8,
+    }]
     assert calls[0][1]["nativeChildId"].startswith("profile-")
 
     forged = json.loads(delegate_tool.delegate_task(

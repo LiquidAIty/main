@@ -155,9 +155,14 @@ def test_profile_targets_are_bounded_and_projected_only_into_delegate_task() -> 
     properties = agent.tools[0]["function"]["parameters"]["properties"]
     assert properties["role"]["enum"] == ["leaf", "orchestrator", "team", "profile"]
     assert properties["target_profile"]["enum"] == ["graph-agent"]
+    assert properties["dataAnchors"]["maxItems"] == 16
+    assert properties["dataAnchors"]["items"]["properties"]["authority"]["enum"] == [
+        "ThinkGraph", "KnowGraph", "CodeGraph",
+    ]
     assert agent._host_profile_targets == parsed["profileTargets"]
     clear_host_profile_targets(agent)
     assert agent.tools == [delegate]
+    assert "dataAnchors" not in agent.tools[0]["function"]["parameters"]["properties"]
     assert agent._host_profile_targets == []
 
     forged = _metadata()

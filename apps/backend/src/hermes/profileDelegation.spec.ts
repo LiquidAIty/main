@@ -49,6 +49,14 @@ describe('native profile delegation host adapter', () => {
       targetProfile: 'liquidaity-hermes-steward',
       goal: 'Inspect the requested graph.',
       context: 'Return native provenance.',
+      dataAnchors: [{
+        authority: 'ThinkGraph',
+        nativeId: 'memory-project-frame',
+        reason: 'Carry the accepted project frame into the receiving Card IDF.',
+        priority: 10,
+        boundedExpansion: 1,
+        resultLimit: 8,
+      }],
     }, runner as any, vi.fn(async () => currentDeck) as any)).resolves.toEqual({
       nativeChildId: 'profile-abcdef123456',
       targetProfile: 'liquidaity-hermes-steward',
@@ -65,8 +73,30 @@ describe('native profile delegation host adapter', () => {
         cardId: 'card_hermes_steward',
         cardRevisionId: 'graph-revision-one',
         input: 'Inspect the requested graph.\n\n## Delegated context\nReturn native provenance.',
+        dataAnchors: [{
+          authority: 'ThinkGraph',
+          nativeId: 'memory-project-frame',
+          reason: 'Carry the accepted project frame into the receiving Card IDF.',
+          priority: 10,
+          boundedExpansion: 1,
+          resultLimit: 8,
+        }],
       },
     );
+  });
+
+  it('rejects malformed profile data anchors before calling the Card runner', async () => {
+    const runner = vi.fn();
+    await expect(runHermesProfileDelegation(authority, {
+      parentExecutionContextId: 'root-context',
+      nativeChildId: 'profile-abcdef123456',
+      targetProfile: 'liquidaity-hermes-steward',
+      goal: 'Inspect the requested graph.',
+      dataAnchors: 'not-an-array',
+    }, runner as any, vi.fn(async () => currentDeck) as any)).rejects.toThrow(
+      'hermes_profile_data_anchors_must_be_array',
+    );
+    expect(runner).not.toHaveBeenCalled();
   });
 
   it('rejects forged profiles and stale parent identity before execution', async () => {

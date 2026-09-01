@@ -28,6 +28,7 @@ export type HermesProfileDelegationParams = {
   targetProfile?: unknown;
   goal?: unknown;
   context?: unknown;
+  dataAnchors?: unknown;
 };
 
 type SystemRunner = typeof callPythonAgentSystemTool;
@@ -77,6 +78,13 @@ export async function runHermesProfileDelegation(
   const context = params.context === undefined
     ? ''
     : bounded(params.context, 'context', 100_000);
+  const dataAnchors = params.dataAnchors === undefined ? undefined : params.dataAnchors;
+  if (dataAnchors !== undefined && !Array.isArray(dataAnchors)) {
+    throw new Error('hermes_profile_data_anchors_must_be_array');
+  }
+  if (dataAnchors && dataAnchors.length > 16) {
+    throw new Error('hermes_profile_data_anchors_too_many');
+  }
   const currentDeck = await readDeck(authority.projectId, authority.deckId);
   if (!currentDeck.deck) throw new Error('hermes_profile_deck_not_found');
   if (!authority.deckRevision || currentDeck.meta.deckRevision !== authority.deckRevision) {
@@ -130,6 +138,7 @@ export async function runHermesProfileDelegation(
     cardId: target.cardId,
     cardRevisionId: target.cardRevisionId,
     input,
+    ...(dataAnchors !== undefined ? { dataAnchors } : {}),
   });
   if (response.ok !== true) {
     throw new Error(String(response.error || 'hermes_profile_card_run_failed'));
