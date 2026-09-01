@@ -50,6 +50,11 @@ export function resolvePythonAgentMcpHostPath(): string {
 
 let clientPromise: Promise<Client> | null = null;
 
+// Private Card execution can legitimately include one complete downstream
+// model Run. Keep that longer deadline scoped to the system-root doorway;
+// ordinary model-facing MCP calls retain the SDK's bounded default timeout.
+const PYTHON_AGENT_SYSTEM_TOOL_TIMEOUT_MS = 310_000;
+
 async function connect(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
     requestInit: {
@@ -165,7 +170,11 @@ export async function callPythonAgentSystemTool(
   if (principal.kind !== 'system-root') throw new Error('python_agent_system_principal_required');
   const client = await connectAs(principal);
   try {
-    const result = await client.callTool({ name, arguments: args });
+    const result = await client.callTool(
+      { name, arguments: args },
+      undefined,
+      { timeout: PYTHON_AGENT_SYSTEM_TOOL_TIMEOUT_MS },
+    );
     const content = Array.isArray(result?.content) ? result.content : [];
     const raw = String((content[0] as { text?: unknown })?.text ?? '').trim();
     if (!raw) throw new Error(`python_agent_mcp_empty_result: ${name}`);

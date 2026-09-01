@@ -642,7 +642,36 @@ def test_main_bridge_binds_host_lifecycle_before_the_model_call(monkeypatch):
     assert calls[1][4] == {
         "request_id": "request-1",
         "external_memory_mode": "normal",
+        "profile_targets": [],
     }
+
+
+def test_main_bridge_reserves_the_long_timeout_for_host_execution(monkeypatch):
+    openers = []
+
+    def build_opener(*_args):
+        opener = _Opener(_Response(json.dumps({
+            "ok": True,
+            "result": {"runId": "child-run", "result": "done"},
+        }).encode()))
+        openers.append(opener)
+        return opener
+
+    monkeypatch.setattr(plugin.urllib.request, "build_opener", build_opener)
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+
+    assert bridge._request("/next") == {
+        "ok": True,
+        "result": {"runId": "child-run", "result": "done"},
+    }
+    assert bridge._host_requester("session/delegate_profile", {}) == {
+        "runId": "child-run",
+        "result": "done",
+    }
+    assert [opener.timeout for opener in openers] == [
+        plugin._TIMEOUT_SECONDS,
+        plugin._EXECUTION_TIMEOUT_SECONDS,
+    ]
 
 
 def test_main_bridge_delivers_team_result_once_then_syncs_history(monkeypatch):

@@ -20,6 +20,7 @@ from typing import Mapping
 
 _DEFAULT_ENDPOINT = "http://127.0.0.1:4000/api/internal/hermes-kanban/worker-bearer"
 _TIMEOUT_SECONDS = 3.0
+_EXECUTION_TIMEOUT_SECONDS = 310.0
 _MAX_RESPONSE_BYTES = 64 * 1024
 _MAIN_BRIDGE_POLL_SECONDS = 0.2
 _SCRIPT_OUTPUT_PREFIX = "HERMES_CARD_SCRIPT_OUTPUT:"
@@ -159,8 +160,11 @@ class _MainCliBridge:
             method="POST" if data is not None else "GET",
         )
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        timeout_seconds = (
+            _EXECUTION_TIMEOUT_SECONDS if path == "/execution" else _TIMEOUT_SECONDS
+        )
         try:
-            with opener.open(request, timeout=_TIMEOUT_SECONDS) as response:
+            with opener.open(request, timeout=timeout_seconds) as response:
                 body = response.read(_MAX_RESPONSE_BYTES + 1)
         except urllib.error.HTTPError as error:
             if error.code == 204:
