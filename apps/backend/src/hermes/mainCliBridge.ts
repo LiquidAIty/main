@@ -1,5 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { MainProjectionCategory } from '../contracts/runtimeEvents';
+import type {
+  HermesProfileDelegationAuthority,
+  HermesProfileDelegationParams,
+  HermesProfileTarget,
+} from './profileDelegation';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 export type MainContextAuthorityMode = 'main_native_honcho' | 'plugin_context_only';
@@ -49,6 +54,11 @@ export type MainCliHistoryMessage = {
   text: string;
 };
 
+export type MainCliHistoryProjection = {
+  identity: { projectId: string; deckId: string; cardId: string; cardName: string; runId: string };
+  projection: MainCliProjection;
+};
+
 type MainCliTurn = {
   requestId: string;
   runId: string;
@@ -58,6 +68,9 @@ type MainCliTurn = {
   contextAuthorityMode: MainContextAuthorityMode;
   delivered: boolean;
   projectionIds: Set<string>;
+  profileTargets: HermesProfileTarget[];
+  profileAuthority: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
+  projectionIdentity: MainCliHistoryProjection['identity'];
   onEvent: (event: MainCliBridgeEvent) => void;
   resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string;
     contextAuthorityMode: MainContextAuthorityMode }) => void;
@@ -84,6 +97,8 @@ export class MainCliBridge {
   private active: MainCliTurn | null = null;
   private lastPollAt = 0;
   private historySnapshot: { sessionId: string | null; messages: MainCliHistoryMessage[] } | null = null;
+  /** Bounded replay projection of the bridge's existing native event stream. */
+  private executionHistory: MainCliHistoryProjection[] = [];
   private teamDeliveries = new Map<string, PendingTeamDelivery>();
 
   notePoll(): void {
@@ -109,6 +124,9 @@ export class MainCliBridge {
     executionContextId: string;
     driverSource: Exclude<MainDriverSource, 'native_cli'>;
     message: string;
+    profileTargets?: HermesProfileTarget[];
+    profileAuthority?: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
+    projectionIdentity?: MainCliHistoryProjection['identity'];
     onEvent: (event: MainCliBridgeEvent) => void;
   }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string;
     contextAuthorityMode: MainContextAuthorityMode }> {
@@ -127,6 +145,14 @@ export class MainCliBridge {
         message: args.message,
         delivered: false,
         projectionIds: new Set(),
+        profileTargets: [...(args.profileTargets || [])],
+        profileAuthority: args.profileAuthority ? { ...args.profileAuthority } : {
+          projectId: '', deckId: '', deckRevision: '', conversationId: '', parentRunId: args.runId,
+          sourceCardId: '', sourceRuntimeMode: 'main', parentExecutionContextId: executionContextId,
+        },
+        projectionIdentity: args.projectionIdentity ? { ...args.projectionIdentity } : {
+          projectId: '', deckId: '', cardId: '', cardName: 'Main', runId: args.runId,
+        },
         onEvent: args.onEvent,
         resolve,
         reject,
@@ -134,12 +160,44 @@ export class MainCliBridge {
     });
   }
 
-  take(): Omit<MainCliTurn, 'onEvent' | 'resolve' | 'reject' | 'delivered' | 'projectionIds'> | null {
+  take(): {
+    requestId: string;
+    runId: string;
+    executionContextId: string;
+    driverSource: Exclude<MainDriverSource, 'native_cli'>;
+    message: string;
+    contextAuthorityMode: MainContextAuthorityMode;
+    profileTargets: Array<Omit<HermesProfileTarget, 'cardId' | 'cardRevisionId'>>;
+  } | null {
     this.notePoll();
     if (!this.active || this.active.delivered) return null;
     this.active.delivered = true;
-    const { requestId, runId, executionContextId, driverSource, message, contextAuthorityMode } = this.active;
-    return { requestId, runId, executionContextId, driverSource, message, contextAuthorityMode };
+    const {
+      requestId, runId, executionContextId, driverSource, message,
+      contextAuthorityMode, profileTargets,
+    } = this.active;
+    return {
+      requestId, runId, executionContextId, driverSource, message, contextAuthorityMode,
+      profileTargets: profileTargets.map(({ profile, title, description }) => ({
+        profile, title, description,
+      })),
+    };
+  }
+
+  profileDelegationAuthority(
+    params: HermesProfileDelegationParams,
+  ): HermesProfileDelegationAuthority {
+    const active = this.active;
+    if (!active) throw new Error('main_cli_profile_delegation_turn_unavailable');
+    const parentContext = String(params.parentExecutionContextId || '').trim();
+    if (parentContext !== active.executionContextId) {
+      throw new Error('main_cli_profile_delegation_context_mismatch');
+    }
+    return {
+      ...active.profileAuthority,
+      parentExecutionContextId: active.executionContextId,
+      profileTargets: [...active.profileTargets],
+    };
   }
 
   authorizeExecutionBinding(args: {
@@ -252,6 +310,13 @@ export class MainCliBridge {
       }
       if (active.projectionIds.has(projection.id)) return;
       active.projectionIds.add(projection.id);
+      if (projection.category.startsWith('execution.')) {
+        this.executionHistory.push({
+          identity: { ...active.projectionIdentity },
+          projection: { ...projection },
+        });
+        this.executionHistory = this.executionHistory.slice(-2_000);
+      }
     }
     active.onEvent(event);
     if (event.kind === 'completed') {
@@ -298,11 +363,16 @@ export class MainCliBridge {
     this.notePoll();
   }
 
-  history(): { sessionId: string | null; messages: MainCliHistoryMessage[] } | null {
+  history(): { sessionId: string | null; messages: MainCliHistoryMessage[];
+    projections: MainCliHistoryProjection[] } | null {
     return this.ready() && this.historySnapshot
       ? {
           sessionId: this.historySnapshot.sessionId,
           messages: this.historySnapshot.messages.map((message) => ({ ...message })),
+          projections: this.executionHistory.map(({ identity, projection }) => ({
+            identity: { ...identity },
+            projection: { ...projection },
+          })),
         }
       : null;
   }

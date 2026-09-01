@@ -58,7 +58,13 @@ export async function requestCardTranscript(args: {
   return body.result;
 }
 
-const preStyle = { margin: 0, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const, fontFamily: 'inherit' };
+const preStyle = {
+  margin: 0,
+  whiteSpace: 'pre-wrap' as const,
+  overflowWrap: 'break-word' as const,
+  wordBreak: 'normal' as const,
+  fontFamily: 'inherit',
+};
 
 function BoundedText({ text }: { text: string }) {
   const [visible, setVisible] = useState(4000);
@@ -89,13 +95,28 @@ function RuntimeEventRow({ event, conversationOnly }: { event: RuntimeEvent; con
       <BoundedText text={event.text || ''} />
     </div>;
   }
-  const label = event.toolName ? `${event.toolName} · ${event.kind === 'tool_call' ? 'called' : event.status}`
+  const label = event.toolName ? event.toolName
     : ['child_started', 'child_finished'].includes(event.kind)
-      ? `${event.nativeChildId || event.runId} · ${event.kind === 'child_started' ? 'started' : event.status}`
-      : `${event.kind}${event.status ? ` · ${event.status}` : ''}`;
+      ? `${event.nativeChildId || event.runId}`
+      : event.kind;
+  const status = event.kind === 'tool_call' || event.kind === 'child_started'
+    ? 'started'
+    : event.status || '';
+  const summaryLabel = `${event.taskId ? `${event.taskId} · ` : ''}${label}`;
   return <details data-event-id={event.id} onToggle={(event) => setExpanded(event.currentTarget.open)}
     style={{ color: event.kind === 'tool_error' || event.status === 'failed' ? '#FFA2A2' : '#9FB2B8' }}>
-    <summary style={{ cursor: 'pointer' }}>{event.taskId ? `${event.taskId} · ` : ''}{label}</summary>
+    <summary style={{ cursor: 'pointer' }}>
+      <span style={{
+        display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8,
+        alignItems: 'center', minWidth: 0,
+      }}>
+        <span title={summaryLabel} style={{
+          minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          overflowWrap: 'normal', wordBreak: 'normal',
+        }}>{summaryLabel}</span>
+        {status ? <span style={{ whiteSpace: 'nowrap', wordBreak: 'normal' }}>{status}</span> : null}
+      </span>
+    </summary>
     {expanded ? <>
       <div>{event.cardName} · {event.runId}{event.parentRunId ? ` · parent ${event.parentRunId}` : ''}</div>
       {event.agentId ? <div>Agent {event.agentId}</div> : null}
@@ -113,7 +134,7 @@ export function RuntimeEventList({ events, taskId = null, main = false }: {
 }) {
   const [visible, setVisible] = useState(100);
   const selected = reconcileTerminalEvents(events).filter((event) => (!taskId || event.taskId === taskId)
-    && (!main || (event.kind !== 'model' && event.kind !== 'mission')));
+    && (!main || event.category?.startsWith('execution.')));
   return <div data-testid="runtime-event-list" style={{ display: 'grid', gap: 8 }}>
     {selected.length > visible ? <button type="button" onClick={() => setVisible((value) => value + 100)}>Show earlier events</button> : null}
     {selected.slice(-visible).map((event) => <RuntimeEventRow key={`${event.runId}:${event.taskId || ''}:${event.agentId || ''}:${event.id}`}

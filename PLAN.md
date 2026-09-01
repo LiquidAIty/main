@@ -44,10 +44,14 @@ they do not select a runtime implementation.
   worker model, and one Team-lead model for decomposition and final synthesis. Auto authorizes Hermes
   to decide whether to call the native tool; it does not launch Team when a Card Run starts. The
   Subagents tab edits that saved policy and projects the current or last Card Run plus bounded native
-  activity. It is not a board, task editor, receipt product, or runtime authority. Main's existing
-  `leaf` delegation remains available independently; native recursive delegation remains internal and
-  has no new product control.
-- Main delegates only across saved AGE/ReactFlow relationships.
+  activity. It is not a board, task editor, receipt product, or runtime authority. Native Leaf and
+  recursive delegation remain internal and have no new product controls.
+- An enabled outgoing orange `flow` edge authorizes native
+  `delegate_task(role="profile", target_profile=...)` to that exact ordinary Hermes Card/Profile.
+  Direction is exact; blue Magentic-One edges grant no direct Card call. The receiving Card runs through
+  the existing Card Run/IDF owner with its own saved prompt, model, tools, skills, memory, Script, grants,
+  session, and optional private Team. The model-facing Card runner is the one native `delegate_task` tool;
+  `card.run_assistant_agent` remains only the private canonical execution handler.
 - The official Python MCP host is the shared tool doorway. Its catalog is discovered dynamically;
   documentation and tests must not promise a permanent numeric tool count. The external GPT connector
   publishes each IDD `external-mcp` operation once under its canonical unprefixed ID. LiquidAIty is the app

@@ -11,7 +11,7 @@ Graphiti MCP registries:
   * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
   * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire /
-    card.run_assistant_agent         (user-directed Harness control surface;
+    card.run_assistant_agent         (private canonical saved-Card execution handler;
                                       handlers live in app.control_plane — Python)
 
 Bridge tools are thin transport to the backend's existing /api/coder/mcp-bridge/*
@@ -781,7 +781,7 @@ def _request_tool_is_allowed(name: str) -> bool:
     if access is None:
         return principal is None
     if principal is None:
-        return True
+        return tool_publication(name) == "external-mcp"
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False
@@ -2663,6 +2663,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "projectId": {"type": "string"},
                     "deckId": {"type": "string"},
                     "cardId": {"type": "string"},
+                    "cardRevisionId": {
+                        "type": "string",
+                        "description": "Trusted expected saved Card revision for an internal profile handoff.",
+                    },
                     "action": {"type": "string", "enum": ["execute", "status"]},
                     "runId": {"type": "string"},
                     "nativeRootId": {"type": "string"},
@@ -3677,6 +3681,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "projectId",
         "deckId",
         "cardId",
+        "cardRevisionId",
         "runId",
         "nativeRootId",
         "correlationId",

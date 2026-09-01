@@ -60,7 +60,8 @@ describe('Main chat live observation callbacks', () => {
     const onTurnFinished = vi.fn();
     const event = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'main-card', cardName: 'Main',
       runId: 'server-run', parentRunId: null, nativeChildId: null, id: 'server-run:tool:1',
-      kind: 'tool_error', toolName: 'lookup', status: 'failed', sequence: 1, timestamp: null, detail: 'not found' };
+      category: 'execution.tool', kind: 'tool_error', toolName: 'lookup', status: 'failed', sequence: 1,
+      timestamp: null, detail: 'not found' };
     mocks.streamSession.mockImplementation(async ({ onEvent }) => {
       onEvent({ kind: 'tool_result', terminalEvent: event });
       onEvent({ kind: 'tool_result', terminalEvent: event });
@@ -139,7 +140,10 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
-    let resolveHistory!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
+    let resolveHistory!: (history: {
+      messages: Array<{ role: 'assistant' | 'user'; text: string }>;
+      terminalEvents: Array<Record<string, unknown>>;
+    }) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockReturnValue(new Promise((resolve) => {
       resolveHistory = resolve;
@@ -152,10 +156,18 @@ describe('Main chat live observation callbacks', () => {
 
     expect(result.current.sessionHistoryLoading).toBe(true);
     await act(async () => {
-      resolveHistory([
-        { role: 'user', text: 'Run Coder.' },
-        { role: 'assistant', text: 'Coder completed.' },
-      ]);
+      resolveHistory({
+        messages: [
+          { role: 'user', text: 'Run Coder.' },
+          { role: 'assistant', text: 'Coder completed.' },
+        ],
+        terminalEvents: [{
+          projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', cardName: 'Main',
+          runId: 'run-history', parentRunId: null, nativeChildId: null, id: 'run-history:tool:1',
+          category: 'execution.tool', kind: 'tool_result', toolName: 'lookup', status: 'completed',
+          sequence: 1, timestamp: null,
+        }],
+      });
       await Promise.resolve();
     });
 
@@ -163,6 +175,9 @@ describe('Main chat live observation callbacks', () => {
     expect(result.current.messages).toEqual([
       { role: 'user', text: 'Run Coder.' },
       { role: 'assistant', text: 'Coder completed.' },
+    ]);
+    expect(result.current.technicalEvents).toEqual([
+      expect.objectContaining({ id: 'run-history:tool:1', category: 'execution.tool' }),
     ]);
   });
 
@@ -390,8 +405,12 @@ describe('Main chat live observation callbacks', () => {
   });
 
   it('keys transcript state by conversation and never shows A while B loads', async () => {
-    let resolveA!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
-    let resolveB!: (messages: Array<{ role: 'assistant' | 'user'; text: string }>) => void;
+    type LoadedHistory = {
+      messages: Array<{ role: 'assistant' | 'user'; text: string }>;
+      terminalEvents: Array<Record<string, unknown>>;
+    };
+    let resolveA!: (history: LoadedHistory) => void;
+    let resolveB!: (history: LoadedHistory) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockImplementation(({ conversationId }) => new Promise((resolve) => {
       if (conversationId === 'conversation-a') resolveA = resolve;
@@ -410,10 +429,10 @@ describe('Main chat live observation callbacks', () => {
       expect.objectContaining({ conversationId: 'conversation-a' }),
     ));
     await act(async () => {
-      resolveA([
+      resolveA({ messages: [
         { role: 'user', text: 'A user' },
         { role: 'assistant', text: 'A model' },
-      ]);
+      ], terminalEvents: [] });
       await Promise.resolve();
     });
     expect(result.current.messages).toEqual([
@@ -429,7 +448,7 @@ describe('Main chat live observation callbacks', () => {
       expect.objectContaining({ conversationId: 'conversation-b' }),
     ));
     await act(async () => {
-      resolveB([{ role: 'user', text: 'B user' }]);
+      resolveB({ messages: [{ role: 'user', text: 'B user' }], terminalEvents: [] });
       await Promise.resolve();
     });
     expect(result.current.messages).toEqual([{ role: 'user', text: 'B user' }]);

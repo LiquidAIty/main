@@ -111,6 +111,7 @@ describe('MainCliBridge', () => {
         { role: 'user', text: 'question' },
         { role: 'assistant', text: 'answer' },
       ],
+      projections: [],
     });
     expect(bridge.history()).toEqual({
       sessionId: 'session-1',
@@ -118,6 +119,7 @@ describe('MainCliBridge', () => {
         { role: 'user', text: 'question' },
         { role: 'assistant', text: 'answer' },
       ],
+      projections: [],
     });
     expect(() => bridge.acceptHistory({
       sessionId: 'session-1',
@@ -132,6 +134,10 @@ describe('MainCliBridge', () => {
     const done = bridge.submit({
       runId: 'run-projection', executionContextId: 'context-projection',
       driverSource: 'internal_chat', message: 'hello', onEvent,
+      projectionIdentity: {
+        projectId: 'project-one', deckId: 'deck_builder', cardId: 'card_main_chat',
+        cardName: 'Main', runId: 'run-projection',
+      },
     });
     const candidate = bridge.take()!;
     const projection = {
@@ -148,13 +154,23 @@ describe('MainCliBridge', () => {
       kind: 'projection', projection });
     bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
       kind: 'projection', projection: { ...projection, state: 'changed-with-same-id' } });
-    expect(onEvent).toHaveBeenCalledTimes(1);
+    bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
+      kind: 'projection', projection: {
+        ...projection, id: 'answer-1', category: 'conversation.answer', sequence: 2,
+        text: 'answer text',
+      } });
+    expect(onEvent).toHaveBeenCalledTimes(2);
     expect(() => bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
       kind: 'projection', projection: { ...projection, id: '', sequence: 2 } }))
       .toThrow('main_cli_projection_invalid');
     bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
       kind: 'completed', finalText: 'done', nativeSessionId: 'session-1', nativeTurnId: 'turn-1' });
     await expect(done).resolves.toMatchObject({ finalText: 'done' });
+    bridge.acceptHistory({ sessionId: 'session-1', messages: [
+      { role: 'user', text: 'hello' }, { role: 'assistant', text: 'answer text' },
+    ] });
+    expect(bridge.history()?.projections).toHaveLength(1);
+    expect(bridge.history()?.projections[0].projection.category).toBe('execution.tool');
   });
 
   it('delivers one native Team result with exact task idempotence and visible retry', async () => {

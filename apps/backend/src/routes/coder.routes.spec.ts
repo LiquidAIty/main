@@ -119,8 +119,16 @@ const mainCliBridgeMocks = vi.hoisted(() => ({
     args.onEvent({
       requestId: 'main-cli-request',
       runId: args.runId,
-      kind: 'text',
-      delta: 'Real assistant reply.',
+      kind: 'projection',
+      projection: {
+        schemaVersion: 'liquidaity.main.projection.v1',
+        id: `${args.runId}:answer:1`,
+        category: 'conversation.answer',
+        status: 'completed',
+        sequence: 1,
+        timestamp: '2026-08-31T12:00:00.000Z',
+        text: 'Real assistant reply.',
+      },
     });
     return {
       finalText: 'Real assistant reply.',
@@ -274,7 +282,9 @@ const orchestratorMocks = vi.hoisted(() => {
     if (endpoint === '/domain/runs/begin' || endpoint === '/domain/main/runs/begin') {
       const mainChat = endpoint === '/domain/main/runs/begin';
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
-      const autoKanban = cardId === 'card_hermes_steward';
+      const graphAgent = cardId === 'card_hermes_steward';
+      const legacyKanban = cardId === 'card_legacy_kanban';
+      const graphConfigured = graphAgent || legacyKanban;
       const coderCard = cardId === 'card_local_coder';
       const requestKey = [body.projectId, body.deckId, cardId, body.cardRevisionId || '', body.assignment || body.message || ''].join('|');
       const existingRunId = requestFingerprints.get(requestKey);
@@ -287,8 +297,8 @@ const orchestratorMocks = vi.hoisted(() => {
            cardId,
            state: 'running',
            runtimeKind: 'hermes',
-           runtimeMode: mainChat ? 'main' : autoKanban ? 'kanban' : 'delegate',
-           runtimeProfile: mainChat ? 'default' : autoKanban ? 'liquidaity-hermes-steward' : 'coder',
+           runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
+           runtimeProfile: mainChat ? 'default' : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
            startedAt: new Date().toISOString(),
         });
       }
@@ -296,9 +306,10 @@ const orchestratorMocks = vi.hoisted(() => {
         runId: resolvedRunId,
         correlationId: runRecords.get(resolvedRunId)?.correlationId || body.correlationId,
         rejoined: Boolean(existingRunId),
+        deckRevision: 'deck-revision-one',
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
-        resolvedNativeReads: autoKanban
+        resolvedNativeReads: graphConfigured
           ? [{ authority: 'ThinkGraph', nativeId: 'think-root-1' }]
           : coderCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
         resolvedGraphProjection: {
@@ -311,8 +322,8 @@ const orchestratorMocks = vi.hoisted(() => {
         },
         idf: {
           actualGraphData: {
-            recordCounts: { total: coderCard || autoKanban ? 2 : 0 }, authorities: [], records: [],
-            modelText: autoKanban
+            recordCounts: { total: coderCard || graphConfigured ? 2 : 0 }, authorities: [], records: [],
+            modelText: graphConfigured
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
               : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
           },
@@ -322,7 +333,7 @@ const orchestratorMocks = vi.hoisted(() => {
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
-                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate', profile: 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -331,10 +342,10 @@ const orchestratorMocks = vi.hoisted(() => {
             outputRequirements: '',
           },
           selectedToolsAndGrants: {
-            enabledTools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
+            enabledTools: graphConfigured ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
             toolDefinitions: [],
-            nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
-            skills: autoKanban ? ['documentation'] : coderCard ? ['repository-coder'] : [],
+            nativeTools: graphConfigured ? ['memory'] : coderCard ? ['terminal'] : [],
+            skills: graphConfigured ? ['documentation'] : coderCard ? ['repository-coder'] : [],
             toolsets: coderCard ? ['file', 'terminal'] : [],
             mcpConnectionIds: [],
           },
@@ -350,17 +361,17 @@ const orchestratorMocks = vi.hoisted(() => {
           request: {
             systemPrompt: coderCard ? 'Saved Coder prompt' : 'Saved prompt',
             outputRequirements: '',
-            graphContext: autoKanban
+            graphContext: graphConfigured
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
               : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             task: String(mainChat ? body.message || '' : body.assignment || ''),
             message: [
-              autoKanban
+              graphConfigured
                 ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
                 : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
               String(mainChat ? body.message || '' : body.assignment || ''),
             ].filter(Boolean).join('\n\n'),
-            kanbanMission: autoKanban ? [
+            kanbanMission: legacyKanban ? [
               '## Resolved ThinkGraph',
               'Native bounded context for think-root-1.',
               '',
@@ -370,15 +381,15 @@ const orchestratorMocks = vi.hoisted(() => {
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
-                : { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate', profile: 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
             },
             runtimeOptions: {},
-            enabledTools: autoKanban ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
-            toolDefinitions: [], nativeTools: autoKanban ? ['memory'] : coderCard ? ['terminal'] : [],
-            skills: autoKanban ? ['documentation'] : coderCard ? ['repository-coder'] : [],
+            enabledTools: graphConfigured ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
+            toolDefinitions: [], nativeTools: graphConfigured ? ['memory'] : coderCard ? ['terminal'] : [],
+            skills: graphConfigured ? ['documentation'] : coderCard ? ['repository-coder'] : [],
             toolsets: coderCard ? ['file', 'terminal'] : [], mcpConnectionIds: [],
           },
           inputFile: {
@@ -388,22 +399,15 @@ const orchestratorMocks = vi.hoisted(() => {
           },
           delegationTargets: cardId === 'card_main_chat' ? [{
             cardId: 'card_local_coder',
+            cardRevisionId: 'revision:card_local_coder',
             title: 'Coder',
-            runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-            prompt: 'Saved Coder prompt',
-            provider: 'openai',
-            modelKey: 'gpt-5.6-terra',
-            providerModelId: 'gpt-5.6-terra',
-            accessMode: 'chatgpt-account',
-            tools: ['cbm.search_graph'],
-            nativeTools: ['terminal'],
-            skills: ['repository-coder'],
-            toolsets: ['terminal'],
-            mcpConnectionIds: [],
+            profile: 'coder',
+            description: 'Local repository patch/test execution',
           }] : [],
           cardIdentity: {
             cardId,
-            title: cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder' : 'Hermes steward',
+            title: cardId === 'card_main_chat' ? 'Main' : coderCard ? 'Coder'
+              : graphAgent ? 'Graph Agent' : 'Retired Kanban history',
           },
         },
       };
@@ -968,14 +972,16 @@ describe('coder routes', () => {
   it('returns an empty history only for a successful empty read', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.readHermesHistory.mockClear();
-    mainCliBridgeMocks.history.mockReturnValueOnce({ sessionId: null, messages: [] });
+    mainCliBridgeMocks.history.mockReturnValueOnce({ sessionId: null, messages: [], projections: [] });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
         `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
       );
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({ ok: true, sessionId: null, messages: [] });
+      await expect(response.json()).resolves.toEqual({
+        ok: true, sessionId: null, messages: [], terminalEvents: [],
+      });
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
       expect(chatSessionMocks.readHermesHistory).not.toHaveBeenCalled();
     } finally {
@@ -1124,7 +1130,7 @@ describe('coder routes', () => {
         body: JSON.stringify({
           projectId: 'project-one',
           deckId: 'deck-one',
-          cardId: 'card_hermes_steward',
+          cardId: 'card_legacy_kanban',
           action: 'execute',
           input: 'This mode is retired.',
           runId: 'run-retired',
@@ -1257,7 +1263,7 @@ describe('coder routes', () => {
         body: JSON.stringify({
           projectId: 'project-one',
           deckId: 'deck-one',
-          cardId: 'card_hermes_steward',
+          cardId: 'card_legacy_kanban',
           action: 'execute',
           input: 'No fallback.',
           runId: 'run-retired-no-fallback',
@@ -1916,8 +1922,9 @@ describe('coder routes', () => {
 
         expect(response.status).toBe(200);
         expect(body).toContain('event: session');
-        expect(body).toContain('event: text');
+        expect(body).toContain('event: projection');
         expect(body).toContain('Real assistant reply.');
+        expect(body).not.toContain('terminalEvent');
         expect(body).not.toContain('event: tool_result');
         const sessionFrame = body.split('\n\n').find((frame) => frame.startsWith('event: session'))!;
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);

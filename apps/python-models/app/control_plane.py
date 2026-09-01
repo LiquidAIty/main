@@ -804,6 +804,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     originating_run_id = str(args.get("originatingRunId") or "").strip()
     project_id = str(args["projectId"]).strip()
     card_id = str(args["cardId"]).strip()
+    card_revision_id = str(args.get("cardRevisionId") or "").strip()
     correlation_id = str(args["correlationId"]).strip()
     instruction = str(args["input"])
 
@@ -818,6 +819,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         "projectId": project_id,
         **({"deckId": deck_id} if deck_id else {}),
         "cardId": card_id,
+        **({"cardRevisionId": card_revision_id} if card_revision_id else {}),
         "correlationId": correlation_id,
         **({"conversationId": conversation_id} if conversation_id else {}),
         **({"senderCardId": originating_agent_id} if originating_agent_id else {}),

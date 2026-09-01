@@ -625,6 +625,39 @@ describe('Hermes ACP transport identity', () => {
     }, {})).toBeNull();
   });
 
+  it('projects only compact outgoing profile choices into native delegate_task', () => {
+    const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
+      team: {
+        mode: 'auto', maxWorkers: 2, retryLimit: 0,
+        workerModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+        leadModel: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+        },
+      },
+      profileTargets: [{
+        cardId: 'card_hermes_steward',
+        cardRevisionId: 'revision-graph',
+        title: 'Graph Agent',
+        profile: 'liquidaity-hermes-steward',
+        description: 'Planning, memory, and KnowGraph research',
+      }],
+    }, {}, 'root-context');
+
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.delegationRoles).toEqual(['team', 'profile']);
+    expect(config.profileTargets).toEqual([{
+      title: 'Graph Agent',
+      profile: 'liquidaity-hermes-steward',
+      description: 'Planning, memory, and KnowGraph research',
+    }]);
+    expect(JSON.stringify(config)).not.toContain('card_hermes_steward');
+  });
+
   it('configures a signed Card MCP projection on one ACP session without prompting a model', async () => {
     const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
     const previousUrl = process.env.LIQUIDAITY_INTERNAL_MCP_URL;

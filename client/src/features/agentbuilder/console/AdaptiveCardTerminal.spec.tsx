@@ -55,13 +55,15 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('keeps model conversation out of Main technical output without hiding tool failures', () => {
-    render(<RuntimeEventList main events={[model,
-      { ...model, id: 'done', kind: 'completion', status: 'completed', text: 'Final chat reply' },
-      { ...model, id: 'tool', kind: 'tool_error', status: 'failed', toolName: 'lookup', detail: 'missing' },
+    render(<RuntimeEventList main events={[
+      { ...model, category: 'conversation.answer' },
+      { ...model, id: 'done', category: 'conversation.answer', kind: 'completion', status: 'completed', text: 'Final chat reply' },
+      { ...model, id: 'tool', category: 'execution.tool', kind: 'tool_error', status: 'failed', toolName: 'lookup', detail: 'missing' },
     ]} />);
     expect(screen.queryByText('Model text')).toBeNull();
     expect(screen.queryByText('Final chat reply')).toBeNull();
-    expect(screen.getByText('lookup · failed')).toBeTruthy();
+    expect(screen.getByText('lookup')).toBeTruthy();
+    expect(screen.getByText('failed')).toBeTruthy();
   });
 
   it('uses canonical runtime bindings and keeps Main and Coder on their specialized surfaces', () => {
@@ -131,8 +133,9 @@ describe('ordinary saved Card adaptive terminal', () => {
         { ...model, id: 'child', kind: 'child_finished', runId: 'child-run', parentRunId: 'r', nativeChildId: 'native-child', status: 'failed' }],
     } }} />);
     expect(screen.getByTestId('terminal-active-agents').textContent).toBe('3');
-    expect(screen.getByText('lookup · failed')).toBeTruthy();
-    expect(screen.getByText('native-child · failed')).toBeTruthy();
+    expect(screen.getByText('lookup')).toBeTruthy();
+    expect(screen.getAllByText('failed')).toHaveLength(2);
+    expect(screen.getByText('native-child')).toBeTruthy();
     expect(screen.queryByLabelText('Dynamic context / input')).toBeNull();
   });
 

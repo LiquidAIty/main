@@ -32,17 +32,9 @@ def _expected_delegate(card_id: str = "child") -> dict:
     return {
         "cardId": card_id,
         "title": card_id,
-        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
-        "prompt": "common prompt",
-        "provider": "openrouter",
-        "modelKey": "deepseek/deepseek-v4-flash-0731",
-        "providerModelId": "deepseek/deepseek-v4-flash-0731",
-        "accessMode": "openrouter-api",
-        "tools": [],
-        "nativeTools": [],
-        "skills": [],
-        "toolsets": [],
-        "mcpConnectionIds": [],
+        "profile": "coder",
+        "description": "",
+        "cardRevisionId": "revision-2" if card_id == "child" else "revision-2",
     }
 
 
@@ -251,10 +243,12 @@ def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
         {"source": "parent", "target": "nested", "edgeType": "flow"},
         {"source": "parent", "target": "orchestrator", "edgeType": "flow"},
         {"source": "enabled", "target": "parent", "edgeType": "flow"},
+        {"source": "parent", "target": "enabled", "edgeType": "magentic_option"},
+        {"source": "parent", "target": "enabled", "edgeType": "flow", "enabled": False},
     ]
-    assert card_domain._direct_card_targets("parent", cards, edges) == [
-        _expected_delegate("enabled"),
-    ]
+    assert card_domain._direct_card_targets("parent", cards, edges) == [{
+        **_expected_delegate("enabled"), "cardRevisionId": "",
+    }]
 
 
 def _delegation_invocation(
@@ -269,6 +263,8 @@ def _delegation_invocation(
         **parent["runtimeOptions"],
         "tools": ["calculator"],
     }
+    if parent["runtime"].get("kind") == "hermes":
+        parent["runtimeOptions"]["tools"].append("card.run_assistant_agent")
     child = target or _agent(
         "child",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
@@ -309,12 +305,7 @@ def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_gr
     )
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
-    assert invocation["delegationTargets"] == [{
-        **_expected_delegate(),
-        "nativeTools": ["terminal"],
-        "skills": ["repository-coder"],
-        "toolsets": ["terminal"],
-    }]
+    assert invocation["delegationTargets"] == [_expected_delegate()]
     assert "delegationTargets" not in invocation["idf"]
 
 
@@ -329,12 +320,7 @@ def test_hermes_flow_target_projects_saved_profile_outside_model_input(
     assert invocation["runtimeOwner"] == "hermes"
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
     assert "card.run_assistant_agent" not in invocation["idf"]["selectedToolsAndGrants"]["enabledTools"]
-    assert invocation["delegationTargets"] == [{
-        **_expected_delegate(),
-        "nativeTools": ["terminal"],
-        "skills": ["repository-coder"],
-        "toolsets": ["terminal"],
-    }]
+    assert invocation["delegationTargets"] == [_expected_delegate()]
     assert "delegationTargets" not in invocation["idf"]
 
 

@@ -23,7 +23,7 @@ operations = [
   { id = "card.update_configuration", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "canvas.upsert_wire", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "web_search", access = "read", publication = "external-mcp", sourceIds = ["main_mcp","autogen"], namespace = "main", kind = "tool" },
-  { id = "card.run_assistant_agent", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
+  { id = "card.run_assistant_agent", access = "write", publication = "private-runtime", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "cbm.delete_project", access = "write", publication = "external-mcp", sourceIds = ["cbm"], namespace = "cbm", kind = "tool" },
   { id = "cbm.check_index_coverage", access = "read", publication = "external-mcp", sourceIds = ["cbm"], namespace = "cbm", kind = "tool" },
   { id = "cbm.detect_changes", access = "read", publication = "external-mcp", sourceIds = ["cbm"], namespace = "cbm", kind = "tool" },

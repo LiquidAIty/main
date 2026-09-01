@@ -827,7 +827,7 @@ def _looks_like_error_output(content: Any) -> bool:
 
 
 def _normalize_role(r: Optional[str]) -> str:
-    """Normalise a caller-provided role to leaf, orchestrator, or team.
+    """Normalise a caller-provided role to leaf, orchestrator, team, or profile.
 
     None/empty -> 'leaf'.  Unknown strings coerce to 'leaf' with a
     warning log (matches the silent-degrade pattern of
@@ -837,7 +837,7 @@ def _normalize_role(r: Optional[str]) -> str:
     if r is None or not r:
         return "leaf"
     r_norm = str(r).strip().lower()
-    if r_norm in {"leaf", "orchestrator", "team"}:
+    if r_norm in {"leaf", "orchestrator", "team", "profile"}:
         return r_norm
     logger.warning("Unknown delegate_task role=%r, coercing to 'leaf'", r)
     return "leaf"
@@ -3659,6 +3659,7 @@ def delegate_task(
     tasks: Optional[List[Dict[str, Any]]] = None,
     max_iterations: Optional[int] = None,
     role: Optional[str] = None,
+    target_profile: Optional[str] = None,
     background: Optional[bool] = None,
     output_schema: Optional[Dict[str, Any]] = None,
     action: Optional[str] = None,
@@ -3710,7 +3711,7 @@ def delegate_task(
     # but cannot start temporary delegation or another durable Team.
     if os.environ.get("HERMES_KANBAN_TEAM_WORKER", "").strip() == "1":
         return tool_error(
-            "Team workers cannot delegate nested team, leaf, or orchestrator work."
+            "Team workers cannot delegate nested team, profile, leaf, or orchestrator work."
         )
 
     # Operator-controlled kill switch — lets the TUI freeze new fan-out
@@ -3791,6 +3792,55 @@ def delegate_task(
             )
         except Exception as exc:
             return tool_error(f"Team dispatch failed: {exc}")
+
+    # LIQUIDAITY VENDOR PATCH: direct native-profile handoff stays inside the
+    # one delegate_task doorway. The trusted host owns Card authorization,
+    # canonical Run/IDF materialization, lineage, and target configuration.
+    if top_role == "profile":
+        if tasks is not None:
+            return tool_error(
+                "role='profile' accepts exactly one goal/context task; tasks[] "
+                "batches remain available only for leaf/orchestrator."
+            )
+        if not isinstance(goal, str) or not goal.strip():
+            return tool_error("role='profile' requires one non-empty goal.")
+        if context is not None and not isinstance(context, str):
+            return tool_error("role='profile' context must be a string when provided.")
+        if output_schema is not None:
+            return tool_error("role='profile' does not accept output_schema.")
+        profile = str(target_profile or "").strip().lower()
+        allowed = {
+            str(item.get("profile") or "").strip().lower()
+            for item in getattr(parent_agent, "_host_profile_targets", []) or []
+            if isinstance(item, dict)
+        }
+        if not profile or profile not in allowed:
+            return tool_error("Profile delegation target is not authorized for this session.")
+        requester = getattr(parent_agent, "_host_execution_requester", None)
+        parent_context_id = str(
+            getattr(parent_agent, "_host_execution_context_id", "") or ""
+        ).strip()
+        session_id = str(
+            getattr(parent_agent, "_host_execution_session_id", "") or ""
+        ).strip()
+        if not callable(requester) or not parent_context_id or not session_id:
+            return tool_error("Profile delegation host context is unavailable.")
+        import uuid as _uuid
+
+        try:
+            response = requester("session/delegate_profile", {
+                "sessionId": session_id,
+                "parentExecutionContextId": parent_context_id,
+                "nativeChildId": f"profile-{_uuid.uuid4().hex[:12]}",
+                "targetProfile": profile,
+                "goal": goal.strip(),
+                "context": context or "",
+            })
+        except Exception as exc:
+            return tool_error(f"Profile delegation failed: {exc}")
+        if not isinstance(response, dict):
+            return tool_error("Profile delegation returned an invalid host response.")
+        return json.dumps(response, ensure_ascii=False)
 
     # Resolve delegation credentials (provider:model pair).
     # When delegation.provider is configured, this resolves the full credential
@@ -4740,8 +4790,9 @@ def _build_top_level_description() -> str:
     here, check it is not already stated in a parameter description.
     """
     return (
-        "Delegate a focused task to a temporary leaf/orchestrator or durable "
-        "Team. Team gives goal/context to Auto-Kanban and returns its synthesis "
+        "Delegate a focused task to a temporary leaf/orchestrator, durable "
+        "Team, or explicitly host-authorized native profile. Team gives "
+        "goal/context to Auto-Kanban and returns its synthesis "
         "to the originating session. Use 'goal' for "
         "task or 'tasks' for a temporary parallel batch; limits and nesting "
         "are documented on those parameters.\n\n"
@@ -4832,7 +4883,8 @@ def _build_role_param_description() -> str:
         f"delegate_task to spawn its own workers. {nesting_note} "
         "'team' = one durable Auto-Kanban Triage root; Hermes decomposes, "
         "routes, retries, reviews, synthesizes, notifies, and supports rejoin. "
-        "Team accepts only the top-level single goal/context form."
+        "Team accepts only the top-level single goal/context form. 'profile' "
+        "hands one goal/context task to an authorized connected native profile."
     )
 
 
@@ -4931,8 +4983,12 @@ DELEGATE_TASK_SCHEMA = {
             },
             "role": {
                 "type": "string",
-                "enum": ["leaf", "orchestrator", "team"],
+                "enum": ["leaf", "orchestrator", "team", "profile"],
                 "description": "(rebuilt at get_definitions() time)",
+            },
+            "target_profile": {
+                "type": "string",
+                "description": "Host-authorized native profile for role='profile'.",
             },
             "output_schema": {
                 "type": "object",
@@ -5045,6 +5101,7 @@ registry.register(
         tasks=_strip_model_hidden_task_fields(args.get("tasks")),
         max_iterations=args.get("max_iterations"),
         role=args.get("role"),
+        target_profile=args.get("target_profile"),
         background=_model_background_value(args, kw.get("parent_agent")),
         output_schema=args.get("output_schema"),
         action=args.get("action"),

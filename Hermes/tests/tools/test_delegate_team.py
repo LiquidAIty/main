@@ -82,7 +82,7 @@ def test_team_worker_cannot_start_any_nested_delegation(monkeypatch):
         role="leaf",
         parent_agent=_Parent(),
     ))
-    assert "cannot delegate nested team, leaf, or orchestrator" in payload["error"]
+    assert "cannot delegate nested team, profile, leaf, or orchestrator" in payload["error"]
 
 
 def test_native_schema_keeps_compatibility_roles_but_team_is_top_level_only():
@@ -90,8 +90,58 @@ def test_native_schema_keeps_compatibility_roles_but_team_is_top_level_only():
 
     parameters = _build_dynamic_schema_overrides()["parameters"]
     assert parameters["properties"]["role"]["enum"] == [
-        "leaf", "orchestrator", "team",
+        "leaf", "orchestrator", "team", "profile",
     ]
     assert parameters["properties"]["tasks"]["items"]["properties"]["role"]["enum"] == [
         "leaf", "orchestrator",
     ]
+
+
+def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch):
+    from tools import delegate_tool
+
+    monkeypatch.setattr(delegate_tool, "is_spawn_paused", lambda: False)
+    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
+    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {})
+    calls = []
+
+    def requester(method, params):
+        calls.append((method, params))
+        return {
+            "nativeChildId": params["nativeChildId"],
+            "targetProfile": params["targetProfile"],
+            "runId": "child-run",
+            "result": "Graph result",
+        }
+
+    parent = _Parent()
+    parent._host_execution_requester = requester
+    parent._host_execution_context_id = "root-context"
+    parent._host_execution_session_id = "native-session"
+    parent._host_profile_targets = [{
+        "profile": "graph-agent", "title": "Graph Agent", "description": "",
+    }]
+    result = json.loads(delegate_tool.delegate_task(
+        goal="Inspect the selected native graph.",
+        context="Return bounded provenance.",
+        role="profile",
+        target_profile="graph-agent",
+        parent_agent=parent,
+    ))
+
+    assert result["targetProfile"] == "graph-agent"
+    assert result["runId"] == "child-run"
+    assert calls[0][0] == "session/delegate_profile"
+    assert calls[0][1]["parentExecutionContextId"] == "root-context"
+    assert calls[0][1]["goal"] == "Inspect the selected native graph."
+    assert calls[0][1]["context"] == "Return bounded provenance."
+    assert calls[0][1]["nativeChildId"].startswith("profile-")
+
+    forged = json.loads(delegate_tool.delegate_task(
+        goal="Try an unconnected profile.",
+        role="profile",
+        target_profile="forged",
+        parent_agent=parent,
+    ))
+    assert "not authorized" in forged["error"]
+    assert len(calls) == 1

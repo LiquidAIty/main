@@ -106,13 +106,12 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });
 
-  it('stores bounded write and receiving-Card handoff authority on Hermes Cards', () => {
+  it('stores bounded write authority without the retired public Card-run model tool', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     expect(mainTools).toEqual(expect.arrayContaining([
       'constellation.remember',
-      'card.run_assistant_agent',
       'run_mag_one',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining([
@@ -121,9 +120,9 @@ describe('Main / Hermes / graph authority topology', () => {
       'agentgraph.inspect',
       'mag_one.describe_connected_agents',
     ]));
+    expect(mainTools).not.toContain('card.run_assistant_agent');
     expect(mainTools).not.toContain('web_search');
     expect(hermesTools).toEqual([
-      'card.run_assistant_agent',
       'graphiti.add_memory',
       'graphiti.add_triplet',
       'write_mag_one_instructions',
@@ -186,10 +185,10 @@ describe('Main / Hermes / graph authority topology', () => {
     }
 
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
-    expect(main?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
+    expect(main?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
     expect(main?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
-    expect(main?.prompt).toContain('card.run_assistant_agent');
+    expect(main?.prompt).toContain('delegate_task(role="profile")');
     expect(main?.prompt).toContain('A wire grants authority but never starts work');
     expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
     expect(main?.prompt).toContain('Do not copy this conversation or Main memory into another Card');
@@ -244,12 +243,12 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
-    expect(steward?.runtimeOptions?.tools).toContain('card.run_assistant_agent');
+    expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(steward?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
-    expect(steward?.prompt).toContain('Use card.run_assistant_agent for a normal automatic handoff');
+    expect(steward?.prompt).toContain('Use native delegate_task(role="profile")');
     expect(steward?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');
     expect(steward?.prompt).toContain('Inspect the supplied current native graph data first');
     expect(steward?.prompt).toContain('Firecrawl backend');

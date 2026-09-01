@@ -307,6 +307,11 @@ class _MainCliBridge:
             session_id,
             request_id=active["requestId"],
             external_memory_mode=external_memory_mode,
+            profile_targets=(
+                active.get("profileTargets")
+                if isinstance(active.get("profileTargets"), list)
+                else []
+            ),
         ):
             raise RuntimeError("liquidaity_main_execution_parent_unavailable")
 

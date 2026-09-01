@@ -192,6 +192,28 @@ async function executePreparedMainCliRun(
       executionContextId: rootContext.contextId,
       driverSource: run.driverSource,
       message: String(run.prepared.hermesTransport.request.message || ''),
+      profileTargets: turnArgs.profileTargets || [],
+      profileAuthority: {
+        projectId: run.projectId,
+        deckId: run.deckId,
+        deckRevision: String(run.prepared.deckRevision || ''),
+        conversationId: run.conversationId,
+        parentRunId: run.runId,
+        sourceCardId: run.cardId,
+        sourceRuntimeMode: turnArgs.runtime.mode,
+        parentExecutionContextId: rootContext.contextId,
+      },
+      projectionIdentity: {
+        projectId: run.projectId,
+        deckId: run.deckId,
+        cardId: run.cardId,
+        cardName: String(
+          run.prepared.hermesTransport?.cardIdentity?.title
+          || run.prepared.hermesTransport?.cardIdentity?.cardName
+          || 'Main Chat'
+        ),
+        runId: run.runId,
+      },
       onEvent,
     });
     await finishHermesExecutionContext({
@@ -628,6 +650,18 @@ function resolveHermesTurnArgs(
   const scriptState = input.runtimeOptions?.script;
   const scriptCompiled = scriptState?.compiled;
   const scriptPresentation = input.scriptPresentation;
+  const profileTargets = Array.isArray(transport?.delegationTargets)
+    ? transport.delegationTargets.map((target: any) => ({
+        cardId: String(target?.cardId || ''),
+        title: String(target?.title || ''),
+        profile: String(target?.profile || '').trim().toLowerCase(),
+        description: String(target?.description || ''),
+        cardRevisionId: String(target?.cardRevisionId || ''),
+      })).filter((target: any) => (
+        target.cardId && target.cardRevisionId && target.title
+        && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(target.profile)
+      ))
+    : [];
   const script = scriptPresentation?.mode === 'script'
     && scriptState?.nativeSupport?.active === true
     && typeof scriptState?.source === 'string'
@@ -679,6 +713,7 @@ function resolveHermesTurnArgs(
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     ...(script ? { script } : {}),
+    ...(profileTargets.length ? { profileTargets } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -688,6 +723,7 @@ function resolveHermesTurnArgs(
     deckId: args.deckId,
     conversationId: args.conversationId,
     parentRunId: args.parentRunId || args.conversationId,
+    deckRevision: String(args.prepared?.deckRevision || ''),
     message: String(input.message || ''),
     ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
   };
@@ -1626,7 +1662,14 @@ router.get('/main/session/history', (_req, res) => {
       messages: [],
     });
   }
-  return res.json({ ok: true, ...history });
+  return res.json({
+    ok: true,
+    sessionId: history.sessionId,
+    messages: history.messages,
+    terminalEvents: history.projections
+      .filter(({ projection }) => projection.category.startsWith('execution.'))
+      .map(({ identity, projection }) => projectMainRuntimeEvent(identity, projection)),
+  });
 });
 router.delete('/main/session/history', (_req, res) => {
   return res.status(405).json({

@@ -621,12 +621,16 @@ class TestRunAssistantAgent:
 
         monkeypatch.setattr(cp, "_backend_json", backend)
         asyncio.run(cp.card_run_assistant_agent({
-            "projectId": "p", "deckId": "d", "cardId": "c", "correlationId": "x", "input": "hi",
+            "projectId": "p", "deckId": "d", "cardId": "c",
+            "cardRevisionId": "revision-c", "correlationId": "x", "input": "hi",
         }))
         method, path, payload = calls[0]
         assert path == "/api/coder/mcp-bridge/run_configured_card"
-        assert sorted(payload.keys()) == ["action", "cardId", "correlationId", "deckId", "input", "projectId"]
+        assert sorted(payload.keys()) == [
+            "action", "cardId", "cardRevisionId", "correlationId", "deckId", "input", "projectId",
+        ]
         assert payload["action"] == "execute"
+        assert payload["cardRevisionId"] == "revision-c"
         assert payload["input"] == "hi"
 
         asyncio.run(cp.card_run_assistant_agent({

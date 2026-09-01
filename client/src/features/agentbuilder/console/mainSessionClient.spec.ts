@@ -246,6 +246,12 @@ describe('loadSessionHistory', () => {
           { role: 'status', text: 'Working' },
           { role: 'assistant', text: 'Exact model text' },
         ],
+        terminalEvents: [{ id: 'answer', category: 'conversation.answer' }, {
+          id: 'tool', category: 'execution.tool', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_main_chat', cardName: 'Main', runId: 'run-1', parentRunId: null,
+          nativeChildId: null, kind: 'tool_result', status: 'completed', sequence: 2, timestamp: null,
+          toolName: 'lookup',
+        }],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
@@ -253,10 +259,13 @@ describe('loadSessionHistory', () => {
     await expect(loadSessionHistory({
       projectId: 'project-1',
       conversationId: 'conversation-history-roles',
-    })).resolves.toEqual([
-      { role: 'user', text: 'Exact user text' },
-      { role: 'assistant', text: 'Exact model text' },
-    ]);
+    })).resolves.toEqual({
+      messages: [
+        { role: 'user', text: 'Exact user text' },
+        { role: 'assistant', text: 'Exact model text' },
+      ],
+      terminalEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
+    });
   });
 
   it('keeps a valid fresh conversation as an empty transcript', async () => {
@@ -268,7 +277,7 @@ describe('loadSessionHistory', () => {
     await expect(loadSessionHistory({
       projectId: 'project-1',
       conversationId: 'main',
-    })).resolves.toEqual([]);
+    })).resolves.toEqual({ messages: [], terminalEvents: [] });
   });
 
   it('surfaces a persistence failure instead of substituting an empty transcript', async () => {

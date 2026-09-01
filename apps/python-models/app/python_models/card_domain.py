@@ -1731,34 +1731,13 @@ def _direct_card_targets(
         runtime = _card_runtime(target)
         if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
             continue
-        options = _json_object(target.get("runtimeOptions"), "delegate_runtime_options")
-        provider = _required_text(options.get("provider"), "delegate_provider")
-        model_key = _required_text(options.get("modelKey"), "delegate_model_key")
-        provider_model_id = _required_text(
-            options.get("providerModelId") or model_key,
-            "delegate_provider_model_id",
-        )
         seen.add(target_id)
         direct.append({
             "cardId": target_id,
             "title": str(target.get("title") or target_id),
-            "runtime": runtime,
-            "prompt": str(target.get("prompt") or ""),
-            "provider": provider,
-            "modelKey": model_key,
-            "providerModelId": provider_model_id,
-            "accessMode": _required_text(
-                options.get("accessMode"), "delegate_access_mode"
-            ),
-            "tools": _string_list(options.get("tools"), "delegate_tools"),
-            "nativeTools": _string_list(
-                options.get("nativeTools"), "delegate_native_tools"
-            ),
-            "skills": _string_list(options.get("skills"), "delegate_skills"),
-            "toolsets": _string_list(options.get("toolsets"), "delegate_toolsets"),
-            "mcpConnectionIds": _string_list(
-                options.get("mcpConnectionIds"), "delegate_mcp_connection_ids"
-            ),
+            "profile": runtime["profile"],
+            "description": str(target.get("subtitle") or "")[:1_000],
+            "cardRevisionId": str(target.get("_cardRevisionId") or ""),
         })
     return direct
 
@@ -2164,6 +2143,13 @@ def _prepare_invocation(
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
+    if runtime.get("kind") == "hermes":
+        # Native delegate_task(role="profile") is the one model-facing Card
+        # handoff. Keep card.run_assistant_agent as the canonical internal
+        # execution handler without publishing a competing model tool.
+        selected_tools = [
+            name for name in selected_tools if name != "card.run_assistant_agent"
+        ]
     call_config["enabledTools"] = selected_tools
     # `tools` remains the saved Card's deliberately selected presentation.
     # `all_healthy` broadens the authorization ceiling for healthy reads, but
@@ -2203,22 +2189,12 @@ def _prepare_invocation(
     }
     call_config["presentedTools"] = script_plan["presentedTools"]
     tool_definitions = [by_id[name] for name in call_config["presentedTools"]]
-    for delegate in direct_card_targets:
-        unknown_delegate_tools = [
-            name for name in delegate["tools"] if name not in by_id
-        ]
-        if unknown_delegate_tools:
-            raise CardDomainError(
-                f"configured_tool_unknown:{unknown_delegate_tools[0]}"
-            )
-        delegate["tools"] = [
-            name for name in delegate["tools"] if name in (readable_tool_ids() | writable_tool_ids())
-        ]
     return {
         "ok": True,
         "ephemeral": True,
         "projectId": loaded["projectId"],
         "deckId": deck_id,
+        "deckRevision": str((loaded.get("meta") or {}).get("deckRevision") or ""),
         "cardRevisionId": card["_cardRevisionId"],
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],

@@ -88,16 +88,16 @@ transcript lifecycle; that is not independent Card memory or identity.
 
 Native `delegate_task(role="team")` is a headless capability of an authorized ordinary Hermes Card;
 it is not a Card type or a standalone Kanban/Team Card authority. The adapter creates one durable native
-Auto-Kanban root owned by the originating profile/session. Each saved Hermes Card may authorize Team
+Team task-graph root owned by the originating profile/session. Each saved Hermes Card may authorize Team
 with an Off/Auto policy plus maximum workers, retry limit, worker provider/model, and one Team-lead
 provider/model. Auto means Hermes may call the native model tool; it never starts Team merely because
 a Card Run began. The Team-lead model owns native decomposition and the resumed root's final synthesis,
 while the worker model owns the bounded decomposed tasks. Team never receives the global Hermes profile
 roster: the decomposer sees only the root's already-persisted originating profile, and the atomic native
 decomposition boundary pins every child back to that profile even if a malformed response supplies another
-assignee. Card-facing Hermes sessions therefore expose either no delegation tool or the Team-only role;
-native Leaf, Orchestrator, and general Kanban profile routing remain available only outside that narrower
-LiquidAIty Card projection. Every worker task
+assignee. Card-facing Hermes sessions expose Team only when the saved policy permits it and expose `profile`
+only for exact enabled outgoing orange `flow` targets. Native Leaf and Orchestrator remain internally
+compatible without new LiquidAIty controls. Every worker task
 is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Team-lead
 pass all worker reports. That pass returns one native task result to the existing originating Hermes
 session and Card Run. ACP Card sessions and persistent Main CLI turns use one backend-owned host child
@@ -119,10 +119,13 @@ two Luna workers (`t_0a5610dc`, `t_91562520`), ran one Terra synthesis, and appe
 to originating native session `20260830_170231_2b1e6f`. Native and host owners both reached terminal
 success without provider fallback, duplicate allocation, nested delegation or a second acceptance call.
 
-LiquidAIty's trusted ACP session projection exposes `team` when the saved Card policy is Auto and adds
-`leaf` only for Main's existing direct Agent Builder doorway. Team Off does not remove Main's leaf
-contract. Native Hermes keeps `leaf`, `orchestrator`, and `team` on its one `delegate_task` implementation
-for compatibility; recursive delegation has no new LiquidAIty UI. A process-only
+LiquidAIty's trusted session projection exposes `team` when the saved Card policy is Auto and adds
+`profile` only when the current Card revision has an enabled outgoing orange edge to another enabled,
+top-level Hermes `delegate` Card. The model sees compact target profile/title/description choices; the host
+keeps Card and revision identity private, revalidates the current deck revision, direction, target profile,
+and enabled state, then uses the canonical saved-Card Run/IDF handler. Native Hermes keeps `leaf`,
+`orchestrator`, `team`, and `profile` on its one `delegate_task` implementation; Leaf/recursive delegation
+has no new LiquidAIty UI. A process-only
 Team marker blocks every Team worker and synthesis pass from calling any nested delegation role or
 creating another native task, so the first-party MVP recipe cannot recurse.
 
@@ -345,6 +348,11 @@ Main's graph callbacks and technical events use the backend-issued Run identity;
 mint a competing Run. Native tool-call IDs are shared across live events, status and replay, with changed
 partial output updating in place. Transcript commands verify Project, Deck, Card and Run identity and
 serialize against native session configuration and execution inside the existing ACP owner.
+For Main, `conversation.input` and `conversation.answer` feed Chat only. Existing structured
+`execution.*` projections feed the lower terminal only, both live and on browser reload. Stable projection
+IDs reconcile repeats; raw text, ANSI output, DOM hiding, and content matching never decide routing. The
+terminal row summary uses a constrained two-column layout so its name and status stay intact, with long
+structured detail available only in the existing expandable body.
 
 The Script editor's optional ThinkGraph and KnowGraph examples are source templates only. They call the
 canonical `constellation.context`, `constellation.inspect`, `graphiti.search_nodes`,
@@ -354,8 +362,10 @@ execution owner. Script failure may restore the exact selected MCP presentation 
 has begun; once a tool receipt records an operation, failure is terminal so the model cannot replay it.
 
 Current limits are explicit: some native sessions contain multiple Runs without per-Run transcript
-boundaries; exact Run transcript read/deletion is unavailable in that case. Main technical replay after a
-full refresh, public skill/autoskill events, and full Team worker tool output are not yet integrated.
+boundaries; exact Run transcript read/deletion is unavailable in that case. Main technical replay survives
+browser reload while the startup-owned backend bridge remains alive; a full backend restart does not yet
+reconstruct structured execution projections from a second store. Public skill/autoskill events and full
+Team worker tool output are not yet integrated.
 The AutoGen adapter returns completion output rather than a live public terminal stream. These are
 observation gaps, not restrictions on native execution. Loaded-runtime proof remains separate from tests.
 
@@ -444,11 +454,16 @@ AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is ma
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.
 
-Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Graph Agent. A saved `flow`
-edge grants an explicit Card-to-Card call; it never starts a profile, queued task, or model. Main may
-call Agent Builder or Graph Agent through `card.run_assistant_agent`. Local Coder is instead eligible only
-through Magentic-One's saved `magentic_option`; Agent Builder has no Magentic-One edge. Graph Agent has no
-outgoing saved-Card delegation grant. Each direct call uses the receiving Card's saved Hermes profile and
+Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Graph Agent.
+Each Card maps one-to-one to one native Hermes profile and may privately self-fan out through Team; there is
+no second product persona/profile layer. An enabled outgoing orange `flow` edge grants the source's native
+`delegate_task(role="profile")` exact target profile; it never starts work by itself and its reverse direction
+is not implied. Blue `magentic_control` and `magentic_option` edges authorize only Magentic-One. The host maps
+the selected native profile back to its saved Card outside model input, and the private
+`card.run_assistant_agent` handler remains the one canonical receiving-Card Run/IDF owner rather than a
+second model-facing tool. Local Coder is eligible only through Magentic-One's saved `magentic_option`;
+Agent Builder has no Magentic-One edge, and Graph Agent has no outgoing saved-Card delegation grant.
+Each direct call uses the receiving Card's saved Hermes profile and
 one explicit mission plus selected native graph references. This is the normal automatic handoff and it
 executes immediately through the canonical receiving-Card Run path. Python rejects copied parent context,
 message windows, prior-result packets, and caller-authored native-reference bodies; it rereads each
@@ -678,7 +693,7 @@ OAuth storage. The registered files, proof, contribution plan, and rollback live
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 The headless per-Card Team doorway is a separate contained divergence over Hermes' same native
-`delegate_task`, Auto-Kanban SQLite graph, decomposer, dispatcher and worker context. The generic host
+`delegate_task`, SQLite task graph, decomposer, dispatcher and worker context. The generic host
 allocation callback accepts the durable native root ID before activation; LiquidAIty creates one child
 Card Run for that root and monitors/rejoins it through the existing Kanban read path. ACP and persistent
 Main both enter the same backend host lifecycle. Persistent Main binds the lifecycle to its live CLI

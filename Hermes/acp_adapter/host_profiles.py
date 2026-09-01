@@ -37,6 +37,7 @@ _SESSION_FIELDS = {
     "toolCallMeta",
     "hostScript",
     "delegationRoles",
+    "profileTargets",
     "team",
 }
 
@@ -270,6 +271,7 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         "toolCallMeta": normalized_tool_meta,
         "hostScript": _host_script(raw.get("hostScript")),
         "delegationRoles": _delegation_roles(raw.get("delegationRoles")),
+        "profileTargets": _profile_targets(raw.get("profileTargets")),
         "team": _team_policy(raw.get("team")),
     }
 
@@ -278,12 +280,49 @@ def _delegation_roles(value: Any) -> list[str] | None:
     if value is None:
         return None
     roles = _bounded_string_list(value, "delegationRoles")
-    unknown = [role for role in roles if role not in {"leaf", "orchestrator", "team"}]
+    unknown = [
+        role for role in roles
+        if role not in {"leaf", "orchestrator", "team", "profile"}
+    ]
     if unknown:
         raise HostSessionConfigError(
             f"hermes_host_config_delegation_role_invalid:{unknown[0]}"
         )
     return roles
+
+
+def _profile_targets(value: Any) -> list[dict[str, str]]:
+    """Validate the compact host-authorized native profile roster."""
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise HostSessionConfigError("hermes_host_config_profile_targets_must_be_list")
+    if len(value) > _MAX_LIST_ITEMS:
+        raise HostSessionConfigError("hermes_host_config_profile_targets_too_many")
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"profile", "title", "description"}:
+            raise HostSessionConfigError("hermes_host_config_profile_target_invalid")
+        profile = _bounded_text(
+            item.get("profile"), "profileTarget.profile", limit=64, required=True
+        ).lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile):
+            raise HostSessionConfigError("hermes_host_config_profile_target_profile_invalid")
+        if profile in seen:
+            raise HostSessionConfigError("hermes_host_config_profile_target_duplicate")
+        seen.add(profile)
+        result.append({
+            "profile": profile,
+            "title": _bounded_text(
+                item.get("title"), "profileTarget.title", limit=256, required=True
+            ),
+            "description": _bounded_text(
+                item.get("description"), "profileTarget.description", limit=1_000
+            ),
+        })
+    return result
 
 
 def _team_model(value: Any, field: str) -> dict[str, str]:
@@ -336,6 +375,7 @@ def _team_policy(value: Any) -> dict[str, Any] | None:
 def _project_delegation_roles(
     definitions: list[dict[str, Any]],
     roles: list[str] | None,
+    profile_targets: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Narrow only the host session's view of native ``delegate_task``."""
 
@@ -360,13 +400,32 @@ def _project_delegation_roles(
         role["enum"] = list(roles)
         role["default"] = "team" if "team" in roles else roles[0]
         role["description"] = "Authorized delegation mode for this host session."
+        targets = profile_targets or []
+        if "profile" in roles:
+            if not targets:
+                raise HostSessionConfigError("hermes_host_profile_targets_required")
+            properties["target_profile"] = {
+                "type": "string",
+                "enum": [target["profile"] for target in targets],
+                "description": "Authorized connected target profile. " + "; ".join(
+                    f"{target['profile']} ({target['title']})"
+                    + (f": {target['description']}" if target["description"] else "")
+                    for target in targets
+                ),
+            }
+        else:
+            properties.pop("target_profile", None)
         # A Team-only Card accepts one durable mission because native Team
         # rejects temporary batches and output schemas. Main keeps Hermes'
         # complete Leaf batch/output contract alongside Team; the host narrows
         # roles but does not replace native delegate_task semantics.
-        if roles == ["team"]:
+        if roles and set(roles).issubset({"team", "profile"}):
             properties.pop("tasks", None)
             properties.pop("output_schema", None)
+            properties.pop("background", None)
+            properties.pop("action", None)
+            properties.pop("subagent_id", None)
+            properties.pop("message", None)
         function["description"] = (
             "Delegate one explicit task using this host session's authorized "
             f"native role(s): {', '.join(roles)}."
@@ -407,6 +466,9 @@ def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> Non
     setattr(agent, "_host_tool_call_meta", (
         dict(normalized.get("toolCallMeta") or {}) if normalized else {}
     ))
+    setattr(agent, "_host_profile_targets", (
+        copy.deepcopy(normalized.get("profileTargets") or []) if normalized else []
+    ))
     if normalized is not None:
         # Native Hermes appends this field to its effective system prompt at
         # model-call time. It keeps the host-selected role session-scoped and
@@ -438,6 +500,66 @@ def attach_host_execution_context(agent: Any, execution_context_id: str) -> None
         required=True,
     )
     setattr(agent, "_host_execution_context_id", context_id)
+
+
+def apply_host_profile_targets(agent: Any, value: Any) -> None:
+    """Add bounded profile handoff choices to one already-built CLI agent.
+
+    The persistent CLI is constructed before a remote Card turn is accepted,
+    unlike ACP sessions whose whole host surface is configured up front. Keep
+    one reversible copy of the native tool definitions and alter only the
+    delegate_task schema for the duration of that accepted turn.
+    """
+
+    targets = _profile_targets(value)
+    original = getattr(agent, "_host_profile_original_tools", None)
+    if original is None:
+        original = copy.deepcopy(list(getattr(agent, "tools", []) or []))
+        setattr(agent, "_host_profile_original_tools", original)
+    definitions = copy.deepcopy(original)
+    roles: list[str] = []
+    for definition in definitions:
+        function = definition.get("function") if isinstance(definition, dict) else None
+        if not isinstance(function, dict) or function.get("name") != "delegate_task":
+            continue
+        parameters = function.get("parameters")
+        properties = parameters.get("properties") if isinstance(parameters, dict) else None
+        role = properties.get("role") if isinstance(properties, dict) else None
+        roles = list(role.get("enum") or []) if isinstance(role, dict) else []
+        break
+    roles = [role for role in roles if role != "profile"]
+    if targets:
+        roles.append("profile")
+    projected = _project_delegation_roles(definitions, roles, targets)
+    agent.tools = projected
+    agent.valid_tool_names = {
+        str((item.get("function") or {}).get("name") or "")
+        for item in projected
+        if str((item.get("function") or {}).get("name") or "")
+    }
+    setattr(agent, "_host_profile_targets", copy.deepcopy(targets))
+    invalidate = getattr(agent, "_invalidate_system_prompt", None)
+    if callable(invalidate):
+        invalidate()
+
+
+def clear_host_profile_targets(agent: Any) -> None:
+    """Restore the persistent CLI's exact pre-turn native tool definitions."""
+
+    original = getattr(agent, "_host_profile_original_tools", None)
+    if original is not None:
+        restored = copy.deepcopy(original)
+        agent.tools = restored
+        agent.valid_tool_names = {
+            str((item.get("function") or {}).get("name") or "")
+            for item in restored
+            if str((item.get("function") or {}).get("name") or "")
+        }
+        delattr(agent, "_host_profile_original_tools")
+    setattr(agent, "_host_profile_targets", [])
+    invalidate = getattr(agent, "_invalidate_system_prompt", None)
+    if callable(invalidate):
+        invalidate()
 
 
 def allocate_host_native_execution(
@@ -709,7 +831,9 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
         )
         definitions = _project_host_script_tool(definitions, script)
     definitions = _project_delegation_roles(
-        definitions, config.get("delegationRoles")
+        definitions,
+        config.get("delegationRoles"),
+        config.get("profileTargets"),
     )
 
     # Memory-provider tools are injected only when the trusted host selected

@@ -520,8 +520,9 @@ Files and symbols:
 
 Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
 temporary-agent construction, depth, provider/model and result behavior. LiquidAIty Card sessions project
-only Team when enabled and remove `delegate_task` when Team is Off; this narrows one trusted session without
-rewriting the native tool. Ordinary Kanban tasks keep their existing event shape, profile roster,
+Team only when enabled; when Team is Off, `delegate_task` remains only if another separately authorized role
+such as an outgoing profile target exists. This narrows one trusted session without rewriting the native
+tool. Ordinary Kanban tasks keep their existing event shape, profile roster,
 decomposition freedom, manual controls, models, and prompts. Team markers and limits apply only to
 `workflow_template_id="delegate-team-v1"`; no profile, global configuration, credential or user-global
 Hermes home is rewritten by a Team run.
@@ -569,3 +570,54 @@ extension and native session append together; restore the previous leaf helper b
 event/context behavior. Native leaf/orchestrator and internal native Kanban operation continue. LiquidAIty must
 then remove only its `team` projection and fail closed for Team rather than route through a standalone
 helper Card, another database, direct model fan-out or a synthetic result.
+
+## Patch: trusted direct profile delegation through native `delegate_task`
+
+Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
+
+Purpose: add `role="profile"` to Hermes' one native `delegate_task` doorway so a trusted host may expose
+only a bounded roster of installed target profiles for the current session. LiquidAIty derives that roster
+from the calling Card's current enabled outgoing orange `flow` edges; Hermes never receives LiquidAIty Card
+IDs, target grants, prompts, tools, memory, or configuration.
+
+External alternative check: native `leaf` creates a disposable child of the current profile, `orchestrator`
+owns recursive delegation, and `team` is private same-profile durable fan-out. None expresses a direct handoff
+to another existing named profile. A new Card tool, router, message bus, or session registry was rejected
+because the canonical receiving-Card Run/IDF owner already exists downstream.
+
+Files and symbols:
+
+- `tools/delegate_tool.py` validates `target_profile` against the exact trusted host roster, rejects batching,
+  output schemas and Team-worker nesting, then requests one synchronous host profile handoff.
+- `run_agent.py` forwards the exact native parameter without interpreting profile or Card meaning.
+- `acp_adapter/host_profiles.py` validates compact profile/title/description targets and projects them into
+  the existing `delegate_task` role enum and `target_profile` enum. Empty/cleared projection restores the
+  previous tool definition.
+- `hermes_cli/plugins.py` carries the same immutable roster through first-turn CLI staging and clears the
+  projection with the existing host execution binding.
+- Downstream `apps/hermes-liquidaity-plugin` forwards only the compact roster; LiquidAIty backend code maps
+  the selected profile to a Card and invokes the private canonical Card runner.
+
+Upstream behavior preserved: without a trusted target roster, no `profile` choice is projected into a
+LiquidAIty Card session. Existing Leaf, Orchestrator and Team branches retain their own validation,
+provider/model, recursion and execution behavior. Profile delegation does not mutate the caller or target
+profile, select a different target configuration, or expose another public model tool.
+
+Contracts: a profile choice must be an exact enum member. The host revalidates the current saved deck
+revision, directed enabled orange edge, enabled top-level Hermes `delegate` target, and exact target profile;
+the downstream canonical runner independently checks the target Card revision and edge before creating the
+child Run and IDF. The target executes as its own profile and may independently use its own private Team.
+
+Tests: `tests/tools/test_delegate_team.py` covers authorized profile dispatch, forged-profile rejection and
+preserved Team-worker recursion blocking. `tests/acp_adapter/test_host_profiles.py` covers strict roster
+parsing, exact model schema projection, and reversible CLI projection. Downstream backend/Python tests cover
+orange directionality, blue/disabled/child/non-Hermes exclusion, stale deck/profile rejection, compact model
+transport and use of the existing Card Run handler.
+
+Fork cost and contribution plan: three narrow existing Hermes owners plus the existing plugin binding.
+Propose the generic trusted-host named-profile roster and synchronous callback upstream without Card, graph,
+Run, IDF, or LiquidAIty policy. Keep saved-edge authority and Card mapping downstream.
+
+Rollback: remove the `profile` branch, target roster projection and plugin-carried roster together. Leave
+Leaf, Orchestrator, Team and native Kanban machinery unchanged; downstream must then fail closed rather than
+restore a duplicate model-facing Card-run tool.

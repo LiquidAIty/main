@@ -47,42 +47,16 @@ These calls require explicit approval. Structural tests must not be presented as
 - Preserve current/last Card Run context after workers stop; do not create a Team history database,
   duplicate SQL task table, or user-facing receipt product.
 
-## Graph Agent capability profiles — architecture only
+## Graph Agent evolution
 
-Keep one visible `card_hermes_steward` Graph Agent and one native
-`liquidaity-hermes-steward` profile home so its conversation, native sessions, memory, Runs, grants, and
-history remain continuous. Evaluate a separate versioned **Card capability profile** contract inside that
-Card; do not represent each capability as another Card or another Hermes home.
-
-The first bounded profile set should be ThinkGraph reasoning, CodeGraph repository analysis,
-KnowGraph/research, prompt design, and cross-graph context synthesis. A saved profile may narrow the Graph
-Agent's base prompt with an additive instruction layer, select subsets of its tools and skills, identify
-allowed native graph authorities/context recipes, select one saved Script recipe, and define an output
-contract. It must never widen Card grants, copy graph data into another authority, replace the Card's native
-profile, or let a caller submit an alternate Card definition.
-
-Main may select only a saved profile ID when invoking Graph Agent. The receiving Card resolves that ID and
-materializes its exact profile revision into the normal Card Run/IDF; Run context and telemetry record the
-selection without creating another history or receipt store. The editor/runtime worker/saved configuration
-remain separate decisions: the existing Card editor owns reviewed profile changes, Graph Agent performs the
-bounded work, and its one saved Card remains identity and authority. Team stays Card-scoped until a real,
-tested per-profile projection exists.
-
-Capability selection and delegation remain orthogonal. A capability profile defines the bounded Graph Agent
-configuration for the Run; native Leaf remains an optional disposable one-task child, while native Team owns
-durable decomposition, retries, recovery, and synthesis. Neither is required for an ordinary Hermes response.
-A saved Graph Agent skill may teach the model when direct work, Leaf, or Team is appropriate, but the skill is
-guidance rather than authority: the Card's projected native tool schema and grants enforce the allowed roles.
-
-For the first reversible `Auto` experiment, Main should semantically select one authorized saved profile ID
-from compact Card-owned descriptions before invoking Graph Agent. `Auto` must not invent profiles, launch Leaf
-or Team automatically, or add a deterministic TypeScript/keyword router. A reusable profile template may seed
-a Card-owned immutable revision later, but a mutable global profile must not silently change existing Cards.
-
-Acceptance requires repeated profile switching in one continuous Graph Agent conversation, correct tool and
-graph narrowing, restart recovery, exact profile revision attribution, no cross-profile authority widening,
-and complete rollback by disabling the profile layer. Until that proof exists, the current Graph Agent Card
-and native profile remain unchanged beyond the continuity rename.
+Keep one ordinary visible `card_hermes_steward` Graph Agent mapped one-to-one to its native
+`liquidaity-hermes-steward` profile so its sessions, memory, Runs, grants, and history remain continuous.
+Do not add capability profiles, prompt overlays, temporary personas, or a second selectable profile store
+inside it. ThinkGraph, CodeGraph, KnowGraph/research, prompt design, and cross-graph synthesis should evolve
+through the ordinary Card's saved prompt, skills, tools, graph selections, Script, grants, and explicit Card
+revisions. If a responsibility later requires genuinely separate identity, memory, authority, or lifecycle,
+evaluate a separate ordinary Card through the normal orange-edge contract instead of hiding another agent
+inside Graph Agent.
 
 ## Constellation quality work
 

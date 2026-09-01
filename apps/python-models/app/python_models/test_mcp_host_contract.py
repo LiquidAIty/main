@@ -2728,6 +2728,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
+    assert "card.run_assistant_agent" not in {
+        tool.name for tool in mcp_host._gpt_public_catalog(tools)
+    }
     for tool in tools:
         assert "liquidaitySource" in tool.meta
         assert "runtimeExecution" not in tool.meta
@@ -2787,7 +2790,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "run_mag_one" in by_name
     card_tool = by_name["card.run_assistant_agent"]
     assert set(card_tool.inputSchema["properties"]) == {
-        "action", "cardId", "runId", "nativeRootId", "input", "dataAnchors",
+        "action", "cardId", "cardRevisionId", "runId", "nativeRootId", "input", "dataAnchors",
     }
     assert card_tool.inputSchema["anyOf"] == [
         {"required": ["cardId", "input"]},
@@ -2795,7 +2798,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         {"required": ["nativeRootId"]},
     ]
     assert "saved runtime adapter" in card_tool.description
-    assert "instructionId" not in by_name["card.run_assistant_agent"].inputSchema["properties"]
+    assert "instructionId" not in card_tool.inputSchema["properties"]
     assert {scheme["scopes"][0] for scheme in by_name["constellation.context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
@@ -2809,7 +2812,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     main_names = {tool.name for tool in asyncio.run(mcp_host.list_tools())}
     assert {
         "main.context", "canvas.inspect",
-        "card.run_assistant_agent", "run_mag_one", "cbm.search_graph",
+        "run_mag_one", "cbm.search_graph",
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
@@ -2915,14 +2918,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "mainCardId": "card_main_chat",
     }
 
-    asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
+    retired_card_tool = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "card_agent",
         "input": "Use the assigned context.",
     }))
-    path, payload = calls[-1]
-    assert path == "card_run_assistant_agent"
-    assert payload["originatingAgentId"] == "card_main_chat"
-    assert payload["originatingRunId"] == "external-main:grant-1"
+    assert retired_card_tool.isError is True
+    assert '"error": "tool_not_granted"' in retired_card_tool.content[0].text
 
     denied = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "projectId": "spoofed",
@@ -2930,28 +2931,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "input": "Approved exact task.",
     }))
     assert denied.isError is True
-    assert "caller_identity_rejected: projectId" in denied.content[0].text
+    assert '"error": "tool_not_granted"' in denied.content[0].text
 
-    asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
-        "cardId": "coder-card",
-        "input": "Approved exact task.",
-        "dataAnchors": [{
-            "authority": "CodeGraph", "nativeId": "module.symbol",
-            "reason": "start from this production symbol", "priority": 1,
-            "boundedExpansion": 1, "resultLimit": 8, "required": True,
-        }],
-    }))
-    path, payload = calls[-1]
-    assert path == "card_run_assistant_agent"
-    assert payload["projectId"] == "project-1"
-    assert payload["deckId"] == "deck_builder"
-    assert payload["conversationId"] == "external-mcp:grant-1"
-    assert payload["originatingAgentId"] == "card_main_chat"
-    assert payload["originatingRunId"] == "external-main:grant-1"
-    assert payload["dataAnchors"][0]["nativeId"] == "module.symbol"
-    assert not {
-        "keyContext", "visibleMessages", "priorResults", "outputRequirements",
-    }.intersection(payload)
 
 def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
     import asyncio

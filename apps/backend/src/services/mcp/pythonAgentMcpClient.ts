@@ -67,6 +67,19 @@ async function connect(): Promise<Client> {
   return client;
 }
 
+async function connectAs(principal: InternalMcpPrincipal): Promise<Client> {
+  const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${createInternalMcpBearer(principal)}`,
+      },
+    },
+  });
+  const client = new Client({ name: 'main-harness-system', version: '0.1.0' });
+  await client.connect(transport);
+  return client;
+}
+
 function getClient(): Promise<Client> {
   if (!clientPromise) {
     clientPromise = connect().catch((error) => {
@@ -141,6 +154,29 @@ export async function callPythonAgentMcpTool(
     throw new Error(`python_agent_mcp_invalid_result: ${name}`);
   }
   return parsed as PythonMcpToolResult;
+}
+
+/** Call one private system tool without publishing it on a Card model surface. */
+export async function callPythonAgentSystemTool(
+  principal: InternalMcpPrincipal,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<PythonMcpToolResult> {
+  if (principal.kind !== 'system-root') throw new Error('python_agent_system_principal_required');
+  const client = await connectAs(principal);
+  try {
+    const result = await client.callTool({ name, arguments: args });
+    const content = Array.isArray(result?.content) ? result.content : [];
+    const raw = String((content[0] as { text?: unknown })?.text ?? '').trim();
+    if (!raw) throw new Error(`python_agent_mcp_empty_result: ${name}`);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error(`python_agent_mcp_invalid_result: ${name}`);
+    }
+    return parsed as PythonMcpToolResult;
+  } finally {
+    await client.close();
+  }
 }
 
 /** Read factual live MCP contracts for mechanical ingestion by LiquidAIty.idd. */

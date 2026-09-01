@@ -14,7 +14,9 @@ from acp_adapter.host_profiles import (
     HostSessionConfigError,
     activate_host_script_fallback,
     allocate_host_child_execution,
+    apply_host_profile_targets,
     apply_host_session_config,
+    clear_host_profile_targets,
     current_host_script_config,
     current_host_tool_call_meta,
     finish_host_child_execution,
@@ -109,6 +111,62 @@ def test_parser_accepts_only_namespaced_bounded_noncredential_configuration() ->
     with pytest.raises(
         HostSessionConfigError,
         match="hermes_host_session_config_unknown_field:apiKey",
+    ):
+        parse_host_session_config(forged)
+
+
+def test_profile_targets_are_bounded_and_projected_only_into_delegate_task() -> None:
+    metadata = _metadata()
+    metadata["hermes"]["sessionConfig"].update({
+        "delegationRoles": ["team", "profile"],
+        "profileTargets": [{
+            "profile": "graph-agent",
+            "title": "Graph Agent",
+            "description": "Bounded graph research",
+        }],
+    })
+    parsed = parse_host_session_config(metadata)
+    assert parsed["profileTargets"] == [{
+        "profile": "graph-agent",
+        "title": "Graph Agent",
+        "description": "Bounded graph research",
+    }]
+
+    delegate = _definition("delegate_task")
+    delegate["function"]["parameters"]["properties"] = {
+        "goal": {"type": "string"},
+        "context": {"type": "string"},
+        "tasks": {"type": "array"},
+        "output_schema": {"type": "object"},
+        "background": {"type": "boolean"},
+        "action": {"type": "string"},
+        "subagent_id": {"type": "string"},
+        "message": {"type": "string"},
+        "role": {"type": "string", "enum": ["leaf", "orchestrator", "team", "profile"]},
+        "target_profile": {"type": "string"},
+    }
+    agent = SimpleNamespace(
+        tools=[delegate], valid_tool_names={"delegate_task"}, invalidations=0,
+    )
+    agent._invalidate_system_prompt = lambda: setattr(
+        agent, "invalidations", agent.invalidations + 1
+    )
+    apply_host_profile_targets(agent, parsed["profileTargets"])
+    properties = agent.tools[0]["function"]["parameters"]["properties"]
+    assert properties["role"]["enum"] == ["leaf", "orchestrator", "team", "profile"]
+    assert properties["target_profile"]["enum"] == ["graph-agent"]
+    assert agent._host_profile_targets == parsed["profileTargets"]
+    clear_host_profile_targets(agent)
+    assert agent.tools == [delegate]
+    assert agent._host_profile_targets == []
+
+    forged = _metadata()
+    forged["hermes"]["sessionConfig"]["profileTargets"] = [{
+        "profile": "../../other", "title": "Other", "description": "",
+    }]
+    with pytest.raises(
+        HostSessionConfigError,
+        match="hermes_host_config_profile_target_profile_invalid",
     ):
         parse_host_session_config(forged)
 

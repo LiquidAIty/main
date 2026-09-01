@@ -8,6 +8,7 @@ import {
   isHermesHostExecutionMethod,
   startHermesHostTeamMonitor,
 } from '../hermes/hostExecutionLifecycle';
+import { runHermesProfileDelegation } from '../hermes/profileDelegation';
 
 const router = Router();
 
@@ -72,10 +73,20 @@ router.post('/execution/bind', (req, res) => {
 
 router.post('/execution', async (req, res) => {
   const method = req.body?.method;
-  if (!isHermesHostExecutionMethod(method)) {
+  if (!isHermesHostExecutionMethod(method) && method !== 'session/delegate_profile') {
     return res.status(400).json({ ok: false, error: 'main_cli_execution_method_invalid' });
   }
   try {
+    if (method === 'session/delegate_profile') {
+      const params = req.body?.params && typeof req.body.params === 'object'
+        ? req.body.params
+        : {};
+      const result = await runHermesProfileDelegation(
+        mainCliBridge.profileDelegationAuthority(params),
+        params,
+      );
+      return res.json({ ok: true, result });
+    }
     const outcome = await handleHermesHostExecutionRequest({
       method,
       params: req.body?.params && typeof req.body.params === 'object'

@@ -356,7 +356,16 @@ export default function useAgentBuilderMainChat({
       })
       .then((history) => {
         if (cancelled || !history) return;
-        setTranscript({ key: conversationKey, messages: history });
+        setTranscript({ key: conversationKey, messages: history.messages });
+        setTechnical({
+          key: conversationKey,
+          events: reconcileTerminalEvents(history.terminalEvents),
+          error: null,
+        });
+        observedProjectionIdsRef.current = {
+          key: conversationKey,
+          ids: new Set(history.terminalEvents.map((event) => event.id)),
+        };
         setHistoryState({ key: conversationKey, loading: false });
       })
       .catch(() => {
@@ -474,7 +483,7 @@ export default function useAgentBuilderMainChat({
             }
             if (publicEvent?.projectId === canvasProjectId && publicEvent.deckId === deckId
               && publicEvent.cardId && publicEvent.runId && publicEvent.id
-              && publicEvent.kind !== 'model' && publicEvent.kind !== 'mission') {
+              && publicEvent.category?.startsWith('execution.')) {
               setTechnical((current) => current.key === conversationKey
                 ? { ...current, events: reconcileTerminalEvents([...current.events, publicEvent]) } : current);
             }

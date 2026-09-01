@@ -29,6 +29,10 @@ import {
   toNativeTeamPolicy,
   type SavedTeamConfig,
 } from './teamConfig';
+import {
+  runHermesProfileDelegation,
+  type HermesProfileTarget,
+} from './profileDelegation';
 
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
@@ -95,6 +99,7 @@ export type HermesRuntimeConfig = {
     maxToolCalls: number;
     maxOutputBytes: number;
   };
+  profileTargets?: HermesProfileTarget[];
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
@@ -131,6 +136,7 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
   deckId: string;
   conversationId: string;
   parentRunId: string;
+  deckRevision?: string;
   message: string;
   workingDirectory?: string;
 };
@@ -270,6 +276,10 @@ type ActiveTurn = {
   configuration: NonNullable<HermesRunSnapshot['configuration']>;
   modelBlocks: NonNullable<HermesRunSnapshot['modelBlocks']>;
   lastPublicKind: string;
+  profileTargets: HermesProfileTarget[];
+  deckRevision: string;
+  conversationId: string;
+  runtimeMode: HermesRuntimeConfig['runtime']['mode'];
 };
 
 function resolveHermesInstall(): HermesAcpInstall {
@@ -416,7 +426,11 @@ export function buildHermesHostSessionProjection(
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
     : [];
   const nativeTeam = args.team ? toNativeTeamPolicy(args.team) : null;
-  const delegationRoles = nativeTeam ? ['team'] : [];
+  const profileTargets = args.profileTargets || [];
+  const delegationRoles = [
+    ...(nativeTeam ? ['team'] : []),
+    ...(profileTargets.length ? ['profile'] : []),
+  ];
   return {
     mcpServers: rootServers,
     sessionMeta: {
@@ -441,6 +455,11 @@ export function buildHermesHostSessionProjection(
           // This narrows only the trusted LiquidAIty session projection. The
           // native delegate_task registry keeps every upstream role.
           delegationRoles,
+          ...(profileTargets.length ? {
+            profileTargets: profileTargets.map(({ profile, title, description }) => ({
+              profile, title, description,
+            })),
+          } : {}),
           ...(nativeTeam ? { team: nativeTeam } : {}),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
@@ -621,12 +640,41 @@ export class AcpProcess {
       return;
     }
     if (
-      ['_session/create_execution_context', '_session/finish_execution_context'].includes(message.method)
+      [
+        '_session/create_execution_context',
+        '_session/finish_execution_context',
+        '_session/delegate_profile',
+      ].includes(message.method)
       && Object.prototype.hasOwnProperty.call(message, 'id')
     ) {
       const sessionId = String(message.params?.sessionId || '');
-      if (message.method === '_session/create_execution_context' && !this.turns.get(sessionId)) {
+      const turn = this.turns.get(sessionId);
+      if (
+        ['_session/create_execution_context', '_session/delegate_profile'].includes(message.method)
+        && !turn
+      ) {
         this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32001, message: 'hermes_turn_context_unavailable' } });
+        return;
+      }
+      if (message.method === '_session/delegate_profile') {
+        void runHermesProfileDelegation({
+          projectId: turn!.identity.projectId,
+          deckId: turn!.identity.deckId,
+          deckRevision: turn!.deckRevision,
+          conversationId: turn!.conversationId,
+          parentRunId: turn!.runId,
+          sourceCardId: turn!.identity.cardId,
+          sourceRuntimeMode: turn!.runtimeMode,
+          parentExecutionContextId: turn!.rootExecutionContextId,
+          profileTargets: turn!.profileTargets,
+        }, message.params && typeof message.params === 'object' ? message.params : {}).then((result) => {
+          this.send({ jsonrpc: '2.0', id: message.id, result });
+        }).catch((error) => {
+          this.send({
+            jsonrpc: '2.0', id: message.id,
+            error: { code: -32004, message: error instanceof Error ? error.message : 'hermes_profile_delegation_failed' },
+          });
+        });
         return;
       }
       const method = message.method === '_session/create_execution_context'
@@ -1084,6 +1132,10 @@ export class AcpProcess {
           subagentModel: args.effectiveSubagentModel || null },
         modelBlocks: [],
         lastPublicKind: '',
+        profileTargets: [...(args.profileTargets || [])],
+        deckRevision: String(args.deckRevision || ''),
+        conversationId: args.conversationId,
+        runtimeMode: args.runtime.mode,
       };
       this.turns.set(sessionId, active);
     } catch (error) {

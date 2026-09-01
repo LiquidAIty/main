@@ -1163,6 +1163,7 @@ class _PendingCliHostExecution:
     cli_identity: int
     requester: Callable[[str, dict[str, Any]], dict[str, Any]]
     external_memory_mode: str
+    profile_targets: tuple[dict[str, str], ...]
 
 
 # LIQUIDAITY VENDOR PATCH: generic registered pre-spawn child environment seam.
@@ -2149,6 +2150,7 @@ class PluginContext:
         *,
         request_id: str = "",
         external_memory_mode: str = "normal",
+        profile_targets: list[dict[str, str]] | None = None,
     ) -> bool:
         """Bind the active CLI agent to a generic host child lifecycle.
 
@@ -2156,8 +2158,10 @@ class PluginContext:
         reuse the same opaque host lifecycle already used by ACP.
         The exact live CLI agent may be bound while idle, before an alternate
         input driver injects its accepted turn.  During a turn, Hermes' active
-        parent binding must resolve to that same object.  The operation changes
-        no prompt, tool, Script, profile, credential, or persistence config.
+        parent binding must resolve to that same object. The operation changes
+        no prompt, Script, profile, credential, or persistence config. When a
+        trusted host supplies profile targets it narrows only this turn's
+        existing delegate_task schema and restores it on clear.
         """
 
         cli = self._manager._cli_ref
@@ -2182,6 +2186,7 @@ class PluginContext:
                 cli_identity=id(cli),
                 requester=requester,
                 external_memory_mode=external_memory_mode,
+                profile_targets=tuple(copy.deepcopy(profile_targets or [])),
             ),
         )
 
@@ -4187,6 +4192,9 @@ class PluginManager:
 
     @staticmethod
     def _clear_cli_agent_host_execution(agent: Any) -> None:
+        from acp_adapter.host_profiles import clear_host_profile_targets
+
+        clear_host_profile_targets(agent)
         setattr(agent, "_host_execution_context_id", "")
         setattr(agent, "_host_execution_requester", None)
         setattr(agent, "_host_execution_session_id", "")
@@ -4203,6 +4211,7 @@ class PluginManager:
     ) -> bool:
         from agent.subagent_lifecycle import get_active_subagent_parent
         from acp_adapter.host_profiles import (
+            apply_host_profile_targets,
             attach_host_execution_context,
             attach_host_execution_requester,
         )
@@ -4234,6 +4243,7 @@ class PluginManager:
             binding.requester,
             binding.session_id,
         )
+        apply_host_profile_targets(agent, list(binding.profile_targets))
         setattr(agent, "_host_execution_request_id", binding.request_id)
         setattr(agent, "_host_execution_profile_key", binding.profile_key)
         return True

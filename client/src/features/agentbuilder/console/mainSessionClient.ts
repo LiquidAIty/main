@@ -210,7 +210,10 @@ export async function loadSessionHistory(args: {
   conversationId: string;
   signal?: AbortSignal;
   timeoutMs?: number;
-}): Promise<{ role: 'assistant' | 'user'; text: string }[]> {
+}): Promise<{
+  messages: { role: 'assistant' | 'user'; text: string }[];
+  terminalEvents: RuntimeEvent[];
+}> {
   const params = new URLSearchParams({
     projectId: args.projectId,
     conversationId: args.conversationId,
@@ -247,6 +250,7 @@ export async function loadSessionHistory(args: {
   const payload = (await res.json().catch(() => null)) as {
     error?: unknown;
     messages?: { role?: unknown; text?: unknown }[];
+    terminalEvents?: RuntimeEvent[];
   } | null;
   if (!res.ok) {
     throw new SessionStreamError({
@@ -264,11 +268,19 @@ export async function loadSessionHistory(args: {
       status: res.status,
     });
   }
-  return payload.messages
+  const messages = payload.messages
     .filter((message) => message.role === 'assistant' || message.role === 'user')
     .map((m) => ({
       role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
       text: typeof m.text === 'string' ? m.text : '',
     }))
     .filter((m) => m.text.length > 0);
+  const terminalEvents = Array.isArray(payload.terminalEvents)
+    ? payload.terminalEvents.filter((event) => (
+        event && typeof event.id === 'string'
+        && typeof event.category === 'string'
+        && event.category.startsWith('execution.')
+      ))
+    : [];
+  return { messages, terminalEvents };
 }
