@@ -93,7 +93,6 @@ from app.python_models.tool_registry import (
     tool_publication,
     tool_access,
 )
-from app.python_models.card_script import CardScript
 from mcp.server import Server
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -773,6 +772,11 @@ def _request_execution_context() -> dict[str, Any] | None:
         ),
         "effectTargetDeckRevision": str(
             context.get("effectTargetDeckRevision") or ""
+        ),
+        "builderOperation": (
+            dict(context["builderOperation"])
+            if isinstance(context.get("builderOperation"), dict)
+            else None
         ),
         "grantedTools": sorted({str(item).strip() for item in grants if str(item).strip()}),
     }
@@ -2414,10 +2418,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.create",
             description=(
-                "Create ONE explicitly configured saved Card through the canonical PostgreSQL "
-                "deck authority using optimistic locking. The server mints the Card identity; "
-                "only explicitly selected capabilities enter the saved grant list. This operation "
-                "never launches the Card or Mag One."
+                "Create ONE ordinary AutoGen assistant Card exactly matching the current "
+                "Agent Builder Run operation. Use its IDD template, title, role, prompt, "
+                "configured model, explicit tools, and deck revision unchanged. The server "
+                "mints the identity. This never launches the Card, creates wires, or runs Mag One."
             ),
             inputSchema={
                 "type": "object",
@@ -2432,12 +2436,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "runtime": {
                         "type": "object",
                         "properties": {
-                            "kind": {"type": "string", "enum": ["hermes", "autogen"]},
-                            "mode": {
-                                "type": "string",
-                                "enum": ["main", "delegate", "assistant", "magentic_one"],
-                            },
-                            "profile": {"type": "string", "minLength": 1},
+                            "kind": {"type": "string", "enum": ["autogen"]},
+                            "mode": {"type": "string", "enum": ["assistant"]},
                         },
                         "required": ["kind", "mode"],
                         "additionalProperties": False,
@@ -2449,70 +2449,21 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "modelKey": {"type": "string", "minLength": 1},
                             "accessMode": {"type": "string", "minLength": 1},
                             "providerModelId": {"type": "string", "minLength": 1},
-                            "reasoningEffort": {
-                                "type": "string",
-                                "enum": ["low", "medium", "high", "xhigh"],
-                            },
                         },
-                        "required": ["provider", "modelKey", "accessMode"],
+                        "required": [
+                            "provider", "modelKey", "accessMode", "providerModelId",
+                        ],
                         "additionalProperties": False,
                     },
-                    "subagentModel": {
-                        "type": "object",
-                        "description": (
-                            "Saved desired model for bounded native Hermes delegated children and "
-                            "background skill review. Omit for AutoGen Cards."
-                        ),
-                        "properties": {
-                            "provider": {"type": "string", "minLength": 1},
-                            "accessMode": {
-                                "type": "string",
-                                "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
-                            },
-                            "modelKey": {"type": "string", "minLength": 1},
-                            "providerModelId": {"type": "string", "minLength": 1},
-                        },
-                        "required": ["provider", "accessMode", "modelKey", "providerModelId"],
-                        "additionalProperties": False,
-                    },
-                    "team": _card_team_schema(),
                     "tools": {
                         "type": "array",
                         "items": {"type": "string", "minLength": 1},
                         "default": [],
                     },
-                    "nativeTools": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "default": [],
-                    },
-                    "skills": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "default": [],
-                    },
-                    "toolsets": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "default": [],
-                    },
-                    "mcpConnectionIds": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "default": [],
-                    },
-                    "position": {
-                        "type": "object",
-                        "properties": {
-                            "x": {"type": "number"},
-                            "y": {"type": "number"},
-                        },
-                        "additionalProperties": False,
-                    },
                 },
                 "required": [
-                    "projectId", "deckId", "expectedRevision", "title", "role",
-                    "prompt", "runtime", "model",
+                    "projectId", "deckId", "expectedRevision", "templateId",
+                    "title", "role", "prompt", "runtime", "model",
                 ],
                 "additionalProperties": False,
             },
@@ -2520,14 +2471,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.update_configuration",
             description=(
-                "User-directed strict-allowlist update of one persisted card: prompt, title, "
-                "modelKey, providerModelId, provider, accessMode, reasoningEffort, "
-                "temperature, maxTokens, the Hermes subagent model, saved Team "
-                "defaults and ceilings, explicit "
-                "tool/native-tool/skill/toolset/MCP selections, "
-                "optional Python Card Script source. "
-                "Everything else (runtime code, "
-                "shell config, hidden tools, run authority, worker selection) is rejected."
+                "Update only the prompt and explicit MCP tools of the one ordinary Card "
+                "selected by the current Agent Builder Run. The request must match that "
+                "run-issued target and field authority; every other field is rejected."
             ),
             inputSchema={
                 "type": "object",
@@ -2539,63 +2485,17 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "type": "object",
                         "properties": {
                             "prompt": {"type": "string"},
-                            "title": {"type": "string"},
-                            "modelKey": {"type": "string"},
-                            "providerModelId": {"type": "string", "minLength": 1},
-                            "provider": {"type": "string"},
-                            "accessMode": {
-                                "type": "string",
-                                "enum": [
-                                    "chatgpt-account", "openai-api", "openrouter-api",
-                                ],
-                            },
-                            "reasoningEffort": {
-                                "type": "string",
-                                "enum": ["low", "medium", "high", "xhigh"],
-                            },
-                            "temperature": {"type": "number"},
-                            "maxTokens": {"type": "integer", "minimum": 1},
-                            "subagentModel": {
-                                "type": "object",
-                                "properties": {
-                                    "provider": {"type": "string", "minLength": 1},
-                                    "accessMode": {
-                                        "type": "string",
-                                        "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
-                                    },
-                                    "modelKey": {"type": "string", "minLength": 1},
-                                    "providerModelId": {"type": "string", "minLength": 1},
-                                },
-                                "required": ["provider", "accessMode", "modelKey", "providerModelId"],
-                                "additionalProperties": False,
-                            },
-                            "team": _card_team_schema(),
-                            "script": CardScript.model_json_schema(),
                             "tools": {
                                 "type": "array",
                                 "items": {"type": "string", "minLength": 1},
                             },
-                            "nativeTools": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
-                            "skills": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
-                            "toolsets": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
-                            "mcpConnectionIds": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
                         },
+                        "minProperties": 1,
                         "additionalProperties": False,
                     },
                 },
                 "required": ["projectId", "deckId", "cardId", "updates"],
+                "additionalProperties": False,
             },
         ),
         Tool(
@@ -3574,6 +3474,7 @@ _SERVER_OWNED_ARGUMENTS = {
     "_effectTargetCardId",
     "_effectTargetCardRevisionId",
     "_effectTargetDeckRevision",
+    "_builderOperation",
 }
 
 
@@ -3682,13 +3583,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "canvas.inspect": {"projectId", "deckId"},
     "card.create": {
         "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
-        "runtime", "model", "subagentModel", "team", "tools", "nativeTools",
-        "skills", "toolsets", "mcpConnectionIds", "position", "templateId",
+        "runtime", "model", "tools", "templateId", "_builderOperation",
     },
     "card.update_configuration": {
         "projectId", "deckId", "cardId", "updates",
         "_effectTargetCardId", "_effectTargetCardRevisionId",
         "_effectTargetDeckRevision",
+        "_builderOperation",
     },
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.run_assistant_agent": {
@@ -3791,6 +3692,57 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.load_graph_references": "card_load_graph_references",
 }
 
+_AGENT_BUILDER_CBM_READ_TOOLS = frozenset({
+    "search_graph", "search_code", "trace_path", "get_code_snippet",
+    "check_index_coverage",
+})
+
+
+def _normalized_workspace_path(value: Any) -> str:
+    return str(value or "").strip().replace("\\", "/").rstrip("/").casefold()
+
+
+def _native_result_payload(result: Any) -> dict[str, Any]:
+    blocks = result.content if isinstance(result, CallToolResult) else result
+    for block in blocks if isinstance(blocks, list) else []:
+        text = getattr(block, "text", "")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _scope_agent_builder_cbm_call(
+    context: dict[str, Any], native_name: str, arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Force an Agent Builder CBM read to its run-bound deck workspace."""
+
+    operation = context.get("builderOperation")
+    if not isinstance(operation, dict):
+        return arguments
+    if native_name not in _AGENT_BUILDER_CBM_READ_TOOLS:
+        raise PermissionError("agent_builder_cbm_tool_forbidden")
+    project = str(operation.get("cbmProject") or "").strip()
+    workspace_root = str(operation.get("workspaceRoot") or "").strip()
+    if not project or not workspace_root:
+        raise PermissionError("agent_builder_cbm_project_required")
+    supplied_project = str(arguments.get("project") or "").strip()
+    if supplied_project and supplied_project != project:
+        raise PermissionError("agent_builder_cbm_project_mismatch")
+    status = _native_result_payload(_call_native_cbm("index_status", {"project": project}))
+    if status.get("status") != "ready":
+        raise PermissionError("agent_builder_cbm_project_not_ready")
+    if _normalized_workspace_path(status.get("root_path")) != _normalized_workspace_path(
+        workspace_root
+    ):
+        raise PermissionError("agent_builder_cbm_workspace_mismatch")
+    return {**arguments, "project": project}
+
 
 async def _dispatch_tool(
     name: str,
@@ -3801,10 +3753,15 @@ async def _dispatch_tool(
         await _native_cbm_tools()
         native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
         if native_name in _NATIVE_CBM_NAMES:
+            native_arguments = dict(arguments or {})
+            if context is not None:
+                native_arguments = _scope_agent_builder_cbm_call(
+                    context, native_name, native_arguments,
+                )
             return await asyncio.to_thread(
                 _call_native_cbm,
                 native_name,
-                dict(arguments or {}),
+                native_arguments,
             )
     if name.startswith(_NATIVE_PREFIXES["graphiti"]):
         await _initialize_native_graphiti()
@@ -3892,6 +3849,11 @@ async def _dispatch_tool(
                 )
                 args["_effectTargetDeckRevision"] = str(
                     context.get("effectTargetDeckRevision") or ""
+                )
+            if name in {"card.create", "card.update_configuration"}:
+                operation = context.get("builderOperation")
+                args["_builderOperation"] = (
+                    dict(operation) if isinstance(operation, dict) else {}
                 )
             from app.python_models.tool_registry import required_tool_caller_runtime
 
@@ -4050,7 +4012,17 @@ async def _dispatch_tool(
         from app import control_plane
 
         try:
+            operation = args.pop("_builderOperation", None)
             result = await (
+                control_plane.card_create(
+                    args,
+                    caller_card_id=caller_card_id,
+                    builder_operation=(
+                        operation if isinstance(operation, dict) else None
+                    ),
+                )
+                if name == "card.create"
+                else
                 control_plane.card_update_configuration(
                     args,
                     caller_card_id=caller_card_id,
@@ -4061,6 +4033,12 @@ async def _dispatch_tool(
                     target_deck_revision=str(
                         args.pop("_effectTargetDeckRevision", "") or ""
                     ),
+                    operation_mode=str((operation or {}).get("mode") or "")
+                    if isinstance(operation, dict) else "",
+                    allowed_fields=list((operation or {}).get("allowedFields") or [])
+                    if isinstance(operation, dict) else [],
+                    workspace_root=str((operation or {}).get("workspaceRoot") or "")
+                    if isinstance(operation, dict) else "",
                 )
                 if name == "card.update_configuration"
                 else getattr(control_plane, handler_name)(args)

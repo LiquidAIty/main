@@ -680,28 +680,36 @@ def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypa
         "callerRuntimeMode": "delegate",
         "principalKind": "card-runtime",
         "grantedTools": ["card.update_configuration"],
-        "effectTargetCardId": "card-trading",
-        "effectTargetCardRevisionId": "trading-revision-one",
+        "effectTargetCardId": "card-selected-target",
+        "effectTargetCardRevisionId": "selected-target-revision-one",
         "effectTargetDeckRevision": "deck-revision-one",
+        "builderOperation": {
+            "mode": "edit",
+            "allowedFields": ["prompt", "tools"],
+            "workspaceRoot": "C:/Projects/agents",
+        },
     })
     monkeypatch.setattr(control_plane, "card_update_configuration", update)
 
     result = asyncio.run(mcp_host._dispatch_tool(
         "card.update_configuration",
-        {"cardId": "card-trading", "updates": {"prompt": "New prompt"}},
+        {"cardId": "card-selected-target", "updates": {"prompt": "New prompt"}},
     ))
 
     assert json.loads(result[0].text)["ok"] is True
     assert observed == [({
-        "cardId": "card-trading",
+        "cardId": "card-selected-target",
         "updates": {"prompt": "New prompt"},
         "projectId": "project-1",
         "deckId": "deck_builder",
     }, {
         "caller_card_id": "card-agent-builder",
-        "target_card_id": "card-trading",
-        "target_card_revision_id": "trading-revision-one",
+        "target_card_id": "card-selected-target",
+        "target_card_revision_id": "selected-target-revision-one",
         "target_deck_revision": "deck-revision-one",
+        "operation_mode": "edit",
+        "allowed_fields": ["prompt", "tools"],
+        "workspace_root": "C:/Projects/agents",
     })]
 
 
@@ -1456,6 +1464,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "projectId",
             "deckId",
             "expectedRevision",
+            "templateId",
             "title",
             "role",
             "prompt",
@@ -1463,34 +1472,21 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "model",
         ]
         assert by_name["card.create"].inputSchema["additionalProperties"] is False
-        assert "subagentModel" in by_name["card.create"].inputSchema["properties"]
-        assert "memoryProvider" not in by_name["card.create"].inputSchema["properties"]
+        assert set(by_name["card.create"].inputSchema["properties"]) == {
+            "projectId", "deckId", "expectedRevision", "templateId", "title",
+            "role", "prompt", "runtime", "model", "tools",
+        }
         assert by_name["card.create"].inputSchema["properties"]["runtime"]["properties"]["mode"] == {
             "type": "string",
-            "enum": ["main", "delegate", "assistant", "magentic_one"],
-        }
-        assert "minProperties" not in str(
-            by_name["card.update_configuration"].inputSchema
-        )
-        reasoning_schema = by_name["card.update_configuration"].inputSchema[
-            "properties"
-        ]["updates"]["properties"]["reasoningEffort"]
-        assert reasoning_schema == {
-            "type": "string",
-            "enum": ["low", "medium", "high", "xhigh"],
-        }
-        access_mode_schema = by_name["card.update_configuration"].inputSchema[
-            "properties"
-        ]["updates"]["properties"]["accessMode"]
-        assert access_mode_schema == {
-            "type": "string",
-            "enum": ["chatgpt-account", "openai-api", "openrouter-api"],
+            "enum": ["assistant"],
         }
         update_properties = by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["properties"]
-        assert "subagentModel" in update_properties
-        assert "memoryProvider" not in update_properties
+        assert set(update_properties) == {"prompt", "tools"}
+        assert by_name["card.update_configuration"].inputSchema[
+            "properties"
+        ]["updates"]["minProperties"] == 1
         assert "main.context" in by_name
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name

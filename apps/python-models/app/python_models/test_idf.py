@@ -18,7 +18,10 @@ from app.python_models.idf import (
 )
 
 
-def _idf(*, graph_context: str = "", secret: bool = False, selected_target: bool = False):
+def _idf(
+    *, graph_context: str = "", secret: bool = False,
+    selected_target: bool = False, builder_operation: bool = False,
+):
     reference = {
         "authority": "CodeGraph",
         "nativeId": "project.module.materialize_idf",
@@ -68,17 +71,45 @@ def _idf(*, graph_context: str = "", secret: bool = False, selected_target: bool
         variable={
             "task": "Inspect the exact bounded slice.",
             "selectedCardTarget": ({
-                "cardId": "trading-card",
-                "cardRevisionId": "trading-revision-one",
+                "cardId": "selected-card",
+                "cardRevisionId": "selected-revision-one",
                 "deckRevision": "deck-revision-one",
-                "title": "Trading Journal",
-                "templateId": "template_trading_workbench",
-                "role": "Research-only trading journal",
-                "prompt": "Summarize research with citations.",
+                "title": "Selected Assistant",
+                "templateId": "template_assist",
+                "role": "Selected specialist",
+                "prompt": "Complete the selected bounded mission.",
                 "outputContract": {"type": "object"},
                 "runtime": {"kind": "autogen", "mode": "assistant"},
                 "runtimeOptions": {"tools": ["web_search"]},
             } if selected_target else None),
+            "agentBuilderGuidance": ({
+                "vision": {
+                    "sourcePath": "PLAN.md", "sourceSha256": "a" * 64,
+                    "content": "## Agent Builder product vision\nBuild one Card.",
+                },
+                "idd": {
+                    "sourcePath": "LiquidAIty.idd", "sourceSha256": "b" * 64,
+                    "content": {"template": {"id": "template_assist"}},
+                },
+                "skill": {
+                    "sourcePath": "Hermes/.hermes/profiles/builder/skills/build/SKILL.md",
+                    "sourceSha256": "c" * 64, "content": "Build exactly one Card.",
+                },
+            } if builder_operation else None),
+            "agentBuilderOperation": ({
+                "mode": "edit",
+                "deckRevision": "deck-revision-one",
+                "workspaceRoot": "C:/Projects/agents",
+                "cbmProject": None,
+                "allowedFields": ["prompt", "tools"],
+                "templateId": "template_assist",
+                "title": "Selected Assistant",
+                "role": "Selected specialist",
+                "prompt": "Complete the revised bounded mission.",
+                "tools": ["web_search"],
+                "targetCardId": "selected-card",
+                "targetCardRevisionId": "selected-revision-one",
+            } if builder_operation else None),
             "images": [],
         },
         capabilities={
@@ -144,17 +175,39 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
 
 
 def test_selected_card_target_is_retained_and_projected_before_the_mission() -> None:
-    materialized = _idf(selected_target=True)
+    materialized = _idf(selected_target=True, builder_operation=True)
     target = materialized.idf.dynamicContext.selectedCardTarget
     assert target is not None
-    assert target.cardId == "trading-card"
-    assert target.cardRevisionId == "trading-revision-one"
+    assert target.cardId == "selected-card"
+    assert target.cardRevisionId == "selected-revision-one"
     message = model_task(materialized.idf)
+    assert message.index("Agent Builder guidance") < message.index(
+        "Agent Builder operation"
+    )
+    assert message.index("Agent Builder operation") < message.index(
+        "Selected Agent Builder target"
+    )
     assert message.index("Selected Agent Builder target") < message.index(
         "Inspect the exact bounded slice."
     )
     projection = runtime_projection(materialized)
     assert projection["buildTarget"]["deckRevision"] == "deck-revision-one"
+    assert projection["builderOperation"] == {
+        "mode": "edit",
+        "deckRevision": "deck-revision-one",
+        "workspaceRoot": "C:/Projects/agents",
+        "cbmProject": None,
+        "allowedFields": ["prompt", "tools"],
+        "templateId": "template_assist",
+        "title": "Selected Assistant",
+        "role": "Selected specialist",
+        "prompt": "Complete the revised bounded mission.",
+        "tools": ["web_search"],
+        "model": None,
+        "targetCardId": "selected-card",
+        "targetCardRevisionId": "selected-revision-one",
+    }
+    assert projection["builderGuidance"]["vision"]["sourcePath"] == "PLAN.md"
 
 
 def test_each_run_writes_one_file_and_reloads_exact_bytes(

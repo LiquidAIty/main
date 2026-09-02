@@ -43,17 +43,18 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
         "builder",
         runtime={
             "kind": "hermes", "mode": "delegate",
-            "profile": "liquidaity-agent-builder",
+            "profile": "agent-builder",
         },
         runtimeOptions={
             **_agent("x")["runtimeOptions"],
             "tools": ["card.update_configuration"],
+            "skills": ["agent-builder-inspection"],
         },
     )
     target = _agent(
-        "trading",
-        title="Trading Journal",
-        role="Research-only journal",
+        "selected",
+        title="Selected Assistant",
+        role="Selected specialist",
         prompt="Old prompt",
         runtimeOptions={**_agent("x")["runtimeOptions"], "tools": ["web_search"]},
     )
@@ -64,7 +65,11 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
         "projectId": "project-one",
         "meta": {"deckRevision": "deck-revision-one"},
-        "deck": {"nodes": [builder, target], "edges": []},
+        "deck": {
+            "nodes": [builder, target],
+            "edges": [],
+            "workspaceRoot": "C:/Projects/agents",
+        },
     })
 
     prepared = card_domain._prepare_invocation({
@@ -72,21 +77,208 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
         "deckId": "deck_builder",
         "cardId": "builder",
         "assignment": "Update the selected Card prompt and tools.",
-        "buildTargetCardId": "trading",
+        "builderOperation": {
+            "mode": "edit",
+            "expectedDeckRevision": "deck-revision-one",
+            "targetCardId": "selected",
+            "targetCardRevisionId": "revision-2",
+            "prompt": "New prompt",
+            "tools": ["web_search"],
+        },
     })
 
     assert prepared["buildTarget"] == {
-        "cardId": "trading",
+        "cardId": "selected",
         "cardRevisionId": "revision-2",
         "deckRevision": "deck-revision-one",
-        "title": "Trading Journal",
+        "title": "Selected Assistant",
         "templateId": "template_assist",
-        "role": "Research-only journal",
+        "role": "Selected specialist",
         "prompt": "Old prompt",
         "outputContract": None,
         "runtime": {"kind": "autogen", "mode": "assistant"},
         "runtimeOptions": target["runtimeOptions"],
     }
+    assert prepared["builderOperation"] == {
+        "mode": "edit",
+        "deckRevision": "deck-revision-one",
+        "workspaceRoot": "C:/Projects/agents",
+        "cbmProject": None,
+        "allowedFields": ["prompt", "tools"],
+        "templateId": "template_assist",
+        "title": "Selected Assistant",
+        "role": "Selected specialist",
+        "prompt": "New prompt",
+        "tools": ["web_search"],
+        "targetCardId": "selected",
+        "targetCardRevisionId": "revision-2",
+    }
+    assert prepared["builderGuidance"]["vision"]["sourcePath"] == "PLAN.md"
+    assert prepared["builderGuidance"]["idd"]["content"]["template"]["id"] == (
+        "template_assist"
+    )
+    assert prepared["builderGuidance"]["skill"]["content"].startswith("---")
+
+    with pytest.raises(
+        card_domain.CardDomainError, match="agent_builder_deck_revision_stale"
+    ):
+        card_domain._prepare_invocation({
+            "projectId": "project-one",
+            "deckId": "deck_builder",
+            "cardId": "builder",
+            "assignment": "Use no stale deck.",
+            "builderOperation": {
+                "mode": "edit",
+                "expectedDeckRevision": "stale-deck-revision",
+                "targetCardId": "selected",
+                "targetCardRevisionId": "revision-2",
+                "prompt": "New prompt",
+                "tools": ["web_search"],
+            },
+        })
+
+    with pytest.raises(
+        card_domain.CardDomainError, match="agent_builder_target_revision_stale"
+    ):
+        card_domain._prepare_invocation({
+            "projectId": "project-one",
+            "deckId": "deck_builder",
+            "cardId": "builder",
+            "assignment": "Use no stale Card.",
+            "builderOperation": {
+                "mode": "edit",
+                "expectedDeckRevision": "deck-revision-one",
+                "targetCardId": "selected",
+                "targetCardRevisionId": "stale-card-revision",
+                "prompt": "New prompt",
+                "tools": ["web_search"],
+            },
+        })
+
+
+def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypatch) -> None:
+    builder = _agent(
+        "builder",
+        runtime={
+            "kind": "hermes", "mode": "delegate",
+            "profile": "agent-builder",
+        },
+        runtimeOptions={
+            **_agent("x")["runtimeOptions"],
+            "tools": ["card.create"],
+            "skills": ["agent-builder-inspection"],
+        },
+    )
+    builder["_cardRevisionId"] = "revision-builder"
+    builder["_cardRevision"] = 1
+    builder["_cardRevisionSha256"] = "sha-builder"
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "meta": {"deckRevision": "deck-revision-one"},
+        "deck": {
+            "nodes": [builder],
+            "edges": [],
+            "workspaceRoot": "C:/Projects/agents",
+        },
+    })
+    model = {
+        "provider": "openai",
+        "modelKey": "gpt-5.6-luna",
+        "providerModelId": "gpt-5.6-luna",
+        "accessMode": "chatgpt-account",
+    }
+
+    prepared = card_domain._prepare_invocation({
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "cardId": "builder",
+        "assignment": "Create the configured ordinary Card.",
+        "builderOperation": {
+            "mode": "create",
+            "expectedDeckRevision": "deck-revision-one",
+            "templateId": "template_assist",
+            "title": "Portfolio Planner",
+            "role": "Plans and journals assigned paper trades.",
+            "prompt": "Return a bounded trade plan with citations.",
+            "tools": ["web_search"],
+            "model": model,
+        },
+        "configuredModels": [{
+            "provider": "openai",
+            "key": "gpt-5.6-luna",
+            "providerModelId": "gpt-5.6-luna",
+            "label": "Luna",
+        }],
+    })
+
+    assert prepared["buildTarget"] is None
+    assert prepared["builderOperation"] == {
+        "mode": "create",
+        "deckRevision": "deck-revision-one",
+        "workspaceRoot": "C:/Projects/agents",
+        "cbmProject": None,
+        "allowedFields": ["prompt", "tools"],
+        "templateId": "template_assist",
+        "title": "Portfolio Planner",
+        "role": "Plans and journals assigned paper trades.",
+        "prompt": "Return a bounded trade plan with citations.",
+        "tools": ["web_search"],
+        "model": model,
+    }
+    assert prepared["builderGuidance"]["idd"]["content"]["operations"] == [
+        {
+            "id": "canvas.inspect", "access": "read", "publication": "external-mcp",
+            "sourceIds": ["main_mcp"], "namespace": "main", "kind": "tool",
+        },
+        {
+            "id": "card.create", "access": "write", "publication": "external-mcp",
+            "sourceIds": ["main_mcp"], "namespace": "main", "kind": "tool",
+        },
+        {
+            "id": "web_search", "access": "read", "publication": "external-mcp",
+            "sourceIds": ["main_mcp", "autogen"], "namespace": "main", "kind": "tool",
+        },
+    ]
+
+
+def test_agent_builder_guidance_fails_visibly_for_missing_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    operation = {
+        "mode": "edit", "templateId": "template_assist", "tools": [],
+    }
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", tmp_path / "missing-plan")
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_vision_missing"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
+
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", card_domain._REPOSITORY_ROOT / "PLAN.md")
+    monkeypatch.setattr(
+        card_domain, "load_input_data_dictionary",
+        lambda: (_ for _ in ()).throw(card_domain.IddValidationError("idd_load_failed")),
+    )
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_idd_unavailable"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
+
+
+def test_agent_builder_guidance_requires_selected_existing_native_skill(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    operation = {
+        "mode": "edit", "templateId": "template_assist", "tools": [],
+    }
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_not_selected"):
+        card_domain._agent_builder_guidance(operation, selected_skills=[])
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_SKILL_PATH", tmp_path / "missing-skill")
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_missing"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
 
 
 @pytest.mark.parametrize("system_target", [
@@ -111,12 +303,12 @@ def test_agent_builder_target_rejects_system_cards(system_target) -> None:
         "builder",
         runtime={
             "kind": "hermes", "mode": "delegate",
-            "profile": "liquidaity-agent-builder",
+            "profile": "agent-builder",
         },
     )
     with pytest.raises(card_domain.CardDomainError, match="agent_builder_system_target_forbidden"):
         card_domain._selected_agent_builder_target(
-            {"buildTargetCardId": system_target["id"]},
+            system_target["id"],
             receiving_card=builder,
             cards={builder["id"]: builder, system_target["id"]: system_target},
             deck_revision="deck-revision-one",

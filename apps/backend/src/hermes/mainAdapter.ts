@@ -112,6 +112,7 @@ export type HermesRuntimeConfig = {
     runtime: Record<string, unknown>;
     runtimeOptions: Record<string, unknown>;
   };
+  builderOperation?: Record<string, unknown>;
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
@@ -1107,6 +1108,9 @@ export class AcpProcess {
         cardRevisionId: args.buildTarget.cardRevisionId,
         deckRevision: args.buildTarget.deckRevision,
       } } : {}),
+      ...(args.builderOperation ? {
+        builderOperation: args.builderOperation,
+      } : {}),
     });
     let sessionId: string;
     let active: ActiveTurn;

@@ -66,7 +66,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.map((node) => node.runtime)).toEqual([
       { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
       { kind: 'autogen', mode: 'magentic_one' },
       { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
@@ -114,7 +114,7 @@ describe('agentbuilder authoring flow', () => {
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     const agentBuilder = INITIAL_DECK.nodes.find((node) => node.id === 'card_agent_builder');
     expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
-    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' });
+    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'agent-builder' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
     expect(systemCoder?.runtimeOptions?.tools).toEqual([
       'cbm.search_graph',
@@ -125,18 +125,21 @@ describe('agentbuilder authoring flow', () => {
     ]);
     expect(agentBuilder?.runtimeOptions?.tools).toEqual([
       'canvas.inspect',
+      'card.create',
       'card.update_configuration',
     ]);
     expect(agentBuilder?.runtimeOptions?.toolsets).toEqual([
       'hermes-acp',
     ]);
     expect(agentBuilder?.runtimeOptions).toMatchObject({
-      modelKey: 'gpt-5.6-terra',
-      providerModelId: 'gpt-5.6-terra',
+      modelKey: 'gpt-5.6-sol',
+      providerModelId: 'gpt-5.6-sol',
     });
     expect(agentBuilder?.runtimeOptions?.team?.mode).toBe('off');
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
-    expect(agentBuilder?.runtimeOptions?.skills).toEqual(['hermes-agent']);
+    expect(agentBuilder?.runtimeOptions?.skills).toEqual([
+      'hermes-agent', 'agent-builder-inspection',
+    ]);
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
     expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
     expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['hermes-acp', 'computer_use']);

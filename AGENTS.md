@@ -334,7 +334,7 @@ runtime, or give Local Coder Agent Builder/IDD authority.
 ### Hermes Agent Builder
 
 The saved Agent Builder Card uses the repo-owned Hermes adapter in `delegate` mode with profile
-`liquidaity-agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
+`agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
 authority through the lower Agent Builder coding surface beneath Main Chat. It executes bounded coding
 missions by inspecting current source, editing, running commands/tests, and returning evidence. Its
 Card/profile memory, skills, tools, sessions, Runs, and history are independent of Local Coder, and it

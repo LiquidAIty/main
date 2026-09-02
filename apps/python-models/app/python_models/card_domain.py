@@ -11,6 +11,7 @@ import json
 import re
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -26,6 +27,11 @@ from app.python_models.tool_registry import (
 from pydantic import ValidationError
 from app.python_models.orchestration_contracts import DataAnchorReference, GraphHook
 from app.python_models.card_script import saved_script, script_presentation
+from app.python_models.idd import (
+    IDD_PATH,
+    load_input_data_dictionary,
+    template_objects,
+)
 from app.python_models.idf import (
     InputMaterializationError,
     idf_public,
@@ -86,8 +92,32 @@ PROTECTED_CARD_IDS = frozenset({
     "card_worldsignals_agent",
 })
 
-AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
+AGENT_BUILDER_PROFILE = "agent-builder"
+AGENT_BUILDER_SKILL_NAME = "agent-builder-inspection"
 GRAPH_AGENT_PROFILE = "liquidaity-hermes-steward"
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+AGENT_BUILDER_VISION_PATH = _REPOSITORY_ROOT / "PLAN.md"
+AGENT_BUILDER_SKILL_PATH = (
+    _REPOSITORY_ROOT / "Hermes" / ".hermes" / "profiles"
+    / AGENT_BUILDER_PROFILE / "skills" / "agent-construction"
+    / AGENT_BUILDER_SKILL_NAME / "SKILL.md"
+)
+_AGENT_BUILDER_VISION_HEADING = "## Agent Builder product vision"
+_AGENT_BUILDER_SOURCE_BYTE_LIMIT = 32_000
+_AGENT_BUILDER_OPERATION_FIELDS = frozenset({
+    "mode", "expectedDeckRevision", "targetCardId", "targetCardRevisionId",
+    "templateId", "title", "role", "prompt", "tools", "model", "cbmProject",
+})
+_AGENT_BUILDER_CREATE_MODEL_FIELDS = frozenset({
+    "provider", "modelKey", "providerModelId", "accessMode",
+})
+_AGENT_BUILDER_ACCESS_MODES = frozenset({
+    "chatgpt-account", "openai-api", "openrouter-api",
+})
+_AGENT_BUILDER_SYSTEM_TEMPLATE_IDS = frozenset({
+    "template_main_chat", "template_local_coder", "template_agent_builder",
+    "template_hermes_steward", "template_magentic",
+})
 
 CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
     "(run:Run)-[edge:EXECUTED_BY]->(card)",
@@ -1746,7 +1776,7 @@ def _direct_card_targets(
 
 
 def _selected_agent_builder_target(
-    payload: dict[str, Any],
+    target_card_id: str,
     *,
     receiving_card: dict[str, Any],
     cards: dict[str, dict[str, Any]],
@@ -1754,7 +1784,7 @@ def _selected_agent_builder_target(
 ) -> dict[str, Any] | None:
     """Resolve one exact non-system Card snapshot for an Agent Builder Run."""
 
-    target_id = str(payload.get("buildTargetCardId") or "").strip()
+    target_id = str(target_card_id or "").strip()
     if not target_id:
         return None
     receiving_runtime = _card_runtime(receiving_card)
@@ -1805,6 +1835,268 @@ def _selected_agent_builder_target(
         "runtimeOptions": _json_object(
             target.get("runtimeOptions"), "agent_builder_target_runtime_options"
         ),
+    }
+
+
+def _agent_builder_operation(
+    payload: dict[str, Any],
+    *,
+    receiving_card: dict[str, Any],
+    cards: dict[str, dict[str, Any]],
+    deck: dict[str, Any],
+    deck_revision: str,
+    available_tool_ids: set[str],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Validate one exact create/edit operation against current saved authority."""
+
+    raw = payload.get("builderOperation")
+    if raw is None:
+        return None, None
+    receiving_runtime = _card_runtime(receiving_card)
+    if (
+        receiving_runtime.get("kind") != "hermes"
+        or receiving_runtime.get("mode") != "delegate"
+        or receiving_runtime.get("profile") != AGENT_BUILDER_PROFILE
+    ):
+        raise CardDomainError("agent_builder_operation_requires_agent_builder")
+    workspace_root = _required_text(deck.get("workspaceRoot"), "agent_builder_workspace_root")
+    if not isinstance(raw, dict) or set(raw) - _AGENT_BUILDER_OPERATION_FIELDS:
+        raise CardDomainError("agent_builder_operation_invalid")
+    operation = dict(raw)
+    expected_deck_revision = _required_text(
+        operation.get("expectedDeckRevision"), "agent_builder_expected_deck_revision"
+    )
+    if expected_deck_revision != deck_revision:
+        raise CardDomainError("agent_builder_deck_revision_stale")
+    mode = str(operation.get("mode") or "").strip()
+    if mode not in {"create", "edit"}:
+        raise CardDomainError("agent_builder_operation_mode_invalid")
+    cbm_project = str(operation.get("cbmProject") or "").strip() or None
+    prompt = _required_text(operation.get("prompt"), "agent_builder_prompt")
+    tools = _string_list(operation.get("tools"), "agent_builder_tools")
+    unavailable_tools = [tool for tool in tools if tool not in available_tool_ids]
+    if unavailable_tools:
+        raise CardDomainError(
+            f"agent_builder_tool_unavailable:{unavailable_tools[0]}"
+        )
+    if mode == "edit":
+        target_id = _required_text(
+            operation.get("targetCardId"),
+            "agent_builder_target_card_id",
+        )
+        target = _selected_agent_builder_target(
+            target_id,
+            receiving_card=receiving_card,
+            cards=cards,
+            deck_revision=deck_revision,
+        )
+        assert target is not None
+        target_revision_id = _required_text(
+            operation.get("targetCardRevisionId"),
+            "agent_builder_target_card_revision_id",
+        )
+        if target_revision_id != target["cardRevisionId"]:
+            raise CardDomainError("agent_builder_target_revision_stale")
+        return ({
+            "mode": "edit",
+            "deckRevision": deck_revision,
+            "workspaceRoot": workspace_root,
+            "cbmProject": cbm_project,
+            "allowedFields": ["prompt", "tools"],
+            "templateId": target["templateId"],
+            "title": target["title"],
+            "role": target["role"],
+            "prompt": prompt,
+            "tools": tools,
+            "targetCardId": target["cardId"],
+            "targetCardRevisionId": target["cardRevisionId"],
+        }, target)
+
+    if operation.get("targetCardId"):
+        raise CardDomainError("agent_builder_create_target_forbidden")
+    if operation.get("targetCardRevisionId"):
+        raise CardDomainError("agent_builder_create_target_revision_forbidden")
+    template_id = _required_text(
+        operation.get("templateId"), "agent_builder_template_id"
+    )
+    try:
+        templates = load_input_data_dictionary()["templates"]
+    except IddValidationError as error:
+        raise CardDomainError("agent_builder_idd_unavailable") from error
+    if template_id not in templates:
+        raise CardDomainError("agent_builder_template_unavailable")
+    if template_id in _AGENT_BUILDER_SYSTEM_TEMPLATE_IDS:
+        raise CardDomainError("agent_builder_system_template_forbidden")
+    title = _required_text(operation.get("title"), "agent_builder_title")
+    role = _required_text(operation.get("role"), "agent_builder_role")
+    raw_model = operation.get("model")
+    if (
+        not isinstance(raw_model, dict)
+        or set(raw_model) != _AGENT_BUILDER_CREATE_MODEL_FIELDS
+    ):
+        raise CardDomainError("agent_builder_model_invalid")
+    model = {
+        field: _required_text(raw_model.get(field), f"agent_builder_model_{field}")
+        for field in _AGENT_BUILDER_CREATE_MODEL_FIELDS
+    }
+    if model["accessMode"] not in _AGENT_BUILDER_ACCESS_MODES:
+        raise CardDomainError("agent_builder_model_access_mode_invalid")
+    configured_models = payload.get("configuredModels") or []
+    if not isinstance(configured_models, list):
+        raise CardDomainError("configured_models_invalid")
+    if not any(
+        isinstance(candidate, dict)
+        and str(candidate.get("provider") or "") == model["provider"]
+        and str(candidate.get("key") or "") == model["modelKey"]
+        and str(candidate.get("providerModelId") or "") == model["providerModelId"]
+        for candidate in configured_models
+    ):
+        raise CardDomainError("agent_builder_model_unavailable")
+    return ({
+        "mode": "create",
+        "deckRevision": deck_revision,
+        "workspaceRoot": workspace_root,
+        "cbmProject": cbm_project,
+        "allowedFields": ["prompt", "tools"],
+        "templateId": template_id,
+        "title": title,
+        "role": role,
+        "prompt": prompt,
+        "tools": tools,
+        "model": model,
+    }, None)
+
+
+def _agent_builder_source(
+    path: Path,
+    missing_error: str,
+    *,
+    max_bytes: int | None = _AGENT_BUILDER_SOURCE_BYTE_LIMIT,
+) -> tuple[str, bytes]:
+    """Read one required UTF-8 source with an explicit bounded size."""
+
+    try:
+        payload = path.read_bytes()
+        content = payload.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise CardDomainError(missing_error) from error
+    if not content.strip() or (max_bytes is not None and len(payload) > max_bytes):
+        raise CardDomainError(missing_error)
+    return content, payload
+
+
+def _agent_builder_vision() -> dict[str, Any]:
+    content, payload = _agent_builder_source(
+        AGENT_BUILDER_VISION_PATH,
+        "agent_builder_vision_missing",
+        max_bytes=None,
+    )
+    lines = content.splitlines()
+    try:
+        start = lines.index(_AGENT_BUILDER_VISION_HEADING)
+    except ValueError as error:
+        raise CardDomainError("agent_builder_vision_missing") from error
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].startswith("## ")),
+        len(lines),
+    )
+    section = "\n".join(lines[start:end]).strip()
+    if (
+        not section
+        or len(section.encode("utf-8")) > _AGENT_BUILDER_SOURCE_BYTE_LIMIT
+    ):
+        raise CardDomainError("agent_builder_vision_missing")
+    return {
+        "sourcePath": "PLAN.md",
+        "sourceSha256": sha256(payload).hexdigest(),
+        "content": section,
+    }
+
+
+def _agent_builder_skill(selected_skills: list[str]) -> dict[str, Any]:
+    if AGENT_BUILDER_SKILL_NAME not in selected_skills:
+        raise CardDomainError("agent_builder_skill_not_selected")
+    content, payload = _agent_builder_source(
+        AGENT_BUILDER_SKILL_PATH, "agent_builder_skill_missing"
+    )
+    parts = content.split("---", 2)
+    frontmatter = parts[1] if len(parts) == 3 and not parts[0].strip() else ""
+    declared_name = next((
+        line.split(":", 1)[1].strip()
+        for line in frontmatter.splitlines()
+        if line.split(":", 1)[0].strip() == "name" and ":" in line
+    ), "")
+    if declared_name != AGENT_BUILDER_SKILL_NAME:
+        raise CardDomainError("agent_builder_skill_invalid")
+    return {
+        "sourcePath": (
+            "Hermes/.hermes/profiles/agent-builder/skills/"
+            "agent-construction/agent-builder-inspection/SKILL.md"
+        ),
+        "sourceSha256": sha256(payload).hexdigest(),
+        "content": content,
+    }
+
+
+def _agent_builder_idd(operation: dict[str, Any]) -> dict[str, Any]:
+    try:
+        document = load_input_data_dictionary()
+        object_ids = template_objects(document, operation["templateId"])
+    except (IddValidationError, KeyError) as error:
+        raise CardDomainError("agent_builder_idd_unavailable") from error
+    type_ids = sorted({
+        str(document["objects"][object_id]["type"])
+        for object_id in object_ids
+    })
+    effect_id = (
+        "card.create" if operation["mode"] == "create"
+        else "card.update_configuration"
+    )
+    operation_ids = {"canvas.inspect", effect_id, *operation.get("tools", [])}
+    projection = {
+        "dictionary": dict(document["dictionary"]),
+        "template": {
+            "id": operation["templateId"],
+            **dict(document["templates"][operation["templateId"]]),
+        },
+        "objects": [
+            {"id": identity, **dict(document["objects"][identity])}
+            for identity in object_ids
+        ],
+        "types": [
+            {"id": identity, **dict(document["types"][identity])}
+            for identity in type_ids
+        ],
+        "relationships": list(document.get("relationships") or []),
+        "operations": [
+            dict(item) for item in document.get("operations") or []
+            if item.get("id") in operation_ids
+        ],
+    }
+    try:
+        payload = IDD_PATH.read_bytes()
+    except OSError as error:
+        raise CardDomainError("agent_builder_idd_unavailable") from error
+    return {
+        "sourcePath": "LiquidAIty.idd",
+        "sourceSha256": sha256(payload).hexdigest(),
+        "content": projection,
+    }
+
+
+def _agent_builder_guidance(
+    operation: dict[str, Any] | None,
+    *,
+    selected_skills: list[str],
+) -> dict[str, Any] | None:
+    """Materialize the three required Agent Builder inputs or fail visibly."""
+
+    if operation is None:
+        return None
+    return {
+        "vision": _agent_builder_vision(),
+        "idd": _agent_builder_idd(operation),
+        "skill": _agent_builder_skill(selected_skills),
     }
 
 
@@ -2162,12 +2454,6 @@ def _prepare_invocation(
         runtime_options["writeMode"] = write_mode
     direct_card_targets = _direct_card_targets(card_id, cards, loaded["deck"]["edges"])
     deck_revision = str((loaded.get("meta") or {}).get("deckRevision") or "")
-    build_target = _selected_agent_builder_target(
-        payload,
-        receiving_card=card,
-        cards=cards,
-        deck_revision=deck_revision,
-    )
     card_identity = {"cardId": card_id, "title": card["title"]}
     call_config = {
         "systemPrompt": common_prompt,
@@ -2195,6 +2481,21 @@ def _prepare_invocation(
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
+    builder_operation, build_target = _agent_builder_operation(
+        payload,
+        receiving_card=card,
+        cards=cards,
+        deck=loaded["deck"],
+        deck_revision=deck_revision,
+        available_tool_ids={
+            identity for identity, item in by_id.items()
+            if item.get("availability") == "available"
+        },
+    )
+    builder_guidance = _agent_builder_guidance(
+        builder_operation,
+        selected_skills=call_config["skills"],
+    )
     if catalog_policy == "all_healthy":
         disabled = set(disabled_tools)
         healthy_reads = [
@@ -2280,6 +2581,8 @@ def _prepare_invocation(
         "cardIdentity": card_identity,
         "delegationTargets": direct_card_targets,
         "buildTarget": build_target,
+        "builderOperation": builder_operation,
+        "builderGuidance": builder_guidance,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
@@ -2399,6 +2702,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             variable={
                 "task": assignment,
                 "selectedCardTarget": prepared.get("buildTarget"),
+                "agentBuilderGuidance": prepared.get("builderGuidance"),
+                "agentBuilderOperation": prepared.get("builderOperation"),
                 "images": images,
             },
             capabilities={

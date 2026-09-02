@@ -116,6 +116,10 @@ export type AgentTemplate = {
 
 export type AgentCardInstance = {
   id: string;
+  /** Current server-owned immutable revision identity returned with a loaded deck. */
+  _cardRevisionId?: string;
+  _cardRevision?: number;
+  _cardRevisionSha256?: string;
   kind?: DeckNodeKind;
   templateId: string;
   /** Stable LiquidAIty Card-to-Card capability description. */

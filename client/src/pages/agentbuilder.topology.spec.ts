@@ -25,7 +25,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainInspectorProjection).not.toContain('CoderTerminalPanel');
     expect(source).toContain('data-testid="under-chat-agent-builder"');
     expect(source).toContain('run={agentBuilderRunResult}');
-    expect(source).toMatch(/executeStandaloneInvocation\(\s*agentBuilderCard,\s*agentBuilderInput\.trim\(\),\s*agentBuilderBuildTarget\.id,\s*\)/);
+    expect(source).toMatch(/executeStandaloneInvocation\(\s*agentBuilderCard,\s*agentBuilderInput\.trim\(\),\s*preparedAgentBuilderOperation,\s*\)/);
+    expect(source).toContain('data-testid="under-chat-agent-builder-proposal"');
     expect(source).not.toContain('title="Main CLI Terminal"');
   });
   it('preserves the stable steward identity as the temporary Graph Agent', () => {
@@ -231,23 +232,23 @@ describe('Main / Hermes / graph authority topology', () => {
 
     expect(agentBuilder).toMatchObject({
       title: 'Agent Builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
       runtimeOptions: {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
-        skills: ['hermes-agent'],
+        skills: ['hermes-agent', 'agent-builder-inspection'],
         toolsets: ['hermes-acp'],
         toolCatalogPolicy: 'selected',
-        tools: ['canvas.inspect', 'card.update_configuration'],
+        tools: ['canvas.inspect', 'card.create', 'card.update_configuration'],
       },
     });
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.runtimeOptions).toMatchObject({
-      modelKey: 'gpt-5.6-terra',
-      providerModelId: 'gpt-5.6-terra',
+      modelKey: 'gpt-5.6-sol',
+      providerModelId: 'gpt-5.6-sol',
     });
-    expect(agentBuilder?.prompt).toContain('Configure the one selected non-system Canvas Card');
-    expect(agentBuilder?.prompt).toContain('Use card.update_configuration only for the selected target');
+    expect(agentBuilder?.prompt).toContain('Execute the one run-issued Agent Builder create or edit operation');
+    expect(agentBuilder?.prompt).toContain('Use card.update_configuration only in edit mode');
     expect(agentBuilder?.prompt).toContain('IDD supplies compositional templates, types, and effect contracts');
     expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
 

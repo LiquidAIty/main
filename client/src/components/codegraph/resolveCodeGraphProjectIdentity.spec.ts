@@ -22,12 +22,28 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
       listProjects: async () => ({
         projects: [
           { name: 'C-Projects-main', root_path: 'C:/Projects/main' },
-          { name: 'C-Configured-main', root_path: 'C:/Configured/main' },
+          { name: 'C-Configured-main', root_path: 'C:/Projects/main' },
         ],
       }),
       getProjectStatus: ready,
     });
     expect(name).toBe('C-Configured-main');
+  });
+
+  it('rejects a configured project that indexes a different repository', async () => {
+    const resolution = resolveCbmProjectName('C:\\Projects\\agents', {
+      configuredProjectName: 'C-Projects-LiquidAIty-main',
+      listProjects: async () => ({
+        projects: [{
+          name: 'C-Projects-LiquidAIty-main',
+          root_path: 'C:/Projects/LiquidAIty/main',
+        }],
+      }),
+      getProjectStatus: ready,
+    });
+    await expect(resolution).rejects.toThrow(
+      'Configured CBM project does not index C:\\Projects\\agents: C-Projects-LiquidAIty-main',
+    );
   });
 
   it('prefers the canonical project over an earlier stale same-root index', async () => {
@@ -127,7 +143,22 @@ describe('CodeGraph authoritative CBM identity resolution', () => {
       getProjectStatus: ready,
     });
     await expect(resolution).rejects.toThrow(
-      'CBM project is not indexed: C-Projects-LiquidAIty-main',
+      'CBM project is not indexed for C:\\Projects\\main',
+    );
+  });
+
+  it('never falls back to the platform project for a deck agent workspace', async () => {
+    const resolution = resolveCbmProjectName('C:\\Projects\\agents', {
+      listProjects: async () => ({
+        projects: [{
+          name: 'C-Projects-LiquidAIty-main',
+          root_path: 'C:/Projects/LiquidAIty/main',
+        }],
+      }),
+      getProjectStatus: ready,
+    });
+    await expect(resolution).rejects.toThrow(
+      'CBM project is not indexed for C:\\Projects\\agents',
     );
   });
 });

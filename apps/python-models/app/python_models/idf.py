@@ -123,6 +123,46 @@ class SelectedCardTarget(BaseModel):
     runtimeOptions: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentBuilderOperation(BaseModel):
+    """One run-scoped create/edit authority materialized for Agent Builder."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["create", "edit"]
+    deckRevision: str
+    workspaceRoot: str
+    cbmProject: str | None = None
+    allowedFields: list[Literal["prompt", "tools"]]
+    templateId: str
+    title: str = ""
+    role: str = ""
+    prompt: str
+    tools: list[str] = Field(default_factory=list)
+    model: dict[str, Any] | None = None
+    targetCardId: str | None = None
+    targetCardRevisionId: str | None = None
+
+
+class AgentBuilderSource(BaseModel):
+    """One exact bounded source read for an Agent Builder Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sourcePath: str
+    sourceSha256: str
+    content: Any
+
+
+class AgentBuilderGuidance(BaseModel):
+    """Run-scoped Vision, IDD, and native-skill materialization."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    vision: AgentBuilderSource
+    idd: AgentBuilderSource
+    skill: AgentBuilderSource
+
+
 class DynamicContext(BaseModel):
     """The final transient mission, selected Card target, and images."""
 
@@ -130,6 +170,8 @@ class DynamicContext(BaseModel):
 
     task: str
     selectedCardTarget: SelectedCardTarget | None = None
+    agentBuilderGuidance: AgentBuilderGuidance | None = None
+    agentBuilderOperation: AgentBuilderOperation | None = None
     images: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -189,6 +231,24 @@ def _input_estimates(idf: Idf) -> dict[str, Any]:
                 separators=(",", ":"),
             )
             if idf.dynamicContext.selectedCardTarget is not None
+            else ""
+        ),
+        "agentBuilderGuidanceTokens": _token_estimate(
+            json.dumps(
+                idf.dynamicContext.agentBuilderGuidance.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if idf.dynamicContext.agentBuilderGuidance is not None
+            else ""
+        ),
+        "agentBuilderOperationTokens": _token_estimate(
+            json.dumps(
+                idf.dynamicContext.agentBuilderOperation.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if idf.dynamicContext.agentBuilderOperation is not None
             else ""
         ),
         "outputContractTokens": _token_estimate(
@@ -429,6 +489,8 @@ def materialize_idf(
     dynamic_context = DynamicContext(
         task=str(variable.get("task") or ""),
         selectedCardTarget=variable.get("selectedCardTarget"),
+        agentBuilderGuidance=variable.get("agentBuilderGuidance"),
+        agentBuilderOperation=variable.get("agentBuilderOperation"),
         images=list(variable.get("images") or []),
     )
     idf = Idf(
@@ -546,8 +608,32 @@ def model_task(idf: Idf) -> str:
         if selected_target is not None
         else ""
     )
+    builder_operation = idf.dynamicContext.agentBuilderOperation
+    builder_operation_text = (
+        "Agent Builder operation (run-issued structural authority):\n"
+        + json.dumps(
+            builder_operation.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if builder_operation is not None
+        else ""
+    )
+    builder_guidance = idf.dynamicContext.agentBuilderGuidance
+    builder_guidance_text = (
+        "Agent Builder guidance (exact bounded source reads for this Run):\n"
+        + json.dumps(
+            builder_guidance.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if builder_guidance is not None
+        else ""
+    )
     return "\n\n".join(value for value in (
         idf.actualGraphData.modelText.strip(),
+        builder_guidance_text,
+        builder_operation_text,
         selected_target_text,
         (
             f"Saved Card output requirements:\n"
@@ -595,6 +681,16 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "buildTarget": (
             idf.dynamicContext.selectedCardTarget.model_dump(mode="json")
             if idf.dynamicContext.selectedCardTarget is not None
+            else None
+        ),
+        "builderOperation": (
+            idf.dynamicContext.agentBuilderOperation.model_dump(mode="json")
+            if idf.dynamicContext.agentBuilderOperation is not None
+            else None
+        ),
+        "builderGuidance": (
+            idf.dynamicContext.agentBuilderGuidance.model_dump(mode="json")
+            if idf.dynamicContext.agentBuilderGuidance is not None
             else None
         ),
         "images": list(idf.dynamicContext.images),

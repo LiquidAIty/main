@@ -25,7 +25,7 @@ type CbmProjectStatus = {
   root_path?: string;
 };
 
-type ResolveCbmProjectOptions = {
+export type ResolveCbmProjectOptions = {
   configuredProjectName?: string | null;
   canonicalProjectName?: string;
   listProjects?: () => Promise<{ projects?: CbmProjectRow[] }>;
@@ -79,8 +79,9 @@ export function normalizeRepoPath(value: string | null | undefined): string {
  *
  * Resolution order:
  *  1. An explicitly configured, indexed, ready project.
- *  2. The indexed, ready canonical project (`C-Projects-LiquidAIty-main`).
- *  3. The sole ready project whose `root_path` equals the active repo root.
+ *  2. The indexed, ready canonical project (`C-Projects-LiquidAIty-main`), but
+ *     only when it indexes this exact requested root.
+ *  3. The sole ready project whose `root_path` equals the requested root.
  *
  * Any missing, unready, or ambiguous authority rejects with a user-visible error.
  */
@@ -110,29 +111,36 @@ export async function resolveCbmProjectName(
     return projectName;
   };
 
+  const target = normalizeRepoPath(repoPath);
+  if (!target) throw new Error('CBM repository root is required');
+
   const configuredProjectName = options.configuredProjectName?.trim();
   if (configuredProjectName) {
-    if (!projects.some((project) => project.name === configuredProjectName)) {
+    const configured = projects.find((project) => project.name === configuredProjectName);
+    if (!configured) {
       throw new Error(
         `Configured CBM project is not indexed: ${configuredProjectName}`,
+      );
+    }
+    if (normalizeRepoPath(configured.root_path) !== target) {
+      throw new Error(
+        `Configured CBM project does not index ${repoPath}: ${configuredProjectName}`,
       );
     }
     return requireReady(configuredProjectName);
   }
 
-  if (projects.some((project) => project.name === canonicalProjectName)) {
+  const canonical = projects.find((project) => project.name === canonicalProjectName);
+  if (canonical && normalizeRepoPath(canonical.root_path) === target) {
     return requireReady(canonicalProjectName);
   }
 
-  const target = normalizeRepoPath(repoPath);
-  const exactRootProjects = target
-    ? projects.filter(
-        (project) =>
-          project.name &&
-          project.root_path &&
-          normalizeRepoPath(project.root_path) === target,
-      )
-    : [];
+  const exactRootProjects = projects.filter(
+    (project) =>
+      project.name &&
+      project.root_path &&
+      normalizeRepoPath(project.root_path) === target,
+  );
   const readyExactRootProjects = (
     await Promise.all(
       exactRootProjects.map(async (project) => ({
@@ -164,5 +172,5 @@ export async function resolveCbmProjectName(
     );
   }
 
-  throw new Error(`CBM project is not indexed: ${canonicalProjectName}`);
+  throw new Error(`CBM project is not indexed for ${repoPath}`);
 }

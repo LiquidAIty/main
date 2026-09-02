@@ -65,7 +65,7 @@ import {
 
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
-const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
+const AGENT_BUILDER_PROFILE = 'agent-builder';
 
 function commaSeparatedIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
@@ -717,6 +717,14 @@ function resolveHermesTurnArgs(
           ? rawBuildTarget.runtimeOptions : {},
       }
     : undefined;
+  const rawBuilderOperation = input?.builderOperation;
+  const builderOperation = rawBuilderOperation && typeof rawBuilderOperation === 'object'
+    && !Array.isArray(rawBuilderOperation)
+    && ['create', 'edit'].includes(String(rawBuilderOperation.mode || ''))
+    && String(rawBuilderOperation.deckRevision || '').trim()
+    && String(rawBuilderOperation.workspaceRoot || '').trim()
+    ? structuredClone(rawBuilderOperation as Record<string, unknown>)
+    : undefined;
   const script = scriptPresentation?.mode === 'script'
     && scriptState?.nativeSupport?.active === true
     && typeof scriptState?.source === 'string'
@@ -770,6 +778,7 @@ function resolveHermesTurnArgs(
     ...(script ? { script } : {}),
     ...(profileTargets.length ? { profileTargets } : {}),
     ...(buildTarget ? { buildTarget } : {}),
+    ...(builderOperation ? { builderOperation } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -1169,12 +1178,13 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     conversationId,
     dataAnchors: Array.isArray(body.dataAnchors) ? body.dataAnchors : [],
     images: Array.isArray(body.images) ? body.images : [],
-    buildTargetCardId: String(body.buildTargetCardId || '').trim() || undefined,
+    builderOperation: body.builderOperation,
   };
 
   try {
     const cardRevisionId = String(body.cardRevisionId || '').trim();
     const discoveredTools = await listPythonAgentMcpCatalog();
+    const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
     const prepared = await requestPythonRailsJson('/domain/runs/begin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1184,6 +1194,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         runId: correlationId,
         correlationId,
         discoveredTools,
+        configuredModels: listConfiguredModelOptions(openaiDefault),
       }),
     }) as any;
 

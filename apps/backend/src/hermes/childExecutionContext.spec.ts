@@ -139,8 +139,8 @@ describe('Hermes child execution attribution', () => {
       runtimeMode: 'delegate',
       grantedTools: ['card.update_configuration'],
       effectTarget: {
-        cardId: 'card_trading_workbench',
-        cardRevisionId: 'trading-revision-one',
+        cardId: 'card_selected_target',
+        cardRevisionId: 'selected-target-revision-one',
         deckRevision: 'deck-revision-one',
       },
     });
@@ -152,8 +152,8 @@ describe('Hermes child execution attribution', () => {
     });
 
     expect(child).toMatchObject({
-      effectTargetCardId: 'card_trading_workbench',
-      effectTargetCardRevisionId: 'trading-revision-one',
+      effectTargetCardId: 'card_selected_target',
+      effectTargetCardRevisionId: 'selected-target-revision-one',
       effectTargetDeckRevision: 'deck-revision-one',
     });
   });

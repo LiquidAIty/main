@@ -30,7 +30,7 @@ const deckMocks = vi.hoisted(() => ({
           id: 'card_agent_builder',
           kind: 'agent',
           templateId: 'template_agent_builder',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
           runtimeOptions: {
             tools: ['card.create', 'card.update_configuration', 'canvas.upsert_wire'],
             nativeTools: ['memory'],
@@ -72,7 +72,7 @@ const chatSessionMocks = vi.hoisted(() => {
     })),
     requestHermesNative: vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'profiles.describe') return {
-        name: String(params?.name || 'liquidaity-agent-builder'),
+        name: String(params?.name || 'agent-builder'),
         description: 'Agent Builder',
         soul: 'Build saved agents.',
         model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
@@ -284,6 +284,9 @@ const orchestratorMocks = vi.hoisted(() => {
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const graphAgent = cardId === 'card_hermes_steward';
       const agentBuilder = cardId === 'card_agent_builder';
+      const builderTargetId = agentBuilder
+        ? String(body.builderOperation?.targetCardId || '').trim()
+        : '';
       const legacyKanban = cardId === 'card_legacy_kanban';
       const graphConfigured = graphAgent || legacyKanban;
       const coderCard = cardId === 'card_local_coder';
@@ -299,7 +302,7 @@ const orchestratorMocks = vi.hoisted(() => {
            state: 'running',
            runtimeKind: 'hermes',
            runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
-           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'liquidaity-agent-builder'
+           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'agent-builder'
              : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
            startedAt: new Date().toISOString(),
         });
@@ -353,13 +356,13 @@ const orchestratorMocks = vi.hoisted(() => {
           },
           dynamicContext: {
             task: String(mainChat ? body.message || '' : body.assignment || ''),
-            selectedCardTarget: body.buildTargetCardId ? {
-              cardId: body.buildTargetCardId,
-              cardRevisionId: `revision:${body.buildTargetCardId}`,
+            selectedCardTarget: builderTargetId ? {
+              cardId: builderTargetId,
+              cardRevisionId: `revision:${builderTargetId}`,
               deckRevision: 'deck-revision-one',
-              title: 'Trading Journal',
-              templateId: 'template_trading_workbench',
-              role: 'Research-only journal',
+              title: 'Selected Assistant',
+              templateId: 'template_assist',
+              role: 'Selected specialist',
               prompt: 'Old prompt',
               runtime: { kind: 'autogen', mode: 'assistant' },
               runtimeOptions: { tools: [] },
@@ -380,13 +383,13 @@ const orchestratorMocks = vi.hoisted(() => {
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
               : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             task: String(mainChat ? body.message || '' : body.assignment || ''),
-            buildTarget: body.buildTargetCardId ? {
-              cardId: body.buildTargetCardId,
-              cardRevisionId: `revision:${body.buildTargetCardId}`,
+            buildTarget: builderTargetId ? {
+              cardId: builderTargetId,
+              cardRevisionId: `revision:${builderTargetId}`,
               deckRevision: 'deck-revision-one',
-              title: 'Trading Journal',
-              templateId: 'template_trading_workbench',
-              role: 'Research-only journal',
+              title: 'Selected Assistant',
+              templateId: 'template_assist',
+              role: 'Selected specialist',
               prompt: 'Old prompt',
               runtime: { kind: 'autogen', mode: 'assistant' },
               runtimeOptions: { tools: [] },
@@ -408,7 +411,7 @@ const orchestratorMocks = vi.hoisted(() => {
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
                 : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
-                    profile: agentBuilder ? 'liquidaity-agent-builder' : 'liquidaity-hermes-steward' },
+                    profile: agentBuilder ? 'agent-builder' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -983,7 +986,7 @@ describe('coder routes', () => {
 
   it('projects native discovery and preserves missing saved selections without rewriting the Card', async () => {
     const card = { id: 'custom', templateId: 'template_agent_builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
       runtimeOptions: { tools: ['removed.tool'], nativeTools: [], provider: 'openrouter', modelKey: 'removed-model' } };
     const before = JSON.stringify(card);
     deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [card], edges: [] } } as any);
@@ -999,13 +1002,13 @@ describe('coder routes', () => {
       const body = JSON.parse(String((call?.[1] as RequestInit).body));
       expect(body.selectedIds).toEqual([
         'template_agent_builder', 'removed.tool', 'model:openrouter:removed-model',
-        'profile:liquidaity-agent-builder',
+        'profile:agent-builder',
       ]);
       expect(body.nativeOptions).toEqual(expect.arrayContaining([{
         id: 'new.tool', kind: 'tool', owner: 'native-source', source: 'native-source', available: true,
         schema: { type: 'object', properties: { q: { type: 'string' } } },
       }, expect.objectContaining({
-        id: 'profile:liquidaity-agent-builder', kind: 'profile', owner: 'Hermes', available: true,
+        id: 'profile:agent-builder', kind: 'profile', owner: 'Hermes', available: true,
       })]));
       expect(JSON.stringify(card)).toBe(before);
     } finally { await closeServer(server); }
@@ -1167,10 +1170,17 @@ describe('coder routes', () => {
           projectId: 'project-1',
           deckId: 'deck_builder',
           cardId: 'card_agent_builder',
-          buildTargetCardId: 'card_trading_workbench',
+          builderOperation: {
+            mode: 'edit',
+            expectedDeckRevision: 'deck-revision-one',
+            targetCardId: 'card_selected_target',
+            targetCardRevisionId: 'revision:card_selected_target',
+            prompt: 'Updated prompt',
+            tools: [],
+          },
           correlationId: 'corr-builder-1',
           conversationId: 'main',
-          input: 'Write a research-only prompt and grant web_search.',
+          input: 'Update the selected Card prompt and explicit tools.',
           action: 'execute',
         }),
       });
@@ -1181,13 +1191,18 @@ describe('coder routes', () => {
       );
       expect(JSON.parse(String(beginCall?.[1]?.body || '{}'))).toMatchObject({
         cardId: 'card_agent_builder',
-        buildTargetCardId: 'card_trading_workbench',
+        builderOperation: {
+          mode: 'edit',
+          expectedDeckRevision: 'deck-revision-one',
+          targetCardId: 'card_selected_target',
+          targetCardRevisionId: 'revision:card_selected_target',
+        },
       });
       expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
         cardId: 'card_agent_builder',
         buildTarget: {
-          cardId: 'card_trading_workbench',
-          cardRevisionId: 'revision:card_trading_workbench',
+          cardId: 'card_selected_target',
+          cardRevisionId: 'revision:card_selected_target',
           deckRevision: 'deck-revision-one',
         },
       });

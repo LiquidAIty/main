@@ -9,7 +9,7 @@ Git history, not active Markdown.
 ```text
 Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
-     ├─ flow → Agent Builder Card (Hermes delegate, profile liquidaity-agent-builder)
+     ├─ flow → Agent Builder Card (Hermes delegate, profile agent-builder)
      ├─ flow → Graph Agent Card (Hermes delegate, profile liquidaity-hermes-steward)
      ├─ native delegate_task(team) → headless Auto-Team inside Main's existing Card Run/session
      └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
@@ -169,7 +169,7 @@ the transient Card call. The call carries task meaning and selected context, not
 ### Agent Builder
 
 - Card: saved dedicated Agent Builder identity
-- Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
+- Hermes mode/profile: `delegate` / `agent-builder`
 - Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
   inspect current source, edit, run commands/tests, and return evidence. It plans only when asked or blocked.
 - Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
@@ -177,6 +177,26 @@ the transient Card call. The call carries task meaning and selected context, not
   `cbm.trace_path`, `cbm.get_code_snippet`, `cbm.query_graph`, `cbm.check_index_coverage`, and
   `cbm.detect_changes`.
 - Has no Magentic-One connection and receives no Local Coder state.
+
+## Agent Builder product vision
+
+This is the approved operating vision; the complete live loop is not yet proven.
+
+- Main and Graph Agent prepare approved intent, bounded native graph references, and the dynamic
+  construction mission. Main decides whether to invoke Agent Builder.
+- Agent Builder is the saved single Sol Card that creates or edits exactly one ordinary Canvas Card
+  from one run-issued operation. It uses the current IDD palette, this bounded Vision section, and its
+  native `agent-builder-inspection` Hermes skill. Configuration in the UI has no effect until Run.
+- Create selects a non-system IDD template, stable prompt, configured model, and minimum explicit tool
+  set. Edit is limited to the selected ordinary Card's stable prompt and explicit tools. Main, Graph
+  Agent, Agent Builder, Magentic-One, and other unselected Cards are outside the effect boundary.
+- A prompt/template/tools-only Card build does not require CodeGraph. Code-, Script-, UI-, web-slice-,
+  or file-backed work must use the exact deck workspace and its exact ready CBM project; missing or
+  mismatched coverage fails closed and never falls back to the LiquidAIty repository.
+- Use regular granted MCP tools first. Add Python Script composition only after a real execution trace
+  proves that a repeated workflow needs deterministic ordering, validation, or reduced tool exposure.
+- A successful Builder Run reports the exact created or edited Card and preservation evidence. It does
+  not run that Card, wire it, change another Card, or claim unobserved runtime behavior.
 
 ### Local Coder
 

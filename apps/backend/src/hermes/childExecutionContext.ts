@@ -22,6 +22,7 @@ export type HermesExecutionContext = {
   effectTargetCardId?: string | null;
   effectTargetCardRevisionId?: string | null;
   effectTargetDeckRevision?: string | null;
+  builderOperation?: Record<string, unknown> | null;
   expiresAt: number;
   state: 'active' | 'closing' | 'closed';
 };
@@ -64,6 +65,7 @@ export function registerHermesRootExecutionContext(args: {
     cardRevisionId: string;
     deckRevision: string;
   };
+  builderOperation?: Record<string, unknown>;
   now?: number;
 }): HermesExecutionContext {
   const required = [
@@ -99,11 +101,20 @@ export function registerHermesRootExecutionContext(args: {
     effectTargetCardId: effectTarget?.cardId || null,
     effectTargetCardRevisionId: effectTarget?.cardRevisionId || null,
     effectTargetDeckRevision: effectTarget?.deckRevision || null,
+    builderOperation: args.builderOperation
+      ? structuredClone(args.builderOperation)
+      : null,
     expiresAt: (args.now ?? Date.now()) + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
   };
   contexts.set(context.contextId, context);
-  return { ...context, grantedTools: [...context.grantedTools] };
+  return {
+    ...context,
+    grantedTools: [...context.grantedTools],
+    builderOperation: context.builderOperation
+      ? structuredClone(context.builderOperation)
+      : null,
+  };
 }
 
 export function bindHermesRootExecutionSession(contextId: string, sessionId: string): void {
@@ -168,7 +179,13 @@ export async function createHermesChildExecutionContext(args: {
   if (!persistedRunId) throw new Error('hermes_child_run_id_missing');
   context.runId = persistedRunId;
   contexts.set(context.contextId, context);
-  return { ...context, grantedTools: [...context.grantedTools] };
+  return {
+    ...context,
+    grantedTools: [...context.grantedTools],
+    builderOperation: context.builderOperation
+      ? structuredClone(context.builderOperation)
+      : null,
+  };
 }
 
 export function resolveHermesExecutionContext(args: {
@@ -194,7 +211,13 @@ export function resolveHermesExecutionContext(args: {
     && JSON.stringify(principalTools) === JSON.stringify(context.grantedTools)
   );
   if (!matches) throw new Error('hermes_execution_context_principal_mismatch');
-  return { ...context, grantedTools: [...context.grantedTools] };
+  return {
+    ...context,
+    grantedTools: [...context.grantedTools],
+    builderOperation: context.builderOperation
+      ? structuredClone(context.builderOperation)
+      : null,
+  };
 }
 
 export async function finishHermesExecutionContext(args: {
