@@ -587,7 +587,9 @@ async def card_create(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def card_update_configuration(
-    args: dict[str, Any], *, caller_card_id: str = ""
+    args: dict[str, Any], *, caller_card_id: str = "",
+    target_card_id: str = "", target_card_revision_id: str = "",
+    target_deck_revision: str = "",
 ) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "cardId")
     updates = args.get("updates")
@@ -664,25 +666,44 @@ async def card_update_configuration(
 
     def _apply() -> dict[str, Any]:
         deck, revision = _load_deck(project_id, deck_id)
-        if "script" in updates:
-            try:
-                caller = _find_card(deck, caller_card_id)
-            except ControlPlaneError as error:
-                raise ControlPlaneError(
-                    "card_script_update_requires_agent_builder"
-                ) from error
-            caller_runtime = caller.get("runtime") or {}
-            if (
-                caller_runtime.get("kind") != "hermes"
-                or str(caller_runtime.get("profile") or "").strip()
-                != _AGENT_BUILDER_PROFILE
-            ):
-                raise ControlPlaneError(
-                    "card_script_update_requires_agent_builder"
-                )
-            if card_id == caller_card_id:
-                raise ControlPlaneError("card_script_self_mutation_forbidden")
+        try:
+            caller = _find_card(deck, caller_card_id)
+        except ControlPlaneError as error:
+            raise ControlPlaneError(
+                "card_update_requires_agent_builder"
+            ) from error
+        caller_runtime = caller.get("runtime") or {}
+        if (
+            caller_runtime.get("kind") != "hermes"
+            or caller_runtime.get("mode") != "delegate"
+            or str(caller_runtime.get("profile") or "").strip()
+            != _AGENT_BUILDER_PROFILE
+        ):
+            raise ControlPlaneError("card_update_requires_agent_builder")
+        if not target_card_id or not target_card_revision_id or not target_deck_revision:
+            raise ControlPlaneError("agent_builder_target_authority_required")
+        if card_id != target_card_id:
+            raise ControlPlaneError("agent_builder_target_mismatch")
+        if str(revision or "") != target_deck_revision:
+            raise ControlPlaneError("agent_builder_target_revision_changed")
+        if card_id == caller_card_id:
+            raise ControlPlaneError("agent_builder_target_self_forbidden")
         card = _find_card(deck, card_id)
+        card_runtime = card.get("runtime") or {}
+        if (
+            card_runtime.get("kind") == "autogen"
+            and card_runtime.get("mode") == "magentic_one"
+        ):
+            raise ControlPlaneError("agent_builder_system_target_forbidden")
+        if (
+            card_runtime.get("kind") == "hermes"
+            and (
+                card_runtime.get("mode") == "main"
+                or str(card_runtime.get("profile") or "").strip()
+                in {_AGENT_BUILDER_PROFILE, "liquidaity-hermes-steward"}
+            )
+        ):
+            raise ControlPlaneError("agent_builder_system_target_forbidden")
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")
         if "team" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
@@ -704,6 +725,7 @@ async def card_update_configuration(
         return {
             "ok": True,
             "cardId": card_id,
+            "targetCardRevisionId": target_card_revision_id,
             "appliedFields": sorted(updates.keys()),
             "card": {
                 "prompt": saved_card.get("prompt"),

@@ -86,6 +86,9 @@ PROTECTED_CARD_IDS = frozenset({
     "card_worldsignals_agent",
 })
 
+AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
+GRAPH_AGENT_PROFILE = "liquidaity-hermes-steward"
+
 CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
     "(run:Run)-[edge:EXECUTED_BY]->(card)",
     "(card)-[edge:EXECUTED_BY]->(run:Run)",
@@ -1742,6 +1745,69 @@ def _direct_card_targets(
     return direct
 
 
+def _selected_agent_builder_target(
+    payload: dict[str, Any],
+    *,
+    receiving_card: dict[str, Any],
+    cards: dict[str, dict[str, Any]],
+    deck_revision: str,
+) -> dict[str, Any] | None:
+    """Resolve one exact non-system Card snapshot for an Agent Builder Run."""
+
+    target_id = str(payload.get("buildTargetCardId") or "").strip()
+    if not target_id:
+        return None
+    receiving_runtime = _card_runtime(receiving_card)
+    if (
+        receiving_runtime.get("kind") != "hermes"
+        or receiving_runtime.get("mode") != "delegate"
+        or receiving_runtime.get("profile") != AGENT_BUILDER_PROFILE
+    ):
+        raise CardDomainError("agent_builder_target_requires_agent_builder")
+    receiving_id = str(receiving_card.get("id") or "")
+    if target_id == receiving_id:
+        raise CardDomainError("agent_builder_target_self_forbidden")
+    target = cards.get(target_id)
+    if target is None:
+        raise CardDomainError("agent_builder_target_not_found")
+    if not _card_enabled(target):
+        raise CardDomainError("agent_builder_target_disabled")
+    target_runtime = _card_runtime(target)
+    if (
+        target_runtime.get("kind") == "autogen"
+        and target_runtime.get("mode") == "magentic_one"
+    ):
+        raise CardDomainError("agent_builder_system_target_forbidden")
+    if (
+        target_runtime.get("kind") == "hermes"
+        and (
+            target_runtime.get("mode") == "main"
+            or target_runtime.get("profile") in {
+                AGENT_BUILDER_PROFILE,
+                GRAPH_AGENT_PROFILE,
+            }
+        )
+    ):
+        raise CardDomainError("agent_builder_system_target_forbidden")
+    revision_id = str(target.get("_cardRevisionId") or "").strip()
+    if not revision_id or not deck_revision:
+        raise CardDomainError("agent_builder_target_revision_unavailable")
+    return {
+        "cardId": target_id,
+        "cardRevisionId": revision_id,
+        "deckRevision": deck_revision,
+        "title": str(target.get("title") or target_id),
+        "templateId": str(target.get("templateId") or ""),
+        "role": str(target.get("role") or ""),
+        "prompt": str(target.get("prompt") or ""),
+        "outputContract": target.get("outputContract"),
+        "runtime": target_runtime,
+        "runtimeOptions": _json_object(
+            target.get("runtimeOptions"), "agent_builder_target_runtime_options"
+        ),
+    }
+
+
 _DATA_ANCHOR_LIMIT = 16
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "contextMarkdown",
@@ -2095,6 +2161,13 @@ def _prepare_invocation(
             raise CardDomainError("coder_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
     direct_card_targets = _direct_card_targets(card_id, cards, loaded["deck"]["edges"])
+    deck_revision = str((loaded.get("meta") or {}).get("deckRevision") or "")
+    build_target = _selected_agent_builder_target(
+        payload,
+        receiving_card=card,
+        cards=cards,
+        deck_revision=deck_revision,
+    )
     card_identity = {"cardId": card_id, "title": card["title"]}
     call_config = {
         "systemPrompt": common_prompt,
@@ -2197,7 +2270,7 @@ def _prepare_invocation(
         "ephemeral": True,
         "projectId": loaded["projectId"],
         "deckId": deck_id,
-        "deckRevision": str((loaded.get("meta") or {}).get("deckRevision") or ""),
+        "deckRevision": deck_revision,
         "cardRevisionId": card["_cardRevisionId"],
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],
@@ -2206,6 +2279,7 @@ def _prepare_invocation(
         "assignment": assignment,
         "cardIdentity": card_identity,
         "delegationTargets": direct_card_targets,
+        "buildTarget": build_target,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
@@ -2324,6 +2398,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             },
             variable={
                 "task": assignment,
+                "selectedCardTarget": prepared.get("buildTarget"),
                 "images": images,
             },
             capabilities={

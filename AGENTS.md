@@ -43,9 +43,11 @@ Never collapse CURRENT and TARGET into one claim.
   bounded-subagent model selections, and grants.
 - Local Coder is the Hermes delegate Card `card_local_coder` / profile `coder`, owns work against an
   explicitly selected local repository, remains a Magentic-One option, and is not Agent Builder.
-- Agent Builder is a separate Hermes delegate Card/profile directly connected from Main. It owns
-  approved Card construction/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work;
-  it is not connected to Magentic-One and receives no Local Coder state.
+- Agent Builder is Main's directly connected Hermes implementation/coding Card. Main Chat remains the
+  upper conversation and the lower split is another presentation of this same saved Agent Builder
+  Card/Run authority. Agent Builder also owns approved Card construction/configuration, canvas wiring,
+  agent UI, IDD, Agent Maker, and CBM work; it is not connected to Magentic-One and receives no Local
+  Coder state.
 - OpenClaude, the removed standalone LocalCoder runtime, and Bun are absent from the supported
   dependency graph. The user-facing Local Coder is Hermes-backed.
 - Microsoft AutoGen 0.7.5 is checked in at `autogen-main` as first-party execution infrastructure;
@@ -332,8 +334,11 @@ runtime, or give Local Coder Agent Builder/IDD authority.
 ### Hermes Agent Builder
 
 The saved Agent Builder Card uses the repo-owned Hermes adapter in `delegate` mode with profile
-`liquidaity-agent-builder`. Main reaches it through a direct `flow`. Its Card/profile memory, skills,
-tools, sessions, CLI, Runs, and history are independent of Local Coder, and it has no Magentic-One edge.
+`liquidaity-agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
+authority through the lower Agent Builder coding surface beneath Main Chat. It executes bounded coding
+missions by inspecting current source, editing, running commands/tests, and returning evidence. Its
+Card/profile memory, skills, tools, sessions, Runs, and history are independent of Local Coder, and it
+has no Magentic-One edge.
 
 ### Magentic-One
 

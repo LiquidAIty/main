@@ -32,6 +32,7 @@ type UseAgentBuilderDeckLoadArgs = {
   setDeckLoadError: Dispatch<SetStateAction<string | null>>;
   setStateLoaded: Dispatch<SetStateAction<boolean>>;
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
+  reloadToken?: number;
 };
 
 export default function useAgentBuilderDeckLoad({
@@ -50,6 +51,7 @@ export default function useAgentBuilderDeckLoad({
   setDeckLoadError,
   setStateLoaded,
   setDeckStatusMessage,
+  reloadToken = 0,
 }: UseAgentBuilderDeckLoadArgs) {
   useEffect(() => {
     if (!canvasProjectId) {
@@ -169,6 +171,7 @@ export default function useAgentBuilderDeckLoad({
     lastPersistedBoardSnapshotRef,
     projectsApi,
     recordDeckWriteReason,
+    reloadToken,
     resolveProjectDeckLoadResult,
     setDeck,
     setDeckLoadBusy,

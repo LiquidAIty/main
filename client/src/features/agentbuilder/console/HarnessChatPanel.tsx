@@ -13,7 +13,7 @@ type HarnessChatPanelProps = {
   storageKey?: string;
 };
 
-/** Two presentation drivers over one always-mounted Main CLI surface. */
+/** One Main conversation over one always-mounted Agent Builder work surface. */
 export default function HarnessChatPanel({
   chat,
   terminal,
@@ -125,9 +125,8 @@ export default function HarnessChatPanel({
     });
   }, [clampHeight, manualFullCli, setHeight]);
 
-  const forcedFullCli = activeDriver === 'external_plugin';
-  const fullCli = forcedFullCli || manualFullCli;
-  const driverSource: MainDriverSource = activeDriver || (manualFullCli ? 'native_cli' : 'internal_chat');
+  const fullCli = manualFullCli;
+  const driverSource: MainDriverSource = activeDriver || 'internal_chat';
   const terminalMode = fullCli ? 'expanded' : 'split';
 
   return (
@@ -144,7 +143,7 @@ export default function HarnessChatPanel({
         </div>
       ) : null}
 
-      {forcedFullCli ? (
+      {activeDriver === 'external_plugin' ? (
         <div data-testid="main-driver-indicator" role="status" style={{ padding: '4px 8px' }}>
           External Chat driving Main
         </div>
@@ -152,11 +151,11 @@ export default function HarnessChatPanel({
 
       <button
         type="button"
-        data-testid="main-chat-cli-divider"
+        data-testid="main-chat-agent-builder-divider"
         aria-expanded={fullCli}
-        aria-controls="main-cli-region"
-        aria-label="Resize Main Chat and Main CLI"
-        title="Resize Main Chat and Main CLI"
+        aria-controls="agent-builder-region"
+        aria-label="Resize Main Chat and Agent Builder"
+        title="Resize Main Chat and Agent Builder"
         onMouseDown={onDragStart}
         onClick={toggleTerminal}
         style={{
@@ -177,8 +176,8 @@ export default function HarnessChatPanel({
       </button>
 
       <div
-        id="main-cli-region"
-        data-testid="main-cli-region"
+        id="agent-builder-region"
+        data-testid="agent-builder-region"
         aria-hidden="false"
         style={{
           flex: fullCli ? '1 1 auto' : '0 0 auto',

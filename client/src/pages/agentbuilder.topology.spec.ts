@@ -18,13 +18,15 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
   );
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('keeps Main CLI execution in the workspace and out of the Inspector', () => {
+  it('keeps Main as one conversation and presents the saved Agent Builder Run beneath it', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     const mainInspectorProjection = /terminalContent=\{selectedCard\.runtime\.kind === 'hermes'[\s\S]*?runtime\.mode === 'main'\s*\?([\s\S]*?)\s*: selectedCard\.runtime\.kind/.exec(source)?.[1] || '';
     expect(mainInspectorProjection).toContain('main-card-cli-location');
     expect(mainInspectorProjection).not.toContain('CoderTerminalPanel');
-    expect(source).toContain('semanticEvents={technicalEvents}');
-    expect(source).toContain('ownerCardId={mainCardId || \'card_main_chat\'}');
+    expect(source).toContain('data-testid="under-chat-agent-builder"');
+    expect(source).toContain('run={agentBuilderRunResult}');
+    expect(source).toMatch(/executeStandaloneInvocation\(\s*agentBuilderCard,\s*agentBuilderInput\.trim\(\),\s*agentBuilderBuildTarget\.id,\s*\)/);
+    expect(source).not.toContain('title="Main CLI Terminal"');
   });
   it('preserves the stable steward identity as the temporary Graph Agent', () => {
     const serialized = JSON.stringify(INITIAL_DECK);
@@ -171,6 +173,8 @@ describe('Main / Hermes / graph authority topology', () => {
         modelKey: 'gpt-5.6-luna',
         providerModelId: 'gpt-5.6-luna',
       });
+    }
+    for (const card of [coder, steward]) {
       expect(card?.runtimeOptions?.team).toEqual({
         mode: 'auto', maxWorkers: 4, retryLimit: 1,
         workerModel: {
@@ -183,6 +187,8 @@ describe('Main / Hermes / graph authority topology', () => {
         },
       });
     }
+    expect(main?.runtimeOptions?.team?.mode).toBe('off');
+    expect(agentBuilder?.runtimeOptions?.team?.mode).toBe('off');
 
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
@@ -230,16 +236,19 @@ describe('Main / Hermes / graph authority topology', () => {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
         skills: ['hermes-agent'],
-        toolsets: ['hermes-acp', 'computer_use'],
+        toolsets: ['hermes-acp'],
         toolCatalogPolicy: 'selected',
-        tools: [
-          'card.create', 'card.update_configuration', 'canvas.upsert_wire',
-          'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
-        ],
+        tools: ['canvas.inspect', 'card.update_configuration'],
       },
     });
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
-    expect(agentBuilder?.prompt).toContain('Load the full LiquidAIty.idd only');
+    expect(agentBuilder?.runtimeOptions).toMatchObject({
+      modelKey: 'gpt-5.6-terra',
+      providerModelId: 'gpt-5.6-terra',
+    });
+    expect(agentBuilder?.prompt).toContain('Configure the one selected non-system Canvas Card');
+    expect(agentBuilder?.prompt).toContain('Use card.update_configuration only for the selected target');
+    expect(agentBuilder?.prompt).toContain('IDD supplies compositional templates, types, and effect contracts');
     expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');

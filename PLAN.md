@@ -67,9 +67,11 @@ they do not select a runtime implementation.
   explicitly saved tools remain `AGENT` by default, implicit healthy reads remain `OFF` unless the saved
   Script claims them as `SCRIPT` or `BOTH`.
 - IDD supplies composable builder types, objects, templates and effect annotations, not runtime
-  authentication or a second IDF validator. After user agreement, Main directs only the dedicated
-  Agent Builder Card to compose existing templates or custom Cards. Local Coder never receives the
-  full palette. This interaction awaits live proof.
+  authentication or a second IDF validator. Agent Builder is Main's under-chat implementation/coding
+  agent and also owns approved Card building; it receives the full palette only when a mission requires
+  Agent Builder work. Local Coder never receives the full palette. Main delegation and direct under-chat
+  invocation use the same saved Card Run authority; live provider-backed coding execution still requires
+  separate acceptance proof.
 - Hermes is the runtime platform; LiquidAIty composes native capabilities and contextualizes Runs.
   Native catalogs, profiles, tools and worker lifecycle remain Hermes-owned.
 - Every Card has one saved Python Script field and the same Monaco editor in Agent Builder. IDD and the
@@ -168,10 +170,12 @@ the transient Card call. The call carries task meaning and selected context, not
 
 - Card: saved dedicated Agent Builder identity
 - Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
-- Owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
-- Its saved CBM surface is the selected structural recipe only: `cbm.search_graph`, `cbm.trace_path`,
-  and `cbm.get_code_snippet`. Projection coverage and working-tree change detection remain Local Coder
-  concerns and are not implicit Agent Builder reads.
+- Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
+  inspect current source, edit, run commands/tests, and return evidence. It plans only when asked or blocked.
+- Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
+- Its saved CBM surface is the bounded discovery/audit set: `cbm.search_graph`, `cbm.search_code`,
+  `cbm.trace_path`, `cbm.get_code_snippet`, `cbm.query_graph`, `cbm.check_index_coverage`, and
+  `cbm.detect_changes`.
 - Has no Magentic-One connection and receives no Local Coder state.
 
 ### Local Coder
@@ -250,8 +254,9 @@ These are recommendations for later saved-prompt review, not grant changes or ca
 - Memory use should stay deliberate: profile history and curated memory, then the profile's native
   external provider when explicitly configured, then a relevant native skill, followed by selected ThinkGraph/KnowGraph/CodeGraph reads. Do
   not inject all authorities or pass credential/receipt tokens between agents.
-- Agent Builder should follow `IDD/catalog inspect -> select existing object/tool -> preview exact saved
-  change -> save -> native/readback verification`. It may use CodeGraph for this repository but should
+- Agent Builder should follow `CBM discovery -> complete direct source read -> edit -> focused command/test
+  proof -> report`. For Card-building missions it additionally follows `IDD/catalog inspect -> select
+  existing object/tool -> preview exact saved change -> save -> native/readback verification`; it does
   not send the whole IDD palette to ordinary Cards.
 - Local Coder should follow `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet -> complete direct
   source read -> inverse caller/residue audit -> focused tests/typecheck`. Literal `search_code`/`rg`

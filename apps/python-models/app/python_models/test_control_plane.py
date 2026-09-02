@@ -47,6 +47,15 @@ def fake_backend(monkeypatch):
     return saved
 
 
+def builder_target_authority(card_id="signals-card", deck_revision="rev1"):
+    return {
+        "caller_card_id": "builder-card",
+        "target_card_id": card_id,
+        "target_card_revision_id": f"revision:{card_id}",
+        "target_deck_revision": deck_revision,
+    }
+
+
 def test_saved_card_reference_exposes_explicit_runtime() -> None:
     reference = cp.resolve_saved_card_reference(
         "project-one",
@@ -392,31 +401,31 @@ class TestCardCreate:
 
 
 class TestCardUpdateConfiguration:
-    def test_script_update_requires_agent_builder_and_cannot_self_modify(self, fake_backend):
+    def test_update_requires_agent_builder_and_cannot_target_system_cards(self, fake_backend):
         script = {
             "enabled": False,
             "source": "",
             "version": 1,
         }
         with pytest.raises(
-            cp.ControlPlaneError, match="card_script_update_requires_agent_builder"
+            cp.ControlPlaneError, match="card_update_requires_agent_builder"
         ):
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
                 "updates": {"script": script},
-            }, caller_card_id="card_main_chat"))
+            }, **{**builder_target_authority(), "caller_card_id": "signals-card"}))
         with pytest.raises(
-            cp.ControlPlaneError, match="card_script_self_mutation_forbidden"
+            cp.ControlPlaneError, match="agent_builder_target_self_forbidden"
         ):
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "builder-card",
                 "updates": {"script": script},
-            }, caller_card_id="builder-card"))
+            }, **builder_target_authority("builder-card")))
 
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"script": script},
-        }, caller_card_id="builder-card"))
+        }, **builder_target_authority()))
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"]["script"]["author"] == {
@@ -435,7 +444,7 @@ class TestCardUpdateConfiguration:
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"prompt": "new prompt", "reasoningEffort": "medium", "temperature": 0.2},
-        }))
+        }, **builder_target_authority()))
         assert result["ok"] is True
         assert fake_backend["expectedRevision"] == "rev1"
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
@@ -459,7 +468,7 @@ class TestCardUpdateConfiguration:
                 "modelKey": "gpt-5.6-sol",
                 "providerModelId": "gpt-5.6-sol",
             },
-        }))
+        }, **builder_target_authority()))
         assert result["ok"] is True
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert {
@@ -489,7 +498,7 @@ class TestCardUpdateConfiguration:
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"subagentModel": selection},
-        }))
+        }, **builder_target_authority()))
 
         assert result["ok"] is True
         saved = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
@@ -521,7 +530,7 @@ class TestCardUpdateConfiguration:
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"tools": ["card.update_configuration", "web_search"]},
-        }))
+        }, **builder_target_authority()))
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"]["tools"] == ["card.update_configuration", "web_search"]
@@ -535,7 +544,7 @@ class TestCardUpdateConfiguration:
                 "toolsets": ["computer_use"],
                 "mcpConnectionIds": ["saved-native-mcp"],
             },
-        }))
+        }, **builder_target_authority()))
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"] | {
@@ -544,6 +553,18 @@ class TestCardUpdateConfiguration:
             "toolsets": ["computer_use"],
             "mcpConnectionIds": ["saved-native-mcp"],
         } == saved["runtimeOptions"]
+
+    def test_target_and_revision_are_bound_to_the_builder_run(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="agent_builder_target_mismatch"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"prompt": "new prompt"},
+            }, **builder_target_authority("worker")))
+        with pytest.raises(cp.ControlPlaneError, match="agent_builder_target_revision_changed"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"prompt": "new prompt"},
+            }, **builder_target_authority(deck_revision="stale")))
 
 
 class TestUpsertWire:

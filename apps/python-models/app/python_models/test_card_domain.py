@@ -38,6 +38,91 @@ def _expected_delegate(card_id: str = "child") -> dict:
     }
 
 
+def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch) -> None:
+    builder = _agent(
+        "builder",
+        runtime={
+            "kind": "hermes", "mode": "delegate",
+            "profile": "liquidaity-agent-builder",
+        },
+        runtimeOptions={
+            **_agent("x")["runtimeOptions"],
+            "tools": ["card.update_configuration"],
+        },
+    )
+    target = _agent(
+        "trading",
+        title="Trading Journal",
+        role="Research-only journal",
+        prompt="Old prompt",
+        runtimeOptions={**_agent("x")["runtimeOptions"], "tools": ["web_search"]},
+    )
+    for number, card in enumerate((builder, target), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = number
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "meta": {"deckRevision": "deck-revision-one"},
+        "deck": {"nodes": [builder, target], "edges": []},
+    })
+
+    prepared = card_domain._prepare_invocation({
+        "projectId": "project-one",
+        "deckId": "deck_builder",
+        "cardId": "builder",
+        "assignment": "Update the selected Card prompt and tools.",
+        "buildTargetCardId": "trading",
+    })
+
+    assert prepared["buildTarget"] == {
+        "cardId": "trading",
+        "cardRevisionId": "revision-2",
+        "deckRevision": "deck-revision-one",
+        "title": "Trading Journal",
+        "templateId": "template_assist",
+        "role": "Research-only journal",
+        "prompt": "Old prompt",
+        "outputContract": None,
+        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "runtimeOptions": target["runtimeOptions"],
+    }
+
+
+@pytest.mark.parametrize("system_target", [
+    _agent(
+        "main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "liquidaity-main"},
+    ),
+    _agent(
+        "graph",
+        runtime={
+            "kind": "hermes", "mode": "delegate",
+            "profile": "liquidaity-hermes-steward",
+        },
+    ),
+    _agent(
+        "mag-one",
+        runtime={"kind": "autogen", "mode": "magentic_one"},
+    ),
+])
+def test_agent_builder_target_rejects_system_cards(system_target) -> None:
+    builder = _agent(
+        "builder",
+        runtime={
+            "kind": "hermes", "mode": "delegate",
+            "profile": "liquidaity-agent-builder",
+        },
+    )
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_system_target_forbidden"):
+        card_domain._selected_agent_builder_target(
+            {"buildTargetCardId": system_target["id"]},
+            receiving_card=builder,
+            cards={builder["id"]: builder, system_target["id"]: system_target},
+            deck_revision="deck-revision-one",
+        )
+
+
 def test_saved_hermes_card_preserves_exact_team_defaults_and_rejects_non_hermes() -> None:
     team = {
         "mode": "auto", "maxWorkers": 3, "retryLimit": 2,

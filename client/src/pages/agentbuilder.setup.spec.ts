@@ -124,13 +124,17 @@ describe('agentbuilder authoring flow', () => {
       'cbm.detect_changes',
     ]);
     expect(agentBuilder?.runtimeOptions?.tools).toEqual([
-      'card.create',
+      'canvas.inspect',
       'card.update_configuration',
-      'canvas.upsert_wire',
-      'cbm.search_graph',
-      'cbm.trace_path',
-      'cbm.get_code_snippet',
     ]);
+    expect(agentBuilder?.runtimeOptions?.toolsets).toEqual([
+      'hermes-acp',
+    ]);
+    expect(agentBuilder?.runtimeOptions).toMatchObject({
+      modelKey: 'gpt-5.6-terra',
+      providerModelId: 'gpt-5.6-terra',
+    });
+    expect(agentBuilder?.runtimeOptions?.team?.mode).toBe('off');
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.runtimeOptions?.skills).toEqual(['hermes-agent']);
     expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');

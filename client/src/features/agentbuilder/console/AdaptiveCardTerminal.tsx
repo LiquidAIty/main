@@ -172,7 +172,7 @@ export default function AdaptiveCardTerminal(props: {
   }, [selection]);
   const state = run?.state || run?.status || '';
   const active = run ? state === 'pending' || state === 'running' : busy;
-  const dormant = !active && (!run || newInputFor === runId);
+  const dormant = !active && (!run || !runId || newInputFor === runId);
   const events = reconcileTerminalEvents(history ?? run?.terminal?.events ?? []);
   useEffect(() => {
     if (following && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

@@ -22,29 +22,29 @@ async function render(activeDriver: MainDriverSource | null = null) {
       <HarnessChatPanel
         activeDriver={activeDriver === 'native_cli' ? null : activeDriver}
         chat={<div data-testid="main-chat">Main Chat</div>}
-        terminal={<div data-testid="main-cli-instance">Main CLI</div>}
+        terminal={<div data-testid="agent-builder-instance">Agent Builder</div>}
       />,
     );
   });
   return container;
 }
 
-describe('Main Chat and CLI work surface', () => {
-  it('starts split with a useful CLI strip and keeps the CLI mounted', async () => {
+describe('Main Chat and Agent Builder work surface', () => {
+  it('starts split with a useful Agent Builder strip and keeps it mounted', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    const handle = host.querySelector('[data-testid="main-chat-cli-divider"]') as HTMLButtonElement;
+    const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     expect(handle.getAttribute('aria-expanded')).toBe('false');
-    const region = host.querySelector('[data-testid="main-cli-region"]') as HTMLDivElement;
+    const region = host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement;
     expect(region.style.height).toBe('240px');
     expect(region.getAttribute('aria-hidden')).toBe('false');
-    expect(host.querySelector('[data-testid="main-cli-instance"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 
-  it('toggles full CLI and restores the split without remounting the CLI', async () => {
+  it('expands Agent Builder and restores the split without remounting it', async () => {
     const host = await render();
-    const handle = host.querySelector('[data-testid="main-chat-cli-divider"]') as HTMLButtonElement;
-    const terminal = host.querySelector('[data-testid="main-cli-instance"]');
+    const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
+    const terminal = host.querySelector('[data-testid="agent-builder-instance"]');
     await act(async () => {
       handle.click();
     });
@@ -57,7 +57,7 @@ describe('Main Chat and CLI work surface', () => {
     });
     expect(handle.getAttribute('aria-expanded')).toBe('false');
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="main-cli-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
   });
 
   it('can be pulled from collapsed through peek to fully expanded and back', async () => {
@@ -67,20 +67,20 @@ describe('Main Chat and CLI work surface', () => {
       x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
       width: 800, height: 600, toJSON: () => ({}),
     });
-    const handle = host.querySelector('[data-testid="main-chat-cli-divider"]') as HTMLButtonElement;
-    const terminal = host.querySelector('[data-testid="main-cli-instance"]');
+    const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
+    const terminal = host.querySelector('[data-testid="agent-builder-instance"]');
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 590 }));
       window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 0 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
-    expect(panel.getAttribute('data-main-driver')).toBe('native_cli');
+    expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
     expect(panel.getAttribute('data-terminal-mode')).toBe('expanded');
-    expect((host.querySelector('[data-testid="main-cli-region"]') as HTMLDivElement).style.height)
+    expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
       .toBe('auto');
     expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
-    expect(host.querySelector('[data-testid="main-cli-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 0 }));
@@ -90,18 +90,18 @@ describe('Main Chat and CLI work surface', () => {
     expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
     expect(panel.getAttribute('data-terminal-mode')).toBe('split');
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
-    expect((host.querySelector('[data-testid="main-cli-region"]') as HTMLDivElement).style.height)
+    expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
       .toBe('160px');
-    expect(host.querySelector('[data-testid="main-cli-instance"]')).toBe(terminal);
+    expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
   });
 
-  it('forces full CLI for an external driver and shows only truthful provenance', async () => {
+  it('keeps Main visible for an external driver and shows truthful provenance', async () => {
     const host = await render('external_plugin');
-    expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="main-work-surface"]')?.getAttribute('data-main-driver'))
       .toBe('external_plugin');
     expect(host.querySelector('[data-testid="main-driver-indicator"]')?.textContent)
       .toBe('External Chat driving Main');
-    expect(host.querySelector('[data-testid="main-cli-instance"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 });

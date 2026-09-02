@@ -659,6 +659,52 @@ def test_card_invocation_injects_caller_identity_and_main_uses_the_external_cli_
     assert calls == []
 
 
+def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+
+    observed = []
+
+    async def update(args, **authority):
+        observed.append((dict(args), dict(authority)))
+        return {"ok": True, "cardId": args["cardId"]}
+
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "conversationId": "conversation-1",
+        "parentRunId": "builder-run-1",
+        "mainCardId": "card-agent-builder",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "principalKind": "card-runtime",
+        "grantedTools": ["card.update_configuration"],
+        "effectTargetCardId": "card-trading",
+        "effectTargetCardRevisionId": "trading-revision-one",
+        "effectTargetDeckRevision": "deck-revision-one",
+    })
+    monkeypatch.setattr(control_plane, "card_update_configuration", update)
+
+    result = asyncio.run(mcp_host._dispatch_tool(
+        "card.update_configuration",
+        {"cardId": "card-trading", "updates": {"prompt": "New prompt"}},
+    ))
+
+    assert json.loads(result[0].text)["ok"] is True
+    assert observed == [({
+        "cardId": "card-trading",
+        "updates": {"prompt": "New prompt"},
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+    }, {
+        "caller_card_id": "card-agent-builder",
+        "target_card_id": "card-trading",
+        "target_card_revision_id": "trading-revision-one",
+        "target_deck_revision": "deck-revision-one",
+    })]
+
+
 def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):
     import asyncio
     import mcp_host

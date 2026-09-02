@@ -185,7 +185,8 @@ _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
-     "nativeChildId", "nativeRunId"}
+     "nativeChildId", "nativeRunId", "effectTargetCardId",
+     "effectTargetCardRevisionId", "effectTargetDeckRevision"}
 )
 
 
@@ -766,6 +767,13 @@ def _request_execution_context() -> dict[str, Any] | None:
         "callerRuntimeMode": str(context.get("runtimeMode") or ""),
         "principalKind": "card-runtime",
         "nativeChildId": str(context.get("nativeChildId") or ""),
+        "effectTargetCardId": str(context.get("effectTargetCardId") or ""),
+        "effectTargetCardRevisionId": str(
+            context.get("effectTargetCardRevisionId") or ""
+        ),
+        "effectTargetDeckRevision": str(
+            context.get("effectTargetDeckRevision") or ""
+        ),
         "grantedTools": sorted({str(item).strip() for item in grants if str(item).strip()}),
     }
 
@@ -3563,6 +3571,9 @@ _SERVER_OWNED_ARGUMENTS = {
     "_callerRuntimeMode",
     "_sourceCardId",
     "_sourceRunId",
+    "_effectTargetCardId",
+    "_effectTargetCardRevisionId",
+    "_effectTargetDeckRevision",
 }
 
 
@@ -3674,7 +3685,11 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "runtime", "model", "subagentModel", "team", "tools", "nativeTools",
         "skills", "toolsets", "mcpConnectionIds", "position", "templateId",
     },
-    "card.update_configuration": {"projectId", "deckId", "cardId", "updates"},
+    "card.update_configuration": {
+        "projectId", "deckId", "cardId", "updates",
+        "_effectTargetCardId", "_effectTargetCardRevisionId",
+        "_effectTargetDeckRevision",
+    },
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "card.run_assistant_agent": {
         "action",
@@ -3868,6 +3883,16 @@ async def _dispatch_tool(
                 if context.get("principalKind") != "system-root":
                     args["originatingAgentId"] = str(context["mainCardId"])
                     args["originatingRunId"] = str(context["parentRunId"])
+            if name == "card.update_configuration":
+                args["_effectTargetCardId"] = str(
+                    context.get("effectTargetCardId") or ""
+                )
+                args["_effectTargetCardRevisionId"] = str(
+                    context.get("effectTargetCardRevisionId") or ""
+                )
+                args["_effectTargetDeckRevision"] = str(
+                    context.get("effectTargetDeckRevision") or ""
+                )
             from app.python_models.tool_registry import required_tool_caller_runtime
 
             if required_tool_caller_runtime(name) is not None:
@@ -4027,7 +4052,15 @@ async def _dispatch_tool(
         try:
             result = await (
                 control_plane.card_update_configuration(
-                    args, caller_card_id=caller_card_id
+                    args,
+                    caller_card_id=caller_card_id,
+                    target_card_id=str(args.pop("_effectTargetCardId", "") or ""),
+                    target_card_revision_id=str(
+                        args.pop("_effectTargetCardRevisionId", "") or ""
+                    ),
+                    target_deck_revision=str(
+                        args.pop("_effectTargetDeckRevision", "") or ""
+                    ),
                 )
                 if name == "card.update_configuration"
                 else getattr(control_plane, handler_name)(args)

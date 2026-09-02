@@ -33,24 +33,19 @@ export function cleanOptionalText(value: unknown): string | null {
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-terra';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
 // Seed default only for the dedicated Agent Builder Card. These tools mutate
 // saved Card configuration/topology and therefore do not belong to Local Coder.
 export const AGENT_BUILDER_CONTROLLER_TOOLS = [
-  'card.create',
+  'canvas.inspect',
   'card.update_configuration',
-  'canvas.upsert_wire',
 ] as const;
-// Agent Builder needs only the structural source-understanding recipe. It may
-// find similar symbols, trace relevant relationships, and then read the exact
-// returned implementation. Projection diagnostics and diff maintenance remain
-// Local Coder concerns.
-export const AGENT_BUILDER_CODEBASE_MEMORY_TOOLS = [
-  'cbm.search_graph',
-  'cbm.trace_path',
-  'cbm.get_code_snippet',
-] as const;
+// CodeGraph joins Agent Builder only after the selected buildable-agent
+// workspace has its own exact CBM project. The first saved-Card composition
+// loop deliberately presents only canvas inspection plus one bounded update.
+export const AGENT_BUILDER_CODEBASE_MEMORY_TOOLS = [] as const;
 // Shared non-administrative CodeGraph corridor for repository-owning Cards.
 // Indexing, trace ingestion, ADR mutation, and project deletion stay outside
 // ordinary Card grants.

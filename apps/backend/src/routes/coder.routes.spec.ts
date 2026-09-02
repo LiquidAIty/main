@@ -283,6 +283,7 @@ const orchestratorMocks = vi.hoisted(() => {
       const mainChat = endpoint === '/domain/main/runs/begin';
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const graphAgent = cardId === 'card_hermes_steward';
+      const agentBuilder = cardId === 'card_agent_builder';
       const legacyKanban = cardId === 'card_legacy_kanban';
       const graphConfigured = graphAgent || legacyKanban;
       const coderCard = cardId === 'card_local_coder';
@@ -298,7 +299,8 @@ const orchestratorMocks = vi.hoisted(() => {
            state: 'running',
            runtimeKind: 'hermes',
            runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
-           runtimeProfile: mainChat ? 'default' : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
+           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'liquidaity-agent-builder'
+             : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
            startedAt: new Date().toISOString(),
         });
       }
@@ -349,7 +351,20 @@ const orchestratorMocks = vi.hoisted(() => {
             toolsets: coderCard ? ['file', 'terminal'] : [],
             mcpConnectionIds: [],
           },
-          dynamicContext: { task: String(mainChat ? body.message || '' : body.assignment || '') },
+          dynamicContext: {
+            task: String(mainChat ? body.message || '' : body.assignment || ''),
+            selectedCardTarget: body.buildTargetCardId ? {
+              cardId: body.buildTargetCardId,
+              cardRevisionId: `revision:${body.buildTargetCardId}`,
+              deckRevision: 'deck-revision-one',
+              title: 'Trading Journal',
+              templateId: 'template_trading_workbench',
+              role: 'Research-only journal',
+              prompt: 'Old prompt',
+              runtime: { kind: 'autogen', mode: 'assistant' },
+              runtimeOptions: { tools: [] },
+            } : null,
+          },
         },
         inputSummary: { idfBytes: 400 },
         inputFile: {
@@ -365,6 +380,17 @@ const orchestratorMocks = vi.hoisted(() => {
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
               : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             task: String(mainChat ? body.message || '' : body.assignment || ''),
+            buildTarget: body.buildTargetCardId ? {
+              cardId: body.buildTargetCardId,
+              cardRevisionId: `revision:${body.buildTargetCardId}`,
+              deckRevision: 'deck-revision-one',
+              title: 'Trading Journal',
+              templateId: 'template_trading_workbench',
+              role: 'Research-only journal',
+              prompt: 'Old prompt',
+              runtime: { kind: 'autogen', mode: 'assistant' },
+              runtimeOptions: { tools: [] },
+            } : null,
             message: [
               graphConfigured
                 ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
@@ -381,13 +407,15 @@ const orchestratorMocks = vi.hoisted(() => {
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
-                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate', profile: 'liquidaity-hermes-steward' },
+                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
+                    profile: agentBuilder ? 'liquidaity-agent-builder' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
             },
             runtimeOptions: {},
-            enabledTools: graphConfigured ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
+            enabledTools: agentBuilder ? ['card.update_configuration']
+              : graphConfigured ? ['graphiti.search_nodes'] : coderCard ? ['cbm.search_graph'] : [],
             toolDefinitions: [], nativeTools: graphConfigured ? ['memory'] : coderCard ? ['terminal'] : [],
             skills: graphConfigured ? ['documentation'] : coderCard ? ['repository-coder'] : [],
             toolsets: coderCard ? ['file', 'terminal'] : [], mcpConnectionIds: [],
@@ -1121,6 +1149,47 @@ describe('coder routes', () => {
         runId: 'corr-main-1',
         state: 'completed',
         finalResult: 'Real assistant reply.',
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('binds an Agent Builder Run to one selected Card snapshot', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_agent_builder',
+          buildTargetCardId: 'card_trading_workbench',
+          correlationId: 'corr-builder-1',
+          conversationId: 'main',
+          input: 'Write a research-only prompt and grant web_search.',
+          action: 'execute',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+        ([endpoint]) => endpoint === '/domain/runs/begin',
+      );
+      expect(JSON.parse(String(beginCall?.[1]?.body || '{}'))).toMatchObject({
+        cardId: 'card_agent_builder',
+        buildTargetCardId: 'card_trading_workbench',
+      });
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+        cardId: 'card_agent_builder',
+        buildTarget: {
+          cardId: 'card_trading_workbench',
+          cardRevisionId: 'revision:card_trading_workbench',
+          deckRevision: 'deck-revision-one',
+        },
       });
     } finally {
       await closeServer(server);

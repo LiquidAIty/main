@@ -128,6 +128,36 @@ describe('Hermes child execution attribution', () => {
     })).toThrow('hermes_execution_context_principal_mismatch');
   });
 
+  it('retains one exact Agent Builder effect target through native children', async () => {
+    const builder = registerHermesRootExecutionContext({
+      sessionId: 'builder-session',
+      runId: 'builder-run',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'builder-conversation',
+      cardId: 'card_agent_builder',
+      runtimeMode: 'delegate',
+      grantedTools: ['card.update_configuration'],
+      effectTarget: {
+        cardId: 'card_trading_workbench',
+        cardRevisionId: 'trading-revision-one',
+        deckRevision: 'deck-revision-one',
+      },
+    });
+    const child = await createHermesChildExecutionContext({
+      sessionId: 'builder-session',
+      parentExecutionContextId: builder.contextId,
+      nativeChildId: 'builder-helper',
+      request: vi.fn(persistRequestedRun),
+    });
+
+    expect(child).toMatchObject({
+      effectTargetCardId: 'card_trading_workbench',
+      effectTargetCardRevisionId: 'trading-revision-one',
+      effectTargetDeckRevision: 'deck-revision-one',
+    });
+  });
+
   it('keeps an ephemeral child on the originating saved Card with a distinct Run', async () => {
     const parent = root();
     const child = await createHermesChildExecutionContext({

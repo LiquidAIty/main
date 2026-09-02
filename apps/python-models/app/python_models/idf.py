@@ -106,12 +106,30 @@ class SelectedToolsAndGrants(BaseModel):
         return value
 
 
+class SelectedCardTarget(BaseModel):
+    """One exact saved Card selected for an Agent Builder invocation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cardId: str
+    cardRevisionId: str
+    deckRevision: str
+    title: str
+    templateId: str
+    role: str = ""
+    prompt: str = ""
+    outputContract: Any = None
+    runtime: dict[str, Any]
+    runtimeOptions: dict[str, Any] = Field(default_factory=dict)
+
+
 class DynamicContext(BaseModel):
-    """The final, transient mission and images for this invocation."""
+    """The final transient mission, selected Card target, and images."""
 
     model_config = ConfigDict(extra="forbid")
 
     task: str
+    selectedCardTarget: SelectedCardTarget | None = None
     images: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -164,6 +182,15 @@ def _input_estimates(idf: Idf) -> dict[str, Any]:
             idf.stableSavedCardContext.instructions
         ),
         "taskTokens": _token_estimate(idf.dynamicContext.task),
+        "selectedCardTargetTokens": _token_estimate(
+            json.dumps(
+                idf.dynamicContext.selectedCardTarget.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if idf.dynamicContext.selectedCardTarget is not None
+            else ""
+        ),
         "outputContractTokens": _token_estimate(
             idf.stableSavedCardContext.outputRequirements
         ),
@@ -401,6 +428,7 @@ def materialize_idf(
     )
     dynamic_context = DynamicContext(
         task=str(variable.get("task") or ""),
+        selectedCardTarget=variable.get("selectedCardTarget"),
         images=list(variable.get("images") or []),
     )
     idf = Idf(
@@ -507,8 +535,20 @@ def load_idf(
 def model_task(idf: Idf) -> str:
     """Return the exact graph-first user/task text represented by the IDF."""
 
+    selected_target = idf.dynamicContext.selectedCardTarget
+    selected_target_text = (
+        "Selected Agent Builder target (authoritative saved Card snapshot for this Run):\n"
+        + json.dumps(
+            selected_target.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if selected_target is not None
+        else ""
+    )
     return "\n\n".join(value for value in (
         idf.actualGraphData.modelText.strip(),
+        selected_target_text,
         (
             f"Saved Card output requirements:\n"
             f"{idf.stableSavedCardContext.outputRequirements.strip()}"
@@ -552,6 +592,11 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "toolsets": list(grants.toolsets),
         "mcpConnectionIds": list(grants.mcpConnectionIds),
         "nativeReferences": list(idf.actualGraphData.selectedNativeReferences),
+        "buildTarget": (
+            idf.dynamicContext.selectedCardTarget.model_dump(mode="json")
+            if idf.dynamicContext.selectedCardTarget is not None
+            else None
+        ),
         "images": list(idf.dynamicContext.images),
         "estimates": _input_estimates(idf),
     }

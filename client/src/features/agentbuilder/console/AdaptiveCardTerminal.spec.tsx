@@ -94,6 +94,14 @@ describe('ordinary saved Card adaptive terminal', () => {
     expect(screen.queryByTestId('terminal-active-agents')).toBeNull();
   });
 
+  it('keeps a staged mission editable when no canonical Run exists yet', () => {
+    render(<AdaptiveCardTerminal {...props} run={{
+      status: 'ready', state: 'ready', output: '', error: null, cardId: 'c', runId: null,
+    }} />);
+    expect(screen.getByLabelText('Dynamic context / input')).toBeTruthy();
+    expect(screen.queryByTestId('adaptive-card-terminal')).toBeNull();
+  });
+
   it('shows starting without inventing authorization or model activity', () => {
     render(<AdaptiveCardTerminal {...props} busy run={null} />);
     expect(screen.getByTestId('adaptive-card-terminal').getAttribute('data-state')).toBe('starting');

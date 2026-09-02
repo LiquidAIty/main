@@ -696,6 +696,27 @@ function resolveHermesTurnArgs(
         && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(target.profile)
       ))
     : [];
+  const rawBuildTarget = input?.buildTarget;
+  const buildTarget = rawBuildTarget && typeof rawBuildTarget === 'object'
+    && !Array.isArray(rawBuildTarget)
+    && String(rawBuildTarget.cardId || '').trim()
+    && String(rawBuildTarget.cardRevisionId || '').trim()
+    && String(rawBuildTarget.deckRevision || '').trim()
+    ? {
+        cardId: String(rawBuildTarget.cardId),
+        cardRevisionId: String(rawBuildTarget.cardRevisionId),
+        deckRevision: String(rawBuildTarget.deckRevision),
+        title: String(rawBuildTarget.title || rawBuildTarget.cardId),
+        templateId: String(rawBuildTarget.templateId || ''),
+        role: String(rawBuildTarget.role || ''),
+        prompt: String(rawBuildTarget.prompt || ''),
+        outputContract: rawBuildTarget.outputContract,
+        runtime: rawBuildTarget.runtime && typeof rawBuildTarget.runtime === 'object'
+          ? rawBuildTarget.runtime : {},
+        runtimeOptions: rawBuildTarget.runtimeOptions && typeof rawBuildTarget.runtimeOptions === 'object'
+          ? rawBuildTarget.runtimeOptions : {},
+      }
+    : undefined;
   const script = scriptPresentation?.mode === 'script'
     && scriptState?.nativeSupport?.active === true
     && typeof scriptState?.source === 'string'
@@ -748,6 +769,7 @@ function resolveHermesTurnArgs(
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     ...(script ? { script } : {}),
     ...(profileTargets.length ? { profileTargets } : {}),
+    ...(buildTarget ? { buildTarget } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -1147,6 +1169,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     conversationId,
     dataAnchors: Array.isArray(body.dataAnchors) ? body.dataAnchors : [],
     images: Array.isArray(body.images) ? body.images : [],
+    buildTargetCardId: String(body.buildTargetCardId || '').trim() || undefined,
   };
 
   try {

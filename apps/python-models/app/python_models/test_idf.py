@@ -18,7 +18,7 @@ from app.python_models.idf import (
 )
 
 
-def _idf(*, graph_context: str = "", secret: bool = False):
+def _idf(*, graph_context: str = "", secret: bool = False, selected_target: bool = False):
     reference = {
         "authority": "CodeGraph",
         "nativeId": "project.module.materialize_idf",
@@ -67,6 +67,18 @@ def _idf(*, graph_context: str = "", secret: bool = False):
         },
         variable={
             "task": "Inspect the exact bounded slice.",
+            "selectedCardTarget": ({
+                "cardId": "trading-card",
+                "cardRevisionId": "trading-revision-one",
+                "deckRevision": "deck-revision-one",
+                "title": "Trading Journal",
+                "templateId": "template_trading_workbench",
+                "role": "Research-only trading journal",
+                "prompt": "Summarize research with citations.",
+                "outputContract": {"type": "object"},
+                "runtime": {"kind": "autogen", "mode": "assistant"},
+                "runtimeOptions": {"tools": ["web_search"]},
+            } if selected_target else None),
             "images": [],
         },
         capabilities={
@@ -129,6 +141,20 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     summary = idf_public(materialized)["inputSummary"]
     assert summary["idfBytes"] == len(materialized.idf_bytes)
     assert summary["estimatedGraphContextTokens"] > 0
+
+
+def test_selected_card_target_is_retained_and_projected_before_the_mission() -> None:
+    materialized = _idf(selected_target=True)
+    target = materialized.idf.dynamicContext.selectedCardTarget
+    assert target is not None
+    assert target.cardId == "trading-card"
+    assert target.cardRevisionId == "trading-revision-one"
+    message = model_task(materialized.idf)
+    assert message.index("Selected Agent Builder target") < message.index(
+        "Inspect the exact bounded slice."
+    )
+    projection = runtime_projection(materialized)
+    assert projection["buildTarget"]["deckRevision"] == "deck-revision-one"
 
 
 def test_each_run_writes_one_file_and_reloads_exact_bytes(
