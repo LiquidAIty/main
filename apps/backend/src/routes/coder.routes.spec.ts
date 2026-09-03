@@ -616,7 +616,10 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 
 vi.mock('node-pty', () => ({ spawn: ptyMocks.spawn }));
 
-vi.mock('../services/autogen/pythonRailsClient', () => orchestratorMocks);
+vi.mock('../services/autogen/pythonRailsClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../services/autogen/pythonRailsClient')>(),
+  ...orchestratorMocks,
+}));
 
 vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
@@ -1907,6 +1910,12 @@ describe('coder routes', () => {
   it('sends the exact Python-retained root inputs to native Mag One', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
+    orchestratorMocks.dispatchConfiguredRuntime.mockResolvedValueOnce({
+      ok: true, runId: 'corr-mag-1', finalResponseText: 'Native Mag One response.',
+      stopReason: 'Native completion',
+      runtimeEvidence: { stage: 'completed', usage: { inputTokens: 11, outputTokens: 7 } },
+      resultArtifact: { artifact_id: 'native-result-one' },
+    });
     const nativeRuntimeRequest = {
       session: {
         sessionId: 'deck_builder:card_magentic:corr-mag-1',
@@ -1958,8 +1967,43 @@ describe('coder routes', () => {
         result: {
           runtimeOwner: 'mag_one',
           output: 'Native Mag One response.',
+          stopReason: 'Native completion',
+          runtimeEvidence: { stage: 'completed' },
+          resultArtifact: { artifact_id: 'native-result-one' },
         },
       });
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/runs/finish', expect.objectContaining({ body: expect.stringContaining('"providerInputTokens":11') }),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('persists native Mag One safe failure stage without claiming completion', async () => {
+    const { ConfiguredRuntimeFailure } = await import('../services/autogen/pythonRailsClient');
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async () => ({
+      runId: 'failed-native-root', runtimeOwner: 'mag_one',
+      nativeRuntimeRequest: { session: { runId: 'failed-native-root' } },
+    }));
+    orchestratorMocks.dispatchConfiguredRuntime.mockRejectedValueOnce(new ConfiguredRuntimeFailure({
+      ok: false, runId: 'failed-native-root', error: 'magentic_run_failed',
+      runtimeEvidence: { stage: 'native_stream', failure: { failure_code: 'codex_app_server_turn_failed' } },
+    }));
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+          correlationId: 'failed-native-root', input: 'Bounded test mission', action: 'execute' }),
+      });
+      expect(response.status).toBe(502);
+      const finish = orchestratorMocks.requestPythonRailsJson.mock.calls
+        .filter(([path]) => path === '/domain/runs/finish')
+        .map(([, init]) => JSON.parse(String(init?.body)))
+        .find((body) => body.runId === 'failed-native-root');
+      expect(finish).toMatchObject({ state: 'failed', nativePhase: 'native_stream',
+        errorCode: 'codex_app_server_turn_failed', errorSummary: 'magentic_run_failed' });
     } finally {
       await closeServer(server);
     }

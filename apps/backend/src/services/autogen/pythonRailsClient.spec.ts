@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   describeConnectedAgents,
+  ConfiguredRuntimeFailure,
   dispatchConfiguredRuntime,
   fetchThinkGraphNeighborhood,
 } from './pythonRailsClient';
@@ -136,6 +137,8 @@ describe('pythonRailsClient', () => {
           ok: false,
           error: 'tool_selection_invalid: unknown_tool',
           finalResponseText: '',
+          runtimeEvidence: { stage: 'worker_failed', workers: [{ cardId: 'worker', childRunId: 'child' }] },
+          resultArtifact: { artifact_id: 'native-result-artifact' },
         }),
     });
     vi.stubGlobal('fetch', fetchMock as any);
@@ -154,7 +157,14 @@ describe('pythonRailsClient', () => {
         },
         inputFile: testInputFile(),
       }),
-    ).rejects.toThrow('tool_selection_invalid: unknown_tool');
+    ).rejects.toMatchObject({
+      message: 'tool_selection_invalid: unknown_tool',
+      result: {
+        runtimeEvidence: { stage: 'worker_failed', workers: [{ cardId: 'worker', childRunId: 'child' }] },
+        resultArtifact: { artifact_id: 'native-result-artifact' },
+      },
+    });
+    expect(new ConfiguredRuntimeFailure({ ok: false, runId: 'r', error: 'safe-code' }).message).toBe('safe-code');
   });
 
   it('returns the required unavailable code when Python rails cannot be reached', async () => {

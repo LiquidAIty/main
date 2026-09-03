@@ -108,6 +108,7 @@ class McpSavedCardAgent(BaseChatAgent):
         self._card_id = card_id
         self._outer_run_id = outer_run_id
         self._invocation = 0
+        self.observations: list[dict[str, str]] = []
 
     @property
     def produced_message_types(self) -> tuple[type[BaseChatMessage], ...]:
@@ -173,8 +174,15 @@ class McpSavedCardAgent(BaseChatAgent):
             )
         )
         cancellation_token.link_future(call)
-        response = await call
+        observation = {"cardId": self._card_id, "state": "running"}
+        self.observations.append(observation)
+        try:
+            response = await call
+        except BaseException as error:
+            observation.update(state="failed", exceptionClass=type(error).__name__)
+            raise
         if not isinstance(response, dict):
+            observation["state"] = "failed"
             raise RuntimeError(
                 f"saved_card_mcp_run_failed: cardId={self._card_id} "
                 "status=invalid_response"
@@ -183,13 +191,17 @@ class McpSavedCardAgent(BaseChatAgent):
         status = _as_text(result.get("status")) if isinstance(result, dict) else ""
         output = _as_text(result.get("output")) if isinstance(result, dict) else ""
         child_run_id = _as_text(result.get("correlationId")) if isinstance(result, dict) else ""
+        if child_run_id:
+            observation["childRunId"] = child_run_id
         if not response.get("ok") or status != "completed" or not output or not child_run_id:
+            observation["state"] = "failed"
             # Backend/native error text is intentionally not copied into the
             # Mag One transcript. It may contain provider or process detail.
             raise RuntimeError(
                 f"saved_card_mcp_run_failed: cardId={self._card_id} "
                 f"status={status or 'unknown'}"
             )
+        observation["state"] = "completed"
         return Response(
             chat_message=TextMessage(
                 source=self.name,
@@ -215,7 +227,7 @@ def _build_participants(
         card_id = _as_text(getattr(participant, "cardId", ""))
         title = _as_text(getattr(participant, "title", "")) or card_id
         name = _safe_agent_name(title or f"Agent {i + 1}", i, used_names)
-        description = f"{participant.runtime.kind}/{participant.runtime.mode}"
+        description = participant.description or title
         if not outer_run_id:
             raise RuntimeError("magentic_outer_run_id_required")
         participants.append(
@@ -393,8 +405,11 @@ def _read_max_turns(context: RuntimeRequest) -> int | None:
 
 def _magentic_completion_status(
     final_response_text: str,
+    stop_reason: str | None = None,
 ) -> tuple[bool, str | None]:
-    """Derive completion from the native result text without another authority."""
+    """Respect the pinned runtime's explicit exhaustion outcome; never parse prose."""
+    if stop_reason == "Max rounds reached.":
+        return False, "magentic_turn_budget_exhausted"
     if not _as_text(final_response_text):
         return False, "no_model_output"
     return True, None
@@ -412,6 +427,8 @@ async def run_native_magentic_mission(
 
     client = None
     participant_clients: list[Any] = []
+    participants: list[BaseChatAgent] = []
+    evidence: dict[str, Any] = {"stage": "model_client", "participants": [], "selections": []}
     try:
         runtime_options = context.idf.stableSavedCardContext.runtimeOptions
         provider = context.idf.stableSavedCardContext.provider
@@ -426,6 +443,7 @@ async def run_native_magentic_mission(
             ),
             runtime_mode="magentic_one",
         )
+        evidence["stage"] = "participant_materialization"
         participants = _build_participants(
             context,
             outer_run_id=run_id,
@@ -433,10 +451,17 @@ async def run_native_magentic_mission(
         team_options: dict[str, Any] = {
             "participants": participants,
             "model_client": client,
+            "emit_team_events": True,
         }
         max_turns = _read_max_turns(context)
         if max_turns is not None:
             team_options["max_turns"] = max_turns
+        evidence["participants"] = [
+            {"cardId": configured.cardId, "name": agent.name, "description": agent.description}
+            for configured, agent in zip(context.participants, participants, strict=True)
+        ]
+        evidence["maxTurns"] = max_turns
+        evidence["stage"] = "team_construction"
         team = MagenticOneGroupChat(**team_options)
 
         autogen_messages: list[dict[str, str]] = []
@@ -444,7 +469,10 @@ async def run_native_magentic_mission(
         stop_reason: str | None = None
         final_response_text = ""
 
+        evidence["stage"] = "native_stream"
         async for emitted in team.run_stream(task=task):
+            if emitted.__class__.__name__ == "SelectSpeakerEvent":
+                evidence["selections"].append(list(emitted.content))
             if hasattr(emitted, "messages") and isinstance(
                 getattr(emitted, "messages", None), list
             ):
@@ -485,8 +513,14 @@ async def run_native_magentic_mission(
             },
         )
 
-        ok, completion_error = _magentic_completion_status(final_response_text)
-        return OrchestratorRunResponse(
+        ok, completion_error = _magentic_completion_status(final_response_text, stop_reason)
+        evidence["stage"] = (
+            "completed" if ok else
+            "exhausted" if completion_error == "magentic_turn_budget_exhausted" else
+            "result_missing"
+        )
+        evidence["stopReason"] = stop_reason
+        result = OrchestratorRunResponse(
             ok=ok,
             session=context.session,
             runId=run_id,
@@ -495,6 +529,7 @@ async def run_native_magentic_mission(
             autogenMessages=autogen_messages,
             autogenEvents=autogen_events,
             error=completion_error,
+            runtimeEvidence=evidence,
         )
     except Exception as error:
         # Keep provider/process detail out of the public response while leaving
@@ -507,18 +542,30 @@ async def run_native_magentic_mission(
         }
         if isinstance(error, CodexAppServerError):
             diagnostic["failure_code"] = str(error)
+        evidence["failure"] = diagnostic
         print(
             "[magentic] run_stream failed:",
             diagnostic,
         )
-        return OrchestratorRunResponse(
+        result = OrchestratorRunResponse(
             ok=False,
             session=context.session,
             runId=run_id,
             finalResponseText="",
             error="magentic_run_failed",
+            runtimeEvidence=evidence,
         )
     finally:
+        evidence["workers"] = [
+            observation for participant in participants
+            for observation in getattr(participant, "observations", [])
+        ]
+        if any(worker["state"] == "failed" for worker in evidence["workers"]):
+            evidence["stage"] = "worker_failed"
+        usage = getattr(client, "total_usage", None)
+        if callable(usage):
+            totals = usage()
+            evidence["usage"] = {"inputTokens": totals.prompt_tokens, "outputTokens": totals.completion_tokens}
         for owned_client in [*participant_clients, client]:
             if owned_client is None:
                 continue
@@ -528,3 +575,5 @@ async def run_native_magentic_mission(
                     await close()
                 except Exception:
                     pass
+    result.runtimeEvidence = evidence
+    return result

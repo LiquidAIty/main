@@ -39,6 +39,7 @@ import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantS
 import {
   describeConnectedAgents,
   dispatchConfiguredRuntime,
+  ConfiguredRuntimeFailure,
   requestPythonRailsJson,
 } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
@@ -1252,6 +1253,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
+    let nativeRuntimeResult: Awaited<ReturnType<typeof dispatchConfiguredRuntime>> | null = null;
     try {
       if (prepared.runtimeOwner === 'hermes') {
         hermesHandle = await startPreparedHermesTransport({
@@ -1280,8 +1282,11 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         totalCostUsd = response.usage.totalCostUsd;
       } else if (prepared.nativeRuntimeRequest) {
         const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
+        nativeRuntimeResult = response;
         if (!response.ok) throw new Error(response.error || 'configured_runtime_failed');
         output = String(response.finalResponseText || '');
+        providerInputTokens = response.runtimeEvidence?.usage?.inputTokens ?? null;
+        providerOutputTokens = response.runtimeEvidence?.usage?.outputTokens ?? null;
       } else {
         throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
       }
@@ -1293,6 +1298,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         providerOutputTokens,
         totalCostUsd,
         finalResult: output,
+        ...(nativeRuntimeResult ? { nativePhase: nativeRuntimeResult.runtimeEvidence?.stage } : {}),
         ...(prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script'
           ? {
               cardScriptExecution: {
@@ -1345,19 +1351,30 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           output,
           transport,
           nativeEvents,
+          ...(nativeRuntimeResult ? {
+            runtimeEvidence: nativeRuntimeResult.runtimeEvidence,
+            stopReason: nativeRuntimeResult.stopReason,
+            resultArtifact: nativeRuntimeResult.resultArtifact,
+          } : {}),
           receipt: finished.receipt || null,
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
+      const nativeFailure = error instanceof ConfiguredRuntimeFailure ? error.result : null;
       const cancelled = message === 'hermes_turn_cancelled';
       const scriptToolExecution = readCardScriptToolExecution(nativeEvents);
       const scriptConfigured = prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script';
       await finishRun(cancelled ? 'cancelled' : 'failed', {
         providerThreadRef: hermesHandle?.runtime?.sessionId || null,
-        nativePhase: cancelled ? 'cancelled' : 'failed',
-        errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
+        nativePhase: nativeFailure?.runtimeEvidence?.stage || (cancelled ? 'cancelled' : 'failed'),
+        errorCode: nativeFailure?.runtimeEvidence?.failure?.failure_code || (cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed'),
         errorSummary: message,
+        ...(nativeFailure ? {
+          finalResult: nativeFailure.finalResponseText || null,
+          providerInputTokens: nativeFailure.runtimeEvidence?.usage?.inputTokens ?? null,
+          providerOutputTokens: nativeFailure.runtimeEvidence?.usage?.outputTokens ?? null,
+        } : {}),
         ...(scriptConfigured
           ? {
               cardScriptExecution: {

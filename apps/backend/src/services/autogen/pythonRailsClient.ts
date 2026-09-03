@@ -37,7 +37,20 @@ export type ConfiguredRuntimeResponse = {
   autogenEvents?: NativeRuntimeMessage[];
   error?: string;
   stopReason?: string | null;
+  runtimeEvidence?: {
+    stage?: string;
+    usage?: { inputTokens: number; outputTokens: number };
+    failure?: { failure_code?: string; exception_class?: string };
+    [key: string]: unknown;
+  };
+  resultArtifact?: Record<string, unknown> | null;
 };
+
+export class ConfiguredRuntimeFailure extends Error {
+  constructor(public readonly result: ConfiguredRuntimeResponse) {
+    super(result.error || 'autogen_dispatch_failed');
+  }
+}
 
 function trimBaseUrl(value: string): string {
   return value.replace(/\/+$/, '');
@@ -84,10 +97,7 @@ export async function dispatchConfiguredRuntime(
           throw new Error('autogen_dispatch_invalid_response');
         }
         if ((data as any).ok === false) {
-          const message = String(
-            (data as any).error || 'autogen_dispatch_failed',
-          ).trim();
-          throw new Error(message || 'autogen_dispatch_failed');
+          throw new ConfiguredRuntimeFailure(data as ConfiguredRuntimeResponse);
         }
         const finalResponseText = String((data as any).finalResponseText || '').trim();
         if (!finalResponseText) {

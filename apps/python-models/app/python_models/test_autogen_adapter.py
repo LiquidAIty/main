@@ -190,7 +190,10 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
 
     context = _context()
     monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: Client())
-    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [object(), object()])
+    monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [
+        SimpleNamespace(name="Coder", description="Coder"),
+        SimpleNamespace(name="Trading", description="Trading"),
+    ])
     monkeypatch.setattr(mac, "MagenticOneGroupChat", Team)
     result = asyncio.run(mac.run_native_magentic_mission(context))
 
@@ -233,7 +236,8 @@ def test_native_mag_one_logs_only_stable_app_server_failure_code(monkeypatch, ca
     result = asyncio.run(mac.run_native_magentic_mission(context))
 
     assert result.error == "magentic_run_failed"
-    assert failure_code not in result.model_dump_json()
+    assert result.runtimeEvidence["failure"]["failure_code"] == failure_code
+    assert secret not in result.model_dump_json()
     captured = capsys.readouterr()
     assert "CodexAppServerError" in captured.out
     assert failure_code in captured.out

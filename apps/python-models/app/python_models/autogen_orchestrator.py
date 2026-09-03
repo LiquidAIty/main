@@ -70,4 +70,11 @@ async def dispatch_configured_runtime(context: RuntimeRequest) -> OrchestratorRu
 async def dispatch_stored_runtime(
     context: StoredRuntimeRequest,
 ) -> OrchestratorRunResponse:
-    return await dispatch_configured_runtime(load_stored_runtime_request(context))
+    loaded = load_stored_runtime_request(context)
+    result = await dispatch_configured_runtime(loaded)
+    if loaded.idf.stableSavedCardContext.runtime.get("mode") == "magentic_one":
+        import asyncio
+        from app.python_models.card_domain import record_native_run_result
+
+        result.resultArtifact = await asyncio.to_thread(record_native_run_result, loaded, result)
+    return result

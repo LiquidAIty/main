@@ -2916,12 +2916,13 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
 
 
 def _saved_card_participant(card: dict[str, Any]) -> dict[str, Any]:
-    """Project only saved worker identity; its Card materializes when invoked."""
+    """Project saved identity and capability description, never worker execution config."""
     if not _is_callable_magentic_worker_card(card):
         raise CardDomainError("magentic_worker_runtime_invalid")
     return {
         "cardId": card["id"],
         "title": card.get("title") or card["id"],
+        "description": str(card.get("subtitle") or card.get("title") or card["id"]),
         "runtime": _card_runtime(card),
     }
 
@@ -4262,6 +4263,49 @@ def _observe_run_finish(
         return True
     except Exception:
         return False
+
+
+def record_native_run_result(context: Any, result: Any) -> dict[str, Any]:
+    """Retain observable native result evidence in the existing Run artifact catalog.
+
+    No transcript, Task Ledger, Progress Ledger, or hidden reasoning is retained.
+    The already validated IDF location supplies this Run's workspace only.
+    """
+    run_id = _required_text(context.session.runId, "run_id")
+    descriptor = _input_file_descriptor_for_run(run_id)
+    if descriptor is None:
+        raise CardDomainError("run_input_files_missing")
+    from app.python_models.idf import invocation_workspace
+
+    workspace = invocation_workspace(context.session.projectId, context.session.deckId, run_id).resolve()
+    idf_path = Path(descriptor["idfPath"]).resolve(strict=True)
+    if idf_path.parent != workspace:
+        raise CardDomainError("native_result_workspace_mismatch")
+    path = workspace / "native-result.json"
+    encoded = (json.dumps({
+        "runId": run_id,
+        "cardId": context.session.cardId,
+        "ok": result.ok,
+        "error": result.error,
+        "stopReason": result.stopReason,
+        "finalResponseText": result.finalResponseText,
+        "runtimeEvidence": result.runtimeEvidence,
+    }, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if len(encoded) > 1_000_000:
+        raise CardDomainError("native_result_artifact_too_large")
+    with path.open("xb") as stream:
+        stream.write(encoded)
+    # Native result evidence is an output artifact, never another runtime input.
+    return record_explicit_artifact({
+        "artifactId": f"result:{_sha(run_id)[:24]}:native",
+        "runId": run_id,
+        "artifactKind": "native-runtime-result",
+        "locator": str(path.relative_to(_REPOSITORY_ROOT)) if path.is_relative_to(_REPOSITORY_ROOT) else str(path),
+        "mediaType": "application/json",
+        "contentSha256": sha256(encoded).hexdigest(),
+        "sizeBytes": len(encoded),
+        "provenanceRef": "native-magentic-one",
+    })["artifact"]
 
 
 def record_explicit_artifact(payload: dict[str, Any]) -> dict[str, Any]:

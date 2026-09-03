@@ -67,6 +67,7 @@ class HermesRuntime(BaseModel):
 class RuntimeParticipant(BaseModel):
     cardId: str
     title: str
+    description: str = ""
     runtime: HermesRuntime | AutoGenRuntime
 
 
@@ -185,3 +186,7 @@ class OrchestratorRunResponse(BaseModel):
     autogenMessages: list[AutoGenMessage] = Field(default_factory=list)
     autogenEvents: list[AutoGenMessage] = Field(default_factory=list)
     error: str | None = None
+    # Observable identities, selection events, usage and safe failure codes only.
+    # Never a copy of the native Task/Progress Ledger or model reasoning.
+    runtimeEvidence: dict[str, Any] = Field(default_factory=dict)
+    resultArtifact: dict[str, Any] | None = None

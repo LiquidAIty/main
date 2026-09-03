@@ -253,6 +253,19 @@ Saved Card configuration and graph edges define participants. LiquidAIty does no
 Task/Progress Ledgers or add a TypeScript participant classifier. Mag One receives approved transient
 Card input through the official MCP/Card boundary; it does not consume Main's internal subagents.
 
+Every callable saved `magentic_option` worker remains in the native participant set. Native
+Magentic-One selects speakers; there is no per-Run worker subset or Main-owned speaker order.
+The saved Card subtitle supplies its native capability description without copying its prompt,
+model, tools, memory, or execution configuration into a second agent. The worker still runs through
+its saved-Card MCP adapter. Native public selection events, child identities, usage, terminal reason,
+and secret-safe failures are output evidence, not a copied Task or Progress Ledger.
+
+The current source retains that evidence and the final result through the existing Run artifact
+catalog as `native-result.json`. Exhaustion (`Max rounds reached.` in pinned 0.7.5) is not successful
+task completion. The native defaults are 20 rounds and three stalls; a saved override remains saved
+Card authority. This source change is **not live-proven**: the September 3 full-team acceptance is
+still gated on native characterization tests, and the saved two-turn override has not been changed.
+
 The initial checked-in fork has no internal AutoGen divergence. Product authority and adaptation stay
 in `apps/python-models`; any later fork edit must be registered in
 `autogen-main/LIQUIDAITY_FORK.md` with tests and an update/removal strategy.

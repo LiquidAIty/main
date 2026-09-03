@@ -1036,6 +1036,61 @@ def test_mag_one_participant_validation_still_fails_before_run_creation(
         card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
 
 
+def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monkeypatch):
+    prepared = _prepared_grounded_runtime({"kind": "autogen", "mode": "magentic_one"})
+    workers = [_agent(f"worker-{i}", subtitle=f"Saved capability {i}",
+                      runtime={"kind": "hermes", "mode": "delegate", "profile": f"profile-{i}"})
+               for i in range(6)]
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {"deck": {
+        "nodes": workers,
+        "edges": [{"source": "card-one" if i % 2 else worker["id"],
+                   "target": worker["id"] if i % 2 else "card-one",
+                   "edgeType": "magentic_option"} for i, worker in enumerate(workers)],
+    }})
+    monkeypatch.setattr(card_domain, "_insert_run", lambda *a, **kw: ("run-one", "correlation-one", True))
+    monkeypatch.setattr(card_domain, "_retain_required_run_idf", _fake_retain_idf)
+    monkeypatch.setattr(card_domain, "_observe_run_start", lambda *a, **kw: True)
+    monkeypatch.setattr(card_domain, "observe_materialized_anchor_reads", lambda *a, **kw: True)
+    result = card_domain.begin_run({"runId": "run-one", "correlationId": "correlation-one"})
+    assert result["nativeRuntimeRequest"]["participants"] == [
+        {"cardId": worker["id"], "title": worker["title"],
+         "description": worker["subtitle"], "runtime": worker["runtime"]} for worker in workers
+    ]
+
+
+def test_native_result_artifact_uses_existing_catalog_without_ledger_or_transcript(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from hashlib import sha256
+    from app.python_models.idf import invocation_workspace
+
+    monkeypatch.setenv("LIQUIDAITY_RUN_INPUT_ROOT", str(tmp_path))
+    workspace = invocation_workspace("project", "deck", "run")
+    workspace.mkdir(parents=True)
+    idf = workspace / "in.idf"
+    idf.write_text("test canonical bytes", encoding="utf-8")
+    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda run_id: {"idfPath": str(idf)})
+    captured = []
+    def record(payload):
+        captured.append(payload)
+        return {"artifact": payload}
+    monkeypatch.setattr(card_domain, "record_explicit_artifact", record)
+    context = SimpleNamespace(session=SimpleNamespace(projectId="project", deckId="deck", runId="run", cardId="card"))
+    result = SimpleNamespace(ok=True, error=None, stopReason="done", finalResponseText="test final",
+                             runtimeEvidence={"selections": [["Worker"]]},
+                             autogenMessages=[{"content": "PRIVATE LEDGER DO NOT COPY"}])
+    artifact = card_domain.record_native_run_result(context, result)
+    data = (workspace / "native-result.json").read_bytes()
+    assert "PRIVATE LEDGER" not in data.decode()
+    assert json.loads(data)["finalResponseText"] == "test final"
+    assert artifact["contentSha256"] == sha256(data).hexdigest()
+    assert artifact["sizeBytes"] == len(data)
+    assert captured[0]["runId"] == "run"
+    with pytest.raises(FileExistsError):
+        card_domain.record_native_run_result(context, result)
+
+
 def test_retired_kanban_card_mode_cannot_create_a_new_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1714,10 +1769,12 @@ def test_saved_card_participant_projects_identity_and_runtime_only() -> None:
         runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
     )
     card["runtimeOptions"]["tools"] = ["card.create"]
+    card["subtitle"] = "Controlled repository code worker"
 
     assert card_domain._saved_card_participant(card) == {
         "cardId": "coder",
         "title": "Coder",
+        "description": "Controlled repository code worker",
         "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
     }
     with pytest.raises(card_domain.CardDomainError, match="magentic_worker_runtime_invalid"):
