@@ -138,6 +138,16 @@ describe('Hermes child execution attribution', () => {
       cardId: 'card_agent_builder',
       runtimeMode: 'delegate',
       grantedTools: ['card.update_configuration'],
+      builderOperation: {
+        mode: 'edit',
+        deckRevision: 'deck-revision-one',
+        workspaceRoot: 'C:/Projects/agents',
+        allowedFields: ['prompt', 'tools'],
+        targetCardId: 'card_selected_target',
+        targetCardRevisionId: 'selected-target-revision-one',
+        prompt: 'Updated prompt',
+        tools: [],
+      },
       effectTarget: {
         cardId: 'card_selected_target',
         cardRevisionId: 'selected-target-revision-one',
@@ -155,6 +165,11 @@ describe('Hermes child execution attribution', () => {
       effectTargetCardId: 'card_selected_target',
       effectTargetCardRevisionId: 'selected-target-revision-one',
       effectTargetDeckRevision: 'deck-revision-one',
+      builderOperation: {
+        mode: 'edit',
+        targetCardId: 'card_selected_target',
+        targetCardRevisionId: 'selected-target-revision-one',
+      },
     });
   });
 

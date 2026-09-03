@@ -92,7 +92,7 @@ PROTECTED_CARD_IDS = frozenset({
     "card_worldsignals_agent",
 })
 
-AGENT_BUILDER_PROFILE = "agent-builder"
+AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
 AGENT_BUILDER_SKILL_NAME = "agent-builder-inspection"
 GRAPH_AGENT_PROFILE = "liquidaity-hermes-steward"
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
@@ -108,9 +108,13 @@ _AGENT_BUILDER_OPERATION_FIELDS = frozenset({
     "mode", "expectedDeckRevision", "targetCardId", "targetCardRevisionId",
     "templateId", "title", "role", "prompt", "tools", "model", "cbmProject",
 })
-_AGENT_BUILDER_CREATE_MODEL_FIELDS = frozenset({
+_AGENT_BUILDER_CREATE_MODEL_FIELDS = (
     "provider", "modelKey", "providerModelId", "accessMode",
-})
+)
+_AGENT_BUILDER_CREATE_FIELDS = (
+    "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+)
+_AGENT_BUILDER_CREATE_RUNTIME = {"kind": "autogen", "mode": "assistant"}
 _AGENT_BUILDER_ACCESS_MODES = frozenset({
     "chatgpt-account", "openai-api", "openrouter-api",
 })
@@ -1932,7 +1936,7 @@ def _agent_builder_operation(
     raw_model = operation.get("model")
     if (
         not isinstance(raw_model, dict)
-        or set(raw_model) != _AGENT_BUILDER_CREATE_MODEL_FIELDS
+        or set(raw_model) != set(_AGENT_BUILDER_CREATE_MODEL_FIELDS)
     ):
         raise CardDomainError("agent_builder_model_invalid")
     model = {
@@ -1957,12 +1961,13 @@ def _agent_builder_operation(
         "deckRevision": deck_revision,
         "workspaceRoot": workspace_root,
         "cbmProject": cbm_project,
-        "allowedFields": ["prompt", "tools"],
+        "allowedFields": list(_AGENT_BUILDER_CREATE_FIELDS),
         "templateId": template_id,
         "title": title,
         "role": role,
         "prompt": prompt,
         "tools": tools,
+        "runtime": dict(_AGENT_BUILDER_CREATE_RUNTIME),
         "model": model,
     }, None)
 
@@ -2030,7 +2035,7 @@ def _agent_builder_skill(selected_skills: list[str]) -> dict[str, Any]:
         raise CardDomainError("agent_builder_skill_invalid")
     return {
         "sourcePath": (
-            "Hermes/.hermes/profiles/agent-builder/skills/"
+            "Hermes/.hermes/profiles/liquidaity-agent-builder/skills/"
             "agent-construction/agent-builder-inspection/SKILL.md"
         ),
         "sourceSha256": sha256(payload).hexdigest(),
@@ -2520,6 +2525,11 @@ def _prepare_invocation(
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
+    if builder_operation is not None and not builder_operation.get("cbmProject"):
+        selected_tools = [
+            name for name in selected_tools
+            if str(by_id.get(name, {}).get("namespace") or "") != "cbm"
+        ]
     if runtime.get("kind") == "hermes":
         # Native delegate_task(role="profile") is the one model-facing Card
         # handoff. Keep card.run_assistant_agent as the canonical internal

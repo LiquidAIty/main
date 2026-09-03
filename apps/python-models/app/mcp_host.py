@@ -2420,7 +2420,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
             description=(
                 "Create ONE ordinary AutoGen assistant Card exactly matching the current "
                 "Agent Builder Run operation. Use its IDD template, title, role, prompt, "
-                "configured model, explicit tools, and deck revision unchanged. The server "
+                "AutoGen assistant execution binding, configured model, explicit tools, and "
+                "deck revision unchanged. The server "
                 "mints the identity. This never launches the Card, creates wires, or runs Mag One."
             ),
             inputSchema={
@@ -3694,7 +3695,7 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
 
 _AGENT_BUILDER_CBM_READ_TOOLS = frozenset({
     "search_graph", "search_code", "trace_path", "get_code_snippet",
-    "check_index_coverage",
+    "check_index_coverage", "detect_changes",
 })
 
 
@@ -4039,6 +4040,9 @@ async def _dispatch_tool(
                     if isinstance(operation, dict) else [],
                     workspace_root=str((operation or {}).get("workspaceRoot") or "")
                     if isinstance(operation, dict) else "",
+                    builder_operation=(
+                        operation if isinstance(operation, dict) else None
+                    ),
                 )
                 if name == "card.update_configuration"
                 else getattr(control_plane, handler_name)(args)

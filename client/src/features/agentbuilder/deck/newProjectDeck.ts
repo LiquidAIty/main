@@ -431,7 +431,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_agent_builder',
         )?.content || '',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',

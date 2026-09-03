@@ -140,7 +140,7 @@ function isAgentBuilderBuildTarget(card: AgentCardInstance): boolean {
     card.runtime.kind === 'hermes'
     && (
       card.runtime.mode === 'main'
-      || ['agent-builder', 'liquidaity-hermes-steward']
+      || ['liquidaity-agent-builder', 'liquidaity-hermes-steward']
         .includes(card.runtime.profile)
     )
   );
@@ -367,7 +367,7 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes'
       && card.runtime.mode === 'delegate'
-      && card.runtime.profile === 'agent-builder'
+      && card.runtime.profile === 'liquidaity-agent-builder'
     )) || null,
     [deck.nodes],
   );
@@ -1322,7 +1322,7 @@ export default function AgentBuilder(): React.ReactElement {
             return next;
           });
           if (card.runtime.kind === 'hermes'
-            && card.runtime.profile === 'agent-builder') {
+            && card.runtime.profile === 'liquidaity-agent-builder') {
             setDeckReloadToken((current) => current + 1);
           }
         }
@@ -2077,7 +2077,7 @@ export default function AgentBuilder(): React.ReactElement {
                     + ` · Card revision ${agentBuilderBuildTarget._cardRevisionId || 'unavailable'}`
                     + ` · Deck revision ${deckRevision || 'unavailable'}`
                   : 'Select a non-system Canvas Card'
-                : 'one new ordinary unattached Card'
+                : 'one new ordinary Card · AutoGen assistant execution'
             }
           </span>
           <span data-testid="under-chat-agent-builder-workspace" style={{ color: '#8fa6bc' }}>

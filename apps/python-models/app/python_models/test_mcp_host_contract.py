@@ -710,7 +710,81 @@ def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypa
         "operation_mode": "edit",
         "allowed_fields": ["prompt", "tools"],
         "workspace_root": "C:/Projects/agents",
+        "builder_operation": {
+            "mode": "edit",
+            "allowedFields": ["prompt", "tools"],
+            "workspaceRoot": "C:/Projects/agents",
+        },
     })]
+
+
+def test_agent_builder_cbm_read_is_forced_to_the_run_bound_ready_workspace(monkeypatch):
+    import mcp_host
+
+    calls = []
+
+    def native_call(name, arguments):
+        calls.append((name, dict(arguments)))
+        return [mcp_host.TextContent(
+            type="text",
+            text=json.dumps({
+                "status": "ready",
+                "root_path": "C:\\Projects\\agents",
+            }),
+        )]
+
+    monkeypatch.setattr(mcp_host, "_call_native_cbm", native_call)
+    context = {
+        "builderOperation": {
+            "mode": "edit",
+            "workspaceRoot": "C:/Projects/agents",
+            "cbmProject": "C-Projects-agents",
+        },
+    }
+
+    scoped = mcp_host._scope_agent_builder_cbm_call(
+        context,
+        "detect_changes",
+        {"depth": 2},
+    )
+
+    assert scoped == {"depth": 2, "project": "C-Projects-agents"}
+    assert calls == [("index_status", {"project": "C-Projects-agents"})]
+
+
+def test_agent_builder_cbm_read_rejects_missing_or_different_run_bound_project(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(
+        mcp_host,
+        "_call_native_cbm",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid scope must fail before a native CBM call")
+        ),
+    )
+    missing = {
+        "builderOperation": {
+            "mode": "edit",
+            "workspaceRoot": "C:/Projects/agents",
+            "cbmProject": None,
+        },
+    }
+    with pytest.raises(PermissionError, match="agent_builder_cbm_project_required"):
+        mcp_host._scope_agent_builder_cbm_call(missing, "search_graph", {})
+
+    bound = {
+        "builderOperation": {
+            "mode": "edit",
+            "workspaceRoot": "C:/Projects/agents",
+            "cbmProject": "C-Projects-agents",
+        },
+    }
+    with pytest.raises(PermissionError, match="agent_builder_cbm_project_mismatch"):
+        mcp_host._scope_agent_builder_cbm_call(
+            bound,
+            "search_graph",
+            {"project": "C-Projects-LiquidAIty-main"},
+        )
 
 
 def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):

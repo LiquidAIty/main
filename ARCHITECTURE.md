@@ -19,7 +19,7 @@ React/Vite Agent Builder and Chat
   → Node/TypeScript HTTP, SSE, saved-state, and session transport
      → repo-owned Hermes ACP adapter, reusing one process owner per native profile
         ├─ Main: stable native session, home/profile liquidaity-main
-        ├─ Agent Builder: stable native session, home/profile agent-builder
+        ├─ Agent Builder: stable native session, home/profile liquidaity-agent-builder
         ├─ Coder: stable native session, home/profile coder
         └─ Graph Agent: stable native session, home/profile liquidaity-hermes-steward
      → official Python MCP client boundary
@@ -46,7 +46,7 @@ Current internal Cards:
 | User-facing role | Stable Card ID | Runtime | Profile |
 | --- | --- | --- | --- |
 | Main Chat | `card_main_chat` | Hermes `main` | `liquidaity-main` |
-| Agent Builder | saved server-minted Card ID | Hermes `delegate` | `agent-builder` |
+| Agent Builder | saved server-minted Card ID | Hermes `delegate` | `liquidaity-agent-builder` |
 | Local Coder | `card_local_coder` | Hermes `delegate` | `coder` |
 | Graph Agent | `card_hermes_steward` | Hermes `delegate` | `liquidaity-hermes-steward` |
 
@@ -399,7 +399,7 @@ rollback identity. The same Monaco Python editor appears on every Card only in A
 current IDD/native contracts through a bounded backend projection, but autocomplete and executable
 handles are limited by the Card's effective Tools-tab selection. Human Card Save remains the existing
 deck/revision path. Script mutation through MCP additionally requires the authenticated caller to be the
-saved Hermes Card whose profile is `agent-builder`; it cannot rewrite its own active Script.
+saved Hermes Card whose profile is `liquidaity-agent-builder`; it cannot rewrite its own active Script.
 
 Python rails parses the source without execution, requires one literal `CARD_SCRIPT` object, safe imports,
 one or more `output.emit()` calls and literal `tools.call()` IDs, then validates those IDs against the

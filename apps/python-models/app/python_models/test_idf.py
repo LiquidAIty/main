@@ -21,6 +21,7 @@ from app.python_models.idf import (
 def _idf(
     *, graph_context: str = "", secret: bool = False,
     selected_target: bool = False, builder_operation: bool = False,
+    builder_mode: str = "edit",
 ):
     reference = {
         "authority": "CodeGraph",
@@ -52,6 +53,42 @@ def _idf(
         }] if graph_context else []),
         "edges": [],
     }
+    operation = None
+    if builder_operation:
+        operation = ({
+            "mode": "create",
+            "deckRevision": "deck-revision-one",
+            "workspaceRoot": "C:/Projects/agents",
+            "cbmProject": None,
+            "allowedFields": [
+                "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+            ],
+            "templateId": "template_assist",
+            "title": "New Assistant",
+            "role": "A bounded specialist",
+            "prompt": "Perform only the assigned specialist task.",
+            "tools": ["web_search"],
+            "runtime": {"kind": "autogen", "mode": "assistant"},
+            "model": {
+                "provider": "openai",
+                "modelKey": "gpt-5.6-luna",
+                "providerModelId": "gpt-5.6-luna",
+                "accessMode": "chatgpt-account",
+            },
+        } if builder_mode == "create" else {
+            "mode": "edit",
+            "deckRevision": "deck-revision-one",
+            "workspaceRoot": "C:/Projects/agents",
+            "cbmProject": None,
+            "allowedFields": ["prompt", "tools"],
+            "templateId": "template_assist",
+            "title": "Selected Assistant",
+            "role": "Selected specialist",
+            "prompt": "Complete the revised bounded mission.",
+            "tools": ["web_search"],
+            "targetCardId": "selected-card",
+            "targetCardRevisionId": "selected-revision-one",
+        })
     return materialize_idf(
         stable={
             "projectId": "project-one",
@@ -96,20 +133,7 @@ def _idf(
                     "sourceSha256": "c" * 64, "content": "Build exactly one Card.",
                 },
             } if builder_operation else None),
-            "agentBuilderOperation": ({
-                "mode": "edit",
-                "deckRevision": "deck-revision-one",
-                "workspaceRoot": "C:/Projects/agents",
-                "cbmProject": None,
-                "allowedFields": ["prompt", "tools"],
-                "templateId": "template_assist",
-                "title": "Selected Assistant",
-                "role": "Selected specialist",
-                "prompt": "Complete the revised bounded mission.",
-                "tools": ["web_search"],
-                "targetCardId": "selected-card",
-                "targetCardRevisionId": "selected-revision-one",
-            } if builder_operation else None),
+            "agentBuilderOperation": operation,
             "images": [],
         },
         capabilities={
@@ -203,11 +227,43 @@ def test_selected_card_target_is_retained_and_projected_before_the_mission() -> 
         "role": "Selected specialist",
         "prompt": "Complete the revised bounded mission.",
         "tools": ["web_search"],
+        "runtime": None,
         "model": None,
         "targetCardId": "selected-card",
         "targetCardRevisionId": "selected-revision-one",
     }
     assert projection["builderGuidance"]["vision"]["sourcePath"] == "PLAN.md"
+
+
+def test_agent_builder_create_authority_round_trips_through_the_canonical_idf() -> None:
+    materialized = _idf(builder_operation=True, builder_mode="create")
+
+    projection = runtime_projection(load_idf_bytes(materialized.idf_bytes))
+
+    assert projection["buildTarget"] is None
+    assert projection["builderOperation"] == {
+        "mode": "create",
+        "deckRevision": "deck-revision-one",
+        "workspaceRoot": "C:/Projects/agents",
+        "cbmProject": None,
+        "allowedFields": [
+            "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+        ],
+        "templateId": "template_assist",
+        "title": "New Assistant",
+        "role": "A bounded specialist",
+        "prompt": "Perform only the assigned specialist task.",
+        "tools": ["web_search"],
+        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "model": {
+            "provider": "openai",
+            "modelKey": "gpt-5.6-luna",
+            "providerModelId": "gpt-5.6-luna",
+            "accessMode": "chatgpt-account",
+        },
+        "targetCardId": None,
+        "targetCardRevisionId": None,
+    }
 
 
 def test_each_run_writes_one_file_and_reloads_exact_bytes(

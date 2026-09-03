@@ -132,12 +132,15 @@ class AgentBuilderOperation(BaseModel):
     deckRevision: str
     workspaceRoot: str
     cbmProject: str | None = None
-    allowedFields: list[Literal["prompt", "tools"]]
+    allowedFields: list[Literal[
+        "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+    ]]
     templateId: str
     title: str = ""
     role: str = ""
     prompt: str
     tools: list[str] = Field(default_factory=list)
+    runtime: dict[str, Any] | None = None
     model: dict[str, Any] | None = None
     targetCardId: str | None = None
     targetCardRevisionId: str | None = None

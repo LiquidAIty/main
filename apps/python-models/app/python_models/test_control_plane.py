@@ -15,7 +15,8 @@ DECK = {
     "name": "Builder",
     "workspaceRoot": "C:/Projects/agents",
     "nodes": [
-        {"id": "signals-card", "title": "WorldSignals",
+        {"id": "signals-card", "title": "WorldSignals", "role": "",
+         "templateId": "template_assist",
          "runtime": {"kind": "autogen", "mode": "assistant"}, "prompt": "p",
          "runtimeOptions": {"tools": ["worldsignals.capabilities", "worldsignals.command"]},
          "_cardRevisionId": "revision:signals-card"},
@@ -25,7 +26,7 @@ DECK = {
          "_cardRevisionId": "revision:worker"},
         {"id": "builder-card", "title": "Agent Builder",
          "runtime": {"kind": "hermes", "mode": "delegate",
-                     "profile": "agent-builder"},
+                     "profile": "liquidaity-agent-builder"},
          "prompt": "Build saved Cards.", "runtimeOptions": {"tools": []},
          "_cardRevisionId": "revision:builder-card"},
     ],
@@ -51,16 +52,33 @@ def fake_backend(monkeypatch):
     return saved
 
 
-def builder_target_authority(card_id="signals-card", deck_revision="rev1"):
-    return {
+def builder_target_authority(
+    card_id="signals-card", deck_revision="rev1", *,
+    prompt="new prompt", tools=None, workspace_root="C:/Projects/agents",
+):
+    authority = {
         "caller_card_id": "builder-card",
         "target_card_id": card_id,
         "target_card_revision_id": f"revision:{card_id}",
         "target_deck_revision": deck_revision,
         "operation_mode": "edit",
         "allowed_fields": ["prompt", "tools"],
-        "workspace_root": "C:/Projects/agents",
+        "workspace_root": workspace_root,
     }
+    authority["builder_operation"] = {
+        "mode": "edit",
+        "deckRevision": deck_revision,
+        "workspaceRoot": workspace_root,
+        "allowedFields": ["prompt", "tools"],
+        "templateId": "template_assist",
+        "title": "WorldSignals" if card_id == "signals-card" else card_id,
+        "role": "",
+        "prompt": prompt,
+        "tools": list(tools or []),
+        "targetCardId": card_id,
+        "targetCardRevisionId": f"revision:{card_id}",
+    }
+    return authority
 
 
 def builder_create_authority(
@@ -78,12 +96,15 @@ def builder_create_authority(
         "mode": "create",
         "deckRevision": deck_revision,
         "workspaceRoot": "C:/Projects/agents",
-        "allowedFields": ["prompt", "tools"],
+        "allowedFields": [
+            "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+        ],
         "templateId": template_id,
         "title": title,
         "role": role,
         "prompt": prompt,
         "tools": list(tools or []),
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "model": model,
     }
 
@@ -364,11 +385,20 @@ class TestCardCreate:
         }
         with pytest.raises(cp.ControlPlaneError, match="card_create_requires_agent_builder"):
             asyncio.run(cp.card_create(base))
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_runtime_forbidden"):
+        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_request_mismatch"):
             asyncio.run(cp.card_create({
                 **base,
                 "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
             }, caller_card_id="builder-card", builder_operation=operation))
+        forged_operation = {
+            **operation,
+            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
+        }
+        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_runtime_forbidden"):
+            asyncio.run(cp.card_create({
+                **base,
+                "runtime": forged_operation["runtime"],
+            }, caller_card_id="builder-card", builder_operation=forged_operation))
         assert "deck" not in fake_backend
 
     def test_rejects_unavailable_tools_system_templates_and_request_drift(self, fake_backend):
@@ -468,12 +498,29 @@ class TestCardUpdateConfiguration:
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"prompt": "new prompt", "tools": ["web_search"]},
-        }, **builder_target_authority()))
+        }, **builder_target_authority(tools=["web_search"])))
         assert result["ok"] is True
         assert fake_backend["expectedRevision"] == "rev1"
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["prompt"] == "new prompt"
         assert card["runtimeOptions"]["tools"] == ["web_search"]
+
+    def test_prompt_and_tools_cannot_drift_from_the_run_operation(self, fake_backend):
+        with pytest.raises(
+            cp.ControlPlaneError, match="agent_builder_edit_request_mismatch"
+        ):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"prompt": "different prompt"},
+            }, **builder_target_authority(prompt="authorized prompt")))
+        with pytest.raises(
+            cp.ControlPlaneError, match="agent_builder_edit_request_mismatch"
+        ):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "updates": {"tools": ["web_search"]},
+            }, **builder_target_authority(tools=[])))
+        assert "deck" not in fake_backend
 
     def test_tools_update_must_be_string_list(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_tools_must_be_string_list"):
@@ -495,7 +542,9 @@ class TestCardUpdateConfiguration:
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"tools": ["card.update_configuration", "web_search"]},
-        }, **builder_target_authority()))
+        }, **builder_target_authority(
+            tools=["card.update_configuration", "web_search"],
+        )))
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"]["tools"] == ["card.update_configuration", "web_search"]
@@ -515,7 +564,7 @@ class TestCardUpdateConfiguration:
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
                 "updates": {"prompt": "new prompt"},
-            }, **{**builder_target_authority(), "workspace_root": "C:/Projects/other"}))
+            }, **builder_target_authority(workspace_root="C:/Projects/other")))
 
 
 class TestUpsertWire:

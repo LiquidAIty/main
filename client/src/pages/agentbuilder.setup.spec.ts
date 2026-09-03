@@ -66,7 +66,7 @@ describe('agentbuilder authoring flow', () => {
 
     expect(INITIAL_DECK.nodes.map((node) => node.runtime)).toEqual([
       { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-      { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
+      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       { kind: 'autogen', mode: 'magentic_one' },
       { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
@@ -114,7 +114,7 @@ describe('agentbuilder authoring flow', () => {
     const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
     const agentBuilder = INITIAL_DECK.nodes.find((node) => node.id === 'card_agent_builder');
     expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
-    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'agent-builder' });
+    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' });
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
     expect(systemCoder?.runtimeOptions?.tools).toEqual([
       'cbm.search_graph',
@@ -127,6 +127,11 @@ describe('agentbuilder authoring flow', () => {
       'canvas.inspect',
       'card.create',
       'card.update_configuration',
+      'cbm.search_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.check_index_coverage',
+      'cbm.detect_changes',
     ]);
     expect(agentBuilder?.runtimeOptions?.toolsets).toEqual([
       'hermes-acp',

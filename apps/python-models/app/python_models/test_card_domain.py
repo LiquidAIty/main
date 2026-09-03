@@ -43,7 +43,7 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
         "builder",
         runtime={
             "kind": "hermes", "mode": "delegate",
-            "profile": "agent-builder",
+            "profile": "liquidaity-agent-builder",
         },
         runtimeOptions={
             **_agent("x")["runtimeOptions"],
@@ -161,11 +161,11 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
         "builder",
         runtime={
             "kind": "hermes", "mode": "delegate",
-            "profile": "agent-builder",
+            "profile": "liquidaity-agent-builder",
         },
         runtimeOptions={
             **_agent("x")["runtimeOptions"],
-            "tools": ["card.create"],
+            "tools": ["card.create", "cbm.search_graph", "cbm.detect_changes"],
             "skills": ["agent-builder-inspection"],
         },
     )
@@ -188,7 +188,7 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
         "accessMode": "chatgpt-account",
     }
 
-    prepared = card_domain._prepare_invocation({
+    payload = {
         "projectId": "project-one",
         "deckId": "deck_builder",
         "cardId": "builder",
@@ -209,7 +209,8 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
             "providerModelId": "gpt-5.6-luna",
             "label": "Luna",
         }],
-    })
+    }
+    prepared = card_domain._prepare_invocation(payload)
 
     assert prepared["buildTarget"] is None
     assert prepared["builderOperation"] == {
@@ -217,14 +218,33 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
         "deckRevision": "deck-revision-one",
         "workspaceRoot": "C:/Projects/agents",
         "cbmProject": None,
-        "allowedFields": ["prompt", "tools"],
+        "allowedFields": [
+            "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+        ],
         "templateId": "template_assist",
         "title": "Portfolio Planner",
         "role": "Plans and journals assigned paper trades.",
         "prompt": "Return a bounded trade plan with citations.",
         "tools": ["web_search"],
+        "runtime": {"kind": "autogen", "mode": "assistant"},
         "model": model,
     }
+    assert "cbm.search_graph" not in prepared["_callConfig"]["enabledTools"]
+    assert "cbm.search_graph" not in prepared["_callConfig"]["presentedTools"]
+    assert "cbm.detect_changes" not in prepared["_callConfig"]["enabledTools"]
+    assert "cbm.detect_changes" not in prepared["_callConfig"]["presentedTools"]
+    code_payload = {
+        **payload,
+        "builderOperation": {
+            **payload["builderOperation"],
+            "cbmProject": "C-Projects-agents",
+        },
+    }
+    code_prepared = card_domain._prepare_invocation(code_payload)
+    assert "cbm.search_graph" in code_prepared["_callConfig"]["enabledTools"]
+    assert "cbm.search_graph" in code_prepared["_callConfig"]["presentedTools"]
+    assert "cbm.detect_changes" in code_prepared["_callConfig"]["enabledTools"]
+    assert "cbm.detect_changes" in code_prepared["_callConfig"]["presentedTools"]
     assert prepared["builderGuidance"]["idd"]["content"]["operations"] == [
         {
             "id": "canvas.inspect", "access": "read", "publication": "external-mcp",
@@ -303,7 +323,7 @@ def test_agent_builder_target_rejects_system_cards(system_target) -> None:
         "builder",
         runtime={
             "kind": "hermes", "mode": "delegate",
-            "profile": "agent-builder",
+            "profile": "liquidaity-agent-builder",
         },
     )
     with pytest.raises(card_domain.CardDomainError, match="agent_builder_system_target_forbidden"):

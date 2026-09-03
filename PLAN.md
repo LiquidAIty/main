@@ -9,7 +9,7 @@ Git history, not active Markdown.
 ```text
 Chat / GPT plugin
   → Main Chat Card (Hermes, profile liquidaity-main)
-     ├─ flow → Agent Builder Card (Hermes delegate, profile agent-builder)
+     ├─ flow → Agent Builder Card (Hermes delegate, profile liquidaity-agent-builder)
      ├─ flow → Graph Agent Card (Hermes delegate, profile liquidaity-hermes-steward)
      ├─ native delegate_task(team) → headless Auto-Team inside Main's existing Card Run/session
      └─ magentic_control → automatic or optionally reviewed Card handoff → native AutoGen Magentic-One
@@ -169,13 +169,12 @@ the transient Card call. The call carries task meaning and selected context, not
 ### Agent Builder
 
 - Card: saved dedicated Agent Builder identity
-- Hermes mode/profile: `delegate` / `agent-builder`
+- Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
 - Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
   inspect current source, edit, run commands/tests, and return evidence. It plans only when asked or blocked.
 - Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
-- Its saved CBM surface is the bounded discovery/audit set: `cbm.search_graph`, `cbm.search_code`,
-  `cbm.trace_path`, `cbm.get_code_snippet`, `cbm.query_graph`, `cbm.check_index_coverage`, and
-  `cbm.detect_changes`.
+- Its saved CBM surface is the bounded discovery/audit set: `cbm.search_graph`, `cbm.trace_path`,
+  `cbm.get_code_snippet`, `cbm.check_index_coverage`, and `cbm.detect_changes`.
 - Has no Magentic-One connection and receives no Local Coder state.
 
 ## Agent Builder product vision
@@ -184,8 +183,9 @@ This is the approved operating vision; the complete live loop is not yet proven.
 
 - Main and Graph Agent prepare approved intent, bounded native graph references, and the dynamic
   construction mission. Main decides whether to invoke Agent Builder.
-- Agent Builder is the saved single Sol Card that creates or edits exactly one ordinary Canvas Card
-  from one run-issued operation. It uses the current IDD palette, this bounded Vision section, and its
+- Agent Builder is the saved single Sol Card that creates or edits exactly one ordinary saved Card
+  from one run-issued operation. New Cards use the current AutoGen assistant execution binding. It
+  uses the current IDD palette, this bounded Vision section, and its
   native `agent-builder-inspection` Hermes skill. Configuration in the UI has no effect until Run.
 - Create selects a non-system IDD template, stable prompt, configured model, and minimum explicit tool
   set. Edit is limited to the selected ordinary Card's stable prompt and explicit tools. Main, Graph

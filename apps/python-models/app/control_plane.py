@@ -97,8 +97,12 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "modelKey": "gpt-5.6-luna",
     "providerModelId": "gpt-5.6-luna",
 }
-_AGENT_BUILDER_PROFILE = "agent-builder"
+_AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
 _AGENT_BUILDER_EDIT_FIELDS = frozenset({"prompt", "tools"})
+_AGENT_BUILDER_CREATE_FIELDS = frozenset({
+    "templateId", "title", "role", "prompt", "runtime", "model", "tools",
+})
+_AGENT_BUILDER_CREATE_RUNTIME = {"kind": "autogen", "mode": "assistant"}
 _SYSTEM_TEMPLATE_IDS = frozenset({
     "template_main_chat", "template_local_coder", "template_agent_builder",
     "template_hermes_steward", "template_magentic",
@@ -541,7 +545,7 @@ async def card_create(
         if authorization.get("mode") != "create":
             raise ControlPlaneError("agent_builder_create_authority_required")
         allowed_fields = authorization.get("allowedFields")
-        if set(allowed_fields or []) != _AGENT_BUILDER_EDIT_FIELDS:
+        if set(allowed_fields or []) != _AGENT_BUILDER_CREATE_FIELDS:
             raise ControlPlaneError("agent_builder_create_fields_invalid")
         if str(authorization.get("deckRevision") or "") != str(current_revision or ""):
             raise ControlPlaneError("agent_builder_create_revision_changed")
@@ -550,17 +554,19 @@ async def card_create(
         ).strip():
             raise ControlPlaneError("agent_builder_workspace_changed")
         authorized_model = authorization.get("model")
+        authorized_runtime = authorization.get("runtime")
+        if authorized_runtime != _AGENT_BUILDER_CREATE_RUNTIME:
+            raise ControlPlaneError("agent_builder_create_runtime_forbidden")
         if (
             template_id != authorization.get("templateId")
             or title != authorization.get("title")
             or role != authorization.get("role")
             or prompt != authorization.get("prompt")
             or normalized_tools != authorization.get("tools")
+            or runtime != authorized_runtime
             or model != authorized_model
         ):
             raise ControlPlaneError("agent_builder_create_request_mismatch")
-        if runtime != {"kind": "autogen", "mode": "assistant"}:
-            raise ControlPlaneError("agent_builder_create_runtime_forbidden")
         from app.python_models.idd import load_input_data_dictionary
 
         if template_id not in load_input_data_dictionary()["templates"]:
@@ -646,16 +652,30 @@ async def card_update_configuration(
     target_deck_revision: str = "",
     operation_mode: str = "", allowed_fields: list[str] | None = None,
     workspace_root: str = "",
+    builder_operation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "cardId")
     updates = args.get("updates")
     if not isinstance(updates, dict) or not updates:
         raise ControlPlaneError("updates_object_required")
-    if operation_mode != "edit":
+    authorization = builder_operation if isinstance(builder_operation, dict) else {}
+    if operation_mode != "edit" or authorization.get("mode") != "edit":
         raise ControlPlaneError("agent_builder_edit_authority_required")
     authorized_fields = set(allowed_fields or [])
-    if authorized_fields != _AGENT_BUILDER_EDIT_FIELDS:
+    if (
+        authorized_fields != _AGENT_BUILDER_EDIT_FIELDS
+        or set(authorization.get("allowedFields") or []) != _AGENT_BUILDER_EDIT_FIELDS
+    ):
         raise ControlPlaneError("agent_builder_edit_fields_invalid")
+    if (
+        str(authorization.get("targetCardId") or "") != target_card_id
+        or str(authorization.get("targetCardRevisionId") or "")
+        != target_card_revision_id
+        or str(authorization.get("deckRevision") or "") != target_deck_revision
+        or str(authorization.get("workspaceRoot") or "").strip()
+        != workspace_root.strip()
+    ):
+        raise ControlPlaneError("agent_builder_edit_authority_mismatch")
     if set(updates) - authorized_fields:
         raise ControlPlaneError("agent_builder_edit_field_forbidden")
     unknown = [
@@ -688,6 +708,9 @@ async def card_update_configuration(
             raise ControlPlaneError(
                 f"card_update_tool_unavailable:{invalid_tools[0]}"
             )
+    for field in updates:
+        if updates[field] != authorization.get(field):
+            raise ControlPlaneError("agent_builder_edit_request_mismatch")
     if "script" in updates:
         from app.python_models.card_script import saved_script
         from app.python_models.idd import IddValidationError
@@ -756,6 +779,12 @@ async def card_update_configuration(
         card = _find_card(deck, card_id)
         if str(card.get("_cardRevisionId") or "") != target_card_revision_id:
             raise ControlPlaneError("agent_builder_target_revision_changed")
+        if (
+            str(card.get("templateId") or "") != str(authorization.get("templateId") or "")
+            or str(card.get("title") or "") != str(authorization.get("title") or "")
+            or str(card.get("role") or "") != str(authorization.get("role") or "")
+        ):
+            raise ControlPlaneError("agent_builder_target_snapshot_changed")
         card_runtime = card.get("runtime") or {}
         if (
             card_runtime.get("kind") == "autogen"

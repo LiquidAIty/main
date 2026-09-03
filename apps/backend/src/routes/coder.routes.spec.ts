@@ -30,7 +30,7 @@ const deckMocks = vi.hoisted(() => ({
           id: 'card_agent_builder',
           kind: 'agent',
           templateId: 'template_agent_builder',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
           runtimeOptions: {
             tools: ['card.create', 'card.update_configuration', 'canvas.upsert_wire'],
             nativeTools: ['memory'],
@@ -72,7 +72,7 @@ const chatSessionMocks = vi.hoisted(() => {
     })),
     requestHermesNative: vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'profiles.describe') return {
-        name: String(params?.name || 'agent-builder'),
+        name: String(params?.name || 'liquidaity-agent-builder'),
         description: 'Agent Builder',
         soul: 'Build saved agents.',
         model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
@@ -287,6 +287,39 @@ const orchestratorMocks = vi.hoisted(() => {
       const builderTargetId = agentBuilder
         ? String(body.builderOperation?.targetCardId || '').trim()
         : '';
+      const preparedBuilderOperation = agentBuilder && body.builderOperation
+        ? body.builderOperation.mode === 'create'
+          ? {
+              mode: 'create',
+              deckRevision: 'deck-revision-one',
+              workspaceRoot: 'C:/Projects/agents',
+              cbmProject: null,
+              allowedFields: [
+                'templateId', 'title', 'role', 'prompt', 'runtime', 'model', 'tools',
+              ],
+              templateId: String(body.builderOperation.templateId || ''),
+              title: String(body.builderOperation.title || ''),
+              role: String(body.builderOperation.role || ''),
+              prompt: String(body.builderOperation.prompt || ''),
+              tools: Array.isArray(body.builderOperation.tools) ? body.builderOperation.tools : [],
+              runtime: { kind: 'autogen', mode: 'assistant' },
+              model: body.builderOperation.model,
+            }
+          : {
+              mode: 'edit',
+              deckRevision: 'deck-revision-one',
+              workspaceRoot: 'C:/Projects/agents',
+              cbmProject: null,
+              allowedFields: ['prompt', 'tools'],
+              templateId: 'template_assist',
+              title: 'Selected Assistant',
+              role: 'Selected specialist',
+              prompt: String(body.builderOperation.prompt || ''),
+              tools: Array.isArray(body.builderOperation.tools) ? body.builderOperation.tools : [],
+              targetCardId: builderTargetId,
+              targetCardRevisionId: `revision:${builderTargetId}`,
+            }
+        : undefined;
       const legacyKanban = cardId === 'card_legacy_kanban';
       const graphConfigured = graphAgent || legacyKanban;
       const coderCard = cardId === 'card_local_coder';
@@ -302,7 +335,7 @@ const orchestratorMocks = vi.hoisted(() => {
            state: 'running',
            runtimeKind: 'hermes',
            runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
-           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'agent-builder'
+           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'liquidaity-agent-builder'
              : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
            startedAt: new Date().toISOString(),
         });
@@ -356,6 +389,9 @@ const orchestratorMocks = vi.hoisted(() => {
           },
           dynamicContext: {
             task: String(mainChat ? body.message || '' : body.assignment || ''),
+            ...(preparedBuilderOperation
+              ? { agentBuilderOperation: preparedBuilderOperation }
+              : {}),
             selectedCardTarget: builderTargetId ? {
               cardId: builderTargetId,
               cardRevisionId: `revision:${builderTargetId}`,
@@ -394,6 +430,9 @@ const orchestratorMocks = vi.hoisted(() => {
               runtime: { kind: 'autogen', mode: 'assistant' },
               runtimeOptions: { tools: [] },
             } : null,
+            ...(preparedBuilderOperation
+              ? { builderOperation: preparedBuilderOperation }
+              : {}),
             message: [
               graphConfigured
                 ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
@@ -411,7 +450,7 @@ const orchestratorMocks = vi.hoisted(() => {
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
                 : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
-                    profile: agentBuilder ? 'agent-builder' : 'liquidaity-hermes-steward' },
+                    profile: agentBuilder ? 'liquidaity-agent-builder' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -986,7 +1025,7 @@ describe('coder routes', () => {
 
   it('projects native discovery and preserves missing saved selections without rewriting the Card', async () => {
     const card = { id: 'custom', templateId: 'template_agent_builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       runtimeOptions: { tools: ['removed.tool'], nativeTools: [], provider: 'openrouter', modelKey: 'removed-model' } };
     const before = JSON.stringify(card);
     deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [card], edges: [] } } as any);
@@ -1002,13 +1041,13 @@ describe('coder routes', () => {
       const body = JSON.parse(String((call?.[1] as RequestInit).body));
       expect(body.selectedIds).toEqual([
         'template_agent_builder', 'removed.tool', 'model:openrouter:removed-model',
-        'profile:agent-builder',
+        'profile:liquidaity-agent-builder',
       ]);
       expect(body.nativeOptions).toEqual(expect.arrayContaining([{
         id: 'new.tool', kind: 'tool', owner: 'native-source', source: 'native-source', available: true,
         schema: { type: 'object', properties: { q: { type: 'string' } } },
       }, expect.objectContaining({
-        id: 'profile:agent-builder', kind: 'profile', owner: 'Hermes', available: true,
+        id: 'profile:liquidaity-agent-builder', kind: 'profile', owner: 'Hermes', available: true,
       })]));
       expect(JSON.stringify(card)).toBe(before);
     } finally { await closeServer(server); }
@@ -1200,10 +1239,79 @@ describe('coder routes', () => {
       });
       expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
         cardId: 'card_agent_builder',
+        builderOperation: {
+          mode: 'edit',
+          deckRevision: 'deck-revision-one',
+          workspaceRoot: 'C:/Projects/agents',
+          allowedFields: ['prompt', 'tools'],
+          prompt: 'Updated prompt',
+          tools: [],
+          targetCardId: 'card_selected_target',
+          targetCardRevisionId: 'revision:card_selected_target',
+        },
         buildTarget: {
           cardId: 'card_selected_target',
           cardRevisionId: 'revision:card_selected_target',
           deckRevision: 'deck-revision-one',
+        },
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('binds an Agent Builder create Run to one exact AutoGen assistant configuration', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const model = {
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+        accessMode: 'chatgpt-account',
+      };
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_agent_builder',
+          builderOperation: {
+            mode: 'create',
+            expectedDeckRevision: 'deck-revision-one',
+            templateId: 'template_assist',
+            title: 'New Assistant',
+            role: 'A bounded specialist',
+            prompt: 'Perform only the assigned specialist task.',
+            tools: ['web_search'],
+            model,
+          },
+          correlationId: 'corr-builder-create-1',
+          conversationId: 'main',
+          input: 'Create one ordinary saved Assistant Card.',
+          action: 'execute',
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+        cardId: 'card_agent_builder',
+        builderOperation: {
+          mode: 'create',
+          deckRevision: 'deck-revision-one',
+          workspaceRoot: 'C:/Projects/agents',
+          allowedFields: [
+            'templateId', 'title', 'role', 'prompt', 'runtime', 'model', 'tools',
+          ],
+          templateId: 'template_assist',
+          title: 'New Assistant',
+          role: 'A bounded specialist',
+          prompt: 'Perform only the assigned specialist task.',
+          tools: ['web_search'],
+          runtime: { kind: 'autogen', mode: 'assistant' },
+          model,
         },
       });
     } finally {

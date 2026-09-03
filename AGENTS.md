@@ -105,6 +105,14 @@ If a new explicit decision replaces an older approach:
 4. delete the superseded path when the replacement is actually implemented and proven;
 5. update canonical docs so contradictory plans do not coexist.
 
+### Existing branded technical identifiers
+
+Existing `liquidaity-*` identifiers are compatibility contracts, not a naming template. Do not
+introduce a new distinct branded profile, package, function, variable, route, tool, schema,
+environment key, service, or internal name. Preserve an exact existing identifier when saved data or
+a live runtime still depends on it. A separate coordinated refactor recorded in `FUTURE.md` owns their
+later removal; do not mix that migration into feature work.
+
 ### Ask only when the choice is materially irreversible
 
 Proceed with reasonable bounded assumptions for ordinary read-only discovery and normal implementation
@@ -334,7 +342,7 @@ runtime, or give Local Coder Agent Builder/IDD authority.
 ### Hermes Agent Builder
 
 The saved Agent Builder Card uses the repo-owned Hermes adapter in `delegate` mode with profile
-`agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
+`liquidaity-agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
 authority through the lower Agent Builder coding surface beneath Main Chat. It executes bounded coding
 missions by inspecting current source, editing, running commands/tests, and returning evidence. Its
 Card/profile memory, skills, tools, sessions, Runs, and history are independent of Local Coder, and it

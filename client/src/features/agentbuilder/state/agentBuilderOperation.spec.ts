@@ -97,6 +97,7 @@ describe('Agent Builder operation composer', () => {
     expect(buildAgentBuilderProposal(create, null)).toMatchObject({
       mode: 'create', expectedDeckRevision: 'deck-revision-one', configuration: {
         templateId: 'template_assist', title: 'Planner', role: 'Plans', prompt: 'Plan.',
+        runtime: { kind: 'autogen', mode: 'assistant' },
       },
     });
   });

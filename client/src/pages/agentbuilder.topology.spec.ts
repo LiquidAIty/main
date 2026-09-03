@@ -232,14 +232,18 @@ describe('Main / Hermes / graph authority topology', () => {
 
     expect(agentBuilder).toMatchObject({
       title: 'Agent Builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
       runtimeOptions: {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
         skills: ['hermes-agent', 'agent-builder-inspection'],
         toolsets: ['hermes-acp'],
         toolCatalogPolicy: 'selected',
-        tools: ['canvas.inspect', 'card.create', 'card.update_configuration'],
+        tools: [
+          'canvas.inspect', 'card.create', 'card.update_configuration',
+          'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
+          'cbm.check_index_coverage', 'cbm.detect_changes',
+        ],
       },
     });
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');

@@ -85,6 +85,10 @@ inside Graph Agent.
 
 ## Cleanup decisions intentionally deferred
 
+- Replace existing `liquidaity-*` technical identities only through one coordinated, branding-neutral
+  migration covering saved Cards, Hermes profile homes, source guards, routes, tool/config references,
+  and persistence readback. Until that migration is explicitly approved, preserve exact load-bearing
+  identifiers and do not create new branded technical names, aliases, or fallbacks.
 - Rename stable historical IDs such as `card_local_coder` only through an explicit persisted-data
   migration with readback proof.
 - Rename the load-bearing `/api/coder/mcp-bridge/` transport only with coordinated Python/backend

@@ -65,7 +65,7 @@ import {
 
 const router = Router();
 const CODER_CARD_ID = 'card_local_coder';
-const AGENT_BUILDER_PROFILE = 'agent-builder';
+const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
 
 function commaSeparatedIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
@@ -718,13 +718,39 @@ function resolveHermesTurnArgs(
       }
     : undefined;
   const rawBuilderOperation = input?.builderOperation;
-  const builderOperation = rawBuilderOperation && typeof rawBuilderOperation === 'object'
-    && !Array.isArray(rawBuilderOperation)
-    && ['create', 'edit'].includes(String(rawBuilderOperation.mode || ''))
-    && String(rawBuilderOperation.deckRevision || '').trim()
-    && String(rawBuilderOperation.workspaceRoot || '').trim()
-    ? structuredClone(rawBuilderOperation as Record<string, unknown>)
-    : undefined;
+  let builderOperation: Record<string, unknown> | undefined;
+  if (rawBuilderOperation !== undefined && rawBuilderOperation !== null) {
+    if (typeof rawBuilderOperation !== 'object' || Array.isArray(rawBuilderOperation)) {
+      throw new Error('prepared_agent_builder_operation_invalid');
+    }
+    const operation = rawBuilderOperation as Record<string, unknown>;
+    const mode = String(operation.mode || '');
+    const allowedFields = Array.isArray(operation.allowedFields)
+      ? operation.allowedFields.map(String)
+      : [];
+    const baseValid = (
+      ['create', 'edit'].includes(mode)
+      && Boolean(String(operation.deckRevision || '').trim())
+      && Boolean(String(operation.workspaceRoot || '').trim())
+      && allowedFields.length > 0
+    );
+    const createRuntime = operation.runtime;
+    const createValid = mode !== 'create' || (
+      typeof createRuntime === 'object'
+      && createRuntime !== null
+      && !Array.isArray(createRuntime)
+      && (createRuntime as Record<string, unknown>).kind === 'autogen'
+      && (createRuntime as Record<string, unknown>).mode === 'assistant'
+    );
+    const editValid = mode !== 'edit' || (
+      Boolean(String(operation.targetCardId || '').trim())
+      && Boolean(String(operation.targetCardRevisionId || '').trim())
+    );
+    if (!baseValid || !createValid || !editValid) {
+      throw new Error('prepared_agent_builder_operation_invalid');
+    }
+    builderOperation = structuredClone(operation);
+  }
   const script = scriptPresentation?.mode === 'script'
     && scriptState?.nativeSupport?.active === true
     && typeof scriptState?.source === 'string'

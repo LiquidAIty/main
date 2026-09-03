@@ -52,6 +52,7 @@ export type AgentBuilderProposal = {
     role: string;
     prompt: string;
     tools: string[];
+    runtime: { kind: 'autogen'; mode: 'assistant' };
     model: AgentBuilderOperation['model'];
   };
   changes?: {
@@ -230,6 +231,7 @@ export function buildAgentBuilderProposal(
       role: String(operation.role || ''),
       prompt: operation.prompt,
       tools: operation.tools,
+      runtime: { kind: 'autogen', mode: 'assistant' },
       model: operation.model,
     },
   };
