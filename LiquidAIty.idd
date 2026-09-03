@@ -101,6 +101,7 @@ operations = [
   { id = "worldsignals.capabilities", access = "read", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "worldsignals", kind = "tool" },
   { id = "worldsignals.command", access = "write", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "worldsignals", kind = "tool" },
   { id = "worldsignals.poll", access = "read", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "worldsignals", kind = "tool" },
+  { id = "worldsignals.package", access = "read", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "worldsignals", kind = "tool" },
   { id = "worldsignals.stream_events", access = "read", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "worldsignals", kind = "tool" },
 ]
 

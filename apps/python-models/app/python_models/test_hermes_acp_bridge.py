@@ -69,6 +69,20 @@ def test_native_manager_extension_is_an_exact_allowlisted_pass_through(monkeypat
     agent = bridge.LiquidAItyHermesACPAgent.__new__(bridge.LiquidAItyHermesACPAgent)
 
     async def exercise():
+        created = await agent.ext_method(
+            "native/call",
+            {
+                "method": "profiles.create",
+                "params": {
+                    "name": "worldview",
+                    "description": "Saved Card runtime profile",
+                    "provider": "openai-codex",
+                    "model": "gpt-5.6-luna",
+                    "mirror_credentials": True,
+                    "share_auth": True,
+                },
+            },
+        )
         described = await agent.ext_method(
             "native/call",
             {"method": "profiles.describe", "params": {"name": "liquidaity-main"}},
@@ -89,13 +103,27 @@ def test_native_manager_extension_is_an_exact_allowlisted_pass_through(monkeypat
                 "params": {"name": "learn", "arg": "this repository"},
             },
         )
-        return described, learning, learn
+        return created, described, learning, learn
 
-    described, learning, learn = asyncio.run(exercise())
+    created, described, learning, learn = asyncio.run(exercise())
+    assert created["native_method"] == "profiles.create"
     assert described["native_method"] == "profiles.describe"
     assert learning["profile"] == "liquidaity-main"
     assert learn["native_params"] == {"name": "learn", "arg": "this repository"}
-    assert manager_calls == [("profiles.describe", {"name": "liquidaity-main"})]
+    assert manager_calls == [
+        (
+            "profiles.create",
+            {
+                "name": "worldview",
+                "description": "Saved Card runtime profile",
+                "provider": "openai-codex",
+                "model": "gpt-5.6-luna",
+                "mirror_credentials": True,
+                "share_auth": True,
+            },
+        ),
+        ("profiles.describe", {"name": "liquidaity-main"}),
+    ]
     assert profile_calls == [
         ("liquidaity-main", "learning.frames", {"cols": 60, "rows": 18, "frames": 2}),
         ("liquidaity-main", "command.dispatch", {"name": "learn", "arg": "this repository"}),

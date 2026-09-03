@@ -800,6 +800,7 @@ function resolveHermesTurnArgs(
     disabledTools: Array.isArray(input.disabledTools) ? input.disabledTools : [],
     mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
+    ...(Array.isArray(input.skills) && input.skills.length ? { skills: input.skills } : {}),
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     ...(script ? { script } : {}),
     ...(profileTargets.length ? { profileTargets } : {}),

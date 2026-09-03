@@ -71,9 +71,15 @@ function ProductGraphsHarness() {
       <AgentBuilderRail
         colors={{ panel: '#000', border: '#222', primary: '#2dd4bf', text: '#fff' }}
         workspaceView={workspaceView}
-        visibleRailItems={{ showKnowledge: true, showWorldsignal: false, showTrading: false }}
+        visibleRailItems={{
+          showKnowledge: true,
+          showWorldsignal: false,
+          showWorldview: false,
+          showTrading: false,
+        }}
         moonOrb={null}
         onShowWorldsignalWorkspace={vi.fn()}
+        onShowWorldviewWorkspace={vi.fn()}
         onShowCanvasWorkspace={() => setWorkspaceView('canvas')}
         onQuickAddAssistNode={vi.fn()}
         onShowKnowledgeWorkspace={() => setWorkspaceView('knowledge')}

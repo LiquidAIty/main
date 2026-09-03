@@ -32,8 +32,10 @@ import {
 } from './renderGovernor.js';
 import { installScopeMask } from './scopeMask.js';
 import { initFirstRunExperience } from './firstRunExperience.js';
+import { installHostBridge, resolveEmbedMode } from './embed/hostBridge.js';
 
 initLogoGaze();
+const embedMode = resolveEmbedMode(window.location.search);
 
 /**
  * Extract a human-readable error message from any thrown value.
@@ -81,10 +83,10 @@ async function init() {
 
     // Set Google Maps API key for 3D Tiles
     const googleApiKey = import.meta.env.GOOGLE_MAPS_API_KEY;
-    if (!googleApiKey) {
+    if (!googleApiKey && !embedMode.enabled) {
       throw new Error('GOOGLE_MAPS_API_KEY not found. Set it as an environment variable.');
     }
-    Cesium.GoogleMaps.defaultApiKey = googleApiKey;
+    if (googleApiKey) Cesium.GoogleMaps.defaultApiKey = googleApiKey;
 
     // Expose API key globally for geocoding in locations.js
     window.__GOOGLE_MAPS_API_KEY__ = googleApiKey;
@@ -143,7 +145,7 @@ async function init() {
     // Hide Cesium's default globe — Google Photorealistic 3D Tiles provide their own
     // globe at all LODs (street level → orbital). The default globe's 2D imagery
     // clips through 3D tile buildings at close range.
-    viewer.scene.globe.show = false;
+    viewer.scene.globe.show = !googleApiKey;
 
     // Keep a sky behind Google 3D Tiles, but soften Cesium's high-intensity
     // default atmosphere. With the globe hidden its bright limb otherwise
@@ -155,7 +157,7 @@ async function init() {
 
     loaderStatus.textContent = 'Loading Google 3D Tiles...';
     let tileset = null;
-    try {
+    if (googleApiKey) try {
       // Load Google Photorealistic 3D Tiles
       tileset = await Cesium.createGooglePhotorealistic3DTileset({
         onlyUsingWithGoogleGeocoder: true,
@@ -169,6 +171,9 @@ async function init() {
       const tileErrorDetail = describeError(tileError);
       loaderStatus.textContent = `Google 3D Tiles unavailable (${tileErrorDetail}). Continuing in fallback mode...`;
       // Keep Cesium globe visible as fallback instead of aborting the app.
+      viewer.scene.globe.show = true;
+    } else {
+      loaderStatus.textContent = 'Using the keyless OSM globe stack...';
       viewer.scene.globe.show = true;
     }
 
@@ -264,7 +269,7 @@ async function init() {
         // dataManager is passed explicitly: the globe missions enable bundled
         // keyless layers through it, and reaching for styleManager._dataManager
         // would make a private field part of this feature's contract.
-        initFirstRunExperience({ styleManager, dataManager });
+        if (!embedMode.enabled) initFirstRunExperience({ styleManager, dataManager });
       };
       loadingScreen.addEventListener('transitionend', revealFirstRun, { once: true });
       setTimeout(revealFirstRun, 900);
@@ -324,7 +329,23 @@ async function init() {
       getRenderGovernorDiagnostics,
       requestRender: governorRequestRender,
     };
-    window.__godsEyeView.voiceCommands = initGevVoiceCommands({ viewer, styleManager, dataManager, sceneDirector, annotations });
+    window.__godsEyeView.voiceCommands = initGevVoiceCommands({
+      viewer,
+      styleManager,
+      dataManager,
+      sceneDirector,
+      annotations,
+    });
+    window.__godsEyeView.hostBridge = installHostBridge({
+      dataManager,
+      voiceCommands: window.__godsEyeView.voiceCommands,
+      focusPosition: ({ longitude, latitude }) => viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, 800000),
+        duration: 1.2,
+      }),
+      sourceVersion: '0.1.0',
+      mode: embedMode,
+    });
 
   } catch (error) {
     console.error("God's Eye View initialization failed:", error);

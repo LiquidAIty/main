@@ -1513,7 +1513,9 @@ describe('coder routes', () => {
         toolsets: ['file', 'terminal'],
         message: '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
       });
-      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).not.toHaveProperty('skills');
+      expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0]).toMatchObject({
+        skills: ['repository-coder'],
+      });
       expect(chatSessionMocks.startHermesTurn.mock.calls[0]?.[0].toolsets).not.toContain('hermes-acp');
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       const payload = await response.json();

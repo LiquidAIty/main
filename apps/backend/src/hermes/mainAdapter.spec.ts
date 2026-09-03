@@ -595,6 +595,141 @@ describe('Hermes ACP transport identity', () => {
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
+  it('creates a missing saved-Card profile through the native manager before materialization', async () => {
+    const startTurn = vi.fn(async (args: any) => ({ args }));
+    const acquire = vi.fn(() => ({ startTurn }) as never);
+    const readNative = vi.fn()
+      .mockRejectedValueOnce(new Error("hermes_native_manager_error:profile 'worldview' not found"))
+      .mockResolvedValueOnce({
+        name: 'worldview',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
+        background_review: {
+          enabled: true,
+          provider: 'openai-codex',
+          model: 'gpt-5.6-luna',
+          max_input_tokens: 120_000,
+        },
+        toolsets: [],
+        mcp_servers: [],
+      });
+    const configureSubagent = vi.fn();
+    const configureParent = vi.fn();
+    const createProfile = vi.fn(async () => ({ ok: true, name: 'worldview' }));
+    const saved = {
+      provider: 'openai',
+      accessMode: 'chatgpt-account' as const,
+      modelKey: 'gpt-5.6-luna',
+      providerModelId: 'gpt-5.6-luna',
+    };
+
+    await startHermesTurnWithOnePrePromptRecovery(
+      {
+        ...providerFreeTurnArgs(0),
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+        accessMode: 'chatgpt-account',
+        subagentModel: saved,
+      },
+      () => undefined,
+      acquire,
+      readNative,
+      configureSubagent,
+      configureParent,
+      createProfile,
+    );
+
+    expect(createProfile).toHaveBeenCalledExactlyOnceWith('worldview', {
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+    });
+    expect(configureParent).not.toHaveBeenCalled();
+    expect(configureSubagent).not.toHaveBeenCalled();
+    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('materializes an explicit saved Card skill grant while preserving the native essential skill', async () => {
+    const startTurn = vi.fn(async (args: any) => ({ args }));
+    const acquire = vi.fn(() => ({ startTurn }) as never);
+    const readNative = vi.fn()
+      .mockResolvedValueOnce({
+        name: 'worldview',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        skills: [
+          { name: 'hermes-agent', enabled: true },
+          { name: 'grounded-citations', enabled: true },
+          { name: 'browser', enabled: true },
+        ],
+        toolsets: [],
+        mcp_servers: [],
+      })
+      .mockResolvedValueOnce({
+        name: 'worldview',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        skills: [
+          { name: 'hermes-agent', enabled: true },
+          { name: 'grounded-citations', enabled: true },
+          { name: 'browser', enabled: false },
+        ],
+        toolsets: [],
+        mcp_servers: [],
+      });
+    const configureSkills = vi.fn(async () => ({ ok: true, applied: { skills: true } }));
+
+    await startHermesTurnWithOnePrePromptRecovery(
+      {
+        ...providerFreeTurnArgs(0),
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+        accessMode: 'chatgpt-account',
+        skills: ['grounded-citations'],
+      },
+      () => undefined,
+      acquire,
+      readNative,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureSkills,
+    );
+
+    expect(configureSkills).toHaveBeenCalledExactlyOnceWith('worldview', ['hermes-agent', 'browser']);
+    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(startTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails before inference when a saved Card skill is absent from the native profile', async () => {
+    const acquire = vi.fn();
+    const readNative = vi.fn(async () => ({
+      name: 'worldview',
+      model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+      skills: [{ name: 'hermes-agent', enabled: true }],
+      toolsets: [],
+      mcp_servers: [],
+    }));
+
+    await expect(startHermesTurnWithOnePrePromptRecovery(
+      {
+        ...providerFreeTurnArgs(0),
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+        accessMode: 'chatgpt-account',
+        skills: ['grounded-citations'],
+      },
+      () => undefined,
+      acquire as never,
+      readNative,
+    )).rejects.toThrow('hermes_native_skill_missing:worldview:grounded-citations');
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
   it('requires visible completion text from the Hermes loop', () => {
     expect(requireHermesCompletionText('answer')).toBe('answer');
     expect(() => requireHermesCompletionText('  ')).toThrow('hermes_empty_completion');

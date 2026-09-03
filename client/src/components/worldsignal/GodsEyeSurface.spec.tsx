@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import GodsEyeSurface, {
@@ -8,14 +8,14 @@ import GodsEyeSurface, {
   resolveGodsEyeEmbedUrl,
 } from './GodsEyeSurface';
 
-describe('GodsEyeSurface providerless host boundary', () => {
-  it('accepts only a distinct loopback origin and pins providerless query state', () => {
+describe('GodsEyeSurface supervised host boundary', () => {
+  it('accepts only a distinct loopback origin and pins supervised query state', () => {
     const url = resolveGodsEyeEmbedUrl('http://127.0.0.1:4173/globe?theme=dark', 'http://localhost:5173');
     expect(url.origin).toBe('http://127.0.0.1:4173');
     expect(url.searchParams.get('theme')).toBe('dark');
     expect(url.searchParams.get('embed')).toBe('1');
-    expect(url.searchParams.get('agentRuntime')).toBe('host');
-    expect(url.searchParams.get('voice')).toBe('disabled');
+    expect(url.searchParams.get('agentRuntime')).toBe('supervised');
+    expect(url.searchParams.get('hostOrigin')).toBe('http://localhost:5173');
   });
 
   it('rejects remote and same-origin embeds', () => {
@@ -25,23 +25,26 @@ describe('GodsEyeSurface providerless host boundary', () => {
       .toThrow('gods_eye_embed_requires_isolated_origin');
   });
 
-  it('requires upstream to prove host runtime and disabled voice before readiness', () => {
+  it('requires upstream to report the supervised native-agent state', () => {
     expect(parseGodsEyeHostMessage({
       schemaVersion: 'gev.embed.ready.v1',
       sourceVersion: '0.1.0',
-      agentRuntime: 'host',
-      voiceEnabled: false,
+      agentRuntime: 'supervised',
+      nativeAgentAvailable: true,
+      nativeAgentActive: false,
     })).toEqual({
       schemaVersion: 'gev.embed.ready.v1',
       sourceVersion: '0.1.0',
-      agentRuntime: 'host',
-      voiceEnabled: false,
+      agentRuntime: 'supervised',
+      nativeAgentAvailable: true,
+      nativeAgentActive: false,
     });
     expect(parseGodsEyeHostMessage({
       schemaVersion: 'gev.embed.ready.v1',
       sourceVersion: '0.1.0',
-      agentRuntime: 'openai-realtime',
-      voiceEnabled: true,
+      agentRuntime: 'standalone',
+      nativeAgentAvailable: true,
+      nativeAgentActive: true,
     })).toBeNull();
   });
 
@@ -67,7 +70,54 @@ describe('GodsEyeSurface providerless host boundary', () => {
       />,
     );
     expect(screen.getByRole('heading', { name: 'God’s Eye embed unavailable' })).toBeTruthy();
-    expect(screen.getByText(/providerless, isolated upstream build/)).toBeTruthy();
+    expect(screen.getByText(/supervised, isolated upstream build/)).toBeTruthy();
     expect(screen.queryByTitle('God’s Eye WorldView globe')).toBeNull();
+  });
+
+  it('sends a Card-scoped evidence flight only after the supervised handshake', () => {
+    const onNativeAgentState = vi.fn();
+    const { rerender } = render(
+      <GodsEyeSurface
+        embedUrl="http://127.0.0.1:4174"
+        projectId="project-1"
+        cardId="card-worldview"
+        onNativeAgentState={onNativeAgentState}
+      />,
+    );
+    const frame = screen.getByTitle('God’s Eye WorldView globe') as HTMLIFrameElement;
+    const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+    fireEvent.load(frame);
+    window.dispatchEvent(new MessageEvent('message', {
+      origin: 'http://127.0.0.1:4174',
+      source: frame.contentWindow,
+      data: {
+        schemaVersion: 'gev.embed.ready.v1',
+        sourceVersion: '0.1.0',
+        agentRuntime: 'supervised',
+        nativeAgentAvailable: true,
+        nativeAgentActive: false,
+      },
+    }));
+    expect(onNativeAgentState).toHaveBeenCalledExactlyOnceWith({
+      available: true,
+      active: false,
+    });
+
+    rerender(
+      <GodsEyeSurface
+        embedUrl="http://127.0.0.1:4174"
+        projectId="project-1"
+        cardId="card-worldview"
+        focus={{ id: 'candidate-1', position: { longitude: -97.7431, latitude: 30.2672 } }}
+      />,
+    );
+
+    expect(postMessage).toHaveBeenLastCalledWith({
+      schemaVersion: 'gev.embed.focus.v1',
+      projectId: 'project-1',
+      cardId: 'card-worldview',
+      id: 'candidate-1',
+      position: { longitude: -97.7431, latitude: 30.2672 },
+    }, 'http://127.0.0.1:4174');
   });
 });

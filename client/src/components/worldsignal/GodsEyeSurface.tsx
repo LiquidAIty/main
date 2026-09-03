@@ -5,6 +5,12 @@ export type GodsEyeSelectionRef = {
   type: string;
   label: string | null;
   position: { longitude: number; latitude: number } | null;
+  observedAt?: string | null;
+};
+
+export type GodsEyeFocusRequest = {
+  id: string;
+  position: { longitude: number; latitude: number };
 };
 
 export type GodsEyeLayerState = {
@@ -12,11 +18,17 @@ export type GodsEyeLayerState = {
   sourceClocks: Record<string, string | null>;
 };
 
+export type GodsEyeNativeAgentState = {
+  available: boolean;
+  active: boolean;
+};
+
 type GodsEyeReadyMessage = {
   schemaVersion: 'gev.embed.ready.v1';
   sourceVersion: string;
-  agentRuntime: 'host';
-  voiceEnabled: false;
+  agentRuntime: 'supervised';
+  nativeAgentAvailable: boolean;
+  nativeAgentActive: boolean;
 };
 
 type GodsEyeSelectionMessage = {
@@ -42,11 +54,13 @@ export type GodsEyeHostMessage =
   | GodsEyeErrorMessage;
 
 type GodsEyeSurfaceProps = {
-  /** URL of a separately built God’s Eye embed with the providerless host contract. */
+  /** URL of a separately built God’s Eye embed with the supervised host contract. */
   embedUrl: string | null;
   projectId: string;
   cardId: string;
+  focus?: GodsEyeFocusRequest | null;
   onReady?: (sourceVersion: string) => void;
+  onNativeAgentState?: (state: GodsEyeNativeAgentState) => void;
   onSelectionChange?: (selection: GodsEyeSelectionRef | null) => void;
   onLayerStateChange?: (state: GodsEyeLayerState) => void;
   onError?: (error: { code: string; message: string }) => void;
@@ -66,8 +80,9 @@ export function parseGodsEyeHostMessage(value: unknown): GodsEyeHostMessage | nu
     if (
       typeof value.sourceVersion !== 'string'
       || !value.sourceVersion.trim()
-      || value.agentRuntime !== 'host'
-      || value.voiceEnabled !== false
+      || value.agentRuntime !== 'supervised'
+      || typeof value.nativeAgentAvailable !== 'boolean'
+      || typeof value.nativeAgentActive !== 'boolean'
     ) return null;
     return value as GodsEyeReadyMessage;
   }
@@ -127,8 +142,8 @@ export function resolveGodsEyeEmbedUrl(rawUrl: string, hostOrigin: string): URL 
   if (!loopback.has(url.hostname)) throw new Error('gods_eye_embed_must_be_loopback');
   if (url.origin === hostOrigin) throw new Error('gods_eye_embed_requires_isolated_origin');
   url.searchParams.set('embed', '1');
-  url.searchParams.set('agentRuntime', 'host');
-  url.searchParams.set('voice', 'disabled');
+  url.searchParams.set('agentRuntime', 'supervised');
+  url.searchParams.set('hostOrigin', hostOrigin);
   return url;
 }
 
@@ -137,24 +152,30 @@ export function resolveGodsEyeEmbedUrl(rawUrl: string, hostOrigin: string): URL 
  *
  * This deliberately does not import, clone, or imitate the upstream app. It
  * mounts a separately built copy in an isolated origin and accepts readiness
- * only after upstream proves its own AI/voice runtime is disabled. The supplied
- * upstream archive does not implement this handshake yet, so callers must keep
- * this component disconnected until that small upstream patch is available.
+ * only after upstream reports its native Realtime agent as a supervised,
+ * explicitly user-started subsystem. Hermes remains the parent Card runtime;
+ * the upstream agent retains its native globe-interaction lifecycle.
  */
 export default function GodsEyeSurface({
   embedUrl,
   projectId,
   cardId,
+  focus = null,
   onReady,
+  onNativeAgentState,
   onSelectionChange,
   onLayerStateChange,
   onError,
 }: GodsEyeSurfaceProps): React.ReactElement {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [ready, setReady] = useState(false);
-  const callbacksRef = useRef({ onReady, onSelectionChange, onLayerStateChange, onError });
+  const callbacksRef = useRef({
+    onReady, onNativeAgentState, onSelectionChange, onLayerStateChange, onError,
+  });
   useEffect(() => {
-    callbacksRef.current = { onReady, onSelectionChange, onLayerStateChange, onError };
+    callbacksRef.current = {
+      onReady, onNativeAgentState, onSelectionChange, onLayerStateChange, onError,
+    };
   });
 
   const resolved = useMemo(() => {
@@ -180,6 +201,10 @@ export default function GodsEyeSurface({
       if (message.schemaVersion === 'gev.embed.ready.v1') {
         setReady(true);
         callbacksRef.current.onReady?.(message.sourceVersion);
+        callbacksRef.current.onNativeAgentState?.({
+          available: message.nativeAgentAvailable,
+          active: message.nativeAgentActive,
+        });
       } else if (message.schemaVersion === 'gev.embed.selection.v1') {
         callbacksRef.current.onSelectionChange?.(message.selection);
       } else if (message.schemaVersion === 'gev.embed.layer-state.v1') {
@@ -192,6 +217,17 @@ export default function GodsEyeSurface({
     return () => window.removeEventListener('message', receive);
   }, [resolved.url]);
 
+  useEffect(() => {
+    if (!ready || !focus || !resolved.url) return;
+    frameRef.current?.contentWindow?.postMessage({
+      schemaVersion: 'gev.embed.focus.v1',
+      projectId,
+      cardId,
+      id: focus.id,
+      position: focus.position,
+    }, resolved.url.origin);
+  }, [cardId, focus, projectId, ready, resolved.url]);
+
   if (resolved.error) {
     return <Unavailable title="God’s Eye embed rejected" detail={resolved.error} />;
   }
@@ -199,7 +235,7 @@ export default function GodsEyeSurface({
     return (
       <Unavailable
         title="God’s Eye embed unavailable"
-        detail="A providerless, isolated upstream build has not been connected."
+        detail="A supervised, isolated upstream build has not been connected."
       />
     );
   }
@@ -211,7 +247,7 @@ export default function GodsEyeSurface({
         src={resolved.url.toString()}
         title="God’s Eye WorldView globe"
         sandbox="allow-scripts allow-same-origin"
-        allow="fullscreen"
+        allow="fullscreen; microphone"
         referrerPolicy="no-referrer"
         style={styles.frame}
         onLoad={() => {
@@ -219,14 +255,14 @@ export default function GodsEyeSurface({
             schemaVersion: 'gev.embed.host-config.v1',
             projectId,
             cardId,
-            agentRuntime: 'host',
-            voiceEnabled: false,
+            parentRuntime: 'hermes',
+            nativeAgentPolicy: 'user-initiated',
           }, resolved.url?.origin || '*');
         }}
       />
       {!ready ? (
         <div style={styles.waiting} role="status">
-          Waiting for God’s Eye providerless embed handshake…
+          Waiting for God’s Eye supervised embed handshake…
         </div>
       ) : null}
     </section>

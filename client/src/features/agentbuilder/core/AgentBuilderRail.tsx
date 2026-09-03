@@ -12,6 +12,7 @@ type RailColors = {
 type RailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
+  showWorldview: boolean;
   showTrading: boolean;
 };
 
@@ -21,6 +22,7 @@ type AgentBuilderRailProps = {
   visibleRailItems: RailVisibility;
   moonOrb: ReactNode;
   onShowWorldsignalWorkspace: () => void;
+  onShowWorldviewWorkspace: () => void;
   onShowCanvasWorkspace: () => void;
   onQuickAddAssistNode: () => void;
   onShowKnowledgeWorkspace: () => void;
@@ -70,6 +72,7 @@ export default function AgentBuilderRail({
   visibleRailItems,
   moonOrb,
   onShowWorldsignalWorkspace,
+  onShowWorldviewWorkspace,
   onShowCanvasWorkspace,
   onQuickAddAssistNode,
   onShowKnowledgeWorkspace,
@@ -109,6 +112,19 @@ export default function AgentBuilderRail({
           >
             {moonOrb}
           </div>
+        </button>
+      ) : null}
+      {visibleRailItems.showWorldview ? (
+        <button
+          type="button"
+          title="WorldView"
+          aria-label="WorldView"
+          data-testid="rail-worldview-button"
+          onClick={onShowWorldviewWorkspace}
+          className="p-2 rounded"
+          style={{ color: workspaceView === 'worldview' ? colors.primary : colors.text }}
+        >
+          <Icon d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2c3 3 4.5 6.33 4.5 10S15 19 12 22M12 2c-3 3-4.5 6.33-4.5 10S9 19 12 22" />
         </button>
       ) : null}
       <button

@@ -141,6 +141,15 @@ Honcho during generic Run-start materialization. Card Save changes only desired 
 stale or unavailable subagent selection stays
 visible until an eligible Run either materializes it or fails honestly.
 
+When an ordinary saved Hermes Card first runs and its bound native profile does not yet exist, the
+same adapter asks Hermes' native profile manager to create it with the saved account-backed parent
+model and shared native authentication, then rereads it before inference. It never writes profile
+files or copies credentials. A non-empty saved Card skill selection is likewise materialized through
+native profile configuration: unselected non-essential installed skills are disabled, Hermes' one
+non-disableable operating skill remains, every selected skill must exist, and exact enabled-skill
+readback is required. Cards without an explicit skill selection preserve their existing native profile
+skill state.
+
 The host derives one opaque key from Project, conversation, and Card identity. Hermes stores that key
 in its existing native `sessions.session_key` field so an ACP restart recovers the exact session even
 when Main and Coder share the repository working directory. The key is routing identity only; it is
@@ -834,6 +843,22 @@ behavior. Exact files, contracts, proof, fork cost and rollback are recorded in
 
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.
+
+God's Eye View is a controlled presentation-subsystem fork of
+[`GodsEyeView-org/gods-eye-view`](https://github.com/GodsEyeView-org/gods-eye-view), imported as package
+version `0.1.0` from the reviewed source archive with SHA-256
+`506FE6510BE5EE2EE8D9772072BF1C30FC9E95C2DF32BACA37B4068F482741D7`. LiquidAIty composes the upstream
+Cesium application at an isolated loopback origin. The narrow divergence is limited to
+`src/main.js`, `src/embed/hostBridge.js`, and `src/data/localLayers.js`: an opt-in supervised embed
+handshake exposes bounded selection/layer state and Card-scoped evidence flight, preserves the native
+Realtime/voice agent as an explicitly user-started upstream capability, permits the existing keyless
+OSM fallback, and omits TeleGeography's CC BY-NC-SA cable layer from this distribution. It does not
+replace the upstream data manager, scene renderer, interaction system, scheduler, or voice lifecycle.
+Focused proof is `src/embed/hostBridge.test.mjs` plus the upstream production build. The generic embed
+bridge is a candidate upstream contribution; rollback removes the host-bridge import/installation and
+restores the cable registration only after a commercially compatible data license is established.
+The upstream application remains MIT, while each surfaced dataset retains its own license and
+attribution requirements.
 
 ## Known limitations
 

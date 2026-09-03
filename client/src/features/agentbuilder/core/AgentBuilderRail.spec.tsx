@@ -10,6 +10,7 @@ import AgentBuilderRail from './AgentBuilderRail';
 const baseVisibility = {
   showKnowledge: true,
   showWorldsignal: false,
+  showWorldview: false,
   showTrading: false,
 };
 
@@ -18,6 +19,7 @@ const baseProps = {
   workspaceView: 'canvas',
   moonOrb: null,
   onShowWorldsignalWorkspace: () => undefined,
+  onShowWorldviewWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
   onQuickAddAssistNode: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
@@ -127,6 +129,20 @@ describe('AgentBuilderRail product destinations', () => {
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
+    expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it('opens the connected WorldView app from its rail icon', () => {
+    const onOpen = vi.fn();
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        visibleRailItems={{ ...baseVisibility, showWorldview: true }}
+        onShowWorldviewWorkspace={onOpen}
+      />,
+    );
+    const button = host.querySelector('[data-testid="rail-worldview-button"]') as HTMLButtonElement;
+    act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(onOpen).toHaveBeenCalledOnce();
   });
 

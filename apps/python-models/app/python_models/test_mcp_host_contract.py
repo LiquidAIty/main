@@ -95,6 +95,83 @@ def test_caller_enforcement_reads_explicit_idd_permissions():
     assert mcp_host._enforce_tool_caller("cbm.search_graph", unrestricted) is None
 
 
+def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app.python_models import worldsignals_client
+
+    captured = {}
+
+    class _Package:
+        def model_dump_json(self):
+            return json.dumps({
+                "schemaVersion": "signal.package.v1",
+                "packageId": "signal-package:test",
+                "candidates": [],
+            })
+
+    def collect(**kwargs):
+        captured.update(kwargs)
+        return _Package()
+
+    monkeypatch.setattr(worldsignals_client, "collect_worldsignals_signal_package", collect)
+    context_token = mcp_host._ACTIVE_AUTHENTICATED_CONTEXT.set({
+        "projectId": "project-1",
+        "deckId": "deck-1",
+        "conversationId": "conversation-1",
+        "parentRunId": "run-1",
+        "mainCardId": "card-signal-analyst",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "principalKind": "card-runtime",
+        "grantedTools": ["worldsignals.package"],
+    })
+    try:
+        result = asyncio.run(mcp_host._dispatch_tool("worldsignals.package", {
+            "command": "get_summary",
+            "reason": "Inspect one bounded source result.",
+            "limit": 4,
+        }))
+    finally:
+        mcp_host._ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
+
+    payload = json.loads(result[0].text)
+    assert payload["packageId"] == "signal-package:test"
+    assert captured["project_id"] == "project-1"
+    assert captured["deck_id"] == "deck-1"
+    assert captured["requesting_card_id"] == "card-signal-analyst"
+    assert captured["requesting_run_id"] == "run-1"
+    assert captured["producer_card_id"] == "card-signal-analyst"
+    assert captured["producer_run_id"] == "run-1"
+
+
+def test_worldsignals_package_rejects_model_supplied_scope():
+    import asyncio
+    import mcp_host
+
+    context_token = mcp_host._ACTIVE_AUTHENTICATED_CONTEXT.set({
+        "projectId": "project-1",
+        "deckId": "deck-1",
+        "conversationId": "conversation-1",
+        "parentRunId": "run-1",
+        "mainCardId": "card-worldview",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "principalKind": "card-runtime",
+        "grantedTools": ["worldsignals.package"],
+    })
+    try:
+        result = asyncio.run(mcp_host._dispatch_tool("worldsignals.package", {
+            "command": "get_summary",
+            "reason": "Inspect one bounded source result.",
+            "projectId": "other-project",
+        }))
+    finally:
+        mcp_host._ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
+
+    assert json.loads(result[0].text)["error"] == "caller_identity_rejected: projectId"
+
+
 def test_graphiti_uses_knowgraph_openrouter_embedding_configuration(monkeypatch):
     import mcp_host
 

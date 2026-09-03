@@ -47,6 +47,24 @@ def test_worldsignals_batch_uses_the_native_command_contract():
     assert command["additionalProperties"] is False
 
 
+def test_worldsignals_package_exposes_query_only_and_requires_runtime_scope():
+    registry = build_default_tool_registry()
+    spec = registry.spec("worldsignals.package")
+    assert spec is not None
+    assert spec.access == "read"
+    assert set(spec.inputSchema["properties"]) == {
+        "command", "reason", "arguments", "domains", "sourceRefs",
+        "maxAgeSeconds", "limit",
+    }
+    assert spec.inputSchema["required"] == ["command", "reason"]
+    assert "projectId" not in spec.inputSchema["properties"]
+    with pytest.raises(RuntimeError, match="worldsignals_package_card_context_required"):
+        registry._adapters["worldsignals.package"](
+            command="get_summary",
+            reason="Read one bounded source result.",
+        )
+
+
 def test_duplicate_registry_identity_is_rejected():
     registry = ToolRegistry()
     spec = ToolSpec(

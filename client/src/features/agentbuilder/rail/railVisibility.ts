@@ -10,6 +10,7 @@ import type {
 import {
   normalizeDeckEdgeType,
 } from '../deck/deckPrimitives';
+import { readCardSubsystemAttachments } from '../deck/cardSubsystems';
 
 function isTradingAgentCard(card: AgentCardInstance | null | undefined): boolean {
   return card?.id === 'card_trading_workbench';
@@ -21,9 +22,17 @@ export function isWorldSignalsAgentCard(
   return card?.id === 'card_worldsignals_agent';
 }
 
+export function isWorldViewCard(
+  card: AgentCardInstance | null | undefined,
+): boolean {
+  return readCardSubsystemAttachments(card?.runtimeOptions)
+    .some((attachment) => attachment.id === 'gods-eye');
+}
+
 type ProgressiveRailVisibility = {
   showKnowledge: boolean;
   showWorldsignal: boolean;
+  showWorldview: boolean;
   showTrading: boolean;
 };
 
@@ -107,6 +116,9 @@ export function deriveVisibleRailItems({
     showWorldsignal:
       workspaceView === 'worldsignal' ||
       isBusConnectedCard(deck.nodes, deck.edges, isWorldSignalsAgentCard),
+    showWorldview:
+      workspaceView === 'worldview' ||
+      isBusConnectedCard(deck.nodes, deck.edges, isWorldViewCard),
     showTrading:
       workspaceView === 'trading' ||
       isBusConnectedCard(deck.nodes, deck.edges, isTradingAgentCard),

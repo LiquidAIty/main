@@ -34,6 +34,10 @@ import {
   type HermesProfileTarget,
 } from './profileDelegation';
 
+// Hermes itself makes this operating-manual skill non-disableable. It is a
+// native runtime prerequisite, not an additional saved Card capability.
+const NATIVE_ESSENTIAL_SKILL_NAMES = new Set(['hermes-agent']);
+
 export type HermesTurnUsage = {
   providerInputTokens: number | null;
   providerOutputTokens: number | null;
@@ -79,6 +83,8 @@ export type HermesRuntimeConfig = {
   disabledTools?: string[];
   mcpConnectionIds: string[];
   nativeTools?: string[];
+  /** Explicit non-empty saved Card skill grant to materialize into the native profile. */
+  skills?: string[];
   toolsets?: string[];
   nativeProfileToolsets?: string[];
   nativeProfileMcpServerNames?: string[];
@@ -1291,6 +1297,16 @@ type NativeParentModel = {
   model: string;
 };
 
+type CreateNativeProfile = (
+  profile: string,
+  selection: NativeParentModel,
+) => Promise<any>;
+
+type ConfigureNativeSkills = (
+  profile: string,
+  disabledSkills: string[],
+) => Promise<any>;
+
 function toNativeParentModel(args: HermesRuntimeConfig): NativeParentModel {
   return {
     provider: args.provider === 'openai' && args.accessMode === 'chatgpt-account'
@@ -1304,6 +1320,11 @@ function sameNativeParentModel(value: unknown, expected: NativeParentModel): boo
   const model = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return String(model.provider || '').trim() === expected.provider
     && String(model.default || '').trim() === expected.model;
+}
+
+function missingNativeProfile(error: unknown, profile: string): boolean {
+  return String(error instanceof Error ? error.message : error)
+    .includes(`profile '${profile}' not found`);
 }
 
 export async function materializeHermesProfileSelections(
@@ -1332,13 +1353,38 @@ export async function materializeHermesProfileSelections(
     provider: selection.provider,
     model: selection.model,
   }),
+  createNativeProfile: CreateNativeProfile = (profile, selection) => requestHermesNative(
+    'profiles.create',
+    {
+      name: profile,
+      description: 'Saved Card runtime profile',
+      provider: selection.provider,
+      model: selection.model,
+      mirror_credentials: true,
+      share_auth: true,
+    },
+  ),
+  configureNativeSkills: ConfigureNativeSkills = (profile, disabledSkills) => requestHermesNative(
+    'profiles.configure',
+    { name: profile, disabled_skills: disabledSkills },
+  ),
 ): Promise<HermesProfileMaterialization> {
   const profile = String(args.runtime.profile || '').trim();
-  let native = await readNativeProfile(profile);
+  const expectedParent = toNativeParentModel(args);
+  let native: any;
+  try {
+    native = await readNativeProfile(profile);
+  } catch (error) {
+    if (!missingNativeProfile(error, profile)) throw error;
+    const created = await createNativeProfile(profile, expectedParent);
+    if (created?.ok !== true || String(created?.name || '').trim() !== profile) {
+      throw new Error(`hermes_native_profile_create_failed:${profile}`);
+    }
+    native = await readNativeProfile(profile);
+  }
   if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
     throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
   }
-  const expectedParent = toNativeParentModel(args);
   if (!sameNativeParentModel(native.model, expectedParent)) {
     const configured = await configureNativeParentModel(profile, expectedParent);
     const applied = configured?.applied && typeof configured.applied === 'object'
@@ -1350,6 +1396,57 @@ export async function materializeHermesProfileSelections(
     native = await readNativeProfile(profile);
     if (!sameNativeParentModel(native?.model, expectedParent)) {
       throw new Error(`hermes_native_parent_model_readback_mismatch:${profile}`);
+    }
+  }
+  const selectedSkills = Array.isArray(args.skills)
+    ? [...new Set(args.skills.map((name) => String(name || '').trim()).filter(Boolean))]
+    : [];
+  if (selectedSkills.length > 0) {
+    const installedSkills = Array.isArray(native.skills)
+      ? native.skills
+        .map((skill: any) => String(skill?.name || '').trim())
+        .filter(Boolean)
+      : [];
+    const installedByKey = new Map(installedSkills.map((name: string) => [name.toLowerCase(), name]));
+    const missingSkills = selectedSkills.filter((name: string) => !installedByKey.has(name.toLowerCase()));
+    if (missingSkills.length > 0) {
+      throw new Error(`hermes_native_skill_missing:${profile}:${missingSkills.join(',')}`);
+    }
+    const selectedKeys = new Set(selectedSkills.map((name) => name.toLowerCase()));
+    const expectedEnabledKeys = new Set([
+      ...selectedKeys,
+      ...[...NATIVE_ESSENTIAL_SKILL_NAMES].filter((name) => installedByKey.has(name)),
+    ]);
+    const enabledKeys = new Set(
+      (Array.isArray(native.skills) ? native.skills : [])
+        .filter((skill: any) => skill?.enabled === true)
+        .map((skill: any) => String(skill?.name || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const disabledSkills = installedSkills.filter((name: string) => !selectedKeys.has(name.toLowerCase()));
+    const selectionMatches = enabledKeys.size === expectedEnabledKeys.size
+      && [...expectedEnabledKeys].every((name) => enabledKeys.has(name));
+    if (!selectionMatches) {
+      const configured = await configureNativeSkills(profile, disabledSkills);
+      const applied = configured?.applied && typeof configured.applied === 'object'
+        ? configured.applied as Record<string, unknown>
+        : {};
+      if (configured?.ok !== true || applied.skills !== true) {
+        throw new Error(`hermes_native_skills_apply_failed:${profile}`);
+      }
+      native = await readNativeProfile(profile);
+    }
+    const finalEnabledKeys = new Set(
+      (Array.isArray(native?.skills) ? native.skills : [])
+        .filter((skill: any) => skill?.enabled === true)
+        .map((skill: any) => String(skill?.name || '').trim().toLowerCase())
+        .filter(Boolean),
+    );
+    if (
+      finalEnabledKeys.size !== expectedEnabledKeys.size
+      || ![...expectedEnabledKeys].every((name) => finalEnabledKeys.has(name))
+    ) {
+      throw new Error(`hermes_native_skills_readback_mismatch:${profile}`);
     }
   }
   let effectiveSubagentModel = args.effectiveSubagentModel;
@@ -1424,6 +1521,21 @@ export async function startHermesTurnWithOnePrePromptRecovery(
     provider: selection.provider,
     model: selection.model,
   }),
+  createNativeProfile: CreateNativeProfile = (profile, selection) => requestHermesNative(
+    'profiles.create',
+    {
+      name: profile,
+      description: 'Saved Card runtime profile',
+      provider: selection.provider,
+      model: selection.model,
+      mirror_credentials: true,
+      share_auth: true,
+    },
+  ),
+  configureNativeSkills: ConfigureNativeSkills = (profile, disabledSkills) => requestHermesNative(
+    'profiles.configure',
+    { name: profile, disabled_skills: disabledSkills },
+  ),
 ): Promise<HermesTurnHandle> {
   const profile = String(args.runtime.profile || '').trim();
   const materialized = await materializeHermesProfileSelections(
@@ -1431,6 +1543,8 @@ export async function startHermesTurnWithOnePrePromptRecovery(
     readNativeProfile,
     configureNativeSubagentModel,
     configureNativeParentModel,
+    createNativeProfile,
+    configureNativeSkills,
   );
   const { native, effectiveSubagentModel } = materialized;
   const nativeArgs: HermesTurnArgs = {

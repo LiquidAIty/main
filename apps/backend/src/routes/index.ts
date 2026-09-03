@@ -13,6 +13,7 @@ import internalMainCliRoutes from './internalMainCli.routes';
 import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
+import worldviewRoutes from './worldview.routes';
 
 const router = Router();
 
@@ -35,5 +36,6 @@ router.use('/projects', authMiddleware, projectsRoutes);
 router.use('/projects', authMiddleware, decksRoutes);
 router.use('/hermes-profile', authMiddleware, hermesProfileRoutes);
 router.use('/trading', authMiddleware, tradingRoutes);
+router.use('/worldview', authMiddleware, worldviewRoutes);
 
 export default router;

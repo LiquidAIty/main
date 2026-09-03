@@ -22,10 +22,30 @@ export type CardRuntime =
 // (the old default) silently handed invocation authority to malformed data.
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
+export type CardSubsystemCapability =
+  | 'state'
+  | 'events'
+  | 'commands'
+  | 'artifacts'
+  | 'readiness';
+
+export type CardSubsystemAttachment = {
+  id: string;
+  label: string;
+  adapter: {
+    kind: 'python';
+    contractVersion: 'card-subsystem.v1';
+    capabilities: CardSubsystemCapability[];
+  };
+  cardTab: { enabled: boolean };
+  configurationSchema?: string | null;
+};
+
 export type AgentCardRuntimeOptions = {
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
+  subsystems?: CardSubsystemAttachment[] | null;
   script?: {
     enabled: boolean;
     source: string;

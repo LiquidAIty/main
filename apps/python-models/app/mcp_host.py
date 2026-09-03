@@ -3646,6 +3646,11 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "_builderOperation",
     },
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
+    "worldsignals.package": {
+        "command", "reason", "arguments", "domains", "sourceRefs",
+        "maxAgeSeconds", "limit", "projectId", "deckId", "_sourceCardId",
+        "_sourceRunId",
+    },
     "card.run_assistant_agent": {
         "action",
         "projectId",
@@ -3896,9 +3901,9 @@ async def _dispatch_tool(
                             and (args.get("runId") or args.get("projectWide") is True)):
                         continue
                     args[field] = str(context[field])
-            if name in {"write_mag_one_instructions", "card.load_graph_references"}:
+            if name in {"write_mag_one_instructions", "card.load_graph_references", "worldsignals.package"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
-            if name == "card.load_graph_references":
+            if name in {"card.load_graph_references", "worldsignals.package"}:
                 args["_sourceRunId"] = str(context["parentRunId"])
             if name.startswith("trading."):
                 args["_sourceRunId"] = str(context["parentRunId"])
@@ -4077,6 +4082,37 @@ async def _dispatch_tool(
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
+    if name == "worldsignals.package":
+        from app.python_models.worldsignals_client import collect_worldsignals_signal_package
+
+        try:
+            source_card_id = str(args.pop("_sourceCardId", "") or "").strip()
+            source_run_id = str(args.pop("_sourceRunId", "") or "").strip()
+            project_id = str(args.pop("projectId", "") or "").strip()
+            deck_id = str(args.pop("deckId", "") or "").strip()
+            if not all((source_card_id, source_run_id, project_id, deck_id)):
+                raise ValueError("worldsignals_package_card_context_required")
+            package = await asyncio.to_thread(
+                collect_worldsignals_signal_package,
+                command=str(args.get("command") or ""),
+                arguments=args.get("arguments") if isinstance(args.get("arguments"), dict) else {},
+                project_id=project_id,
+                deck_id=deck_id,
+                requesting_card_id=source_card_id,
+                requesting_run_id=source_run_id,
+                reason=str(args.get("reason") or ""),
+                producer_card_id=source_card_id,
+                producer_run_id=source_run_id,
+                domains=[str(value) for value in (args.get("domains") or [])],
+                source_refs=[str(value) for value in (args.get("sourceRefs") or [])],
+                max_age_seconds=args.get("maxAgeSeconds"),
+                limit=int(args.get("limit") or 25),
+            )
+            return [TextContent(type="text", text=package.model_dump_json())]
+        except Exception as error:
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False, "error": str(error),
+            }))]
     if name.startswith("trading."):
         from app.python_models.trading_runtime import (
             accept_trade_assignment,

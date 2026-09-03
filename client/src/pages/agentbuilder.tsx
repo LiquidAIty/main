@@ -16,6 +16,7 @@ import WorldSignalSurface, {
   type WorldSignalsLayerState,
 } from '../components/worldsignal/WorldSignalSurface';
 import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
+import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
@@ -91,6 +92,7 @@ import {
 } from '../features/agentbuilder/deck/deckDocument';
 import {
   deriveVisibleRailItems,
+  isWorldViewCard,
   isWorldSignalsAgentCard,
 } from '../features/agentbuilder/rail/railVisibility';
 import {
@@ -259,9 +261,11 @@ export default function AgentBuilder(): React.ReactElement {
     | 'knowledge'
     | 'trading'
     | 'worldsignal'
+    | 'worldview'
   >(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('workspace') === 'knowledge') return 'knowledge';
+    if (params.get('workspace') === 'worldview') return 'worldview';
     return params.get('projectId') ? 'canvas' : 'chat';
   });
   // Left-rail camera focus: carries a requested pan/zoom-to-fit to BuilderCanvas;
@@ -409,6 +413,17 @@ export default function AgentBuilder(): React.ReactElement {
   );
   const worldSignalsCardId = useMemo(
     () => deck.nodes.find((node) => isWorldSignalsAgentCard(node))?.id ?? null,
+    [deck.nodes],
+  );
+  const worldViewCard = useMemo(
+    () => deck.nodes.find((node) => isWorldViewCard(node)) || null,
+    [deck.nodes],
+  );
+  const signalAnalystCard = useMemo(
+    () => deck.nodes.find((node) => (
+      node.runtime.kind === 'hermes'
+      && node.runtime.profile === 'signal-analyst'
+    )) || null,
     [deck.nodes],
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
@@ -1761,6 +1776,8 @@ export default function AgentBuilder(): React.ReactElement {
             attachment={selectedCardSubsystem}
             readinessEndpoint={selectedCardSubsystem.id === 'lumibot'
               ? '/api/trading/readiness'
+              : selectedCardSubsystem.id === 'gods-eye'
+                ? '/api/worldview/readiness'
               : null}
           />;
         }
@@ -2508,6 +2525,18 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('worldsignal');
   }, [closeInspectorDrawer]);
 
+  const showWorldviewWorkspace = useCallback(() => {
+    closeInspectorDrawer();
+    setWorkspaceView('worldview');
+    const params = new URLSearchParams(window.location.search);
+    params.set('workspace', 'worldview');
+    window.history.replaceState(
+      {},
+      '',
+      `${window.location.pathname}?${params.toString()}`,
+    );
+  }, [closeInspectorDrawer]);
+
   const handleCompanionTabClick = useCallback((nextTab: string) => {
     setTab(nextTab);
   }, []);
@@ -2519,6 +2548,7 @@ export default function AgentBuilder(): React.ReactElement {
       visibleRailItems={visibleRailItems}
       moonOrb={<BuilderRailMoonOrb phase01={moonPhase01} />}
       onShowWorldsignalWorkspace={showWorldsignalWorkspace}
+      onShowWorldviewWorkspace={showWorldviewWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
       onQuickAddAssistNode={handleQuickAddAssistNode}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
@@ -2555,6 +2585,14 @@ export default function AgentBuilder(): React.ReactElement {
           onInspectorSectionRequest={handleWorldSignalInspectorRequest}
           onLayerStateChange={setWorldSignalLayerState}
           onBridgeChange={setWorldSignalBridge}
+        />
+      }
+      worldviewSurface={
+        <WorldViewSurface
+          projectId={canvasProjectId || null}
+          deckId={BUILDER_DECK_ID}
+          cardId={worldViewCard?.id || null}
+          analystCardId={signalAnalystCard?.id || null}
         />
       }
     />

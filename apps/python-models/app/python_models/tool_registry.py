@@ -52,6 +52,26 @@ async def _trading_context_required(**_arguments: Any) -> dict[str, Any]:
     raise RuntimeError("trading_card_context_required")
 
 
+def _worldsignals_package_context_required(
+    command: str,
+    reason: str,
+    arguments: dict[str, Any] | None = None,
+    domains: list[str] | None = None,
+    sourceRefs: list[str] | None = None,
+    maxAgeSeconds: int | None = None,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Typed packages require trusted Card/Run identity from the MCP host.
+
+    Keeping the public arguments in this callable preserves an accurate native
+    FunctionTool schema, while a direct AutoGen invocation fails closed instead
+    of accepting model-authored scope identifiers.
+    """
+
+    del command, reason, arguments, domains, sourceRefs, maxAgeSeconds, limit
+    raise RuntimeError("worldsignals_package_card_context_required")
+
+
 # One startup projection of effect/publication DATA, not a second dictionary or
 # saved grant owner. No Run reads the full builder dictionary. Native discovery
 # supplies actual schemas/availability; selection and authorization remain separate.
@@ -490,6 +510,50 @@ def build_default_tool_registry() -> ToolRegistry:
         ),
         (ToolSpec(name="worldsignals.poll", description="Poll completed command results and pending WorldSignals tasks.", enabled=True, access="read", inputSchema={"type": "object", "properties": {}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_poll),
         (ToolSpec(name="worldsignals.stream_events", description="Read a bounded set of real-time events from the WorldSignals SSE channel.", enabled=True, access="read", inputSchema={"type": "object", "properties": {"max_events": {"type": "integer", "minimum": 1, "maximum": 20, "default": 1}, "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15}}, "required": [], "additionalProperties": False}, outputSchema={"type": "object"}), worldsignals_stream_events),
+        (
+            ToolSpec(
+                name="worldsignals.package",
+                description=(
+                    "Run one live WorldSignals command only when its native manifest classifies it "
+                    "as read-only, then return one provenance-bound signal.package.v1 envelope. "
+                    "Project, deck, Card, and Run scope are injected by the authenticated runtime; "
+                    "the caller cannot supply or widen them."
+                ),
+                enabled=True,
+                access="read",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string", "minLength": 1},
+                        "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                        "arguments": {"type": "object"},
+                        "domains": {
+                            "type": "array", "maxItems": 16,
+                            "items": {"type": "string", "minLength": 1},
+                        },
+                        "sourceRefs": {
+                            "type": "array", "maxItems": 32,
+                            "items": {"type": "string", "minLength": 1},
+                        },
+                        "maxAgeSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 2592000},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25},
+                    },
+                    "required": ["command", "reason"],
+                    "additionalProperties": False,
+                },
+                outputSchema={
+                    "type": "object",
+                    "properties": {
+                        "schemaVersion": {"const": "signal.package.v1"},
+                        "packageId": {"type": "string"},
+                        "query": {"type": "object"},
+                        "candidates": {"type": "array", "maxItems": 100},
+                    },
+                    "required": ["schemaVersion", "packageId", "query", "candidates"],
+                },
+            ),
+            _worldsignals_package_context_required,
+        ),
     ]:
         registry.register(spec, adapter)
     registry.register(

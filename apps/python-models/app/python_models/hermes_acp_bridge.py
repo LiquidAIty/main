@@ -90,6 +90,7 @@ def _native_profile_scope_call(
 
 _NATIVE_MANAGER_METHODS = frozenset(
     {
+        "profiles.create",
         "profiles.describe",
         "profiles.configure",
         "learning.frames",
