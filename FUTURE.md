@@ -74,8 +74,11 @@ inside Graph Agent.
 - Keep Coder terminal as a revealable second face under Chat.
 - Explore distinct visual treatment for internal Hermes Cards versus AutoGen/Mag One Cards without
   creating new runtime types.
-- Explore a magnetic plus/X bus for Mag One composition only after saved topology and execution remain
-  stable.
+- Preserve the current bus layout for now: protected System 3 Cards above it, ordinary information/source/
+  processor/support Cards on one side, and sandboxed strategy Trading Cards on the other. Explore a
+  magnetic plus/X presentation later, with slim collapsed Cards and optional visual quadrants, only after
+  saved topology and execution remain stable. Position and quadrant must never imply Card type, grant,
+  edge direction, or execution authority.
 
 ## Data and trading
 

@@ -60,6 +60,8 @@ import {
 } from '../features/agentbuilder/state/agentBuilderOperation';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
+import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
+import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
@@ -79,6 +81,7 @@ import {
   BUILDER_DECK_ID,
   INITIAL_DECK,
 } from '../features/agentbuilder/deck/newProjectDeck';
+import { readCardSubsystemAttachments } from '../features/agentbuilder/deck/cardSubsystems';
 import {
   buildProjectlessDeckDocument,
   buildQuickAddAssistCard,
@@ -884,6 +887,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showDeckBuilder = workspaceView === 'canvas';
   const {
+    handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
     handleRenameSelectedCard,
     handleUpdateSelectedCardSubtext,
@@ -895,6 +899,10 @@ export default function AgentBuilder(): React.ReactElement {
     selectedCardId,
     setDeck,
   });
+  const tradingCard = useMemo(
+    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
+    [deck.nodes],
+  );
   const [agentBuilderMode, setAgentBuilderMode] = useState<AgentBuilderMode>('edit');
   const [agentBuilderTemplates, setAgentBuilderTemplates] = useState<AgentBuilderTemplateOption[]>([]);
   const [agentBuilderModels, setAgentBuilderModels] = useState<AgentBuilderModelOption[]>([]);
@@ -1527,9 +1535,19 @@ export default function AgentBuilder(): React.ReactElement {
     toStandaloneRunResult, transientCardGraphContext, transientCardInputs]);
 
   const builderTabs = useMemo(() => {
-    if (selectedCard) return [...BUILDER_NODE_TABS];
+    if (selectedCard) return [
+      ...BUILDER_NODE_TABS,
+      ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
+        .filter((attachment) => attachment.cardTab.enabled)
+        .map((attachment) => attachment.label),
+    ];
     return [...BUILDER_PROJECT_TABS];
   }, [selectedCard]);
+  const selectedCardSubsystem = useMemo(
+    () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
+      .find((attachment) => attachment.cardTab.enabled && attachment.label === tab) || null,
+    [selectedCard?.runtimeOptions, tab],
+  );
   const activeTabs = useMemo(() => {
     if (workspaceView === 'canvas') return builderTabs;
     return [];
@@ -1738,6 +1756,14 @@ export default function AgentBuilder(): React.ReactElement {
 
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
+        if (selectedCardSubsystem) {
+          return <CardSubsystemTab
+            attachment={selectedCardSubsystem}
+            readinessEndpoint={selectedCardSubsystem.id === 'lumibot'
+              ? '/api/trading/readiness'
+              : null}
+          />;
+        }
         if (
           tab === 'CLI' ||
           tab === 'Prompt' ||
@@ -1924,13 +1950,14 @@ export default function AgentBuilder(): React.ReactElement {
     activeProjectLatestRef.current = activeProject;
   }, [activeProject]);
 
-  const inspectorDrawerRole = useMemo<'agent' | 'worldsignal' | null>(() => {
+  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | null>(() => {
     if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
     // same drawer, same renderer, section requested by the vendor controls.
     if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
+    if (workspaceView === 'trading' && tradingCard) return 'trading';
     return null;
-  }, [canonicalDeckReady, selectedCard, workspaceView, worldSignalInspectorSection]);
+  }, [canonicalDeckReady, selectedCard, tradingCard, workspaceView, worldSignalInspectorSection]);
   const isInspectorDrawerVisible =
     inspectorDrawerRole === 'worldsignal'
       ? true
@@ -2469,33 +2496,12 @@ export default function AgentBuilder(): React.ReactElement {
   }, [closeInspectorDrawer]);
 
   const showTradingWorkspace = useCallback(() => {
-    closeInspectorDrawer();
+    // Hide the editor while the operational presentation is open, but preserve
+    // the Canvas selection. Returning to the Canvas therefore restores the
+    // same Card context instead of treating app navigation as a Card edit.
+    setInspectorDrawerOpen(false);
     setWorkspaceView('trading');
-  }, [closeInspectorDrawer]);
-
-  const tradingCard = useMemo(
-    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
-    [deck.nodes],
-  );
-
-  const handleTradingConfigurationChange = useCallback((configuration: Record<string, unknown>) => {
-    if (!tradingCard) return;
-    recordDeckWriteReason('trading-ui-configuration');
-    setDeck((current) => ({
-      ...current,
-      version: current.version + 1,
-      nodes: current.nodes.map((card) => card.id === tradingCard.id
-        ? {
-            ...card,
-            runtimeOptions: {
-              ...(card.runtimeOptions || {}),
-              configuration,
-            },
-          }
-        : card),
-    }));
-    setDeckStatusMessage('Trading risk settings saved to the Trading Card configuration.');
-  }, [recordDeckWriteReason, setDeck, setDeckStatusMessage, tradingCard]);
+  }, [setInspectorDrawerOpen]);
 
   const showWorldsignalWorkspace = useCallback(() => {
     closeInspectorDrawer();
@@ -2537,7 +2543,7 @@ export default function AgentBuilder(): React.ReactElement {
           projectId={canvasProjectId || null}
           deckId={BUILDER_DECK_ID}
           card={tradingCard}
-          onConfigurationChange={handleTradingConfigurationChange}
+          onInspectorRequest={() => setInspectorDrawerOpen(true)}
         />
       }
       worldsignalSurface={
@@ -2561,10 +2567,16 @@ export default function AgentBuilder(): React.ReactElement {
         title={
           inspectorDrawerRole === 'worldsignal'
             ? 'WorldSignals'
+            : inspectorDrawerRole === 'trading'
+              ? 'Trading settings'
             : safeText(selectedCard?.title || 'Agent')
         }
         onClose={
-          inspectorDrawerRole === 'worldsignal' ? closeWorldSignalInspector : closeInspectorDrawer
+          inspectorDrawerRole === 'worldsignal'
+            ? closeWorldSignalInspector
+            : inspectorDrawerRole === 'trading'
+              ? () => setInspectorDrawerOpen(false)
+              : closeInspectorDrawer
         }
         movable
         defaultWidth={inspectorDrawerDefaultWidth}
@@ -2573,6 +2585,8 @@ export default function AgentBuilder(): React.ReactElement {
         storageKey={
           inspectorDrawerRole === 'worldsignal'
             ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
+            : inspectorDrawerRole === 'trading'
+              ? 'card.drawer.inspector.trading.v1.width'
             : inspectorDrawerStorageKey
         }
         dataTestId="workspace-inspector-drawer"
@@ -2606,6 +2620,15 @@ export default function AgentBuilder(): React.ReactElement {
               );
             })}
           </div>
+        ) : null}
+        {inspectorDrawerRole === 'trading' && tradingCard ? (
+          <TradingUiInspectorPanel
+            configuration={tradingCard.runtimeOptions?.configuration || {}}
+            onSave={(configuration) => {
+              handleSaveCardConfiguration(tradingCard.id, configuration);
+              setDeckStatusMessage('Trading operational settings saved to the Card configuration.');
+            }}
+          />
         ) : null}
         {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
           <WorldSignalsInspectorPanel

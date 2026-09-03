@@ -54,29 +54,37 @@ def fake_backend(monkeypatch):
 
 def builder_target_authority(
     card_id="signals-card", deck_revision="rev1", *,
-    prompt="new prompt", tools=None, configuration=None,
+    prompt="new prompt", tools=None, configuration=None, script=None, subsystems=None,
     workspace_root="C:/Projects/agents",
 ):
+    optional = {
+        key: value for key, value in {
+            "configuration": configuration,
+            "script": script,
+            "subsystems": subsystems,
+        }.items() if value is not None
+    }
+    allowed_fields = sorted(["prompt", "tools", *optional])
     authority = {
         "caller_card_id": "builder-card",
         "target_card_id": card_id,
         "target_card_revision_id": f"revision:{card_id}",
         "target_deck_revision": deck_revision,
         "operation_mode": "edit",
-        "allowed_fields": ["configuration", "prompt", "tools"],
+        "allowed_fields": allowed_fields,
         "workspace_root": workspace_root,
     }
     authority["builder_operation"] = {
         "mode": "edit",
         "deckRevision": deck_revision,
         "workspaceRoot": workspace_root,
-        "allowedFields": ["configuration", "prompt", "tools"],
+        "allowedFields": allowed_fields,
         "templateId": "template_assist",
         "title": "WorldSignals" if card_id == "signals-card" else card_id,
         "role": "",
         "prompt": prompt,
         "tools": list(tools or []),
-        "configuration": dict(configuration or {}),
+        **optional,
         "targetCardId": card_id,
         "targetCardRevisionId": f"revision:{card_id}",
     }
@@ -516,6 +524,26 @@ class TestCardUpdateConfiguration:
         assert result["ok"] is True
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["runtimeOptions"]["configuration"] == configuration
+
+    def test_product_neutral_subsystem_attachment_persists_with_revision(self, fake_backend):
+        subsystems = [{
+            "id": "lumibot",
+            "label": "LumiBot",
+            "adapter": {
+                "kind": "python",
+                "contractVersion": "card-subsystem.v1",
+                "capabilities": ["state", "readiness"],
+            },
+            "cardTab": {"enabled": True},
+            "configurationSchema": "trading.card.v1",
+        }]
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {"subsystems": subsystems},
+        }, **builder_target_authority(subsystems=subsystems)))
+        assert result["ok"] is True
+        card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
+        assert card["runtimeOptions"]["subsystems"] == subsystems
 
     def test_prompt_and_tools_cannot_drift_from_the_run_operation(self, fake_backend):
         with pytest.raises(

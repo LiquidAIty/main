@@ -27,6 +27,7 @@ from app.python_models.tool_registry import (
 from pydantic import ValidationError
 from app.python_models.orchestration_contracts import DataAnchorReference, GraphHook
 from app.python_models.card_script import saved_script, script_presentation
+from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.idd import (
     IDD_PATH,
     load_input_data_dictionary,
@@ -106,7 +107,8 @@ _AGENT_BUILDER_VISION_HEADING = "## Agent Builder product vision"
 _AGENT_BUILDER_SOURCE_BYTE_LIMIT = 32_000
 _AGENT_BUILDER_OPERATION_FIELDS = frozenset({
     "mode", "expectedDeckRevision", "targetCardId", "targetCardRevisionId",
-    "templateId", "title", "role", "prompt", "tools", "configuration", "model",
+    "templateId", "title", "role", "prompt", "tools", "configuration", "script",
+    "subsystems", "model",
     "cbmProject",
 })
 _AGENT_BUILDER_CREATE_MODEL_FIELDS = (
@@ -480,6 +482,11 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
                 native_available=True,
             )
         except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
+    if "subsystems" in extensions:
+        try:
+            extensions["subsystems"] = normalize_card_subsystems(extensions["subsystems"])
+        except ValueError as error:
             raise CardDomainError(str(error)) from error
     stable = {
         "cardId": _required_text(card.get("id"), "card_id"),
@@ -1652,6 +1659,28 @@ def delete_card(
             )
             if cursor.fetchone() is not None:
                 raise CardDomainError("card_deletion_references_present:assignments")
+            cursor.execute(
+                """
+                SELECT 1 FROM ag_catalog.trading_jobs
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                LIMIT 1
+                """,
+                (project_id, deck_id, card_id),
+            )
+            if cursor.fetchone() is not None:
+                raise CardDomainError("card_deletion_references_present:trading_jobs")
+            cursor.execute(
+                """
+                SELECT 1 FROM ag_catalog.trading_lifecycle_runs
+                WHERE project_id=%s AND deck_id=%s AND card_id=%s
+                LIMIT 1
+                """,
+                (project_id, deck_id, card_id),
+            )
+            if cursor.fetchone() is not None:
+                raise CardDomainError(
+                    "card_deletion_references_present:trading_lifecycle_runs"
+                )
             if _card_has_telemetry_edges(cursor, project_id, deck_id, card_id):
                 raise CardDomainError("card_deletion_references_present:agentgraph")
 
@@ -1901,21 +1930,42 @@ def _agent_builder_operation(
         )
         if target_revision_id != target["cardRevisionId"]:
             raise CardDomainError("agent_builder_target_revision_stale")
-        configuration = operation.get("configuration", target["runtimeOptions"].get("configuration"))
-        if configuration is not None and not isinstance(configuration, dict):
-            raise CardDomainError("agent_builder_configuration_invalid")
+        allowed_fields = ["prompt", "tools"]
+        optional_updates: dict[str, Any] = {}
+        if "configuration" in operation:
+            configuration = operation["configuration"]
+            if not isinstance(configuration, dict):
+                raise CardDomainError("agent_builder_configuration_invalid")
+            allowed_fields.append("configuration")
+            optional_updates["configuration"] = dict(configuration)
+        if "script" in operation:
+            try:
+                optional_updates["script"] = saved_script(
+                    operation["script"], selected_tools=tools
+                )
+            except IddValidationError as error:
+                raise CardDomainError(str(error)) from error
+            allowed_fields.append("script")
+        if "subsystems" in operation:
+            try:
+                optional_updates["subsystems"] = normalize_card_subsystems(
+                    operation["subsystems"]
+                )
+            except ValueError as error:
+                raise CardDomainError(str(error)) from error
+            allowed_fields.append("subsystems")
         return ({
             "mode": "edit",
             "deckRevision": deck_revision,
             "workspaceRoot": workspace_root,
             "cbmProject": cbm_project,
-            "allowedFields": ["configuration", "prompt", "tools"],
+            "allowedFields": sorted(allowed_fields),
             "templateId": target["templateId"],
             "title": target["title"],
             "role": target["role"],
             "prompt": prompt,
             "tools": tools,
-            "configuration": dict(configuration or {}),
+            **optional_updates,
             "targetCardId": target["cardId"],
             "targetCardRevisionId": target["cardRevisionId"],
         }, target)

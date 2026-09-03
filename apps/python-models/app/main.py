@@ -45,6 +45,7 @@ from app.python_models.trading_runtime import (
     intervene_trade_job,
     lumibot_readiness,
     read_trading_state,
+    run_trading_lifecycle_proof,
 )
 
 app = FastAPI()
@@ -123,12 +124,20 @@ def trading_readiness():
 
 
 @app.get("/trading/state")
-def trading_state(projectId: str, deckId: str, cardId: str):
+def trading_state(
+    projectId: str,
+    deckId: str,
+    cardId: str,
+    timeframe: str = "5Min",
+    selectedJobId: str | None = None,
+):
     try:
         return read_trading_state(
             project_id=str(projectId or "").strip(),
             deck_id=str(deckId or "").strip(),
             card_id=str(cardId or "").strip(),
+            timeframe=str(timeframe or "").strip(),
+            selected_job_id=str(selectedJobId or "").strip() or None,
         )
     except TradingRuntimeError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
@@ -144,7 +153,22 @@ def trading_intervene(payload: dict[str, Any]):
             job_id=str(payload.get("jobId") or "").strip(),
             action=str(payload.get("action") or "").strip(),
             reason=str(payload.get("reason") or "").strip(),
-            actor="local-user",
+            actor=str(payload.get("actor") or "").strip(),
+        )
+    except TradingRuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/trading/lifecycle/backtest")
+def trading_lifecycle_backtest(payload: dict[str, Any]):
+    """Run one bounded local LumiBot lifecycle; no live broker is selectable."""
+    try:
+        return run_trading_lifecycle_proof(
+            project_id=str(payload.get("projectId") or "").strip(),
+            deck_id=str(payload.get("deckId") or "").strip(),
+            card_id=str(payload.get("cardId") or "").strip(),
+            idempotency_key=str(payload.get("idempotencyKey") or "").strip(),
+            actor=str(payload.get("actor") or "").strip(),
         )
     except TradingRuntimeError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err

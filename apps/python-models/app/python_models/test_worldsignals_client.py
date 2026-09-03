@@ -10,9 +10,63 @@ from app.python_models.worldsignals_client import (
     WORLDSIGNALS_RESTRICTED_COMMANDS,
     WorldSignalsClient,
     WorldSignalsError,
+    collect_worldsignals_signal_package,
     _guard_command,
     worldsignals_capabilities,
 )
+
+
+class _PackageClient:
+    def __init__(self, operation_class: str = "read") -> None:
+        self.operation_class = operation_class
+        self.commands: list[tuple[str, dict[str, object]]] = []
+
+    def command_operation_classes(self, commands: list[str]) -> list[str]:
+        return [self.operation_class for _command in commands]
+
+    def command(self, command: str, arguments: dict[str, object]) -> dict[str, object]:
+        self.commands.append((command, arguments))
+        return {"ok": True, "native": {"id": "source-result-1"}}
+
+
+def test_collect_signal_package_dispatches_one_manifest_verified_read() -> None:
+    client = _PackageClient()
+    package = collect_worldsignals_signal_package(
+        command="get_layer_slice",
+        arguments={"layer": "earthquakes"},
+        project_id="project-1",
+        deck_id="deck-1",
+        requesting_card_id="card-worldview",
+        requesting_run_id="run-worldview-1",
+        reason="Load a bounded layer slice for review.",
+        producer_card_id="card_worldsignals_agent",
+        producer_run_id="run-source-1",
+        domains=["geophysical"],
+        client=client,  # type: ignore[arg-type]
+        retrieved_at="2026-09-03T10:00:00+00:00",
+    )
+
+    assert client.commands == [("get_layer_slice", {"layer": "earthquakes"})]
+    assert package.producerCardId == "card_worldsignals_agent"
+    assert package.candidates[0].rawObservation["native"]["id"] == "source-result-1"
+
+
+def test_collect_signal_package_refuses_write_before_dispatch() -> None:
+    client = _PackageClient(operation_class="write")
+    with pytest.raises(WorldSignalsError, match="worldsignals_signal_query_requires_read_command"):
+        collect_worldsignals_signal_package(
+            command="create_watch",
+            arguments={"query": "bounded"},
+            project_id="project-1",
+            deck_id="deck-1",
+            requesting_card_id="card-worldview",
+            requesting_run_id="run-worldview-1",
+            reason="Attempt a read-only package.",
+            producer_card_id="card_worldsignals_agent",
+            producer_run_id="run-source-1",
+            client=client,  # type: ignore[arg-type]
+        )
+    assert client.commands == []
 
 
 def _fake_upstream(monkeypatch, *, tool_names: list[str]) -> None:

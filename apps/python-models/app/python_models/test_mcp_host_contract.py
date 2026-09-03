@@ -1557,7 +1557,9 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         update_properties = by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["properties"]
-        assert set(update_properties) == {"configuration", "prompt", "tools"}
+        assert set(update_properties) == {
+            "configuration", "prompt", "script", "subsystems", "tools",
+        }
         assert by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["minProperties"] == 1

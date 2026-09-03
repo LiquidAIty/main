@@ -393,6 +393,46 @@ One Hermes Card configures one native agent/profile; native subagents remain chi
 not newly saved Cards. Native prompt/model/tool/profile sections retain their native owners. Further
 section consolidation and aliases are deferred; existing non-Hermes saved bindings are preserved.
 
+### Card-managed subsystem attachments
+
+An ordinary saved Card may declare product-neutral `runtimeOptions.subsystems` entries. Each entry names
+one Python adapter contract, its bounded `state`, `events`, `commands`, `artifacts`, and `readiness`
+capabilities, an optional structured-configuration schema, and whether the subsystem's named Card tab is
+visible. The declaration is saved Card configuration; it does not start the subsystem, create an agent,
+grant a tool, or replace the subsystem's native lifecycle. Python rails validate the same
+`card-subsystem.v1` structure before a Card can run. Agent Builder may change an attachment only when the
+exact attachment value and field are present in the current Run's edit authority.
+
+| Surface | Owns |
+| --- | --- |
+| Card/IDF workspace | Agent identity, stable prompt, Hermes profile/model/runtime, tools, skills, memory policy, Team policy, graph context, dynamic mission, Script, wires, and presentation attachment |
+| Named subsystem Card tab | Native adapter contract, capabilities, readiness, lifecycle, and native-agent policy; never the end-user dashboard or another Card editor |
+| Agent UI | Live domain product: observations, dashboards, charts, evidence, artifacts, status, and authorized interventions |
+| Agent UI Inspector | Durable domain settings such as risk, cadence, chart density, broker references, and subsystem parameters; never the agent prompt, model, skills, or tools |
+
+The preferred composition is Python-first: saved Hermes Card -> one saved Card Script -> a bounded
+LiquidAIty Python adapter -> the repository's public Python API or public protocol. A JavaScript,
+TypeScript, Rust, or other subsystem remains compatible when its supported public HTTP, MCP, stdio, gRPC,
+or file/artifact contract is reached through that Python boundary. The adapter may supervise an existing
+agent system without flattening its workers into saved Cards. Any subsystem-owned model calls must be
+disabled unless they execute through the saved Card's account-backed Hermes authority; no end-user
+provider credential is introduced.
+
+Multiple Cards may use the same subsystem kind or the same connected Magentic-One support team. Their
+Card IDs, profiles, sessions, memory, configurations, Scripts, Runs, and subsystem state remain isolated.
+For Trading, this permits multiple sandboxed strategy Cards with different theses and risk envelopes to
+reuse ordinary source, processor, and support Cards. System 3 Cards remain protected and are not this
+support grouping. Paper results may be compared by a separate evaluator, but no result promotes a Card to
+live trading or changes broker authority.
+
+Trading lifecycle receipts are Python-owned deterministic results persisted under the saved Card and
+Card revision after both identities are reread from canonical Card storage. The database stores the fixed
+paper-only mode, normalized state/events, artifact metadata and completion/failure truth. The authenticated
+backend transports the initial snapshot, SSE reconciliation stream and fixed local-proof command; the UI
+does not manufacture broker or lifecycle activity. Runtime migrations intentionally do not add foreign-key
+authority from lifecycle tables into protected Card tables because the least-privilege runtime migrator
+does not own them. Canonical Card deletion performs the corresponding explicit inverse-reference check.
+
 Python Card Script source is retained in the existing Card runtime-extension field with version,
 source/compiled hashes, palette fingerprint, compiled bounds, validation state, native support and
 rollback identity. The same Monaco Python editor appears on every Card only in Agent Builder. It obtains

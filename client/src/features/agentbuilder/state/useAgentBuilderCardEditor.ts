@@ -193,6 +193,26 @@ export default function useAgentBuilderCardEditor({
     ],
   );
 
+  const handleSaveCardConfiguration = useCallback(
+    (cardId: string, configuration: Record<string, unknown>) => {
+      recordDeckWriteReason('card-subsystem-configuration');
+      setDeck((currentDeck) => ({
+        ...currentDeck,
+        version: currentDeck.version + 1,
+        nodes: currentDeck.nodes.map((node) => node.id === cardId
+          ? {
+              ...node,
+              runtimeOptions: normalizeRuntimeOptions({
+                ...(node.runtimeOptions || {}),
+                configuration,
+              }),
+            }
+          : node),
+      }));
+    },
+    [recordDeckWriteReason, setDeck],
+  );
+
   const handleUpdateSelectedCardSubtext = useCallback(
     (nextSubtext: string) => {
       if (!selectedCard) return;
@@ -221,6 +241,7 @@ export default function useAgentBuilderCardEditor({
   return {
     effectiveAgent,
     handleRenameSelectedCard,
+    handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
     handleUpdateSelectedCardSubtext,
     selectedCard,

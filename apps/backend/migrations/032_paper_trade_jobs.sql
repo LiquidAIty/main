@@ -7,8 +7,10 @@ CREATE TABLE IF NOT EXISTS ag_catalog.trading_jobs (
   project_id UUID NOT NULL,
   deck_id TEXT NOT NULL,
   card_id TEXT NOT NULL,
-  card_revision_id UUID NOT NULL
-    REFERENCES ag_catalog.agent_card_revisions(revision_id) ON DELETE RESTRICT,
+  -- The least-privilege application migrator cannot acquire REFERENCES on the
+  -- protected Card tables. Python validates this immutable identity before
+  -- every write, and explicit Card deletion performs the inverse reference audit.
+  card_revision_id UUID NOT NULL,
   source_run_id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   symbol TEXT NOT NULL,
@@ -28,9 +30,7 @@ CREATE TABLE IF NOT EXISTS ag_catalog.trading_jobs (
   realized_pnl_usd NUMERIC(20,4),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (project_id, deck_id, card_id, idempotency_key),
-  FOREIGN KEY (project_id, deck_id, card_id)
-    REFERENCES ag_catalog.agent_cards(project_id, deck_id, card_id) ON DELETE RESTRICT
+  UNIQUE (project_id, deck_id, card_id, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS trading_jobs_card_state_idx

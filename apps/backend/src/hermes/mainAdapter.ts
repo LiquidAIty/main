@@ -1286,6 +1286,26 @@ export type HermesProfileMaterialization = {
   effectiveSubagentModel?: HermesRuntimeConfig['effectiveSubagentModel'];
 };
 
+type NativeParentModel = {
+  provider: string;
+  model: string;
+};
+
+function toNativeParentModel(args: HermesRuntimeConfig): NativeParentModel {
+  return {
+    provider: args.provider === 'openai' && args.accessMode === 'chatgpt-account'
+      ? 'openai-codex'
+      : args.provider,
+    model: args.providerModelId,
+  };
+}
+
+function sameNativeParentModel(value: unknown, expected: NativeParentModel): boolean {
+  const model = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return String(model.provider || '').trim() === expected.provider
+    && String(model.default || '').trim() === expected.model;
+}
+
 export async function materializeHermesProfileSelections(
   args: HermesRuntimeConfig,
   readNativeProfile: (profile: string) => Promise<any> = (profile) => (
@@ -1304,11 +1324,33 @@ export async function materializeHermesProfileSelections(
       max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
     },
   }),
+  configureNativeParentModel: (
+    profile: string,
+    selection: NativeParentModel,
+  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
+    name: profile,
+    provider: selection.provider,
+    model: selection.model,
+  }),
 ): Promise<HermesProfileMaterialization> {
   const profile = String(args.runtime.profile || '').trim();
   let native = await readNativeProfile(profile);
   if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
     throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
+  }
+  const expectedParent = toNativeParentModel(args);
+  if (!sameNativeParentModel(native.model, expectedParent)) {
+    const configured = await configureNativeParentModel(profile, expectedParent);
+    const applied = configured?.applied && typeof configured.applied === 'object'
+      ? configured.applied as Record<string, unknown>
+      : {};
+    if (configured?.ok !== true || applied.model !== true) {
+      throw new Error(`hermes_native_parent_model_apply_failed:${profile}`);
+    }
+    native = await readNativeProfile(profile);
+    if (!sameNativeParentModel(native?.model, expectedParent)) {
+      throw new Error(`hermes_native_parent_model_readback_mismatch:${profile}`);
+    }
   }
   let effectiveSubagentModel = args.effectiveSubagentModel;
   if (args.subagentModel) {
@@ -1374,12 +1416,21 @@ export async function startHermesTurnWithOnePrePromptRecovery(
       max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
     },
   }),
+  configureNativeParentModel: (
+    profile: string,
+    selection: NativeParentModel,
+  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
+    name: profile,
+    provider: selection.provider,
+    model: selection.model,
+  }),
 ): Promise<HermesTurnHandle> {
   const profile = String(args.runtime.profile || '').trim();
   const materialized = await materializeHermesProfileSelections(
     args,
     readNativeProfile,
     configureNativeSubagentModel,
+    configureNativeParentModel,
   );
   const { native, effectiveSubagentModel } = materialized;
   const nativeArgs: HermesTurnArgs = {

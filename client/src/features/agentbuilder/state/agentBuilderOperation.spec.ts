@@ -46,6 +46,33 @@ describe('Agent Builder operation composer', () => {
     });
   });
 
+  it('binds optional Script, settings, and subsystem changes to the exact edit operation', () => {
+    const operation = buildAgentBuilderOperation({
+      mode: 'edit', target: selected, templateId: '', title: '', role: '',
+      prompt: 'New prompt', tools: [], model: null, deckRevision: 'deck-revision-one',
+      configuration: { schemaVersion: 'trading.card.v1' },
+      script: { enabled: false, source: '', version: 1 },
+      subsystems: [{
+        id: 'lumibot', label: 'LumiBot',
+        adapter: {
+          kind: 'python', contractVersion: 'card-subsystem.v1',
+          capabilities: ['state', 'readiness'],
+        },
+        cardTab: { enabled: true },
+      }],
+    });
+    expect(operation).toMatchObject({
+      configuration: { schemaVersion: 'trading.card.v1' },
+      script: { enabled: false, source: '', version: 1 },
+      subsystems: [{ id: 'lumibot', label: 'LumiBot' }],
+    });
+    expect(buildAgentBuilderProposal(operation, selected).changes).toMatchObject({
+      configuration: { from: null, to: { schemaVersion: 'trading.card.v1' } },
+      script: { from: null, to: { enabled: false, source: '', version: 1 } },
+      subsystems: { from: null, to: [{ id: 'lumibot', label: 'LumiBot' }] },
+    });
+  });
+
   it('builds a basic ordinary create operation and rejects system templates', () => {
     const model = {
       provider: 'openai', modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',

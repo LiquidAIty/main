@@ -22,6 +22,7 @@ tmp_*.log
 handoff/
 /runtime/run-inputs/
 /runtime/codex-models/
+/runtime/trading/
 /db/constellation/*.sqlite*
 /db/constellation/.*.mimir-runtime.json
 # Runtime copies of user-uploaded KnowGraph documents. The original user files

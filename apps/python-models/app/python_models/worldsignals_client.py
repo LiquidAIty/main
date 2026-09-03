@@ -13,6 +13,12 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.python_models.signal_contracts import (
+    SignalPackage,
+    build_signal_query,
+    package_native_signal_result,
+)
+
 
 class WorldSignalsError(RuntimeError):
     pass
@@ -357,3 +363,56 @@ def worldsignals_poll() -> dict[str, Any]:
 def worldsignals_stream_events(max_events: int = 1, timeout_seconds: int = 15) -> dict[str, Any]:
     """Read a bounded set of real-time events from the WorldSignals SSE channel."""
     return WorldSignalsClient().stream_events(max_events, timeout_seconds)
+
+
+def collect_worldsignals_signal_package(
+    *,
+    command: str,
+    arguments: dict[str, Any] | None,
+    project_id: str,
+    deck_id: str,
+    requesting_card_id: str,
+    requesting_run_id: str,
+    reason: str,
+    producer_card_id: str,
+    producer_run_id: str,
+    domains: list[str] | None = None,
+    source_refs: list[str] | None = None,
+    max_age_seconds: int | None = None,
+    limit: int = 25,
+    client: WorldSignalsClient | None = None,
+    retrieved_at: str | None = None,
+) -> SignalPackage:
+    """Collect one real read-only WorldSignals result as a typed signal package.
+
+    This is an internal Card-runtime seam, not a public tool: the trusted caller
+    must supply authenticated Card/Run identity. Before dispatch it reads the
+    live native manifest and refuses commands not explicitly classified read.
+    """
+
+    source_client = client or WorldSignalsClient()
+    query = build_signal_query(
+        project_id=project_id,
+        deck_id=deck_id,
+        requesting_card_id=requesting_card_id,
+        requesting_run_id=requesting_run_id,
+        reason=reason,
+        source_system="worldsignals",
+        command=command,
+        arguments=arguments,
+        domains=domains,
+        source_refs=source_refs,
+        max_age_seconds=max_age_seconds,
+        limit=limit,
+    )
+    operation_class = source_client.command_operation_classes([query.command])[0]
+    if operation_class != "read":
+        raise WorldSignalsError(f"worldsignals_signal_query_requires_read_command:{query.command}")
+    result = source_client.command(query.command, query.arguments)
+    return package_native_signal_result(
+        query=query,
+        producer_card_id=producer_card_id,
+        producer_run_id=producer_run_id,
+        result=result,
+        retrieved_at=retrieved_at,
+    )

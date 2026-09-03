@@ -80,6 +80,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "toolsets",
     "mcpConnectionIds",
     "configuration",
+    "subsystems",
 }
 _CAPABILITY_LIST_FIELDS = {
     "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
@@ -99,7 +100,10 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "providerModelId": "gpt-5.6-luna",
 }
 _AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
-_AGENT_BUILDER_EDIT_FIELDS = frozenset({"configuration", "prompt", "tools"})
+_AGENT_BUILDER_EDIT_FIELDS = frozenset({
+    "configuration", "prompt", "script", "subsystems", "tools",
+})
+_AGENT_BUILDER_REQUIRED_EDIT_FIELDS = frozenset({"prompt", "tools"})
 _AGENT_BUILDER_CREATE_FIELDS = frozenset({
     "templateId", "title", "role", "prompt", "runtime", "model", "tools",
 })
@@ -663,9 +667,11 @@ async def card_update_configuration(
     if operation_mode != "edit" or authorization.get("mode") != "edit":
         raise ControlPlaneError("agent_builder_edit_authority_required")
     authorized_fields = set(allowed_fields or [])
+    operation_fields = set(authorization.get("allowedFields") or [])
     if (
-        authorized_fields != _AGENT_BUILDER_EDIT_FIELDS
-        or set(authorization.get("allowedFields") or []) != _AGENT_BUILDER_EDIT_FIELDS
+        authorized_fields != operation_fields
+        or not _AGENT_BUILDER_REQUIRED_EDIT_FIELDS.issubset(authorized_fields)
+        or not authorized_fields.issubset(_AGENT_BUILDER_EDIT_FIELDS)
     ):
         raise ControlPlaneError("agent_builder_edit_fields_invalid")
     if (
@@ -711,6 +717,15 @@ async def card_update_configuration(
             )
     if "configuration" in updates and not isinstance(updates["configuration"], dict):
         raise ControlPlaneError("card_update_configuration_invalid")
+    if "subsystems" in updates:
+        from app.python_models.card_subsystem import normalize_card_subsystems
+        try:
+            updates = {
+                **updates,
+                "subsystems": normalize_card_subsystems(updates["subsystems"]),
+            }
+        except ValueError as error:
+            raise ControlPlaneError(str(error)) from error
     for field in updates:
         if updates[field] != authorization.get(field):
             raise ControlPlaneError("agent_builder_edit_request_mismatch")

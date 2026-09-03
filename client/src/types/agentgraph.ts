@@ -21,10 +21,33 @@ export type CardRuntime =
 // stays inert/visible, never silently promoted to a directional Call.
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
+export type CardSubsystemCapability =
+  | 'state'
+  | 'events'
+  | 'commands'
+  | 'artifacts'
+  | 'readiness';
+
+/** A saved, product-neutral attachment from one Card to a Python-managed
+ * subsystem. The subsystem keeps its native lifecycle; this declaration only
+ * exposes the bounded adapter contract and its named Card tab. */
+export type CardSubsystemAttachment = {
+  id: string;
+  label: string;
+  adapter: {
+    kind: 'python';
+    contractVersion: 'card-subsystem.v1';
+    capabilities: CardSubsystemCapability[];
+  };
+  cardTab: { enabled: boolean };
+  configurationSchema?: string | null;
+};
+
 export type AgentCardRuntimeOptions = {
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
+  subsystems?: CardSubsystemAttachment[] | null;
   script?: {
     enabled: boolean;
     source: string;

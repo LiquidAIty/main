@@ -411,6 +411,7 @@ describe('Hermes ACP transport identity', () => {
         },
         async () => ({
           name: 'liquidaity-main',
+          model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
           toolsets: [],
           mcp_servers: [],
         }),
@@ -494,6 +495,7 @@ describe('Hermes ACP transport identity', () => {
     const readNative = vi.fn()
       .mockResolvedValueOnce({
         name: 'liquidaity-main',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
         subagent_model: { provider: '', model: '' },
         background_review: { enabled: false, provider: 'auto', model: '' },
         toolsets: [],
@@ -501,6 +503,7 @@ describe('Hermes ACP transport identity', () => {
       })
       .mockResolvedValueOnce({
         name: 'liquidaity-main',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
         subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
         background_review: {
           enabled: true,
@@ -542,6 +545,54 @@ describe('Hermes ACP transport identity', () => {
       fallbackOccurred: false,
       fallbackReason: null,
     });
+  });
+
+  it('materializes the saved parent model before the first turn of a new Hermes Card profile', async () => {
+    const startTurn = vi.fn(async (args: any) => ({ args }));
+    const acquire = vi.fn(() => ({ startTurn }) as never);
+    const readNative = vi.fn()
+      .mockResolvedValueOnce({
+        name: 'trading',
+        model: { provider: '', default: '' },
+        subagent_model: { provider: '', model: '' },
+        background_review: { enabled: false, provider: 'auto', model: '' },
+        toolsets: [],
+        mcp_servers: [],
+      })
+      .mockResolvedValueOnce({
+        name: 'trading',
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        subagent_model: { provider: '', model: '' },
+        background_review: { enabled: false, provider: 'auto', model: '' },
+        toolsets: [],
+        mcp_servers: [],
+      });
+    const configureSubagent = vi.fn();
+    const configureParent = vi.fn(async () => ({ ok: true, applied: { model: true } }));
+
+    await startHermesTurnWithOnePrePromptRecovery(
+      {
+        ...providerFreeTurnArgs(0),
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'trading' },
+        provider: 'openai',
+        modelKey: 'gpt-5.6-luna',
+        providerModelId: 'gpt-5.6-luna',
+        accessMode: 'chatgpt-account',
+      },
+      () => undefined,
+      acquire,
+      readNative,
+      configureSubagent,
+      configureParent,
+    );
+
+    expect(configureParent).toHaveBeenCalledWith('trading', {
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+    });
+    expect(configureSubagent).not.toHaveBeenCalled();
+    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
   it('requires visible completion text from the Hermes loop', () => {

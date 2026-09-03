@@ -2474,8 +2474,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.update_configuration",
             description=(
-                "Update only the prompt, explicit MCP tools, and product-neutral structured "
-                "configuration of the one ordinary Card "
+                "Update only the exact prompt, explicit MCP tools, structured configuration, "
+                "saved Python Script, and product-neutral subsystem attachments authorized for "
+                "the one ordinary Card "
                 "selected by the current Agent Builder Run. The request must match that "
                 "run-issued target and field authority; every other field is rejected."
             ),
@@ -2499,6 +2500,21 @@ async def _materialize_complete_catalog() -> list[Tool]:
                                     "Structured Card settings already selected by the current "
                                     "Agent Builder operation; replaces no runtime identity."
                                 ),
+                            },
+                            "script": {
+                                "type": "object",
+                                "description": (
+                                    "Exact saved Card Python Script selected by the current "
+                                    "Agent Builder operation."
+                                ),
+                            },
+                            "subsystems": {
+                                "type": "array",
+                                "description": (
+                                    "Exact product-neutral Python subsystem attachments selected "
+                                    "by the current Agent Builder operation."
+                                ),
+                                "items": {"type": "object"},
                             },
                         },
                         "minProperties": 1,

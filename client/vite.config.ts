@@ -98,20 +98,6 @@ export default defineConfig(() => {
       port: 5173,
       strictPort: false,
       proxy: {
-        // Read-only Alpaca paper market data from the Python rails (port 8003),
-        // consumed by the /tradingui surface.
-        '/market': {
-          target: 'http://127.0.0.1:8003',
-          changeOrigin: true,
-          secure: false,
-        },
-        // Durable paper Trade Jobs and explicit local-user intervention. The
-        // Python boundary exposes no order-submission route.
-        '/trading': {
-          target: 'http://127.0.0.1:8003',
-          changeOrigin: true,
-          secure: false,
-        },
         // WorldSignals (vendored app, own FastAPI backend on :8000). Its client
         // calls `${API_BASE}/api/...`; the embed mount sets API_BASE to this
         // prefix, so its traffic lands here instead of on LiquidAIty's own /api

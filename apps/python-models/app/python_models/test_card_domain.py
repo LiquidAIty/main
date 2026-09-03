@@ -104,13 +104,12 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
         "deckRevision": "deck-revision-one",
         "workspaceRoot": "C:/Projects/agents",
         "cbmProject": None,
-        "allowedFields": ["configuration", "prompt", "tools"],
+        "allowedFields": ["prompt", "tools"],
         "templateId": "template_assist",
         "title": "Selected Assistant",
         "role": "Selected specialist",
         "prompt": "New prompt",
         "tools": ["web_search"],
-        "configuration": {},
         "targetCardId": "selected",
         "targetCardRevisionId": "revision-2",
     }
@@ -492,6 +491,8 @@ def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     assert deleted_cards == ["accidental"]
     assert connection.committed is True
     assert result["meta"]["deckRevision"] == "new-revision"
+    assert any("FROM ag_catalog.trading_jobs" in query for query, _ in statements)
+    assert any("FROM ag_catalog.trading_lifecycle_runs" in query for query, _ in statements)
     mutation_params = [params for query, params in statements if "DELETE FROM" in query]
     assert mutation_params == [
         ("project-one", "deck-one", "accidental"),

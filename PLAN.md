@@ -82,6 +82,15 @@ they do not select a runtime implementation.
   the Script's pre-registered wrapped handles for the current model iteration; a failure after any tool
   operation begins is terminal and cannot replay through the model. The active version/hash is immutable during a Run.
   AutoGen Cards retain the editor but cannot activate this Hermes-native execution path.
+- Ordinary saved Cards may declare validated product-neutral `card-subsystem.v1` attachments. A named
+  subsystem Card tab shows only the adapter contract, capabilities, readiness, lifecycle, and native-agent
+  policy. The Agent UI renders live domain work, its adjacent Inspector owns durable domain settings, and
+  the Card/IDF workspace continues to own agent configuration. The first source implementation attaches
+  LumiBot beneath `card_trading_workbench`; no second Trading Card, runtime, scheduler, or broker owner is created.
+- Agent Builder repository-backed construction starts with a bounded public-repository search and an
+  evidence comparison. It prefers an upstream public API/protocol and records keep/remove criteria before
+  code composition. Its exact edit operation can authorize prompt, tools, structured configuration, saved
+  Python Script, and subsystem attachments without widening runtime or model authority.
 - The Card Inspector has exactly five top-level surfaces: CLI, Prompt, Context, Tools, and Script. Prompt
   contains the existing prompt plus provider/model/runtime controls; Context contains the existing graph,
   memory, selected references, and native skills/learning controls. This is presentation consolidation,
@@ -126,6 +135,13 @@ they do not select a runtime implementation.
   Agent Builder Scripts must retain their normal prompts/profiles/grants, one real account-backed Luna
   turn must return the compact Script/native receipt, and blank/broken exact-selected MCP fallback must
   be observed without a catalog-wide leak.
+- The Trading reference now has canonical saved-deck reconciliation, loaded-process Card/profile/subsystem
+  readback, its preserved Magentic-One worker edge, and one authenticated local LumiBot lifecycle whose
+  snapshot, SSE events, replay candles and hashed artifacts render in the existing Agent UI. One native
+  account-backed Luna Card Run has now exercised the saved `trading` profile and read back its parent model,
+  assigned skill and holographic-memory availability without tools, Team, Magentic-One or subsystem execution.
+  A real Magentic-One invocation remains a separate explicitly approved proof. Alpaca reports explicit broker
+  unavailability; order submission and automatic strategy promotion remain blocked.
 - Direct Main routing and fail-open completion are live-proven. Actual Honcho recall/write success remains
   unavailable until the intended service and account credential/base URL are present.
 

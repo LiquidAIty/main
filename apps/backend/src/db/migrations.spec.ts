@@ -38,6 +38,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '030_card_script_run_receipt.sql', applied: true }),
       expect.objectContaining({ filename: '031_graph_agent_continuity.sql', applied: true }),
       expect.objectContaining({ filename: '032_paper_trade_jobs.sql', applied: true }),
+      expect.objectContaining({ filename: '033_trading_lifecycle_runs.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -75,7 +76,24 @@ describe('canonical backend migrations', () => {
     expect(source).toContain("execution_state = 'blocked_pending_separate_approval'");
     expect(source).toContain('execution_requested BOOLEAN NOT NULL DEFAULT FALSE');
     expect(source).toContain('CHECK (execution_requested = FALSE)');
-    expect(source).not.toMatch(/CREATE TABLE[^;]*orders/i);
+    expect(source).not.toContain('REFERENCES ag_catalog.agent_card_revisions');
+    expect(source).not.toContain('REFERENCES ag_catalog.agent_cards');
+    expect(source).not.toMatch(/CREATE TABLE(?: IF NOT EXISTS)?\s+\S*orders\b/i);
+  });
+
+  it('keeps bounded lifecycle proof structurally local, paper-only, and provider-free', async () => {
+    const source = await readFile(
+      resolve(process.cwd(), 'apps/backend/migrations/033_trading_lifecycle_runs.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("mode TEXT NOT NULL CHECK (mode = 'local_backtest')");
+    expect(source).toContain('paper_only BOOLEAN NOT NULL DEFAULT TRUE CHECK (paper_only = TRUE)');
+    expect(source).toContain('live_orders BOOLEAN NOT NULL DEFAULT FALSE CHECK (live_orders = FALSE)');
+    expect(source).toContain('model_provider_calls BOOLEAN NOT NULL DEFAULT FALSE');
+    expect(source).not.toContain('REFERENCES ag_catalog.agent_card_revisions');
+    expect(source).not.toContain('REFERENCES ag_catalog.agent_cards');
+    expect(source).not.toMatch(/CREATE TABLE(?: IF NOT EXISTS)?\s+\S*orders\b/i);
   });
 
   it('does not open backend readiness when migration application fails', async () => {

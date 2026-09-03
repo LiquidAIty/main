@@ -1,4 +1,8 @@
-import type { AgentCardInstance } from '../../../types/agentgraph';
+import type {
+  AgentCardInstance,
+  AgentCardRuntimeOptions,
+  CardSubsystemAttachment,
+} from '../../../types/agentgraph';
 
 export type AgentBuilderMode = 'create' | 'edit';
 
@@ -32,6 +36,9 @@ export type AgentBuilderOperation = {
   role?: string;
   prompt: string;
   tools: string[];
+  configuration?: Record<string, unknown>;
+  script?: NonNullable<AgentCardRuntimeOptions['script']>;
+  subsystems?: CardSubsystemAttachment[];
   model?: {
     provider: string;
     modelKey: string;
@@ -58,6 +65,18 @@ export type AgentBuilderProposal = {
   changes?: {
     prompt: { from: string; to: string };
     tools: { from: string[]; to: string[] };
+    configuration?: {
+      from: Record<string, unknown> | null;
+      to: Record<string, unknown>;
+    };
+    script?: {
+      from: AgentCardRuntimeOptions['script'];
+      to: NonNullable<AgentCardRuntimeOptions['script']>;
+    };
+    subsystems?: {
+      from: CardSubsystemAttachment[] | null;
+      to: CardSubsystemAttachment[];
+    };
   };
 };
 
@@ -152,6 +171,9 @@ export function buildAgentBuilderOperation(args: {
   model: AgentBuilderModelOption | null;
   deckRevision: string | null;
   cbmProject?: string;
+  configuration?: Record<string, unknown>;
+  script?: NonNullable<AgentCardRuntimeOptions['script']>;
+  subsystems?: CardSubsystemAttachment[];
 }): AgentBuilderOperation {
   const prompt = args.prompt.trim();
   if (!prompt) throw new Error('Agent prompt is required.');
@@ -170,6 +192,9 @@ export function buildAgentBuilderOperation(args: {
       targetCardRevisionId,
       prompt,
       tools,
+      ...(args.configuration ? { configuration: structuredClone(args.configuration) } : {}),
+      ...(args.script ? { script: structuredClone(args.script) } : {}),
+      ...(args.subsystems ? { subsystems: structuredClone(args.subsystems) } : {}),
       ...(cbmProject ? { cbmProject } : {}),
     };
   }
@@ -219,6 +244,18 @@ export function buildAgentBuilderProposal(
       changes: {
         prompt: { from: String(target.prompt || ''), to: operation.prompt },
         tools: { from: previousTools, to: operation.tools },
+        ...(operation.configuration ? { configuration: {
+          from: target.runtimeOptions?.configuration || null,
+          to: operation.configuration,
+        } } : {}),
+        ...(operation.script ? { script: {
+          from: target.runtimeOptions?.script || null,
+          to: operation.script,
+        } } : {}),
+        ...(operation.subsystems ? { subsystems: {
+          from: target.runtimeOptions?.subsystems || null,
+          to: operation.subsystems,
+        } } : {}),
       },
     };
   }
