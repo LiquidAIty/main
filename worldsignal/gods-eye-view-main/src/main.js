@@ -233,7 +233,12 @@ async function init() {
       dataManager.register(layer);
     }
     // Restoration starts only after the complete production registry is sealed.
-    dataManager.finalizeRegistrations(LAYER_STATE_REGISTRY);
+    // The distribution omits this licensed layer in localLayers.js. Keep its
+    // historical share token in the codec, but do not require a runtime module.
+    // All other registration mismatches still fail the native seal.
+    dataManager.finalizeRegistrations(
+      LAYER_STATE_REGISTRY.filter((entry) => entry.id !== 'telegeography-submarine-cables'),
+    );
     if (import.meta.env.DEV) {
       window.__gevQaRegisterLayer = (targetManager, layerModule) => {
         if (targetManager !== dataManager) throw new Error('QA layer manager mismatch');

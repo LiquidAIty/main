@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 
 import {
   projectSelection,
@@ -7,6 +9,29 @@ import {
   validFocusRequest,
   validHostConfig,
 } from './hostBridge.js';
+
+test('distribution startup seals native layers without deleting historical share tokens', async () => {
+  const { DataLayerManager } = await import('../data/manager.js');
+  const { LAYER_STATE_REGISTRY, decodeLayerStateParams } = await import('../data/layerState.js');
+  const source = await readFile(new URL('../main.js', import.meta.url), 'utf8');
+  const calls = [...source.matchAll(/^\s*dataManager\.finalizeRegistrations\([\s\S]*?\);/gm)];
+  assert.equal(calls.length, 1, 'exercise the actual startup call, not a copied registry adapter');
+  const available = LAYER_STATE_REGISTRY.filter((entry) => entry.id !== 'telegeography-submarine-cables');
+  const dataManager = new DataLayerManager({});
+  for (const entry of available) dataManager.register({ id: entry.id });
+  runInNewContext(calls[0][0], { dataManager, LAYER_STATE_REGISTRY });
+  assert.equal(dataManager.registrationsFinalized, true);
+
+  const incompleteManager = new DataLayerManager({});
+  for (const entry of available.filter((entry) => entry.id !== 'earthquakes')) {
+    incompleteManager.register({ id: entry.id });
+  }
+  assert.throws(() => runInNewContext(calls[0][0], {
+    dataManager: incompleteManager, LAYER_STATE_REGISTRY,
+  }), /Layer serialization registry mismatch/);
+  assert.deepEqual(decodeLayerStateParams(new URLSearchParams('v=2&l=u.e')).enabledLayerIds,
+    ['earthquakes', 'telegeography-submarine-cables']);
+});
 
 test('embed mode requires supervised host ownership and a loopback origin', () => {
   assert.deepEqual(

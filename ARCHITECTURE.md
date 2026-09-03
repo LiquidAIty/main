@@ -854,6 +854,9 @@ handshake exposes bounded selection/layer state and Card-scoped evidence flight,
 Realtime/voice agent as an explicitly user-started upstream capability, permits the existing keyless
 OSM fallback, and omits TeleGeography's CC BY-NC-SA cable layer from this distribution. It does not
 replace the upstream data manager, scene renderer, interaction system, scheduler, or voice lifecycle.
+The native startup seal receives the serialization registry minus only that omitted layer; the
+historical cable URL token remains readable in the unchanged codec. This repairs the distribution's
+registration mismatch without weakening the native manager's check for any other missing module.
 Focused proof is `src/embed/hostBridge.test.mjs` plus the upstream production build. The generic embed
 bridge is a candidate upstream contribution; rollback removes the host-bridge import/installation and
 restores the cable registration only after a commercially compatible data license is established.
