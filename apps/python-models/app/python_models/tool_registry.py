@@ -16,6 +16,7 @@ import asyncio
 import ast
 import operator
 import re
+import inspect
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -43,6 +44,12 @@ from app.python_models.worldsignals_client import (
     worldsignals_poll,
     worldsignals_stream_events,
 )
+
+
+async def _trading_context_required(**_arguments: Any) -> dict[str, Any]:
+    """Trading writes require the authenticated Card/Run identity from MCP."""
+
+    raise RuntimeError("trading_card_context_required")
 
 
 # One startup projection of effect/publication DATA, not a second dictionary or
@@ -411,6 +418,14 @@ class ToolRegistry:
             resolved.append(tool)
         return resolved
 
+    async def invoke(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Invoke one registered private-runtime adapter with its exact arguments."""
+
+        canonical_name = str(name or "").strip()
+        self.resolve_one(canonical_name)
+        value = self._adapters[canonical_name](**dict(arguments or {}))
+        return await value if inspect.isawaitable(value) else value
+
 
 def build_default_tool_registry() -> ToolRegistry:
     """The canonical runtime registry."""
@@ -677,6 +692,78 @@ def build_default_tool_registry() -> ToolRegistry:
             },
         ),
         get_paper_account_readiness_tool,
+    )
+    registry.register(
+        ToolSpec(
+            name="trading.get_state",
+            description=(
+                "Read this authenticated Trading Card's durable paper Trade Jobs, typed "
+                "decisions, evidence, execution-block state, and recorded portfolio outcomes."
+            ),
+            enabled=True,
+            access="read",
+            inputSchema={"type": "object", "properties": {}, "required": []},
+            outputSchema={"type": "object"},
+        ),
+        _trading_context_required,
+    )
+    registry.register(
+        ToolSpec(
+            name="trading.accept_assignment",
+            description=(
+                "Validate and persist one complete structured paper trade assignment as a "
+                "Trade Job. Missing execution terms fail closed. This never submits an order."
+            ),
+            enabled=True,
+            access="write",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plan": {"type": "object"},
+                    "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 160},
+                },
+                "required": ["plan", "idempotencyKey"],
+                "additionalProperties": False,
+            },
+            outputSchema={"type": "object"},
+        ),
+        _trading_context_required,
+    )
+    registry.register(
+        ToolSpec(
+            name="trading.record_decision",
+            description=(
+                "Journal one WAIT, ENTER, HOLD, REDUCE, EXIT, PAUSE, or FAIL_SAFE outcome "
+                "against a durable Trade Job with evidence. A decision is not an order and "
+                "executionRequested is always false."
+            ),
+            enabled=True,
+            access="write",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "jobId": {"type": "string", "format": "uuid"},
+                    "action": {"type": "string", "enum": [
+                        "WAIT", "ENTER", "HOLD", "REDUCE", "EXIT", "PAUSE", "FAIL_SAFE",
+                    ]},
+                    "rationale": {"type": "string", "minLength": 1, "maxLength": 8_000},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "evidence": {"type": "array", "maxItems": 64, "items": {"type": "object"}},
+                    "missingTerms": {
+                        "type": "array", "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 160},
+                },
+                "required": [
+                    "jobId", "action", "rationale", "confidence", "evidence",
+                    "missingTerms", "idempotencyKey",
+                ],
+                "additionalProperties": False,
+            },
+            outputSchema={"type": "object"},
+        ),
+        _trading_context_required,
     )
     return registry
 

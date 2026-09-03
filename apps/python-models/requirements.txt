@@ -17,6 +17,16 @@ python-multipart==0.0.32
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.3.4
+# Deterministic trading lifecycle/backtest machinery beneath Hermes Cards.
+# Stable PyPI release verified against the current Python 3.11 / MCP v1 graph.
+lumibot==4.4.56
+# Avoid an unsatisfiable newest-transitive pair: polygon 1.16.3 requires
+# certifi<2026 while ccxt 4.5.77 pins certifi==2026.6.17. This is the newest
+# inspected ccxt release whose supported certifi range overlaps polygon's.
+polygon-api-client==1.16.3
+ccxt==4.5.64
+# Bound resolver search across Databento's paired Python/native releases.
+databento==0.86.0
 # LiquidAIty owns the checked-in AutoGen 0.7.5 execution fork. These editable
 # installs are the only authoritative AutoGen distributions for Python rails;
 # there is no wheel fallback or runtime sys.path substitution.

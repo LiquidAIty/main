@@ -70,7 +70,7 @@ describe('agentbuilder authoring flow', () => {
       { kind: 'autogen', mode: 'magentic_one' },
       { kind: 'hermes', mode: 'delegate', profile: 'coder' },
       { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
-      { kind: 'autogen', mode: 'assistant' },
+      { kind: 'hermes', mode: 'delegate', profile: 'trading' },
       { kind: 'autogen', mode: 'assistant' },
     ]);
     expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
@@ -90,6 +90,9 @@ describe('agentbuilder authoring flow', () => {
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_trading_workbench', edgeType: 'flow' },
+      { source: 'card_hermes_steward', target: 'card_trading_workbench', edgeType: 'flow' },
+      { source: 'card_trading_workbench', target: 'card_worldsignals_agent', edgeType: 'flow' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',
@@ -101,8 +104,8 @@ describe('agentbuilder authoring flow', () => {
         edgeType: 'magentic_option',
       },
       {
-        source: 'card_trading_workbench',
-        target: 'card_magentic',
+        source: 'card_magentic',
+        target: 'card_trading_workbench',
         edgeType: 'magentic_option',
       },
       {

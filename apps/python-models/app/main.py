@@ -40,6 +40,12 @@ from app.python_models.idd import (
 )
 from app.python_models.orchestration_contracts import StoredRuntimeRequest
 from app.python_models.tool_registry import tool_manifest, materialize_tool_catalog
+from app.python_models.trading_runtime import (
+    TradingRuntimeError,
+    intervene_trade_job,
+    lumibot_readiness,
+    read_trading_state,
+)
 
 app = FastAPI()
 
@@ -103,6 +109,45 @@ def market_bars(
 def market_paper_account_readiness():
     """Alpaca paper account availability/status only. No balances, positions, or orders."""
     return get_paper_account_readiness().to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Durable paper Trade Jobs. These routes expose observation and explicit user
+# intervention only; no route can submit or authorize an order.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/trading/readiness")
+def trading_readiness():
+    return lumibot_readiness()
+
+
+@app.get("/trading/state")
+def trading_state(projectId: str, deckId: str, cardId: str):
+    try:
+        return read_trading_state(
+            project_id=str(projectId or "").strip(),
+            deck_id=str(deckId or "").strip(),
+            card_id=str(cardId or "").strip(),
+        )
+    except TradingRuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/trading/intervene")
+def trading_intervene(payload: dict[str, Any]):
+    try:
+        return intervene_trade_job(
+            project_id=str(payload.get("projectId") or "").strip(),
+            deck_id=str(payload.get("deckId") or "").strip(),
+            card_id=str(payload.get("cardId") or "").strip(),
+            job_id=str(payload.get("jobId") or "").strip(),
+            action=str(payload.get("action") or "").strip(),
+            reason=str(payload.get("reason") or "").strip(),
+            actor="local-user",
+        )
+    except TradingRuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
 
 
 @app.get("/tools/manifest")

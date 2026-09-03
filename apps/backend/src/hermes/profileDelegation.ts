@@ -122,7 +122,6 @@ export async function runHermesProfileDelegation(
     || targetRecord?.enabled === false
     || sourceOptions?.enabled === false
     || targetOptions?.enabled === false
-    || currentTarget.parentGraphId
     || !currentEdge
     || !targetRuntimeMatches
   ) {

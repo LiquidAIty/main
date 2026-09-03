@@ -23,6 +23,9 @@ export type CardRuntime =
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type AgentCardRuntimeOptions = {
+  /** Product-neutral, Card-owned structured settings consumed by the bound
+   * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
+  configuration?: Record<string, unknown> | null;
   script?: {
     enabled: boolean;
     source: string;

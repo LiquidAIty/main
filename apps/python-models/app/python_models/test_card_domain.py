@@ -104,12 +104,13 @@ def test_agent_builder_run_resolves_one_exact_non_system_card_target(monkeypatch
         "deckRevision": "deck-revision-one",
         "workspaceRoot": "C:/Projects/agents",
         "cbmProject": None,
-        "allowedFields": ["prompt", "tools"],
+        "allowedFields": ["configuration", "prompt", "tools"],
         "templateId": "template_assist",
         "title": "Selected Assistant",
         "role": "Selected specialist",
         "prompt": "New prompt",
         "tools": ["web_search"],
+        "configuration": {},
         "targetCardId": "selected",
         "targetCardRevisionId": "revision-2",
     }
@@ -518,7 +519,7 @@ def test_card_deletion_telemetry_check_uses_typed_agentgraph_endpoints(
     assert all(":Run" in statement or ":Card" in statement for statement in statements)
 
 
-def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
+def test_direct_card_targets_allow_presentation_attached_hermes_workers() -> None:
     cards = {
         "parent": _agent("parent"),
         "enabled": _agent(
@@ -529,7 +530,11 @@ def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
             "disabled-option",
             runtimeOptions={**_agent("x")["runtimeOptions"], "enabled": False},
         ),
-        "nested": _agent("nested", parentGraphId="nested-graph"),
+        "presentation-attached": _agent(
+            "presentation-attached",
+            parentGraphId="workbench-trading",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "trading"},
+        ),
         "orchestrator": _agent(
             "orchestrator", runtime={"kind": "autogen", "mode": "magentic_one"}
         ),
@@ -537,15 +542,22 @@ def test_direct_card_targets_keep_only_enabled_top_level_flow_targets() -> None:
     edges = [
         {"source": "parent", "target": "enabled", "edgeType": "flow"},
         {"source": "parent", "target": "disabled-option", "edgeType": "flow"},
-        {"source": "parent", "target": "nested", "edgeType": "flow"},
+        {"source": "parent", "target": "presentation-attached", "edgeType": "flow"},
         {"source": "parent", "target": "orchestrator", "edgeType": "flow"},
         {"source": "enabled", "target": "parent", "edgeType": "flow"},
         {"source": "parent", "target": "enabled", "edgeType": "magentic_option"},
         {"source": "parent", "target": "enabled", "edgeType": "flow", "enabled": False},
     ]
-    assert card_domain._direct_card_targets("parent", cards, edges) == [{
-        **_expected_delegate("enabled"), "cardRevisionId": "",
-    }]
+    assert card_domain._direct_card_targets("parent", cards, edges) == [
+        {**_expected_delegate("enabled"), "cardRevisionId": ""},
+        {
+            "cardId": "presentation-attached",
+            "title": "presentation-attached",
+            "profile": "trading",
+            "description": "",
+            "cardRevisionId": "",
+        },
+    ]
 
 
 def _delegation_invocation(

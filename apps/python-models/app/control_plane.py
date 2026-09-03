@@ -79,6 +79,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "skills",
     "toolsets",
     "mcpConnectionIds",
+    "configuration",
 }
 _CAPABILITY_LIST_FIELDS = {
     "tools", "nativeTools", "skills", "toolsets", "mcpConnectionIds",
@@ -98,7 +99,7 @@ _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "providerModelId": "gpt-5.6-luna",
 }
 _AGENT_BUILDER_PROFILE = "liquidaity-agent-builder"
-_AGENT_BUILDER_EDIT_FIELDS = frozenset({"prompt", "tools"})
+_AGENT_BUILDER_EDIT_FIELDS = frozenset({"configuration", "prompt", "tools"})
 _AGENT_BUILDER_CREATE_FIELDS = frozenset({
     "templateId", "title", "role", "prompt", "runtime", "model", "tools",
 })
@@ -708,6 +709,8 @@ async def card_update_configuration(
             raise ControlPlaneError(
                 f"card_update_tool_unavailable:{invalid_tools[0]}"
             )
+    if "configuration" in updates and not isinstance(updates["configuration"], dict):
+        raise ControlPlaneError("card_update_configuration_invalid")
     for field in updates:
         if updates[field] != authorization.get(field):
             raise ControlPlaneError("agent_builder_edit_request_mismatch")

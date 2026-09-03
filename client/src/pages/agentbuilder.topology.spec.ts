@@ -88,12 +88,15 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
   });
 
-  it('uses wires only as explicit help authority and gives Graph Agent no outward flow', () => {
+  it('uses wires as explicit help authority and permits the bounded Trading handoff path', () => {
     expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_trading_workbench', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_hermes_steward', target: 'card_trading_workbench', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_trading_workbench', target: 'card_worldsignals_agent', edgeType: 'flow' }),
     ]));
-    expect(INITIAL_DECK.edges).toHaveLength(6);
+    expect(INITIAL_DECK.edges).toHaveLength(9);
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_local_coder', edgeType: 'flow',
     }));
@@ -102,9 +105,6 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
-    }));
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_hermes_steward', edgeType: 'flow',
     }));
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });

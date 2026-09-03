@@ -88,8 +88,10 @@ def _startup_source_identity() -> tuple[str, str]:
 
 from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
+    DEFAULT_TOOL_REGISTRY,
     external_mcp_tool_ids,
     readable_tool_ids,
+    tool_manifest,
     tool_publication,
     tool_access,
 )
@@ -2472,7 +2474,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.update_configuration",
             description=(
-                "Update only the prompt and explicit MCP tools of the one ordinary Card "
+                "Update only the prompt, explicit MCP tools, and product-neutral structured "
+                "configuration of the one ordinary Card "
                 "selected by the current Agent Builder Run. The request must match that "
                 "run-issued target and field authority; every other field is rejected."
             ),
@@ -2489,6 +2492,13 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "tools": {
                                 "type": "array",
                                 "items": {"type": "string", "minLength": 1},
+                            },
+                            "configuration": {
+                                "type": "object",
+                                "description": (
+                                    "Structured Card settings already selected by the current "
+                                    "Agent Builder operation; replaces no runtime identity."
+                                ),
                             },
                         },
                         "minProperties": 1,
@@ -3415,6 +3425,32 @@ def _http_catalog_or_error() -> list[Tool]:
     return list(tools)
 
 
+def _private_runtime_catalog(public_tools: list[Tool]) -> list[Tool]:
+    """Project registry-owned tools only for authenticated internal Card runs."""
+
+    existing_names = {tool.name for tool in public_tools}
+    tools: list[Tool] = []
+    for descriptor in tool_manifest():
+        name = str(descriptor.get("name") or "").strip()
+        if (
+            not name
+            or name in existing_names
+            or tool_publication(name) != "private-runtime"
+        ):
+            continue
+        tool = Tool(
+            name=name,
+            description=str(descriptor.get("description") or name),
+            inputSchema=copy.deepcopy(descriptor.get("inputSchema") or {
+                "type": "object", "properties": {}, "required": [],
+            }),
+        )
+        tool.inputSchema.setdefault("additionalProperties", False)
+        tools.append(_bind_idd_access(_bind_repo_tool_source(tool)))
+        existing_names.add(name)
+    return tools
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """Return no HTTP catalog until the one complete frozen catalog is ready."""
@@ -3430,6 +3466,7 @@ async def list_tools() -> list[Tool]:
             return [tool for tool in tools if tool.name in readable]
         if principal.get("kind") == "system-root":
             return [tool for tool in tools if tool.name == "card.run_assistant_agent"]
+        tools = [*tools, *_private_runtime_catalog(tools)]
         grants = principal.get("presentedTools")
         if not isinstance(grants, list):
             grants = principal.get("grantedTools")
@@ -3676,6 +3713,20 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
 }
 
+for _runtime_descriptor in tool_manifest():
+    _runtime_name = str(_runtime_descriptor.get("name") or "").strip()
+    _runtime_schema = _runtime_descriptor.get("inputSchema")
+    _runtime_properties = (
+        _runtime_schema.get("properties")
+        if isinstance(_runtime_schema, dict) else None
+    )
+    if _runtime_name and isinstance(_runtime_properties, dict):
+        _ALLOWED_KEYS.setdefault(_runtime_name, set(_runtime_properties))
+for _trading_name in (
+    "trading.get_state", "trading.accept_assignment", "trading.record_decision",
+):
+    _ALLOWED_KEYS[_trading_name].update({"projectId", "deckId", "_sourceRunId"})
+
 _BRIDGE_PATHS: dict[str, str] = {
     "mag_one.describe_connected_agents": "describe_connected_agents",
 }
@@ -3832,6 +3883,8 @@ async def _dispatch_tool(
             if name in {"write_mag_one_instructions", "card.load_graph_references"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
             if name == "card.load_graph_references":
+                args["_sourceRunId"] = str(context["parentRunId"])
+            if name.startswith("trading."):
                 args["_sourceRunId"] = str(context["parentRunId"])
             if "senderAgentId" in allowed:
                 args["senderAgentId"] = str(context["mainCardId"])
@@ -4008,6 +4061,48 @@ async def _dispatch_tool(
             max_results=int(args.get("max_results") or 5),
         )
         return [TextContent(type="text", text=result)]
+    if name.startswith("trading."):
+        from app.python_models.trading_runtime import (
+            accept_trade_assignment,
+            read_trading_state,
+            record_trade_decision,
+        )
+
+        try:
+            source_run_id = str(args.pop("_sourceRunId", "") or "")
+            common = {
+                "project_id": str(args.pop("projectId", "") or ""),
+                "deck_id": str(args.pop("deckId", "") or ""),
+                "card_id": caller_card_id,
+            }
+            if name == "trading.get_state":
+                result = await asyncio.to_thread(read_trading_state, **common)
+            elif name == "trading.accept_assignment":
+                result = await asyncio.to_thread(
+                    accept_trade_assignment,
+                    **common,
+                    source_run_id=source_run_id,
+                    plan=args["plan"],
+                    idempotency_key=str(args["idempotencyKey"]),
+                )
+            else:
+                result = await asyncio.to_thread(
+                    record_trade_decision,
+                    **common,
+                    source_run_id=source_run_id,
+                    job_id=str(args["jobId"]),
+                    action=str(args["action"]),
+                    rationale=str(args["rationale"]),
+                    confidence=args["confidence"],
+                    evidence=args["evidence"],
+                    missing_terms=args["missingTerms"],
+                    idempotency_key=str(args["idempotencyKey"]),
+                )
+            return [TextContent(type="text", text=json.dumps(result, default=str))]
+        except Exception as error:
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False, "error": str(error),
+            }))]
     handler_name = _CONTROL_HANDLER_NAMES.get(name)
     if handler_name is not None:
         from app import control_plane
@@ -4050,6 +4145,14 @@ async def _dispatch_tool(
             return [TextContent(type="text", text=json.dumps(result))]
         except control_plane.ControlPlaneError as err:
             return [TextContent(type="text", text=json.dumps({"ok": False, "error": str(err)}))]
+    if DEFAULT_TOOL_REGISTRY.spec(name) is not None:
+        try:
+            result = await DEFAULT_TOOL_REGISTRY.invoke(name, args)
+            return [TextContent(type="text", text=json.dumps(result, default=str))]
+        except Exception as error:
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False, "error": str(error),
+            }))]
     return await _bridge(_BRIDGE_PATHS[name], args)
 
 

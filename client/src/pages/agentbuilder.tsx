@@ -1024,8 +1024,10 @@ export default function AgentBuilder(): React.ReactElement {
         cardId: card.id,
         title: card.title,
         ready: card.status !== 'error'
-          && card.runtime.kind === 'autogen'
-          && card.runtime.mode === 'assistant'
+          && (
+            (card.runtime.kind === 'autogen' && card.runtime.mode === 'assistant')
+            || (card.runtime.kind === 'hermes' && card.runtime.mode === 'delegate')
+          )
           && Boolean(card.runtimeOptions?.provider)
           && Boolean(card.runtimeOptions?.modelKey),
         provider: card.runtimeOptions?.provider || null,
@@ -2471,6 +2473,30 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('trading');
   }, [closeInspectorDrawer]);
 
+  const tradingCard = useMemo(
+    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
+    [deck.nodes],
+  );
+
+  const handleTradingConfigurationChange = useCallback((configuration: Record<string, unknown>) => {
+    if (!tradingCard) return;
+    recordDeckWriteReason('trading-ui-configuration');
+    setDeck((current) => ({
+      ...current,
+      version: current.version + 1,
+      nodes: current.nodes.map((card) => card.id === tradingCard.id
+        ? {
+            ...card,
+            runtimeOptions: {
+              ...(card.runtimeOptions || {}),
+              configuration,
+            },
+          }
+        : card),
+    }));
+    setDeckStatusMessage('Trading risk settings saved to the Trading Card configuration.');
+  }, [recordDeckWriteReason, setDeck, setDeckStatusMessage, tradingCard]);
+
   const showWorldsignalWorkspace = useCallback(() => {
     closeInspectorDrawer();
     setWorkspaceView('worldsignal');
@@ -2505,7 +2531,15 @@ export default function AgentBuilder(): React.ReactElement {
           surfaceRole: 'companion',
         })
       }
-      tradingSurface={<TradingUI symbol="RDW" />}
+      tradingSurface={
+        <TradingUI
+          symbol="RDW"
+          projectId={canvasProjectId || null}
+          deckId={BUILDER_DECK_ID}
+          card={tradingCard}
+          onConfigurationChange={handleTradingConfigurationChange}
+        />
+      }
       worldsignalSurface={
         <WorldSignalSurface
           projectId={

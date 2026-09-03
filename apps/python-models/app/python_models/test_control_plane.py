@@ -54,7 +54,8 @@ def fake_backend(monkeypatch):
 
 def builder_target_authority(
     card_id="signals-card", deck_revision="rev1", *,
-    prompt="new prompt", tools=None, workspace_root="C:/Projects/agents",
+    prompt="new prompt", tools=None, configuration=None,
+    workspace_root="C:/Projects/agents",
 ):
     authority = {
         "caller_card_id": "builder-card",
@@ -62,19 +63,20 @@ def builder_target_authority(
         "target_card_revision_id": f"revision:{card_id}",
         "target_deck_revision": deck_revision,
         "operation_mode": "edit",
-        "allowed_fields": ["prompt", "tools"],
+        "allowed_fields": ["configuration", "prompt", "tools"],
         "workspace_root": workspace_root,
     }
     authority["builder_operation"] = {
         "mode": "edit",
         "deckRevision": deck_revision,
         "workspaceRoot": workspace_root,
-        "allowedFields": ["prompt", "tools"],
+        "allowedFields": ["configuration", "prompt", "tools"],
         "templateId": "template_assist",
         "title": "WorldSignals" if card_id == "signals-card" else card_id,
         "role": "",
         "prompt": prompt,
         "tools": list(tools or []),
+        "configuration": dict(configuration or {}),
         "targetCardId": card_id,
         "targetCardRevisionId": f"revision:{card_id}",
     }
@@ -504,6 +506,16 @@ class TestCardUpdateConfiguration:
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["prompt"] == "new prompt"
         assert card["runtimeOptions"]["tools"] == ["web_search"]
+
+    def test_structured_card_configuration_persists_with_revision(self, fake_backend):
+        configuration = {"schemaVersion": "trading.card.v1", "trading": {"paperOnly": True}}
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "updates": {"configuration": configuration},
+        }, **builder_target_authority(configuration=configuration)))
+        assert result["ok"] is True
+        card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
+        assert card["runtimeOptions"]["configuration"] == configuration
 
     def test_prompt_and_tools_cannot_drift_from_the_run_operation(self, fake_backend):
         with pytest.raises(

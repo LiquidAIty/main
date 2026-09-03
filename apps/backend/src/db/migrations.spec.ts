@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { applyBackendMigrations, listenAfterRequiredMigrations } from './migrations';
 
 const migration = `
@@ -36,6 +37,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '029_child_model_receipt.sql', applied: true }),
       expect.objectContaining({ filename: '030_card_script_run_receipt.sql', applied: true }),
       expect.objectContaining({ filename: '031_graph_agent_continuity.sql', applied: true }),
+      expect.objectContaining({ filename: '032_paper_trade_jobs.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -62,6 +64,18 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bLOAD\s+'age'/i);
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('keeps the paper Trade Job schema structurally unable to request orders', async () => {
+    const source = await readFile(
+      resolve(process.cwd(), 'apps/backend/migrations/032_paper_trade_jobs.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("execution_state = 'blocked_pending_separate_approval'");
+    expect(source).toContain('execution_requested BOOLEAN NOT NULL DEFAULT FALSE');
+    expect(source).toContain('CHECK (execution_requested = FALSE)');
+    expect(source).not.toMatch(/CREATE TABLE[^;]*orders/i);
   });
 
   it('does not open backend readiness when migration application fails', async () => {

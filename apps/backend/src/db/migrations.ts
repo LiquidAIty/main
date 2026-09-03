@@ -12,6 +12,7 @@ const REQUIRED_MIGRATIONS = [
   '029_child_model_receipt.sql',
   '030_card_script_run_receipt.sql',
   '031_graph_agent_continuity.sql',
+  '032_paper_trade_jobs.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

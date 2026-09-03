@@ -106,7 +106,8 @@ _AGENT_BUILDER_VISION_HEADING = "## Agent Builder product vision"
 _AGENT_BUILDER_SOURCE_BYTE_LIMIT = 32_000
 _AGENT_BUILDER_OPERATION_FIELDS = frozenset({
     "mode", "expectedDeckRevision", "targetCardId", "targetCardRevisionId",
-    "templateId", "title", "role", "prompt", "tools", "model", "cbmProject",
+    "templateId", "title", "role", "prompt", "tools", "configuration", "model",
+    "cbmProject",
 })
 _AGENT_BUILDER_CREATE_MODEL_FIELDS = (
     "provider", "modelKey", "providerModelId", "accessMode",
@@ -1761,7 +1762,6 @@ def _direct_card_targets(
             or target_id in seen
             or target is None
             or target.get("kind") != "agent"
-            or str(target.get("parentGraphId") or "").strip()
             or not _card_enabled(target)
         ):
             continue
@@ -1901,17 +1901,21 @@ def _agent_builder_operation(
         )
         if target_revision_id != target["cardRevisionId"]:
             raise CardDomainError("agent_builder_target_revision_stale")
+        configuration = operation.get("configuration", target["runtimeOptions"].get("configuration"))
+        if configuration is not None and not isinstance(configuration, dict):
+            raise CardDomainError("agent_builder_configuration_invalid")
         return ({
             "mode": "edit",
             "deckRevision": deck_revision,
             "workspaceRoot": workspace_root,
             "cbmProject": cbm_project,
-            "allowedFields": ["prompt", "tools"],
+            "allowedFields": ["configuration", "prompt", "tools"],
             "templateId": target["templateId"],
             "title": target["title"],
             "role": target["role"],
             "prompt": prompt,
             "tools": tools,
+            "configuration": dict(configuration or {}),
             "targetCardId": target["cardId"],
             "targetCardRevisionId": target["cardRevisionId"],
         }, target)
@@ -2444,6 +2448,11 @@ def _prepare_invocation(
         "maxTokens": options.get("maxTokens"),
         "maxTurns": options.get("maxTurns"),
     }
+    configuration = options.get("configuration")
+    if configuration is not None:
+        if not isinstance(configuration, dict):
+            raise CardDomainError("card_configuration_invalid")
+        runtime_options["configuration"] = dict(configuration)
     subagent_model = _subagent_model_selection(options.get("subagentModel"))
     if subagent_model is not None:
         runtime_options["subagentModel"] = subagent_model

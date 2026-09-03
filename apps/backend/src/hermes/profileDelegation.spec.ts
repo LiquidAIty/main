@@ -28,6 +28,7 @@ const currentDeck = {
       runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
     }, {
       id: 'card_hermes_steward', templateId: 'graph', title: 'Graph Agent', position: { x: 1, y: 0 },
+      parentGraphId: 'workbench_graph',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
     }],
     edges: [{

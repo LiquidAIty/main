@@ -1,42 +1,80 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { resolveInstrument } from '../features/trading/instrument';
+import type { AgentCardInstance } from '../types/agentgraph';
+import {
+  DEFAULT_TRADING_CONFIGURATION,
+  type HistoricalBars,
+  type MarketBar,
+  readTradingConfiguration,
+  type TradeAction,
+  type TradeJob,
+  type TradingConfiguration,
+  type TradingSettings,
+  type TradingState,
+} from '../features/trading/tradingState';
 
-// Theme palettes
-const DARK = { bg: '#0a0f1a', panel: '#111827', edge: '#1f2937', ink: '#e5e7eb' };
-const DIM = { bg: '#0d1422', panel: '#0f1a2b', edge: '#223048', ink: '#e6edf6' };
+const CARD_ID = 'card_trading_workbench';
+const BG = '#071018';
+const PANEL = '#0c1822';
+const PANEL_2 = '#10212d';
+const EDGE = '#223947';
+const INK = '#e5f2f6';
+const MUTED = '#89a4ae';
+const CYAN = '#56d4dd';
+const GREEN = '#5cdaa0';
+const AMBER = '#f2bf61';
+const RED = '#ff786e';
 
-type Msg = { who: 'User' | 'AI'; text: string };
+type TradingTab = 'overview' | 'jobs' | 'risk' | 'evidence';
+type InterventionAction = 'PAUSE' | 'EXIT' | 'FAIL_SAFE';
 
-function TVChart({ symbol = 'NYSE:RDW' }: { symbol?: string }) {
+type TradingUIProps = {
+  symbol?: string;
+  projectId?: string | null;
+  deckId?: string;
+  card?: AgentCardInstance | null;
+  onConfigurationChange?: (configuration: TradingConfiguration) => void;
+};
+
+function statusColor(action: TradeAction): string {
+  if (action === 'ENTER' || action === 'HOLD') return GREEN;
+  if (action === 'REDUCE' || action === 'WAIT') return AMBER;
+  if (action === 'EXIT' || action === 'FAIL_SAFE') return RED;
+  return '#9aaec7';
+}
+
+function money(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function shortTime(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function tradingViewSymbol(job: TradeJob | null, fallback?: string): string | null {
+  const symbol = String(job?.plan?.instrument?.symbol || job?.symbol || fallback || '')
+    .trim().toUpperCase();
+  if (!/^[A-Z0-9._-]{1,32}$/.test(symbol)) return null;
+  const venue = String(job?.plan?.instrument?.venue || 'NYSE').trim().toUpperCase();
+  return /^[A-Z0-9._-]{1,20}$/.test(venue) ? `${venue}:${symbol}` : symbol;
+}
+
+let chartSequence = 0;
+
+function TradingViewChart({ symbol }: { symbol: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const idRef = useRef(`trading-chart-${++chartSequence}`);
   useEffect(() => {
-    let script = document.querySelector<HTMLScriptElement>('#tv-script');
-    let added = false;
     let cancelled = false;
-    const ensure = () =>
-      new Promise<void>((res) => {
-        if ((window as any).TradingView) return res();
-        if (!script) {
-          script = document.createElement('script');
-          script.id = 'tv-script';
-          script.src = 'https://s3.tradingview.com/tv.js';
-          script.async = true;
-          script.onload = () => res();
-          document.head.appendChild(script);
-          added = true;
-        } else {
-          script.addEventListener('load', () => res(), { once: true });
-        }
-      });
-
-    ensure().then(() => {
-      if (cancelled) return;
-      const el = ref.current;
-      if (!el || !(window as any).TradingView) return;
-      const id = 'tv_container_autosize';
-      el.id = id;
+    const render = () => {
+      if (cancelled || !ref.current || !(window as any).TradingView) return;
+      ref.current.id = idRef.current;
       try {
         new (window as any).TradingView.widget({
           autosize: true,
@@ -44,281 +82,440 @@ function TVChart({ symbol = 'NYSE:RDW' }: { symbol?: string }) {
           interval: '5',
           timezone: 'Etc/UTC',
           theme: 'dark',
-          container_id: id,
+          container_id: idRef.current,
           hide_top_toolbar: false,
           hide_legend: false,
-          allow_symbol_change: true,
+          allow_symbol_change: false,
         });
       } catch {
-        // External chart loading is optional for this parked future surface.
+        // The evidence panel remains usable if the third-party chart cannot load.
       }
-    });
-
-    return () => {
-      cancelled = true;
-      if (added && script && script.parentNode) script.parentNode.removeChild(script);
     };
+    if ((window as any).TradingView) render();
+    else {
+      let script = document.querySelector<HTMLScriptElement>('#tradingview-widget-script');
+      if (!script) {
+        script = document.createElement('script');
+        script.id = 'tradingview-widget-script';
+        script.src = 'https://s3.tradingview.com/tv.js';
+        script.async = true;
+        document.head.appendChild(script);
+      }
+      script.addEventListener('load', render, { once: true });
+    }
+    return () => { cancelled = true; };
   }, [symbol]);
-  return <div ref={ref} style={{ width: '100%', height: '100%' }} />;
+  return <div ref={ref} style={{ height: '100%', minHeight: 340, width: '100%' }} />;
 }
 
-type AlpacaSnapshot = {
-  provider?: string;
-  feed?: string | null;
-  symbol?: string;
-  status?: string;
-  observedAt?: string | null;
-  latestTradePrice?: number | null;
-  latestQuoteBid?: number | null;
-  latestQuoteAsk?: number | null;
-  freshness?: string | null;
-  diagnostics?: string | null;
-};
-
-// Live read-only Alpaca paper snapshot panel. Consumes the Python rails /market proxy.
-// No orders, no balances — market data only. Refreshes every 30s.
-function AlpacaSnapshotPanel({ symbol, edge, panel }: { symbol: string; edge: string; panel: string }) {
-  const [snap, setSnap] = useState<AlpacaSnapshot | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+function useHistoricalBars(symbol: string | null, enabled = true) {
+  const [payload, setPayload] = useState<HistoricalBars | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch(`/market/snapshot?symbol=${encodeURIComponent(symbol)}`);
-        const json = (await res.json()) as AlpacaSnapshot;
-        if (!cancelled) {
-          setSnap(json);
-          setErr(null);
-        }
-      } catch (e: any) {
-        if (!cancelled) setErr(e?.message || 'fetch failed');
-      }
-    };
-    // Fetch once on explicit symbol selection / page load. No timed polling — continuous
-    // WorldSignals come later as an explicit signal policy, not a hidden demo timer.
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [symbol]);
+    if (!symbol || !enabled) return;
+    const controller = new AbortController();
+    void fetch(`/market/bars?symbol=${encodeURIComponent(symbol)}&timeframe=5Min&limit=48`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(String(body?.detail || `market_bars_${response.status}`));
+        setPayload(body as HistoricalBars);
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(reason instanceof Error ? reason.message : 'Market bars unavailable');
+      });
+    return () => controller.abort();
+  }, [enabled, symbol]);
+  return { payload, error };
+}
 
-  const ok = snap?.status === 'available';
-  const statusLabel = snap?.status || (err ? 'error' : 'loading…');
+function Candles({ bars }: { bars: MarketBar[] }) {
+  const width = 320;
+  const height = 116;
+  const pad = 7;
+  const prices = bars.flatMap((bar) => [bar.high, bar.low]);
+  const high = Math.max(...prices);
+  const low = Math.min(...prices);
+  const range = Math.max(high - low, 0.000001);
+  const step = (width - pad * 2) / bars.length;
+  const candleWidth = Math.max(1.5, Math.min(7, step - 2));
+  const y = (value: number) => pad + ((high - value) / range) * (height - pad * 2);
   return (
-    <div className="rounded-xl border p-3" style={{ borderColor: edge, background: panel }}>
-      <div className="mb-2 flex items-center justify-between">
-        <div className="font-bold" style={{ color: '#34d399' }}>📈 Market data · Alpaca paper · {symbol}</div>
-        <span className="text-[11px]" style={{ color: ok ? '#34d399' : '#fb923c' }}>{statusLabel}</span>
-      </div>
-      {ok ? (
-        <div className="grid grid-cols-2 gap-1 text-sm" style={{ color: '#cbd5e1' }}>
-          <div>Last</div>
-          <div style={{ textAlign: 'right', color: '#e6edf6', fontWeight: 700 }}>{snap?.latestTradePrice ?? '—'}</div>
-          <div>Bid / Ask</div>
-          <div style={{ textAlign: 'right' }}>{snap?.latestQuoteBid ?? '—'} / {snap?.latestQuoteAsk ?? '—'}</div>
-          <div>Feed</div>
-          <div style={{ textAlign: 'right' }}>{snap?.feed ?? '—'}</div>
-          <div>As of</div>
-          <div style={{ textAlign: 'right', fontSize: 11 }}>{snap?.observedAt ?? '—'}</div>
-        </div>
-      ) : (
-        <div className="text-[12px]" style={{ color: '#94a3b8' }}>
-          {snap?.status === 'provider_unconfigured'
-            ? 'Alpaca paper credentials not configured.'
-            : snap?.diagnostics || err || 'Loading live snapshot…'}
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none"
+         aria-label="Recent real market candles" style={{ display: 'block', height: 116, width: '100%' }}>
+      <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke="#19313e" />
+      {bars.map((bar, index) => {
+        const x = pad + index * step + step / 2;
+        const color = bar.close >= bar.open ? GREEN : RED;
+        const top = Math.min(y(bar.open), y(bar.close));
+        const bodyHeight = Math.max(1.5, Math.abs(y(bar.open) - y(bar.close)));
+        return (
+          <g key={`${bar.timestamp}-${index}`}>
+            <line x1={x} y1={y(bar.high)} x2={x} y2={y(bar.low)} stroke={color} />
+            <rect x={x - candleWidth / 2} y={top} width={candleWidth} height={bodyHeight}
+                  rx={0.6} fill={color} />
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function MiniCandleChart({ symbol }: { symbol: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '120px' });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  const { payload, error } = useHistoricalBars(symbol, visible);
+  const bars = Array.isArray(payload?.bars) ? payload.bars : [];
+  return (
+    <div ref={hostRef} style={{ minHeight: 116, background: '#08131c', borderRadius: 10, overflow: 'hidden' }}>
+      {bars.length > 0 ? <Candles bars={bars} /> : (
+        <div style={{ alignItems: 'center', color: MUTED, display: 'flex', fontSize: 12,
+          height: 116, justifyContent: 'center', padding: 12, textAlign: 'center' }}>
+          {error || payload?.diagnostics || (visible ? 'No market bars returned' : 'Chart loads when visible')}
         </div>
       )}
     </div>
   );
 }
 
-const Pill: React.FC<{ color: string; children: React.ReactNode }> = ({ color, children }) => (
-  <span className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs md:text-[13px]"
-        style={{ borderColor: DARK.edge, background: '#0b1220', color: DARK.ink }}>
-    <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: color }} />
-    <span>{children}</span>
-  </span>
-);
-
-const Chip: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <span className="inline-flex items-center rounded-full border px-2 py-1 text-[11px]"
-        style={{ borderColor: DARK.edge, background: '#0b1220', color: DARK.ink }}>{children}</span>
-);
-
-const GradientBtn: React.FC<{ variant: 'enter' | 'exit'; children: React.ReactNode; onClick?: () => void }>
-  = ({ variant, children, onClick }) => (
-  <button onClick={onClick}
-    className="w-full select-none rounded-xl px-4 py-3 font-extrabold tracking-wide text-[15px] shadow transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-2"
-    style={{ minHeight: 44, background: variant === 'enter' ? 'linear-gradient(90deg,#34d399,#14b8a6)' : 'linear-gradient(90deg,#fb923c,#f43f5e)', color: '#04110d' }}>
-    {children}
-  </button>
-);
-
-export default function TradingUI({ symbol }: { symbol?: string }) {
-  const [agentMode, setAgentMode] = useState<'run' | 'follow'>('run');
-  const [fullscreen, setFullscreen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'dim'>('dark');
-  const colors = theme === 'dark' ? DARK : DIM;
-  const [searchParams] = useSearchParams();
-  // The card surface supplies its explicit instrument; the standalone route
-  // continues to accept an explicit URL symbol and has no silent default.
-  const instrument = resolveInstrument(symbol ?? searchParams.get('symbol'));
-
-  const [messages, setMessages] = useState<Msg[]>([
-    { who: 'User', text: 'Should I take this trade?' },
-    { who: 'AI', text: 'Confidence 72%, conditions look favorable.' },
-  ]);
-  const chatRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { chatRef.current?.scrollTo({ top: 1e9, behavior: 'smooth' }); }, [messages.length]);
-
-  // Signals strip (mock)
-  const signals = useMemo(() => (
-    [
-      ['YLV8', '72%'], ['TLOB', '64%'], ['CRON', '58%'], ['ARMA', '61%'], ['OPTM', '69%'], ['OPTA', '73%']
-    ] as [string,string][]
-  ), []);
-
-  // No-op hooks
-  const onEnterTrade = () => console.log('onEnterTrade');
-  const onExitTrade = () => console.log('onExitTrade');
-  const onRunAgent = () => { setAgentMode('run'); console.log('onRunAgent'); };
-  const onFollowTrader = () => { setAgentMode('follow'); console.log('onFollowTrader'); };
-
-  function sendChat(text: string) {
-    if (!text.trim()) return;
-    setMessages((m) => [...m, { who: 'User', text }]);
-    setTimeout(() => setMessages((m) => [...m, { who: 'AI', text: 'Noted. Confidence checking…' }]), 400);
+function PortfolioChart({ jobs }: { jobs: TradeJob[] }) {
+  const closed = jobs.filter((job) => job.realizedPnlUsd !== null).slice()
+    .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+  if (closed.length === 0) {
+    return <div style={{ alignItems: 'center', color: MUTED, display: 'flex', height: 180,
+      justifyContent: 'center', padding: 20, textAlign: 'center' }}>
+      Portfolio performance will appear after a Trade Job records real realized paper P/L.
+    </div>;
   }
-
-  if (!instrument) {
-    return (
-      <div className="flex h-screen items-center justify-center" style={{ background: colors.bg, color: colors.ink }}>
-        <div className="rounded-xl border p-6 text-center" style={{ borderColor: colors.edge, background: colors.panel, maxWidth: 440 }}>
-          <div className="mb-2 text-lg font-bold">Select an instrument</div>
-          <div className="text-sm" style={{ color: '#94a3b8' }}>
-            This market view requires an explicit symbol — there is no default. Open{' '}
-            <code style={{ color: '#7dd3fc' }}>/tradingui?symbol=RDW</code>.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  let cumulative = 0;
+  const values = closed.map((job) => { cumulative += Number(job.realizedPnlUsd || 0); return cumulative; });
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const range = Math.max(max - min, 1);
+  const points = values.map((value, index) => {
+    const x = 10 + (index / Math.max(values.length - 1, 1)) * 600;
+    const y = 170 - ((value - min) / range) * 145;
+    return `${x},${y}`;
+  }).join(' ');
+  const zeroY = 170 - ((0 - min) / range) * 145;
   return (
-    <div className="flex h-screen flex-col" style={{ background: colors.bg, color: colors.ink }}>
-      {/* HEADER (scrollable pills) */}
-      <header className="flex h-10 items-center gap-2 border-b px-2 backdrop-blur overflow-x-auto"
-              style={{ borderColor: colors.edge, background: `${colors.panel}CC` }}>
-        <Pill color="#60a5fa">Trade Stats</Pill>
-        <Pill color="#34d399">P/L</Pill>
-        <Pill color="#fb923c">Win Rate</Pill>
-        <div className="ml-auto flex items-center gap-2 text-xs">
-          <span>Theme</span>
-          <button className="rounded-md border px-2 py-1" style={{ borderColor: colors.edge, background: '#0b1220', color: colors.ink }} onClick={() => setTheme((t) => t === 'dark' ? 'dim' : 'dark')}>
-            {theme === 'dark' ? 'Dark' : 'Dim'}
-          </button>
-        </div>
-      </header>
+    <svg viewBox="0 0 620 190" preserveAspectRatio="none"
+         aria-label="Cumulative realized paper profit and loss" style={{ display: 'block', height: 180, width: '100%' }}>
+      <line x1={0} y1={zeroY} x2={620} y2={zeroY} stroke="#314957" strokeDasharray="5 5" />
+      <polyline points={points} fill="none" stroke={values.at(-1)! >= 0 ? GREEN : RED}
+                strokeWidth={3} vectorEffect="non-scaling-stroke" />
+      {points.split(' ').map((point, index) => {
+        const [cx, cy] = point.split(',');
+        return <circle key={closed[index].jobId} cx={cx} cy={cy} r={4}
+          fill={values[index] >= 0 ? GREEN : RED} />;
+      })}
+    </svg>
+  );
+}
 
-      {/* MAIN */}
-      <main className="flex min-h-0 flex-1 flex-col md:flex-row" style={{ padding: 16 }}>
-        {/* CHART AREA */}
-        <section className={`relative min-h-0 ${fullscreen ? 'w-full' : 'flex-1'} overflow-hidden`}>
-          {/* Signals strip */}
-          <div className="absolute left-0 right-0 top-0 z-10 flex gap-2 overflow-x-auto px-2 py-1"
-               style={{ background: 'linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0))' }}>
-            {signals.map(([k,v]) => (
-              <span key={k} className="rounded-full px-2 py-0.5 text-[11px] shadow"
-                    style={{ background: '#182033', color: '#dbeafe', border: `1px solid ${colors.edge}` }}>{k}: {v}</span>
-            ))}
-          </div>
-          {/* Desktop Fullscreen toggle */}
-          <button className="hidden md:block absolute right-2 top-2 z-10 rounded-md border px-2 py-1 text-xs hover:brightness-110"
-                  style={{ borderColor: colors.edge, background: '#0b1220', color: colors.ink }}
-                  onClick={() => setFullscreen((v) => !v)}>
-            {fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-          </button>
-          {/* Honest source ownership: the chart is TradingView's own data; Alpaca is the
-              independent market-data source for LiquidAIty (panel below). */}
-          <div className="absolute left-2 top-8 z-10 rounded-md px-2 py-0.5 text-[11px]"
-               style={{ background: '#0b1220cc', color: '#94a3b8', border: `1px solid ${colors.edge}` }}>
-            Chart · TradingView · {instrument.tradingViewSymbol}
-            <span style={{ color: '#64748b' }}> (independent of Alpaca quotes)</span>
-          </div>
-          <div className="h-full w-full" style={{ minHeight: 0 }}>
-            <TVChart symbol={instrument.tradingViewSymbol} />
+function Badge({ children, color = MUTED }: { children: React.ReactNode; color?: string }) {
+  return <span style={{ background: `${color}13`, border: `1px solid ${color}55`, borderRadius: 999,
+    color, fontSize: 11, fontWeight: 700, letterSpacing: '.04em', padding: '5px 8px' }}>{children}</span>;
+}
+
+function Metric({ label, value, tone = INK }: { label: string; value: React.ReactNode; tone?: string }) {
+  return <div style={{ background: PANEL_2, border: `1px solid ${EDGE}`, borderRadius: 12, minWidth: 118, padding: '10px 12px' }}>
+    <div style={{ color: MUTED, fontSize: 10, letterSpacing: '.08em', textTransform: 'uppercase' }}>{label}</div>
+    <div style={{ color: tone, fontSize: 18, fontWeight: 760, marginTop: 3 }}>{value}</div>
+  </div>;
+}
+
+function TradeJobCard({ job, selected, onSelect }: { job: TradeJob; selected: boolean; onSelect: () => void }) {
+  return (
+    <button type="button" onClick={onSelect} style={{ background: selected ? '#122a35' : PANEL,
+      border: `1px solid ${selected ? CYAN : EDGE}`, borderRadius: 14, color: INK, cursor: 'pointer',
+      minWidth: 0, overflow: 'hidden', padding: 0, textAlign: 'left', width: '100%' }}>
+      <div style={{ alignItems: 'center', display: 'flex', gap: 8, justifyContent: 'space-between', padding: '10px 11px 8px' }}>
+        <div><strong style={{ fontSize: 15 }}>{job.symbol}</strong><span style={{ color: MUTED, fontSize: 11, marginLeft: 7 }}>{job.assetClass}</span></div>
+        <Badge color={statusColor(job.action)}>{job.action}</Badge>
+      </div>
+      <MiniCandleChart symbol={job.symbol} />
+      <div style={{ display: 'grid', gap: 4, gridTemplateColumns: '1fr 1fr', padding: '9px 11px 11px' }}>
+        <span style={{ color: MUTED, fontSize: 11 }}>Risk ceiling</span><span style={{ fontSize: 11, textAlign: 'right' }}>{money(job.maxLossUsd)}</span>
+        <span style={{ color: MUTED, fontSize: 11 }}>Paper P/L</span><span style={{ color: (job.realizedPnlUsd || 0) >= 0 ? GREEN : RED, fontSize: 11, textAlign: 'right' }}>{money(job.realizedPnlUsd)}</span>
+      </div>
+    </button>
+  );
+}
+
+type SliderSpec = { field: keyof TradingSettings; label: string; min: number; max: number;
+  step: number; suffix?: string; description: string };
+
+const SLIDERS: SliderSpec[] = [
+  { field: 'paperBudgetUsd', label: 'Paper budget', min: 0, max: 1_000_000, step: 5_000, suffix: ' USD', description: 'Zero keeps new capital allocation blocked.' },
+  { field: 'allocationPerJobPercent', label: 'Allocation per job', min: 0, max: 100, step: 1, suffix: '%', description: 'Maximum share of the paper budget assigned to one job.' },
+  { field: 'maxConcurrentJobs', label: 'Concurrent Trade Jobs', min: 1, max: 20, step: 1, description: 'Limits simultaneous monitoring lifecycles.' },
+  { field: 'maxOpenPositions', label: 'Open positions', min: 0, max: 20, step: 1, description: 'Zero prevents any position from being opened.' },
+  { field: 'maxPlanLossPercent', label: 'Loss per plan', min: 0, max: 20, step: 0.25, suffix: '%', description: 'Hard paper-loss ceiling for one accepted plan.' },
+  { field: 'maxDailyLossPercent', label: 'Daily loss', min: 0, max: 20, step: 0.25, suffix: '%', description: 'Daily fail-safe threshold across the portfolio.' },
+  { field: 'minimumConfidencePercent', label: 'Minimum confidence', min: 0, max: 100, step: 1, suffix: '%', description: 'Required reasoning confidence before an ENTER outcome.' },
+  { field: 'minimumRiskReward', label: 'Minimum risk / reward', min: 0, max: 10, step: 0.25, suffix: '×', description: 'Minimum expected reward relative to planned risk.' },
+  { field: 'evaluationCadenceSeconds', label: 'Evaluation cadence', min: 15, max: 3600, step: 15, suffix: ' sec', description: 'Hermes reasoning cadence; continuous monitoring stays deterministic.' },
+  { field: 'staleDataSeconds', label: 'Stale-data fail-safe', min: 15, max: 3600, step: 15, suffix: ' sec', description: 'Pause when required evidence is older than this threshold.' },
+];
+
+function RiskSettings({ value, canSave, onSave }: { value: TradingConfiguration; canSave: boolean;
+  onSave?: (configuration: TradingConfiguration) => void }) {
+  const [draft, setDraft] = useState(value);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { setDraft(value); }, [value]);
+  const setNumber = (field: keyof TradingSettings, next: number) => {
+    setSaved(false);
+    setDraft((current) => ({ ...current, trading: { ...current.trading, [field]: next } }));
+  };
+  return (
+    <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 16, padding: 16 }}>
+      <div style={{ alignItems: 'flex-start', display: 'flex', gap: 12, justifyContent: 'space-between', marginBottom: 14 }}>
+        <div><h2 style={{ fontSize: 16, margin: 0 }}>Risk and runtime controls</h2><p style={{ color: MUTED, fontSize: 12, margin: '5px 0 0' }}>Saved on this Card. Agent Builder may edit the same fields through ordinary Card configuration.</p></div>
+        <Badge color={RED}>Execution approval locked off</Badge>
+      </div>
+      <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(245px, 1fr))' }}>
+        {SLIDERS.map((spec) => {
+          const current = Number(draft.trading[spec.field]);
+          return <label key={spec.field} style={{ background: PANEL_2, border: `1px solid ${EDGE}`, borderRadius: 12, padding: 12 }}>
+            <span style={{ alignItems: 'center', display: 'flex', fontSize: 12, fontWeight: 700, justifyContent: 'space-between' }}><span>{spec.label}</span><output style={{ color: CYAN }}>{current.toLocaleString()}{spec.suffix || ''}</output></span>
+            <input type="range" min={spec.min} max={spec.max} step={spec.step} value={current}
+              onChange={(event) => setNumber(spec.field, Number(event.target.value))}
+              style={{ accentColor: CYAN, margin: '10px 0 5px', width: '100%' }} />
+            <span style={{ color: MUTED, display: 'block', fontSize: 11, lineHeight: 1.35 }}>{spec.description}</span>
+          </label>;
+        })}
+      </div>
+      <div style={{ alignItems: 'center', display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
+        {saved && <span style={{ color: GREEN, fontSize: 12 }}>Saved to Card configuration</span>}
+        <button type="button" disabled={!canSave} onClick={() => { onSave?.(draft); setSaved(true); }}
+          style={{ background: canSave ? CYAN : '#34515b', border: 0, borderRadius: 10, color: '#041116',
+            cursor: canSave ? 'pointer' : 'not-allowed', fontWeight: 800, padding: '10px 15px' }}>
+          Save risk settings
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function JobDetail({ job, onIntervene, busy }: { job: TradeJob;
+  onIntervene: (action: InterventionAction, reason: string) => Promise<void>; busy: boolean }) {
+  const [reason, setReason] = useState('');
+  const chartSymbol = tradingViewSymbol(job);
+  return (
+    <div style={{ display: 'grid', gap: 14, gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+      <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 16, minHeight: 420, overflow: 'hidden' }}>
+        <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', padding: '11px 13px' }}><div><strong>{job.symbol}</strong><span style={{ color: MUTED, fontSize: 12, marginLeft: 8 }}>full chart</span></div><Badge color={statusColor(job.action)}>{job.action}</Badge></div>
+        {chartSymbol ? <TradingViewChart symbol={chartSymbol} /> : <div style={{ color: MUTED, padding: 30 }}>The saved instrument cannot be mapped to a chart symbol.</div>}
+      </section>
+      <aside style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 14, padding: 13 }}>
+          <h3 style={{ fontSize: 13, margin: '0 0 10px' }}>Plan boundary</h3>
+          <dl style={{ display: 'grid', fontSize: 12, gap: 7, gridTemplateColumns: '1fr 1fr', margin: 0 }}>
+            <dt style={{ color: MUTED }}>Budget ceiling</dt><dd style={{ margin: 0, textAlign: 'right' }}>{money(job.budgetCeilingUsd)}</dd>
+            <dt style={{ color: MUTED }}>Max loss</dt><dd style={{ margin: 0, textAlign: 'right' }}>{money(job.maxLossUsd)}</dd>
+            <dt style={{ color: MUTED }}>State</dt><dd style={{ margin: 0, textAlign: 'right' }}>{job.state}</dd>
+            <dt style={{ color: MUTED }}>Execution</dt><dd style={{ color: RED, margin: 0, textAlign: 'right' }}>{job.executionState}</dd>
+            <dt style={{ color: MUTED }}>Updated</dt><dd style={{ margin: 0, textAlign: 'right' }}>{shortTime(job.updatedAt)}</dd>
+          </dl>
+        </section>
+        <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 14, padding: 13 }}>
+          <h3 style={{ fontSize: 13, margin: '0 0 8px' }}>Authorized intervention</h3>
+          <p style={{ color: MUTED, fontSize: 11, lineHeight: 1.4, margin: '0 0 9px' }}>These controls update monitored paper state. They cannot submit or close a broker order.</p>
+          <textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason required" rows={3}
+            style={{ background: '#07121a', border: `1px solid ${EDGE}`, borderRadius: 9, color: INK,
+              padding: 9, resize: 'vertical', width: '100%' }} />
+          <div style={{ display: 'grid', gap: 7, gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 8 }}>
+            {(['PAUSE', 'EXIT', 'FAIL_SAFE'] as InterventionAction[]).map((action) => <button key={action}
+              type="button" disabled={busy || !reason.trim()}
+              onClick={() => void onIntervene(action, reason).then(() => setReason(''))}
+              style={{ background: action === 'PAUSE' ? '#2d342c' : '#382022', border: `1px solid ${action === 'PAUSE' ? AMBER : RED}66`,
+                borderRadius: 8, color: action === 'PAUSE' ? AMBER : RED,
+                cursor: busy || !reason.trim() ? 'not-allowed' : 'pointer', fontSize: 10,
+                fontWeight: 800, opacity: busy || !reason.trim() ? .5 : 1, padding: '9px 4px' }}>
+              {action.replace('_', ' ')}
+            </button>)}
           </div>
         </section>
+      </aside>
+    </div>
+  );
+}
 
-        {/* SIDEBAR */}
-        {!fullscreen && (
-        <aside className="min-h-0 w-full md:w-[320px] md:border-l md:border-t-0 border-t p-2 overflow-y-auto"
-               style={{ background: colors.panel, borderColor: colors.edge }}>
-          <div className="flex h-full min-h-0 flex-col gap-2">
-            {/* Mobile Fullscreen toggle */}
-            <button className="md:hidden rounded-md border px-2 py-2 text-sm hover:brightness-110"
-                    style={{ borderColor: colors.edge, background: '#0b1220', color: colors.ink }}
-                    onClick={() => setFullscreen(true)}>Fullscreen</button>
+export default function TradingUI({ symbol, projectId, deckId = 'deck_builder', card,
+  onConfigurationChange }: TradingUIProps) {
+  const [searchParams] = useSearchParams();
+  const explicitSymbol = String(symbol || searchParams.get('symbol') || '').trim().toUpperCase() || null;
+  const cardId = card?.id || CARD_ID;
+  const [tab, setTab] = useState<TradingTab>('overview');
+  const [state, setState] = useState<TradingState | null>(null);
+  const [stateError, setStateError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [interventionBusy, setInterventionBusy] = useState(false);
+  const [interventionError, setInterventionError] = useState<string | null>(null);
+  const configuration = useMemo(() => readTradingConfiguration(
+    card?.runtimeOptions?.configuration || DEFAULT_TRADING_CONFIGURATION,
+  ), [card?.runtimeOptions?.configuration]);
 
-            <GradientBtn variant="enter" onClick={onEnterTrade}>🚀 ENTER TRADE</GradientBtn>
+  const readState = useCallback(async () => {
+    if (!projectId || !cardId) { setState(null); setStateError(null); return; }
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ projectId, deckId, cardId });
+      const response = await fetch(`/trading/state?${params.toString()}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(String(body?.detail || `trading_state_${response.status}`));
+      setState(body as TradingState);
+      setStateError(null);
+    } catch (reason: unknown) {
+      setStateError(reason instanceof Error ? reason.message : 'Trading state unavailable');
+    } finally { setLoading(false); }
+  }, [cardId, deckId, projectId]);
 
-            <AlpacaSnapshotPanel symbol={instrument.symbol} edge={colors.edge} panel={colors.panel} />
+  useEffect(() => { void readState(); }, [readState]);
+  useEffect(() => {
+    if (!projectId) return;
+    const timer = window.setInterval(() => void readState(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [projectId, readState]);
 
-            <div className="rounded-xl border p-3" style={{ borderColor: colors.edge, background: colors.panel }}>
-              <div className="mb-2 flex items-center justify-between">
-                <div className="font-bold" style={{ color: '#7dd3fc' }}>🤖 AI Agent</div>
-                <div className="flex gap-1">
-                  <button className={`transition ${agentMode === 'run' ? '' : 'opacity-80 hover:opacity-100'}`} onClick={onRunAgent}>
-                    <Chip>Run my agent</Chip>
-                  </button>
-                  <button className={`transition ${agentMode === 'follow' ? '' : 'opacity-80 hover:opacity-100'}`} onClick={onFollowTrader}>
-                    <Chip>Follow trader</Chip>
-                  </button>
-                </div>
-              </div>
-              <ul className="ml-4 list-disc space-y-1" style={{ color: '#cbd5e1' }}>
-                <li>Signals & confidence</li>
-                <li>Consensus: OPTA ≥ 70%</li>
-                <li>Quick link share</li>
-              </ul>
-            </div>
+  const jobs = state?.jobs || [];
+  const selectedJob = jobs.find((job) => job.jobId === selectedJobId) || null;
+  useEffect(() => {
+    if (selectedJobId && !jobs.some((job) => job.jobId === selectedJobId)) setSelectedJobId(null);
+  }, [jobs, selectedJobId]);
 
-            {/* CHAT PANEL */}
-            <div className="flex min-h-[140px] flex-1 flex-col rounded-xl border" style={{ borderColor: colors.edge, background: colors.panel }}>
-              <div ref={chatRef} className="flex-1 overflow-y-auto p-3">
-                <div className="grid gap-2 text-sm">
-                  {messages.map((m, i) => (
-                    <div key={i} className="leading-relaxed">
-                      <span className="font-semibold" style={{ color: colors.ink }}>{m.who}: </span>
-                      <span style={{ color: '#cbd5e1' }}>{m.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <form className="flex gap-2 border-t p-2" style={{ borderColor: colors.edge }} onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget as HTMLFormElement);
-                const t = String(fd.get('t') || '').trim();
-                if (!t) return;
-                (e.currentTarget as HTMLFormElement).reset();
-                sendChat(t);
-              }}>
-                <input name="t" placeholder="Type a message…" className="flex-1 rounded-md border px-3" style={{ borderColor: colors.edge, background: '#0b1220', color: colors.ink, minHeight: 44 }} />
-                <button className="rounded-md border px-3" style={{ borderColor: colors.edge, background: '#0b1220', color: colors.ink, minHeight: 44 }} type="submit">Send</button>
-              </form>
-            </div>
+  const intervene = async (action: InterventionAction, reason: string) => {
+    if (!projectId || !selectedJob) return;
+    setInterventionBusy(true);
+    setInterventionError(null);
+    try {
+      const response = await fetch('/trading/intervene', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId, deckId, cardId, jobId: selectedJob.jobId, action, reason }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(String(body?.detail || `trading_intervention_${response.status}`));
+      await readState();
+    } catch (reasonValue: unknown) {
+      setInterventionError(reasonValue instanceof Error ? reasonValue.message : 'Intervention failed');
+    } finally { setInterventionBusy(false); }
+  };
 
-            <GradientBtn variant="exit" onClick={onExitTrade}>⛔ EXIT TRADE</GradientBtn>
+  const activeJobs = jobs.filter((job) => !['completed', 'fail_safe'].includes(job.state));
+  const blockedSettings = configuration.trading.paperBudgetUsd === 0
+    || configuration.trading.maxOpenPositions === 0
+    || configuration.trading.maxPlanLossPercent === 0
+    || configuration.trading.maxDailyLossPercent === 0;
+  const closed = state?.portfolio.closedTrades || 0;
+  const winRate = closed ? ((state?.portfolio.wins || 0) / closed) * 100 : null;
+  const runtimeProfile = card?.runtime.kind === 'hermes' ? card.runtime.profile : null;
+  const runtimeOkay = card?.runtime.kind === 'hermes' && card.runtime.mode === 'delegate'
+    && Boolean(runtimeProfile);
 
-            {/* BOTTOM NAV */}
-            <div className="mt-1 grid grid-cols-3 gap-2 rounded-xl border p-2" style={{ borderColor: colors.edge, background: `${colors.panel}` }}>
-              <button className="rounded-full border px-3 py-2 text-sm hover:brightness-110" style={{ borderColor: colors.edge, background: '#0b1220', color: '#86efac', minHeight: 44 }}>📈 Markets</button>
-              <button className="rounded-full border px-3 py-2 text-sm hover:brightness-110" style={{ borderColor: colors.edge, background: '#0b1220', color: '#e879f9', minHeight: 44 }}>👥 Traders</button>
-              <button className="rounded-full border px-3 py-2 text-sm hover:brightness-110" style={{ borderColor: colors.edge, background: '#0b1220', color: '#fdba74', minHeight: 44 }}>⚙️ Settings</button>
-            </div>
+  return (
+    <div style={{ background: BG, color: INK, height: '100%', minHeight: '100vh', overflow: 'auto' }}>
+      <header style={{ background: '#09151eeb', borderBottom: `1px solid ${EDGE}`, position: 'sticky', top: 0, zIndex: 20 }}>
+        <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', padding: '12px 16px 9px' }}>
+          <div>
+            <div style={{ alignItems: 'center', display: 'flex', gap: 8 }}><span style={{ color: CYAN, fontSize: 11, fontWeight: 900, letterSpacing: '.15em' }}>TRADER</span><Badge color={RED}>Paper only</Badge><Badge color={runtimeOkay ? GREEN : AMBER}>{runtimeOkay ? `Hermes · ${runtimeProfile}` : 'Hermes profile pending'}</Badge></div>
+            <h1 style={{ fontSize: 19, margin: '5px 0 0' }}>{card?.title || 'Trading Agent'}</h1>
           </div>
-        </aside>
-        )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}><Badge color={state?.engine.status === 'available' ? GREEN : AMBER}>Lumibot {state?.engine.version || state?.engine.status || 'not loaded'}</Badge><Badge color={RED}>Order submission blocked</Badge></div>
+        </div>
+        <nav aria-label="Trading workspace" style={{ display: 'flex', gap: 4, overflowX: 'auto', padding: '0 12px' }}>
+          {([['overview', 'Overview'], ['jobs', `Trade Jobs ${jobs.length ? `(${jobs.length})` : ''}`],
+            ['risk', 'Strategy & Risk'], ['evidence', 'Evidence']] as [TradingTab, string][]).map(([id, label]) =>
+            <button key={id} type="button" onClick={() => setTab(id)} style={{ background: 'transparent',
+              border: 0, borderBottom: `2px solid ${tab === id ? CYAN : 'transparent'}`,
+              color: tab === id ? INK : MUTED, cursor: 'pointer', fontSize: 12, fontWeight: 750,
+              padding: '9px 11px' }}>{label}</button>)}
+        </nav>
+      </header>
+
+      <main style={{ margin: '0 auto', maxWidth: 1600, padding: 14 }}>
+        {stateError && <div role="alert" style={{ background: '#31191c', border: `1px solid ${RED}77`, borderRadius: 11,
+          color: '#ffaaa3', fontSize: 12, marginBottom: 12, padding: 11 }}>Trading state is unavailable: {stateError}. No execution state has been inferred.</div>}
+        {interventionError && <div role="alert" style={{ color: RED, fontSize: 12, marginBottom: 10 }}>{interventionError}</div>}
+
+        {tab === 'overview' && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <section style={{ display: 'grid', gap: 9, gridTemplateColumns: 'repeat(auto-fit, minmax(118px, 1fr))' }}>
+            <Metric label="Active jobs" value={activeJobs.length} />
+            <Metric label="Realized paper P/L" value={money(state?.portfolio.realizedPnlUsd)} tone={(state?.portfolio.realizedPnlUsd || 0) >= 0 ? GREEN : RED} />
+            <Metric label="Win rate" value={winRate === null ? '—' : `${winRate.toFixed(1)}%`} />
+            <Metric label="Risk configuration" value={blockedSettings ? 'Blocked' : 'Set'} tone={blockedSettings ? AMBER : GREEN} />
+          </section>
+          <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 16, overflow: 'hidden' }}>
+            <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', padding: '12px 14px 0' }}><div><h2 style={{ fontSize: 15, margin: 0 }}>Portfolio outcome</h2><span style={{ color: MUTED, fontSize: 11 }}>Cumulative realized paper P/L · no synthetic marks</span></div><div style={{ display: 'flex', gap: 7 }}><Badge color={GREEN}>{state?.portfolio.wins || 0} wins</Badge><Badge color={RED}>{state?.portfolio.losses || 0} losses</Badge></div></div>
+            <PortfolioChart jobs={jobs} />
+          </section>
+          <section>
+            <div style={{ alignItems: 'end', display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}><div><h2 style={{ fontSize: 15, margin: 0 }}>Active Trade Jobs</h2><span style={{ color: MUTED, fontSize: 11 }}>One compact real-candle view per assignment</span></div>{loading && <span style={{ color: MUTED, fontSize: 11 }}>Refreshing…</span>}</div>
+            {activeJobs.length ? <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+              {activeJobs.map((job) => <TradeJobCard key={job.jobId} job={job} selected={selectedJobId === job.jobId}
+                onSelect={() => { setSelectedJobId(job.jobId); setTab('jobs'); }} />)}
+            </div> : <div style={{ background: PANEL, border: `1px dashed ${EDGE}`, borderRadius: 16, color: MUTED,
+              padding: '34px 20px', textAlign: 'center' }}><strong style={{ color: INK, display: 'block', marginBottom: 6 }}>No active Trade Jobs</strong>Main, an approved Mag One result, Graph Agent, or an explicitly connected Card can send a complete structured assignment. Missing execution terms are rejected.{explicitSymbol && <div style={{ color: CYAN, marginTop: 7 }}>Observed route instrument: {explicitSymbol}</div>}</div>}
+          </section>
+        </div>}
+
+        {tab === 'jobs' && <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {jobs.length > 0 && <div style={{ display: 'flex', gap: 7, overflowX: 'auto', paddingBottom: 2 }}>
+            {jobs.map((job) => <button key={job.jobId} type="button" onClick={() => setSelectedJobId(job.jobId)}
+              style={{ background: selectedJobId === job.jobId ? '#16313b' : PANEL,
+                border: `1px solid ${selectedJobId === job.jobId ? CYAN : EDGE}`, borderRadius: 10,
+                color: INK, cursor: 'pointer', padding: '8px 11px', whiteSpace: 'nowrap' }}>
+              {job.symbol} <span style={{ color: statusColor(job.action), fontSize: 10 }}>{job.action}</span>
+            </button>)}
+          </div>}
+          {selectedJob ? <JobDetail job={selectedJob} onIntervene={intervene} busy={interventionBusy} />
+            : <div style={{ background: PANEL, border: `1px dashed ${EDGE}`, borderRadius: 16, color: MUTED,
+              padding: 40, textAlign: 'center' }}>{jobs.length ? 'Select a Trade Job to open its full chart and evidence.' : 'No Trade Jobs have been accepted.'}</div>}
+        </div>}
+
+        {tab === 'risk' && <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <RiskSettings value={configuration} canSave={Boolean(card && onConfigurationChange)} onSave={onConfigurationChange} />
+          <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 16, padding: 16 }}>
+            <h2 style={{ fontSize: 15, margin: '0 0 10px' }}>Runtime division of work</h2>
+            <div style={{ display: 'grid', gap: 9, gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))' }}>
+              {[
+                ['Hermes', 'Profile, stable prompt, native skills, sessions, memory, tools, and optional bounded Team reasoning.'],
+                ['Lumibot', 'Deterministic strategy lifecycle and paper-broker machinery beneath the Card. No live mode.'],
+                ['Mag One', 'Outer mission manager. The saved Trading Card remains an independently runnable worker.'],
+              ].map(([title, body]) => <div key={title} style={{ background: PANEL_2, border: `1px solid ${EDGE}`, borderRadius: 12, padding: 12 }}><strong style={{ color: CYAN, fontSize: 12 }}>{title}</strong><p style={{ color: MUTED, fontSize: 11, lineHeight: 1.45, margin: '5px 0 0' }}>{body}</p></div>)}
+            </div>
+          </section>
+        </div>}
+
+        {tab === 'evidence' && <section style={{ background: PANEL, border: `1px solid ${EDGE}`, borderRadius: 16, padding: 15 }}>
+          <div style={{ alignItems: 'center', display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><div><h2 style={{ fontSize: 15, margin: 0 }}>Decision evidence</h2><span style={{ color: MUTED, fontSize: 11 }}>Typed outcomes and the evidence recorded with them</span></div><Badge>{state?.observedAt ? `Observed ${shortTime(state.observedAt)}` : 'No state read'}</Badge></div>
+          {jobs.some((job) => job.decisions.length) ? jobs.flatMap((job) => job.decisions.map((decision) =>
+            <article key={decision.decisionId} style={{ borderTop: `1px solid ${EDGE}`, padding: '12px 2px' }}>
+              <div style={{ alignItems: 'center', display: 'flex', gap: 8 }}><strong>{job.symbol}</strong><Badge color={statusColor(decision.action)}>{decision.action}</Badge><span style={{ color: MUTED, fontSize: 11 }}>{(decision.confidence * 100).toFixed(0)}% · {shortTime(decision.createdAt)}</span></div>
+              <p style={{ color: '#bfd0d7', fontSize: 12, lineHeight: 1.5, margin: '8px 0' }}>{decision.rationale}</p>
+              <details><summary style={{ color: CYAN, cursor: 'pointer', fontSize: 11 }}>Recorded evidence and missing terms</summary><pre style={{ background: '#07121a', borderRadius: 8, color: MUTED, fontSize: 10, overflow: 'auto', padding: 9 }}>{JSON.stringify({ evidence: decision.evidence, missingTerms: decision.missingTerms, executionRequested: decision.executionRequested }, null, 2)}</pre></details>
+            </article>))
+            : <div style={{ color: MUTED, padding: 30, textAlign: 'center' }}>No decisions have been recorded. The UI will not manufacture evidence.</div>}
+        </section>}
       </main>
     </div>
   );

@@ -1557,7 +1557,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         update_properties = by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["properties"]
-        assert set(update_properties) == {"prompt", "tools"}
+        assert set(update_properties) == {"configuration", "prompt", "tools"}
         assert by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["minProperties"] == 1
@@ -1580,6 +1580,21 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
 
     catalog = asyncio.run(check())
     assert len(catalog) == len(set(catalog))
+
+
+def test_private_runtime_registry_tools_are_projected_only_for_internal_card_runs():
+    import mcp_host
+    from app.python_models.tool_registry import tool_publication
+
+    tools = mcp_host._private_runtime_catalog([])
+    names = {tool.name for tool in tools}
+    assert {
+        "trading.get_state",
+        "trading.accept_assignment",
+        "trading.record_decision",
+    }.issubset(names)
+    assert all(tool_publication(name) == "private-runtime" for name in names)
+    assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
 
 
 def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadata(
