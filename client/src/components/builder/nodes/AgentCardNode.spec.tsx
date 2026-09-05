@@ -23,6 +23,16 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
+  it('shows Card control output only for an enabled Hermes controller and retains worker output', () => {
+    const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
+    const { rerender } = render(<AgentCardNode data={card} />);
+    expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
+    expect(screen.getByLabelText('Test Agent Mag One worker output')).not.toBeNull();
+    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { profileDelegationEnabled: true } }} />);
+    expect(screen.getByLabelText('Test Agent Card control output')).not.toBeNull();
+    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { profileDelegationEnabled: false } }} />);
+    expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
+  });
   it('keeps the same compact geometry for Hermes and AutoGen Cards', () => {
     const { container, rerender } = render(
       <AgentCardNode

@@ -4,6 +4,34 @@ import { describe, expect, it } from 'vitest';
 import { buildQuickAddAssistCard } from './deckDocument';
 import { INITIAL_DECK } from './newProjectDeck';
 
+describe('requested initial Card topology', () => {
+  it('keeps unique profiles, only Builder/Graph orange targets, and existing Mag One edges', () => {
+    const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
+    expect(main.runtimeOptions?.profileDelegationEnabled).toBe(true);
+    expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
+    expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
+      { id: 'edge_main_chat_hermes', source: main.id, target: 'card_hermes_steward', edgeType: 'flow' },
+      { id: 'edge_main_chat_agent_builder', source: main.id, target: 'card_agent_builder', edgeType: 'flow' },
+    ]);
+    expect(INITIAL_DECK.edges.find(edge => edge.edgeType === 'magentic_control')).toMatchObject({
+      source: main.id, target: 'card_magentic', targetHandle: 'task-bus-top',
+    });
+    expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option').map(edge => edge.id))
+      .toEqual(['edge_worldsignals_magentic_bus', 'edge_trading_magentic_bus', 'edge_coder_magentic_option']);
+    for (const edge of INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option')) {
+      const busHandle = edge.source === 'card_magentic' ? edge.sourceHandle : edge.targetHandle;
+      const cardHandle = edge.source === 'card_magentic' ? edge.targetHandle : edge.sourceHandle;
+      expect(busHandle).toMatch(/^bus-(in|out)-\d+$/);
+      expect(cardHandle).toBeUndefined();
+    }
+    const profiles = INITIAL_DECK.nodes.flatMap(card => card.runtime.kind === 'hermes' ? [card.runtime.profile] : []);
+    expect(new Set(profiles).size).toBe(profiles.length);
+    for (const id of ['card_main_chat', 'card_agent_builder', 'card_hermes_steward']) {
+      expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
+    }
+  });
+});
+
 describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
   it('creates exactly one new Assistant Agent card', () => {
     const { nextDeck, nextNode } = buildQuickAddAssistCard(INITIAL_DECK);

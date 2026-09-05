@@ -54,6 +54,7 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
     )
     .map((edge) => {
       return {
+        ...edge,
         id: String(edge.id || '').trim(),
         source: String(edge.source || '').trim(),
         sourceHandle: typeof (edge as DeckEdge).sourceHandle === 'string' ? (edge as DeckEdge).sourceHandle : null,
@@ -68,13 +69,12 @@ export function sanitizeDeckEdges(value: unknown): DeckEdge[] {
 export function buildDeckEdgeIdentityKey(
   edge: Pick<DeckEdge, 'source' | 'sourceHandle' | 'target' | 'targetHandle' | 'edgeType'>,
 ): string {
-  return [
-    String(edge.source || '').trim(),
-    String(edge.sourceHandle ?? '').trim(),
-    String(edge.target || '').trim(),
-    String(edge.targetHandle ?? '').trim(),
-    normalizeDeckEdgeType(edge.edgeType),
-  ].join('::');
+  const edgeType = normalizeDeckEdgeType(edge.edgeType);
+  const endpoints = [String(edge.source || '').trim(), String(edge.target || '').trim()];
+  if (edgeType === 'magentic_option' || edgeType === 'magentic_control') {
+    return JSON.stringify([edgeType, ...endpoints.sort()]);
+  }
+  return JSON.stringify([edgeType, ...endpoints]);
 }
 
 export function validateDeckDocument(document: DeckDocument): DeckValidationResult {

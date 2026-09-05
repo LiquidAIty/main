@@ -56,6 +56,7 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   ...CODEBASE_MEMORY_CODER_TOOLS,
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
+  'canvas.inspect',
   'constellation.context',
   'constellation.inspect',
   'constellation.remember',
@@ -89,6 +90,15 @@ export function normalizeRuntimeOptions(
 ): AgentCardRuntimeOptions | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return cloneDeckDocument(value as AgentCardRuntimeOptions);
+}
+
+export function isCardController(card: AgentCardInstance): boolean {
+  const record = card as AgentCardInstance & { enabled?: boolean };
+  const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
+  return card.runtime.kind === 'hermes'
+    && record.enabled !== false
+    && options?.enabled !== false
+    && options?.profileDelegationEnabled === true;
 }
 
 

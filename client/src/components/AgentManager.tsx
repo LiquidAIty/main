@@ -612,6 +612,7 @@ export function AgentManager({
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
   const [hermesProfile, setHermesProfile] = useState('');
+  const [profileDelegationEnabled, setProfileDelegationEnabled] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
@@ -845,6 +846,7 @@ export function AgentManager({
       setScriptDraft(savedScript);
     }
     setHermesProfile(localConfig.runtime.kind === 'hermes' ? localConfig.runtime.profile : '');
+    setProfileDelegationEnabled(localConfig.runtime_options?.profileDelegationEnabled === true);
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
@@ -1008,6 +1010,7 @@ export function AgentManager({
       ...editedConfig,
       runtime_options: {
         ...(localConfig.runtime_options || {}),
+        ...(runtimeKind === 'hermes' ? { profileDelegationEnabled } : {}),
         toolCatalogPolicy: runtimeKind === 'hermes'
           ? (localConfig.runtime_options?.toolCatalogPolicy === 'selected' ? 'selected' : 'all_healthy')
           : 'selected',
@@ -1030,6 +1033,7 @@ export function AgentManager({
     runtimeKind,
     runtimeMode,
     hermesProfile,
+    profileDelegationEnabled,
     cardId,
     provider,
     accessMode,
@@ -2038,6 +2042,17 @@ export function AgentManager({
                 <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
                   This saved profile owns the Card's isolated Hermes session and SQLite memory.
                 </div>
+                <label style={{ display: 'block', marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={profileDelegationEnabled}
+                    onChange={(event) => {
+                      setProfileDelegationEnabled(event.target.checked);
+                      markDraftDirty();
+                    }}
+                  />
+                  Control connected Cards
+                </label>
               </div>
             ) : null}
               <>

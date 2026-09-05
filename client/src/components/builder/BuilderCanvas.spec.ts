@@ -32,6 +32,57 @@ import {
 } from '../../features/agentbuilder/core/agentBuilderViewportMath';
 import { buildDeckEdgeIdentityKey, sanitizeDeckEdges } from './deckValidation';
 import MagenticBusNode from './nodes/MagenticBusNode';
+import { INITIAL_DECK } from '../../features/agentbuilder/deck/newProjectDeck';
+
+describe('orange controller connection validation', () => {
+  it('keeps blue membership and control identical in either endpoint order', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    for (const [cardId, busHandle, edgeType] of [
+      ['card_main_chat', 'task-bus-top', 'magentic_control'],
+      ['card_local_coder', 'bus-in-1', 'magentic_option'],
+    ] as const) {
+      const forward = { source: cardId, target: 'card_magentic', sourceHandle: null, targetHandle: busHandle };
+      const reverse = { source: forward.target, target: forward.source, sourceHandle: busHandle, targetHandle: null };
+      expect(isPlainConnectionAllowedForDocument(deck, forward, [])).toBe(true);
+      expect(isPlainConnectionAllowedForDocument(deck, reverse, [])).toBe(true);
+      const edges = [{ ...forward, id: 'existing', data: { edgeType } }];
+      expect(isPlainConnectionAllowedForDocument(deck, reverse, edges)).toBe(false);
+      if (edgeType === 'magentic_option') {
+        expect(isPlainConnectionAllowedForDocument(deck, { ...forward, source: 'card_trading_workbench' }, edges)).toBe(true);
+      }
+    }
+    const bus = deck.nodes.find(card => card.id === 'card_magentic')!;
+    deck.nodes.push({ ...bus, id: 'other-bus' });
+    expect(isPlainConnectionAllowedForDocument(deck, {
+      source: 'card_magentic', target: 'other-bus', sourceHandle: null, targetHandle: null,
+    }, [])).toBe(false);
+  });
+
+  it('preserves disabled state and existing presentation fields through load and Canvas conversion', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const wire = { ...deck.edges[0], enabled: false, label: 'Existing label', style: { opacity: 0.4 } };
+    deck.edges = sanitizeDeckEdges([wire]);
+    const displayed = toFlowEdges(deck, null, null, new Set([wire.id]));
+    expect(displayed[0].data).toMatchObject({ enabled: false, isActive: false });
+    expect(mergeFlowEdgesIntoDeck(displayed, deck.edges)[0]).toMatchObject(wire);
+  });
+  it('rejects invalid creations and reconnections without changing blue membership', () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const connect = { source: 'card_main_chat', target: 'card_agent_builder', sourceHandle: null, targetHandle: null };
+    const allowed = (value = connect, ignore?: string) => isPlainConnectionAllowedForDocument(deck, value, [], ignore);
+    expect(allowed()).toBe(true);
+    expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
+    const main = deck.nodes.find(card => card.id === connect.source)!;
+    main.runtimeOptions!.profileDelegationEnabled = false;
+    expect(allowed()).toBe(false);
+    expect(allowed(connect, 'reconnected-edge')).toBe(false);
+    expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'task-bus-top' as any })).toBe(true);
+    expect(allowed({ ...connect, source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
+    main.runtimeOptions!.profileDelegationEnabled = true;
+    deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
+    expect(allowed()).toBe(false);
+  });
+});
 
 describe('BuilderCanvas runtime-truth helpers', () => {
   it('fits every rendered Card when the Fit view control is used', () => {
@@ -618,7 +669,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ]);
   });
 
-  it('includes sourceHandle and targetHandle in edge identity', () => {
+  it('identifies blue membership by the Card pair rather than drawing order or port', () => {
     const firstKey = buildDeckEdgeIdentityKey({
       source: 'card_magentic',
       sourceHandle: 'bus-out-1',
@@ -634,11 +685,13 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       edgeType: 'magentic_option',
     });
 
-    expect(firstKey).not.toBe(secondKey);
-    expect(firstKey).toBe('card_magentic::bus-out-1::card_worker_a::::magentic_option');
+    expect(firstKey).toBe(secondKey);
+    expect(firstKey).toBe(buildDeckEdgeIdentityKey({
+      source: 'card_worker_a', target: 'card_magentic', targetHandle: 'bus-out-1', edgeType: 'magentic_option',
+    }));
   });
 
-  it('allows the same source and target through different handles but rejects exact duplicates', () => {
+  it('rejects duplicate worker membership even through another port', () => {
     const document = createBusTestDocument();
     const currentEdges: Edge[] = [
       {
@@ -662,7 +715,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
         currentEdges,
       ),
-    ).toBe(true);
+    ).toBe(false);
 
     expect(
       isPlainConnectionAllowedForDocument(
@@ -678,8 +731,12 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ).toBe(false);
   });
 
-  it('allows normal agent-to-agent chains and rejects only exact duplicate links', () => {
+  it('allows controller-to-receiver chains and rejects exact duplicate links', () => {
     const document = createBusTestDocument();
+    for (const card of document.nodes.filter(card => card.id !== 'card_magentic')) {
+      card.runtime = { kind: 'hermes', mode: 'delegate', profile: card.id };
+      card.runtimeOptions = { profileDelegationEnabled: card.id !== 'card_research_agent' };
+    }
     const currentEdges: Edge[] = [
       {
         id: 'edge_worker_chain',

@@ -419,6 +419,7 @@ export const INITIAL_DECK: DeckDocument = {
       // Main's tools are role-filtered before the Python MCP host exposes them.
       // No ordinary web search is granted.
       runtimeOptions: {
+        profileDelegationEnabled: true,
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
@@ -661,9 +662,6 @@ export const INITIAL_DECK: DeckDocument = {
   edges: [
     { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
     { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
-    { id: 'edge_main_chat_trading', source: 'card_main_chat', target: 'card_trading_workbench', edgeType: 'flow' },
-    { id: 'edge_graph_trading', source: 'card_hermes_steward', target: 'card_trading_workbench', edgeType: 'flow' },
-    { id: 'edge_trading_worldsignals', source: 'card_trading_workbench', target: 'card_worldsignals_agent', edgeType: 'flow' },
     {
       id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
@@ -672,8 +670,8 @@ export const INITIAL_DECK: DeckDocument = {
       edgeType: 'magentic_control',
     },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
-    { id: 'edge_trading_magentic_bus', source: 'card_magentic', target: 'card_trading_workbench', targetHandle: 'bus-in-4', edgeType: 'magentic_option' },
-    { id: 'edge_coder_magentic_option', source: 'card_magentic', target: 'card_local_coder', targetHandle: 'bus-in-5', edgeType: 'magentic_option' },
+    { id: 'edge_trading_magentic_bus', source: 'card_magentic', sourceHandle: 'bus-in-4', target: 'card_trading_workbench', edgeType: 'magentic_option' },
+    { id: 'edge_coder_magentic_option', source: 'card_magentic', sourceHandle: 'bus-in-5', target: 'card_local_coder', edgeType: 'magentic_option' },
   ],
 };
 

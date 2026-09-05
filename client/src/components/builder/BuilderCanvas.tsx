@@ -32,7 +32,7 @@ import type {
 import {
   buildDeckEdgeIdentityKey,
 } from './deckValidation';
-import { normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
+import { isCardController, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 import {
   GRAPH_THEME,
   graphControlButtonStyle,
@@ -244,6 +244,7 @@ type DeckEdgeVisualState = {
 
 type FlowEdgeData = {
   edgeType?: DeckEdgeType | null;
+  enabled?: boolean;
   isActive?: boolean;
   isSelected?: boolean;
   isHoverConnected?: boolean;
@@ -285,6 +286,20 @@ function resolveCanvasConnectionEdgeType(
     return busHandle === MAG_ONE_CONTROL_HANDLE ? 'magentic_control' : 'magentic_option';
   }
 
+  const targetOptions = targetNode.runtimeOptions as { enabled?: boolean } | null;
+  const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
+  if (!isCardController(sourceNode)
+    || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
+    || targetOptions?.enabled === false
+    || targetNode.runtime.kind !== 'hermes'
+    || targetNode.runtime.mode !== 'delegate'
+    || !targetProfile
+    || document.nodes.filter((card) => card.runtime.kind === 'hermes'
+      && card.runtime.profile.trim().toLowerCase() === targetProfile).length !== 1
+    || (sourceNode.runtime.kind === 'hermes'
+      && sourceNode.runtime.profile.trim().toLowerCase() === targetNode.runtime.profile.trim().toLowerCase())) {
+    return null;
+  }
   return 'flow';
 }
 
@@ -358,7 +373,7 @@ export function toFlowEdges(
   return document.edges.flatMap((edge) => {
     const isSelected = edge.id === selectedEdgeId;
     const isHoverConnected = isEdgeConnectedToNode(edge.source, edge.target, hoveredCardId);
-    const isActive = activeEdgeIds.has(edge.id);
+    const isActive = edge.enabled !== false && activeEdgeIds.has(edge.id);
     const edgeType = normalizeDeckEdgeType(edge.edgeType);
     const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
     const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
@@ -371,6 +386,7 @@ export function toFlowEdges(
       targetHandle: edge.targetHandle ?? undefined,
       data: {
         edgeType,
+        enabled: edge.enabled !== false,
         isActive,
         isSelected,
         isHoverConnected,
@@ -1102,7 +1118,7 @@ export default function BuilderCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        connectionMode={ConnectionMode.Strict}
+        connectionMode={ConnectionMode.Loose}
         minZoom={GRAPH_THEME.nav.minZoom}
         maxZoom={GRAPH_THEME.nav.maxZoom}
         preventScrolling

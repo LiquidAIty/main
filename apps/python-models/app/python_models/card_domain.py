@@ -267,6 +267,11 @@ def _edge_core(edge: dict[str, Any]) -> dict[str, Any]:
     edge_id = _required_text(edge.get("id"), "edge_id")
     source = _required_text(edge.get("source"), "edge_source")
     target = _required_text(edge.get("target"), "edge_target")
+    for field in ("sourceHandle", "targetHandle"):
+        if edge.get(field) is not None and not isinstance(edge[field], str):
+            raise CardDomainError(f"edge_handle_invalid:{field}")
+    if "enabled" in edge and not isinstance(edge["enabled"], bool):
+        raise CardDomainError("edge_enabled_invalid")
     presentation = {
         key: value for key, value in edge.items()
         if key not in {"id", "source", "target", "edgeType", "sourceHandle", "targetHandle"}
@@ -296,6 +301,7 @@ def _validated_deck_collections(
         raise CardDomainError("deck_document_invalid")
 
     node_ids: set[str] = set()
+    profiles: set[str] = set()
     for node in nodes:
         if not isinstance(node, dict):
             raise CardDomainError("deck_document_invalid")
@@ -303,8 +309,16 @@ def _validated_deck_collections(
         if card_id in node_ids:
             raise CardDomainError(f"card_id_duplicate:{card_id}")
         node_ids.add(card_id)
+        runtime = _card_runtime(node)
+        if runtime.get("kind") == "hermes":
+            profile = runtime["profile"].strip().lower()
+            if profile in profiles:
+                raise CardDomainError(f"card_profile_duplicate:{profile}")
+            profiles.add(profile)
 
     edge_ids: set[str] = set()
+    edge_keys: set[tuple[str, ...]] = set()
+    cards = {node["id"]: node for node in nodes}
     for edge in edges:
         if not isinstance(edge, dict):
             raise CardDomainError("deck_document_invalid")
@@ -314,6 +328,16 @@ def _validated_deck_collections(
         edge_ids.add(core["id"])
         if core["source"] not in node_ids or core["target"] not in node_ids:
             raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
+        endpoints = (core["source"], core["target"])
+        if core["edgeType"] in {"magentic_option", "magentic_control"}:
+            if sum(_card_runtime(cards[key]) == {"kind": "autogen", "mode": "magentic_one"}
+                   for key in endpoints) != 1:
+                raise CardDomainError(f"edge_magentic_endpoint_required:{core['id']}")
+            endpoints = tuple(sorted(endpoints))
+        key = (core["edgeType"], *endpoints)
+        if key in edge_keys:
+            raise CardDomainError(f"edge_connection_duplicate:{core['id']}")
+        edge_keys.add(key)
 
     template_ids: set[str] = set()
     for template in templates:
@@ -466,6 +490,9 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         for field in GRANT_FIELDS.values()
     }
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
+    if "profileDelegationEnabled" in extensions:
+        if not isinstance(extensions["profileDelegationEnabled"], bool):
+            raise CardDomainError("card_profile_delegation_flag_invalid")
     if "subagentModel" in extensions:
         extensions["subagentModel"] = _subagent_model_selection(
             extensions["subagentModel"]
@@ -1406,6 +1433,7 @@ def save_deck(
             if cursor.fetchone() is None:
                 if expected_revision:
                     raise CardDomainError("deck_conflict")
+                _validate_changed_flow_edges(incoming_nodes, incoming_edges, [])
                 revision = str(uuid4())
                 saved_at = _now()
                 cursor.execute(
@@ -1468,6 +1496,7 @@ def save_deck(
             current = _load_deck_with_cursor(cursor, project_ref, deck_id, include_internal=True)
             if expected_revision and current["meta"]["deckRevision"] != expected_revision:
                 raise CardDomainError("deck_conflict")
+            _validate_changed_flow_edges(incoming_nodes, incoming_edges, current["deck"]["edges"])
             current_by_id = {node["id"]: node for node in current["deck"]["nodes"]}
             incoming_by_id = {_required_text(node.get("id"), "card_id"): node for node in incoming_nodes}
             if set(current_by_id) - set(incoming_by_id):
@@ -1772,12 +1801,53 @@ def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
     )
 
 
+def _profile_delegation_enabled(card: dict[str, Any]) -> bool:
+    return (
+        _card_runtime(card).get("kind") == "hermes"
+        and _card_enabled(card)
+        and (card.get("runtimeOptions") or {}).get("profileDelegationEnabled") is True
+    )
+
+
+def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+                                 previous: list[dict[str, Any]]) -> None:
+    cards = {card["id"]: card for card in nodes}
+    old = {edge["id"]: edge for edge in previous}
+    removed: set[str] = set()
+    for edge in edges:
+        if edge.get("edgeType") != "flow":
+            continue
+        prior = old.get(edge["id"])
+        source = cards[edge["source"]]
+        if (source.get("runtimeOptions") or {}).get("profileDelegationEnabled") is not True:
+            if prior and all(prior.get(key) == edge.get(key) for key in (
+                "source", "target", "sourceHandle", "targetHandle", "edgeType", "enabled",
+            )):
+                removed.add(edge["id"])
+                continue
+            raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
+        if edge.get("enabled") is False:
+            continue
+        targets = _direct_card_targets(edge["source"], cards, [edge])
+        if not any(target["cardId"] == edge["target"] for target in targets):
+            raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
+    edges[:] = [edge for edge in edges if edge["id"] not in removed]
+
+
 def _direct_card_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Project explicit saved Hermes Card targets from enabled FLOW edges."""
+    source = cards.get(card_id)
+    if source is None or not _profile_delegation_enabled(source):
+        return []
+    profiles = [
+        str(runtime.get("profile") or "").strip().lower()
+        for card in cards.values()
+        if isinstance(runtime := card.get("runtime"), dict) and runtime.get("kind") == "hermes"
+    ]
     direct: list[dict[str, Any]] = []
     seen: set[str] = set()
     for edge in edges:
@@ -1796,6 +1866,8 @@ def _direct_card_targets(
             continue
         runtime = _card_runtime(target)
         if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
+            continue
+        if profiles.count(runtime["profile"].strip().lower()) != 1:
             continue
         seen.add(target_id)
         direct.append({
@@ -2450,8 +2522,7 @@ def _prepare_invocation(
         sender_runtime = _card_runtime(sender) if sender is not None else None
         if target_runtime == {"kind": "autogen", "mode": "magentic_one"}:
             authorized = any(
-                edge["source"] == sender_id
-                and edge["target"] == card_id
+                {edge["source"], edge["target"]} == {sender_id, card_id}
                 and edge["edgeType"] == "magentic_control"
                 and edge.get("enabled") is not False
                 for edge in loaded["deck"]["edges"]
@@ -2465,11 +2536,8 @@ def _prepare_invocation(
             )
         else:
             authorized = any(
-                edge["source"] == sender_id
-                and edge["target"] == card_id
-                and edge["edgeType"] == "flow"
-                and edge.get("enabled") is not False
-                for edge in loaded["deck"]["edges"]
+                target["cardId"] == card_id
+                for target in _direct_card_targets(sender_id, cards, loaded["deck"]["edges"])
             )
         if sender is None or not authorized:
             raise CardDomainError("card_invocation_edge_authority_required")
@@ -2845,9 +2913,10 @@ def resolve_magentic_target_card(
     sender_id = _required_text(sender_id, "sender_card_id")
     loaded = _load_deck_internal(project_ref, deck_id)
     target_ids = {
-        edge["target"]
+        edge["target"] if edge["source"] == sender_id else edge["source"]
         for edge in loaded["deck"]["edges"]
-        if edge["source"] == sender_id and edge["edgeType"] == "magentic_control"
+        if sender_id in {edge["source"], edge["target"]}
+        and edge["edgeType"] == "magentic_control" and edge.get("enabled") is not False
     }
     targets = [
         card for card in loaded["deck"]["nodes"]
@@ -2878,7 +2947,8 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     seen: set[str] = set()
     known_tools = {item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())}
     for edge in loaded["deck"]["edges"]:
-        if edge["edgeType"] != "magentic_option" or orchestrator["id"] not in {edge["source"], edge["target"]}:
+        if (edge["edgeType"] != "magentic_option" or edge.get("enabled") is False
+                or orchestrator["id"] not in {edge["source"], edge["target"]}):
             continue
         card_id = edge["target"] if edge["source"] == orchestrator["id"] else edge["source"]
         card = cards.get(card_id)
@@ -3239,6 +3309,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         for edge in loaded["deck"]["edges"]:
             if (
                 edge["edgeType"] != "magentic_option"
+                or edge.get("enabled") is False
                 or card_identity["cardId"] not in {edge["source"], edge["target"]}
             ):
                 continue

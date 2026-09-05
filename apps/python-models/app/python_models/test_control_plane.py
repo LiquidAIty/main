@@ -162,6 +162,8 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
         "unavailableConfiguredTools": [],
     }
     assert result["effectiveReadTools"] == []
+    # Disconnected Cards remain visible independently of any call allowlist.
+    assert {card["id"] for card in result["cards"]} == {card["id"] for card in DECK["nodes"]}
     assert all("prompt" not in card for card in result["cards"])
     assert result["wires"] == [
         {"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}
@@ -622,14 +624,74 @@ class TestUpsertWire:
                 "wire": {"source": "ghost", "target": "signals-card", "edgeType": "flow"},
             }))
 
-    def test_magentic_option_upsert_persists(self, fake_backend):
+    def test_magentic_option_upsert_persists(self, fake_backend, monkeypatch):
+        import copy
+        deck = copy.deepcopy(DECK)
+        deck['nodes'].append({'id': 'mag', 'runtime': {'kind': 'autogen', 'mode': 'magentic_one'}})
+        monkeypatch.setattr(cp, '_load_deck', lambda *_: (deck, 'rev1'))
         result = asyncio.run(cp.canvas_upsert_wire({
             "projectId": "p", "deckId": "d", "op": "upsert",
-            "wire": {"source": "worker", "target": "signals-card", "edgeType": "magentic_option"},
+            "wire": {"source": "worker", "target": "mag", "edgeType": "magentic_option"},
         }))
         assert result["ok"] is True
         edges = fake_backend["deck"]["edges"]
         assert any(e["edgeType"] == "magentic_option" for e in edges)
+
+    @pytest.mark.parametrize('edge_type', ['flow', 'magentic_option', 'magentic_control'])
+    def test_wire_round_trip_and_identical_upsert_preserve_every_field(self, monkeypatch, edge_type):
+        import copy
+        from app.python_models import card_domain
+        source = {'id': 'source', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'source'},
+                  'runtimeOptions': {'profileDelegationEnabled': True, 'tools': ['canvas.inspect']}}
+        target = {'id': 'target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
+                  'runtimeOptions': {'profileDelegationEnabled': False}}
+        if edge_type != 'flow':
+            target['runtime'] = {'kind': 'autogen', 'mode': 'magentic_one'}
+        deck = {'nodes': [source, target], 'edges': []}
+        cards_before = copy.deepcopy(deck['nodes'])
+        saves = []
+        monkeypatch.setattr(cp, '_load_deck', lambda *_: (copy.deepcopy(deck), 'rev1'))
+        def save(_project, _deck_id, value, _revision):
+            saves.append(copy.deepcopy(value))
+            deck.update(value)
+        monkeypatch.setattr(cp, '_save_deck', save)
+        wire = {'id': 'wire', 'source': 'source', 'target': 'target', 'sourceHandle': 'out',
+                'targetHandle': 'in', 'edgeType': edge_type, 'enabled': False, 'label': 'Saved label',
+                'style': {'strokeWidth': 2}}
+        args = {'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': wire}
+        assert asyncio.run(cp.canvas_upsert_wire(args))['ok']
+        assert deck['edges'] == [wire]
+        # An abbreviated update retains saved fields and performs no write when unchanged.
+        args['wire'] = {key: wire[key] for key in ('id', 'source', 'target')}
+        assert asyncio.run(cp.canvas_upsert_wire(args))['ok']
+        assert len(saves) == 1
+        if edge_type != 'flow':
+            # Reversing only serialization keeps each port on its original Card and is a no-op.
+            args['wire'] = {'id': wire['id'], 'source': wire['target'], 'target': wire['source']}
+            assert asyncio.run(cp.canvas_upsert_wire(args))['ok']
+            assert len(saves) == 1
+            assert deck['edges'] == [wire]
+        assert asyncio.run(cp.canvas_inspect({'projectId': 'p', 'deckId': 'd'}))['wires'] == [wire]
+        core = card_domain._edge_core(wire)
+        properties = {**core, 'edgeId': core['id'], 'ordinal': 0}
+        monkeypatch.setattr(card_domain, '_age_rows', lambda _cursor, query, *_:
+                            [{'source': wire['source'], 'target': wire['target'], 'properties': properties}]
+                            if ':' + card_domain._edge_labels()[edge_type] + ']' in query else [])
+        assert card_domain._load_age_edges(None, 'p', 'd') == [wire]
+        assert deck['nodes'] == cards_before
+
+    def test_blue_reverse_duplicates_and_invalid_endpoint_pairs(self, monkeypatch):
+        deck = {'nodes': [{'id': key, 'runtime': {'kind': 'autogen', 'mode': mode}}
+                          for key, mode in [('a', 'assistant'), ('b', 'assistant'),
+                                            ('mag', 'magentic_one'), ('other-mag', 'magentic_one')]],
+                'edges': [{'id': 'existing', 'source': 'a', 'target': 'mag', 'edgeType': 'magentic_option'}]}
+        monkeypatch.setattr(cp, '_load_deck', lambda *_: (deck, 'rev1'))
+        monkeypatch.setattr(cp, '_save_deck', lambda *_: pytest.fail('Rejected wires must not save or execute'))
+        for source, target, reason in [('mag', 'a', 'duplicate'), ('a', 'b', 'endpoint_required'),
+                                       ('mag', 'other-mag', 'endpoint_required')]:
+            with pytest.raises(cp.ControlPlaneError, match=reason):
+                asyncio.run(cp.canvas_upsert_wire({'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
+                    'wire': {'id': 'new', 'source': source, 'target': target, 'edgeType': 'magentic_option'}}))
 
 
 class TestRunAssistantAgent:

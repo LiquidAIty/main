@@ -26,6 +26,7 @@ const currentDeck = {
     nodes: [{
       id: 'card_main_chat', templateId: 'main', title: 'Main', position: { x: 0, y: 0 },
       runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+      runtimeOptions: { profileDelegationEnabled: true },
     }, {
       id: 'card_hermes_steward', templateId: 'graph', title: 'Graph Agent', position: { x: 1, y: 0 },
       parentGraphId: 'workbench_graph',
@@ -39,6 +40,21 @@ const currentDeck = {
 };
 
 describe('native profile delegation host adapter', () => {
+  it.each(['controller-off', 'shared-profile', 'reverse-edge'])('rejects %s before any runner call', async (reason) => {
+    const deck = structuredClone(currentDeck);
+    if (reason === 'controller-off') deck.deck.nodes[0].runtimeOptions!.profileDelegationEnabled = false;
+    if (reason === 'shared-profile') deck.deck.nodes[0].runtime.profile = deck.deck.nodes[1].runtime.profile;
+    if (reason === 'reverse-edge') {
+      const edge = deck.deck.edges[0];
+      [edge.source, edge.target] = [edge.target, edge.source];
+    }
+    const runner = vi.fn();
+    await expect(runHermesProfileDelegation(authority, {
+      parentExecutionContextId: 'root-context', nativeChildId: 'profile-abcdef123456',
+      targetProfile: 'liquidaity-hermes-steward', goal: 'Inspect',
+    }, runner as any, vi.fn(async () => deck) as any)).rejects.toThrow('hermes_profile_target_stale');
+    expect(runner).not.toHaveBeenCalled();
+  });
   it('maps one authorized native profile to the canonical saved-Card tool', async () => {
     const runner = vi.fn(async () => ({
       ok: true,

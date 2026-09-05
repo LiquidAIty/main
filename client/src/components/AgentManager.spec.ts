@@ -66,6 +66,25 @@ const savedConfig: AgentManagerLocalConfig = {
 };
 
 describe('AgentManager active builder config', () => {
+  it('saves and reloads Control connected Cards through existing Card options', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const props = { agentType: 'agent_builder' as const, activeTab: 'Prompt' as const, cardId: 'card-one',
+      projectId: 'p', deckId: 'd', localConfig: savedConfig, onSaveLocalConfig: onSave };
+    const { rerender } = render(React.createElement(AgentManager, props));
+    const checkbox = screen.getByLabelText('Control connected Cards') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByTestId('agent-manager-save'));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    const saved = onSave.mock.calls[0][0];
+    expect(saved.runtime_options.profileDelegationEnabled).toBe(true);
+    expect(saved.runtime).toEqual(savedConfig.runtime);
+    expect(saved.tools).toEqual(savedConfig.tools);
+    expect(saved.prompt_template).toBe(savedConfig.prompt_template);
+    rerender(React.createElement(AgentManager, { ...props, localConfig: saved }));
+    expect((screen.getByLabelText('Control connected Cards') as HTMLInputElement).checked).toBe(true);
+  });
   it('shows native-contract runtime choices without full Builder discovery or implicit model replacement', async () => {
     const fetchMock = mockEditorFetch();
     const onSave = vi.fn();

@@ -5,6 +5,7 @@ import { GRAPH_THEME } from "../../graph/graphVisualTokens";
 
 type TurboFlowEdgeData = {
   edgeType?: DeckEdgeType | null;
+  enabled?: boolean;
   isActive?: boolean;
   isSelected?: boolean;
   isHoverConnected?: boolean;
@@ -89,7 +90,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
   const isMagenticControl = edgeData.edgeType === "magentic_control";
   // An unrecognised persisted edge authorises nothing at runtime — render it
   // visibly inert (muted, dashed), never as a Call.
-  const isInvalid = edgeData.edgeType === "invalid";
+  const isInvalid = edgeData.edgeType === "invalid" || edgeData.enabled === false;
   // Turbo shell motion is the primary visual signal. Edges stay secondary.
   const stroke = isInvalid
     ? "#8A7F78"

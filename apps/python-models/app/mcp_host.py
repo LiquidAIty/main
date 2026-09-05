@@ -2529,7 +2529,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
             name="canvas.upsert_wire",
             description=(
                 "Create/update/remove ONE saved canvas wire. Supported wire types only: 'flow' and "
-                "'magentic_option'. A wire is persisted visible configuration — it never runs agents."
+                "'magentic_option', 'magentic_control'. Blue endpoint order has no runtime meaning. "
+                "A wire is persisted visible configuration — it never runs agents."
             ),
             inputSchema={
                 "type": "object",
@@ -2543,13 +2544,15 @@ async def _materialize_complete_catalog() -> list[Tool]:
                             "id": {"type": "string"},
                             "source": {"type": "string"},
                             "target": {"type": "string"},
+                            "sourceHandle": {"type": ["string", "null"]},
+                            "targetHandle": {"type": ["string", "null"]},
+                            "enabled": {"type": "boolean"},
                             "edgeType": {
                                 "type": "string",
-                                "enum": ["flow", "magentic_option"],
-                                "default": "flow",
+                                "enum": ["flow", "magentic_option", "magentic_control"],
                             },
                         },
-                        "additionalProperties": False,
+                        "additionalProperties": True,
                     },
                 },
                 "required": ["projectId", "deckId", "op", "wire"],

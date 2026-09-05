@@ -121,9 +121,13 @@ export async function runHermesProfileDelegation(
     || sourceRecord?.enabled === false
     || targetRecord?.enabled === false
     || sourceOptions?.enabled === false
+    || sourceOptions?.profileDelegationEnabled !== true
+    || source.runtime.kind !== 'hermes'
     || targetOptions?.enabled === false
     || !currentEdge
     || !targetRuntimeMatches
+    || deck.nodes.filter((card) => card.runtime.kind === 'hermes'
+      && card.runtime.profile.trim().toLowerCase() === targetProfile).length !== 1
   ) {
     throw new Error('hermes_profile_target_stale');
   }

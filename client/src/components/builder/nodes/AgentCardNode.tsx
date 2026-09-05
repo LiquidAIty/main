@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
+import { isCardController } from '../../../features/agentbuilder/deck/deckPrimitives';
 
 type AgentCardNodeData = AgentCardInstance & {
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
@@ -23,6 +24,7 @@ export default function AgentCardNode({
 }) {
   const canReceiveConnection = true;
   const canStartConnection = true;
+  const controller = isCardController(data);
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const activeAgentCount = Number.isSafeInteger(data?.activeAgentCount) && Number(data.activeAgentCount) > 0
     ? Number(data.activeAgentCount)
@@ -77,23 +79,23 @@ export default function AgentCardNode({
       <Handle
         type="source"
         position={Position.Right}
-        aria-label={`${name} output`}
+        aria-label={`${name} ${controller ? 'Card control' : 'Mag One worker'} output`}
         isConnectable={canStartConnection}
         style={{
           width: 12,
           height: 12,
           right: -7,
           borderRadius: '999px',
-          border: shellActive
+          border: controller
             ? `1.5px solid ${GRAPH_THEME.accent.solar}`
             : `1.5px solid ${GRAPH_THEME.accent.primary}`,
           background: canStartConnection
-            ? shellActive
+            ? controller
               ? `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`
               : `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`
             : '#111315',
           boxShadow: canStartConnection
-            ? shellActive
+            ? controller
               ? `inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px ${GRAPH_THEME.accent.solarSoft}`
               : `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`
             : undefined,

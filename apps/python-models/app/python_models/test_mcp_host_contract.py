@@ -38,6 +38,28 @@ def test_card_team_schema_exposes_only_proven_saved_fields():
     assert "concurrency" not in schema["properties"]
 
 
+def test_canvas_wire_catalog_preserves_supported_fields_without_native_discovery(monkeypatch):
+    import asyncio
+    import jsonschema
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, '_configured_tool_allowlist', lambda: {'canvas.upsert_wire'})
+    monkeypatch.setattr(mcp_host, '_authenticated_main_context', lambda: None)
+    monkeypatch.setattr(mcp_host, 'OAUTH_ENFORCED', False)
+    tools = asyncio.run(mcp_host._materialize_complete_catalog())
+    assert [tool.name for tool in tools] == ['canvas.upsert_wire']
+    schema = tools[0].inputSchema
+    for edge_type in ('flow', 'magentic_option', 'magentic_control'):
+        jsonschema.validate({'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': {
+            'id': 'wire', 'source': 'a', 'target': 'b', 'edgeType': edge_type,
+            'sourceHandle': None, 'targetHandle': 'port', 'enabled': False,
+            'label': 'Existing presentation',
+        }}, schema)
+    assert schema['properties']['wire']['properties']['edgeType']['enum'] == [
+        'flow', 'magentic_option', 'magentic_control',
+    ]
+
+
 def test_execution_receipt_observes_the_actual_provider_client_boundary():
     import asyncio
     import mcp_host

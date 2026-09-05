@@ -6,7 +6,7 @@ The minimum user-directed MCP control surface over ACTUAL saved state:
   * canvas.inspect             — bounded saved deck view
   * card.create                — strict optimistic creation in the saved deck
   * card.update_configuration  — strict allowlist edits of persisted card config
-  * canvas.upsert_wire         — supported wire types only (flow / magentic_option)
+  * canvas.upsert_wire         — flow / magentic_option / magentic_control
   * card.run_assistant_agent   — run ONE saved enabled card (no overrides possible)
 
 Policy/validation lives HERE (Python). Saved-deck persistence stays with the
@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 _BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
-SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
+SUPPORTED_WIRE_TYPES = ("flow", "magentic_option", "magentic_control")
 _SUPPORTED_CARD_RUNTIME_MODES = {
     "hermes": {"main", "delegate"},
     "autogen": {"assistant", "magentic_one"},
@@ -311,6 +311,7 @@ async def canvas_inspect(args: dict[str, Any]) -> dict[str, Any]:
         })
     wires = [
         {
+            **edge,
             "id": str(edge.get("id") or ""),
             "source": str(edge.get("source") or ""),
             "target": str(edge.get("target") or ""),
@@ -866,9 +867,9 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
         raise ControlPlaneError("wire_object_required")
     source = str(wire.get("source") or "").strip()
     target = str(wire.get("target") or "").strip()
-    edge_type = str(wire.get("edgeType") or "flow").strip()
-    wire_id = str(wire.get("id") or "").strip() or f"{source}->{target}:{edge_type}"
-    if edge_type not in SUPPORTED_WIRE_TYPES:
+    edge_type = str(wire.get("edgeType") or "").strip()
+    wire_id = str(wire.get("id") or "").strip()
+    if edge_type and edge_type not in SUPPORTED_WIRE_TYPES:
         raise ControlPlaneError(f"wire_edge_type_unsupported: {edge_type}")
     if op == "upsert" and (not source or not target):
         raise ControlPlaneError("wire_source_and_target_required")
@@ -877,22 +878,67 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
     deck_id = str(args["deckId"]).strip()
 
     def _apply() -> dict[str, Any]:
+        from app.python_models.card_domain import CardDomainError, _edge_core, _validate_changed_flow_edges
+
         deck, revision = _load_deck(project_id, deck_id)
-        node_ids = {str(node.get("id") or "") for node in deck.get("nodes") or []}
+        cards = {str(node.get("id") or ""): node for node in deck.get("nodes") or []}
         edges = list(deck.get("edges") or [])
+        prior = next((edge for edge in edges if edge.get("id") == wire_id), None)
+        resolved_type = edge_type or (prior or {}).get("edgeType") or "flow"
+        resolved_id = wire_id or f"{source}->{target}:{resolved_type}"
+        if prior is None:
+            prior = next((edge for edge in edges if edge.get("id") == resolved_id), None)
         if op == "upsert":
-            if source not in node_ids or target not in node_ids:
+            if source not in cards or target not in cards:
                 raise ControlPlaneError(f"wire_endpoints_not_in_deck: {source}->{target}")
-            edges = [e for e in edges if str(e.get("id") or "") != wire_id]
-            edges.append({"id": wire_id, "source": source, "target": target, "edgeType": edge_type})
+            candidate = {**(prior or {}), **wire, "id": resolved_id, "source": source,
+                         "target": target, "edgeType": resolved_type}
+            blue = resolved_type in {"magentic_option", "magentic_control"}
+            if blue and prior and (prior['source'], prior['target']) == (target, source):
+                for field, old_field in (('sourceHandle', 'targetHandle'), ('targetHandle', 'sourceHandle')):
+                    if field not in wire:
+                        candidate.pop(field, None)
+                        if old_field in prior:
+                            candidate[field] = prior[old_field]
+            if blue:
+                bus_count = sum(cards[key].get("runtime") == {"kind": "autogen", "mode": "magentic_one"}
+                                for key in (source, target))
+                if bus_count != 1:
+                    raise ControlPlaneError("wire_magentic_endpoint_required")
+            for edge in edges:
+                same_endpoints = ({edge["source"], edge["target"]} == {source, target} if blue
+                                  else (edge["source"], edge["target"]) == (source, target))
+                if edge["id"] != resolved_id and edge["edgeType"] == resolved_type and same_endpoints:
+                    raise ControlPlaneError("wire_connection_duplicate")
+            try:
+                _edge_core(candidate)
+                # A wire edit cannot implicitly remove a connection because its source is off.
+                _validate_changed_flow_edges(list(cards.values()), [candidate], [])
+            except CardDomainError as error:
+                raise ControlPlaneError(str(error)) from error
+            comparable = dict(candidate)
+            if blue and prior and (prior['source'], prior['target']) == (target, source):
+                comparable['source'], comparable['target'] = target, source
+                comparable.pop('sourceHandle', None)
+                comparable.pop('targetHandle', None)
+                if 'targetHandle' in candidate:
+                    comparable['sourceHandle'] = candidate['targetHandle']
+                if 'sourceHandle' in candidate:
+                    comparable['targetHandle'] = candidate['sourceHandle']
+            if prior == comparable:
+                return {"ok": True, "op": op, "wireId": resolved_id, "edgeType": resolved_type}
+            if prior is None:
+                edges.append(candidate)
+            else:
+                edges = [candidate if edge["id"] == resolved_id else edge for edge in edges]
         else:
             before = len(edges)
-            edges = [e for e in edges if str(e.get("id") or "") != wire_id]
+            edges = [e for e in edges if str(e.get("id") or "") != resolved_id]
             if len(edges) == before:
-                raise ControlPlaneError(f"wire_not_found: {wire_id}")
+                raise ControlPlaneError(f"wire_not_found: {resolved_id}")
         deck["edges"] = edges
         _save_deck(project_id, deck_id, deck, revision)
-        return {"ok": True, "op": op, "wireId": wire_id, "edgeType": edge_type}
+        return {"ok": True, "op": op, "wireId": resolved_id, "edgeType": resolved_type}
 
     return await asyncio.to_thread(_apply)
 

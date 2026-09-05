@@ -149,6 +149,9 @@ export default function useAgentBuilderCardEditor({
         return {
           ...currentDeck,
           version: currentDeck.version + 1,
+          edges: nextRuntimeOptions?.profileDelegationEnabled === true
+            ? currentDeck.edges
+            : currentDeck.edges.filter((edge) => edge.edgeType !== 'flow' || edge.source !== selectedCard.id),
           nodes: currentDeck.nodes.map((node) =>
             node.id === selectedCard.id
               ? {
