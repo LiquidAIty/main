@@ -58,6 +58,23 @@ afterEach(async () => {
 });
 
 describe('XtermView real PTY transport', () => {
+  it('keeps connection diagnostics out of the native terminal stream', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const failure = 'Database request failed\ninternal stack trace';
+    await act(async () => {
+      root?.render(<XtermView interactive={false} launchError={failure}
+        connectOutput={async (write) => { write('native prompt'); }} />);
+    });
+    expect(terminalMocks.writes).toEqual(['native prompt']);
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
+    expect(host.textContent).not.toContain(failure);
+    expect(log).toHaveBeenCalledWith('[Terminal connection]', failure);
+    log.mockRestore();
+  });
+
   it('renders only PTY output and forwards raw input without local echo or line parsing', async () => {
     const onData = vi.fn(async () => undefined);
     const connectOutput = vi.fn(async (onOutput: (data: string) => void) => {

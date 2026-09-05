@@ -8,6 +8,7 @@ import {
   HermesCoderTerminalSession,
   ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
+  ensureSavedBuilderTerminal,
   type ConsoleSessionInfo,
   type HermesCoderPtyLaunch,
   type PtyFactory,
@@ -138,6 +139,58 @@ describe('Hermes Coder real PTY boundary', () => {
     expect(sameMain.id).toBe(main.id);
     expect(launchCoder).toHaveBeenCalledOnce();
     expect(launchMain).toHaveBeenCalledOnce();
+  });
+
+  it('reuses one saved Builder CLI across attachments without crossing into Coder', async () => {
+    const child = new FakePty();
+    const factory = vi.fn(() => child) as unknown as PtyFactory;
+    const manager = new HermesCoderTerminalManager(factory);
+    const deck = { workspaceRoot: process.cwd(), nodes: [{
+      id: 'saved-builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtimeOptions: { tools: ['canvas.inspect'], modelKey: 'saved-model' }, prompt: 'Saved prompt',
+    }] } as any;
+    const before = JSON.stringify(deck);
+    const readDeck = vi.fn(async () => ({ deck, meta: { deckRevision: 'revision', deckSavedAt: null } }));
+    const launchBuilder = vi.fn((target: HermesCoderTerminalSession) => target.start({
+      ...launch(), profile: target.info.profile,
+      args: ['-p', target.info.profile, 'chat', '--cli', '--in', target.info.targetRoot],
+    }));
+    const request = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder' };
+    const [first, second] = await Promise.all([
+      ensureSavedBuilderTerminal(request, manager, readDeck, launchBuilder),
+      ensureSavedBuilderTerminal(request, manager, readDeck, launchBuilder),
+    ]);
+    expect(first).toMatchObject({ ownerCardId: 'saved-builder', profile: 'liquidaity-agent-builder',
+      projectId: 'project-1', deckId: 'deck_builder', runtimeSource: 'repository_hermes_cli', state: 'running' });
+    expect(first.id).toBe(second.id);
+    expect(launchBuilder).toHaveBeenCalledOnce();
+    expect(manager.list()).toHaveLength(1);
+    expect(child.write).not.toHaveBeenCalled();
+    expect(JSON.stringify(deck)).toBe(before);
+
+    deck.nodes[0].runtimeOptions.enabled = false;
+    await expect(ensureSavedBuilderTerminal(request, manager, readDeck, launchBuilder))
+      .rejects.toThrow('builder_terminal_saved_card_required');
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(launchBuilder).toHaveBeenCalledOnce();
+  });
+
+  it('rejects missing, foreign, and shared Builder profiles before acquiring a process', async () => {
+    const launchBuilder = vi.fn();
+    const manager = new HermesCoderTerminalManager();
+    for (const nodes of [[],
+      [{ id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' } }],
+      ['builder', 'other'].map((id) => ({ id, runtime: {
+        kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder',
+      } })),
+    ]) {
+      const readDeck = vi.fn(async () => ({ deck: { nodes, workspaceRoot: process.cwd() } as any,
+        meta: { deckRevision: 'revision', deckSavedAt: null } }));
+      await expect(ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+        manager, readDeck, launchBuilder)).rejects.toThrow('builder_terminal_saved_card_required');
+    }
+    expect(launchBuilder).not.toHaveBeenCalled();
+    expect(manager.list()).toHaveLength(0);
   });
 
   it('requires server-owned project, deck, and conversation identity', () => {

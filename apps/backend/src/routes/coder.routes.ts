@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import {
   coderTerminalSessionManager,
+  ensureSavedBuilderTerminal,
 } from '../hermes/coderTerminal';
 import {
   contextAuthorityModeForDriver,
@@ -164,6 +165,7 @@ async function prepareMainCliRun(args: {
 async function executePreparedMainCliRun(
   run: PreparedMainCliRun,
   onEvent: (event: MainCliBridgeEvent) => void,
+  delivery = { bridge: mainCliBridge, finishRun: true },
 ) {
   let result: Awaited<ReturnType<typeof mainCliBridge.submit>>;
   let rootExecutionContextId = '';
@@ -185,7 +187,7 @@ async function executePreparedMainCliRun(
         : {}),
       // The persistent native Main CLI reuses one MCP client identity while
       // each accepted Run still receives a newly signed Card-scoped bearer.
-      sessionKey: `hermes-main-cli:${run.projectId}:${run.cardId}:${turnArgs.runtime.profile}`,
+      sessionKey: `hermes-${delivery.bridge === mainCliBridge ? 'main' : 'builder'}-cli:${run.projectId}:${run.cardId}:${turnArgs.runtime.profile}`,
       nativeProfileToolsets: Array.isArray(native?.toolsets)
         ? native.toolsets
           .filter((item: any) => item?.enabled === true)
@@ -200,7 +202,7 @@ async function executePreparedMainCliRun(
         : [],
     };
     const rootContext = registerHermesRootExecutionContext({
-      sessionId: `main:${run.runId}`,
+      sessionId: `${delivery.bridge === mainCliBridge ? 'main' : 'builder'}:${run.runId}`,
       runId: run.runId,
       projectId: run.projectId,
       deckId: run.deckId,
@@ -220,7 +222,7 @@ async function executePreparedMainCliRun(
     if (!sessionConfig || typeof sessionConfig !== 'object' || Array.isArray(sessionConfig)) {
       throw new Error('main_cli_host_session_config_invalid');
     }
-    result = await mainCliBridge.submit({
+    result = await delivery.bridge.submit({
       runId: run.runId,
       executionContextId: rootContext.contextId,
       driverSource: run.driverSource,
@@ -268,7 +270,7 @@ async function executePreparedMainCliRun(
       : ['main_cli_bridge_unavailable', 'main_driver_turn_already_running'].includes(rawReason)
         ? rawReason
         : 'main_cli_turn_failed';
-    await requestPythonRailsJson('/domain/runs/finish', {
+    if (delivery.finishRun) await requestPythonRailsJson('/domain/runs/finish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -279,6 +281,7 @@ async function executePreparedMainCliRun(
     }).catch(() => undefined);
     throw new Error(reason);
   }
+  if (!delivery.finishRun) return { ...result, profileMaterialization: run.profileMaterialization };
   try {
     await requestPythonRailsJson('/domain/runs/finish', {
       method: 'POST',
@@ -1255,7 +1258,28 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     let totalCostUsd: number | null = null;
     let nativeRuntimeResult: Awaited<ReturnType<typeof dispatchConfiguredRuntime>> | null = null;
     try {
-      if (prepared.runtimeOwner === 'hermes') {
+      if (prepared.runtimeOwner === 'hermes'
+        && prepared.hermesTransport?.request?.runtime?.profile === AGENT_BUILDER_PROFILE) {
+        const info = await ensureSavedBuilderTerminal({ projectId, deckId, cardId });
+        const session = coderTerminalSessionManager.get(info.id);
+        if (!session?.delivery) throw new Error('builder_cli_delivery_unavailable');
+        const readyDeadline = Date.now() + 15_000;
+        while (!session.delivery.bridge.ready() && session.isLive() && Date.now() < readyDeadline) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!session.isLive() || !session.delivery.bridge.ready()) {
+          throw new Error(session.info.error || 'builder_cli_delivery_unavailable');
+        }
+        const response = await executePreparedMainCliRun({
+          projectId, deckId, conversationId, cardId, runId, prepared, driverSource: 'internal_chat',
+        }, (event) => {
+          // Native PTY output remains the displayed CLI's sole output source.
+          if (event.kind === 'text' && event.delta) nativeEvents.push({ kind: 'text', text: event.delta });
+        }, { bridge: session.delivery.bridge, finishRun: false });
+        output = response.finalText;
+        transport = { threadId: response.nativeSessionId, turnId: response.nativeTurnId,
+          terminalSessionId: info.id, runtimeSource: 'repository_hermes_cli' };
+      } else if (prepared.runtimeOwner === 'hermes') {
         hermesHandle = await startPreparedHermesTransport({
           prepared,
           projectId,
@@ -1888,6 +1912,20 @@ function mountConsoleSessionRoutes(
 }
 
 mountConsoleSessionRoutes('/hermes/coder-terminal', coderTerminalSessionManager);
+
+router.post('/hermes/coder-terminal/sessions', async (req, res) => {
+  try {
+    const session = await ensureSavedBuilderTerminal({
+      projectId: String(req.body?.projectId || ''),
+      deckId: String(req.body?.deckId || ''),
+      cardId: String(req.body?.cardId || ''),
+    });
+    return res.json({ ok: true, session });
+  } catch (error) {
+    return res.status(409).json({ ok: false,
+      error: error instanceof Error ? error.message : 'builder_terminal_unavailable' });
+  }
+});
 
 
 /** Resolve the saved Main Card's durable Hermes identity, never its title or grants. */

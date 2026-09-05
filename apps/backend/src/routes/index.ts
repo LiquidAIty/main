@@ -9,7 +9,7 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
-import internalMainCliRoutes from './internalMainCli.routes';
+import internalMainCliRoutes, { builderCliRoutes } from './internalMainCli.routes';
 import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
@@ -27,6 +27,7 @@ router.use('/health', health);
 // public MCP/ngrok service.
 router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
 router.use('/internal/main-cli', internalMainCliRoutes);
+router.use('/internal/builder-cli/:sessionId', builderCliRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/coder', authMiddleware, coder);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);

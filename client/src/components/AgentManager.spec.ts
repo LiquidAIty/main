@@ -66,6 +66,18 @@ const savedConfig: AgentManagerLocalConfig = {
 };
 
 describe('AgentManager active builder config', () => {
+  it('displays the owning Card name while preserving its saved profile binding on Save', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      agentType: 'agent_builder', activeTab: 'Prompt', cardId: 'card-one', cardName: 'Research',
+      projectId: 'p', deckId: 'd', localConfig: savedConfig, onSaveLocalConfig: onSave,
+    }));
+    expect((screen.getByLabelText('Hermes profile') as HTMLInputElement).value).toBe('Research');
+    fireEvent.click(screen.getByTestId('agent-manager-save'));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].runtime).toEqual(savedConfig.runtime);
+  });
   it('saves and reloads Control connected Cards through existing Card options', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
@@ -532,7 +544,6 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
     expect(source).toContain('Card connection references');
-    expect(source).toContain('References existing LiquidAIty connections by ID');
     expect(source).toContain('Apply Role to profile');
     expect(source).toContain('Apply Soul to profile');
     expect(source).toContain('Apply Model');

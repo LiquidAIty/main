@@ -18,15 +18,19 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
   );
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('keeps Main as one conversation and presents the saved Agent Builder Run beneath it', () => {
+  it('keeps Main as one conversation and presents the saved Agent Builder native CLI beneath it', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     const mainInspectorProjection = /terminalContent=\{selectedCard\.runtime\.kind === 'hermes'[\s\S]*?runtime\.mode === 'main'\s*\?([\s\S]*?)\s*: selectedCard\.runtime\.kind/.exec(source)?.[1] || '';
     expect(mainInspectorProjection).toContain('main-card-cli-location');
     expect(mainInspectorProjection).not.toContain('CoderTerminalPanel');
     expect(source).toContain('data-testid="under-chat-agent-builder"');
-    expect(source).toContain('run={agentBuilderRunResult}');
-    expect(source).toMatch(/executeStandaloneInvocation\(\s*agentBuilderCard,\s*agentBuilderInput\.trim\(\),\s*preparedAgentBuilderOperation,\s*\)/);
-    expect(source).toContain('data-testid="under-chat-agent-builder-proposal"');
+    const underChat = source.slice(source.indexOf('const agentBuilderTerminal ='), source.indexOf('terminal={agentBuilderTerminal}'));
+    expect(underChat).toContain('<CoderTerminalPanel');
+    expect(underChat).toContain('ownerCardId={agentBuilderCard.id}');
+    expect(underChat).toContain('profile: agentBuilderCard.runtime.profile');
+    expect(underChat).toContain('readOnly={!directInput}');
+    expect(underChat).not.toContain('<AdaptiveCardTerminal');
+    expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');
   });
   it('preserves the stable steward identity as the temporary Graph Agent', () => {
@@ -88,15 +92,19 @@ describe('Main / Hermes / graph authority topology', () => {
     }));
   });
 
-  it('uses wires as explicit help authority and permits the bounded Trading handoff path', () => {
-    expect(INITIAL_DECK.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
+  it('connects Main only to Builder, Graph Agent, and Mag One, with other workers on the bus', () => {
+    expect(INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'flow')).toEqual([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_main_chat', target: 'card_trading_workbench', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_hermes_steward', target: 'card_trading_workbench', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_trading_workbench', target: 'card_worldsignals_agent', edgeType: 'flow' }),
-    ]));
-    expect(INITIAL_DECK.edges).toHaveLength(9);
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
+    ]);
+    expect(INITIAL_DECK.edges).toHaveLength(6);
+    expect(INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'magentic_control')).toEqual([
+      expect.objectContaining({ source: 'card_main_chat', target: 'card_magentic' }),
+    ]);
+    const workerEdges = INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'magentic_option');
+    expect(workerEdges.map((edge) => edge.source === 'card_magentic' ? edge.target : edge.source).sort())
+      .toEqual(['card_local_coder', 'card_trading_workbench', 'card_worldsignals_agent']);
+    expect(workerEdges.every((edge) => edge.source === 'card_magentic' || edge.target === 'card_magentic')).toBe(true);
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_local_coder', edgeType: 'flow',
     }));

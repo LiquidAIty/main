@@ -380,7 +380,7 @@ export default function useAgentBuilderMainChat({
         if (!ready) {
           throw new SessionStreamError({
             code: 'backend_not_ready',
-            message: 'LiquidAIty backend did not become ready in time.',
+            message: 'The backend did not become ready in time.',
             route: '/api/health',
           });
         }

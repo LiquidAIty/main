@@ -47,18 +47,6 @@ import AgentBuilderProjectDrawer from '../features/agentbuilder/project/AgentBui
 import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgentBuilderProjectReset';
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
-import { resolveDeckWorkspaceRoot } from '../features/agentbuilder/state/deckWorkspaceRoot';
-import {
-  buildAgentBuilderOperation,
-  buildAgentBuilderProposal,
-  parseAgentBuilderPalette,
-  parseAgentBuilderTools,
-  type AgentBuilderMode,
-  type AgentBuilderModelOption,
-  type AgentBuilderTemplateOption,
-  type AgentBuilderToolOption,
-  type AgentBuilderOperation,
-} from '../features/agentbuilder/state/agentBuilderOperation';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
@@ -138,18 +126,6 @@ const C = {
   accent: '#8358A4',
   warn: '#D98458',
 };
-
-function isAgentBuilderBuildTarget(card: AgentCardInstance): boolean {
-  if (card.runtime.kind === 'autogen' && card.runtime.mode === 'magentic_one') return false;
-  return !(
-    card.runtime.kind === 'hermes'
-    && (
-      card.runtime.mode === 'main'
-      || ['liquidaity-agent-builder', 'liquidaity-hermes-steward']
-        .includes(card.runtime.profile)
-    )
-  );
-}
 
 class KnowledgeSurfaceErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -918,121 +894,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
-  const [agentBuilderMode, setAgentBuilderMode] = useState<AgentBuilderMode>('edit');
-  const [agentBuilderTemplates, setAgentBuilderTemplates] = useState<AgentBuilderTemplateOption[]>([]);
-  const [agentBuilderModels, setAgentBuilderModels] = useState<AgentBuilderModelOption[]>([]);
-  const [agentBuilderTools, setAgentBuilderTools] = useState<AgentBuilderToolOption[]>([]);
-  const [agentBuilderPaletteStatus, setAgentBuilderPaletteStatus] = useState<
-    'idle' | 'loading' | 'ready' | 'failed'
-  >('idle');
-  const [agentBuilderPaletteError, setAgentBuilderPaletteError] = useState<string | null>(null);
-  const [agentBuilderTemplateId, setAgentBuilderTemplateId] = useState('template_assist');
-  const [agentBuilderModelKey, setAgentBuilderModelKey] = useState('');
-  const [agentBuilderTitle, setAgentBuilderTitle] = useState('');
-  const [agentBuilderRole, setAgentBuilderRole] = useState('');
-  const [agentBuilderPrompt, setAgentBuilderPrompt] = useState('');
-  const [agentBuilderSelectedTools, setAgentBuilderSelectedTools] = useState<string[]>([]);
-  const agentBuilderWorkspaceRoot = resolveDeckWorkspaceRoot(deck);
-  const [agentBuilderUseCbm, setAgentBuilderUseCbm] = useState(false);
-  const [agentBuilderCbmProject, setAgentBuilderCbmProject] = useState('');
-  const [agentBuilderCbmError, setAgentBuilderCbmError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!canonicalDeckReady || !agentBuilderCard || !canvasProjectId) {
-      setAgentBuilderPaletteStatus('idle');
-      setAgentBuilderPaletteError(null);
-      setAgentBuilderTemplates([]);
-      setAgentBuilderModels([]);
-      setAgentBuilderTools([]);
-      return;
-    }
-    const controller = new AbortController();
-    setAgentBuilderPaletteStatus('loading');
-    setAgentBuilderPaletteError(null);
-    void Promise.all([
-      fetch(
-        `/api/coder/input-data-dictionary/card-editor?projectId=${encodeURIComponent(canvasProjectId)}`
-        + `&deckId=${encodeURIComponent(BUILDER_DECK_ID)}`
-        + `&cardId=${encodeURIComponent(agentBuilderCard.id)}`,
-        { signal: controller.signal },
-      ),
-      fetch('/api/coder/input-data-dictionary/tools?offset=0&limit=100', {
-        signal: controller.signal,
-      }),
-    ]).then(async ([paletteResponse, toolsResponse]) => {
-      const [palettePayload, toolsPayload] = await Promise.all([
-        paletteResponse.json(), toolsResponse.json(),
-      ]);
-      if (!paletteResponse.ok || palettePayload?.ok !== true) {
-        throw new Error(String(palettePayload?.error || 'Agent Builder IDD unavailable.'));
-      }
-      if (!toolsResponse.ok || toolsPayload?.ok !== true || toolsPayload?.hasMore === true) {
-        throw new Error(String(toolsPayload?.error || 'Complete Agent Builder tool catalog unavailable.'));
-      }
-      const palette = parseAgentBuilderPalette(palettePayload);
-      const tools = parseAgentBuilderTools(toolsPayload);
-      if (controller.signal.aborted) return;
-      setAgentBuilderTemplates(palette.templates);
-      setAgentBuilderModels(palette.models);
-      setAgentBuilderTools(tools);
-      setAgentBuilderTemplateId((current) => (
-        palette.templates.some((template) => template.id === current)
-          ? current
-          : palette.templates[0]?.id || ''
-      ));
-      setAgentBuilderModelKey((current) => (
-        palette.models.some((model) => `${model.provider}:${model.modelKey}` === current)
-          ? current
-          : `${palette.models[0].provider}:${palette.models[0].modelKey}`
-      ));
-      setAgentBuilderPaletteStatus('ready');
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setAgentBuilderPaletteStatus('failed');
-      setAgentBuilderPaletteError(
-        error instanceof Error ? error.message : 'Agent Builder palette unavailable.',
-      );
-    });
-    return () => controller.abort();
-  }, [agentBuilderCard, canonicalDeckReady, canvasProjectId]);
-
-  useEffect(() => {
-    if (agentBuilderMode !== 'edit') return;
-    const target = selectedCard && isAgentBuilderBuildTarget(selectedCard) ? selectedCard : null;
-    setAgentBuilderPrompt(target?.prompt || '');
-    setAgentBuilderSelectedTools([...(target?.runtimeOptions?.tools || [])]);
-  }, [agentBuilderMode, selectedCard?.id]);
-
-  useEffect(() => {
-    if (!agentBuilderUseCbm) {
-      setAgentBuilderCbmProject('');
-      setAgentBuilderCbmError(null);
-      return;
-    }
-    if (!canonicalDeckReady || !agentBuilderWorkspaceRoot) {
-      setAgentBuilderCbmProject('');
-      setAgentBuilderCbmError(
-        agentBuilderWorkspaceRoot ? null : 'No saved deck agent workspace is configured.',
-      );
-      return;
-    }
-    let cancelled = false;
-    void resolveCbmProjectName(agentBuilderWorkspaceRoot)
-      .then((project) => {
-        if (cancelled) return;
-        setAgentBuilderCbmProject(project);
-        setAgentBuilderCbmError(null);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setAgentBuilderCbmProject('');
-        setAgentBuilderCbmError(
-          error instanceof Error ? error.message : 'Deck agent CBM project unavailable.',
-        );
-      });
-    return () => { cancelled = true; };
-  }, [agentBuilderUseCbm, agentBuilderWorkspaceRoot, canonicalDeckReady]);
-
   const selectedMagOneWorkers = useMemo(() => {
     if (!selectedCard || selectedCard.runtime.kind !== 'autogen' || selectedCard.runtime.mode !== 'magentic_one') {
       return [];
@@ -1067,14 +928,8 @@ export default function AgentBuilder(): React.ReactElement {
   const standaloneTestResult = selectedCard
     ? standaloneTestResults[selectedCard.id] || null
     : null;
-  const agentBuilderRunResult = agentBuilderCard
-    ? standaloneTestResults[agentBuilderCard.id] || null
-    : null;
   const standaloneTestBusy = selectedCard
     ? standaloneTestBusyByCard[selectedCard.id] === true
-    : false;
-  const agentBuilderRunBusy = agentBuilderCard
-    ? standaloneTestBusyByCard[agentBuilderCard.id] === true
     : false;
   const setCardRunBusy = useCallback((cardId: string, busy: boolean) => {
     setStandaloneTestBusyByCard((current) => {
@@ -1258,7 +1113,6 @@ export default function AgentBuilder(): React.ReactElement {
   const executeStandaloneInvocation = useCallback(async (
     card: AgentCardInstance,
     input: string,
-    builderOperation?: AgentBuilderOperation,
   ) => {
     const unavailableReason = getStandaloneCardUnavailableReason(card);
     if (
@@ -1294,7 +1148,6 @@ export default function AgentBuilder(): React.ReactElement {
           correlationId,
           input,
           conversationId,
-          ...(builderOperation ? { builderOperation } : {}),
           dataAnchors: (transientCardGraphContext[card.id] || []).map((item) => ({
             authority: item.reference.authority,
             nativeId: item.reference.nativeId,
@@ -2013,8 +1866,8 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Main owns the conversation; the lower split presents the separate saved
-    // Agent Builder Card through the same configured-Run authority as Inspector.
+    // Main owns the upper conversation; the lower surface attaches to the saved
+    // Agent Builder native CLI. Full-height mode gives that CLI direct input.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -2045,334 +1898,26 @@ export default function AgentBuilder(): React.ReactElement {
         />
       </div>
     );
-    const agentBuilderInput = agentBuilderCard
-      ? transientCardInputs[agentBuilderCard.id] || ''
-      : '';
-    const agentBuilderBuildTarget = selectedCard && isAgentBuilderBuildTarget(selectedCard)
-      ? selectedCard
-      : null;
-    const agentBuilderSelectedModel = agentBuilderModels.find(
-      (model) => `${model.provider}:${model.modelKey}` === agentBuilderModelKey,
-    ) || null;
-    let preparedAgentBuilderOperation: AgentBuilderOperation | null = null;
-    let preparedAgentBuilderProposal: ReturnType<typeof buildAgentBuilderProposal> | null = null;
-    let agentBuilderOperationError: string | null = null;
-    if (agentBuilderPaletteStatus === 'ready') {
-      try {
-        preparedAgentBuilderOperation = buildAgentBuilderOperation({
-          mode: agentBuilderMode,
-          target: agentBuilderBuildTarget,
-          deckRevision,
-          templateId: agentBuilderTemplateId,
-          title: agentBuilderTitle,
-          role: agentBuilderRole,
-          prompt: agentBuilderPrompt,
-          tools: agentBuilderSelectedTools,
-          model: agentBuilderSelectedModel,
-          ...(agentBuilderCbmProject ? { cbmProject: agentBuilderCbmProject } : {}),
-        });
-        preparedAgentBuilderProposal = buildAgentBuilderProposal(
-          preparedAgentBuilderOperation,
-          agentBuilderBuildTarget,
-        );
-      } catch (error) {
-        agentBuilderOperationError = error instanceof Error
-          ? error.message
-          : 'Agent Builder operation is incomplete.';
-      }
-    }
-    const requiredAgentBuilderContextMissing = agentBuilderCard
-      ? (transientCardGraphContext[agentBuilderCard.id] || []).some(
-          (item) => item.reference.required && !item.ready,
-        )
-      : false;
-    const agentBuilderToolGroups = Object.entries(
-      agentBuilderTools.reduce<Record<string, AgentBuilderToolOption[]>>((groups, tool) => {
-        (groups[tool.category] ||= []).push(tool);
-        return groups;
-      }, {}),
-    );
-    const agentBuilderTerminal = agentBuilderCard ? (
-      <section
-        data-testid="under-chat-agent-builder"
-        aria-label="Agent Builder Card CLI"
-        style={{
-          height: '100%',
-          minHeight: 0,
-          overflow: 'auto',
-          padding: 10,
-          background: '#0b0f14',
-          color: '#d7e0ea',
-          borderTop: '1px solid #1c2733',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          fontSize: 12,
-        }}
-      >
-        <div style={{ display: 'grid', gap: 3, marginBottom: 8 }}>
-          <strong>Agent Builder · Card CLI</strong>
-          <span style={{ color: '#8fa6bc' }}>
-            Saved Card · {agentBuilderCard.runtime.kind === 'hermes'
-              ? agentBuilderCard.runtime.profile
-              : 'runtime mismatch'}
-          </span>
-          <span data-testid="under-chat-agent-builder-target" style={{ color: agentBuilderBuildTarget ? '#8fd7c8' : '#d9a06c' }}>
-            {agentBuilderMode === 'edit' ? 'Target' : 'Create'} · {
-              agentBuilderMode === 'edit'
-                ? agentBuilderBuildTarget
-                  ? `${agentBuilderBuildTarget.title} (${agentBuilderBuildTarget.id})`
-                    + ` · Card revision ${agentBuilderBuildTarget._cardRevisionId || 'unavailable'}`
-                    + ` · Deck revision ${deckRevision || 'unavailable'}`
-                  : 'Select a non-system Canvas Card'
-                : 'one new ordinary Card · AutoGen assistant execution'
-            }
-          </span>
-          <span data-testid="under-chat-agent-builder-workspace" style={{ color: '#8fa6bc' }}>
-            Agent workspace · {agentBuilderWorkspaceRoot || 'not configured'}
-            {' · '}CBM {!agentBuilderUseCbm
-              ? 'off (not required for prompt/tools-only builds)'
-              : agentBuilderCbmProject || 'unavailable for this exact workspace'}
-          </span>
+    const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
+      agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
+        <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
+          <CoderTerminalPanel
+            key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
+            open
+            title="Agent Builder"
+            placement="docked"
+            testIdPrefix="agent-builder-terminal"
+            ownerCardId={agentBuilderCard.id}
+            savedCard={{
+              projectId: canvasProjectId,
+              deckId: BUILDER_DECK_ID,
+              cardId: agentBuilderCard.id,
+              profile: agentBuilderCard.runtime.profile,
+            }}
+            readOnly={!directInput}
+          />
         </div>
-        <AdaptiveCardTerminal
-          enabled
-          projectId={canvasProjectId}
-          deckId={BUILDER_DECK_ID}
-          cardId={agentBuilderCard.id}
-          runtime={agentBuilderCard.runtime}
-          run={agentBuilderRunResult}
-          busy={agentBuilderRunBusy}
-          onStop={() => { void stopCardRun(agentBuilderCard); }}
-          onRejoin={() => { void rejoinCardRun(agentBuilderCard); }}
-        >
-          <div style={{ display: 'grid', gap: 7 }}>
-            <div style={{ display: 'flex', gap: 6 }} role="group" aria-label="Agent Builder mode">
-              {(['create', 'edit'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={agentBuilderMode === mode}
-                  onClick={() => setAgentBuilderMode(mode)}
-                  disabled={agentBuilderRunBusy}
-                >
-                  {mode === 'create' ? 'Create' : 'Edit'}
-                </button>
-              ))}
-            </div>
-            {agentBuilderPaletteStatus === 'failed' ? (
-              <div role="alert" style={{ color: '#d9a06c' }}>
-                {agentBuilderPaletteError || 'Agent Builder IDD unavailable.'}
-              </div>
-            ) : null}
-            {agentBuilderMode === 'create' ? (
-              <div style={{ display: 'grid', gap: 7 }}>
-                <label>
-                  IDD template
-                  <select
-                    aria-label="Agent Builder template"
-                    value={agentBuilderTemplateId}
-                    onChange={(event) => setAgentBuilderTemplateId(event.target.value)}
-                    disabled={agentBuilderRunBusy || agentBuilderPaletteStatus !== 'ready'}
-                    style={{ width: '100%' }}
-                  >
-                    {agentBuilderTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>
-                        {template.label} · {template.id}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Agent title
-                  <input
-                    aria-label="Agent Builder agent title"
-                    value={agentBuilderTitle}
-                    onChange={(event) => setAgentBuilderTitle(event.target.value)}
-                    disabled={agentBuilderRunBusy}
-                    style={{ width: '100%' }}
-                  />
-                </label>
-                <label>
-                  Agent role
-                  <input
-                    aria-label="Agent Builder agent role"
-                    value={agentBuilderRole}
-                    onChange={(event) => setAgentBuilderRole(event.target.value)}
-                    disabled={agentBuilderRunBusy}
-                    style={{ width: '100%' }}
-                  />
-                </label>
-                <label>
-                  Configured model
-                  <select
-                    aria-label="Agent Builder model"
-                    value={agentBuilderModelKey}
-                    onChange={(event) => setAgentBuilderModelKey(event.target.value)}
-                    disabled={agentBuilderRunBusy || agentBuilderPaletteStatus !== 'ready'}
-                    style={{ width: '100%' }}
-                  >
-                    {agentBuilderModels.map((model) => (
-                      <option
-                        key={`${model.provider}:${model.modelKey}`}
-                        value={`${model.provider}:${model.modelKey}`}
-                      >
-                        {model.label} · {model.provider}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            ) : null}
-            <label htmlFor="under-chat-agent-builder-prompt" style={{ fontWeight: 600 }}>
-              Stable agent prompt
-            </label>
-            <textarea
-              id="under-chat-agent-builder-prompt"
-              aria-label="Agent Builder stable prompt"
-              value={agentBuilderPrompt}
-              onChange={(event) => setAgentBuilderPrompt(event.target.value)}
-              rows={7}
-              placeholder="Write the stable role, goal, constraints, tool process, and output contract for this agent."
-              disabled={agentBuilderRunBusy}
-              style={{
-                width: '100%', minHeight: 118, resize: 'vertical', padding: 9,
-                borderRadius: 7, border: '1px solid #3A4A4F',
-                background: '#171C1D', color: '#D9E4E8', font: 'inherit',
-              }}
-            />
-            <label style={{ fontWeight: 600 }}>
-              Allowed tools
-              <select
-                multiple
-                size={Math.min(8, Math.max(3, agentBuilderTools.length))}
-                aria-label="Agent Builder allowed tools"
-                value={agentBuilderSelectedTools}
-                onChange={(event) => setAgentBuilderSelectedTools(
-                  [...event.currentTarget.selectedOptions].map((option) => option.value),
-                )}
-                disabled={agentBuilderRunBusy || agentBuilderPaletteStatus !== 'ready'}
-                style={{ width: '100%', minHeight: 74 }}
-              >
-                {agentBuilderToolGroups.map(([category, tools]) => (
-                  <optgroup key={category} label={category}>
-                    {tools.map((tool) => (
-                      <option key={tool.id} value={tool.id}>
-                        {tool.label} · {tool.id} · {tool.access}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={agentBuilderUseCbm}
-                onChange={(event) => setAgentBuilderUseCbm(event.target.checked)}
-                disabled={agentBuilderRunBusy}
-              />
-              {' '}Code-backed build: use only this deck workspace's exact CodeGraph project
-            </label>
-            <label htmlFor="under-chat-agent-builder-input" style={{ fontWeight: 600 }}>
-              Dynamic build mission from Main or the user
-            </label>
-            <textarea
-              id="under-chat-agent-builder-input"
-              aria-label="Agent Builder construction mission"
-              value={agentBuilderInput}
-              onChange={(event) => {
-                const value = event.target.value;
-                setTransientCardInputs((current) => {
-                  if (!value) {
-                    const next = { ...current };
-                    delete next[agentBuilderCard.id];
-                    return next;
-                  }
-                  return { ...current, [agentBuilderCard.id]: value };
-                });
-              }}
-              rows={5}
-              placeholder="Describe what this one build should accomplish and what must remain unchanged."
-              style={{
-                width: '100%',
-                minHeight: 86,
-                resize: 'vertical',
-                padding: 9,
-                borderRadius: 7,
-                border: '1px solid #3A4A4F',
-                background: '#171C1D',
-                color: '#D9E4E8',
-                font: 'inherit',
-              }}
-            />
-            <div style={{ color: '#8fa6bc' }}>
-              IDD and the current catalog supply choices. The saved Agent Builder, canonical IDF, and run-issued create/edit authority control the effect. Configuration alone changes nothing.
-            </div>
-            {agentBuilderCbmError ? (
-              <div style={{ color: '#8fa6bc' }}>
-                Code workspace status · {agentBuilderCbmError}
-              </div>
-            ) : null}
-            {agentBuilderOperationError ? (
-              <div role="status" style={{ color: '#d9a06c' }}>
-                {agentBuilderOperationError}
-              </div>
-            ) : null}
-            {preparedAgentBuilderProposal ? (
-              <div>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  Proposed Card {preparedAgentBuilderProposal.mode === 'create' ? 'configuration' : 'diff'}
-                </div>
-                <pre
-                  data-testid="under-chat-agent-builder-proposal"
-                  style={{
-                    margin: 0,
-                    padding: 8,
-                    border: '1px solid #263442',
-                    borderRadius: 4,
-                    background: '#080c10',
-                    color: '#b8c7d6',
-                    overflow: 'auto',
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {JSON.stringify(preparedAgentBuilderProposal, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button
-                type="button"
-                onClick={() => clearTransientCardInvocation(agentBuilderCard.id)}
-                disabled={agentBuilderRunBusy || (!agentBuilderInput.trim()
-                  && (transientCardGraphContext[agentBuilderCard.id] || []).length === 0)}
-              >
-                Clear
-              </button>
-              <button
-                type="button"
-                data-testid="under-chat-agent-builder-run"
-                onClick={() => {
-                  if (!preparedAgentBuilderOperation) return;
-                  void executeStandaloneInvocation(
-                    agentBuilderCard,
-                    agentBuilderInput.trim(),
-                    preparedAgentBuilderOperation,
-                  );
-                }}
-                disabled={agentBuilderRunBusy || !preparedAgentBuilderOperation
-                  || !agentBuilderInput.trim() || requiredAgentBuilderContextMissing
-                  || agentBuilderPaletteStatus !== 'ready'}
-              >
-                {agentBuilderRunBusy ? 'Running…' : 'Run Agent Builder'}
-              </button>
-            </div>
-          </div>
-        </AdaptiveCardTerminal>
-      </section>
-    ) : (
-      <div role="alert" data-testid="under-chat-agent-builder-unavailable" style={{ padding: 12 }}>
-        Saved Agent Builder Card unavailable.
-      </div>
+      ) : null
     );
     return (
       <div

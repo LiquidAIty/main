@@ -115,9 +115,7 @@ export default function CardSubagentsTab({
     <div data-testid="card-subagents-tab" style={{ display: 'grid', gap: 10 }}>
       <section style={{ padding: 10, borderRadius: 8, border: '1px solid #3A4A4F', background: '#202827' }}>
         <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 700 }}>Native Team</div>
-        <div style={{ color: '#80969F', fontSize: 10.5, marginTop: 3 }}>
-          Team is the only configured subagent strategy today. Auto authorizes Hermes to call it when useful; it does not start Team with every Run.
-        </div>
+        
         <label style={{ display: 'grid', gap: 4, marginTop: 8, color: '#B8C8CD', fontSize: 10.5 }}>
           Team availability
           <select
@@ -168,9 +166,7 @@ export default function CardSubagentsTab({
             onChange: (leadModel) => onChange({ ...team, leadModel }),
           })}
         </div>
-        <div style={{ color: '#80969F', fontSize: 10, marginTop: 7 }}>
-          The Team lead performs native decomposition and final synthesis. SQLite records applied execution truth; it is not editable configuration.
-        </div>
+        
       </section>
 
       <section style={{ padding: 10, borderRadius: 8, border: '1px solid #3A4A4F', background: '#1D2526' }}>

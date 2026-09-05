@@ -30,14 +30,14 @@ async function render(activeDriver: MainDriverSource | null = null) {
 }
 
 describe('Main Chat and Agent Builder work surface', () => {
-  it('starts split with a useful Agent Builder strip and keeps it mounted', async () => {
+  it('starts collapsed and keeps Agent Builder mounted until pulled open', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     expect(handle.getAttribute('aria-expanded')).toBe('false');
     const region = host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement;
-    expect(region.style.height).toBe('240px');
-    expect(region.getAttribute('aria-hidden')).toBe('false');
+    expect(region.style.height).toBe('0px');
+    expect(region.getAttribute('aria-hidden')).toBe('true');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 
@@ -72,7 +72,7 @@ describe('Main Chat and Agent Builder work surface', () => {
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 590 }));
-      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 0 }));
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientY: 0 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
     expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
@@ -84,14 +84,14 @@ describe('Main Chat and Agent Builder work surface', () => {
 
     await act(async () => {
       handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientY: 0 }));
-      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientY: 595 }));
+      window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientY: 595 }));
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
     expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
-    expect(panel.getAttribute('data-terminal-mode')).toBe('split');
+    expect(panel.getAttribute('data-terminal-mode')).toBe('collapsed');
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
-      .toBe('160px');
+      .toBe('0px');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
   });
 

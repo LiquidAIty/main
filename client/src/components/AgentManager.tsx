@@ -1640,8 +1640,8 @@ export function AgentManager({
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills and learning</div>
               <div style={{ color: '#80969F', fontSize: 10.5 }}>
                 {nativeHermesState
-                  ? `Native profile ${nativeHermesState.binding.profile} · ${nativeHermesState.native.learning.count} learning entries`
-                  : 'Read-only native Hermes projection; LiquidAIty stores no copy.'}
+                  ? `${nativeHermesState.native.learning.count} learning entries`
+                  : 'Read-only native Hermes projection; no copy is stored.'}
               </div>
             </div>
             <button type="button" onClick={() => void refreshNativeProfile()} disabled={nativeHermesStatus === 'loading'}>
@@ -1669,7 +1669,7 @@ export function AgentManager({
                     {!subagentModelAvailable ? ' · unavailable/stale in current catalog' : ''}
                   </span>
                   <span style={{ color: '#80969F', fontSize: 10 }}>
-                    Native: {nativeHermesState.native.subagentModel.provider || 'not materialized'} · {nativeHermesState.native.subagentModel.model || 'not materialized'} · {nativeHermesState.subagentModelMaterialization}. The next eligible Run materializes this saved choice for native delegation and asynchronous profile-only skill review.
+                    Native: {nativeHermesState.native.subagentModel.provider || 'not materialized'} · {nativeHermesState.native.subagentModel.model || 'not materialized'} · {nativeHermesState.subagentModelMaterialization}
                   </span>
                 </div>
                 <select
@@ -1724,9 +1724,7 @@ export function AgentManager({
                         ? ` · ${nativeHermesState.native.honcho.availabilityReason}`
                         : ''}
                     </span>
-                    <span style={{ color: '#80969F', fontSize: 10 }}>
-                      Direct Main conversations use native Honcho fail-open when selected. Contextualized GPT-plugin Main turns report Honcho bypassed and neither recall nor write it.
-                    </span>
+                    
                     <span style={{ color: '#80969F', fontSize: 10 }}>
                       Setup: {nativeHermesState.native.honcho.setupAction} · Status: {nativeHermesState.native.honcho.statusAction}. Secrets are never returned to the Card.
                     </span>
@@ -1799,8 +1797,7 @@ export function AgentManager({
                   <div data-testid="selected-run-idf-graph-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
                     Estimated model-visible graph context: {' '}
                     {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()} tokens. {' '}
-                    This bounded data remains inside the saved Run input; native graphs remain authoritative.
-                  </div>
+                    </div>
                   <details>
                     <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
                       Inspect actual graph data inside saved Run input
@@ -1825,9 +1822,7 @@ export function AgentManager({
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
                 Native profile knowledge
               </div>
-              <div style={{ color: '#80969F', fontSize: 10.5, lineHeight: 1.45 }}>
-                Role and Soul remain owned by profile {nativeHermesState.binding.profile}. Each button invokes one native operation and then re-reads Hermes. Save Card Version does not apply these drafts.
-              </div>
+              
               <div>
                 <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
                   Role
@@ -2033,15 +2028,15 @@ export function AgentManager({
                 <input
                   data-testid="agent-hermes-profile"
                   aria-label="Hermes profile"
-                  value={hermesProfile}
+                  value={localConfig?.runtime.kind === 'hermes' && hermesProfile === localConfig.runtime.profile
+                    ? (cardName || cardId)
+                    : hermesProfile}
                   onChange={(event) => {
                     setHermesProfile(event.target.value);
                     markDraftDirty();
                   }}
                 />
-                <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
-                  This saved profile owns the Card's isolated Hermes session and SQLite memory.
-                </div>
+                
                 <label style={{ display: 'block', marginTop: 8 }}>
                   <input
                     type="checkbox"
@@ -2253,7 +2248,6 @@ export function AgentManager({
               ) : nativeHermesState ? (
                 <>
                   <div style={{ color: '#9FB2B8', fontSize: 11.5, lineHeight: 1.5 }}>
-                    <div>Profile: {nativeHermesState.native.name}</div>
                     <div>
                       Saved model: {localConfig?.provider || 'unset'}
                       {localConfig?.access_mode ? ` (${localConfig.access_mode})` : ''}
@@ -2271,9 +2265,7 @@ export function AgentManager({
                       Saved Card and native profile models differ. Nothing was synchronized automatically.
                     </div>
                   ) : null}
-                  <div style={{ color: '#72D7C7', fontSize: 11.5 }}>
-                    Saving this Card cannot change the profile. Model changes below require their own native Apply.
-                  </div>
+                  
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
                     <label style={{ display: 'grid', gap: 4, color: '#E0DED5', fontSize: 11 }}>
                       Provider
@@ -2553,9 +2545,7 @@ export function AgentManager({
               placeholder="One configured connection ID per line"
               rows={4}
             />
-            <div style={{ color: '#80969F', fontSize: 10, marginTop: 4 }}>
-              References existing LiquidAIty connections by ID; the Card does not copy their credentials.
-            </div>
+            
           </div>
           {runtimeKind === 'hermes' && nativeHermesState ? (
             <section
@@ -2572,9 +2562,7 @@ export function AgentManager({
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
                 Native capabilities
               </div>
-              <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                Card grants authorize LiquidAIty-supplied tools. Every control below changes Hermes-owned profile state through one native operation and exact readback.
-              </div>
+              
               <details>
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
                   Skills · {nativeHermesState.native.skills.filter((item) => item.enabled).length} enabled
@@ -2607,9 +2595,7 @@ export function AgentManager({
                   >
                     Apply Skills
                   </button>
-                  <div style={{ color: '#80969F', fontSize: 10 }}>
-                    Learned and automatically created skill content remains one native object; this control changes profile enablement only.
-                  </div>
+                  
                 </div>
               </details>
               <details>
@@ -2819,9 +2805,7 @@ export function AgentManager({
           >
             {saveCardStatus === 'saving' ? 'Saving…' : saveCardStatus === 'saved' ? 'Saved' : 'Save Card Version'}
           </button>
-          <span style={{ color: '#80969F', fontSize: 10.5 }}>
-            Stable Card fields are versioned; the dynamic input remains in this Card workspace.
-          </span>
+          
           {saveCardStatus === 'failed' && saveCardErrorMessage ? (
             <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
               {saveCardErrorMessage}
@@ -2855,9 +2839,7 @@ export function AgentManager({
               resize: 'vertical',
             }}
           />
-          <div style={{ color: '#80969F', fontSize: 10.5 }}>
-            Python materializes this input with the saved Card and selected graph references once when Run starts.
-          </div>
+          
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
@@ -2924,7 +2906,7 @@ export function AgentManager({
               <>
                 <div style={{ color: '#80969F', fontSize: 10.5 }}>
                   {Number(runInputs.inputSummary?.idfBytes || 0).toLocaleString()} UTF-8 bytes · estimated {' '}
-                  {Number(runInputs.inputSummary?.estimatedModelVisibleTokens || 0).toLocaleString()} LiquidAIty-supplied text tokens
+                  {Number(runInputs.inputSummary?.estimatedModelVisibleTokens || 0).toLocaleString()} supplied text tokens
                 </div>
                 <div data-testid="selected-run-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5, lineHeight: 1.5 }}>
                   system {Number(runInputs.inputSummary?.estimatedSystemContextTokens || 0).toLocaleString()} · {' '}
@@ -2932,7 +2914,7 @@ export function AgentManager({
                   output {Number(runInputs.inputSummary?.estimatedOutputContractTokens || 0).toLocaleString()} · {' '}
                   graph {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()}
                   <br />
-                  Estimate: UTF-8 bytes ÷ 4, rounded up. The saved Run input contains the exact LiquidAIty input fields; native provider usage remains authoritative after execution.
+                  Estimate: UTF-8 bytes ÷ 4, rounded up.
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button type="button" onClick={() => void exportRuntimeInput('.idf', runInputs.idfText || '')}>

@@ -202,6 +202,7 @@ export function toFlowNodes(
   activeCardIds: Set<string>,
   activeAgentCounts: Record<string, number> = {},
 ): Node[] {
+  const bus = document.nodes.find((node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one');
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
     document.edges.map((edge) => ({ source: edge.source, target: edge.target })),
@@ -226,6 +227,7 @@ export function toFlowNodes(
         : undefined,
       data: {
         ...node,
+        busX: bus?.position.x,
         isRuntimeActive: activeCardIds.has(node.id),
         activeAgentCount: activeAgentCounts[node.id] ?? 0,
         isInspecting: inspectMode && selectedCardId === node.id,
@@ -380,8 +382,10 @@ export function toFlowEdges(
     if (!sourceNode || !targetNode) return [];
     return {
       id: edge.id,
+      hidden: edgeType === 'flow' && (!isCardController(sourceNode) || edge.enabled === false),
       source: edge.source,
-      sourceHandle: edge.sourceHandle ?? undefined,
+      sourceHandle: edgeType === 'flow' && isCardController(sourceNode)
+        ? 'card-control' : edge.sourceHandle ?? undefined,
       target: edge.target,
       targetHandle: edge.targetHandle ?? undefined,
       data: {
@@ -412,10 +416,6 @@ export function toFlowEdges(
       focusable: true,
       reconnectable: true,
       interactionWidth: 32,
-      pathOptions: {
-        offset: 24,
-        borderRadius: 14,
-      },
       markerEnd: 'agent-edge-circle',
       style: {
         strokeWidth: isSelected ? 1.56 : isActive ? 1.5 : 1.36,
@@ -487,7 +487,9 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
       return {
         ...edge,
         source: nextEdge.source,
-        sourceHandle: nextEdge.sourceHandle ?? null,
+        sourceHandle: nextEdge.source === edge.source && nextEdge.sourceHandle === 'card-control'
+          && normalizeDeckEdgeType(edge.edgeType) === 'flow'
+          ? edge.sourceHandle ?? null : nextEdge.sourceHandle ?? null,
         target: nextEdge.target,
         targetHandle: nextEdge.targetHandle ?? null,
         edgeType:

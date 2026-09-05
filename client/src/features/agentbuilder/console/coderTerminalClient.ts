@@ -43,6 +43,7 @@ async function postJson(base: string, path: string, body: unknown): Promise<Resp
 
 export type CoderTerminalClient = {
   listSessions(): Promise<ConsoleSessionInfo[]>;
+  ensureSession?(identity: { projectId: string; deckId: string; cardId: string }): Promise<ConsoleSessionInfo>;
   getSession(id: string): Promise<ConsoleSessionInfo | null>;
   streamOutput(
     id: string,
@@ -55,6 +56,14 @@ export type CoderTerminalClient = {
 
 function createTerminalClient(base: string): CoderTerminalClient {
   return {
+    async ensureSession(identity) {
+      const response = await postJson(base, '/sessions', identity);
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true || !payload.session) {
+        throw new Error(String(payload?.error || 'builder_terminal_unavailable'));
+      }
+      return payload.session as ConsoleSessionInfo;
+    },
     async listSessions() {
       const response = await fetch(`${base}/sessions`, { credentials: 'include' });
       if (!response.ok) throw new Error(`console_sessions_unavailable_${response.status}`);

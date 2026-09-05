@@ -1,4 +1,4 @@
-import { BaseEdge, getSmoothStepPath, type EdgeProps } from "@xyflow/react";
+import { BaseEdge, getBezierPath, type EdgeProps } from "@xyflow/react";
 
 import type { DeckEdgeType } from "../../../types/agentgraph";
 import { GRAPH_THEME } from "../../graph/graphVisualTokens";
@@ -21,9 +21,6 @@ export function buildTurboFlowEdgePath({
   targetX,
   targetY,
   targetPosition,
-  borderRadius,
-  offset,
-  edgeType,
 }: {
   sourceX: number;
   sourceY: number;
@@ -31,27 +28,14 @@ export function buildTurboFlowEdgePath({
   targetX: number;
   targetY: number;
   targetPosition: EdgeProps["targetPosition"];
-  borderRadius: number;
-  offset: number;
-  edgeType?: DeckEdgeType | null;
 }): string {
-  if (edgeType === "magentic_option" && targetX < sourceX - 24) {
-    if (Math.abs(targetY - sourceY) < 1) {
-      return `M ${sourceX},${sourceY} L ${targetX},${targetY}`;
-    }
-    const midX = Math.round(targetX + (sourceX - targetX) / 2);
-    return `M ${sourceX},${sourceY} L ${midX},${sourceY} L ${midX},${targetY} L ${targetX},${targetY}`;
-  }
-
-  const [edgePath] = getSmoothStepPath({
+  const [edgePath] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
     targetX,
     targetY,
     targetPosition,
-    borderRadius,
-    offset,
   });
   return edgePath;
 }
@@ -66,7 +50,6 @@ export default function TurboFlowEdge(props: EdgeProps) {
     targetPosition,
     style,
     markerEnd,
-    pathOptions,
     data,
     selected,
   } = props;
@@ -78,9 +61,6 @@ export default function TurboFlowEdge(props: EdgeProps) {
     targetX,
     targetY,
     targetPosition,
-    borderRadius: Number((pathOptions as { borderRadius?: number } | undefined)?.borderRadius || 16),
-    offset: Number((pathOptions as { offset?: number } | undefined)?.offset || 26),
-    edgeType: edgeData.edgeType,
   });
   const strokeWidth = Math.max(2.25, Number(style?.strokeWidth || 2.25));
   const opacity = Number(style?.opacity ?? 1);
@@ -89,7 +69,7 @@ export default function TurboFlowEdge(props: EdgeProps) {
   const isMagenticWorker = edgeData.edgeType === "magentic_option";
   const isMagenticControl = edgeData.edgeType === "magentic_control";
   // An unrecognised persisted edge authorises nothing at runtime — render it
-  // visibly inert (muted, dashed), never as a Call.
+  // visibly inert (muted), never as a Call.
   const isInvalid = edgeData.edgeType === "invalid" || edgeData.enabled === false;
   // Turbo shell motion is the primary visual signal. Edges stay secondary.
   const stroke = isInvalid
@@ -119,7 +99,6 @@ export default function TurboFlowEdge(props: EdgeProps) {
         opacity: edgeOpacity,
         strokeLinecap: "round",
         strokeLinejoin: "round",
-        strokeDasharray: isInvalid ? "3 5" : isMagenticControl ? "7 4" : undefined,
       }}
     />
   );

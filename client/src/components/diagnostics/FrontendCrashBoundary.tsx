@@ -31,7 +31,7 @@ function buildCopyableCrashText(
   componentStack?: string,
 ): string {
   const lines = [
-    "LiquidAIty caught a frontend crash",
+    "A frontend error occurred",
     `message: ${error?.message || crashRecord?.message || "unknown error"}`,
     `route: ${crashRecord?.route || (typeof window !== "undefined" ? window.location.pathname : "")}`,
     `href: ${crashRecord?.href || (typeof window !== "undefined" ? window.location.href : "")}`,
@@ -115,7 +115,7 @@ export default class FrontendCrashBoundary extends React.Component<
           }}
         >
           <h2 style={{ margin: "0 0 8px 0", fontSize: 18 }}>
-            LiquidAIty caught a frontend crash
+            A frontend error occurred
           </h2>
           <div style={{ marginBottom: 10, color: "#f85149", fontWeight: 700 }}>
             {scope}

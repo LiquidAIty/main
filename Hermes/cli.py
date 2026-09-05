@@ -17335,8 +17335,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         ``state_suffix`` is what special states (sudo/secret/approval/agent)
         should render after their leading icon.
 
-        When a profile is active (not "default"), the profile name is
-        prepended to the prompt symbol: ``coder ❯`` instead of ``❯``.
+        The prompt shows the skin symbol without exposing the internal profile name.
         """
         try:
             from hermes_cli.skin_engine import get_active_prompt_symbol
@@ -17346,14 +17345,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         symbol = (symbol or "❯ ").rstrip() + " "
 
-        # Prepend profile name when not default
-        try:
-            from hermes_cli.profiles import get_active_profile_name
-            profile = get_active_profile_name()
-            if profile not in {"default", "custom"}:
-                symbol = f"{profile} {symbol}"
-        except Exception:
-            pass
         stripped = symbol.rstrip()
         if not stripped:
             return "❯ ", "❯ "

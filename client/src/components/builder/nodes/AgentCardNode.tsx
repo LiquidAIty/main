@@ -5,6 +5,7 @@ import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
 import { isCardController } from '../../../features/agentbuilder/deck/deckPrimitives';
 
 type AgentCardNodeData = AgentCardInstance & {
+  busX?: number;
   assistStructureMode?: 'single' | 'seq' | 'branch' | 'merge' | 'branch_merge' | null;
   swarmBadge?: string | null;
   isRuntimeActive?: boolean;
@@ -25,6 +26,11 @@ export default function AgentCardNode({
   const canReceiveConnection = true;
   const canStartConnection = true;
   const controller = isCardController(data);
+  const busOnRight = data.busX === undefined || data.position.x < data.busX;
+  const bluePosition = busOnRight ? Position.Right : Position.Left;
+  const orangePosition = busOnRight ? Position.Left : Position.Right;
+  const blueSide = busOnRight ? { right: -7, left: 'auto' } : { left: -7, right: 'auto' };
+  const orangeSide = busOnRight ? { left: -7, right: 'auto' } : { right: -7, left: 'auto' };
   const shellActive = Boolean(selected || data?.isInspecting || data?.isRuntimeActive);
   const activeAgentCount = Number.isSafeInteger(data?.activeAgentCount) && Number(data.activeAgentCount) > 0
     ? Number(data.activeAgentCount)
@@ -60,13 +66,13 @@ export default function AgentCardNode({
     >
       <Handle
         type="target"
-        position={Position.Left}
+        position={bluePosition}
         aria-label={`${name} input`}
         isConnectable={canReceiveConnection}
         style={{
           width: 12,
           height: 12,
-          left: -7,
+          ...blueSide,
           borderRadius: '999px',
           border: `1.5px solid ${GRAPH_THEME.accent.primaryBorder}`,
           background: canReceiveConnection
@@ -78,30 +84,40 @@ export default function AgentCardNode({
       />
       <Handle
         type="source"
-        position={Position.Right}
-        aria-label={`${name} ${controller ? 'Card control' : 'Mag One worker'} output`}
+        position={bluePosition}
+        aria-label={`${name} Mag One worker output`}
         isConnectable={canStartConnection}
         style={{
           width: 12,
           height: 12,
-          right: -7,
+          ...blueSide,
           borderRadius: '999px',
-          border: controller
-            ? `1.5px solid ${GRAPH_THEME.accent.solar}`
-            : `1.5px solid ${GRAPH_THEME.accent.primary}`,
+          border: `1.5px solid ${GRAPH_THEME.accent.primary}`,
           background: canStartConnection
-            ? controller
-              ? `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`
-              : `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`
+            ? `radial-gradient(circle at 32% 28%, ${GRAPH_THEME.accent.primarySoft}, rgba(12,18,22,0.96))`
             : '#111315',
           boxShadow: canStartConnection
-            ? controller
-              ? `inset 0 0 0 1px rgba(255,200,160,0.12), 0 0 0 1px ${GRAPH_THEME.accent.solarSoft}`
-              : `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`
+            ? `inset 0 0 0 1px ${GRAPH_THEME.accent.primarySoft}`
             : undefined,
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
+      {controller ? (
+        <Handle
+          id="card-control"
+          type="source"
+          position={orangePosition}
+          aria-label={`${name} Card control output`}
+          style={{
+            width: 12,
+            height: 12,
+            ...orangeSide,
+            borderRadius: '999px',
+            border: `1.5px solid ${GRAPH_THEME.accent.solar}`,
+            background: `radial-gradient(circle at 30% 26%, ${GRAPH_THEME.accent.solarSoft}, rgba(22,18,16,0.96))`,
+          }}
+        />
+      ) : null}
 
       <div
         style={{

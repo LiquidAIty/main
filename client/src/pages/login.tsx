@@ -57,7 +57,6 @@ export default function Login() {
               boxShadow: "0 0 0 2px #000 inset",
             }}
           />
-          <h1 className="text-2xl font-bold" style={{ color: C.text }}>LiquidAIty</h1>
         </div>
         
         {error && (

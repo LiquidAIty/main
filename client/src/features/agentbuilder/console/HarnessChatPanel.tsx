@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 const HANDLE_HEIGHT = 12;
-const MIN_OPEN_HEIGHT = 160;
-const DEFAULT_PEEK_HEIGHT = 240;
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
 type HarnessChatPanelProps = {
   chat: ReactNode;
-  terminal: ReactNode;
+  terminal: ReactNode | ((state: { directInput: boolean }) => ReactNode);
   activeDriver?: Exclude<MainDriverSource, 'native_cli'> | null;
   storageKey?: string;
 };
@@ -29,15 +27,15 @@ export default function HarnessChatPanel({
   const initialSplitHeight = (() => {
     try {
       const saved = Number(window.localStorage.getItem(storageKey));
-      return Number.isFinite(saved) && saved >= MIN_OPEN_HEIGHT ? saved : DEFAULT_PEEK_HEIGHT;
+      return Number.isFinite(saved) && saved >= 0 ? saved : 0;
     } catch {
-      return DEFAULT_PEEK_HEIGHT;
+      return 0;
     }
   })();
-  const heightRef = useRef(initialSplitHeight);
+  const heightRef = useRef(0);
   const lastOpenHeightRef = useRef(initialSplitHeight);
   const dragMovedRef = useRef(false);
-  const [height, setHeightState] = useState(initialSplitHeight);
+  const [height, setHeightState] = useState(0);
   const [manualFullCli, setManualFullCli] = useState(false);
   const [dragging, setDragging] = useState(false);
 
@@ -48,8 +46,8 @@ export default function HarnessChatPanel({
 
   const clampHeight = useCallback((next: number) => {
     const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-    const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
-    return Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, next));
+    const maximum = Math.max(0, total - HANDLE_HEIGHT);
+    return next <= HANDLE_HEIGHT ? 0 : Math.min(maximum, Math.max(0, next));
   }, []);
 
   const rememberSplitHeight = useCallback((next: number) => {
@@ -66,6 +64,7 @@ export default function HarnessChatPanel({
     if (!listeners) return;
     window.removeEventListener('mousemove', listeners.move, true);
     window.removeEventListener('mouseup', listeners.up, true);
+    window.removeEventListener('blur', listeners.up);
     listenersRef.current = null;
     dragRef.current = false;
   }, []);
@@ -73,6 +72,7 @@ export default function HarnessChatPanel({
   useEffect(() => removeDragListeners, [removeDragListeners]);
 
   const onDragStart = useCallback((event: React.MouseEvent) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     removeDragListeners();
     dragRef.current = true;
@@ -80,6 +80,10 @@ export default function HarnessChatPanel({
     setDragging(true);
     const move = (nextEvent: MouseEvent) => {
       if (!dragRef.current || !containerRef.current) return;
+      if ((nextEvent.buttons & 1) === 0) {
+        up();
+        return;
+      }
       nextEvent.preventDefault();
       const rect = containerRef.current.getBoundingClientRect();
       const nextHeight = clampHeight(rect.bottom - nextEvent.clientY);
@@ -88,11 +92,11 @@ export default function HarnessChatPanel({
     };
     const up = () => {
       const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-      const maximum = Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT);
+      const maximum = Math.max(0, total - HANDLE_HEIGHT);
       const fullCli = heightRef.current >= maximum - 1;
       const settledHeight = fullCli
         ? maximum
-        : Math.min(maximum, Math.max(MIN_OPEN_HEIGHT, heightRef.current));
+        : clampHeight(heightRef.current);
       setManualFullCli(fullCli);
       if (!fullCli) rememberSplitHeight(settledHeight);
       setHeight(settledHeight);
@@ -105,6 +109,7 @@ export default function HarnessChatPanel({
     listenersRef.current = { move, up };
     window.addEventListener('mousemove', move, true);
     window.addEventListener('mouseup', up, true);
+    window.addEventListener('blur', up);
   }, [clampHeight, rememberSplitHeight, removeDragListeners, setHeight]);
 
   const toggleTerminal = useCallback(() => {
@@ -118,7 +123,7 @@ export default function HarnessChatPanel({
     } else {
       const total = containerRef.current?.getBoundingClientRect().height ?? 0;
       setManualFullCli(true);
-      setHeight(Math.max(MIN_OPEN_HEIGHT, total - HANDLE_HEIGHT));
+      setHeight(Math.max(0, total - HANDLE_HEIGHT));
     }
     window.requestAnimationFrame(() => {
       window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
@@ -127,7 +132,7 @@ export default function HarnessChatPanel({
 
   const fullCli = manualFullCli;
   const driverSource: MainDriverSource = activeDriver || 'internal_chat';
-  const terminalMode = fullCli ? 'expanded' : 'split';
+  const terminalMode = fullCli ? 'expanded' : height === 0 ? 'collapsed' : 'split';
 
   return (
     <div
@@ -152,7 +157,7 @@ export default function HarnessChatPanel({
       <button
         type="button"
         data-testid="main-chat-agent-builder-divider"
-        aria-expanded={fullCli}
+        aria-expanded={fullCli || height > 0}
         aria-controls="agent-builder-region"
         aria-label="Resize Main Chat and Agent Builder"
         title="Resize Main Chat and Agent Builder"
@@ -178,7 +183,7 @@ export default function HarnessChatPanel({
       <div
         id="agent-builder-region"
         data-testid="agent-builder-region"
-        aria-hidden="false"
+        aria-hidden={!fullCli && height === 0}
         style={{
           flex: fullCli ? '1 1 auto' : '0 0 auto',
           height: fullCli ? 'auto' : height,
@@ -187,7 +192,7 @@ export default function HarnessChatPanel({
           userSelect: dragging ? 'none' : 'auto',
         }}
       >
-        {terminal}
+        {typeof terminal === 'function' ? terminal({ directInput: fullCli }) : terminal}
       </div>
     </div>
   );

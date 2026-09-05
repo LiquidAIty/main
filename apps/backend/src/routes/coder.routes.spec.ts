@@ -9,11 +9,14 @@ import router from './coder.routes';
 import {
   ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
+  ensureSavedBuilderTerminal,
+  coderTerminalSessionManager,
 } from '../hermes/coderTerminal';
 
 const deckMocks = vi.hoisted(() => ({
   getDeckDocument: vi.fn(async () => ({
     deck: {
+      workspaceRoot: process.cwd(),
       nodes: [
         {
           id: 'card_main_chat',
@@ -594,7 +597,8 @@ vi.mock('../hermes/mainAdapter', () => ({
   startHermesTurn: chatSessionMocks.startHermesTurn,
 }));
 
-vi.mock('../hermes/mainCliBridge', () => ({
+vi.mock('../hermes/mainCliBridge', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../hermes/mainCliBridge')>(),
   contextAuthorityModeForDriver: (driverSource: string) => (
     driverSource === 'external_plugin' ? 'plugin_context_only' : 'main_native_honcho'
   ),
@@ -1203,6 +1207,14 @@ describe('coder routes', () => {
   it('binds an Agent Builder Run to one selected Card snapshot', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
+    chatSessionMocks.materializeHermesProfileSelections.mockClear();
+    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
+    const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
+    const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
+      finalText: 'Builder reply', nativeSessionId: 'native-builder-session', nativeTurnId: 'builder-turn',
+      contextAuthorityMode: 'main_native_honcho',
+    });
+    delivery.bridge.notePoll();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
@@ -1240,7 +1252,12 @@ describe('coder routes', () => {
           targetCardRevisionId: 'revision:card_selected_target',
         },
       });
-      expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(submit).toHaveBeenCalledOnce();
+      expect((await response.json() as any).result.transport).toMatchObject({
+        terminalSessionId: cli.id, threadId: 'native-builder-session',
+      });
+      expect(chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0]).toMatchObject({
         cardId: 'card_agent_builder',
         builderOperation: {
           mode: 'edit',
@@ -1266,6 +1283,14 @@ describe('coder routes', () => {
   it('binds an Agent Builder create Run to one exact AutoGen assistant configuration', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
+    chatSessionMocks.materializeHermesProfileSelections.mockClear();
+    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
+    const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
+    const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
+      finalText: 'Builder reply', nativeSessionId: 'native-builder-session', nativeTurnId: 'builder-create-turn',
+      contextAuthorityMode: 'main_native_honcho',
+    });
+    delivery.bridge.notePoll();
     const { server, baseUrl } = await createApiServer();
     try {
       const model = {
@@ -1299,7 +1324,9 @@ describe('coder routes', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(chatSessionMocks.startHermesTurn.mock.calls[0][0]).toMatchObject({
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      expect(submit).toHaveBeenCalledOnce();
+      expect(chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0]).toMatchObject({
         cardId: 'card_agent_builder',
         builderOperation: {
           mode: 'create',
@@ -1800,7 +1827,8 @@ describe('coder routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
-      expect(createResponse.status).toBe(404);
+      expect(createResponse.status).toBe(409);
+      expect(await createResponse.json()).toEqual({ ok: false, error: 'builder_terminal_identity_required' });
     } finally {
       await closeServer(server);
     }

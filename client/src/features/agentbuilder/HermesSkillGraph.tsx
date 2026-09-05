@@ -26,7 +26,6 @@ function hash(value: string): number {
  * and only native producer edges are drawn. It owns no learning data. */
 export default function HermesSkillGraph({
   graph,
-  profile,
   onOpenNode,
 }: {
   graph: LearningGraph;
@@ -62,7 +61,7 @@ export default function HermesSkillGraph({
   if (!graph.nodes.length) {
     return (
       <div role="status" style={{ padding: 12, color: '#91A9B8', fontSize: 11 }}>
-        Profile {profile} has no native learned-skill or memory nodes yet. Nothing is synthesized.
+        No native learned-skill or memory nodes yet.
       </div>
     );
   }
@@ -72,7 +71,7 @@ export default function HermesSkillGraph({
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
-        aria-label={`Hermes learning starmap for profile ${profile}`}
+        aria-label="Hermes learning starmap"
         style={{ width: '100%', minHeight: 280, borderRadius: 8, background: 'radial-gradient(circle, #182526 0%, #111718 72%)' }}
       >
         {[0.28, 0.52, 0.76, 1].map((ratio) => (

@@ -6,6 +6,7 @@ type PythonOwnedStartupDependencies = {
   request?: (endpointPath: string, init: RequestInit) => Promise<unknown>;
   delay?: (milliseconds: number) => Promise<void>;
   logModels?: () => Promise<unknown>;
+  startBuilder?: () => Promise<unknown>;
   recoverKanban?: () => Promise<{ discovered: number; started: number }>;
   isActive?: () => boolean;
   maxAttempts?: number;
@@ -71,6 +72,7 @@ export async function runPythonOwnedStartupTasks(
   // backend listener; failures remain visible instead of replaying Deck reads
   // or native Team recovery inside the readiness loop.
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
+  await dependencies.startBuilder?.();
   await logModels();
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
   return recoverKanban();

@@ -31,6 +31,13 @@ def _make_cli_stub():
 
 class TestCliSkinPromptIntegration:
 
+    def test_prompt_does_not_display_or_change_the_active_profile(self):
+        cli = _make_cli_stub()
+        with patch("hermes_cli.profiles.get_active_profile_name", return_value="private-profile") as profile, \
+             patch("hermes_cli.skin_engine.get_active_prompt_symbol", return_value="❯"):
+            assert cli._get_tui_prompt_symbols() == ("❯ ", "❯ ")
+            profile.assert_not_called()
+
     def test_ares_prompt_fragments_use_skin_symbol(self):
         cli = _make_cli_stub()
 

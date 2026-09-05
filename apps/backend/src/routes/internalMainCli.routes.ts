@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 
 import { mainCliBridge, mainCliBridgeToken, type MainCliBridgeEvent } from '../hermes/mainCliBridge';
 import { bindHermesRootExecutionSession } from '../hermes/childExecutionContext';
@@ -9,30 +9,35 @@ import {
   startHermesHostTeamMonitor,
 } from '../hermes/hostExecutionLifecycle';
 import { runHermesProfileDelegation } from '../hermes/profileDelegation';
+import { coderTerminalSessionManager } from '../hermes/coderTerminal';
 
-const router = Router();
-
-function authorized(value: unknown): boolean {
+function authorized(value: unknown, token: string): boolean {
   const supplied = Buffer.from(String(value || '').replace(/^Bearer\s+/i, ''), 'utf8');
-  const expected = Buffer.from(mainCliBridgeToken, 'utf8');
+  const expected = Buffer.from(token, 'utf8');
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
+function nativeCliRoutes(resolveDelivery: (req: Request) => {
+  bridge: typeof mainCliBridge; token: string;
+} | null) {
+const router = Router({ mergeParams: true });
 router.use((req, res, next) => {
-  if (!authorized(req.headers.authorization)) {
+  const delivery = resolveDelivery(req);
+  if (!delivery || !authorized(req.headers.authorization, delivery.token)) {
     return res.status(401).json({ ok: false, error: 'main_cli_bridge_authorization_required' });
   }
+  res.locals.cliBridge = delivery.bridge;
   return next();
 });
 
 router.get('/next', (_req, res) => {
-  const turn = mainCliBridge.take();
+  const turn = (res.locals.cliBridge as typeof mainCliBridge).take();
   return turn ? res.json(turn) : res.status(204).end();
 });
 
 router.post('/events', (req, res) => {
   try {
-    mainCliBridge.acceptEvent(req.body as MainCliBridgeEvent);
+    (res.locals.cliBridge as typeof mainCliBridge).acceptEvent(req.body as MainCliBridgeEvent);
     return res.json({ ok: true });
   } catch (error) {
     return res.status(409).json({
@@ -44,7 +49,7 @@ router.post('/events', (req, res) => {
 
 router.post('/history', (req, res) => {
   try {
-    mainCliBridge.acceptHistory(req.body);
+    (res.locals.cliBridge as typeof mainCliBridge).acceptHistory(req.body);
     return res.json({ ok: true });
   } catch (error) {
     return res.status(409).json({
@@ -60,7 +65,7 @@ router.post('/execution/bind', (req, res) => {
     const runId = String(req.body?.runId || '');
     const executionContextId = String(req.body?.executionContextId || '');
     const sessionId = String(req.body?.sessionId || '');
-    mainCliBridge.authorizeExecutionBinding({ requestId, runId, executionContextId });
+    (res.locals.cliBridge as typeof mainCliBridge).authorizeExecutionBinding({ requestId, runId, executionContextId });
     bindHermesRootExecutionSession(executionContextId, sessionId);
     return res.json({ ok: true });
   } catch (error) {
@@ -82,7 +87,7 @@ router.post('/execution', async (req, res) => {
         ? req.body.params
         : {};
       const result = await runHermesProfileDelegation(
-        mainCliBridge.profileDelegationAuthority(params),
+        (res.locals.cliBridge as typeof mainCliBridge).profileDelegationAuthority(params),
         params,
       );
       return res.json({ ok: true, result });
@@ -98,7 +103,7 @@ router.post('/execution', async (req, res) => {
       startHermesHostTeamMonitor({
         context: outcome.nativeContext,
         appendRetryAttempts: 900,
-        appendTeamResult: async (delivery) => mainCliBridge.queueTeamResult(delivery),
+        appendTeamResult: async (delivery) => (res.locals.cliBridge as typeof mainCliBridge).queueTeamResult(delivery),
       });
     }
     return undefined;
@@ -111,13 +116,13 @@ router.post('/execution', async (req, res) => {
 });
 
 router.get('/team-results/next', (_req, res) => {
-  const delivery = mainCliBridge.takeTeamResult();
+  const delivery = (res.locals.cliBridge as typeof mainCliBridge).takeTeamResult();
   return delivery ? res.json(delivery) : res.status(204).end();
 });
 
 router.post('/team-results/ack', (req, res) => {
   try {
-    mainCliBridge.acknowledgeTeamResult({
+    (res.locals.cliBridge as typeof mainCliBridge).acknowledgeTeamResult({
       deliveryId: String(req.body?.deliveryId || ''),
       delivered: req.body?.delivered === true,
       retry: req.body?.retry === true,
@@ -132,4 +137,12 @@ router.post('/team-results/ack', (req, res) => {
   }
 });
 
-export default router;
+return router;
+}
+
+export const builderCliRoutes = nativeCliRoutes((req) => {
+  const session = coderTerminalSessionManager.get(String(req.params.sessionId || ''));
+  return session?.isLive() ? session.delivery : null;
+});
+
+export default nativeCliRoutes(() => ({ bridge: mainCliBridge, token: mainCliBridgeToken }));

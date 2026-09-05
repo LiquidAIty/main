@@ -19,6 +19,7 @@ type CoderTerminalPanelProps = {
   placement?: 'overlay' | 'docked';
   testIdPrefix?: string;
   ownerCardId?: string;
+  savedCard?: { projectId: string; deckId: string; cardId: string; profile: string };
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
   client?: CoderTerminalClient;
@@ -43,6 +44,7 @@ function CoderTerminalPanelInner({
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
   ownerCardId = 'card_local_coder',
+  savedCard,
   onClose,
   client = coderTerminalClient,
   initialSession = null,
@@ -71,13 +73,27 @@ function CoderTerminalPanelInner({
   const showingSemanticProjection = readOnly && semanticEvents !== undefined;
   sessionRef.current = session;
   useEffect(() => {
+    if (!session && terminalError) console.error('[Terminal connection]', terminalError);
+  }, [session, terminalError]);
+  useEffect(() => {
     if (!open || session) return;
     let cancelled = false;
-    void client.listSessions()
-      .then((sessions) => {
+    const acquire = savedCard
+      ? client.ensureSession
+        ? client.ensureSession({ projectId: savedCard.projectId, deckId: savedCard.deckId,
+          cardId: savedCard.cardId }).then((candidate) => [candidate])
+        : Promise.reject(new Error('builder_terminal_acquisition_unavailable'))
+      : client.listSessions();
+    void acquire.then((sessions) => {
         if (cancelled) return;
         const live = sessions.find((candidate) => (
           candidate.ownerCardId === ownerCardId
+          && (!savedCard || (
+            candidate.ownerCardId === savedCard.cardId
+            && candidate.projectId === savedCard.projectId
+            && candidate.deckId === savedCard.deckId
+            && candidate.profile === savedCard.profile
+          ))
           && candidate.runtimeSource === 'repository_hermes_cli'
           && ['starting', 'running'].includes(candidate.state)
           && Boolean(candidate.pid)
@@ -96,7 +112,7 @@ function CoderTerminalPanelInner({
     return () => {
       cancelled = true;
     };
-  }, [client, open, ownerCardId, session]);
+  }, [client, open, ownerCardId, session, savedCard?.projectId, savedCard?.deckId, savedCard?.cardId, savedCard?.profile]);
 
   const connectOutput = useCallback(
     async (onData: (data: string) => void, signal: AbortSignal) => {
@@ -114,14 +130,14 @@ function CoderTerminalPanelInner({
 
   const sendData = useCallback(
     async (data: string) => {
-      if (!session?.id) return;
+      if (readOnly || !session?.id) return;
       setTerminalError(null);
       const sessionId = session.id;
       const queued = inputQueueRef.current.then(() => client.sendInput(sessionId, data));
       inputQueueRef.current = queued.catch(() => undefined);
       await queued;
     },
-    [client, session?.id],
+    [client, session?.id, readOnly],
   );
 
   const resizeTerminal = useCallback(
@@ -161,6 +177,9 @@ function CoderTerminalPanelInner({
   return (
     <section
       data-testid={`${testIdPrefix}-panel`}
+      data-session-id={session?.id}
+      data-card-id={session?.ownerCardId}
+      data-profile={session?.profile}
       aria-label={title}
       tabIndex={-1}
       style={{
@@ -197,7 +216,7 @@ function CoderTerminalPanelInner({
         <button type="button" aria-pressed={showingRun} onClick={() => setProjection('run')}>Card Run</button>
         <button type="button" aria-pressed={!showingRun} onClick={() => setProjection('cli')}>Native CLI</button>
       </div> : null}
-      {readOnly ? (
+      {readOnly && !savedCard ? (
         <div
           data-testid={`${testIdPrefix}-connection-status`}
           role="status"
@@ -251,7 +270,7 @@ function CoderTerminalPanelInner({
 
       {!session ? (
         <div style={{ flex: 1, padding: 8, color: '#8fa6bc' }} role={terminalError ? 'alert' : 'status'}>
-          {terminalError || `${title} connecting`}
+          {terminalError ? 'Terminal connection failed.' : null}
         </div>
       ) : null}
       </div>

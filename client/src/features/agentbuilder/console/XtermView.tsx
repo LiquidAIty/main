@@ -50,15 +50,12 @@ export default function XtermView({
   const connectOutputRef = useRef(connectOutput);
   const onOutputClosedRef = useRef(onOutputClosed);
   const onErrorRef = useRef(onError);
-  const launchErrorRef = useRef(launchError);
-  const renderedLaunchErrorRef = useRef<string | null>(null);
   const interactiveRef = useRef(interactive);
   onDataRef.current = onData;
   onResizeRef.current = onResize;
   connectOutputRef.current = connectOutput;
   onOutputClosedRef.current = onOutputClosed;
   onErrorRef.current = onError;
-  launchErrorRef.current = launchError;
   interactiveRef.current = interactive;
 
   useEffect(() => {
@@ -75,6 +72,7 @@ export default function XtermView({
     };
     const fit = () => {
       if (!term) return;
+      if (container.closest('[aria-hidden="true"]')) return;
       const bounds = container.getBoundingClientRect();
       if (bounds.width <= 0 || bounds.height <= 0) return;
       try {
@@ -86,6 +84,7 @@ export default function XtermView({
         if (size !== lastSize) {
           lastSize = size;
           void Promise.resolve(onResizeRef.current?.(term.cols, term.rows)).catch((error) => {
+            if (lastSize === size) lastSize = '';
             onErrorRef.current?.(error instanceof Error ? error.message : String(error));
           });
         }
@@ -126,10 +125,6 @@ export default function XtermView({
         }
       });
       termRef.current = { term };
-      if (launchErrorRef.current) {
-        term.write(`${launchErrorRef.current}\r\n`);
-        renderedLaunchErrorRef.current = launchErrorRef.current;
-      }
       if (connectOutputRef.current) {
         void connectOutputRef.current(
           (data) => term?.write(data),
@@ -182,17 +177,17 @@ export default function XtermView({
   }, [interactive]);
 
   useEffect(() => {
-    const state = termRef.current;
-    if (!state || !launchError || renderedLaunchErrorRef.current === launchError) return;
-    state.term.write(`${launchError}\r\n`);
-    renderedLaunchErrorRef.current = launchError;
+    if (launchError) console.error('[Terminal connection]', launchError);
   }, [launchError]);
 
   return (
+    <>
+    {launchError ? <div role="alert" style={{ padding: '2px 8px', fontSize: 12 }}>Terminal connection failed.</div> : null}
     <div
       ref={containerRef}
       data-testid="coder-terminal-xterm"
       style={{ flex: 1, minHeight: 0, padding: '6px 8px' }}
     />
+    </>
   );
 }

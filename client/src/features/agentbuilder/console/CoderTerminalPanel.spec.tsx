@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import CoderTerminalPanel from './CoderTerminalPanel';
+import HarnessChatPanel from './HarnessChatPanel';
 import type {
   CoderTerminalClient,
   ConsoleSessionInfo,
@@ -88,6 +89,43 @@ async function render(element: React.ReactNode) {
 }
 
 describe('CoderTerminalPanel', () => {
+  it('keeps the saved Builder session through pull-up and gives input only to direct mode', async () => {
+    const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
+      profile: 'liquidaity-agent-builder' };
+    const nativeSession = { ...session(), ownerCardId: savedCard.cardId, profile: savedCard.profile };
+    const terminalClient = client({ ensureSession: vi.fn(async () => nativeSession) });
+    await render(<HarnessChatPanel chat={<div data-testid="main-input">Main</div>}
+      terminal={({ directInput }) => <CoderTerminalPanel open ownerCardId={savedCard.cardId}
+        savedCard={savedCard} client={terminalClient} readOnly={!directInput} />} />);
+    expect(terminalClient.ensureSession).toHaveBeenCalledOnce();
+    expect(terminalClient.listSessions).not.toHaveBeenCalled();
+    expect(xtermProps.current?.interactive).toBe(false);
+    await act(async () => { await xtermProps.current?.onData('blocked'); });
+    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+    const panel = host!.querySelector('[data-testid="coder-terminal-panel"]');
+    expect(panel?.getAttribute('data-session-id')).toBe(nativeSession.id);
+    const divider = host!.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
+    await act(async () => divider.click());
+    expect(host!.querySelector('[data-testid="main-input"]')).toBeNull();
+    expect(xtermProps.current?.interactive).toBe(true);
+    await act(async () => { await xtermProps.current?.onData('native input'); });
+    expect(terminalClient.sendInput).toHaveBeenCalledExactlyOnceWith(nativeSession.id, 'native input');
+    await act(async () => divider.click());
+    expect(host!.querySelector('[data-testid="main-input"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="coder-terminal-panel"]')).toBe(panel);
+    expect(xtermProps.current?.interactive).toBe(false);
+    expect(terminalClient.ensureSession).toHaveBeenCalledOnce();
+  });
+
+  it('shows an error when the acquired terminal belongs to another profile', async () => {
+    const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
+      profile: 'liquidaity-agent-builder' };
+    await render(<CoderTerminalPanel open ownerCardId={savedCard.cardId} savedCard={savedCard}
+      client={client({ ensureSession: vi.fn(async () => ({ ...session(), ownerCardId: savedCard.cardId })) })} />);
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
+    expect(xtermProps.current).toBeNull();
+  });
+
   it('attaches only to the startup-owned terminal without lifecycle controls', async () => {
     const terminalClient = client({ listSessions: vi.fn(async () => [session()]) });
     await render(
@@ -160,7 +198,7 @@ describe('CoderTerminalPanel', () => {
     await render(<CoderTerminalPanel open client={terminalClient} />);
     await act(async () => Promise.resolve());
     expect(terminalClient.listSessions).toHaveBeenCalledOnce();
-    expect(host?.textContent).toContain('coder_terminal_startup_session_unavailable');
+    expect(host!.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
     expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
     expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
   });

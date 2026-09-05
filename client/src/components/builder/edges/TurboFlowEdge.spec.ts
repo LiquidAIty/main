@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTurboFlowEdgePath } from './TurboFlowEdge';
 
 describe('TurboFlowEdge path geometry', () => {
-  it('routes magentic edges to left-side targets without a forward sweep', () => {
+  it('uses a curve rather than orthogonal segments for left-side targets', () => {
     expect(
       buildTurboFlowEdgePath({
         sourceX: 320,
@@ -13,14 +13,11 @@ describe('TurboFlowEdge path geometry', () => {
         targetX: 80,
         targetY: 120,
         targetPosition: Position.Left,
-        borderRadius: 14,
-        offset: 24,
-        edgeType: 'magentic_option',
       }),
-    ).toBe('M 320,120 L 80,120');
+    ).toMatch(/^M[^L]+C[^L]+$/);
   });
 
-  it('keeps normal forward flow edges on the existing smooth-step path', () => {
+  it('uses a curve rather than smooth-step segments for forward edges', () => {
     const path = buildTurboFlowEdgePath({
       sourceX: 80,
       sourceY: 120,
@@ -28,11 +25,8 @@ describe('TurboFlowEdge path geometry', () => {
       targetX: 320,
       targetY: 120,
       targetPosition: Position.Left,
-      borderRadius: 14,
-      offset: 24,
-      edgeType: 'flow',
     });
 
-    expect(path).toBe('M80 120L104 120L200 120L200 120L296 120L320 120');
+    expect(path).toMatch(/^M[^L]+C[^L]+$/);
   });
 });

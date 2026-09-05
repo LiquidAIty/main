@@ -30,7 +30,7 @@ describe("FrontendCrashBoundary", () => {
       </FrontendCrashBoundary>,
     );
 
-    expect(screen.getByRole("heading", { name: /LiquidAIty caught a frontend crash/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /A frontend error occurred/i })).toBeTruthy();
     expect(
       screen.getByText(/UnitTestBoundary:\s*boundary_test_crash/i),
     ).toBeTruthy();

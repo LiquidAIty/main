@@ -686,6 +686,16 @@ this is not a GPT plugin readiness blocker. Do not print, copy, export, or repla
 
 ## Controlled vendor divergence
 
+The owner requested no product-name or profile-name prefix in the embedded terminal UI.
+`Hermes/cli.py::HermesCLI._get_tui_prompt_symbols` therefore renders only the native skin symbol.
+The existing skin hook controls the symbol but cannot suppress the hardcoded profile prefix;
+changing that display method avoids renaming saved profiles or filtering terminal output.
+Profile selection, sessions, memory, model/tool authority, prompt assembly, and native input remain
+unchanged. The upstream is the pinned NousResearch Hermes fork described below. Proof is
+`Hermes/tests/cli/test_cli_skin_integration.py::TestCliSkinPromptIntegration` plus live terminal
+readback after reload. The fork cost is one removed display block; rollback would restore that block
+only, and an upstream profile-label display setting would allow removing this divergence.
+
 Hermes is the vendor boundary shared by the internal Hermes Cards. LiquidAIty-owned integration
 stays in the backend adapter whenever possible. Any Hermes edit must remain narrowly recorded, tested,
 and justified against an unavailable upstream adapter/configuration hook.

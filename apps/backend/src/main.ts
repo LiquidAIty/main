@@ -13,6 +13,7 @@ import {
   coderTerminalSessionManager,
   ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
+  ensurePersistentBuilderTerminal,
 } from "./hermes/coderTerminal";
 
 const app = express();
@@ -235,6 +236,10 @@ async function startServer() {
   }
   void runPythonOwnedStartupTasks({
     isActive: () => globalThis.__liquidaityBackendServer__ === server,
+    startBuilder: async () => {
+      const terminal = await ensurePersistentBuilderTerminal();
+      console.log(`[BOOT] Agent Builder CLI ready profile=${terminal.profile} pid=${terminal.pid}`);
+    },
   })
     .then(({ discovered, started }) => {
       console.log(`[BOOT] native Team Run recovery discovered=${discovered} started=${started}`);

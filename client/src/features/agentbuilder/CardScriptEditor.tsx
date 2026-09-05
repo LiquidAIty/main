@@ -357,7 +357,7 @@ function editorOptions(): import('monaco-editor/esm/vs/editor/editor.api').edito
 function acquireHeaderModel(monaco: MonacoApi, header: CardScriptHeader): MonacoModel {
   let entry = headerModelCache.get(header.hash);
   if (!entry || entry.model.isDisposed()) {
-    const uri = monaco.Uri.parse(`inmemory://liquidaity/card-script/${header.hash}/liquidaity_card.pyi`);
+    const uri = monaco.Uri.parse(`inmemory://card-script/${header.hash}/card.pyi`);
     entry = {
       model: monaco.editor.getModel(uri) || monaco.editor.createModel(header.source, 'python', uri),
       references: 0,
@@ -428,7 +428,7 @@ function markerForError(
   return {
     severity: monaco.MarkerSeverity.Error,
     message,
-    source: 'LiquidAIty Card Script',
+    source: 'Card Script',
     startLineNumber: line,
     startColumn: column,
     endLineNumber: line,
@@ -578,7 +578,7 @@ export function CardScriptEditor({
       monacoRef.current = monaco;
       if (activeEditor) activeEditor.dispose();
       const sourceUri = monaco.Uri.parse(
-        `inmemory://liquidaity/card-script/source/${encodeURIComponent(cardId)}/${++sourceModelSequence}/card.py`,
+        `inmemory://card-script/source/${encodeURIComponent(cardId)}/${++sourceModelSequence}/card.py`,
       );
       const sourceModel = monaco.editor.createModel(scriptRef.current.source, 'python', sourceUri);
       const editor = monaco.editor.create(hostRef.current, { ...editorOptions(), model: sourceModel });
@@ -676,7 +676,7 @@ export function CardScriptEditor({
             {
               label: 'CARD_SCRIPT contract',
               kind: monaco.languages.CompletionItemKind.Snippet,
-              detail: 'LiquidAIty bounded Card Script',
+              detail: 'Bounded Card Script',
               insertText: STARTER_SCRIPT,
               range,
             },
@@ -929,7 +929,7 @@ export function CardScriptEditor({
       <header className="card-script-ide__header">
         <div className="card-script-ide__identity">
           <strong>Card Python Script</strong>
-          <span>One immutable source per saved Card. The generated header is IDE metadata and never enters model context.</span>
+          
         </div>
         <label className="card-script-ide__activation">
           <input
@@ -974,7 +974,7 @@ export function CardScriptEditor({
             disabled={!header}
             title="Generated read-only definitions"
           >
-            liquidaity_card.pyi <span className="card-script-ide__readonly">read-only</span>
+            card.pyi <span className="card-script-ide__readonly">read-only</span>
           </button>
           <div className="card-script-ide__grant-key" aria-label="Tool grant legend">
             <span className="is-selected">{toolReferences.length} authorized</span>

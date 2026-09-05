@@ -114,9 +114,9 @@ def generate_card_script_header(
     }
     header_hash = sha256(_canonical(identity).encode("utf-8")).hexdigest()
     lines = [
-        "# Generated from LiquidAIty.idd + live native catalog + saved Card selection.",
+        "# Generated from IDD + live native catalog + saved Card selection.",
         "# Read-only editor/compiler metadata. This file is not saved, executed, or sent to a model.",
-        f"# schema: liquidaity.card-script.header.v1  hash: {header_hash}",
+        f"# hash: {header_hash}",
         "from enum import IntEnum",
         "from typing import Any, Final, Literal, Protocol, TypedDict",
         "",
