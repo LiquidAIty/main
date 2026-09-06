@@ -65,23 +65,30 @@ export function useBuilderDeckPersistenceActions({
     revisionAfter: string | null;
     ok: boolean;
     error?: string;
+    document?: DeckDocument;
   }) => void;
 }) {
-  const handleSaveDeck = useCallback(async () => {
+  const handleSaveDeck = useCallback(async (document?: DeckDocument) => {
+    const requestedDeck = document || deck;
     if (!canvasProjectId) {
+      if (document) throw new Error("Open a canvas before saving.");
       setDeckStatusMessage("Open a canvas before saving.");
       return;
     }
     if (!deckRevision) {
+      if (document) throw new Error("Reload the canonical canvas before saving.");
       setDeckStatusMessage("Reload the canonical canvas before saving.");
       return;
     }
 
+    if (deckSaveAbortRef.current) {
+      if (document) throw new Error("The canvas is saving. Retry when that save finishes.");
+      return;
+    }
     const requestedDeckVersion = deck.version;
     setDeckSaveBusy(true);
     setDeckStatusMessage("Saving deck...");
     const requestProjectId = canvasProjectId;
-    deckSaveAbortRef.current?.abort();
     const controller = new AbortController();
     deckSaveAbortRef.current = controller;
 
@@ -94,13 +101,14 @@ export function useBuilderDeckPersistenceActions({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          document: deck,
+          document: requestedDeck,
           expectedRevision: deckRevision,
         }),
         signal: controller.signal,
       });
       const data = await safeJson(response);
       if (controller.signal.aborted || activeProjectLatestRef.current !== requestProjectId) {
+        if (document) throw new Error("Card save interrupted by workspace change.");
         return;
       }
 
@@ -109,8 +117,8 @@ export function useBuilderDeckPersistenceActions({
           projectId: requestProjectId,
           deckId,
           reason: "manual-save",
-          nodeCount: deck.nodes.length,
-          edgeCount: deck.edges.length,
+          nodeCount: requestedDeck.nodes.length,
+          edgeCount: requestedDeck.edges.length,
           revisionBefore,
           revisionAfter: null,
           ok: false,
@@ -141,15 +149,17 @@ export function useBuilderDeckPersistenceActions({
         projectId: requestProjectId,
         deckId,
         reason: "manual-save",
-        nodeCount: deck.nodes.length,
-        edgeCount: deck.edges.length,
+        nodeCount: requestedDeck.nodes.length,
+        edgeCount: requestedDeck.edges.length,
         revisionBefore,
         revisionAfter,
         ok: true,
+        document: requestedDeck,
       });
       setDeckStatusMessage("Board saved.");
     } catch (err: any) {
       if (isAbortLikeError(err) || activeProjectLatestRef.current !== requestProjectId) {
+        if (document) throw err;
         return;
       }
       const fallbackMessage =
@@ -160,14 +170,15 @@ export function useBuilderDeckPersistenceActions({
         projectId: requestProjectId,
         deckId,
         reason: "manual-save",
-        nodeCount: deck.nodes.length,
-        edgeCount: deck.edges.length,
+        nodeCount: requestedDeck.nodes.length,
+        edgeCount: requestedDeck.edges.length,
         revisionBefore: deckRevision,
         revisionAfter: null,
         ok: false,
         error: safeText(err?.message || "deck_save_failed"),
       });
       setDeckStatusMessage(formatBuilderStatusMessage(err?.message, fallbackMessage));
+      if (document) throw err;
     } finally {
       if (deckSaveAbortRef.current === controller) {
         deckSaveAbortRef.current = null;

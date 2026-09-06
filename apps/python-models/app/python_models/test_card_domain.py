@@ -40,15 +40,15 @@ def _expected_delegate(card_id: str = "child") -> dict:
 
 def test_controller_setting_and_unique_profiles_use_existing_saved_fields():
     controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
-    controller["runtimeOptions"]["profileDelegationEnabled"] = True
+    controller["runtimeOptions"]["delegationRole"] = "profile"
     stable = card_domain._stable_card(controller)
-    assert stable["runtimeExtensions"]["profileDelegationEnabled"] is True
+    assert stable["runtimeExtensions"]["delegationRole"] == "profile"
     assert stable["grants"]["tools"] == controller["runtimeOptions"]["tools"]
-    controller["runtimeOptions"]["profileDelegationEnabled"] = "true"
-    with pytest.raises(card_domain.CardDomainError, match="flag_invalid"):
+    controller["runtimeOptions"]["delegationRole"] = "true"
+    with pytest.raises(card_domain.CardDomainError, match="card_delegation_role_invalid"):
         card_domain._stable_card(controller)
-    controller["runtimeOptions"]["profileDelegationEnabled"] = False
-    assert card_domain._stable_card(controller)["runtimeExtensions"]["profileDelegationEnabled"] is False
+    controller["runtimeOptions"]["delegationRole"] = "off"
+    assert card_domain._stable_card(controller)["runtimeExtensions"]["delegationRole"] == "off"
     duplicate = _agent("separate", runtime={"kind": "hermes", "mode": "delegate", "profile": "MAIN"})
     with pytest.raises(card_domain.CardDomainError, match="card_profile_duplicate"):
         card_domain._validated_deck_collections({
@@ -58,14 +58,14 @@ def test_controller_setting_and_unique_profiles_use_existing_saved_fields():
 
 def test_wire_setting_off_removes_only_outgoing_flow_and_reverse_requires_own_capability():
     cards = [_agent(key, runtime={"kind": "hermes", "mode": "delegate", "profile": key},
-                    runtimeOptions={"profileDelegationEnabled": True}) for key in ('a', 'b')]
+                    runtimeOptions={"delegationRole": "profile"}) for key in ('a', 'b')]
     cards.append(_agent('mag', runtime={"kind": "autogen", "mode": "magentic_one"}))
     edges = [{'id': key, 'source': source, 'target': target, 'edgeType': kind}
              for key, source, target, kind in [('out', 'a', 'b', 'flow'), ('in', 'b', 'a', 'flow'),
                                                ('blue', 'a', 'mag', 'magentic_option')]]
     card_domain._validate_changed_flow_edges(cards, edges, [])
     previous = list(edges)
-    cards[0]['runtimeOptions']['profileDelegationEnabled'] = False
+    cards[0]['runtimeOptions']['delegationRole'] = "off"
     card_domain._validate_changed_flow_edges(cards, edges, previous)
     assert edges == previous[1:]
     assert card_domain._direct_card_targets('a', {card['id']: card for card in cards}, edges) == []
@@ -94,7 +94,7 @@ def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles(edg
 
 def test_controller_flow_creation_reconnection_and_no_reverse_authority(monkeypatch):
     controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
-    controller["runtimeOptions"]["profileDelegationEnabled"] = True
+    controller["runtimeOptions"]["delegationRole"] = "profile"
     receivers = [_agent(name, runtime={"kind": "hermes", "mode": "delegate", "profile": name})
                  for name in ("builder", "graph", "disconnected")]
     nodes = [controller, *receivers]
@@ -121,7 +121,7 @@ def test_controller_flow_creation_reconnection_and_no_reverse_authority(monkeypa
         invalid = [{**edges[0], **mutation}]
         with pytest.raises(card_domain.CardDomainError, match="controller_required"):
             card_domain._validate_changed_flow_edges(nodes, invalid, edges)
-    controller["runtimeOptions"]["profileDelegationEnabled"] = False
+    controller["runtimeOptions"]["delegationRole"] = "off"
     assert card_domain._direct_card_targets("main", cards, edges) == []
     # Turning the source setting off removes its outgoing wires, not its receivers.
     previous_edges = list(edges)
@@ -344,7 +344,7 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
         "role": "Plans and journals assigned paper trades.",
         "prompt": "Return a bounded trade plan with citations.",
         "tools": ["web_search"],
-        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "runtime": {"kind": "hermes", "mode": "delegate"},
         "model": model,
     }
     assert "cbm.search_graph" not in prepared["_callConfig"]["enabledTools"]
@@ -641,7 +641,7 @@ def test_card_deletion_telemetry_check_uses_typed_agentgraph_endpoints(
 def test_direct_card_targets_allow_presentation_attached_hermes_workers() -> None:
     cards = {
         "parent": _agent("parent", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
-                         runtimeOptions={"profileDelegationEnabled": True}),
+                         runtimeOptions={"delegationRole": "profile"}),
         "enabled": _agent(
             "enabled",
             runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
@@ -690,7 +690,7 @@ def _delegation_invocation(
     parent = _agent("parent", runtime=parent_runtime or {"kind": "hermes", "mode": "main", "profile": "main"})
     parent["runtimeOptions"] = {
         **parent["runtimeOptions"],
-        "profileDelegationEnabled": True,
+        "delegationRole": "profile",
         "tools": ["calculator"],
     }
     if parent["runtime"].get("kind") == "hermes":
@@ -1961,7 +1961,7 @@ def test_wire_magentic_roster_deduplicates_both_orders_and_ignores_disabled_edge
 
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
     sender = _agent("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
-    sender["runtimeOptions"]["profileDelegationEnabled"] = True
+    sender["runtimeOptions"]["delegationRole"] = "profile"
     hermes = _agent(
         "hermes",
         prompt="Hermes saved prompt",
@@ -2494,6 +2494,8 @@ def test_main_and_coder_can_explicitly_retask_one_non_delegating_graph_agent_car
     graph_agent = _agent("graph-agent", runtime={"kind": "hermes", "mode": "delegate", "profile": "knowledge"})
     main["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
     coder["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
+    main["runtimeOptions"]["delegationRole"] = "profile"
+    coder["runtimeOptions"]["delegationRole"] = "profile"
     graph_agent["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
     for index, card in enumerate((main, coder, graph_agent), start=1):
         card["_cardRevisionId"] = f"revision-{index}"
@@ -2521,6 +2523,10 @@ def test_main_and_coder_can_explicitly_retask_one_non_delegating_graph_agent_car
 
     assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "graph-agent"
     assert invoke("coder", "Retask the missing evidence.")["delegationTargets"] == []
+    coder["runtimeOptions"]["delegationRole"] = "off"
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        invoke("coder", "The wire alone does not enable profile delegation.")
+    coder["runtimeOptions"]["delegationRole"] = "profile"
     loaded["deck"]["edges"] = loaded["deck"]["edges"][:1]
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         invoke("coder", "This wire no longer authorizes the retask.")

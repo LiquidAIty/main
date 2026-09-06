@@ -13,6 +13,7 @@ type RightGlassDrawerProps = {
   minWidth?: number;
   maxWidth?: number;
   storageKey?: string;
+  resetWidthOnOpen?: boolean;
   top?: number;
   right?: number;
   bottom?: number;
@@ -34,6 +35,7 @@ export default function RightGlassDrawer({
   minWidth = 320,
   maxWidth = 720,
   storageKey,
+  resetWidthOnOpen = false,
   top = 48,
   right = 12,
   bottom = 12,
@@ -58,11 +60,15 @@ export default function RightGlassDrawer({
   }, [defaultWidth]);
 
   useEffect(() => {
+    if (isOpen && resetWidthOnOpen) setWidth(defaultWidth);
+  }, [defaultWidth, isOpen, resetWidthOnOpen]);
+
+  useEffect(() => {
     widthRef.current = clampedWidth;
   }, [clampedWidth]);
 
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey || resetWidthOnOpen) return;
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) return;
@@ -72,7 +78,7 @@ export default function RightGlassDrawer({
     } catch {
       // no-op
     }
-  }, [maxWidth, minWidth, storageKey]);
+  }, [maxWidth, minWidth, resetWidthOnOpen, storageKey]);
 
   const persistWidth = (next: number) => {
     if (!storageKey) return;

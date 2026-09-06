@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 // Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
 // after the '.routes' infix strip. vitest hoists vi.mock() above these.
 import router from './coder.routes';
+import * as executionContext from '../hermes/childExecutionContext';
 import {
   ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
@@ -305,7 +306,7 @@ const orchestratorMocks = vi.hoisted(() => {
               role: String(body.builderOperation.role || ''),
               prompt: String(body.builderOperation.prompt || ''),
               tools: Array.isArray(body.builderOperation.tools) ? body.builderOperation.tools : [],
-              runtime: { kind: 'autogen', mode: 'assistant' },
+              runtime: { kind: 'hermes', mode: 'delegate' },
               model: body.builderOperation.model,
             }
           : {
@@ -1208,6 +1209,7 @@ describe('coder routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
     chatSessionMocks.materializeHermesProfileSelections.mockClear();
+    const registration = vi.spyOn(executionContext, 'registerHermesRootExecutionContext');
     const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
     const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
     const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
@@ -1254,6 +1256,15 @@ describe('coder routes', () => {
       });
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(submit).toHaveBeenCalledOnce();
+      const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
+      expect(registration).toHaveBeenCalledWith(expect.objectContaining({
+        cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
+        ...(projected.buildTarget ? { effectTarget: {
+          cardId: projected.buildTarget.cardId,
+          cardRevisionId: projected.buildTarget.cardRevisionId,
+          deckRevision: projected.buildTarget.deckRevision,
+        } } : {}),
+      }));
       expect((await response.json() as any).result.transport).toMatchObject({
         terminalSessionId: cli.id, threadId: 'native-builder-session',
       });
@@ -1276,14 +1287,16 @@ describe('coder routes', () => {
         },
       });
     } finally {
+      registration.mockRestore();
       await closeServer(server);
     }
   });
 
-  it('binds an Agent Builder create Run to one exact AutoGen assistant configuration', async () => {
+  it('binds an Agent Builder create Run to one template configuration', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
     chatSessionMocks.materializeHermesProfileSelections.mockClear();
+    const registration = vi.spyOn(executionContext, 'registerHermesRootExecutionContext');
     const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
     const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
     const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
@@ -1326,6 +1339,15 @@ describe('coder routes', () => {
       expect(response.status).toBe(200);
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(submit).toHaveBeenCalledOnce();
+      const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
+      expect(registration).toHaveBeenCalledWith(expect.objectContaining({
+        cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
+        ...(projected.buildTarget ? { effectTarget: {
+          cardId: projected.buildTarget.cardId,
+          cardRevisionId: projected.buildTarget.cardRevisionId,
+          deckRevision: projected.buildTarget.deckRevision,
+        } } : {}),
+      }));
       expect(chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0]).toMatchObject({
         cardId: 'card_agent_builder',
         builderOperation: {
@@ -1340,11 +1362,12 @@ describe('coder routes', () => {
           role: 'A bounded specialist',
           prompt: 'Perform only the assigned specialist task.',
           tools: ['web_search'],
-          runtime: { kind: 'autogen', mode: 'assistant' },
+          runtime: { kind: 'hermes', mode: 'delegate' },
           model,
         },
       });
     } finally {
+      registration.mockRestore();
       await closeServer(server);
     }
   });

@@ -211,6 +211,12 @@ async function executePreparedMainCliRun(
       runtimeMode: turnArgs.runtime.mode,
       grantedTools: (turnArgs.grantedTools ?? turnArgs.tools)
         .filter((name) => name !== 'web_search'),
+      ...(turnArgs.buildTarget ? { effectTarget: {
+        cardId: turnArgs.buildTarget.cardId,
+        cardRevisionId: turnArgs.buildTarget.cardRevisionId,
+        deckRevision: turnArgs.buildTarget.deckRevision,
+      } } : {}),
+      ...(turnArgs.builderOperation ? { builderOperation: turnArgs.builderOperation } : {}),
     });
     rootExecutionContextId = rootContext.contextId;
     const hostProjection = buildHermesHostSessionProjection(
@@ -743,8 +749,8 @@ function resolveHermesTurnArgs(
       typeof createRuntime === 'object'
       && createRuntime !== null
       && !Array.isArray(createRuntime)
-      && (createRuntime as Record<string, unknown>).kind === 'autogen'
-      && (createRuntime as Record<string, unknown>).mode === 'assistant'
+      && typeof (createRuntime as Record<string, unknown>).kind === 'string'
+      && typeof (createRuntime as Record<string, unknown>).mode === 'string'
     );
     const editValid = mode !== 'edit' || (
       Boolean(String(operation.targetCardId || '').trim())
@@ -795,6 +801,7 @@ function resolveHermesTurnArgs(
       ? { subagentModel: savedSubagentModel }
       : {}),
     ...(savedTeam ? { team: savedTeam } : {}),
+    delegationRole: input.runtimeOptions?.delegationRole || 'off',
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.presentedTools)
       ? input.presentedTools

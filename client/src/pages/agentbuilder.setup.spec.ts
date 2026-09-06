@@ -90,9 +90,6 @@ describe('agentbuilder authoring flow', () => {
     }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_trading_workbench', edgeType: 'flow' },
-      { source: 'card_hermes_steward', target: 'card_trading_workbench', edgeType: 'flow' },
-      { source: 'card_trading_workbench', target: 'card_worldsignals_agent', edgeType: 'flow' },
       {
         source: 'card_main_chat',
         target: 'card_magentic',

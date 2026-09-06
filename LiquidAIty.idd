@@ -1,7 +1,8 @@
 # Input Data Dictionary: composable Agent Builder data, not runtime authority.
 # Main obtains user agreement; Coder under Chat builds Cards in Agent Builder mode.
 # Native owners supply their current catalogs. Saved Cards retain selected instances.
-# No credentials, model list, MCP schema copy, UI control catalog, or IDF validator here.
+# Catalogs and executable validation are referenced rather than copied.
+
 relationships = [
   { name = "FLOW", canvasValue = "flow", authority = "AGE", direction = "source-to-target" },
   { name = "MAGENTIC_OPTION", canvasValue = "magentic_option", authority = "AGE", direction = "source-to-target" },
@@ -199,9 +200,11 @@ label = "Output"
 # Template IDs select composable object sets, never a provider, grant or runtime fallback.
 [templates.template_assist]
 label = "Custom assistant"
+runtime = { kind = "hermes", mode = "delegate" }
 objects = ["mission", "agent", "instructions", "context", "files", "images", "output"]
 [templates.template_main_chat]
 label = "Main Chat"
+runtime = { kind = "hermes", mode = "main" }
 extends = "template_assist"
 [templates.template_local_coder]
 label = "Coder"
@@ -211,6 +214,7 @@ label = "Hermes helper"
 extends = "template_assist"
 [templates.template_magentic]
 label = "Magentic-One"
+runtime = { kind = "autogen", mode = "magentic_one" }
 extends = "template_assist"
 [templates.template_worldsignals_agent]
 label = "WorldSignals"
@@ -218,3 +222,28 @@ extends = "template_assist"
 [templates.template_trading_workbench]
 label = "Trading"
 extends = "template_assist"
+
+[cardEditor]
+tabs = ["CLI", "Prompt", "Runtime", "Memory", "Tools"]
+fields = [
+  { name = "provider", label = "Provider", section = "Runtime", path = "runtimeOptions.provider", source = "CardConfiguration.provider", catalog = "configured-models", catalogProperty = "provider" },
+  { name = "delegationRole", label = "Delegate task", section = "Runtime", path = "runtimeOptions.delegationRole", source = "CardConfiguration.delegationRole", allowUnset = false },
+  { name = "accessMode", label = "Access", section = "Runtime", path = "runtimeOptions.accessMode", source = "CardConfiguration.accessMode", allowUnset = false },
+  { name = "modelKey", label = "Model", section = "Runtime", path = "runtimeOptions.modelKey", source = "CardConfiguration.modelKey", catalog = "configured-models", control = "catalog-select", filteredBy = "provider" },
+  { name = "reasoningEffort", label = "Reasoning", section = "Runtime", path = "runtimeOptions.reasoningEffort", source = "CardConfiguration.reasoningEffort" },
+  { name = "temperature", label = "Temperature", section = "Runtime", path = "runtimeOptions.temperature", source = "CardConfiguration.temperature", step = 0.1 },
+  { name = "maxTokens", label = "Max tokens", section = "Runtime", path = "runtimeOptions.maxTokens", source = "CardConfiguration.maxTokens", step = 1 },
+  { name = "maxTurns", label = "Max turns", section = "Runtime", path = "runtimeOptions.maxTurns", source = "CardConfiguration.maxTurns", step = 1 },
+  { name = "tools", label = "Tools", section = "Tools", path = "runtimeOptions.tools", source = "CardConfiguration.tools", catalog = "native-tools", control = "catalog-multiselect" },
+  { name = "subagentModel", label = "Subagent model", section = "Runtime", path = "runtimeOptions.subagentModel", source = "CardConfiguration.subagentModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { runtimeKind = "hermes" } },
+  { name = "teamMaxWorkers", label = "Maximum workers", section = "Runtime", path = "runtimeOptions.team.maxWorkers", source = "CardTeamConfiguration.maxWorkers", visibleWhen = { delegationRole = "team" } },
+  { name = "teamRetryLimit", label = "Retry limit", section = "Runtime", path = "runtimeOptions.team.retryLimit", source = "CardTeamConfiguration.retryLimit", step = 1, visibleWhen = { delegationRole = "team" } },
+  { name = "teamWorkerModel", label = "Worker model", section = "Runtime", path = "runtimeOptions.team.workerModel", source = "CardTeamConfiguration.workerModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { delegationRole = "team" } },
+  { name = "teamLeadModel", label = "Team lead model", section = "Runtime", path = "runtimeOptions.team.leadModel", source = "CardTeamConfiguration.leadModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { delegationRole = "team" } },
+]
+
+[cardEditor.schemas]
+CardConfiguration = "app.python_models.orchestration_contracts.CardConfiguration"
+HermesRuntime = "app.python_models.orchestration_contracts.HermesRuntime"
+AutoGenRuntime = "app.python_models.orchestration_contracts.AutoGenRuntime"
+CardTeamConfiguration = "app.python_models.orchestration_contracts.CardTeamConfiguration"

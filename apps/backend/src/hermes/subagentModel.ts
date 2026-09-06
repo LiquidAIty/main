@@ -7,8 +7,6 @@ export type NativeSubagentModel = {
   model: string;
 };
 
-export const HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS = 120_000;
-
 export function readSavedSubagentModel(value: unknown): SavedSubagentModel | null {
   if (value == null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

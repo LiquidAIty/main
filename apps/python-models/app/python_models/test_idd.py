@@ -258,33 +258,42 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     fields = {field["name"]: field for field in materialized["fields"]}
     assert fields["modelKey"]["catalog"] == "configured-models"
     assert fields["tools"]["catalog"] == "native-tools"
-    assert [item["value"] for item in fields["runtimeMode"]["options"]] == [
-        "main", "delegate", "assistant", "magentic_one",
-    ]
+    assert "runtimeKind" not in fields
+    assert "runtimeMode" not in fields
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1
     assert fields["maxTurns"]["minimum"] == 1
 
 
-def test_ordinary_options_reuse_contracts_without_loading_the_builder_palette(monkeypatch):
+def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full_palette(monkeypatch):
     from app.python_models import idd
     models = [{"provider": "native-provider", "key": "current-model", "label": "Current model",
                "providerModelId": "native-model", "default": False}]
     palette = materialize_card_editor(models)
 
-    def forbidden_palette_read():
-        raise AssertionError("ordinary configuration must not read IDD")
-
-    monkeypatch.setattr(idd, "load_input_data_dictionary", forbidden_palette_read)
     options = materialize_runtime_options(models)
     assert options == {key: palette[key] for key in ("fields", "catalogs")}
     assert set(options) == {"fields", "catalogs"}
     fields = {field["name"]: field for field in options["fields"]}
     assert fields["provider"]["options"] == [{"value": "native-provider", "label": "native-provider"}]
-    assert fields["runtimeKind"]["options"] == [
-        {"value": "hermes", "label": "hermes"}, {"value": "autogen", "label": "autogen"},
-    ]
+    assert "runtimeKind" not in fields
+    assert "runtimeMode" not in fields
     assert materialize_runtime_options([])["catalogs"] == {"configured-models": []}
+
+    document = load_input_data_dictionary()
+    document["cardEditor"]["fields"][0]["label"] = "Profile"
+    monkeypatch.setattr(idd, "load_input_data_dictionary", lambda: document)
+    assert materialize_runtime_options(models)["fields"][0]["label"] == "Profile"
+    assert materialize_card_editor(models)["fields"] == materialize_runtime_options(models)["fields"]
+
+
+def test_idd_runtime_dependencies_and_constraints_come_from_executable_schemas():
+    fields = {field["name"]: field for field in materialize_runtime_options([])["fields"]}
+    assert "runtimeKind" not in fields
+    assert "runtimeMode" not in fields
+    assert fields["maxTurns"]["minimum"] == fields["maxTurns"]["valueSchema"]["anyOf"][0]["minimum"]
+    assert fields["tools"]["path"] == "runtimeOptions.tools"
+    assert fields["tools"]["control"] == "catalog-multiselect"
 
 
 @pytest.mark.parametrize("models,code", [
@@ -433,6 +442,29 @@ def test_typed_objects_and_cardinality_are_declared_data():
     assert palette["types"]["InstructionsObject"]["fields"] == [
         {"id": "stable", "type": "Text", "required": True},
     ]
+
+
+def test_editor_fields_resolve_only_their_referenced_definitions():
+    from jsonschema import Draft202012Validator
+    fields = {field["name"]: field for field in materialize_card_editor([])["fields"]}
+    assert "$defs" not in fields["delegationRole"]["valueSchema"]
+    assert "teamMode" not in fields
+    assert fields["teamMaxWorkers"]["visibleWhen"] == {"delegationRole": "team"}
+    schema = fields["subagentModel"]["valueSchema"]
+    assert set(schema["$defs"]) == {"CardSubagentModel"}
+    validator = Draft202012Validator(schema)
+    validator.validate({"provider": "openai", "accessMode": "chatgpt-account",
+                        "modelKey": "selected-model", "providerModelId": "selected-model"})
+    assert list(validator.iter_errors({"provider": "openai"}))
+
+
+def test_template_runtime_is_shared_creation_data_and_inherits():
+    from app.python_models.idd import template_runtime
+    document = load_input_data_dictionary()
+    assert template_runtime(document, "template_assist") == {"kind": "hermes", "mode": "delegate"}
+    assert template_runtime(document, "template_magentic") == {"kind": "autogen", "mode": "magentic_one"}
+    document["templates"]["example"] = {"extends": "template_assist"}
+    assert template_runtime(document, "example") == template_runtime(document, "template_assist")
 
 
 def test_new_composable_object_is_read_from_idd_without_a_python_dictionary(tmp_path, monkeypatch):

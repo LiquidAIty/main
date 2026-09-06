@@ -17,17 +17,18 @@ import {
 
 /**
  * The canonical hex-plus "Add New Agent" mutation: creates exactly one new
- * editable Assistant Agent card using the current deck schema and templates,
+ * editable Card using the current deck schema and template binding,
  * places it in the next valid open canvas position, and returns the updated
  * deck plus the created card (which the caller selects/opens).
  *
  * Restores the historical quick-add path (previously driven by
  * DeckNodePreset/buildQuickAddDeckMutation which were removed) against the
  * current canonical schema. No edge is created (the historical top-level
- * hex-plus added an unattached card); no runtime assignment, no process.
+ * hex-plus added an unattached card); no process is launched.
  */
 export function buildQuickAddAssistCard(
   deck: DeckDocument,
+  runtime: { kind: 'hermes'; mode: 'delegate' },
 ): { nextDeck: DeckDocument; nextNode: AgentCardInstance } {
   const template =
     INITIAL_AGENT_TEMPLATES.find((entry) => entry.id === 'template_assist') || null;
@@ -51,17 +52,17 @@ export function buildQuickAddAssistCard(
   };
   const assistCount = deck.nodes.filter(
     (node) =>
-      normalizeCardRuntime(node.runtime)?.kind === 'autogen'
-      && normalizeCardRuntime(node.runtime)?.mode === 'assistant'
+      node.templateId === 'template_assist'
       && !String(node.parentGraphId || '').trim(),
   ).length;
 
+  const identity = uid();
   const nextNode: AgentCardInstance = {
-    id: `card_assist_${uid()}`,
+    id: `card_assist_${identity}`,
     kind: 'agent',
     templateId: template?.id || 'template_assist',
     prompt: promptContent,
-    runtime: { kind: 'autogen', mode: 'assistant' },
+    runtime: { ...runtime, profile: `agent-${identity}` },
     runtimeOptions: normalizeRuntimeOptions({
       provider: template?.provider || undefined,
       modelKey: template?.model || undefined,

@@ -44,8 +44,7 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
-  /** Saved authority to invoke connected Hermes delegate Cards. */
-  profileDelegationEnabled?: boolean;
+  delegationRole?: 'off' | 'profile' | 'leaf' | 'orchestrator' | 'team';
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;

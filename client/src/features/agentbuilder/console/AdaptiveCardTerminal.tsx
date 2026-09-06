@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CardRuntime } from '../../../types/agentgraph';
 
-import type { RuntimeEvent, RuntimeObservation, RuntimeConfiguration } from '../../../../../apps/backend/src/contracts/runtimeEvents';
+import type { RuntimeEvent, RuntimeObservation } from '../../../../../apps/backend/src/contracts/runtimeEvents';
 export type CardTerminalEvent = RuntimeEvent;
 export type CardTerminalObservation = RuntimeObservation;
 export type TerminalRun = {
@@ -70,17 +70,6 @@ function BoundedText({ text }: { text: string }) {
   const [visible, setVisible] = useState(4000);
   return <><pre style={preStyle}>{text.slice(0, visible)}</pre>
     {text.length > visible ? <button type="button" onClick={() => setVisible((value) => value + 4000)}>Show more output</button> : null}</>;
-}
-
-export function RuntimeConfigurationHeader({ configuration }: { configuration?: RuntimeConfiguration }) {
-  if (!configuration) return null;
-  return <div data-testid="runtime-configuration" style={{ display: 'grid', gap: 4 }}>
-    <span>{[configuration.provider, configuration.model, configuration.profile].filter(Boolean).join(' · ')}</span>
-    {configuration.grantedTools ? <details><summary>Run-granted tools ({configuration.grantedTools.length})</summary>
-      <BoundedText text={configuration.grantedTools.join('\n')} /></details> : null}
-    {configuration.loadedSkills ? <details><summary>Loaded skills ({configuration.loadedSkills.length})</summary>
-      <BoundedText text={configuration.loadedSkills.join('\n')} /></details> : null}
-  </div>;
 }
 
 function RuntimeEventRow({ event, conversationOnly }: { event: RuntimeEvent; conversationOnly: boolean }) {
@@ -227,7 +216,6 @@ export default function AdaptiveCardTerminal(props: {
         ? <button type="button" onClick={props.onStop}>Stop</button> : null}
     </div>
     {runtime.kind === 'autogen' && runtime.mode === 'magentic_one' ? <div>Orchestrator · Magentic-One</div> : null}
-    <RuntimeConfigurationHeader configuration={terminal?.configuration} />
     {!active && finalText ? <div data-testid="card-terminal-final"><BoundedText text={finalText} /></div> : null}
     {failure ? <div role="alert">{terminal?.errorCode ? `${terminal.errorCode}: ` : ''}{failure}</div> : null}
     {run?.observationError ? <div role="alert">{run.observationError}</div> : null}

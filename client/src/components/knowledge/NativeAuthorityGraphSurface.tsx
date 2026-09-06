@@ -257,7 +257,6 @@ export function NativeGraphProjectionSurface({
   const appliedForceSettingsRef = useRef('');
   const initialFitRef = useRef(false);
   const initialFitTimerRef = useRef<number | null>(null);
-  const [hideIsolated, setHideIsolated] = useState(true);
   const [showLinkLabels, setShowLinkLabels] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<NativeNode | null>(null);
@@ -317,8 +316,7 @@ export function NativeGraphProjectionSurface({
         presentationLayer: typeof node.properties?.presentationLayer === 'string'
           ? node.properties.presentationLayer
           : undefined,
-      }))
-      .filter((node) => !hideIsolated || node.degree > 0 || node.transient || node.attentionActive);
+      }));
     const ids = new Set(nodeDescriptions.map((node) => node.id));
     const linkDescriptions: NativeLink[] = edges
       .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
@@ -370,7 +368,7 @@ export function NativeGraphProjectionSurface({
         .sort()
         .join('|')}`,
     };
-  }, [authority, hideIsolated, projection]);
+  }, [authority, projection]);
 
   const adjacency = useMemo(() => {
     const result = new Map<string, Set<string>>();
@@ -639,7 +637,6 @@ export function NativeGraphProjectionSurface({
           <div className="native-authority-actions">
             <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
           </div>
-          <label><input type="checkbox" checked={hideIsolated} onChange={(event) => setHideIsolated(event.target.checked)} /> Hide unconnected entities</label>
           <label><input type="checkbox" checked={showLinkLabels} onChange={(event) => setShowLinkLabels(event.target.checked)} /> Show link labels</label>
           <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && focusSearch()} placeholder="Find entity…" />
           {([

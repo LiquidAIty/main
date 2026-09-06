@@ -7,12 +7,13 @@ product prompt and not a substitute for current source, tests, or runtime proof.
 
 Before doing anything else:
 
-1. Read [PLAN.md](./PLAN.md) completely.
-2. Read the relevant `skills/*.md` procedures.
-3. Establish Git and native Codebase Memory state.
-4. Use CBM to resolve the structural slice.
-5. Direct-read the current source CBM identified.
-6. Only then plan or edit.
+1. Read the current operating rules in [DONT.md](./DONT.md); consult its historical removal record for the affected boundary.
+2. Read [PLAN.md](./PLAN.md) completely.
+3. Read only the relevant reusable `skills/*.md` procedures; verify their named owners against current source.
+4. Establish Git and native Codebase Memory state.
+5. Use CBM to resolve the structural slice, with the documented direct-source fallback for excluded or unavailable coverage.
+6. Direct-read the current source CBM identified.
+7. Only then plan or edit.
 
 The repository has deleted well over 200,000 lines of layered experiments. The most important rule is:
 
@@ -28,7 +29,9 @@ models = semantic reasoning
 saved cards and graph topology = identity and authority
 ```
 
-Do not imitate nearby spaghetti. Follow this file.
+Do not imitate nearby spaghetti. Follow this file and the current rules in DONT.md.
+Historical recovered documents are evidence of previous decisions and failures, not permission to
+restore removed tools, impose retired gates, or override the owner's latest instructions.
 
 ---
 
@@ -460,14 +463,18 @@ receive their dynamic task through the saved-worker Card doorway, so each indepe
 Card gets its own root IDF. A Hermes Kanban Card is one root boundary: Hermes owns native task decomposition,
 worker prompts, handoffs, and child context. Never infer per-worker IDFs from native child IDs.
 
-IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` Agent Builder palette
-for composable objects, typed fields, templates, relationships and effect metadata. Native Hermes,
-MCP and model discovery own their current catalogs. IDD is not runtime authority, an authenticator,
-a checksum gate or an IDF validator, and no copied dictionary belongs in TypeScript or Python.
+IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` definition source
+for composable objects, typed fields, choices, defaults, templates, relationships and effect metadata.
+Following the EnergyPlus IDD/IDF editor pattern, the human Card receives its applicable field list,
+Agent Builder reads the dictionary, and a new Card template resolves its dropdowns from the same
+definitions. IDD references executable validation and current Hermes/MCP/model catalogs rather than
+copying their choices. Creation, editing, Builder operations, validation and normalization must agree.
+This is the approved target; the complete consumer parity remains unproven until tested and loaded.
+IDD is not runtime authority, an authenticator, a checksum gate or a second IDF materializer.
 Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
 Main after user approval. Ordinary Runs and Local Coder receive selected values/references, never the
-whole palette. Ordinary prompt prose stays Markdown. Every Card has the same visible Python Script tab
-only in the Agent Builder workspace. IDD supplies current tool contracts, while the Card's effective
+whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python editor below its Tools selection
+in the Agent Builder workspace. IDD supplies current tool contracts, while the Card's effective
 Tools-tab grants limit autocomplete and execution. The user or the authenticated Agent Builder profile
 may validate, save and activate the next Script version; a running Card receives one immutable saved
 version/hash and cannot rewrite it. Valid Hermes Scripts execute through Hermes' existing child-process
@@ -621,6 +628,9 @@ task objects, or reconstructed Magentic-One ledgers. Do not mark completion with
 
 ## Skills
 
+Historical records explain past failures; they do not authorize obsolete tools, graph writes,
+generators, or restrictions. No feature-manifest or automatic LLM wiki system is restored.
+
 `skills/*.md` files are reusable proven procedures and known traps. Retrieve a small relevant set. Do
 not inject every skill into every prompt. Do not create a skill merely because a task completed.
 
@@ -636,6 +646,7 @@ Canonical durable documents are:
 ```text
 PLAN.md
 AGENTS.md
+DONT.md
 ARCHITECTURE.md
 FUTURE.md
 skills/*.md

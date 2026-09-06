@@ -1,3 +1,5 @@
+import type { StarmapGraph } from '../../../../Hermes/apps/desktop/src/types/hermes';
+
 export type NativeHermesMcpServerView = {
   name: string;
   transport: string;
@@ -63,24 +65,7 @@ export type NativeHermesCardView = {
         date: string;
         nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
       }>;
-      graph: {
-        nodes: Array<{
-          id: string;
-          label: string;
-          kind: 'skill' | 'memory';
-          timestamp?: number | null;
-          category?: string;
-          useCount?: number;
-          state?: string;
-          createdBy?: string | null;
-          pinned?: boolean;
-          memorySource?: string;
-        }>;
-        edges: Array<{ source: string; target: string }>;
-        clusters: Array<{ category?: string; count?: number }>;
-        memory: Array<Record<string, unknown>>;
-        stats: Record<string, unknown>;
-      };
+      graph: StarmapGraph;
     };
   };
   desired: {

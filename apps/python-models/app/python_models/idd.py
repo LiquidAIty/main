@@ -9,6 +9,7 @@ import json
 import tomllib
 from copy import deepcopy
 from hashlib import sha256
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -73,51 +74,105 @@ def builder_fingerprint(value: Any) -> str:
                              separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def _editor_fields(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Existing Card editor wire shape, derived from executable transport types.
-    # Labels/layout live in React; there is no copied UI schema in IDD.
-    from app.python_models.orchestration_contracts import (
-        AutoGenRuntime, CardConfiguration, HermesRuntime,
-    )
-    runtime_schemas = [HermesRuntime.model_json_schema(), AutoGenRuntime.model_json_schema()]
-    schemas = CardConfiguration.model_json_schema()["properties"]
+def template_runtime(document: dict[str, Any], template_id: str) -> dict[str, str]:
+    """Resolve the creation binding declared by a template or its base."""
+    template_objects(document, template_id)
+    definition = document["templates"][template_id]
+    if "runtime" in definition:
+        binding = definition["runtime"]
+        if (not isinstance(binding, dict) or set(binding) != {"kind", "mode"}
+                or not all(isinstance(value, str) and value for value in binding.values())):
+            raise IddValidationError("idd_template_runtime_invalid")
+        return dict(binding)
+    if definition.get("extends"):
+        return template_runtime(document, definition["extends"])
+    raise IddValidationError("idd_template_runtime_missing")
+
+
+def _editor_fields(models: list[dict[str, Any]], document: dict[str, Any]) -> list[dict[str, Any]]:
+    """Resolve the checked-in field definitions against their executable owners."""
+    editor = document.get("cardEditor", {})
+    schemas = {}
+    for key, qualified_name in editor.get("schemas", {}).items():
+        module_name, type_name = qualified_name.rsplit(".", 1)
+        schemas[key] = getattr(import_module(module_name), type_name).model_json_schema()
     fields = []
-    for name, schema in schemas.items():
+    seen = set()
+    for definition in editor.get("fields", []):
+        name = definition["name"]
+        if name in seen:
+            raise IddValidationError("idd_editor_field_duplicate")
+        seen.add(name)
+        sources = definition.get("sources", [definition.get("source")])
+        resolved = []
+        for reference in sources:
+            owner, property_name = reference.split(".", 1)
+            try:
+                resolved.append((schemas[owner], schemas[owner]["properties"][property_name]))
+            except KeyError as error:
+                raise IddValidationError("idd_editor_source_unknown") from error
+        schema = resolved[0][1]
         choices = schema.get("anyOf", [schema])
         concrete = next((item for item in choices if item.get("type") != "null"), schema)
-        values = concrete.get("enum", [])
-        if name == "runtimeKind":
-            values = [item["properties"]["kind"]["const"] for item in runtime_schemas]
-        elif name == "runtimeMode":
-            values = [
-                value
-                for item in runtime_schemas
-                for value in item["properties"]["mode"]["enum"]
-                if value != "kanban"
-            ]
-        elif name == "provider":
-            values = sorted({item["provider"] for item in models})
+        options = []
+        for owner_schema, property_schema in resolved:
+            alternatives = property_schema.get("anyOf", [property_schema])
+            value_schema = next((item for item in alternatives if item.get("type") != "null"), property_schema)
+            values = value_schema.get("enum", [value_schema["const"]] if "const" in value_schema else [])
+            for value in values:
+                if value in definition.get("exclude", []):
+                    continue
+                option = {"value": value, "label": value}
+                if definition.get("filteredBy") == "runtimeKind":
+                    option["when"] = {"runtimeKind": owner_schema["properties"]["kind"]["const"]}
+                options.append(option)
+        if definition.get("catalogProperty"):
+            # The transport supplies current catalog values, never an IDD copy.
+            values = sorted({item[definition["catalogProperty"]] for item in models})
+            options = [{"value": value, "label": value} for value in values]
         field = {
-            "name": name, "label": schema.get("title", name), "path": name,
-            "control": "select" if values else {"number": "number", "integer": "integer"}.get(concrete.get("type"), "text"),
-            "allowUnset": name not in {"runtimeKind", "runtimeMode", "accessMode"},
+            **{key: deepcopy(value) for key, value in definition.items()
+               if key not in {"source", "sources", "exclude", "catalogProperty"}},
+            "control": definition.get("control") or ("select" if options else
+                {"number": "number", "integer": "integer"}.get(concrete.get("type"), "text")),
+            "allowUnset": definition.get("allowUnset", True),
+            "valueSchema": deepcopy(schema),
         }
-        if values:
-            field["options"] = [{"value": value, "label": value} for value in values]
-        if name in {"modelKey", "tools"}:
-            field.update(control="catalog-select" if name == "modelKey" else "catalog-multiselect",
-                         catalog="configured-models" if name == "modelKey" else "native-tools")
+        definitions = resolved[0][0].get("$defs", {})
+        required_definitions = {}
+
+        def include_references(value: Any) -> None:
+            if isinstance(value, list):
+                for child in value:
+                    include_references(child)
+            elif isinstance(value, dict):
+                reference = value.get("$ref", "")
+                if reference.startswith("#/$defs/"):
+                    key = reference.removeprefix("#/$defs/")
+                    if key not in required_definitions:
+                        if key not in definitions:
+                            raise IddValidationError("idd_editor_reference_unknown")
+                        required_definitions[key] = deepcopy(definitions[key])
+                        include_references(definitions[key])
+                for child in value.values():
+                    include_references(child)
+
+        include_references(schema)
+        if required_definitions:
+            field["valueSchema"]["$defs"] = required_definitions
+        if options:
+            field["options"] = options
         for bound in ("minimum", "maximum"):
             if bound in concrete:
                 field[bound] = concrete[bound]
-        if concrete.get("type") in {"number", "integer"}:
-            field["step"] = 0.1 if concrete["type"] == "number" else 1
         fields.append(field)
+    if not fields:
+        raise IddValidationError("idd_editor_fields_missing")
     return fields
 
 
-def materialize_runtime_options(model_options: Any) -> dict[str, Any]:
-    """Ordinary configuration uses executable contracts, without reading IDD."""
+def materialize_runtime_options(model_options: Any, *, document: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The human editor receives only the resolved configuration slice of IDD."""
     from app.python_models.orchestration_contracts import ModelOption
     from pydantic import ValidationError
     if not isinstance(model_options, list):
@@ -128,7 +183,8 @@ def materialize_runtime_options(model_options: Any) -> dict[str, Any]:
         raise IddValidationError("model_catalog_entry_invalid") from error
     if len({(item["provider"], item["key"]) for item in models}) != len(models):
         raise IddValidationError("model_catalog_identity_duplicate")
-    return {"fields": _editor_fields(models), "catalogs": {"configured-models": models}}
+    return {"fields": _editor_fields(models, document or load_input_data_dictionary()),
+            "catalogs": {"configured-models": models}}
 
 
 def materialize_card_editor(
@@ -136,7 +192,7 @@ def materialize_card_editor(
 ) -> dict[str, Any]:
     """One builder palette. Native source data enriches IDD without becoming IDD."""
     document = load_input_data_dictionary()
-    runtime_options = materialize_runtime_options(model_options)
+    runtime_options = materialize_runtime_options(model_options, document=document)
     models = runtime_options["catalogs"]["configured-models"]
     selected = set(selected_ids or [])
     if not all(isinstance(value, str) for value in selected):

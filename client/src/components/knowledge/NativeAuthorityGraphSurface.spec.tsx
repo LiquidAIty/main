@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
@@ -37,6 +37,7 @@ import {
 import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 afterEach(() => {
+  cleanup();
   forceGraphMocks.instances.length = 0;
 });
 
@@ -62,6 +63,20 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('button', { name: 'Open KnowGraph Inspector' })).toBeTruthy();
     expect(screen.getByText('No KnowGraph data viewed in this attention scope yet.')).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('renders native entries without hiding isolated nodes or inventing connections', async () => {
+    const projection = {
+      ...empty('knowgraph'),
+      nodes: [{ id: 'entity-one', label: 'Existing entity', mentionCount: 1 }],
+    };
+    render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    await waitFor(() => expect(graph.data.nodes.map((node: { id: string }) => node.id)).toEqual(['entity-one']));
+    expect(graph.data.links).toEqual([]);
+    expect(screen.queryByRole('checkbox', { name: 'Hide unconnected entities' })).toBeNull();
+    expect(projection.nodes).toEqual([{ id: 'entity-one', label: 'Existing entity', mentionCount: 1 }]);
+    expect(projection.edges).toEqual([]);
   });
 
   it('shows the exact CodeGraph project-resolution failure instead of mounting an arbitrary index', () => {

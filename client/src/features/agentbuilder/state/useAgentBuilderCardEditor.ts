@@ -17,6 +17,7 @@ type UseAgentBuilderCardEditorArgs = {
   recordDeckWriteReason: (reason: string) => void;
   selectedCardId: string | null;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
+  persistDeck: (document: DeckDocument) => Promise<void>;
 };
 
 function normalizeStringList(value: unknown): string[] {
@@ -33,6 +34,7 @@ export default function useAgentBuilderCardEditor({
   recordDeckWriteReason,
   selectedCardId,
   setDeck,
+  persistDeck,
 }: UseAgentBuilderCardEditorArgs) {
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
@@ -88,11 +90,10 @@ export default function useAgentBuilderCardEditor({
   }, [deck.workspaceRoot, effectiveAgent, selectedCard]);
 
   const handleSaveSelectedCardConfig = useCallback(
-    (nextConfig: AgentManagerLocalConfig) => {
-      if (!selectedCard) return;
+    async (nextConfig: AgentManagerLocalConfig) => {
+      if (!selectedCard) throw new Error("No Card is selected.");
 
-      recordDeckWriteReason('card-editor');
-      setDeck((currentDeck) => {
+      const update = (currentDeck: DeckDocument): DeckDocument => {
         const nextRuntime = normalizeCardRuntime(nextConfig.runtime);
         if (!nextRuntime) throw new Error('card_runtime_invalid');
         const nextParentGraphId = cleanOptionalText(
@@ -149,7 +150,7 @@ export default function useAgentBuilderCardEditor({
         return {
           ...currentDeck,
           version: currentDeck.version + 1,
-          edges: nextRuntimeOptions?.profileDelegationEnabled === true
+          edges: nextRuntimeOptions?.delegationRole === 'profile'
             ? currentDeck.edges
             : currentDeck.edges.filter((edge) => edge.edgeType !== 'flow' || edge.source !== selectedCard.id),
           nodes: currentDeck.nodes.map((node) =>
@@ -166,13 +167,12 @@ export default function useAgentBuilderCardEditor({
               : node,
           ),
         };
-      });
+      };
+      await persistDeck(update(deck));
+      recordDeckWriteReason('card-editor');
+      setDeck(update);
     },
-    [
-      recordDeckWriteReason,
-      selectedCard,
-      setDeck,
-    ],
+    [deck, persistDeck, recordDeckWriteReason, selectedCard, setDeck],
   );
 
   const handleRenameSelectedCard = useCallback(

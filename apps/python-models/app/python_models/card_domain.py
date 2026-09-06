@@ -24,14 +24,15 @@ from app.python_models.tool_registry import (
     writable_tool_ids,
     tool_access,
 )
-from pydantic import ValidationError
-from app.python_models.orchestration_contracts import DataAnchorReference, GraphHook
+from pydantic import TypeAdapter, ValidationError
+from app.python_models.orchestration_contracts import CardDelegationRole, DataAnchorReference, GraphHook
 from app.python_models.card_script import saved_script, script_presentation
 from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.idd import (
     IDD_PATH,
     load_input_data_dictionary,
     template_objects,
+    template_runtime,
 )
 from app.python_models.idf import (
     InputMaterializationError,
@@ -117,7 +118,6 @@ _AGENT_BUILDER_CREATE_MODEL_FIELDS = (
 _AGENT_BUILDER_CREATE_FIELDS = (
     "templateId", "title", "role", "prompt", "runtime", "model", "tools",
 )
-_AGENT_BUILDER_CREATE_RUNTIME = {"kind": "autogen", "mode": "assistant"}
 _AGENT_BUILDER_ACCESS_MODES = frozenset({
     "chatgpt-account", "openai-api", "openrouter-api",
 })
@@ -490,9 +490,11 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         for field in GRANT_FIELDS.values()
     }
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
-    if "profileDelegationEnabled" in extensions:
-        if not isinstance(extensions["profileDelegationEnabled"], bool):
-            raise CardDomainError("card_profile_delegation_flag_invalid")
+    if "delegationRole" in extensions:
+        try:
+            extensions["delegationRole"] = TypeAdapter(CardDelegationRole).validate_python(extensions["delegationRole"])
+        except ValidationError as error:
+            raise CardDomainError("card_delegation_role_invalid") from error
     if "subagentModel" in extensions:
         extensions["subagentModel"] = _subagent_model_selection(
             extensions["subagentModel"]
@@ -1805,7 +1807,7 @@ def _profile_delegation_enabled(card: dict[str, Any]) -> bool:
     return (
         _card_runtime(card).get("kind") == "hermes"
         and _card_enabled(card)
-        and (card.get("runtimeOptions") or {}).get("profileDelegationEnabled") is True
+        and (card.get("runtimeOptions") or {}).get("delegationRole") == "profile"
     )
 
 
@@ -1819,7 +1821,7 @@ def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[s
             continue
         prior = old.get(edge["id"])
         source = cards[edge["source"]]
-        if (source.get("runtimeOptions") or {}).get("profileDelegationEnabled") is not True:
+        if (source.get("runtimeOptions") or {}).get("delegationRole") != "profile":
             if prior and all(prior.get(key) == edge.get(key) for key in (
                 "source", "target", "sourceHandle", "targetHandle", "edgeType", "enabled",
             )):
@@ -2093,7 +2095,7 @@ def _agent_builder_operation(
         "role": role,
         "prompt": prompt,
         "tools": tools,
-        "runtime": dict(_AGENT_BUILDER_CREATE_RUNTIME),
+        "runtime": template_runtime(load_input_data_dictionary(), template_id),
         "model": model,
     }, None)
 
@@ -2561,6 +2563,7 @@ def _prepare_invocation(
     if not provider or not model_key or not provider_model_id:
         raise CardDomainError("card_model_configuration_incomplete")
     runtime_options = {
+        "delegationRole": options.get("delegationRole", "off"),
         "reasoningEffort": options.get("reasoningEffort"),
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),

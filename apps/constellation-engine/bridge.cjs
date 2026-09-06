@@ -446,8 +446,17 @@ function render(args, exact) {
     maxDepth: boundedInteger(args.maxDepth, exact ? 1 : 3, 0, 5, 'max_depth'),
     maxL2: boundedInteger(args.maxL2, 12, 0, 128, 'max_l2'),
   });
+  const readTitle = engine.db.prepare("SELECT l0 FROM nodes WHERE id = ? AND state = 'active'");
+  const nodes = result.nodes.map((node) => {
+    const record = readTitle.get(node.id);
+    if (!record || typeof record.l0 !== 'string') {
+      throw new Error(`constellation_native_title_missing:${node.id}`);
+    }
+    return { ...node, l0: record.l0 };
+  });
   return {
     ...result,
+    nodes,
     ...engineReceipt(),
   };
 }

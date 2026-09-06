@@ -88,6 +88,17 @@ def test_native_constellation_write_context_and_inspect(tmp_path: Path) -> None:
             edge["from"] == "answer-one" and edge["to"] == "question-one"
             for edge in inspected["edges"]
         )
+        projected = constellation._projection("project-one", inspected)
+        question = next(node for node in projected["nodes"] if node["id"] == "question-one")
+        assert question["label"] == "Question one"
+        assert question["title"] == "Question one"
+        assert question["properties"]["content"] == "What evidence would change this decision?"
+        assert question["properties"]["level"] == "L2"
+        assert len(projected["edges"]) == len(inspected["edges"])
+        without_title = {**inspected, "nodes": [{key: value for key, value in node.items() if key != "l0"} for node in inspected["nodes"]]}
+        with pytest.raises(ConstellationError, match="constellation_native_title_missing"):
+            constellation._projection("project-one", without_title)
+        assert constellation._projection("project-one", {"nodes": [], "edges": [], "counts": {"active": 0, "total": 3}})["counts"]["nodes"] == 0
 
         context = engine.request(
             "context", {"focus": "question", "maxDepth": 1}

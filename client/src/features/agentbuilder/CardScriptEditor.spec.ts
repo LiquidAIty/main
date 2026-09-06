@@ -109,8 +109,8 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(source).toContain('sourceModel.dispose()');
     expect(source).toContain('entry.model.dispose()');
     expect(source).not.toContain('{header.source}');
-    expect(builderPage).toContain("tab === 'Context'");
-    expect(builderPage).toContain("tab === 'Script'");
+    expect(builderPage).toContain("['CLI', 'Prompt', 'Runtime', 'Knowledge', 'Tools']");
+    expect(builderPage).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
     expect(builderPage).toContain('key="deck-card-editor"');
     expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');
     expect(managerSource).toContain('scriptDraftCacheRef');

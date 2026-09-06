@@ -19,7 +19,6 @@ import {
   startHermesHostTeamMonitor,
 } from './hostExecutionLifecycle';
 import {
-  HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
   sameNativeSubagentModel,
   toNativeSubagentModel,
   type NativeSubagentModel,
@@ -67,6 +66,7 @@ export type HermesRuntimeConfig = {
   providerModelId: string;
   subagentModel?: SavedSubagentModel;
   team?: SavedTeamConfig;
+  delegationRole?: 'off' | 'profile' | 'leaf' | 'orchestrator' | 'team';
   effectiveSubagentModel?: {
     desired: SavedSubagentModel;
     provider: string;
@@ -444,12 +444,12 @@ export function buildHermesHostSessionProjection(
         .filter((name) => name !== 'web_search')
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
     : [];
-  const nativeTeam = args.team ? toNativeTeamPolicy(args.team) : null;
-  const profileTargets = args.profileTargets || [];
-  const delegationRoles = [
-    ...(nativeTeam ? ['team'] : []),
-    ...(profileTargets.length ? ['profile'] : []),
-  ];
+  const role = args.delegationRole || 'off';
+  const nativeTeam = role === 'team' && args.team ? toNativeTeamPolicy(args.team) : null;
+  if (role === 'team' && !nativeTeam) throw new Error('hermes_team_configuration_required');
+  const profileTargets = role === 'profile' ? args.profileTargets || [] : [];
+  const delegationRoles = role === 'off' || (role === 'profile' && !profileTargets.length)
+    ? [] : [role];
   return {
     mcpServers: rootServers,
     sessionMeta: {
@@ -1338,12 +1338,6 @@ export async function materializeHermesProfileSelections(
   ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
     name: profile,
     subagent_model: selection,
-    background_review: {
-      enabled: true,
-      provider: selection.provider,
-      model: selection.model,
-      max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
-    },
   }),
   configureNativeParentModel: (
     profile: string,
@@ -1452,31 +1446,17 @@ export async function materializeHermesProfileSelections(
   let effectiveSubagentModel = args.effectiveSubagentModel;
   if (args.subagentModel) {
     const expected = toNativeSubagentModel(args.subagentModel);
-    const review = native.background_review && typeof native.background_review === 'object'
-      ? native.background_review as Record<string, unknown>
-      : {};
-    const reviewMatches = review.enabled === true
-      && sameNativeSubagentModel(review, expected)
-      && Number(review.max_input_tokens) === HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS;
-    if (!sameNativeSubagentModel(native.subagent_model, expected) || !reviewMatches) {
+    if (!sameNativeSubagentModel(native.subagent_model, expected)) {
       const configured = await configureNativeSubagentModel(profile, expected);
       const applied = configured?.applied && typeof configured.applied === 'object'
         ? configured.applied as Record<string, unknown>
         : {};
-      if (configured?.ok !== true || applied.subagent_model !== true || applied.background_review !== true) {
+      if (configured?.ok !== true || applied.subagent_model !== true) {
         throw new Error(`hermes_native_subagent_model_apply_failed:${profile}`);
       }
       native = await readNativeProfile(profile);
     }
-    const finalReview = native?.background_review && typeof native.background_review === 'object'
-      ? native.background_review as Record<string, unknown>
-      : {};
-    if (
-      !sameNativeSubagentModel(native?.subagent_model, expected)
-      || finalReview.enabled !== true
-      || !sameNativeSubagentModel(finalReview, expected)
-      || Number(finalReview.max_input_tokens) !== HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS
-    ) {
+    if (!sameNativeSubagentModel(native?.subagent_model, expected)) {
       throw new Error(`hermes_native_subagent_model_readback_mismatch:${profile}`);
     }
     effectiveSubagentModel = {
@@ -1506,12 +1486,6 @@ export async function startHermesTurnWithOnePrePromptRecovery(
   ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
     name: profile,
     subagent_model: selection,
-    background_review: {
-      enabled: true,
-      provider: selection.provider,
-      model: selection.model,
-      max_input_tokens: HERMES_BACKGROUND_REVIEW_MAX_INPUT_TOKENS,
-    },
   }),
   configureNativeParentModel: (
     profile: string,

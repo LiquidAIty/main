@@ -114,7 +114,7 @@ def builder_create_authority(
         "role": role,
         "prompt": prompt,
         "tools": list(tools or []),
-        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "runtime": {"kind": "hermes", "mode": "delegate"},
         "model": model,
     }
 
@@ -340,7 +340,7 @@ def test_card_graph_reference_handler_uses_the_one_card_domain_owner(monkeypatch
 
 
 class TestCardCreate:
-    def test_run_authority_creates_one_explicit_autogen_card_without_launching(
+    def test_run_authority_creates_one_hermes_card_without_launching(
         self, fake_backend,
     ):
         operation = builder_create_authority()
@@ -352,7 +352,7 @@ class TestCardCreate:
             "title": "Search Agent",
             "role": "Bounded live-web researcher",
             "prompt": "Return cited sources and claims. Do not write KnowGraph.",
-            "runtime": {"kind": "autogen", "mode": "assistant"},
+            "runtime": {"kind": "hermes", "mode": "delegate"},
             "model": operation["model"],
             "tools": [],
         }, caller_card_id="builder-card", builder_operation=operation))
@@ -367,7 +367,10 @@ class TestCardCreate:
         card = fake_backend["deck"]["nodes"][-1]
         assert card["title"] == "Search Agent"
         assert card["role"] == "Bounded live-web researcher"
-        assert card["runtime"] == {"kind": "autogen", "mode": "assistant"}
+        assert card["runtime"]["kind"] == "hermes"
+        assert card["runtime"]["mode"] == "delegate"
+        assert card["runtime"]["profile"].startswith("agent-")
+        assert card["runtime"]["profile"] not in [n["runtime"].get("profile") for n in DECK["nodes"]]
         assert card["runtimeOptions"] == {
             "provider": "openrouter",
             "modelKey": "research-model",
@@ -378,6 +381,7 @@ class TestCardCreate:
             "skills": [],
             "toolsets": [],
             "mcpConnectionIds": [],
+            "subagentModel": cp._DEFAULT_HERMES_SUBAGENT_MODEL,
         }
         assert fake_backend["deck"]["edges"] == DECK["edges"]
 
@@ -391,7 +395,7 @@ class TestCardCreate:
             "title": operation["title"],
             "role": operation["role"],
             "prompt": operation["prompt"],
-            "runtime": {"kind": "autogen", "mode": "assistant"},
+            "runtime": {"kind": "hermes", "mode": "delegate"},
             "model": operation["model"],
             "tools": [],
         }
@@ -423,7 +427,7 @@ class TestCardCreate:
             "title": operation["title"],
             "role": operation["role"],
             "prompt": operation["prompt"],
-            "runtime": {"kind": "autogen", "mode": "assistant"},
+            "runtime": {"kind": "hermes", "mode": "delegate"},
             "model": operation["model"],
             "tools": [],
         }
@@ -461,7 +465,7 @@ class TestCardCreate:
             "title": operation["title"],
             "role": operation["role"],
             "prompt": operation["prompt"],
-            "runtime": {"kind": "autogen", "mode": "assistant"},
+            "runtime": {"kind": "hermes", "mode": "delegate"},
             "model": operation["model"],
             "tools": [],
         }
@@ -642,9 +646,9 @@ class TestUpsertWire:
         import copy
         from app.python_models import card_domain
         source = {'id': 'source', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'source'},
-                  'runtimeOptions': {'profileDelegationEnabled': True, 'tools': ['canvas.inspect']}}
+                  'runtimeOptions': {'delegationRole': "profile", 'tools': ['canvas.inspect']}}
         target = {'id': 'target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
-                  'runtimeOptions': {'profileDelegationEnabled': False}}
+                  'runtimeOptions': {'delegationRole': "off"}}
         if edge_type != 'flow':
             target['runtime'] = {'kind': 'autogen', 'mode': 'magentic_one'}
         deck = {'nodes': [source, target], 'edges': []}

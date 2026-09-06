@@ -268,6 +268,20 @@ describe('Hermes profile Card routes', () => {
     expect(requestNative).not.toHaveBeenCalled();
   });
 
+  it('preserves the native unset review budget when changing enabled state', async () => {
+    const { base, requestNative } = await start();
+    const background_review = { enabled: false, provider: 'auto', model: '', max_input_tokens: null };
+    const response = await fetch(`${base}/cards/card_main/native`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p1', deckId: 'deck_builder',
+        method: 'profiles.configure', params: { background_review } }),
+    });
+    expect(response.status).toBe(200);
+    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
+      name: 'liquidaity-main', background_review,
+    });
+  });
+
   it('rejects unbounded or malformed background-review selectors before Hermes', async () => {
     const { base, requestNative } = await start();
     const response = await fetch(`${base}/cards/card_main/native`, {

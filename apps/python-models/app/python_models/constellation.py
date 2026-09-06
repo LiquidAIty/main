@@ -272,18 +272,21 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
             continue
         native_id = str(raw["id"])
-        content = str(raw.get("content") or native_id)
+        title = raw.get("l0")
+        if not isinstance(title, str):
+            raise ConstellationError(f"constellation_native_title_missing:{native_id}")
         nodes.append(
             {
                 "id": native_id,
                 "canonicalId": native_id,
-                "label": content[:240] or native_id,
-                "title": content[:240] or native_id,
+                "label": title,
+                "title": title,
                 "type": "ConstellationMemory",
                 "authority": "constellation-engine",
                 "projectId": project_id,
                 "mentionCount": 1,
                 "properties": {
+                    "content": raw.get("content"),
                     "level": raw.get("level"),
                     "distance": raw.get("distance"),
                     "tags": _decoded_tags(raw.get("tags")),
@@ -342,7 +345,7 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
             "consolidationState": native.get("consolidationState"),
         },
         "counts": {
-            "nodes": int(counts.get("active") or counts.get("total") or 0),
+            "nodes": int(counts.get("active", counts.get("total", 0)) or 0),
             "edges": int(counts.get("edges") or 0),
         },
         "nodes": nodes,

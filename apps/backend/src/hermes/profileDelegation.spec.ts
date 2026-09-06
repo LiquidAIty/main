@@ -26,7 +26,7 @@ const currentDeck = {
     nodes: [{
       id: 'card_main_chat', templateId: 'main', title: 'Main', position: { x: 0, y: 0 },
       runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
-      runtimeOptions: { profileDelegationEnabled: true },
+      runtimeOptions: { delegationRole: 'profile' },
     }, {
       id: 'card_hermes_steward', templateId: 'graph', title: 'Graph Agent', position: { x: 1, y: 0 },
       parentGraphId: 'workbench_graph',
@@ -42,7 +42,7 @@ const currentDeck = {
 describe('native profile delegation host adapter', () => {
   it.each(['controller-off', 'shared-profile', 'reverse-edge'])('rejects %s before any runner call', async (reason) => {
     const deck = structuredClone(currentDeck);
-    if (reason === 'controller-off') deck.deck.nodes[0].runtimeOptions!.profileDelegationEnabled = false;
+    if (reason === 'controller-off') deck.deck.nodes[0].runtimeOptions!.delegationRole = 'off';
     if (reason === 'shared-profile') deck.deck.nodes[0].runtime.profile = deck.deck.nodes[1].runtime.profile;
     if (reason === 'reverse-edge') {
       const edge = deck.deck.edges[0];

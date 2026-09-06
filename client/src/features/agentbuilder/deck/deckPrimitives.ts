@@ -98,7 +98,7 @@ export function isCardController(card: AgentCardInstance): boolean {
   return card.runtime.kind === 'hermes'
     && record.enabled !== false
     && options?.enabled !== false
-    && options?.profileDelegationEnabled === true;
+    && options?.delegationRole === 'profile';
 }
 
 

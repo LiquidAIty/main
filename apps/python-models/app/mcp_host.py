@@ -2420,9 +2420,9 @@ async def _materialize_complete_catalog() -> list[Tool]:
         Tool(
             name="card.create",
             description=(
-                "Create ONE ordinary AutoGen assistant Card exactly matching the current "
+                "Create ONE Card exactly matching the current "
                 "Agent Builder Run operation. Use its IDD template, title, role, prompt, "
-                "AutoGen assistant execution binding, configured model, explicit tools, and "
+                "template execution binding, configured model, explicit tools, and "
                 "deck revision unchanged. The server "
                 "mints the identity. This never launches the Card, creates wires, or runs Mag One."
             ),
@@ -2439,8 +2439,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
                     "runtime": {
                         "type": "object",
                         "properties": {
-                            "kind": {"type": "string", "enum": ["autogen"]},
-                            "mode": {"type": "string", "enum": ["assistant"]},
+                            "kind": {"type": "string", "minLength": 1},
+                            "mode": {"type": "string", "minLength": 1},
                         },
                         "required": ["kind", "mode"],
                         "additionalProperties": False,

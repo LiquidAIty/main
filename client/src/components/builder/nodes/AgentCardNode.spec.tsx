@@ -28,9 +28,9 @@ describe('AgentCardNode shared Card geometry', () => {
     const { rerender } = render(<AgentCardNode data={card} />);
     expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
     expect(screen.getByLabelText('Test Agent Mag One worker output')).not.toBeNull();
-    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { profileDelegationEnabled: true } }} />);
+    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { delegationRole: 'profile' } }} />);
     expect(screen.getByLabelText('Test Agent Card control output')).not.toBeNull();
-    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { profileDelegationEnabled: false } }} />);
+    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { delegationRole: 'off' } }} />);
     expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
   });
   it('keeps the same compact geometry for Hermes and AutoGen Cards', () => {

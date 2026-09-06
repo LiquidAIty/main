@@ -1,0 +1,79 @@
+.trading-workspace {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.trading-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #1f2937;
+  padding: 0 10px;
+}
+
+.trading-tabs {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  gap: 16px;
+}
+
+.trading-tabs button {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 12px 0 10px;
+  color: #94a3b8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.trading-tabs button[aria-selected="true"] {
+  color: #72d7c7;
+  border-bottom-color: #72d7c7;
+}
+
+.trading-toolbar-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.trading-workspace button:focus-visible {
+  outline: 2px solid #72d7c7;
+  outline-offset: 2px;
+}
+
+.trading-workspace button:not(:disabled):hover {
+  filter: brightness(1.2);
+}
+
+.trading-layout {
+  display: flex;
+  flex-direction: row;
+  padding: 12px;
+  gap: 12px;
+}
+
+.trading-content { min-width: 0; }
+.trading-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  gap: 16px;
+}
+.trading-tile-chart { position: relative; height: clamp(320px, 45cqw, 520px); }
+.trading-chart-open { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; cursor: pointer; }
+.trading-controls { width: 260px; flex-shrink: 0; }
+.trading-plan { padding: 12px 0; border-bottom: 1px solid #1f2937; }
+.trading-plan-terms { display: grid; gap: 12px; margin: 12px 0; }
+.trading-plan-terms > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+.trading-plan-terms dt { color: #94a3b8; }
+.trading-plan-terms dd { margin: 0; overflow-wrap: anywhere; }
+
+@container trading (max-width: 900px) {
+  .trading-layout-chart { flex-direction: column; }
+  .trading-controls { width: 100%; max-height: 30%; }
+}

@@ -107,7 +107,6 @@ _AGENT_BUILDER_REQUIRED_EDIT_FIELDS = frozenset({"prompt", "tools"})
 _AGENT_BUILDER_CREATE_FIELDS = frozenset({
     "templateId", "title", "role", "prompt", "runtime", "model", "tools",
 })
-_AGENT_BUILDER_CREATE_RUNTIME = {"kind": "autogen", "mode": "assistant"}
 _SYSTEM_TEMPLATE_IDS = frozenset({
     "template_main_chat", "template_local_coder", "template_agent_builder",
     "template_hermes_steward", "template_magentic",
@@ -465,8 +464,6 @@ async def card_create(
     if runtime_mode not in _SUPPORTED_CARD_RUNTIME_MODES.get(runtime_kind, set()):
         raise ControlPlaneError("card_create_runtime_invalid")
     runtime_profile = str(runtime.get("profile") or "").strip()
-    if runtime_kind == "hermes" and not runtime_profile:
-        raise ControlPlaneError("card_create_hermes_profile_required")
     if runtime_kind != "hermes" and runtime_profile:
         raise ControlPlaneError("card_create_runtime_profile_unsupported")
 
@@ -561,7 +558,14 @@ async def card_create(
             raise ControlPlaneError("agent_builder_workspace_changed")
         authorized_model = authorization.get("model")
         authorized_runtime = authorization.get("runtime")
-        if authorized_runtime != _AGENT_BUILDER_CREATE_RUNTIME:
+        from app.python_models.idd import load_input_data_dictionary, template_runtime
+
+        dictionary = load_input_data_dictionary()
+        if template_id not in dictionary["templates"]:
+            raise ControlPlaneError("agent_builder_template_unavailable")
+        if template_id in _SYSTEM_TEMPLATE_IDS:
+            raise ControlPlaneError("agent_builder_system_template_forbidden")
+        if authorized_runtime != template_runtime(dictionary, template_id):
             raise ControlPlaneError("agent_builder_create_runtime_forbidden")
         if (
             template_id != authorization.get("templateId")
@@ -573,12 +577,6 @@ async def card_create(
             or model != authorized_model
         ):
             raise ControlPlaneError("agent_builder_create_request_mismatch")
-        from app.python_models.idd import load_input_data_dictionary
-
-        if template_id not in load_input_data_dictionary()["templates"]:
-            raise ControlPlaneError("agent_builder_template_unavailable")
-        if template_id in _SYSTEM_TEMPLATE_IDS:
-            raise ControlPlaneError("agent_builder_system_template_forbidden")
         if any(normalized_selections[field] for field in (
             "nativeTools", "skills", "toolsets", "mcpConnectionIds"
         )) or raw_subagent_model is not None or raw_team is not None or "position" in args:
@@ -594,8 +592,8 @@ async def card_create(
         identity = uuid4().hex
         card_id = f"card_{identity[:16]}"
         saved_runtime = {"kind": runtime_kind, "mode": runtime_mode}
-        if runtime_profile:
-            saved_runtime["profile"] = runtime_profile
+        if runtime_kind == "hermes":
+            saved_runtime["profile"] = f"agent-{identity}"
         runtime_options: dict[str, Any] = {
             "provider": provider,
             "modelKey": model_key,

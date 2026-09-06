@@ -7,7 +7,7 @@ import { INITIAL_DECK } from './newProjectDeck';
 describe('requested initial Card topology', () => {
   it('keeps unique profiles, only Builder/Graph orange targets, and existing Mag One edges', () => {
     const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
-    expect(main.runtimeOptions?.profileDelegationEnabled).toBe(true);
+    expect(main.runtimeOptions?.delegationRole).toBe('profile');
     expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
       { id: 'edge_main_chat_hermes', source: main.id, target: 'card_hermes_steward', edgeType: 'flow' },
@@ -33,25 +33,26 @@ describe('requested initial Card topology', () => {
 });
 
 describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
-  it('creates exactly one new Assistant Agent card', () => {
-    const { nextDeck, nextNode } = buildQuickAddAssistCard(INITIAL_DECK);
+  it('creates exactly one new Hermes Card from the template binding', () => {
+    const { nextDeck, nextNode } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(nextDeck.nodes.length).toBe(INITIAL_DECK.nodes.length + 1);
     expect(nextNode).toBeDefined();
-    expect(nextNode.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
+    expect(nextNode.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: expect.stringMatching(/^agent-/) });
     expect(nextNode.kind).toBe('agent');
   });
 
   it('uses a unique stable card id in the canonical schema', () => {
-    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(nextNode.id).toMatch(/^card_assist_[a-z0-9]+$/);
     expect(INITIAL_DECK.nodes.map((n) => n.id)).not.toContain(nextNode.id);
     // two successive calls yield different ids
-    const { nextNode: second } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextNode: second } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(second.id).not.toBe(nextNode.id);
+    expect(second.runtime).not.toEqual(nextNode.runtime);
   });
 
   it('carries valid template/model defaults (no hardcoded model)', () => {
-    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(nextNode.templateId).toBe('template_assist');
     expect(nextNode.runtimeOptions?.provider).toBeTruthy();
     expect(nextNode.runtimeOptions?.modelKey).toBeTruthy();
@@ -66,20 +67,20 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
 
   it('leaves existing nodes byte-equivalent and marks the deck dirty (version bump)', () => {
     const before = JSON.stringify(INITIAL_DECK.nodes);
-    const { nextDeck } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextDeck } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(JSON.stringify(nextDeck.nodes.slice(0, INITIAL_DECK.nodes.length))).toBe(before);
     expect(nextDeck.version).toBe(INITIAL_DECK.version + 1);
   });
 
   it('does not touch existing edges or create one', () => {
     const before = JSON.stringify(INITIAL_DECK.edges);
-    const { nextDeck } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextDeck } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(JSON.stringify(nextDeck.edges)).toBe(before);
     expect(nextDeck.edges).toHaveLength(INITIAL_DECK.edges.length);
   });
 
   it('places the new card in an open canvas position', () => {
-    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK);
+    const { nextNode } = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     const rightMost = INITIAL_DECK.nodes.reduce(
       (max, n) => Math.max(max, n.position.x || 0),
       -220,
@@ -89,7 +90,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
 
   it('does not emit runtime work or assignments (pure data mutation)', () => {
     // The factory only returns deck + node: no assignments, no runs, no processes.
-    const result = buildQuickAddAssistCard(INITIAL_DECK);
+    const result = buildQuickAddAssistCard(INITIAL_DECK, { kind: 'hermes', mode: 'delegate' });
     expect(Object.keys(result)).toEqual(['nextDeck', 'nextNode']);
   });
 });

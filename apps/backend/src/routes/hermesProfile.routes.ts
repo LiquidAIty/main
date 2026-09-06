@@ -59,9 +59,9 @@ function parseProfileConfigure(params: Record<string, unknown>): HermesNativeCar
     }
     const maxInputTokens = backgroundReview.max_input_tokens;
     if (
-      !Number.isInteger(maxInputTokens)
+      maxInputTokens != null && (!Number.isInteger(maxInputTokens)
       || Number(maxInputTokens) < 1
-      || Number(maxInputTokens) > 120_000
+      || Number(maxInputTokens) > 120_000)
     ) {
       throw new Error('hermes_native_background_review_max_input_tokens_invalid');
     }
@@ -72,7 +72,7 @@ function parseProfileConfigure(params: Record<string, unknown>): HermesNativeCar
           enabled: backgroundReview.enabled,
           provider,
           model,
-          max_input_tokens: Number(maxInputTokens),
+          max_input_tokens: maxInputTokens == null ? null : Number(maxInputTokens),
         },
       },
     };

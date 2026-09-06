@@ -8,6 +8,7 @@ from app.python_models.idf import Idf
 
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+CardDelegationRole = Literal["off", "profile", "leaf", "orchestrator", "team"]
 
 
 class ToolSpec(BaseModel):
@@ -81,8 +82,27 @@ class ModelOption(BaseModel):
     default: bool = False
 
 
+class CardSubagentModel(BaseModel):
+    """One saved model selection shared by Card editing and execution."""
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+    provider: str = Field(min_length=1, max_length=256)
+    accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
+    modelKey: str = Field(min_length=1, max_length=256)
+    providerModelId: str = Field(min_length=1, max_length=256)
+
+
+class CardTeamConfiguration(BaseModel):
+    """The existing host Team contract; this does not describe Mag One."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    mode: Literal["off", "auto"]
+    maxWorkers: Literal[2, 3, 4]
+    retryLimit: int = Field(ge=0, le=4)
+    workerModel: CardSubagentModel
+    leadModel: CardSubagentModel
+
+
 class CardConfiguration(BaseModel):
-    """Editable saved-Card transport fields, not an IDD-authored UI schema."""
+    """Executable field shapes referenced by the Card dictionary."""
     runtimeKind: str
     runtimeMode: str
     runtimeProfile: str = ""
@@ -94,6 +114,9 @@ class CardConfiguration(BaseModel):
     maxTokens: int | None = Field(default=None, ge=1)
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
+    subagentModel: CardSubagentModel | None = None
+    team: CardTeamConfiguration | None = None
+    delegationRole: CardDelegationRole = "off"
 
 
 class DataAnchorReference(BaseModel):

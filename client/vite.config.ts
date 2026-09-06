@@ -61,6 +61,7 @@ export default defineConfig(() => {
         '@react-three/postprocessing',
       ],
       alias: [
+        { find: '@/lib/time', replacement: path.resolve(__dirname, '../Hermes/apps/desktop/src/lib/time.ts') },
         // drei@9.110 pins troika-three-text@^0.49.0, whose <Text> defines
         // customDepthMaterial/customDistanceMaterial as getter-ONLY. three@0.183's
         // Object3D constructor assigns `this.customDepthMaterial = undefined`, so

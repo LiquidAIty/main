@@ -1,8 +1,8 @@
 # LiquidAIty Core v0 Plan
 
 This is the current product plan. It describes what the repository owns now, what must remain
-separate, and the smallest proof required before live model testing. Historical migrations belong in
-Git history, not active Markdown.
+separate, and the smallest proof required before live model testing. Historical failure records belong in `DONT.md`, clearly separated from current architecture.
+Git retains exact historical source; old implementation instructions are not current requirements.
 
 ## Core v0
 
@@ -43,9 +43,9 @@ they do not select a runtime implementation.
   capability. Each saved Hermes Card owns a small Team policy: Off/Auto, maximum workers, retry limit,
   worker model, and one Team-lead model for decomposition and final synthesis. Auto authorizes Hermes
   to decide whether to call the native tool; it does not launch Team when a Card Run starts. The
-  Subagents tab edits that saved policy and projects the current or last Card Run plus bounded native
-  activity. It is not a board, task editor, receipt product, or runtime authority. Native Leaf and
-  recursive delegation remain internal and have no new product controls.
+  Runtime tab edits that saved policy; the removed Team status panel is not part of Card configuration. It is not a board, task editor, receipt product, or runtime authority. Native Leaf and
+  recursive delegation remain internal execution. Exposing their real supported settings in Runtime
+  is part of the approved Card target and is not yet complete.
 - An enabled outgoing orange `flow` edge authorizes native
   `delegate_task(role="profile", target_profile=...)` to that exact ordinary Hermes Card/Profile.
   Direction is exact; blue Magentic-One edges grant no direct Card call. The receiving Card runs through
@@ -91,9 +91,12 @@ they do not select a runtime implementation.
   evidence comparison. It prefers an upstream public API/protocol and records keep/remove criteria before
   code composition. Its exact edit operation can authorize prompt, tools, structured configuration, saved
   Python Script, and subsystem attachments without widening runtime or model authority.
-- The Card Inspector has exactly five top-level surfaces: CLI, Prompt, Context, Tools, and Script. Prompt
-  contains the existing prompt plus provider/model/runtime controls; Context contains the existing graph,
-  memory, selected references, and native skills/learning controls. This is presentation consolidation,
+- The Card Inspector has five top-level surfaces: CLI, Prompt, Runtime, Memory, and Tools. Prompt
+  keeps separate Role, Goal, Constraints, IO Schema, and Output expectations fields plus the existing Soul editor.
+  Runtime contains parent/subagent model selections; Team fields appear only while Team is selected.
+  Memory contains installed skills and the profile learning graph, followed by the existing external-memory control.
+  Automatic skill settings and complete save-on-leave persistence acceptance remain incomplete. Tools contains the existing Python Script editor
+  below the tool selection. This is presentation consolidation,
   not another persistence owner or execution path. Optional ThinkGraph and KnowGraph Script examples call
   only the canonical `constellation.*` and `graphiti.*` operations and remain inactive until explicitly inserted.
 - After the repaired host-Script boundary is loaded, the first real Agent Builder Script acceptance should
@@ -112,11 +115,13 @@ they do not select a runtime implementation.
   meaning.
 - The Agent Builder Graphs workspace uses the embedded CodeGraph renderer with bounded native CBM
   projections. The removed standalone CBM demo/package shell is not part of the product.
-- Every Hermes-profile Card reads its real native Learning Journey/SkillGraph in the Context tab. The
+- Every Hermes-profile Card reads its profile Learning Journey/SkillGraph data in the Memory tab. The
   graph is a projection of profile skills, usage and curated-memory chunks, not another store.
 - Eligible completed Hermes Runs may launch one deduplicated, asynchronous native background review.
-  The owning Card's subagent selector configures both native delegation and this review; new Hermes
-  Cards default to account-backed `gpt-5.6-luna`. It can patch only the owning profile's native
+  Review has independent saved profile settings. The source repair now materializes only the
+  delegation model and preserves review enabled/disabled/unset state; focused tests pass, but
+  loaded acceptance remains pending. Existing creation defaults still require alignment with IDD.
+  Review can patch only the owning profile's native
   memory/skills and may legitimately make no change.
 - Main context routing is mutually exclusive: contextualized external-plugin turns keep Honcho tools
   callable but bypass automatic Honcho inject/observe/write; direct native Main turns use Main-only
@@ -189,30 +194,28 @@ the transient Card call. The call carries task meaning and selected context, not
 - Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
   inspect current source, edit, run commands/tests, and return evidence. It plans only when asked or blocked.
 - Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
-- Its saved CBM surface is the bounded discovery/audit set: `cbm.search_graph`, `cbm.trace_path`,
-  `cbm.get_code_snippet`, `cbm.check_index_coverage`, and `cbm.detect_changes`.
+- Its actual available CBM operations come from saved grants and the live catalog. Follow the
+  current CBM discovery procedure; this document does not narrow that catalog.
 - Has no Magentic-One connection and receives no Local Coder state.
 
 ## Agent Builder product vision
 
-This is the approved operating vision; the complete live loop is not yet proven.
+Approved target; complete creation, customization, canonical reload and execution acceptance remain
+incomplete. Existing restrictive validation and saved prompts must be repaired through their current
+owners before this behavior is described as working.
 
-- Main and Graph Agent prepare approved intent, bounded native graph references, and the dynamic
-  construction mission. Main decides whether to invoke Agent Builder.
-- Agent Builder is the saved single Sol Card that creates or edits exactly one ordinary saved Card
-  from one run-issued operation. New Cards use the current AutoGen assistant execution binding. It
-  uses the current IDD palette, this bounded Vision section, and its
-  native `agent-builder-inspection` Hermes skill. Configuration in the UI has no effect until Run.
-- Create selects a non-system IDD template, stable prompt, configured model, and minimum explicit tool
-  set. Edit is limited to the selected ordinary Card's stable prompt and explicit tools. Main, Graph
-  Agent, Agent Builder, Magentic-One, and other unselected Cards are outside the effect boundary.
-- A prompt/template/tools-only Card build does not require CodeGraph. Code-, Script-, UI-, web-slice-,
-  or file-backed work must use the exact deck workspace and its exact ready CBM project; missing or
-  mismatched coverage fails closed and never falls back to the LiquidAIty repository.
-- Use regular granted MCP tools first. Add Python Script composition only after a real execution trace
-  proves that a repeated workflow needs deterministic ordering, validation, or reduced tool exposure.
-- A successful Builder Run reports the exact created or edited Card and preservation evidence. It does
-  not run that Card, wire it, change another Card, or claim unobserved runtime behavior.
+- Main and Graph Agent prepare intent and useful references. Builder receives the actual dynamic mission.
+- Builder reads the IDD dictionary, selects a template, creates a Card, then customizes that Card using
+  the same field definitions, supported runtime settings, options and live catalogs used by the editor.
+- A new-Card task does not require an existing target. Editing uses the chosen saved Card and preserves
+  unrelated Cards, identities, unique profiles and grants. There is no approved AutoGen-only creation
+  rule or prompt/tools-only edit rule. Real authorization remains at the existing Card operation boundary.
+- Code work uses the actual selected workspace and CBM where covered. Missing index coverage permits
+  bounded direct-source discovery; it does not silently switch projects or become an execution gate.
+- Python routines use the existing Tools editor and Hermes execution owner. Ordinary Cards receive
+  selected values and dynamic input, never the complete Builder dictionary.
+- Report created/changed fields and genuine canonical readback. Execution is separately proven within
+  the active mission; a saved Card or passing unit test is not proof of a successful agent Run.
 
 ### Local Coder
 
@@ -336,6 +339,19 @@ alternate startup instructions.
 
 ## Ordered delivery
 
+Current owner priority: complete the Card surfaces and report their actual capabilities and gaps first,
+then prove graphs with real project work. Magentic-One execution waits for a prompt prepared by the System3
+agents. Main and Agent Builder keep their existing distinct chat/CLI presentations pending a separate decision.
+Product controls should explain themselves through placement and behavior; do not add explanatory panels or filler copy.
+
+Card configuration alignment remains incomplete: IDD must supply the actual editable Card fields, dropdown
+options, template composition, and references to live catalogs consumed by both the Card UI and Agent Builder.
+The source repair makes `/card-editor/options` and the Builder dictionary read the same IDD field
+definitions; focused option tests pass. Team controls and creation/validation still need full alignment.
+Complete that work through existing owners; do not
+create another dictionary, catalog, runtime validator, or execution owner. IDF continues to combine the saved
+Card configuration with real dynamic input and deliberately selected context at execution.
+
 1. Keep cold install, typecheck, build, focused tests, and static startup proof green.
 2. Prove Main alone with one bounded, explicitly approved model call.
 3. Prove Main → Agent Builder and truthful child lineage.
@@ -360,3 +376,7 @@ alternate startup instructions.
 - No OpenClaude/standalone-LocalCoder/Bun implementation, package root, lock, fallback, or downloader.
 - No fake graph activity, provider substitution, automatic embeddings, or product-data reset.
 - Regression Ratio for every accepted change is `0.000`.
+
+Card runtime bindings are fixed configuration supplied by their construction authority, not
+editable kind/mode dropdowns. Mag One remains Mag One. Hermes `delegate_task` roles are separate
+settings of the existing agent, never choices that turn it into Main or another runtime.

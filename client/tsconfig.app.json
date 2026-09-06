@@ -4,16 +4,31 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/tsconfig.app.tsbuildinfo",
     "jsx": "react-jsx",
-    "lib": ["es2022", "dom", "dom.iterable"],
-    "types": ["node", "vite/client"],
-    "rootDir": "src",
+    "lib": [
+      "es2022",
+      "dom",
+      "dom.iterable"
+    ],
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "rootDir": "..",
     "noImplicitAny": false,
     "noImplicitOverride": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "module": "esnext",
     "moduleResolution": "bundler",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@/types/hermes": [
+        "../Hermes/apps/desktop/src/types/hermes.ts"
+      ],
+      "@/lib/time": [
+        "../Hermes/apps/desktop/src/lib/time.ts"
+      ]
+    }
   },
   "exclude": [
     "out-tsc",
@@ -31,5 +46,20 @@
     "vitest.config.ts",
     "vitest.config.mts"
   ],
-  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../Hermes/apps/desktop/src/app/starmap/color.ts",
+    "../Hermes/apps/desktop/src/app/starmap/constants.ts",
+    "../Hermes/apps/desktop/src/app/starmap/geometry.ts",
+    "../Hermes/apps/desktop/src/app/starmap/render.ts",
+    "../Hermes/apps/desktop/src/app/starmap/simulation.ts",
+    "../Hermes/apps/desktop/src/app/starmap/text.ts",
+    "../Hermes/apps/desktop/src/app/starmap/time-axis.ts",
+    "../Hermes/apps/desktop/src/app/starmap/types.ts",
+    "../Hermes/apps/desktop/src/types/hermes.ts",
+    "../Hermes/apps/desktop/src/lib/time.ts"
+  ]
 }

@@ -73,12 +73,12 @@ describe('orange controller connection validation', () => {
     expect(allowed()).toBe(true);
     expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
     const main = deck.nodes.find(card => card.id === connect.source)!;
-    main.runtimeOptions!.profileDelegationEnabled = false;
+    main.runtimeOptions!.delegationRole = 'off';
     expect(allowed()).toBe(false);
     expect(allowed(connect, 'reconnected-edge')).toBe(false);
     expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'task-bus-top' as any })).toBe(true);
     expect(allowed({ ...connect, source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
-    main.runtimeOptions!.profileDelegationEnabled = true;
+    main.runtimeOptions!.delegationRole = 'profile';
     deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
     expect(allowed()).toBe(false);
   });
@@ -735,7 +735,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const document = createBusTestDocument();
     for (const card of document.nodes.filter(card => card.id !== 'card_magentic')) {
       card.runtime = { kind: 'hermes', mode: 'delegate', profile: card.id };
-      card.runtimeOptions = { profileDelegationEnabled: card.id !== 'card_research_agent' };
+      card.runtimeOptions = { delegationRole: card.id !== 'card_research_agent' ? 'profile' : 'off' };
     }
     const currentEdges: Edge[] = [
       {

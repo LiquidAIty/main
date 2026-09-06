@@ -126,14 +126,15 @@ keeps Card and revision identity private, revalidates the current deck revision,
 and enabled state, then forwards any optional canonical `dataAnchors` selection unchanged to the
 canonical saved-Card Run/IDF handler. Python remains the sole native-reference resolver and IDF
 materializer. Native Hermes keeps `leaf`,
-`orchestrator`, `team`, and `profile` on its one `delegate_task` implementation; Leaf/recursive delegation
-has no new LiquidAIty UI. A process-only
+`orchestrator`, `team`, and `profile` on its one `delegate_task` implementation; Leaf/recursive settings are not fully exposed in the current UI;
+the approved Runtime editor target must use their real supported settings. A process-only
 Team marker blocks every Team worker and synthesis pass from calling any nested delegation role or
 creating another native task, so the first-party MVP recipe cannot recurse.
 
 Each saved Hermes Card may additionally own a desired `subagentModel`. At Run start the existing backend
-adapter projects that selector into Hermes' native top-level `delegation.provider/model` and
-`auxiliary.background_review` fields, then reads the same profile back before inference. The parent Card
+adapter projects that selector into Hermes' native top-level `delegation.provider/model`,
+then reads the same profile back before inference. The source repair preserves independent
+`auxiliary.background_review` settings; focused tests pass and loaded proof remains pending. The parent Card
 keeps its own saved model. A native child Run records the provider/model actually used and whether
 Hermes fell back. External-memory provider choice remains Hermes profile state, not saved Card state.
 Main alone exposes a native Honcho selection/setup/status control; it never reconfigures or contacts
@@ -182,7 +183,7 @@ is a projection over items 2 and 4, not an eighth store.
 4. **Native profile skills — `skills/*/SKILL.md` plus `.usage.json`, per profile.** Serves reusable how-to
    knowledge learned or installed for that Card. The bounded native background-review child may create or
    patch only the owning profile's skills. `build_learning_graph()` reads these files and curated-memory
-   chunks under that profile's `HERMES_HOME`; the Card Context tab stores no copy.
+   chunks under that profile's `HERMES_HOME`; the Card Knowledge tab stores no copy.
 5. **ThinkGraph — one Constellation SQLite authority.** Serves project reasoning, hypotheses, relationships,
    operational knowledge, semantic embeddings, identity segments, and its launcher outbox. The pinned engine
    is its sole writer.
@@ -349,14 +350,26 @@ registry, or direct-database shortcut.
 
 ## Card Inspector projections
 
-The Card editor has exactly six top-level tabs: CLI, Prompt, Context, Tools, Script, and Subagents. CLI replaces the
+The approved configuration target is one IDD-backed field and option projection for the Card editor and
+Agent Builder's template/configuration tools, including custom Card UI configuration. Current source
+partially meets that target: `materialize_runtime_options` and `materialize_card_editor` now resolve
+the same IDD field definitions against executable schemas. Focused tests pass; loaded proof, complete
+field coverage and shared creation/validation remain incomplete. Team still contains hardcoded choices.
+Live MCP/model catalogs retain their existing owners and are referenced through this shared projection.
+
+The Card editor has exactly five top-level tabs: CLI, Prompt, Runtime, Memory, and Tools. CLI replaces the
 former Terminal label and remains the one Card Run/session projection; it does not add a second invocation
-path. Prompt contains the existing prompt, provider, model, and runtime controls. Context contains the
-existing bounded graph selections, saved references, memory, and native Skills/Learning Journey projection.
-Tools retains saved grants and modes. Script compiles the saved Python recipe into one typed optimized model
-tool that may call only Card-authorized operations; Hermes decides whether to call it. Subagents currently
-configures only native Team defaults and limits, then presents the current or last Card Run state and bounded
-native Team activity. It does not expose raw internal receipt JSON, copy SQLite rows, or own another timeline.
+path. Prompt retains separate prompt-section fields and the existing profile Soul editor. Runtime contains parent
+and subagent model selections. Team fields appear only while Team is selected. Memory contains
+installed skills, the profile learning graph, and the existing external-memory control below them.
+`HermesSkillGraph` imports the unchanged Hermes desktop `starmap` simulation and Canvas renderer directly;
+the previous custom SVG implementation is removed. The import boundary and production build pass;
+real graph-node editing and complete save-on-leave persistence acceptance remain unproven.
+The Description editor, profile-status panel, runtime conversion selectors, and Card-control checkbox
+are absent from these settings. Saved bindings and canvas authority remain separate.
+Tools retains saved grants and modes, with the existing Python Script editor below the list. The saved Python recipe
+compiles into one typed optimized model tool that may call only Card-authorized operations; Hermes decides whether to call it.
+Team controls edit the existing saved Team settings; Card configuration has no Team status/receipt panel.
 Main still uses chat for input and responses.
 Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
 Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
@@ -403,17 +416,17 @@ metadata; ordinary Runs do not load the builder palette or use its visibility as
 
 Main leads Chat and may propose composing agents. After user agreement, Main directs the dedicated
 Agent Builder Card to perform IDD-backed construction/configuration with reusable templates or custom
-typed objects. Agent Builder's saved CodeGraph authority uses `selected` catalog policy and only the
-structural `cbm.search_graph -> cbm.trace_path -> cbm.get_code_snippet` recipe; coverage and diff
-diagnostics remain Local Coder capabilities. Local Coder remains repository-focused and never receives the full IDD. Live proof of
+typed objects. Saved grants and current native discovery determine available CodeGraph tools;
+this document does not impose a second capability list. Follow `skills/codebasedmemory.md`
+for coverage and direct-source discovery. Local Coder never receives the full Builder dictionary. Live proof of
 the guided Agent Builder interaction remains outstanding.
 
 Hermes is the runtime platform. LiquidAIty composes and contextualizes its native systems through
 saved Card identity, selected capabilities and exact Run input; it does not duplicate native catalogs,
 profiles, tool execution or worker scheduling. ACP receives a projection, never the IDD dictionary.
 One Hermes Card configures one native agent/profile; native subagents remain children of that agent,
-not newly saved Cards. Native prompt/model/tool/profile sections retain their native owners. Further
-section consolidation and aliases are deferred; existing non-Hermes saved bindings are preserved.
+not newly saved Cards. Native prompt/model/tool/profile sections retain their native owners. The approved five-tab consolidation remains in progress; existing non-Hermes saved bindings
+are preserved without adding aliases or a second execution path.
 
 ### Card-managed subsystem attachments
 
@@ -446,6 +459,17 @@ For Trading, this permits multiple sandboxed strategy Cards with different these
 reuse ordinary source, processor, and support Cards. System 3 Cards remain protected and are not this
 support grouping. Paper results may be compared by a separate evaluator, but no result promotes a Card to
 live trading or changes broker authority.
+
+The current Trading UI is scoped to `card_trading_workbench`. Add trade is its initial tab and opens
+a searchable TradingView chart, followed by Portfolio and Journal. Portfolio is a responsive collection of
+TradingView candlestick charts for its recorded trades, opening one selected trade into a large chart.
+Journal combines each trade's plan with recorded events and fills. Settings remain in the existing UI
+inspector through its shared edge pull tab; agent configuration remains in the canvas Card.
+The owner's target is for Enter to add a chosen trade to Portfolio
+and Exit to remove it. Those two controls remain disabled until that persistence path is implemented;
+they must not be treated as broker-order or agent-start/stop commands.
+The layout is not proof of autonomous paper execution. The current adapter reads broker state and records
+plans/decisions; its fixed local lifecycle replay does not establish configurable paper trading.
 
 Trading lifecycle receipts are Python-owned deterministic results persisted under the saved Card and
 Card revision after both identities are reread from canonical Card storage. The database stores the fixed
@@ -513,7 +537,7 @@ It creates no Run, revision, hash, approval object, or saved prompt and never st
 `card.load_graph_references` is the review-only Card-editor loader for native graph pointers. The MCP host injects
 the trusted source Card/Run/project/deck identity; the caller supplies one target Card, native identity,
 reason, order, and bounds. Python rereads the current native authority, returns actual transient context
-to the target Card's existing Context tab, and records the proven read/handoff on the source Run in
+to the target Card's existing Knowledge tab, and records the proven read/handoff on the source Run in
 AGE. It never materializes an IDF or starts a Card. The outer Mag One Card is materialized only when an
 automatic handoff or reviewed manual submission runs it; each saved worker Card then materializes its own
 task through the same receiving-Card path.
@@ -833,9 +857,9 @@ in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
 After an eligible completed Hermes root Run, the existing native background-review subsystem may
 allocate one generic ACP child and run the owning profile's saved `auxiliary.background_review`
-selector. The owning Card's saved `subagentModel` is materialized into both this selector and Hermes'
-native delegation selector with a 120,000-token review ceiling; new Hermes Cards default to the
-account-backed Luna selection without making it the only valid future value. The child is asynchronous, deduplicated by profile/root Run,
+selector. Its enablement and model remain independent from the Card's saved `subagentModel`.
+The source repair no longer turns review on or replaces its settings when materializing delegation;
+focused regression tests cover enabled, disabled and unset state. Loaded proof is pending. The child is asynchronous, deduplicated by profile/root Run,
 profile-contained, and instructed to create or patch a native skill only when the completed work
 contains a durable reusable lesson. A legitimate no-op is success; allocation, provider, tool, and
 completion failures remain visible on the child receipt. The child skips external-memory prefetch and
@@ -899,3 +923,7 @@ attribution requirements.
   from local MCP tests.
 - Some stable route and Card IDs retain historical words for persistence/caller compatibility; they are
   classified legacy identifiers, not active architectures.
+
+Card runtime bindings are fixed configuration supplied by their construction authority, not
+editable kind/mode dropdowns. Mag One remains Mag One. Hermes `delegate_task` roles are separate
+settings of the existing agent, never choices that turn it into Main or another runtime.

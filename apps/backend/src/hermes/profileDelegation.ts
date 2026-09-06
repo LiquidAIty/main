@@ -121,7 +121,7 @@ export async function runHermesProfileDelegation(
     || sourceRecord?.enabled === false
     || targetRecord?.enabled === false
     || sourceOptions?.enabled === false
-    || sourceOptions?.profileDelegationEnabled !== true
+    || sourceOptions?.delegationRole !== 'profile'
     || source.runtime.kind !== 'hermes'
     || targetOptions?.enabled === false
     || !currentEdge

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SignalAssessment, SignalPackage } from './signalContracts';
@@ -118,6 +118,17 @@ const assessmentFixture: SignalAssessment = {
   freshness: 'fresh',
 };
 
+function readyGlobe() {
+  const frame = screen.getByTitle('God’s Eye WorldView globe') as HTMLIFrameElement;
+  const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+  fireEvent(window, new MessageEvent('message', {
+    origin: new URL(frame.src).origin, source: frame.contentWindow,
+    data: { schemaVersion: 'gev.embed.ready.v1', sourceVersion: 'unit-test',
+      agentRuntime: 'supervised', nativeAgentAvailable: false, nativeAgentActive: false },
+  }));
+  return postMessage;
+}
+
 describe('WorldView Card-owned presentation', () => {
   it('fails closed without a saved Card attachment', () => {
     render(<WorldViewSurface projectId="project-1" cardId={null} />);
@@ -125,108 +136,53 @@ describe('WorldView Card-owned presentation', () => {
     expect(screen.queryByTitle('God’s Eye WorldView globe')).toBeNull();
   });
 
-  it('separates observations, hypotheses, and linked assessments', () => {
-    render(<WorldViewSurface
-      projectId="project-1"
-      cardId="card-worldview"
-      signalPackage={packageFixture}
-      assessment={assessmentFixture}
-    />);
-    expect(screen.getByText('Observed fact')).toBeTruthy();
-    expect(screen.getByText('Agent hypothesis')).toBeTruthy();
-    expect(screen.getByText('Analyst assessment')).toBeTruthy();
-    expect(screen.getByText('INCONCLUSIVE')).toBeTruthy();
-    expect(screen.getByText('More corroboration is required.')).toBeTruthy();
+  it('removes the evidence drawer while preserving geographic focus', () => {
+    render(<WorldViewSurface projectId="project-1" cardId="card-worldview"
+      signalPackage={packageFixture} assessment={assessmentFixture} />);
+    const postMessage = readyGlobe();
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      schemaVersion: 'gev.embed.focus.v1', id: 'signal-candidate:geo',
+      position: { longitude: -97.7431, latitude: 30.2672 },
+    }), expect.any(String));
+    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(screen.queryByText('Observed fact')).toBeNull();
+    expect(screen.queryByText('Agent hypothesis')).toBeNull();
+    expect(screen.queryByText('Analyst assessment')).toBeNull();
+    expect(screen.getByRole('region', { name: 'WorldView signal workspace' }).style.gridTemplateColumns).toBe('minmax(0, 1fr)');
   });
 
-  it('keeps non-geographic candidates off the globe while retaining evidence', () => {
-    render(<WorldViewSurface
-      projectId="project-1"
-      cardId="card-worldview"
-      signalPackage={packageFixture}
-    />);
-    fireEvent.click(screen.getByRole('button', { name: /Example Corp/ }));
-    expect(screen.getByText('non-geographic · evidence only')).toBeTruthy();
-    expect(screen.getByText('This may merit corroboration.')).toBeTruthy();
-    expect(screen.getByText('worldsignals:news:native-2')).toBeTruthy();
+  it('does not invent globe coordinates for non-geographic candidates', () => {
+    render(<WorldViewSurface projectId="project-1" cardId="card-worldview"
+      signalPackage={{ ...packageFixture, candidates: [packageFixture.candidates[1]] }} />);
+    expect(readyGlobe()).not.toHaveBeenCalled();
   });
 
-  it('reads exact typed evidence from the latest persisted Card Runs', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          result: { state: 'completed', runId: 'run-worldview-1', cardId: 'card-worldview', output: JSON.stringify(packageFixture) },
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          ok: true,
-          result: { state: 'completed', runId: 'run-analyst-1', cardId: 'card-signal-analyst', output: JSON.stringify(assessmentFixture) },
-        }),
-      });
+  it('reads the existing Card Run for globe focus without fetching the removed assessment panel', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ ok: true, result: { state: 'completed', runId: 'run-worldview-1',
+        cardId: 'card-worldview', output: JSON.stringify(packageFixture) } }),
+    });
     vi.stubGlobal('fetch', fetchMock);
-
-    render(<WorldViewSurface
-      projectId="project-1"
-      deckId="deck_builder"
-      cardId="card-worldview"
-      analystCardId="card-signal-analyst"
-    />);
-
-    expect(await screen.findByText('signal-package:bounded-1')).toBeTruthy();
-    expect(screen.getByText('More corroboration is required.')).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    render(<WorldViewSurface projectId="project-1" cardId="card-worldview" analystCardId="card-signal-analyst" />);
+    const postMessage = readyGlobe();
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'signal-candidate:geo' }), expect.any(String)));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      action: 'status',
-      inspectOnly: true,
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      cardId: 'card-worldview',
-    });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
-      cardId: 'card-signal-analyst',
+      action: 'status', inspectOnly: true, projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-worldview',
     });
   });
 
-  it('does not present untyped Card output as live evidence', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        result: { state: 'completed', runId: 'run-worldview-1', cardId: 'card-worldview', output: 'A useful answer, but not a SignalPackage.' },
-      }),
+  it.each([
+    'A useful answer, but not a SignalPackage.',
+    JSON.stringify({ ...packageFixture, projectId: 'another-project' }),
+  ])('does not focus the globe from invalid or mismatched Card output', async (output) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ ok: true, result: { state: 'completed', runId: 'run-worldview-1', cardId: 'card-worldview', output } }),
     }));
-
     render(<WorldViewSurface projectId="project-1" cardId="card-worldview" />);
-
-    expect(await screen.findByText(/A Card Run can request one bounded package/)).toBeTruthy();
-    expect(screen.getByText('No SignalPackage attached')).toBeTruthy();
-    expect(screen.queryByText('A useful answer, but not a SignalPackage.')).toBeNull();
-  });
-
-  it('rejects a package whose scope does not match the persisted Card Run', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        result: {
-          state: 'completed', runId: 'run-worldview-1', cardId: 'card-worldview',
-          output: JSON.stringify({ ...packageFixture, projectId: 'another-project' }),
-        },
-      }),
-    }));
-
-    render(<WorldViewSurface projectId="project-1" cardId="card-worldview" />);
-
-    expect(await screen.findByText(/A Card Run can request one bounded package/)).toBeTruthy();
-    expect(screen.getByText('No SignalPackage attached')).toBeTruthy();
-    expect(screen.queryByText('signal-package:bounded-1')).toBeNull();
+    const postMessage = readyGlobe();
+    await act(async () => {});
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(screen.queryByRole('complementary')).toBeNull();
   });
 });

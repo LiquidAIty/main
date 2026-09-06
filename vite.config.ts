@@ -34,6 +34,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "@/lib/time": path.resolve(process.cwd(), "Hermes/apps/desktop/src/lib/time.ts"),
       // npm hoists these packages to the root node_modules (the old
       // client/node_modules copies no longer exist), so every alias must point
       // at the hoisted copy — a stale client path fails vitest collection for

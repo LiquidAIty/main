@@ -419,7 +419,7 @@ export const INITIAL_DECK: DeckDocument = {
       // Main's tools are role-filtered before the Python MCP host exposes them.
       // No ordinary web search is granted.
       runtimeOptions: {
-        profileDelegationEnabled: true,
+        delegationRole: 'profile',
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
@@ -501,6 +501,7 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        delegationRole: 'team',
         team: defaultHermesTeam(),
         tools: [...CODEBASE_MEMORY_CODER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
@@ -530,6 +531,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
       runtimeOptions: {
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        delegationRole: 'team',
         team: defaultHermesTeam(),
         tools: [...HERMES_CARD_TOOLS],
         toolCatalogPolicy: 'all_healthy',
@@ -557,6 +559,7 @@ export const INITIAL_DECK: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'trading' },
       runtimeOptions: {
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
+        delegationRole: 'team',
         team: defaultHermesTeam(),
         tools: [
           'get_market_snapshot',

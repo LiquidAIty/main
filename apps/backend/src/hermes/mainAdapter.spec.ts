@@ -9,6 +9,7 @@ import {
   buildHermesHostSessionProjection,
   buildHermesOfficialMcpServer,
   deriveHermesSessionKey,
+  materializeHermesProfileSelections,
   requireHermesCompletionText,
   requireHermesEffectSuccess,
   resolveHermesEffectToolName,
@@ -489,7 +490,7 @@ describe('Hermes ACP transport identity', () => {
     );
   });
 
-  it('materializes one saved Card subagent model into native delegation and background review before inference', async () => {
+  it('materializes the saved subagent model without enabling disabled review', async () => {
     const startTurn = vi.fn(async (args: any) => ({ args }));
     const acquire = vi.fn(() => ({ startTurn }) as never);
     const readNative = vi.fn()
@@ -506,17 +507,16 @@ describe('Hermes ACP transport identity', () => {
         model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
         subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
         background_review: {
-          enabled: true,
-          provider: 'openai-codex',
-          model: 'gpt-5.6-luna',
-          max_input_tokens: 120_000,
+          enabled: false,
+          provider: 'auto',
+          model: '',
         },
         toolsets: [],
         mcp_servers: [],
       });
     const configure = vi.fn(async () => ({
       ok: true,
-      applied: { subagent_model: true, background_review: true },
+      applied: { subagent_model: true },
     }));
     const saved = {
       provider: 'openai',
@@ -545,6 +545,27 @@ describe('Hermes ACP transport identity', () => {
       fallbackOccurred: false,
       fallbackReason: null,
     });
+  });
+
+  it.each([undefined, false, true])('preserves review enabled=%s when the selected model already matches', async (enabled) => {
+    const saved = {
+      provider: 'openai', accessMode: 'chatgpt-account' as const,
+      modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+    };
+    const review = { ...(enabled === undefined ? {} : { enabled }), provider: 'auto', model: '', max_input_tokens: 50000 };
+    const profile = {
+      name: 'liquidaity-main',
+      model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
+      subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
+      background_review: review,
+    };
+    const configure = vi.fn(async () => { throw new Error('unexpected_profile_write'); });
+    const result = await materializeHermesProfileSelections(
+      { ...providerFreeTurnArgs(0), subagentModel: saved },
+      async () => profile, configure,
+    );
+    expect(configure).not.toHaveBeenCalled();
+    expect(result.native.background_review).toEqual(review);
   });
 
   it('materializes the saved parent model before the first turn of a new Hermes Card profile', async () => {
@@ -814,6 +835,7 @@ describe('Hermes ACP transport identity', () => {
   it('projects only compact outgoing profile choices into native delegate_task', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
+      delegationRole: 'profile',
       team: {
         mode: 'auto', maxWorkers: 2, retryLimit: 0,
         workerModel: {
@@ -835,7 +857,8 @@ describe('Hermes ACP transport identity', () => {
     }, {}, 'root-context');
 
     const config = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(config.delegationRoles).toEqual(['team', 'profile']);
+    expect(config.delegationRoles).toEqual(['profile']);
+    expect(config.team).toBeUndefined();
     expect(config.profileTargets).toEqual([{
       title: 'Graph Agent',
       profile: 'liquidaity-hermes-steward',
@@ -937,6 +960,7 @@ describe('Hermes ACP transport identity', () => {
 
   it('preserves explicitly selected native profile capabilities for Coder', () => {
     const projection = buildHermesHostSessionProjection({
+      delegationRole: 'team',
       sessionKey: 'coder-session-1',
       projectId: 'project-1',
       deckId: 'deck_builder',
@@ -984,6 +1008,14 @@ describe('Hermes ACP transport identity', () => {
       lead: { provider: 'openai-codex', model: 'gpt-5.6-terra' },
     });
     expect(sessionConfig.executionContextId).toBe('coder-context');
+  });
+
+  it.each(['off', 'leaf', 'orchestrator'] as const)('projects Delegate task %s without Team or profile authority', (delegationRole) => {
+    const projection = buildHermesHostSessionProjection({ ...providerFreeTurnArgs(0), delegationRole }, {}, 'root-context');
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.delegationRoles).toEqual(delegationRole === 'off' ? [] : [delegationRole]);
+    expect(config.team).toBeUndefined();
+    expect(config.profileTargets).toBeUndefined();
   });
 
   it('projects one typed Script model tool while keeping wrapped operations private', () => {
