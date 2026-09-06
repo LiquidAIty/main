@@ -25,10 +25,6 @@ import {
   type SavedSubagentModel,
 } from './subagentModel';
 import {
-  toNativeTeamPolicy,
-  type SavedTeamConfig,
-} from './teamConfig';
-import {
   runHermesProfileDelegation,
   type HermesProfileTarget,
 } from './profileDelegation';
@@ -65,7 +61,6 @@ export type HermesRuntimeConfig = {
   modelKey: string;
   providerModelId: string;
   subagentModel?: SavedSubagentModel;
-  team?: SavedTeamConfig;
   delegationRole?: 'off' | 'profile' | 'leaf' | 'orchestrator' | 'team';
   effectiveSubagentModel?: {
     desired: SavedSubagentModel;
@@ -445,8 +440,6 @@ export function buildHermesHostSessionProjection(
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
     : [];
   const role = args.delegationRole || 'off';
-  const nativeTeam = role === 'team' && args.team ? toNativeTeamPolicy(args.team) : null;
-  if (role === 'team' && !nativeTeam) throw new Error('hermes_team_configuration_required');
   const profileTargets = role === 'profile' ? args.profileTargets || [] : [];
   const delegationRoles = role === 'off' || (role === 'profile' && !profileTargets.length)
     ? [] : [role];
@@ -479,7 +472,6 @@ export function buildHermesHostSessionProjection(
               profile, title, description,
             })),
           } : {}),
-          ...(nativeTeam ? { team: nativeTeam } : {}),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
           ...(hostScript ? { hostScript } : {}),

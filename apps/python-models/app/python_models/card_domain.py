@@ -74,9 +74,6 @@ SUBAGENT_MODEL_FIELDS = {
 SUBAGENT_ACCESS_MODES = {
     "chatgpt-account", "openai-api", "openrouter-api",
 }
-TEAM_CONFIG_FIELDS = {
-    "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
-}
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
     "parentGraphId", "prompt", "outputContract", "runtime",
@@ -499,10 +496,6 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         extensions["subagentModel"] = _subagent_model_selection(
             extensions["subagentModel"]
         )
-    if "team" in extensions:
-        if runtime.get("kind") != "hermes":
-            raise CardDomainError("card_team_requires_hermes")
-        extensions["team"] = _team_config(extensions["team"])
     if "script" in extensions:
         try:
             extensions["script"] = saved_script(
@@ -570,38 +563,6 @@ def _subagent_model_selection(value: Any) -> dict[str, str] | None:
     if normalized["accessMode"] not in SUBAGENT_ACCESS_MODES:
         raise CardDomainError("card_subagent_model_access_mode_invalid")
     return normalized
-
-
-def _team_config(value: Any) -> dict[str, Any] | None:
-    """Validate durable Card Team defaults without consulting native state."""
-    if value is None:
-        return None
-    if not isinstance(value, dict) or set(value) != TEAM_CONFIG_FIELDS:
-        raise CardDomainError("card_team_config_invalid")
-    mode = str(value.get("mode") or "").strip()
-    max_workers = value.get("maxWorkers")
-    retry_limit = value.get("retryLimit")
-    if (
-        mode not in {"off", "auto"}
-        or isinstance(max_workers, bool)
-        or max_workers not in {2, 3, 4}
-        or isinstance(retry_limit, bool)
-        or not isinstance(retry_limit, int)
-        or not 0 <= retry_limit <= 4
-    ):
-        raise CardDomainError("card_team_config_invalid")
-    models = {
-        key: _subagent_model_selection(value.get(key))
-        for key in ("workerModel", "leadModel")
-    }
-    if any(model is None for model in models.values()):
-        raise CardDomainError("card_team_config_invalid")
-    return {
-        "mode": mode,
-        "maxWorkers": max_workers,
-        "retryLimit": retry_limit,
-        **models,
-    }
 
 
 def _insert_revision(
@@ -2577,11 +2538,6 @@ def _prepare_invocation(
     subagent_model = _subagent_model_selection(options.get("subagentModel"))
     if subagent_model is not None:
         runtime_options["subagentModel"] = subagent_model
-    team = _team_config(options.get("team"))
-    if team is not None:
-        if runtime.get("kind") != "hermes":
-            raise CardDomainError("card_team_requires_hermes")
-        runtime_options["team"] = team
     if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:

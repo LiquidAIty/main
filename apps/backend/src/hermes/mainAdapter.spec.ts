@@ -836,17 +836,6 @@ describe('Hermes ACP transport identity', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       delegationRole: 'profile',
-      team: {
-        mode: 'auto', maxWorkers: 2, retryLimit: 0,
-        workerModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-        },
-        leadModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
-        },
-      },
       profileTargets: [{
         cardId: 'card_hermes_steward',
         cardRevisionId: 'revision-graph',
@@ -978,17 +967,6 @@ describe('Hermes ACP transport identity', () => {
       mcpConnectionIds: [],
       nativeProfileToolsets: ['terminal', 'file'],
       nativeTools: ['read_file'],
-      team: {
-        mode: 'auto', maxWorkers: 2, retryLimit: 0,
-        workerModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-        },
-        leadModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
-        },
-      },
       message: 'Inspect one symbol.',
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
@@ -1002,15 +980,11 @@ describe('Hermes ACP transport identity', () => {
     ]);
     expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.delegationRoles).toEqual(['team']);
-    expect(sessionConfig.team).toEqual({
-      mode: 'auto', maxWorkers: 2, retryLimit: 0,
-      worker: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
-      lead: { provider: 'openai-codex', model: 'gpt-5.6-terra' },
-    });
+    expect(sessionConfig.team).toBeUndefined();
     expect(sessionConfig.executionContextId).toBe('coder-context');
   });
 
-  it.each(['off', 'leaf', 'orchestrator'] as const)('projects Delegate task %s without Team or profile authority', (delegationRole) => {
+  it.each(['off', 'leaf', 'orchestrator', 'team'] as const)('projects Delegate task %s without adding a Card policy or profile target', (delegationRole) => {
     const projection = buildHermesHostSessionProjection({ ...providerFreeTurnArgs(0), delegationRole }, {}, 'root-context');
     const config = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(config.delegationRoles).toEqual(delegationRole === 'off' ? [] : [delegationRole]);

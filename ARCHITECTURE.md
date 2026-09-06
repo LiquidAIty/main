@@ -88,14 +88,10 @@ transcript lifecycle; that is not independent Card memory or identity.
 
 Native `delegate_task(role="team")` is a headless capability of an authorized ordinary Hermes Card;
 it is not a Card type or a standalone Kanban/Team Card authority. The adapter creates one durable native
-Team task-graph root owned by the originating profile/session. Each saved Hermes Card may authorize Team
-with an Off/Auto policy plus maximum workers, retry limit, worker provider/model, and one Team-lead
-provider/model. Auto means Hermes may call the native model tool; it never starts Team merely because
-a Card Run began. The Team-lead model owns native decomposition and the resumed root's final synthesis,
-while the worker model owns the bounded decomposed tasks. Team never receives the global Hermes profile
-roster: the decomposer sees only the root's already-persisted originating profile, and the atomic native
-decomposition boundary pins every child back to that profile even if a malformed response supplies another
-assignee. Card-facing Hermes sessions expose Team only when the saved policy permits it and expose `profile`
+Team task-graph root correlated to the originating profile/session. Delegate task selects the capability;
+the existing Hermes configuration owns Team models and internal limits. The later Card policy and
+forced-origin assignment are removed. The restored decomposer uses the native profile roster and
+task assignments. Card-facing Hermes sessions expose Team when selected and expose `profile`
 only for exact enabled outgoing orange `flow` targets. Native Leaf and Orchestrator remain internally
 compatible without new LiquidAIty controls. Every worker task
 is a dependency of the original root, so Hermes' existing parent-result context gives the resumed Team-lead
@@ -354,13 +350,17 @@ The approved configuration target is one IDD-backed field and option projection 
 Agent Builder's template/configuration tools, including custom Card UI configuration. Current source
 partially meets that target: `materialize_runtime_options` and `materialize_card_editor` now resolve
 the same IDD field definitions against executable schemas. Focused tests pass; loaded proof, complete
-field coverage and shared creation/validation remain incomplete. Team still contains hardcoded choices.
+field coverage and shared creation/validation remain incomplete. The added Team settings overlay is removed.
 Live MCP/model catalogs retain their existing owners and are referenced through this shared projection.
 
-The Card editor has exactly five top-level tabs: CLI, Prompt, Runtime, Memory, and Tools. CLI replaces the
-former Terminal label and remains the one Card Run/session projection; it does not add a second invocation
-path. Prompt retains separate prompt-section fields and the existing profile Soul editor. Runtime contains parent
-and subagent model selections. Team fields appear only while Team is selected. Memory contains
+Ordinary Cards have CLI, Prompt, Runtime, Memory, and Tools tabs. Main and Agent Builder open on Prompt
+without a CLI tab; the existing Main chat and Builder pull-up CLI retain their input/session ownership.
+CLI remains the ordinary Card Run/session projection, without a second invocation path. Prompt exposes
+the saved bracketed and Markdown sections as independently editable blocks, including unrecognized and
+repeated headings. Editing one body preserves other bytes; code-fenced headings remain literal text.
+Unsectioned text is Instructions, not Role. The profile Soul and output-contract editors retain their
+separate existing owners. Runtime contains parent
+and subagent model selections plus Delegate task. Memory contains
 installed skills, the profile learning graph, and the existing external-memory control below them.
 `HermesSkillGraph` imports the unchanged Hermes desktop `starmap` simulation and Canvas renderer directly;
 the previous custom SVG implementation is removed. The import boundary and production build pass;
@@ -369,7 +369,8 @@ The Description editor, profile-status panel, runtime conversion selectors, and 
 are absent from these settings. Saved bindings and canvas authority remain separate.
 Tools retains saved grants and modes, with the existing Python Script editor below the list. The saved Python recipe
 compiles into one typed optimized model tool that may call only Card-authorized operations; Hermes decides whether to call it.
-Team controls edit the existing saved Team settings; Card configuration has no Team status/receipt panel.
+Card configuration has no added Team policy controls or status panel. Historical overlay values remain
+readable saved data, but are neither validated as runtime policy nor sent to execution.
 Main still uses chat for input and responses.
 Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
 Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
@@ -543,7 +544,7 @@ automatic handoff or reviewed manual submission runs it; each saved worker Card 
 task through the same receiving-Card path.
 
 Saved Hermes Cards remain four distinct persistent agents: Main, Agent Builder, Local Coder, and Graph Agent.
-Each Card maps one-to-one to one native Hermes profile and may privately self-fan out through Team; there is
+Each Card maps one-to-one to one native Hermes profile and may invoke the existing automatic Kanban Team; there is
 no second product persona/profile layer. An enabled outgoing orange `flow` edge grants the source's native
 `delegate_task(role="profile")` exact target profile; it never starts work by itself and its reverse direction
 is not implied. Blue `magentic_control` and `magentic_option` edges authorize only Magentic-One. The host maps
@@ -801,13 +802,17 @@ minimal immutable binding until lazy agent construction completes, verifies CLI/
 identity, and consumes it before provider inference. Initialization, route, session, request, teardown,
 or cancellation mismatches clear or reject the staging slot without allocating a child. The live CLI
 transcript owner appends the terminal native result to the exact idle originating session before the child
-Run closes. Team-specific
-task markers carry the exact Card-projected lead/worker models, retry and worker bounds, final-stage
-identity and durable internal execution evidence. The Team root and every child retain the root's existing
-profile assignee; the Team decomposer never reads the global profile roster, and the SQLite decomposition
-transaction independently canonicalizes foreign assignees to the persisted root owner. The
-stock dependency/retry/notification lifecycle remains authoritative. Full files, tests, upstream shape,
-sync cost and rollback are recorded in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+Run closes. Recovery on September 6 restores `kanban_team.py`, `kanban_decompose.py`, `kanban_db.py`
+and their original Team acceptance test from Git `b78b79ac` (August 30). After that exact recovery,
+the owner explicitly rejected its added 2–4 task-count restriction. That clamp and its count-specific
+prompt instruction are removed; the original SQLite dispatcher concurrency settings remain unchanged.
+The upstream
+project remains https://github.com/NousResearch/hermes-agent. This recovers an existing local divergence;
+it introduces no executor or alternative runtime. The later Card policy projection, host policy validator
+and forced-origin routing are removed. Apart from the rejected count instruction, original prompts,
+profile roster and SQLite lifecycle remain as that revision. Profile delegation, Script and host Run correlation remain separate.
+Focused tests exercise recovery and 1/5/9-task decomposition; loaded execution is not newly proven. Fork cost decreases by removing
+the overlay. Git retains the removed implementation for rollback; saved data is not reset.
 
 The default native Kanban worker lane also exposes one generic registered pre-spawn environment
 provider. The provider receives only bounded native task/run/board/profile/workspace/claim identity

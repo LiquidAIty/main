@@ -33,10 +33,17 @@ the recovered document below is historical evidence, including obsolete paths an
 12. Required tests/builds may exceed a minute. Poll the existing command; do not duplicate it or
     discard work because it is slow. Source proof, tests, saved readback, loaded runtime and UI
     acceptance are different claims. Report each honestly.
-13. Mag One waits for the mission prepared by the system agents and explicit task scope.
-    A stand-in test is not permission to run it or expose its private ledgers.
+13. Mag One needs System3 ready to supply its mission and usable connected agents. Do not add
+    another approval workflow or product gate. A stand-in test does not prove that readiness.
 14. Read only relevant reusable procedures, then verify current source and actual runtime evidence.
     Do not restore feature manifests, automatic LLM wiki generation or report-to-graph writes.
+15. Keep familiar controls in predictable places with direct, visible effects. Show relevant state
+    where the user acts; do not demand acknowledgment of routine activity. Cleanup must preserve
+    useful controls, not bury them or replace them with explanations. The owner's design reference is
+    [Amber Case's interview](https://www.designwhine.com/amber-case-interview-why-ai-has-it-backwards/).
+16. Prompt blocks are independently replaceable. Preserve untouched blocks, headings and whitespace;
+    never collapse the prompt into Role or silently hide its other sections. Main and Builder open
+    on Prompt without a CLI tab; their existing chat and pull-up CLI remain the input surfaces.
 
 ## Documentation roles
 
@@ -50,6 +57,11 @@ the recovered document below is historical evidence, including obsolete paths an
 
 ### September 2026 owner corrections
 
+- **Prompt sections swallowed or hidden.** The editor recognized only a small heading set and missed
+  hyphenated headings, folding their text into Role. Other saved sections were invisible to editing.
+  The repair reads explicit block boundaries and edits only the selected bodies. Tests cover repeated
+  headings, code fences, unrelated-byte preservation and reopening. Do not rewrite whole prompts to
+  compensate for an editor defect.
 - **Unrequested UI and terminal substitutions.** The under-chat CLI was replaced by forms,
   identity/status text and fixed-open behavior. Card expansion, connector presentation and pointer
   capture also changed without the requested scope. This damaged direct use and trust in saved

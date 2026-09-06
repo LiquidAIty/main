@@ -1443,13 +1443,14 @@ export default function AgentBuilder(): React.ReactElement {
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
-      ...BUILDER_NODE_TABS,
+      ...BUILDER_NODE_TABS.filter((entry) => entry !== 'CLI'
+        || (selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id)),
       ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
         .filter((attachment) => attachment.cardTab.enabled)
         .map((attachment) => attachment.label),
     ];
     return [...BUILDER_PROJECT_TABS];
-  }, [selectedCard]);
+  }, [selectedCard, mainCardId, agentBuilderCard?.id]);
   const selectedCardSubsystem = useMemo(
     () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
       .find((attachment) => attachment.cardTab.enabled && attachment.label === tab) || null,
@@ -1584,7 +1585,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab('CLI');
+        setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'CLI');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1593,15 +1594,8 @@ export default function AgentBuilder(): React.ReactElement {
         }));
       }
     },
-    [deck.nodes, recordUiOnlyAction, tab, selectedCardId],
+    [deck.nodes, recordUiOnlyAction, tab, selectedCardId, mainCardId, agentBuilderCard?.id],
   );
-
-  const openMainChat = useCallback(() => {
-    setWorkspaceView('chat');
-    window.setTimeout(() => {
-      document.querySelector<HTMLInputElement>('[data-testid="builder-chat-input"]')?.focus();
-    }, 0);
-  }, []);
 
   const handleSelectEdge = useCallback(
     async (edgeId: string | null) => {
@@ -1689,11 +1683,7 @@ export default function AgentBuilder(): React.ReactElement {
                     registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
-                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main'
-                      ? <div data-testid="main-card-cli-location">
-                          Main conversation and native CLI execution are shown in the Main workspace.
-                        </div>
-                      : selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
+                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
                         ? <div data-testid="local-coder-card-terminal">
                              {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
                              <div style={{ height: 360, minHeight: 240 }}>
@@ -1727,7 +1717,6 @@ export default function AgentBuilder(): React.ReactElement {
                     onOpenCoderTerminal={() => {
                       setTab('CLI');
                     }}
-                    onOpenMainChat={openMainChat}
                     onRemoveGraphReference={(authority, nativeId) => {
                       removeTransientGraphReference(selectedCard.id, authority, nativeId);
                     }}

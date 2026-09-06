@@ -90,25 +90,6 @@ export type AgentCardRuntimeOptions = {
     modelKey: string;
     providerModelId: string;
   } | null;
-  /** Saved Card-owned defaults and ceilings for native Hermes Team. Hermes
-   * chooses whether and when to invoke Team; Python Script cannot invoke it. */
-  team?: {
-    mode: 'off' | 'auto';
-    maxWorkers: 2 | 3 | 4;
-    retryLimit: number;
-    workerModel: {
-      provider: string;
-      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
-      modelKey: string;
-      providerModelId: string;
-    };
-    leadModel: {
-      provider: string;
-      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
-      modelKey: string;
-      providerModelId: string;
-    };
-  } | null;
   reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | null;
   temperature?: number | null;
   maxTokens?: number | null;

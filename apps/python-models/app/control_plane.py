@@ -44,7 +44,6 @@ _CARD_CREATE_KEYS = {
     "runtime",
     "model",
     "subagentModel",
-    "team",
     "tools",
     "nativeTools",
     "skills",
@@ -70,7 +69,6 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "provider",
     "providerModelId",
     "subagentModel",
-    "team",
     "reasoningEffort",
     "temperature",
     "maxTokens",
@@ -89,9 +87,6 @@ _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
 _SUBAGENT_MODEL_FIELDS = {
     "provider", "accessMode", "modelKey", "providerModelId",
-}
-_TEAM_CONFIG_FIELDS = {
-    "mode", "maxWorkers", "retryLimit", "workerModel", "leadModel",
 }
 _DEFAULT_HERMES_SUBAGENT_MODEL = {
     "provider": "openai",
@@ -129,32 +124,6 @@ def _subagent_model_selection(value: Any) -> dict[str, str]:
     if normalized["accessMode"] not in _ACCESS_MODES:
         raise ControlPlaneError("card_subagent_model_access_mode_invalid")
     return normalized
-
-
-def _team_config(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != _TEAM_CONFIG_FIELDS:
-        raise ControlPlaneError("card_team_config_invalid")
-    mode = str(value.get("mode") or "").strip()
-    max_workers = value.get("maxWorkers")
-    retry_limit = value.get("retryLimit")
-    if (
-        mode not in {"off", "auto"}
-        or isinstance(max_workers, bool)
-        or max_workers not in {2, 3, 4}
-        or isinstance(retry_limit, bool)
-        or not isinstance(retry_limit, int)
-        or not 0 <= retry_limit <= 4
-    ):
-        raise ControlPlaneError("card_team_config_invalid")
-    return {
-        "mode": mode,
-        "maxWorkers": max_workers,
-        "retryLimit": retry_limit,
-        **{
-            key: _subagent_model_selection(value.get(key))
-            for key in ("workerModel", "leadModel")
-        },
-    }
 
 
 def _backend_json(method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
@@ -492,10 +461,6 @@ async def card_create(
         else dict(_DEFAULT_HERMES_SUBAGENT_MODEL) if runtime_kind == "hermes"
         else None
     )
-    raw_team = args.get("team")
-    if runtime_kind != "hermes" and raw_team is not None:
-        raise ControlPlaneError("card_create_team_requires_hermes")
-    team = _team_config(raw_team) if raw_team is not None else None
     normalized_selections: dict[str, list[str]] = {}
     for field in _CAPABILITY_LIST_FIELDS:
         values = args.get(field) or []
@@ -579,7 +544,7 @@ async def card_create(
             raise ControlPlaneError("agent_builder_create_request_mismatch")
         if any(normalized_selections[field] for field in (
             "nativeTools", "skills", "toolsets", "mcpConnectionIds"
-        )) or raw_subagent_model is not None or raw_team is not None or "position" in args:
+        )) or raw_subagent_model is not None or "position" in args:
             raise ControlPlaneError("agent_builder_create_fields_forbidden")
         if current_revision != expected_revision:
             raise ControlPlaneError("deck_conflict")
@@ -602,8 +567,6 @@ async def card_create(
         }
         if subagent_model is not None:
             runtime_options["subagentModel"] = subagent_model
-        if team is not None:
-            runtime_options["team"] = team
         for key in ("providerModelId", "reasoningEffort"):
             if model.get(key) is not None:
                 runtime_options[key] = model[key]
@@ -761,8 +724,6 @@ async def card_update_configuration(
             **updates,
             "subagentModel": _subagent_model_selection(updates["subagentModel"]),
         }
-    if "team" in updates:
-        updates = {**updates, "team": _team_config(updates["team"])}
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
     card_id = str(args["cardId"]).strip()
@@ -819,8 +780,6 @@ async def card_update_configuration(
             raise ControlPlaneError("agent_builder_system_target_forbidden")
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")
-        if "team" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
-            raise ControlPlaneError("card_update_team_requires_hermes")
         for key in _UPDATABLE_TOP_FIELDS:
             if key in updates:
                 card[key] = str(updates[key])

@@ -40,10 +40,11 @@ they do not select a runtime implementation.
 - Main, Agent Builder, Local Coder, and Graph Agent are separate saved Hermes Cards with separate profiles
   and runtime homes.
 - Any authorized ordinary Hermes Card may use native `delegate_task(role="team")` as a headless
-  capability. Each saved Hermes Card owns a small Team policy: Off/Auto, maximum workers, retry limit,
-  worker model, and one Team-lead model for decomposition and final synthesis. Auto authorizes Hermes
-  to decide whether to call the native tool; it does not launch Team when a Card Run starts. The
-  Runtime tab edits that saved policy; the removed Team status panel is not part of Card configuration. It is not a board, task editor, receipt product, or runtime authority. Native Leaf and
+  capability. The existing automatic SQLite ledger owns its configuration and execution. The later
+  Card worker-count/retry/model-policy overlay is removed. Team selection authorizes the tool; it
+  does not launch Team when a Card Run starts. Recovery uses Git b78b79ac, followed by the owner's
+  explicit removal of the added 2–4 task-count clamp; existing dispatcher concurrency remains. Its
+  historical acceptance is recorded below; loaded execution after recovery remains unproven. Native Leaf and
   recursive delegation remain internal execution. Exposing their real supported settings in Runtime
   is part of the approved Card target and is not yet complete.
 - An enabled outgoing orange `flow` edge authorizes native
@@ -91,9 +92,10 @@ they do not select a runtime implementation.
   evidence comparison. It prefers an upstream public API/protocol and records keep/remove criteria before
   code composition. Its exact edit operation can authorize prompt, tools, structured configuration, saved
   Python Script, and subsystem attachments without widening runtime or model authority.
-- The Card Inspector has five top-level surfaces: CLI, Prompt, Runtime, Memory, and Tools. Prompt
+- Ordinary Card Inspectors have CLI, Prompt, Runtime, Memory, and Tools. Main and Builder omit CLI
+  and open on Prompt; their established chat and pull-up CLI remain separate. Prompt
   keeps separate Role, Goal, Constraints, IO Schema, and Output expectations fields plus the existing Soul editor.
-  Runtime contains parent/subagent model selections; Team fields appear only while Team is selected.
+  Runtime contains parent/subagent model selections and Delegate task, without an added Team policy.
   Memory contains installed skills and the profile learning graph, followed by the existing external-memory control.
   Automatic skill settings and complete save-on-leave persistence acceptance remain incomplete. Tools contains the existing Python Script editor
   below the tool selection. This is presentation consolidation,
@@ -341,7 +343,9 @@ alternate startup instructions.
 
 Current owner priority: complete the Card surfaces and report their actual capabilities and gaps first,
 then prove graphs with real project work. Magentic-One execution waits for a prompt prepared by the System3
-agents. Main and Agent Builder keep their existing distinct chat/CLI presentations pending a separate decision.
+agents. Main and Agent Builder keep their existing chat and pull-up CLI; their configuration Cards open
+on Prompt with no CLI tab. Mag One needs System3 ready to supply a mission and usable connected agents,
+without an additional product gate.
 Product controls should explain themselves through placement and behavior; do not add explanatory panels or filler copy.
 
 Card configuration alignment remains incomplete: IDD must supply the actual editable Card fields, dropdown

@@ -238,17 +238,11 @@ def test_saved_script_is_one_typed_model_tool_and_not_a_lifecycle_controller(mon
     }
 
 
-def test_team_policy_is_bounded_and_off_can_remove_only_team_delegation(monkeypatch) -> None:
+def test_delegation_selection_does_not_require_a_team_policy(monkeypatch) -> None:
     metadata = _metadata()
     metadata["hermes"]["sessionConfig"]["delegationRoles"] = ["leaf"]
-    metadata["hermes"]["sessionConfig"]["team"] = {
-        "mode": "auto", "maxWorkers": 3, "retryLimit": 2,
-        "worker": {"provider": "openai-codex", "model": "gpt-5.6-luna"},
-        "lead": {"provider": "openai-codex", "model": "gpt-5.6-terra"},
-    }
     parsed = parse_host_session_config(metadata)
-    assert parsed["team"]["maxWorkers"] == 3
-    assert parsed["team"]["lead"]["model"] == "gpt-5.6-terra"
+    assert "team" not in parsed
 
     native = _definition("delegate_task")
     native["function"]["parameters"]["properties"] = {

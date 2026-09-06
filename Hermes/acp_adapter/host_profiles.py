@@ -38,7 +38,6 @@ _SESSION_FIELDS = {
     "hostScript",
     "delegationRoles",
     "profileTargets",
-    "team",
 }
 
 
@@ -272,7 +271,6 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         "hostScript": _host_script(raw.get("hostScript")),
         "delegationRoles": _delegation_roles(raw.get("delegationRoles")),
         "profileTargets": _profile_targets(raw.get("profileTargets")),
-        "team": _team_policy(raw.get("team")),
     }
 
 
@@ -356,53 +354,6 @@ def _profile_data_anchors_schema() -> dict[str, Any]:
             ],
             "additionalProperties": False,
         },
-    }
-
-
-def _team_model(value: Any, field: str) -> dict[str, str]:
-    if not isinstance(value, dict) or set(value) != {"provider", "model"}:
-        raise HostSessionConfigError(f"hermes_host_config_team_{field}_invalid")
-    return {
-        "provider": _bounded_text(
-            value.get("provider"), f"team.{field}.provider", limit=256, required=True
-        ),
-        "model": _bounded_text(
-            value.get("model"), f"team.{field}.model", limit=256, required=True
-        ),
-    }
-
-
-def _team_policy(value: Any) -> dict[str, Any] | None:
-    """Validate one Card/session-scoped native Team policy.
-
-    LIQUIDAITY VENDOR PATCH: this is bounded execution configuration supplied
-    by the trusted ACP host. It contains no Card identity or credentials and
-    never edits Hermes' shared config or SQLite execution truth.
-    """
-
-    if value is None:
-        return None
-    allowed = {"mode", "maxWorkers", "retryLimit", "worker", "lead"}
-    if not isinstance(value, dict) or set(value) != allowed:
-        raise HostSessionConfigError("hermes_host_config_team_invalid")
-    max_workers = value.get("maxWorkers")
-    retry_limit = value.get("retryLimit")
-    if (
-        value.get("mode") != "auto"
-        or not isinstance(max_workers, int)
-        or isinstance(max_workers, bool)
-        or max_workers not in {2, 3, 4}
-        or not isinstance(retry_limit, int)
-        or isinstance(retry_limit, bool)
-        or not 0 <= retry_limit <= 4
-    ):
-        raise HostSessionConfigError("hermes_host_config_team_invalid")
-    return {
-        "mode": "auto",
-        "maxWorkers": max_workers,
-        "retryLimit": retry_limit,
-        "worker": _team_model(value.get("worker"), "worker"),
-        "lead": _team_model(value.get("lead"), "lead"),
     }
 
 

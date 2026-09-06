@@ -28,7 +28,6 @@ import {
   type HermesTurnHandle,
 } from '../hermes/mainAdapter';
 import { readSavedSubagentModel } from '../hermes/subagentModel';
-import { readSavedTeamConfig } from '../hermes/teamConfig';
 import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { projectMainRuntimeEvent } from '../hermes/mainProjection';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
@@ -690,7 +689,6 @@ function resolveHermesTurnArgs(
     throw new Error('prepared_hermes_transport_invalid');
   }
   const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
-  const savedTeam = readSavedTeamConfig(input.runtimeOptions?.team);
   const scriptState = input.runtimeOptions?.script;
   const scriptCompiled = scriptState?.compiled;
   const scriptPresentation = input.scriptPresentation;
@@ -800,7 +798,6 @@ function resolveHermesTurnArgs(
     ...(savedSubagentModel
       ? { subagentModel: savedSubagentModel }
       : {}),
-    ...(savedTeam ? { team: savedTeam } : {}),
     delegationRole: input.runtimeOptions?.delegationRole || 'off',
     accessMode: provider?.accessMode,
     tools: Array.isArray(input.presentedTools)

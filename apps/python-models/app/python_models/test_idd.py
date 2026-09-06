@@ -449,7 +449,7 @@ def test_editor_fields_resolve_only_their_referenced_definitions():
     fields = {field["name"]: field for field in materialize_card_editor([])["fields"]}
     assert "$defs" not in fields["delegationRole"]["valueSchema"]
     assert "teamMode" not in fields
-    assert fields["teamMaxWorkers"]["visibleWhen"] == {"delegationRole": "team"}
+    assert not {"teamMaxWorkers", "teamRetryLimit", "teamWorkerModel", "teamLeadModel"} & fields.keys()
     schema = fields["subagentModel"]["valueSchema"]
     assert set(schema["$defs"]) == {"CardSubagentModel"}
     validator = Draft202012Validator(schema)

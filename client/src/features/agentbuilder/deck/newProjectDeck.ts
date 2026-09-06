@@ -26,23 +26,6 @@ const DEFAULT_HERMES_SUBAGENT_MODEL = {
   providerModelId: 'gpt-5.6-luna',
 };
 
-const DEFAULT_HERMES_TEAM_LEAD_MODEL = {
-  provider: 'openai',
-  accessMode: 'chatgpt-account' as const,
-  modelKey: 'gpt-5.6-terra',
-  providerModelId: 'gpt-5.6-terra',
-};
-
-function defaultHermesTeam() {
-  return {
-    mode: 'auto' as const,
-    maxWorkers: 4 as const,
-    retryLimit: 1,
-    workerModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-    leadModel: { ...DEFAULT_HERMES_TEAM_LEAD_MODEL },
-  };
-}
-
 function buildPromptTemplate(parts: {
   role: string;
   goal: string;
@@ -424,7 +407,6 @@ export const INITIAL_DECK: DeckDocument = {
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        team: { ...defaultHermesTeam(), mode: 'off' },
         tools: [...MAIN_CHAT_CONTROLLER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -452,7 +434,6 @@ export const INITIAL_DECK: DeckDocument = {
         modelKey: AGENT_BUILDER_MODEL_KEY,
         providerModelId: AGENT_BUILDER_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        team: { ...defaultHermesTeam(), mode: 'off' },
         tools: [...AGENT_BUILDER_CONTROLLER_TOOLS],
         toolCatalogPolicy: 'selected',
         disabledTools: [],
@@ -502,7 +483,6 @@ export const INITIAL_DECK: DeckDocument = {
         modelKey: DEFAULT_CARD_MODEL_KEY,
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         delegationRole: 'team',
-        team: defaultHermesTeam(),
         tools: [...CODEBASE_MEMORY_CODER_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -532,7 +512,6 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         delegationRole: 'team',
-        team: defaultHermesTeam(),
         tools: [...HERMES_CARD_TOOLS],
         toolCatalogPolicy: 'all_healthy',
         disabledTools: [],
@@ -560,7 +539,6 @@ export const INITIAL_DECK: DeckDocument = {
       runtimeOptions: {
         subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
         delegationRole: 'team',
-        team: defaultHermesTeam(),
         tools: [
           'get_market_snapshot',
           'get_historical_bars',

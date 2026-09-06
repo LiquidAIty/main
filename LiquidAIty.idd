@@ -236,14 +236,9 @@ fields = [
   { name = "maxTurns", label = "Max turns", section = "Runtime", path = "runtimeOptions.maxTurns", source = "CardConfiguration.maxTurns", step = 1 },
   { name = "tools", label = "Tools", section = "Tools", path = "runtimeOptions.tools", source = "CardConfiguration.tools", catalog = "native-tools", control = "catalog-multiselect" },
   { name = "subagentModel", label = "Subagent model", section = "Runtime", path = "runtimeOptions.subagentModel", source = "CardConfiguration.subagentModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { runtimeKind = "hermes" } },
-  { name = "teamMaxWorkers", label = "Maximum workers", section = "Runtime", path = "runtimeOptions.team.maxWorkers", source = "CardTeamConfiguration.maxWorkers", visibleWhen = { delegationRole = "team" } },
-  { name = "teamRetryLimit", label = "Retry limit", section = "Runtime", path = "runtimeOptions.team.retryLimit", source = "CardTeamConfiguration.retryLimit", step = 1, visibleWhen = { delegationRole = "team" } },
-  { name = "teamWorkerModel", label = "Worker model", section = "Runtime", path = "runtimeOptions.team.workerModel", source = "CardTeamConfiguration.workerModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { delegationRole = "team" } },
-  { name = "teamLeadModel", label = "Team lead model", section = "Runtime", path = "runtimeOptions.team.leadModel", source = "CardTeamConfiguration.leadModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { delegationRole = "team" } },
 ]
 
 [cardEditor.schemas]
 CardConfiguration = "app.python_models.orchestration_contracts.CardConfiguration"
 HermesRuntime = "app.python_models.orchestration_contracts.HermesRuntime"
 AutoGenRuntime = "app.python_models.orchestration_contracts.AutoGenRuntime"
-CardTeamConfiguration = "app.python_models.orchestration_contracts.CardTeamConfiguration"

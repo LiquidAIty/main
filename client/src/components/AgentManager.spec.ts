@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import React from 'react';
+import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
+import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -41,7 +43,6 @@ const runtimeOptions = {
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
     { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
     { name: 'delegationRole', options: ['off', 'profile', 'leaf', 'orchestrator', 'team'] },
-    { name: 'teamMaxWorkers', options: ['2', '3', '4'] },
     ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
   ].map(({ name, options }) => ({ name, label: name, path: name, control: 'select',
     options: options.map((value) => ({ value, label: value })) })),
@@ -75,6 +76,90 @@ const savedConfig: AgentManagerLocalConfig = {
 };
 
 describe('AgentManager active builder config', () => {
+  it.each(['openai', 'openrouter'] as const)('saves the selected %s catalog model ID through the Card editor and retains it on reopen', async (targetProvider) => {
+    const fetchMock = mockEditorFetch();
+    const originalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input) => String(input) === '/api/coder/card-editor/options'
+      ? { ok: true, json: async () => ({ ...runtimeOptions, catalogs: { 'configured-models': [
+          { provider: targetProvider, key: 'catalog-choice', label: 'Selected model', providerModelId: 'provider/model-version' },
+        ] } }) }
+      : originalFetch(input));
+    const initial = structuredClone(INITIAL_DECK);
+    const card = initial.nodes.find(node => node.id === 'card_main_chat')!;
+    card.runtimeOptions = { ...card.runtimeOptions, provider: 'openai', accessMode: 'chatgpt-account',
+      modelKey: 'old-choice', providerModelId: 'old-execution-model', delegationRole: 'profile' };
+    const persist = vi.fn(async (_document: typeof initial) => undefined);
+    function Harness() {
+      const [deck, setDeck] = React.useState(initial);
+      const editor = useAgentBuilderCardEditor({ deck, setDeck, selectedCardId: card.id,
+        persistDeck: persist, recordDeckWriteReason: () => undefined });
+      return React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Runtime',
+        cardId: card.id, projectId: 'p', deckId: 'd', localConfig: editor.selectedCardConfig,
+        onSaveLocalConfig: editor.handleSaveSelectedCardConfig });
+    }
+    const view = render(React.createElement(Harness));
+    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model').disabled).toBe(false));
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: targetProvider } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'catalog-choice' } });
+    await leaveEditor();
+    expect(persist).toHaveBeenCalledOnce();
+    const saved = persist.mock.calls[0][0];
+    const updated = saved.nodes.find(node => node.id === card.id)!;
+    expect(updated.runtimeOptions).toMatchObject({ ...card.runtimeOptions, provider: targetProvider,
+      modelKey: 'catalog-choice', providerModelId: 'provider/model-version' });
+    expect(updated.prompt).toBe(card.prompt);
+    expect(updated.runtime).toEqual(card.runtime);
+    expect(saved.edges).toEqual(initial.edges);
+    expect(saved.nodes.filter(node => node.id !== card.id)).toEqual(initial.nodes.filter(node => node.id !== card.id));
+    view.unmount();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Runtime',
+      localConfig: { ...savedConfig, runtime_options: updated.runtimeOptions,
+        provider: targetProvider, model_key: updated.runtimeOptions?.modelKey }, onSaveLocalConfig: onSave }));
+    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model').value).toBe('catalog-choice'));
+    await leaveEditor();
+    expect(onSave.mock.calls[0][0].runtime_options.providerModelId).toBe('provider/model-version');
+  });
+  it('keeps every explicit prompt block independently editable and preserves all untouched bytes', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const original = '# LIQUIDAITY_PROMPT_V1\r\n[ROLE]\r\nMain role\r\n\r\n[CURRENT PROJECT FRAME - THINKGRAPH FIRST]\r\n  Read the frame.  \r\n\r\n[GOAL]\r\nFirst goal\r\n[GOAL]\r\nSecond goal\r\n[MEMORY_POLICY]\r\nRetain sources\r\n## Research / sources\r\nUse primary sources.\r\n```text\r\n[EXAMPLE]\r\nLiteral example\r\n```\r\n';
+    const props = { agentType: 'agent_builder' as const, cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: { ...savedConfig, prompt_template: original, output_contract: 'Citations' }, onSaveLocalConfig: onSave };
+    const view = render(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
+    expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Main role');
+    expect((screen.getByLabelText('Goal') as HTMLTextAreaElement).value).toBe('First goal');
+    expect((screen.getByLabelText('GOAL', { exact: true }) as HTMLTextAreaElement).value).toBe('Second goal');
+    expect((screen.getByLabelText('Memory policy') as HTMLTextAreaElement).value).toBe('Retain sources');
+    expect((screen.getByLabelText('Research / sources') as HTMLTextAreaElement).value).toContain('[EXAMPLE]');
+    expect(screen.queryByLabelText('EXAMPLE')).toBeNull();
+    fireEvent.change(screen.getByLabelText('CURRENT PROJECT FRAME - THINKGRAPH FIRST'), { target: { value: 'Read the current frame.' } });
+    fireEvent.change(screen.getByLabelText('GOAL', { exact: true }), { target: { value: 'Replacement goal' } });
+    view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Runtime' }));
+    view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
+    expect((screen.getByLabelText('CURRENT PROJECT FRAME - THINKGRAPH FIRST') as HTMLTextAreaElement).value).toBe('Read the current frame.');
+    await leaveEditor();
+    const expected = original.replace('Read the frame.', 'Read the current frame.').replace('Second goal', 'Replacement goal');
+    expect(onSave.mock.calls[0][0].prompt_template).toBe(expected);
+    expect(onSave.mock.calls[0][0].output_contract).toBe('Citations');
+    expect(onSave.mock.calls[0][0].role).toBeUndefined();
+    view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Prompt', localConfig: onSave.mock.calls[0][0] }));
+    expect((screen.getByLabelText('GOAL', { exact: true }) as HTMLTextAreaElement).value).toBe('Replacement goal');
+  });
+
+  it('keeps unsectioned instructions out of Role and does not add an untouched role on save', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Prompt',
+      cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: { ...savedConfig, role: 'Researcher', prompt_template: 'Existing instructions' }, onSaveLocalConfig: onSave }));
+    expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Researcher');
+    fireEvent.change(screen.getByLabelText('Instructions'), { target: { value: 'Replacement instructions' } });
+    await leaveEditor();
+    expect(onSave.mock.calls[0][0].prompt_template).toBe('Replacement instructions');
+    expect(onSave.mock.calls[0][0].role).toBe('Researcher');
+  });
+
   it('saves current settings before Run and never runs after a failed save', async () => {
     mockEditorFetch();
     let rejectSave: (error: Error) => void = () => {};
@@ -273,7 +358,7 @@ describe('AgentManager active builder config', () => {
     expect(saved.tools).toEqual(savedConfig.tools);
     expect(saved.prompt_template).toBe(savedConfig.prompt_template);
   });
-  it('selects one delegation role and keeps Team settings only within Team', async () => {
+  it('selects the existing Team capability without adding a Card policy', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
@@ -284,13 +369,15 @@ describe('AgentManager active builder config', () => {
     await waitFor(() => expect((selector as HTMLSelectElement).disabled).toBe(false));
     expect(screen.queryByLabelText('Maximum workers')).toBeNull();
     fireEvent.change(selector, { target: { value: 'team' } });
-    expect(screen.getByLabelText('Maximum workers')).toBeTruthy();
+    expect(screen.queryByLabelText('Maximum workers')).toBeNull();
+    expect(screen.queryByLabelText('Retry limit')).toBeNull();
+    expect(screen.queryByLabelText('Team lead model')).toBeNull();
     fireEvent.change(selector, { target: { value: 'profile' } });
     expect(screen.queryByLabelText('Maximum workers')).toBeNull();
     expect(screen.queryByLabelText('Control connected Cards')).toBeNull();
     await leaveEditor();
     expect(onSave.mock.calls[0][0].runtime_options.delegationRole).toBe('profile');
-    expect(onSave.mock.calls[0][0].runtime_options.team.mode).toBe('off');
+    expect(onSave.mock.calls[0][0].runtime_options.team).toBeUndefined();
     expect(onSave.mock.calls[0][0].runtime).toEqual(savedConfig.runtime);
   });
   it('shows native-contract runtime choices without full Builder discovery or implicit model replacement', async () => {
@@ -463,7 +550,7 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('aria-label="Memory provider"');
     expect(source).not.toContain('Contextualized GPT-plugin Main turns report Honcho bypassed');
     expect(source).toContain("runtimeMode === 'main' && nativeHermesState.native.honcho");
-    expect(source).toContain('modelOptions={subagentCatalogOptions}');
+    expect(source).not.toContain('CardSubagentsTab');
     expect(source).not.toContain('Use account Luna');
     expect(source).toContain("localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected'");
     expect(source).not.toContain("toolCatalogPolicy={runtimeKind === 'hermes' ? 'all_healthy'");

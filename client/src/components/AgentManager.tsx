@@ -22,11 +22,9 @@ import AdaptiveCardTerminal, {
   usesAdaptiveCardTerminal,
   type CardTerminalObservation,
 } from '../features/agentbuilder/console/AdaptiveCardTerminal';
-import CardSubagentsTab from '../features/agentbuilder/team/CardTeamTab';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
-type SavedTeamConfig = NonNullable<AgentCardRuntimeOptions['team']>;
 type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
@@ -34,19 +32,6 @@ const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   modelKey: 'gpt-5.6-luna',
   providerModelId: 'gpt-5.6-luna',
 };
-
-function defaultTeamConfig(
-  model: SavedSubagentModel = DEFAULT_SUBAGENT_MODEL,
-  mode: SavedTeamConfig['mode'] = 'off',
-): SavedTeamConfig {
-  return {
-    mode,
-    maxWorkers: 2,
-    retryLimit: 1,
-    workerModel: { ...model },
-    leadModel: { ...model },
-  };
-}
 
 function blankCardScript(): SavedCardScript {
   return {
@@ -252,7 +237,6 @@ interface AgentManagerProps {
   onRejoinCard?: () => void;
   onClearInvocation?: () => void;
   onOpenCoderTerminal?: () => void;
-  onOpenMainChat?: () => void;
   terminalContent?: React.ReactNode;
   onRemoveGraphReference?: (authority: string, nativeId: string) => void;
   onMoveGraphReference?: (
@@ -416,43 +400,58 @@ const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
 };
 
 function promptFieldRanges(template: string) {
-  // Parse explicit document syntax only. Unknown and repeated sections stay intact.
-  const headings = [...template.matchAll(/^\[([A-Z_ ]+)\][ \t]*(?:\r?\n|$)/gm)];
-  const ranges: Array<{ key: keyof PromptFields; start: number; end: number }> = [];
+  // Headings delimit editable blocks; they do not classify the text inside them.
+  const headings: Array<{ label: string; index: number; end: number }> = [];
+  let fence: string | null = null;
+  for (const line of template.matchAll(/^.*(?:\r?\n|$)/gm)) {
+    const marker = line[0].match(/^\s*(`{3,}|~{3,})/);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (fence) continue;
+    const heading = line[0].match(/^(?:\[([^\]\r\n]+)\][ \t]*|#{1,6}[ \t]+([^\r\n]+))(?:\r?\n|$)/);
+    if (heading) headings.push({ label: heading[1] ?? heading[2], index: line.index!, end: line.index! + line[0].length });
+  }
+  const ranges: Array<{ key: string; label: string; start: number; end: number }> = [];
   const seen = new Set<keyof PromptFields>();
   headings.forEach((heading, index) => {
-    const key = PROMPT_HEADINGS[heading[1]];
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    const start = heading.index! + heading[0].length;
+    const field = PROMPT_HEADINGS[heading.label.toUpperCase()];
+    const key = field && !seen.has(field) ? field : `section:${heading.index}`;
+    if (field) seen.add(field);
+    const start = heading.end;
     const end = headings[index + 1]?.index ?? template.length;
     const body = template.slice(start, end);
     const leading = body.match(/^\s*/)?.[0].length || 0;
     const trailing = body.match(/\s*$/)?.[0].length || 0;
-    ranges.push({ key, start: start + leading, end: Math.max(start + leading, end - trailing) });
+    ranges.push({ key, label: heading.label, start: start + leading, end: Math.max(start + leading, end - trailing) });
   });
-  if (!headings.length && template) ranges.push({ key: 'role', start: 0, end: template.length });
+  const preambleEnd = headings[0]?.index ?? template.length;
+  if (template.slice(0, preambleEnd).trim()) {
+    ranges.unshift({ key: 'instructions', label: 'Instructions', start: 0, end: preambleEnd });
+  }
   return ranges;
 }
 
-function parsePromptTemplate(template: string): PromptFields {
-  const fields: PromptFields = { role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' };
+function parsePromptTemplate(template: string): PromptFields & Record<string, string> {
+  const fields: PromptFields & Record<string, string> = { role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' };
   for (const range of promptFieldRanges(template)) fields[range.key] = template.slice(range.start, range.end);
   return fields;
 }
 
-function serializePromptFields(fields: PromptFields, original = ''): string {
+function serializePromptFields(fields: PromptFields & Record<string, string>, original: string, edited: Record<string, boolean>): string {
   const ranges = promptFieldRanges(original);
   const previous = parsePromptTemplate(original);
   let result = original;
   for (const range of [...ranges].reverse()) {
-    if (fields[range.key] !== previous[range.key]) {
+    if (edited[range.key] && fields[range.key] !== previous[range.key]) {
       result = result.slice(0, range.start) + fields[range.key] + result.slice(range.end);
     }
   }
   const newline = original.includes('\r\n') ? '\r\n' : '\n';
   for (const [heading, key] of Object.entries(PROMPT_HEADINGS)) {
-    if (heading === 'INPUT_SCHEMA' || ranges.some((range) => range.key === key) || !fields[key]) continue;
+    if (!edited[key] || heading === 'INPUT_SCHEMA' || ranges.some((range) => range.key === key) || !fields[key]) continue;
     result += `${result ? newline + newline : ''}[${heading}]${newline}${fields[key]}`;
   }
   return result;
@@ -533,7 +532,6 @@ export function AgentManager({
   onRejoinCard,
   onClearInvocation,
   onOpenCoderTerminal,
-  onOpenMainChat,
   onRemoveGraphReference,
   onMoveGraphReference,
   runBusy = false,
@@ -564,15 +562,14 @@ export function AgentManager({
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
   const [modelKey, setModelKey] = useState('');
+  const [providerModelId, setProviderModelId] = useState<string | null | undefined>(undefined);
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
-  const [teamTouched, setTeamTouched] = useState(false);
   const [delegationRole, setDelegationRole] = useState<NonNullable<AgentCardRuntimeOptions['delegationRole']>>('off');
   const [delegationTouched, setDelegationTouched] = useState(false);
   const [subagentTouched, setSubagentTouched] = useState(false);
   const [memoryProviderDraft, setMemoryProviderDraft] = useState<'builtin' | 'honcho' | null>(null);
   const [automaticLearningDraft, setAutomaticLearningDraft] = useState<boolean | null>(null);
   const learningEditsRef = useRef(new Map<string, string>());
-  const [teamConfig, setTeamConfig] = useState<SavedTeamConfig>(defaultTeamConfig());
   const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
   const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
@@ -604,14 +601,14 @@ export function AgentManager({
   const [promptText, setPromptText] = useState('');
   const [outputExpectations, setOutputExpectations] = useState('');
   const [outputExpectationsTouched, setOutputExpectationsTouched] = useState(false);
-  const [promptParts, setPromptParts] = useState({
+  const [promptParts, setPromptParts] = useState<PromptFields & Record<string, string>>({
     role: '',
     goal: '',
     constraints: '',
     ioSchema: '',
     memoryPolicy: '',
   });
-  const [promptPartsTouched, setPromptPartsTouched] = useState(false);
+  const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
   const [disabledToolsText, setDisabledToolsText] = useState('');
   const [skillsText, setSkillsText] = useState('');
@@ -749,7 +746,6 @@ export function AgentManager({
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
     draftDirtyRef.current = false;
-    setTeamTouched(false);
     setDelegationTouched(false);
     setDelegationRole(localConfig.runtime_options?.delegationRole || 'off');
     setSubagentTouched(false);
@@ -762,30 +758,12 @@ export function AgentManager({
         : '',
     );
     setModelKey(localConfig.model_key || '');
+    setProviderModelId(localConfig.runtime_options?.providerModelId);
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
     setSubagentModel(
       localConfig.runtime.kind === 'hermes' && savedSubagentModel
         ? savedSubagentModel
         : DEFAULT_SUBAGENT_MODEL,
-    );
-    const parentModel: SavedSubagentModel | null = (
-      localConfig.runtime.kind === 'hermes'
-      && localConfig.provider
-      && localConfig.model_key
-    ) ? {
-        provider: localConfig.provider,
-        accessMode: localConfig.access_mode === 'openrouter-api'
-          || localConfig.access_mode === 'openai-api'
-          || localConfig.access_mode === 'chatgpt-account'
-          ? localConfig.access_mode
-          : subagentAccessMode(localConfig.provider),
-        modelKey: localConfig.model_key,
-        providerModelId: localConfig.runtime_options?.providerModelId || localConfig.model_key,
-      } : null;
-    setTeamConfig(
-      localConfig.runtime.kind === 'hermes' && localConfig.runtime_options?.team
-        ? structuredClone(localConfig.runtime_options.team)
-        : defaultTeamConfig(parentModel || savedSubagentModel || DEFAULT_SUBAGENT_MODEL),
     );
     const savedScript = localConfig.runtime_options?.script
       ? structuredClone(localConfig.runtime_options.script)
@@ -819,7 +797,7 @@ export function AgentManager({
       ...parsedPrompt,
       role: parsedPrompt.role || String(localConfig.role || ''),
     });
-    setPromptPartsTouched(false);
+    setPromptPartsTouched({});
     setToolsText(
       Array.isArray(localConfig.tools)
         ? localConfig.tools
@@ -957,7 +935,7 @@ export function AgentManager({
       temperature,
       maxTokens,
       maxTurns,
-      promptTemplate: promptPartsTouched ? serializePromptFields(promptParts, promptText) : promptText,
+      promptTemplate: serializePromptFields(promptParts, promptText, promptPartsTouched),
       toolsText,
       skillsText,
       toolsetsText,
@@ -968,6 +946,7 @@ export function AgentManager({
       ...editedConfig,
       runtime_options: {
         ...(localConfig.runtime_options || {}),
+        ...(providerModelId !== undefined ? { providerModelId } : {}),
         toolCatalogPolicy: runtimeKind === 'hermes'
           ? (localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected')
           : 'selected',
@@ -976,7 +955,6 @@ export function AgentManager({
           ? parseListText(disabledToolsText)
           : [],
         ...(subagentTouched ? { subagentModel } : {}),
-        ...(teamTouched ? { team: teamConfig } : {}),
         ...(delegationTouched ? { delegationRole } : {}),
         ...(
           localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
@@ -996,10 +974,9 @@ export function AgentManager({
     provider,
     accessMode,
     modelKey,
+    providerModelId,
     subagentModel,
     subagentTouched,
-    teamConfig,
-    teamTouched,
     delegationRole,
     delegationTouched,
     scriptDraft,
@@ -1273,13 +1250,6 @@ export function AgentManager({
 
   const renderSectionBody = (sectionTab: string) => {
     if (sectionTab === 'Terminal') {
-      if (localConfig?.runtime.kind === 'hermes' && localConfig.runtime.mode === 'main' && onOpenMainChat) {
-        return <>{terminalContent || null}
-          <button type="button" data-testid="open-main-chat" onClick={onOpenMainChat}>
-            Open Main chat
-          </button>
-        </>;
-      }
       // The Terminal composer is rendered below the shared Card controls. Keep a
       // concrete section body here so non-Main Cards do not hit the legacy
       // empty-section guard before their real Run controls are mounted.
@@ -1327,7 +1297,7 @@ export function AgentManager({
               value={promptParts.role}
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, role: event.target.value }));
-                setPromptPartsTouched(true);
+                setPromptPartsTouched((current) => ({ ...current, role: true }));
                 markDraftDirty();
               }}
               rows={5}
@@ -1354,7 +1324,7 @@ export function AgentManager({
               value={promptParts.goal}
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, goal: event.target.value }));
-                setPromptPartsTouched(true);
+                setPromptPartsTouched((current) => ({ ...current, goal: true }));
                 markDraftDirty();
               }}
               rows={5}
@@ -1381,7 +1351,7 @@ export function AgentManager({
               value={promptParts.constraints}
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, constraints: event.target.value }));
-                setPromptPartsTouched(true);
+                setPromptPartsTouched((current) => ({ ...current, constraints: true }));
                 markDraftDirty();
               }}
               rows={5}
@@ -1408,7 +1378,7 @@ export function AgentManager({
               value={promptParts.ioSchema}
               onChange={(event) => {
                 setPromptParts((current) => ({ ...current, ioSchema: event.target.value }));
-                setPromptPartsTouched(true);
+                setPromptPartsTouched((current) => ({ ...current, ioSchema: true }));
                 markDraftDirty();
               }}
               rows={5}
@@ -1452,6 +1422,29 @@ export function AgentManager({
               }}
             />
           </div>
+
+          {promptFieldRanges(promptText).filter((block) => (
+            !['role', 'goal', 'constraints', 'ioSchema'].includes(block.key)
+            && (block.start !== block.end || promptPartsTouched[block.key])
+          )).map((block) => (
+            <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>
+              {block.key === 'memoryPolicy' ? 'Memory policy' : block.label}
+              <textarea
+                aria-label={block.key === 'memoryPolicy' ? 'Memory policy' : block.label}
+                value={promptParts[block.key] ?? ''}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setPromptParts((current) => ({ ...current, [block.key]: value }));
+                  setPromptPartsTouched((current) => ({ ...current, [block.key]: true }));
+                  markDraftDirty();
+                }}
+                rows={5}
+                style={{ width: '100%', padding: 10, background: '#2B2B2B', color: '#FFF',
+                  border: '1px solid #3A3A3A', borderRadius: 8, fontFamily: 'monospace',
+                  fontSize: 13, resize: 'vertical' }}
+              />
+            </label>
+          ))}
 
         </div>
       );
@@ -1791,7 +1784,11 @@ export function AgentManager({
                     disabled={!runtimeDictionaryReady}
                     value={modelKey}
                     onChange={(event) => {
-                      setModelKey(event.target.value);
+                      const key = event.target.value;
+                      const selected = availableModels.find((model) => model.key === key);
+                      if (key && !selected) return;
+                      setModelKey(key);
+                      setProviderModelId(selected?.providerModelId ?? null);
                       markDraftDirty();
                     }}
                   >
@@ -2284,8 +2281,6 @@ export function AgentManager({
                       const next = event.target.value as NonNullable<AgentCardRuntimeOptions['delegationRole']>;
                       setDelegationRole(next);
                       setDelegationTouched(true);
-                      setTeamConfig((current) => ({ ...current, mode: next === 'team' ? 'auto' : 'off' }));
-                      setTeamTouched(true);
                       markDraftDirty();
                     }}>
                     {editorField('delegationRole')?.options?.map((option) => (
@@ -2293,19 +2288,6 @@ export function AgentManager({
                     ))}
                   </select>
                 </label>
-              ) : null}
-              {localConfig && delegationRole === 'team' ? (
-                <CardSubagentsTab
-                  runtime={localConfig.runtime}
-                  team={teamConfig}
-                  fields={cardEditorFields}
-                  modelOptions={subagentCatalogOptions}
-                  onChange={(next) => {
-                    setTeamTouched(true);
-                    setTeamConfig(next);
-                    markDraftDirty();
-                  }}
-                />
               ) : null}
             </div>
           )

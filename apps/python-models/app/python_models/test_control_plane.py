@@ -131,20 +131,9 @@ def test_saved_card_reference_exposes_explicit_runtime() -> None:
     assert reference["role"] == ""
 
 
-def test_team_defaults_are_strict_card_configuration() -> None:
-    model = {
-        "provider": "openai", "accessMode": "chatgpt-account",
-        "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna",
-    }
-    assert cp._team_config({
-        "mode": "auto", "maxWorkers": 4, "retryLimit": 1,
-        "workerModel": model, "leadModel": model,
-    })["maxWorkers"] == 4
-    with pytest.raises(cp.ControlPlaneError, match="card_team_config_invalid"):
-        cp._team_config({
-            "mode": "auto", "maxWorkers": 8, "retryLimit": 1,
-            "workerModel": model, "leadModel": model,
-        })
+def test_team_overlay_is_not_a_card_creation_or_edit_option() -> None:
+    assert "team" not in cp._CARD_CREATE_KEYS
+    assert "team" not in cp._UPDATABLE_RUNTIME_OPTION_FIELDS
 
 
 def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend) -> None:

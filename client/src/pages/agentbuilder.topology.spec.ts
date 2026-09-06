@@ -20,9 +20,11 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
 describe('Main / Hermes / graph authority topology', () => {
   it('keeps Main as one conversation and presents the saved Agent Builder native CLI beneath it', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const mainInspectorProjection = /terminalContent=\{selectedCard\.runtime\.kind === 'hermes'[\s\S]*?runtime\.mode === 'main'\s*\?([\s\S]*?)\s*: selectedCard\.runtime\.kind/.exec(source)?.[1] || '';
-    expect(mainInspectorProjection).toContain('main-card-cli-location');
-    expect(mainInspectorProjection).not.toContain('CoderTerminalPanel');
+    expect(source).not.toContain('main-card-cli-location');
+    expect(source).not.toContain('onOpenMainChat');
+    expect(source).toContain("BUILDER_NODE_TABS.filter((entry) => entry !== 'CLI'");
+    expect(source).toContain('selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id');
+    expect(source).toContain("setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'CLI')");
     expect(source).toContain('data-testid="under-chat-agent-builder"');
     const underChat = source.slice(source.indexOf('const agentBuilderTerminal ='), source.indexOf('terminal={agentBuilderTerminal}'));
     expect(underChat).toContain('<CoderTerminalPanel');

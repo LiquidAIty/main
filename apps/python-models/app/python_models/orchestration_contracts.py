@@ -91,16 +91,6 @@ class CardSubagentModel(BaseModel):
     providerModelId: str = Field(min_length=1, max_length=256)
 
 
-class CardTeamConfiguration(BaseModel):
-    """The existing host Team contract; this does not describe Mag One."""
-    model_config = ConfigDict(extra="forbid", strict=True)
-    mode: Literal["off", "auto"]
-    maxWorkers: Literal[2, 3, 4]
-    retryLimit: int = Field(ge=0, le=4)
-    workerModel: CardSubagentModel
-    leadModel: CardSubagentModel
-
-
 class CardConfiguration(BaseModel):
     """Executable field shapes referenced by the Card dictionary."""
     runtimeKind: str
@@ -115,7 +105,6 @@ class CardConfiguration(BaseModel):
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
     subagentModel: CardSubagentModel | None = None
-    team: CardTeamConfiguration | None = None
     delegationRole: CardDelegationRole = "off"
 
 

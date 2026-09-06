@@ -22,8 +22,7 @@ Design notes
   descriptions plus the default fallback. Profiles without a
   description are still listed (with a note) so the decomposer can
   match on name as a fallback, but the user has an obvious incentive
-  to describe them. The LiquidAIty Team workflow is the narrow exception:
-  it sees only the originating profile already persisted on its root.
+  to describe them.
 
 * ``fanout=false`` collapses to the same effect as ``kanban specify``:
   we tighten the body and flip ``triage -> todo`` as a single task,
@@ -284,13 +283,6 @@ def decompose_task(
     """
     with kb.connect_closing() as conn:
         task = kb.get_task(conn, task_id)
-        team_policy = next((
-            event.payload
-            for event in reversed(kb.list_events(conn, task_id))
-            if event.kind == "team_policy_applied"
-            and isinstance(event.payload, dict)
-            and event.payload.get("schema_version") == "hermes.team.policy.v1"
-        ), None)
     if task is None:
         return DecomposeOutcome(task_id, False, "unknown task id")
     if task.status != "triage":
@@ -300,60 +292,29 @@ def decompose_task(
 
     cfg = _load_config()
     # LIQUIDAITY VENDOR PATCH: delegate_task(role="team") marks one native
-    # workflow root. Auto-Kanban still owns decomposition, while the Team path
-    # is private self-fanout for the profile already persisted on that root.
-    # Ordinary Kanban retains its global profile routing below.
+    # workflow root.  Auto-Kanban still owns decomposition and profile routing;
+    # this branch only applies the recipe's bounded native task/model fields.
     is_team = task.workflow_template_id == "delegate-team-v1"
-    if is_team:
-        orchestrator = str(task.assignee or "").strip()
-        if not orchestrator:
-            return DecomposeOutcome(
-                task_id, False, "team root is missing its originating profile",
-            )
-        default_assignee = orchestrator
-    else:
-        orchestrator = _resolve_orchestrator_profile(cfg)
-        default_assignee = _resolve_default_assignee(cfg)
+    orchestrator = (
+        task.assignee
+        if is_team and task.assignee
+        else _resolve_orchestrator_profile(cfg)
+    )
+    default_assignee = _resolve_default_assignee(cfg)
     kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg, dict) else {}
     auto_promote = bool(kanban_cfg.get("auto_promote_children", True))
-    team_max_workers = 4
     team_worker_provider = ""
     team_worker_model = ""
     team_worker_reasoning = None
-    team_lead_provider = ""
-    team_lead_model = ""
     if is_team:
-        if isinstance(team_policy, dict):
-            team_max_workers = int(team_policy["max_workers"])
-            team_worker_provider = str(team_policy["worker_provider"]).strip()
-            team_worker_model = str(team_policy["worker_model"]).strip()
-            team_lead_provider = str(team_policy["lead_provider"]).strip()
-            team_lead_model = str(team_policy["lead_model"]).strip()
-        else:
-            try:
-                team_max_workers = max(
-                    2, min(4, int(kanban_cfg.get("team_max_workers", 4)))
-                )
-            except (TypeError, ValueError):
-                team_max_workers = 4
-            team_worker_provider = str(
-                kanban_cfg.get("team_worker_provider") or ""
-            ).strip()
-            team_worker_model = str(
-                kanban_cfg.get("team_worker_model") or ""
-            ).strip()
-            team_lead_provider = str(task.provider_override or "").strip()
-            team_lead_model = str(task.model_override or "").strip()
+        team_worker_provider = str(
+            kanban_cfg.get("team_worker_provider") or ""
+        ).strip()
+        team_worker_model = str(
+            kanban_cfg.get("team_worker_model") or ""
+        ).strip()
         team_worker_reasoning = kanban_cfg.get("team_worker_reasoning_effort")
-    if is_team:
-        roster = [{
-            "name": orchestrator,
-            "description": "originating profile for this private Team mission",
-            "has_description": True,
-        }]
-        valid_names = {orchestrator}
-    else:
-        roster, valid_names = _build_roster()
+    roster, valid_names = _build_roster()
 
     try:
         from agent.auxiliary_client import call_llm  # type: ignore
@@ -378,14 +339,9 @@ def decompose_task(
         if is_team:
             system_prompt += (
                 "\n\nThis Triage item is a bounded delegate Team mission. "
-                f"Create between 2 and {team_max_workers} worker tasks. Use two "
-                "for smaller missions and more only when the work has "
-                "genuinely independent evidence or implementation slices. The "
-                "worker graph is depth one: workers may depend on siblings but "
+                "The worker graph is depth one: workers may depend on siblings but "
                 "must not create or delegate further work. The root will perform "
-                "the final review and synthesis after every child finishes. "
-                f"Every child assignee must be the originating profile "
-                f"{orchestrator!r}; no other profile is available to this Team."
+                "the final review and synthesis after every child finishes."
             )
         resp = call_llm(
             task="kanban_decomposer",
@@ -396,11 +352,6 @@ def decompose_task(
             temperature=0.3,
             max_tokens=4000,
             timeout=timeout or 180,
-            **(
-                {"provider": team_lead_provider, "model": team_lead_model}
-                if is_team and team_lead_provider and team_lead_model
-                else {}
-            ),
         )
     except Exception as exc:
         logger.info(
@@ -423,7 +374,7 @@ def decompose_task(
     if not fanout:
         if is_team:
             return DecomposeOutcome(
-                task_id, False, "team decomposer must return 2 or more worker tasks",
+                task_id, False, "team decomposer must return worker tasks",
             )
         # Fall back to single-task spec promotion (same effect as specify).
         new_title = parsed.get("title")
@@ -464,16 +415,9 @@ def decompose_task(
         return DecomposeOutcome(
             task_id, False, "decomposer returned fanout=true with empty tasks list",
         )
-    if is_team and not (2 <= len(raw_tasks) <= team_max_workers):
-        return DecomposeOutcome(
-            task_id,
-            False,
-            f"team decomposition must contain 2-{team_max_workers} workers "
-            f"(received {len(raw_tasks)})",
-        )
 
-    # Team is pinned to its origin; ordinary Kanban rewrites invalid
-    # assignees to the configured default. Never leave a task unassigned.
+    # Rewrite invalid assignees to the default fallback. Never leave a
+    # task with assignee=None — the user explicitly does not want that.
     children: list[dict] = []
     for idx, entry in enumerate(raw_tasks):
         if not isinstance(entry, dict):
@@ -489,14 +433,10 @@ def decompose_task(
         if not isinstance(body, str):
             body = ""
         assignee = entry.get("assignee")
-        chosen = (
-            orchestrator
-            if is_team
-            else _normalize_assignee_choice(
-                assignee,
-                default_assignee=default_assignee,
-                valid_names=valid_names,
-            )
+        chosen = _normalize_assignee_choice(
+            assignee,
+            default_assignee=default_assignee,
+            valid_names=valid_names,
         )
         if (
             isinstance(assignee, str)

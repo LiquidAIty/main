@@ -7350,8 +7350,7 @@ def decompose_triage_task(
 
     Validation of titles/assignees happens inside the same write_txn as
     the inserts so a malformed entry aborts the whole decomposition
-    cleanly (no orphan children). For ``delegate-team-v1`` the persisted
-    root assignee overrides every supplied root/child assignee.
+    cleanly (no orphan children).
     """
     if not children:
         return None
@@ -7412,7 +7411,7 @@ def decompose_triage_task(
     with write_txn(conn):
         root_row = conn.execute(
             "SELECT id, status, tenant, workspace_kind, workspace_path, "
-            "workflow_template_id, max_retries, assignee "
+            "workflow_template_id, max_retries "
             "FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
@@ -7428,15 +7427,6 @@ def decompose_triage_task(
         root_ws_kind = root_row["workspace_kind"] or "scratch"
         root_ws_path = root_row["workspace_path"]
         team_workflow = root_row["workflow_template_id"] == "delegate-team-v1"
-        team_origin_assignee = None
-        if team_workflow:
-            team_origin_assignee = _canonical_assignee(root_row["assignee"])
-            if not team_origin_assignee:
-                raise ValueError("Team root is missing its originating assignee")
-            # Team is private self-fanout. The persisted root is the authority;
-            # ignore any foreign root/child assignee supplied by a decomposer
-            # or direct caller so it can never escape into another profile.
-            root_assignee = team_origin_assignee
 
         # Create children. Status is 'todo' regardless of parents — we
         # link them under the root AFTER creation so the dispatcher
@@ -7446,11 +7436,7 @@ def decompose_triage_task(
             new_id = _new_task_id()
             title = child["title"].strip()
             body = child.get("body")
-            assignee = (
-                team_origin_assignee
-                if team_workflow
-                else _canonical_assignee(child.get("assignee"))
-            )
+            assignee = _canonical_assignee(child.get("assignee"))
             # Per-child override wins; otherwise inherit the root's
             # workspace. A child that sets workspace_kind without a path
             # falls back to the root path only when kinds match (so a

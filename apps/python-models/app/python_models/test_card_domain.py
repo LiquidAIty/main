@@ -453,7 +453,7 @@ def test_agent_builder_target_rejects_system_cards(system_target) -> None:
         )
 
 
-def test_saved_hermes_card_preserves_exact_team_defaults_and_rejects_non_hermes() -> None:
+def test_saved_card_preserves_legacy_team_data_without_runtime_validation() -> None:
     team = {
         "mode": "auto", "maxWorkers": 3, "retryLimit": 2,
         "workerModel": {
@@ -471,11 +471,8 @@ def test_saved_hermes_card_preserves_exact_team_defaults_and_rejects_non_hermes(
         runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
     )
     assert card_domain._stable_card(hermes)["runtimeExtensions"]["team"] == team
-    with pytest.raises(card_domain.CardDomainError, match="card_team_requires_hermes"):
-        card_domain._stable_card(_agent(
-            "autogen-team",
-            runtimeOptions={**_agent("x")["runtimeOptions"], "team": team},
-        ))
+    legacy = _agent("old-card", runtimeOptions={**_agent("x")["runtimeOptions"], "team": team})
+    assert card_domain._stable_card(legacy)["runtimeExtensions"]["team"] == team
 
 
 def test_deck_validation_rejects_duplicate_identities_and_missing_endpoints() -> None:
