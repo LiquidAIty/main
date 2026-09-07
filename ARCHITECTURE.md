@@ -725,10 +725,13 @@ Hermes is the vendor boundary shared by the internal Hermes Cards. LiquidAIty-ow
 stays in the backend adapter whenever possible. Any Hermes edit must remain narrowly recorded, tested,
 and justified against an unavailable upstream adapter/configuration hook.
 
-The current contained divergence tracks the default `main` branch of
-[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) (package version `0.20.5`)
-at upstream commit `6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, verified 2026-08-25. That
-commit is newer than the latest tagged release at the time of refresh. ACP has no native host contract for publishing a bounded
+The current contained divergence tracks stable release `v2026.8.31` of
+[`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) (package version `0.21.0`)
+at upstream commit `29112bef099274229cadff79cdff7bf7b99c4b77`. The 2026-09-06 update integrated
+reviewed upstream changes against base `6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, retaining all
+24 individually reconciled overlaps and the 53 local paths enumerated in the preserved snapshot.
+The existing patch register records the retained seams, verification limits and later upstream PR intent.
+This source update does not implement asynchronous application profile delivery or restart interrupted work. ACP has no native host contract for publishing a bounded
 session tool surface or allocating an execution context before a native child starts, so
 `Hermes/acp_adapter/host_profiles.py` plus marked hooks in `acp_adapter/session.py`,
 `acp_adapter/server.py`, and `tools/delegate_tool.py` accept only trusted

@@ -2,10 +2,22 @@
 
 This copied Hermes tree tracks upstream
 [`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent). The refresh base for the
-current LiquidAIty integration is upstream default branch `main` (package version `0.20.5`), commit
-`6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, verified 2026-08-25. That exact commit is not a release
-tag; it advances 1,569 upstream commits (1,460 non-merge) beyond the prior recorded base
-`e624e9fde561e1add9388384012b295fde669ade`.
+current LiquidAIty integration is stable release `v2026.8.31` (package version `0.21.0`), commit
+`29112bef099274229cadff79cdff7bf7b99c4b77`. The 2026-09-06 refresh used a path-scoped three-way
+integration from `6ce7ab8bfb3fce3ba116f52a11a438d6c7e4c03d`, preserving the checkpointed local fork.
+All 24 overlapping paths retain their individually reconciled contents. The preserved snapshot contains
+53 locally added/modified paths (the earlier prose count of 54 was incorrect), including 11 local-only
+files. Native persistent Python execution remains separate from the host Script's isolated execution;
+explicit host delegation roles, mission fields, Team/profile branches and profile background selection remain.
+Generic changes and their tests remain in these existing seams for upstream PR preparation after launch;
+no PR is submitted by this update. Two new upstream contributor-credit filenames differing only in case
+are omitted on Windows; their original bytes remain in the verified upstream archive.
+
+Verification: the reviewed integration passed 153 focused tests with 17 platform skips. Fourteen other
+Windows path/profile failures reproduced against the untouched baseline. The two graph-schema tests
+also fail in both temporary trees because their relative app schema source is absent there; the Windows
+ProgramFiles environment assertion fails identically in both trees. Post-application checks are reported
+in the task result. Interrupted work is not resumed by this update.
 
 Every local Hermes change must remain contained, carry a `LIQUIDAITY VENDOR PATCH` code comment, have
 focused upstream-style tests, and include a concrete plan to contribute the capability upstream. A
