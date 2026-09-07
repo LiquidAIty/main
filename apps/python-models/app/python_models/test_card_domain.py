@@ -2040,6 +2040,28 @@ def test_disabled_script_preserves_model_input_and_remains_visible_saved_configu
     assert stable["grants"]["tools"] == ["calculator"]
 
 
+@pytest.mark.parametrize("model_key", ["gpt-5.6-sol", "catalog-choice"])
+def test_saved_parent_selection_reaches_execution_without_changing_card_authority(monkeypatch, model_key):
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"].update(
+        provider="openai", accessMode="chatgpt-account", modelKey=model_key,
+        providerModelId="gpt-5.6-sol", delegationRole="team",
+        subagentModel={"provider": "openai", "accessMode": "chatgpt-account",
+                       "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna"},
+    )
+    before = json.dumps(loaded, sort_keys=True)
+    prepared = card_domain._prepare_invocation(_destination_payload("hermes"))
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+    expected = {"provider": "openai", "accessMode": "chatgpt-account",
+                "modelKey": model_key, "providerModelId": "gpt-5.6-sol"}
+    assert prepared["_callConfig"]["provider"] == expected
+    assert invocation["idf"]["stableSavedCardContext"]["provider"] == expected
+    assert prepared["_callConfig"]["runtimeOptions"]["subagentModel"] == card["runtimeOptions"]["subagentModel"]
+    assert prepared["_callConfig"]["runtimeOptions"]["delegationRole"] == "team"
+    assert json.dumps(loaded, sort_keys=True) == before
+
+
 def test_saved_hermes_subagent_model_survives_canonical_idf_materialization(monkeypatch):
     loaded = _destination_fixture(monkeypatch)
     card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
@@ -2856,6 +2878,55 @@ def test_native_hermes_team_root_gets_one_idempotent_child_run(
     assert rejoined["runId"] == "team-child-run"
     assert rejoined["rejoined"] is True
     assert observed == ["team-child-run"]
+
+
+def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatch):
+    from contextlib import nullcontext
+    class Cursor:
+        def execute(self, statement):
+            assert statement == "SET TRANSACTION READ ONLY"
+    class Connection:
+        def cursor(self, **_kwargs):
+            return nullcontext(Cursor())
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: nullcontext(Connection()))
+    monkeypatch.setattr(card_domain, "_load_deck_with_cursor", lambda *_args: {
+        "projectId": "p", "deck": {"nodes": [], "edges": []},
+    })
+    queries = []
+    def age_rows(_cursor, query, params, _columns):
+        queries.append((query, params))
+        if "rootRunIds" in params:
+            assert params["rootRunIds"] == ["root"]
+            assert "run.nativeChildId IS NOT NULL" in query and "LIMIT 20" in query
+            return [
+                {"run": {"runId": "team", "rootRunId": "root", "nativeChildId": "t_team", "state": "completed"}, "card_id": "graph"},
+                {"run": {"runId": "profile", "rootRunId": "root", "nativeChildId": "t_other"}, "card_id": "other"},
+                {"run": {"runId": "old-team", "rootRunId": "old", "nativeChildId": "t_old"}, "card_id": "graph"},
+            ]
+        if "EXECUTED_BY" in query:
+            assert params["cardId"] == "graph" and "LIMIT 1" in query
+            return [{"run": {"runId": "root", "state": "running"}, "card_id": "graph"}]
+        assert params["runIds"] == ["root", "team"]
+        if "-[:READ]->" in query:
+            return [{"run_id": "team", "authority": "CodeGraph", "native_id": "pkg.worker"}]
+        if "USED_TOOL" in query and "count(edge)" not in query:
+            assert "directOnly" not in query
+            return [{"run_id": "team", "tool_id": "cbm.search_graph", "event": {
+                "eventId": "worker-read", "cardId": "graph", "nativeChildId": "t_worker",
+                "authority": "codegraph", "operation": "read", "nativeNodeIds": ["pkg.worker"],
+                "resultHash": "a" * 64,
+            }}]
+        return []
+    monkeypatch.setattr(card_domain, "_age_rows", age_rows)
+    result = card_domain.inspect_agentgraph({"projectId": "p", "deckId": "d", "cardId": "graph", "directOnly": True, "limit": 1})
+    assert [run["runId"] for run in result["runs"]] == ["root", "team"]
+    team = result["runs"][1]
+    assert team["cardId"] == "graph" and team["rootRunId"] == "root"
+    assert team["nativeChildId"] == "t_team"
+    assert team["materializedNativeReferences"] == [{"authority": "CodeGraph", "nativeId": "pkg.worker"}]
+    assert team["attentionEvents"][0]["runId"] == "team"
+    assert team["attentionEvents"][0]["nativeChildId"] == "t_worker"
+    assert team["attentionEvents"][0]["resultHash"] == "a" * 64
 
 
 def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(

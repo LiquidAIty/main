@@ -931,7 +931,7 @@ def observe_native_attention(
                 "observed agtype",
             )
             target_card_id = str(event.get("targetCardId") or "").strip()
-            if target_card_id:
+            if target_card_id and target_card_id != card_id:
                 handed = _age_rows(
                     cursor,
                     """
@@ -1067,6 +1067,29 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                  "cardId": card_id, "conversationId": conversation_id},
                 "run agtype, card_id agtype",
             )
+            if direct_only and run_rows:
+                # Select root Runs first, then include their own native work.
+                # A Profile target is a different Card and is never rolled up.
+                root_cards = {
+                    str(row["run"].get("runId") or ""): str(row.get("card_id") or "")
+                    for row in run_rows if isinstance(row.get("run"), dict)
+                }
+                native_rows = _age_rows(
+                    cursor,
+                    f"""
+                    MATCH (run:Run {{{owner_scope}}})-[:EXECUTED_BY]->(card:Card {{{owner_scope}}})
+                    WHERE run.rootRunId IN $rootRunIds
+                      AND run.nativeChildId IS NOT NULL AND run.nativeChildId <> ''
+                    RETURN properties(run), card.cardId
+                    ORDER BY run.startedAt, run.runId
+                    LIMIT {edge_limit}
+                    """,
+                    {"projectId": project_id, "deckId": deck_id, "rootRunIds": list(root_cards)},
+                    "run agtype, card_id agtype",
+                )
+                run_rows.extend(row for row in native_rows
+                    if isinstance(row.get("run"), dict)
+                    and root_cards.get(str(row["run"].get("rootRunId") or "")) == row.get("card_id"))
             runs: dict[str, dict[str, Any]] = {}
             for row in run_rows:
                 properties = row.get("run") if isinstance(row.get("run"), dict) else {}
@@ -1146,7 +1169,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                               -[edge:USED_TOOL]->(tool:Tool)
                         WHERE run.runId IN $runIds
                           AND edge.eventId IS NOT NULL AND edge.eventId <> ''
-                          AND ($directOnly = false OR edge.nativeChildId IS NULL OR edge.nativeChildId = '')
                         RETURN run.runId, tool.toolId, properties(edge)
                         ORDER BY edge.timestamp DESC
                         """,
@@ -1159,7 +1181,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                         WHERE run.runId IN $runIds
                           AND edge.eventId IS NOT NULL AND edge.eventId <> ''
                           AND (edge.phase IS NULL OR edge.phase = 'completed')
-                          AND ($directOnly = false OR edge.nativeChildId IS NULL OR edge.nativeChildId = '')
                         RETURN run.runId, edge.operation, count(edge)
                         """,
                         "run_id agtype, operation agtype, event_count agtype",
@@ -1201,7 +1222,6 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                             "projectId": project_id,
                             "deckId": deck_id,
                             "runIds": run_ids,
-                            "directOnly": direct_only,
                         },
                         columns,
                     )

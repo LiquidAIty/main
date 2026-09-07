@@ -10,6 +10,10 @@ freezing any particular tool list.
 
 import threading
 import types
+import copy
+import hashlib
+
+import pytest
 
 from tools import mcp_tool
 
@@ -25,6 +29,85 @@ def _agent(tool_names, *, enabled=None, disabled=None):
     a.enabled_toolsets = enabled
     a.disabled_toolsets = disabled
     return a
+
+
+@pytest.fixture
+def host_surface(monkeypatch):
+    from tools.registry import registry
+    from acp_adapter.host_profiles import parse_host_session_config
+    monkeypatch.setattr(registry, "_tools", dict(registry._tools))
+    def unused(*args, **kwargs):
+        raise AssertionError("No tool execution in refresh tests")
+    delegate = _tool("delegate_task")["function"]
+    delegate["parameters"] = {"type": "object", "properties": {
+        "role": {"type": "string", "enum": ["leaf", "profile"]}}}
+    registry.register(name="delegate_task", toolset="delegation", schema=delegate,
+                      handler=unused, override=True)
+    for name in ("host_read", "host_write", "host_other", "execute_host_script"):
+        registry.register(name=name, toolset="host-refresh-test", schema=_tool(name)["function"],
+                          handler=unused, override=True)
+    source = 'from hermes_tools import output\noutput.emit({})\n'
+    config = parse_host_session_config({"hermes": {"sessionConfig": {
+        "enabledToolsets": ["delegation"], "enabledTools": ["host_write"],
+        "hostSessionKey": "main-profile", "systemPrompt": "Preserve this prompt",
+        "delegationRoles": ["profile"], "profileTargets": [
+            {"profile": "graph", "title": "Graph", "description": ""}],
+        "hostScript": {"version": 1, "source": source,
+            "sourceHash": hashlib.sha256(source.encode()).hexdigest(), "compiledHash": "b" * 64,
+            "mode": "tool_recipe", "inputSchema": {"type": "object", "properties": {
+                "query": {"type": "string"}}, "required": ["query"]},
+            "outputSchema": {"type": "object"}, "toolAliases": {"read": "host_read"},
+            "fallbackToolAliases": {"read": "host_read", "write": "host_write"},
+            "toolStates": {"read": 1, "write": 2}, "timeoutSeconds": 5,
+            "maxToolCalls": 1, "maxOutputBytes": 1024},
+    }}})
+    return config
+
+
+def test_refresh_retains_exact_host_script_and_profile_targets(host_surface):
+    from acp_adapter.host_profiles import apply_host_session_config
+    agent = _agent([], enabled=[])
+    apply_host_session_config(agent, host_surface)
+    before = copy.deepcopy(agent.tools)
+    assert agent.valid_tool_names == {"delegate_task", "host_write", "execute_host_script"}
+    mcp_tool.refresh_agent_mcp_tools(agent)
+    assert agent.tools == before
+    assert agent.valid_tool_names == {"delegate_task", "host_write", "execute_host_script"}
+    # A stale schema with the same tool name must also be repaired.
+    agent.tools[-1]["function"]["parameters"] = {}
+    mcp_tool.refresh_agent_mcp_tools(agent)
+    assert agent.tools == before
+
+
+def test_refresh_isolates_host_profiles_and_restores_terminal(host_surface):
+    from acp_adapter.host_profiles import apply_cli_host_session_config, clear_cli_host_session_config
+    other = _agent([], enabled=[])
+    second = copy.deepcopy(host_surface)
+    second.pop("hostScript")
+    second.update(enabledTools=["host_other"], enabledToolsets=[], delegationRoles=[])
+    apply_cli_host_session_config(other, second)
+    main = _agent([], enabled=[])
+    apply_cli_host_session_config(main, host_surface)
+    mcp_tool.refresh_agent_mcp_tools(main)
+    mcp_tool.refresh_agent_mcp_tools(other)
+    assert other.valid_tool_names == {"host_other"}
+    assert "host_other" not in main.valid_tool_names
+    assert clear_cli_host_session_config(main)
+    mcp_tool.refresh_agent_mcp_tools(main)
+    assert main.tools == []
+
+
+def test_refresh_preserves_exact_script_failure_fallback(host_surface):
+    from acp_adapter.host_profiles import apply_host_session_config, host_execution_scope, activate_host_script_fallback
+    agent = _agent([], enabled=[])
+    apply_host_session_config(agent, host_surface)
+    with host_execution_scope(agent):
+        activate_host_script_fallback()
+    expected = copy.deepcopy(agent.tools)
+    mcp_tool.refresh_agent_mcp_tools(agent)
+    assert {t["function"]["name"]: t for t in agent.tools} == {
+        t["function"]["name"]: t for t in expected}
+    assert agent.valid_tool_names == {"delegate_task", "host_read", "host_write"}
 
 
 def test_refresh_adds_late_landing_tools(monkeypatch):

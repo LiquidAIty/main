@@ -1463,6 +1463,7 @@ type NativeAttentionEvent = {
   change?: 'read' | 'write' | 'create' | 'delete' | 'clear';
   nativeChildId?: string | null;
   nativeRunId?: string | null;
+  rootRunId?: string | null;
   runState?: string;
   scopeGroupIds?: string[];
 };
@@ -1471,7 +1472,8 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
   if (!value || typeof value !== 'object') return [];
   const runs = Array.isArray((value as any).runs) ? (value as any).runs : [];
   return runs.flatMap((run: any) => Array.isArray(run?.attentionEvents)
-    ? run.attentionEvents.map((event: any) => ({ ...event, runState: run.state })) : [])
+    ? run.attentionEvents.map((event: any) => ({ ...event, runState: run.state,
+      rootRunId: run.rootRunId || run.runId })) : [])
     .filter((event: any) => (
       event
       && typeof event === 'object'
@@ -1511,6 +1513,7 @@ function nativeAttentionEvents(value: unknown): NativeAttentionEvent[] {
       ...(event.change ? { change: event.change } : {}),
       ...(event.nativeChildId ? { nativeChildId: String(event.nativeChildId) } : {}),
       ...(event.nativeRunId ? { nativeRunId: String(event.nativeRunId) } : {}),
+      ...(event.rootRunId ? { rootRunId: String(event.rootRunId) } : {}),
       ...(event.runState ? { runState: String(event.runState) } : {}),
       ...(Array.isArray(event.scopeGroupIds) ? { scopeGroupIds: event.scopeGroupIds.map(String).slice(0, 128) } : {}),
     }));
@@ -1579,7 +1582,8 @@ router.get('/main/session/attention', async (req, res) => {
         for (const run of runs) {
           emit('session', { projectId, deckId: run.deckId || deckId,
             conversationId: run.conversationId || null, cardId: run.cardId,
-            runId: run.runId, state: run.state, nativeChildId: run.nativeChildId || null,
+            runId: run.runId, rootRunId: run.rootRunId || run.runId,
+            state: run.state, nativeChildId: run.nativeChildId || null,
             materializedNativeReferences: run.materializedNativeReferences || [] },
           `run:${run.runId}`, next);
         }
@@ -1590,7 +1594,7 @@ router.get('/main/session/attention', async (req, res) => {
         for (const event of nativeAttentionEvents(value)
           .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))) {
           if (event.authority === 'agentgraph' || event.projectId !== projectId
-            || event.deckId !== deckId || (cardId && (event.cardId !== cardId || event.nativeChildId))) continue;
+            || event.deckId !== deckId || (cardId && event.cardId !== cardId)) continue;
           emit('native_attention', event, event.eventId, next);
         }
         previous = next;

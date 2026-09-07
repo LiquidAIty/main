@@ -6810,7 +6810,13 @@ def _normalize_mcp_input_schema(schema: dict | None) -> dict:
         if not isinstance(node, dict):
             return node
 
-        repaired = {k: _repair_object_shape(v) for k, v in node.items()}
+        repaired = {
+            k: {name: _repair_object_shape(subschema) for name, subschema in v.items()}
+            if k in ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas")
+            and isinstance(v, dict)
+            else _repair_object_shape(v)
+            for k, v in node.items()
+        }
 
         # Coerce missing / null type when the shape is clearly an object
         # (has properties or required but no type).
@@ -8259,14 +8265,20 @@ def refresh_agent_mcp_tools(
     # Computed OUTSIDE the lock (get_tool_definitions can be slow); the diff and
     # publish below happen together in ONE critical section so two concurrent
     # callers can't torn-publish or compute overlapping ``added`` sets.
-    new_defs = list(
-        get_tool_definitions(
-            enabled_toolsets=enabled,
-            disabled_toolsets=disabled,
-            quiet_mode=quiet_mode,
+    host_config = getattr(agent, "_host_session_config", None)
+    if isinstance(host_config, dict):
+        from acp_adapter.host_profiles import host_session_tool_definitions
+
+        new_defs = host_session_tool_definitions(agent, host_config)
+    else:
+        new_defs = list(
+            get_tool_definitions(
+                enabled_toolsets=enabled,
+                disabled_toolsets=disabled,
+                quiet_mode=quiet_mode,
+            )
+            or []
         )
-        or []
-    )
     new_names = {t["function"]["name"] for t in new_defs}
 
     # Re-append the post-build injected families that get_tool_definitions does
@@ -8296,7 +8308,7 @@ def refresh_agent_mcp_tools(
             t["function"]["name"]
             for t in (getattr(agent, "tools", None) or [])
         }
-        if new_names == current:
+        if new_names == current and (not isinstance(host_config, dict) or new_defs == agent.tools):
             # No change → leave the live snapshot untouched (no churn), but
             # record the generation so an in-flight older caller can't clobber.
             agent._tool_snapshot_generation = max(published_gen, snapshot_generation)

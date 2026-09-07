@@ -2606,6 +2606,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
                         "description": "Trusted expected saved Card revision for an internal profile handoff.",
                     },
                     "action": {"type": "string", "enum": ["execute", "status"]},
+                    "background": {"type": "boolean"},
                     "runId": {"type": "string"},
                     "nativeRootId": {"type": "string"},
                     "correlationId": {"type": "string"},
@@ -3656,6 +3657,7 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     },
     "card.run_assistant_agent": {
         "action",
+        "background",
         "projectId",
         "deckId",
         "cardId",

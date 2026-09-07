@@ -29,6 +29,7 @@ export type HermesProfileDelegationParams = {
   goal?: unknown;
   context?: unknown;
   dataAnchors?: unknown;
+  background?: unknown;
 };
 
 type SystemRunner = typeof callPythonAgentSystemTool;
@@ -61,7 +62,12 @@ export async function runHermesProfileDelegation(
   runId: string;
   result: string;
   nativeEvents: unknown[];
+  state?: string;
+  acceptedAt?: string;
 }> {
+  if (params.background !== undefined && typeof params.background !== 'boolean') {
+    throw new Error('hermes_profile_background_must_be_boolean');
+  }
   const parentContext = bounded(
     params.parentExecutionContextId,
     'parent_execution_context_id',
@@ -147,6 +153,11 @@ export async function runHermesProfileDelegation(
     cardId: target.cardId,
     cardRevisionId: target.cardRevisionId,
     input,
+    ...(params.background === true ? {
+      background: true,
+      originatingAgentId: authority.sourceCardId,
+      originatingRunId: authority.parentRunId,
+    } : {}),
     ...(dataAnchors !== undefined ? { dataAnchors } : {}),
   });
   if (response.ok !== true) {
@@ -158,6 +169,13 @@ export async function runHermesProfileDelegation(
   }
   const record = result as Record<string, unknown>;
   const runId = bounded(record.runId, 'child_run_id', 128, true);
+  if (params.background === true) {
+    if (record.state !== 'running' || typeof record.acceptedAt !== 'string') {
+      throw new Error('hermes_profile_acceptance_invalid');
+    }
+    return { nativeChildId, targetProfile, runId, state: 'running',
+      acceptedAt: record.acceptedAt, result: '', nativeEvents: [] };
+  }
   const output = bounded(record.output, 'result', 2_000_000);
   const nativeEvents = Array.isArray(record.nativeEvents) ? record.nativeEvents : [];
   return { nativeChildId, targetProfile, runId, result: output, nativeEvents };

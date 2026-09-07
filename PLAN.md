@@ -4,6 +4,17 @@ This is the current product plan. It describes what the repository owns now, wha
 separate, and the smallest proof required before live model testing. Historical failure records belong in `DONT.md`, clearly separated from current architecture.
 Git retains exact historical source; old implementation instructions are not current requirements.
 
+## Product boundary
+
+The owner's delivery target is to finish the existing Trading application and freeze that delivery,
+then continue the reusable system as a separately named platform. Trading is an application built on
+the platform; its brand and domain must not define shared agent, graph, editor, or execution code.
+Shared identifiers describe their responsibilities. User-facing labels describe the action or content,
+without implementation names or explanatory filler. Application branding belongs in application
+presentation and configuration. Existing persisted and public branded identities require a coordinated
+migration with data and contract preservation; finishing the current delivery does not authorize a
+blanket replacement, a rebuild, or removal of working capabilities.
+
 ## Core v0
 
 ```text

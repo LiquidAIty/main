@@ -220,9 +220,9 @@ const PROJECTS_API = '/api/projects';
 export function getStandaloneCardUnavailableReason(
   card: AgentCardInstance | null,
 ): string | null {
-  if (!card) return 'Select a saved card before testing.';
+  if (!card) return 'Select an agent to test.';
   if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') {
-    return 'Main uses its persistent conversation route and is not tested as an isolated Card.';
+    return 'Use Main chat to test Main.';
   }
   return null;
 }
@@ -591,7 +591,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
     const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
     if (!target) {
-      setDeckStatusMessage('Graph reference target is not an active saved Card.');
+      setDeckStatusMessage('The selected agent is no longer available.');
       return;
     }
     setTransientCardGraphContext((current) => {
@@ -1511,7 +1511,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const handleQuickAddAssistNode = useCallback(async () => {
     if (!canonicalDeckReady) {
-      setDeckStatusMessage('Wait for the canonical canvas to load before adding a Card.');
+      setDeckStatusMessage('Wait for the canvas to load.');
       return;
     }
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
@@ -1979,8 +1979,8 @@ export default function AgentBuilder(): React.ReactElement {
         })}
       >
         {deckLoadError
-          ? `Canonical canvas unavailable: ${deckLoadError}`
-          : 'Loading canonical canvas…'}
+          ? `Canvas unavailable: ${deckLoadError}`
+          : 'Loading…'}
       </div>
     );
     return (

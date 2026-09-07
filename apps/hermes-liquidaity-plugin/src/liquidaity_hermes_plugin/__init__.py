@@ -707,6 +707,10 @@ class _MainCliBridge:
 
     def on_pre_api_request(self, **payload) -> None:
         operation_id = str(payload.get("api_request_id") or "")
+        request = payload.get("request") or {}
+        body = request.get("body") or {}
+        tools = body.get("tools") or []
+        functions = [tool.get("function", tool) for tool in tools if isinstance(tool, dict)]
         self._projection(
             "execution.receipt",
             event_id=f"{operation_id or 'api'}:started",
@@ -722,6 +726,10 @@ class _MainCliBridge:
                 "retryCount": payload.get("retry_count"),
                 "messageCount": payload.get("message_count"),
                 "toolCount": payload.get("tool_count"),
+                "toolNames": [tool.get("name") for tool in functions],
+                "toolSchemas": {tool.get("name"): tool.get("parameters") for tool in functions},
+                "scriptInputSchema": next((tool.get("parameters") for tool in functions
+                    if tool.get("name") == "execute_host_script"), None),
             }),
         )
 

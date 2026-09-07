@@ -358,9 +358,10 @@ def test_saved_card_surface_is_the_exact_native_and_mcp_surface(
         "delegate_task": _definition("delegate_task"),
     }
 
-    def get_tool_definitions(*, enabled_toolsets, disabled_toolsets, quiet_mode):
+    def get_tool_definitions(*, enabled_toolsets, disabled_toolsets, quiet_mode, skip_tool_search_assembly):
         assert isinstance(disabled_toolsets, list)
         assert quiet_mode is True
+        assert skip_tool_search_assembly is True
         selected = []
         if "memory" in enabled_toolsets:
             selected.append(copy.deepcopy(definitions["memory"]))

@@ -946,6 +946,11 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
     card_revision_id = str(args.get("cardRevisionId") or "").strip()
     correlation_id = str(args["correlationId"]).strip()
     instruction = str(args["input"])
+    background = args.get("background", False)
+    if not isinstance(background, bool):
+        raise ControlPlaneError("card_run_background_must_be_boolean")
+    if background and not originating_agent_id:
+        raise ControlPlaneError("card_run_background_source_required")
 
     if originating_agent_id:
         if not conversation_id:
@@ -964,6 +969,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         **({"senderCardId": originating_agent_id} if originating_agent_id else {}),
         **({"originatingRunId": originating_run_id} if originating_run_id else {}),
         "input": instruction,
+        **({"background": True} if background else {}),
         **(
             {"dataAnchors": args["dataAnchors"]}
             if isinstance(args.get("dataAnchors"), list)

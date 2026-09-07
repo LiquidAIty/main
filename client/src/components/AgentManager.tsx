@@ -561,8 +561,9 @@ export function AgentManager({
   const [accessMode, setAccessMode] = useState<
     'chatgpt-account' | 'openai-api' | 'openrouter-api' | ''
   >('');
-  const [modelKey, setModelKey] = useState('');
-  const [providerModelId, setProviderModelId] = useState<string | null | undefined>(undefined);
+  const [{ key: modelKey, providerModelId }, setModel] = useState<{
+    key: string; providerModelId?: string | null;
+  }>({ key: '' });
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [delegationRole, setDelegationRole] = useState<NonNullable<AgentCardRuntimeOptions['delegationRole']>>('off');
   const [delegationTouched, setDelegationTouched] = useState(false);
@@ -757,8 +758,8 @@ export function AgentManager({
         ? localConfig.access_mode
         : '',
     );
-    setModelKey(localConfig.model_key || '');
-    setProviderModelId(localConfig.runtime_options?.providerModelId);
+    setModel({ key: localConfig.model_key || '',
+      providerModelId: localConfig.runtime_options?.providerModelId });
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
     setSubagentModel(
       localConfig.runtime.kind === 'hermes' && savedSubagentModel
@@ -889,7 +890,7 @@ export function AgentManager({
         if (controller.signal.aborted) return;
         acceptNativeReadback(null);
         setNativeHermesStatus('failed');
-        setNativeHermesError(error instanceof Error ? error.message : 'Native Hermes profile unavailable.');
+        setNativeHermesError(error instanceof Error ? error.message : 'Profile unavailable.');
       });
     return () => controller.abort();
   // Native readback is identity-scoped and deliberately independent from
@@ -1479,11 +1480,11 @@ export function AgentManager({
           </div>
           {runtimeKind !== 'hermes' ? (
             <div role="status" style={{ color: '#91A9B8', fontSize: 11 }}>
-              SkillGraph is available only for Cards bound to a native Hermes profile.
+              Skills are unavailable for this agent.
             </div>
           ) : nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {nativeHermesError || 'Native profile learning is unavailable.'}
+              {nativeHermesError || 'Learning unavailable.'}
             </div>
           ) : nativeHermesState ? (
             <>
@@ -1787,8 +1788,7 @@ export function AgentManager({
                       const key = event.target.value;
                       const selected = availableModels.find((model) => model.key === key);
                       if (key && !selected) return;
-                      setModelKey(key);
-                      setProviderModelId(selected?.providerModelId ?? null);
+                      setModel({ key, providerModelId: selected?.providerModelId ?? null });
                       markDraftDirty();
                     }}
                   >
@@ -2364,7 +2364,7 @@ export function AgentManager({
           fontSize: 12,
         }}
       >
-        Select a saved Card to edit its configuration.
+        Select an agent to edit.
       </div>
     );
   }

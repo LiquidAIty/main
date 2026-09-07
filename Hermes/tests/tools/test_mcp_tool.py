@@ -357,6 +357,55 @@ class TestLifecycleConfig:
 # ---------------------------------------------------------------------------
 
 class TestSchemaConversion:
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_real_graph_reference_schema_survives_conversion_and_refresh(self, monkeypatch, nested):
+        import ast
+        import copy
+        import json
+        from pathlib import Path
+        from types import SimpleNamespace
+        from jsonschema import Draft202012Validator
+        from tools import mcp_tool as mcp
+        from tools.registry import registry
+        from acp_adapter.host_profiles import apply_host_session_config
+
+        # Read the authoritative literal without starting the MCP host or its services.
+        source = Path(__file__).resolve().parents[3] / "apps/python-models/app/mcp_host.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        declaration = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+            and any(k.arg == "name" and isinstance(k.value, ast.Constant)
+                    and k.value.value == "card.load_graph_references" for k in node.keywords))
+        original = ast.literal_eval(next(k.value for k in declaration.keywords if k.arg == "inputSchema"))
+        expected = ({"type": "object", "properties": {"payload": original},
+                     "required": ["payload"], "additionalProperties": False} if nested else original)
+        before = json.dumps(expected, sort_keys=True)
+        Draft202012Validator.check_schema(expected)
+        converted = mcp._convert_mcp_schema("main-runtime", _make_mcp_tool(
+            name="nested" if nested else "card.load_graph_references", input_schema=expected))
+        Draft202012Validator.check_schema(converted["parameters"])
+        assert json.dumps(converted["parameters"], sort_keys=True) == before
+        assert json.dumps(expected, sort_keys=True) == before
+        monkeypatch.setattr(registry, "_tools", dict(registry._tools))
+        registry.register(name=converted["name"], toolset="schema-test", schema=converted,
+                          handler=lambda **_: None, override=True)
+        agent = SimpleNamespace(tools=[], valid_tool_names=set(), toolsets=[],
+                                disabled_toolsets=[], quiet_mode=True)
+        apply_host_session_config(agent, {"enabledToolsets": [], "enabledTools": [converted["name"]]})
+        mcp.refresh_agent_mcp_tools(agent)
+        final = json.loads(json.dumps(agent.tools))[0]["function"]
+        assert final["name"] == converted["name"]
+        assert json.dumps(final["parameters"], sort_keys=True) == before
+        actual = final["parameters"]["properties"]["payload"] if nested else final["parameters"]
+        assert actual["additionalProperties"] is False
+        assert actual["properties"]["required"] == {"type": "boolean"}
+        assert actual["required"] == original["required"]
+        Draft202012Validator.check_schema(final["parameters"])
+        invalid = copy.deepcopy(expected)
+        invalid["additionalProperties"] = "object"
+        with pytest.raises(Exception, match="not of type"):
+            Draft202012Validator.check_schema(mcp._convert_mcp_schema(
+                "main-runtime", _make_mcp_tool(input_schema=invalid))["parameters"])
+
     def test_converts_mcp_tool_to_hermes_schema(self):
         from tools.mcp_tool import _convert_mcp_schema
 

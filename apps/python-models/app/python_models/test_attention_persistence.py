@@ -190,3 +190,33 @@ def test_missing_materialized_read_schema_is_visible_even_without_runs(monkeypat
     monkeypatch.setattr(card_domain, "_age_rows", missing_read)
     with pytest.raises(card_domain.CardDomainError, match="agentgraph_materialized_read_unavailable:PermissionError"):
         card_domain.inspect_agentgraph({"projectId": "project-one", "deckId": "deck-one"})
+
+
+@pytest.mark.parametrize("target_card_id", ["card-main", "card-graph"])
+def test_reference_read_only_hands_context_to_a_different_card(monkeypatch, age_boundary, target_card_id):
+    runs, events, statements = age_boundary
+    runs["run-one"] = {"runId": "run-one", "projectId": "project-one",
+                       "deckId": "deck-one", "conversationId": "main",
+                       "cardId": "card-main", "state": "running"}
+    rows = card_domain._age_rows
+    handoffs = []
+
+    def observe(cursor, query, params, columns):
+        if "HANDED_CONTEXT_TO" in query:
+            handoffs.append(params["targetCardId"])
+            if params["targetCardId"] == "card-main":
+                raise PermissionError("handoff schema unavailable")
+            return [{"card_id": params["targetCardId"]}]
+        return rows(cursor, query, params, columns)
+
+    monkeypatch.setattr(card_domain, "_age_rows", observe)
+    event = {"eventId": "native-attention:one", "timestamp": "2026-09-06T22:20:00Z",
+             "projectId": "project-one", "deckId": "deck-one", "conversationId": "main",
+             "runId": "run-one", "cardId": "card-main", "targetCardId": target_card_id,
+             "toolName": "card.load_graph_references", "authority": "thinkgraph",
+             "operation": "read", "nativeNodeIds": ["existing-question"],
+             "resultHash": "a" * 64}
+    assert card_domain.observe_native_attention(event) is True
+    assert len(events) == 1
+    assert events[event["eventId"]]["nativeNodeIds"] == ["existing-question"]
+    assert handoffs == ([] if target_card_id == "card-main" else ["card-graph"])

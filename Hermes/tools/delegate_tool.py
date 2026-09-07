@@ -3847,6 +3847,7 @@ def delegate_task(
                 "parentExecutionContextId": parent_context_id,
                 "nativeChildId": f"profile-{_uuid.uuid4().hex[:12]}",
                 "targetProfile": profile,
+                "background": background,
                 "goal": goal.strip(),
                 "context": context or "",
                 **({"dataAnchors": data_anchors} if data_anchors is not None else {}),

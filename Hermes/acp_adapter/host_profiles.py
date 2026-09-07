@@ -409,7 +409,8 @@ def _project_delegation_roles(
         if roles and set(roles).issubset({"team", "profile"}):
             properties.pop("tasks", None)
             properties.pop("output_schema", None)
-            properties.pop("background", None)
+            if "profile" not in roles:
+                properties.pop("background", None)
             properties.pop("action", None)
             properties.pop("subagent_id", None)
             properties.pop("message", None)
@@ -718,6 +719,10 @@ def activate_host_script_fallback() -> list[str]:
         if str((item.get("function") or {}).get("name") or "") != "execute_host_script"
     ]
     definitions = _merge_definitions(definitions, _explicit_tool_definitions(native_names))
+    config = copy.deepcopy(agent._host_session_config)
+    config.pop("hostScript", None)
+    config["enabledTools"] = list(dict.fromkeys([*config.get("enabledTools", []), *native_names]))
+    agent._host_session_config = config
     agent.tools = definitions
     agent.valid_tool_names = {
         str((item.get("function") or {}).get("name") or "")
@@ -785,13 +790,8 @@ def _blocked_exact_tools(disabled_toolsets: Any) -> set[str]:
     return blocked
 
 
-def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None:
-    """Publish one host-scoped tool/profile surface atomically on ``agent``."""
-
-    attach_host_session_config(agent, config)
-    if config is None:
-        return
-
+def host_session_tool_definitions(agent: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Resolve the same exact host selection at setup and native refresh."""
     from model_tools import get_tool_definitions
 
     toolsets = list(config.get("enabledToolsets") or [])
@@ -801,6 +801,7 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
         enabled_toolsets=toolsets,
         disabled_toolsets=disabled_toolsets,
         quiet_mode=True,
+        skip_tool_search_assembly=True,
     )
     blocked_explicit = [
         name for name in explicit_names if name in _blocked_exact_tools(disabled_toolsets)
@@ -822,6 +823,17 @@ def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None
         config.get("delegationRoles"),
         config.get("profileTargets"),
     )
+    return definitions
+
+
+def apply_host_session_config(agent: Any, config: dict[str, Any] | None) -> None:
+    """Publish one host-scoped tool/profile surface on ``agent``."""
+    attach_host_session_config(agent, config)
+    if config is None:
+        return
+    definitions = host_session_tool_definitions(agent, config)
+    toolsets = list(config.get("enabledToolsets") or [])
+    explicit_names = list(config.get("enabledTools") or [])
 
     # Memory-provider tools are injected only when the trusted host selected
     # the native memory surface.  This prevents provider defaults from widening

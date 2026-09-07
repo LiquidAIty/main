@@ -2168,7 +2168,7 @@ describe('coder routes', () => {
       }
     });
 
-    it('streams the existing AGE contract for non-Main Cards and asks for direct current-Run scope', async () => {
+    it('streams the current Card root and its internal native activity with original identities', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init: any) => {
         if (endpoint !== '/domain/agentgraph/inspect') return railsImplementation(endpoint, init);
@@ -2188,7 +2188,14 @@ describe('coder routes', () => {
           }, { eventId: 'child-event', timestamp: '2026-08-27T12:00:01Z', nativeChildId: 'native-child',
             projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-coder', runId: 'coder-run',
             authority: 'codegraph', operation: 'read', toolName: 'cbm.search_graph',
-            nativeNodeIds: ['pkg.child'], nativeEdgeIds: [], resultHash: 'b'.repeat(64) }] }] };
+            nativeNodeIds: ['pkg.child'], nativeEdgeIds: [], resultHash: 'b'.repeat(64) }] },
+          { runId: 'team-run', rootRunId: 'coder-run', nativeChildId: 'team-root', cardId: 'card-coder',
+            deckId: 'deck_builder', state: 'completed', materializedNativeReferences: [],
+            attentionEvents: [{ eventId: 'team-event', timestamp: '2026-08-27T12:00:03Z',
+              projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-coder', runId: 'team-run',
+              nativeChildId: 'team-worker', authority: 'codegraph', operation: 'read', toolName: 'cbm.search_graph',
+              nativeNodeIds: ['pkg.team'], nativeEdgeIds: [], resultHash: 'd'.repeat(64) }] },
+        ] };
       });
       const { server, baseUrl } = await createApiServer();
       const controller = new AbortController();
@@ -2202,8 +2209,12 @@ describe('coder routes', () => {
         expect(body).toContain('pkg.materialized');
         expect(body).toContain('event: native_attention');
         expect(body).toContain('pkg.direct');
-        expect(body).not.toContain('pkg.child');
-        expect(body).not.toContain('child-event');
+        expect(body).toContain('pkg.child');
+        expect(body).toContain('child-event');
+        expect(body).toContain('pkg.team');
+        expect(body).toContain('"rootRunId":"coder-run"');
+        expect(body).toContain('"runId":"team-run"');
+        expect(body).toContain('"nativeChildId":"team-worker"');
         expect(body.indexOf('direct-event')).toBeLessThan(body.indexOf('delete-event'));
       } finally {
         controller.abort();

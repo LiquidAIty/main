@@ -55,13 +55,14 @@ export type NativeAttentionEvent = {
   change?: 'read' | 'write' | 'create' | 'delete' | 'clear';
   nativeChildId?: string | null;
   nativeRunId?: string | null;
+  rootRunId?: string | null;
   runState?: string;
   scopeGroupIds?: string[];
 };
 
 export type NativeAttentionSession = {
   projectId: string; deckId: string; cardId: string; runId: string | null;
-  state: string | null; nativeChildId?: string | null;
+  state: string | null; nativeChildId?: string | null; rootRunId?: string | null;
   materializedNativeReferences?: Array<{ authority: string; nativeId: string }>;
 };
 
@@ -359,6 +360,9 @@ export function projectNativeAttentionEvent(args: {
     runId: event.runId,
     cardId: event.cardId,
     resultHash: event.resultHash,
+    rootRunId: event.rootRunId || event.runId,
+    nativeChildId: event.nativeChildId || null,
+    nativeRunId: event.nativeRunId || null,
   };
   const nodes = nodeIds.map((nativeId): GraphProjectionNode => ({
     id: nativeId,
@@ -580,9 +584,8 @@ export default function useAgentBuilderGraphAttention({
       || !['thinkgraph', 'knowgraph', 'codegraph'].includes(event.authority) || event.persisted === false
       || !event.eventId || !event.toolName || !event.resultHash || !Number.isFinite(Date.parse(event.timestamp))
       || (event.phase && event.phase !== 'completed')) return;
-    if (selectedCardId && (event.cardId !== selectedCardId || event.nativeChildId
-      || event.runId !== selectedRunRef.current
-      || (event.runState && !['running', 'observing'].includes(event.runState)))) return;
+    if (selectedCardId && (event.cardId !== selectedCardId
+      || (event.rootRunId || event.runId) !== selectedRunRef.current)) return;
     const key = `${event.eventId}:${event.phase || 'completed'}:${event.resultHash}`;
     if (seenEventIdsRef.current.has(key)) return;
     if (event.change === 'delete' || event.change === 'clear') {
@@ -626,9 +629,12 @@ export default function useAgentBuilderGraphAttention({
 
   const observeAttentionSession = useCallback((session: NativeAttentionSession) => {
     if (session.projectId !== projectId || session.deckId !== deckId) return;
-    if (selectedCardId && (session.cardId !== selectedCardId || session.nativeChildId)) return;
+    if (selectedCardId && session.cardId !== selectedCardId) return;
     const active = ['running', 'observing'].includes(session.state || '');
-    if (selectedCardId) {
+    const internal = Boolean(session.nativeChildId);
+    if (selectedCardId && internal && (!session.rootRunId
+      || session.rootRunId !== selectedRunRef.current)) return;
+    if (selectedCardId && !internal) {
       const nextRun = active ? session.runId : null;
       if (selectedRunRef.current !== nextRun || !nextRun) {
         selectedRunRef.current = nextRun;
@@ -638,7 +644,7 @@ export default function useAgentBuilderGraphAttention({
           thinkgraph: authoritativeThinkGraphRef.current,
         });
       }
-    } else if (!active) {
+    } else if (!selectedCardId && !active) {
       setProjections((current) => Object.fromEntries(Object.entries(current).map(([authority, value]) => [authority, {
         ...value, nodes: value.nodes.map((node) => node.properties?.attentionRunId === session.runId
           ? { ...node, properties: { ...node.properties, attentionActive: false } } : node),
@@ -646,7 +652,7 @@ export default function useAgentBuilderGraphAttention({
           ? { ...edge, properties: { ...edge.properties, attentionActive: false } } : edge),
       }])) as typeof current);
     }
-    if (!active || !session.runId) return;
+    if ((!active && !(selectedCardId && internal)) || !session.runId) return;
     // READ edges already record the IDs Python actually materialized. They
     // are not tool calls and do not imply any descendant traversal.
     for (const authority of ['thinkgraph', 'knowgraph', 'codegraph'] as const) {
@@ -659,6 +665,7 @@ export default function useAgentBuilderGraphAttention({
             toolName: '', operation: 'read', runId: session.runId,
           }),
           provenance: { authority, nativeId: ref.nativeId, runId: session.runId,
+            rootRunId: session.rootRunId || session.runId, nativeChildId: session.nativeChildId || null,
             cardId: session.cardId, source: 'AGE READ' },
         }));
       if (nodes.length) {

@@ -893,6 +893,35 @@ Sessions without trusted host Script metadata and all ordinary `execute_code`/CL
 behavior. Exact files, contracts, proof, fork cost and rollback are recorded in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
+Normal MCP refresh now resolves the active host session through the same Python
+`host_session_tool_definitions` projection as initial setup. This preserves exact tool selection,
+Script input schemas and delegation targets without disabling refresh or registering another toolset.
+The projection bypasses native tool-search assembly because the saved Script already owns compact
+presentation. The existing selected-tool failure fallback updates only that session's configuration;
+ordinary sessions keep their existing refresh path. This extends the same NousResearch/hermes-agent
+fork in `acp_adapter/host_profiles.py` and `tools/mcp_tool.py`; the focused host/refresh suite passes
+30 tests. Fork cost is one shared projection call at refresh; rollback is the bounded change to these
+two files and corresponding tests. After canonical reload, Main Run `req_94b760ad` recorded the
+Script and all six selected direct tools among 14 pre-model definitions, without separate wrapped
+read schemas. Execution then failed at the model API because the existing
+`card.load_graph_references` schema was rejected; Script execution and native graph attribution
+remain unproven. The existing plugin receipt records pre-model tool names and Script schema.
+
+The same fork's `_normalize_mcp_input_schema` now treats schema maps (`properties`,
+`patternProperties`, definitions and dependent schemas) as maps rather than schema nodes.
+Previously an argument named `required` caused object repair to insert `properties.type =
+"object"`, invalidating the otherwise valid graph-reference contract. The existing traversal
+now repairs each subschema without editing the map. Regression tests extract the real Python
+catalog literal and check exact preservation through conversion and host refresh, including a
+nested schema. This bounded divergence adds no schema owner; rollback is the contextual traversal
+change and its tests. After canonical reload, Main UI Run `req_5315fc6d` completed with the same
+14 model-facing tools. Its saved Script successfully called `cbm.search_graph` and `cbm.trace_path`
+through the existing Python executor and application MCP. AGE records both reads under Main,
+including `native-attention:f6ba8ea0-54ff-4f5a-98b6-f89e4cbcad54`, with zero graph writes.
+All 692 saved fields and nine profile configuration hashes remained unchanged. The provider
+accepted the tool list and the recorded graph-reference schema matches the catalog; the native
+diagnostic hook depth-limits five other schema copies, so those copies are not full-schema evidence.
+
 OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.
 

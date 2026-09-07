@@ -10,6 +10,23 @@ import pytest
 import liquidaity_hermes_plugin as plugin
 
 
+def test_pre_model_receipt_uses_actual_request_tools():
+    bridge = plugin._MainCliBridge.__new__(plugin._MainCliBridge)
+    events = []
+    bridge._projection = lambda kind, **event: events.append(event)
+    schema = {"type": "object", "properties": {"query": {"type": "string"}}}
+    bridge.on_pre_api_request(api_request_id="request", tool_count=2, request={"body": {
+        "tools": [
+            {"type": "function", "name": "execute_host_script", "parameters": schema},
+            {"type": "function", "function": {"name": "delegate_task", "parameters": {}}},
+        ]}})
+    detail = events[0]["detail"]
+    assert detail["toolNames"] == ["execute_host_script", "delegate_task"]
+    assert detail["scriptInputSchema"] == schema
+    assert detail["toolCount"] == 2
+    assert detail["toolSchemas"] == {"execute_host_script": schema, "delegate_task": {}}
+
+
 def _context():
     return SimpleNamespace(
         task_id="t_root",

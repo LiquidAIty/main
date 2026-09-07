@@ -270,7 +270,7 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.codegraph.nodes).toHaveLength(5);
   });
 
-  it('shows only direct current-Run materialization and hides it when the selected Card finishes', () => {
+  it('includes current internal Team activity under its Card and clears it when the root finishes', () => {
     const { result } = renderHook(() => useAgentBuilderGraphAttention({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', selectedCardId: 'card-kanban',
     }));
@@ -282,10 +282,23 @@ describe('attention-activated native graph projection', () => {
       result.current.observeAttentionEvent(direct);
       result.current.observeAttentionEvent({ ...direct, eventId: 'child', nativeChildId: 'native-worker', nativeNodeIds: ['pkg.child'] });
       result.current.observeAttentionEvent({ ...direct, eventId: 'old', runId: 'old-run', nativeNodeIds: ['pkg.old'] });
-      result.current.observeAttentionSession({ ...session, runId: 'child-run', nativeChildId: 'native-worker',
+      result.current.observeAttentionSession({ ...session, runId: 'child-run', rootRunId: 'root-run', nativeChildId: 'native-worker',
+        state: 'completed',
         materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.child-input' }] });
+      result.current.observeAttentionEvent({ ...direct, eventId: 'worker-event', runId: 'child-run', rootRunId: 'root-run',
+        nativeChildId: 'native-worker', runState: 'completed', nativeNodeIds: ['pkg.worker'] });
+      result.current.observeAttentionEvent({ ...direct, eventId: 'profile-event', cardId: 'other-card',
+        rootRunId: 'root-run', nativeNodeIds: ['pkg.other-card'] });
+      result.current.observeAttentionEvent({ ...direct, eventId: 'older-team', runId: 'old-child',
+        rootRunId: 'old-root', nativeChildId: 'old-worker', nativeNodeIds: ['pkg.old-team'] });
+      result.current.observeAttentionSession({ ...session, cardId: 'other-card', runId: 'profile-run',
+        materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.profile-input' }] });
     });
-    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.input', 'pkg.direct']);
+    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual([
+      'pkg.input', 'pkg.direct', 'pkg.child', 'pkg.child-input', 'pkg.worker',
+    ]);
+    expect(result.current.projections.codegraph.nodes.find(node => node.id === 'pkg.worker')?.provenance)
+      .toMatchObject({ cardId: 'card-kanban', runId: 'child-run', rootRunId: 'root-run', nativeChildId: 'native-worker' });
     act(() => result.current.observeAttentionSession({ ...session, state: 'completed' }));
     expect(result.current.projections.codegraph.nodes).toEqual([]);
     act(() => result.current.observeAttentionEvent({ ...attention('codegraph', ['pkg.stale'], [], 'card-kanban'), runId: 'root-run' }));
