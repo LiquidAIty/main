@@ -5,8 +5,8 @@ const CORR = 'req_abc12345';
 
 describe('formatHarnessTrace — only real events, concise, with correlation id', () => {
   it('formats a real tool_start with the actual tool name + correlation id', () => {
-    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'constellation.context' }, CORR))
-      .toBe(`[tool] constellation.context started corr=${CORR}`);
+    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'engraphis_recall_context' }, CORR))
+      .toBe(`[tool] engraphis_recall_context started corr=${CORR}`);
   });
 
   it('maps a card-run tool call to an [agent] doorway line', () => {

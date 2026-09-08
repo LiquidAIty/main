@@ -26,6 +26,44 @@ def test_public_mcp_identity_is_liquidaity():
     )
 
 
+def test_gpt_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeypatch):
+    import asyncio
+    import jsonschema
+    import mcp_host
+    from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
+
+    names = READ_TOOLS | WRITE_TOOLS
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: names)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
+    tools = mcp_host._gpt_public_catalog(
+        asyncio.run(mcp_host._materialize_complete_catalog()))
+    assert {tool.name for tool in tools} == names
+    assert len(tools) == len(names)
+    assert not any(name.startswith("constellation.")
+                   for name in mcp_host.external_mcp_tool_ids())
+    for tool in tools:
+        schema = tool.inputSchema
+        jsonschema.Draft202012Validator.check_schema(schema)
+        assert schema["additionalProperties"] is False
+        assert not ({"projectId", "workspace", "repo", "scope", "session_id"}
+                    & schema["properties"].keys())
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        assert payload["securitySchemes"] == [{
+            "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
+        }]
+        assert payload["_meta"]["securitySchemes"] == payload["securitySchemes"]
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+    jsonschema.validate({"query": "spacecraft component suppliers", "k": 6,
+                         "token_budget": 600}, schemas["engraphis_recall_context"])
+    jsonschema.validate({"memory_id": "native-id"}, schemas["engraphis_get_memory"])
+    jsonschema.validate({"content": "A tentative assistant suggestion",
+                         "title": "Paper journal", "summary": "A proposal, not a user decision."},
+                        schemas["engraphis_remember"])
+    jsonschema.validate({"memory_id": "native-id", "summary": "Clarified summary"},
+                        schemas["engraphis_update_memory"])
+
+
 def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
     import asyncio
     import mcp_host
@@ -43,16 +81,16 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.005)
 
-    result = asyncio.run(mcp_host.call_tool("constellation.remember_semantic", {}))
+    result = asyncio.run(mcp_host.call_tool("engraphis_remember", {}))
     assert not getattr(result, "isError", False)
-    assert completed == ["constellation.remember_semantic"]
+    assert completed == ["engraphis_remember"]
     # Ordinary reads keep their short deadline; this is not a global increase.
-    result = asyncio.run(mcp_host.call_tool("constellation.context", {}))
+    result = asyncio.run(mcp_host.call_tool("engraphis_recall_context", {}))
     assert result.isError
-    assert completed == ["constellation.remember_semantic"]
+    assert completed == ["engraphis_remember"]
 
 
-def test_constellation_rejection_reaches_agent_without_success_or_retry(monkeypatch):
+def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch):
     import asyncio
     import io
     from urllib.error import HTTPError
@@ -64,7 +102,7 @@ def test_constellation_rejection_reaches_agent_without_success_or_retry(monkeypa
     def reject(request, **kwargs):
         requests.append(json.loads(request.data))
         raise HTTPError(request.full_url, 409, "Conflict", {}, io.BytesIO(
-            b'{"detail":"constellation_edge_type_invalid"}'))
+            b'{"detail":"thinkgraph_summary_invalid"}'))
 
     monkeypatch.setattr(mcp_host, "urlopen", reject)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
@@ -72,16 +110,17 @@ def test_constellation_rejection_reaches_agent_without_success_or_retry(monkeypa
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
     monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *args, **kwargs: None)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
-    result = asyncio.run(mcp_host.call_tool("constellation.remember", {
-        "id": "question", "l0": "Question", "l1": "Question", "l2": "Question",
+    monkeypatch.setitem(mcp_host._ALLOWED_KEYS, "engraphis_remember", {"content"})
+    result = asyncio.run(mcp_host.call_tool("engraphis_remember", {
+        "content": "A retained thought",
     }))
     assert result.isError is True
     assert json.loads(result.content[0].text) == {
-        "ok": False, "error": "constellation_edge_type_invalid",
+        "ok": False, "error": "thinkgraph_summary_invalid",
     }
     receipt = json.loads(result.content[-1].text)["executionReceipt"]
     assert receipt["state"] == "failed"
-    assert receipt["failureCode"] == "constellation_edge_type_invalid"
+    assert receipt["failureCode"] == "thinkgraph_summary_invalid"
     assert len(requests) == 1
     assert requests[0]["projectId"] == "project-one"
 
@@ -600,10 +639,10 @@ def test_materializer_native_reads_keep_project_scope_without_a_fake_run(monkeyp
     monkeypatch.setattr(mcp_host, "_call_native_graphiti", graphiti)
     asyncio.run(mcp_host._dispatch_tool("graphiti.search_memory_facts", {"query": "sources"}))
     assert calls == [("search_memory_facts", {"query": "sources", "group_ids": ["liquidaity-project-1"]})]
-    monkeypatch.setattr(mcp_host, "_constellation_via_python_rails_sync", lambda *args: calls.append(args) or {"nodes": []})
-    asyncio.run(mcp_host._dispatch_tool("constellation.context", {"focus": "sources"}))
-    assert calls[-1] == ("constellation.context", "project-1", {"focus": "sources"})
-    rejected = asyncio.run(mcp_host._dispatch_tool("constellation.context", {"focus": "sources", "projectId": "foreign"}))
+    monkeypatch.setattr(mcp_host, "_thinkgraph_via_python_rails_sync", lambda *args: calls.append(args) or {"nodes": []})
+    asyncio.run(mcp_host._dispatch_tool("engraphis_recall_context", {"query": "sources"}))
+    assert calls[-1] == ("engraphis_recall_context", "project-1", {"query": "sources"})
+    rejected = asyncio.run(mcp_host._dispatch_tool("engraphis_recall_context", {"query": "sources", "projectId": "foreign"}))
     assert "caller_identity_rejected" in rejected[0].text
 
 
@@ -1545,7 +1584,7 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
-    assert mcp_host._mcp_tool_timeout_seconds("constellation.remember") == 30.0
+    assert mcp_host._mcp_tool_timeout_seconds("engraphis_remember") == 190.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 
@@ -1640,7 +1679,7 @@ def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
     }
 
 
-@pytest.mark.parametrize("name", ["constellation.context", "constellation.inspect"])
+@pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
 def test_idd_read_access_does_not_overwrite_native_side_effect_annotations(name):
     import mcp_host
 
@@ -1657,7 +1696,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(monkeypatch):
 
     principal = {"kind": "card-runtime", "grantedTools": ["graphiti.add_memory"]}
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
-    assert mcp_host._request_tool_is_allowed("constellation.remember") is False
+    assert mcp_host._request_tool_is_allowed("engraphis_remember") is False
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
     assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
     principal["grantedTools"].append("cbm.search_graph")
@@ -1668,7 +1707,7 @@ def test_ungranted_and_destructive_tools_are_not_callable(monkeypatch):
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(
         mcp_host.Tool(name=name, inputSchema={"type": "object"})
-        for name in ["constellation.remember", "cbm.search_graph", "graphiti.add_memory"]
+        for name in ["engraphis_remember", "cbm.search_graph", "graphiti.add_memory"]
     ))
     assert {tool.name for tool in asyncio.run(mcp_host.list_tools())} == {"cbm.search_graph", "graphiti.add_memory"}
 
@@ -1790,7 +1829,7 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         assert "agentgraph.inspect" in by_name
         assert "write_mag_one_instructions" in by_name
         assert "card.load_graph_references" in by_name
-        assert {"constellation.context", "constellation.inspect", "constellation.remember"}.issubset(by_name)
+        assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
         assert not any(name.startswith("engraphis.") for name in by_name)
         assert "coder.status" not in by_name
         assert all(
@@ -1930,9 +1969,9 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
         "cbm.index_repository",
         "cbm.ingest_traces",
         "cbm.manage_adr",
-        "constellation.context",
-        "constellation.inspect",
-        "constellation.remember",
+        "engraphis_recall_context",
+        "engraphis_get_memory",
+        "engraphis_remember",
         "graphiti.clear_graph",
     }.issubset(published_names)
 
@@ -2907,7 +2946,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 "agentgraph.inspect",
                 "cbm.search_graph",
                 "graphiti.get_status",
-                "constellation.context",
+                "engraphis_recall_context",
                 "mag_one.describe_connected_agents",
                 "write_mag_one_instructions",
             }.issubset(first_catalog)
@@ -3130,9 +3169,9 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         if name not in native_names
     )
     assert not any(name.startswith("worldsignals.") for name in by_name)
-    assert {"constellation.context", "constellation.inspect", "constellation.remember"}.issubset(by_name)
-    assert "projectId" not in by_name["constellation.context"].inputSchema["properties"]
-    assert "projectId" not in by_name["constellation.remember"].inputSchema["properties"]
+    assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
+    assert "projectId" not in by_name["engraphis_recall_context"].inputSchema["properties"]
+    assert "projectId" not in by_name["engraphis_remember"].inputSchema["properties"]
     assert "codegraph.status" not in by_name
     assert "codegraph.search" not in by_name
     assert {"cbm.search_graph", "cbm.index_status"}.issubset(by_name)
@@ -3155,7 +3194,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     ]
     assert "saved runtime adapter" in card_tool.description
     assert "instructionId" not in card_tool.inputSchema["properties"]
-    assert {scheme["scopes"][0] for scheme in by_name["constellation.context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
+    assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert by_name["cbm.search_graph"].description == "Native search description."
@@ -3172,18 +3211,18 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "graphiti.search_nodes",
     }.issubset(main_names)
     assert {
-        "constellation.context", "graphiti.get_status",
+        "engraphis_recall_context", "graphiti.get_status",
         "card.create", "card.update_configuration", "canvas.upsert_wire",
     }.issubset(main_names)
     active_scopes[:] = ["main"]
 
     calls = []
-    def constellation_call(name, project_id, arguments):
+    def thinkgraph_call(name, project_id, arguments):
         calls.append((name, project_id, arguments))
         return {"ok": True, "id": arguments.get("id"), "nodes": []}
 
     monkeypatch.setattr(
-        mcp_host, "_constellation_via_python_rails_sync", constellation_call
+        mcp_host, "_thinkgraph_via_python_rails_sync", thinkgraph_call
     )
 
     def call_native_cbm(name, arguments):
@@ -3219,25 +3258,24 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         return {"ok": True}
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
 
-    asyncio.run(mcp_host.call_tool("constellation.context", {"focus": "Main", "budget": 2000}))
+    asyncio.run(mcp_host.call_tool("engraphis_recall_context", {"query": "Main", "token_budget": 2000}))
     assert calls[-1] == (
-        "constellation.context",
+        "engraphis_recall_context",
         "project-1",
-        {"focus": "Main", "budget": 2000},
+        {"query": "Main", "token_budget": 2000},
     )
 
     memory = {
-        "id": "approved-fact", "l0": "Approved fact", "l1": "Approved fact",
-        "l2": "Approved fact",
+        "title": "Approved fact", "content": "Approved fact",
     }
-    asyncio.run(mcp_host.call_tool("constellation.remember", memory))
+    asyncio.run(mcp_host.call_tool("engraphis_remember", memory))
     assert calls[-1] == (
-        "constellation.remember",
+        "engraphis_remember",
         "project-1",
         memory,
     )
     rejected_scope = asyncio.run(mcp_host.call_tool(
-        "constellation.remember",
+        "engraphis_remember",
         {**memory, "projectId": "other-project"},
     ))
     assert json.loads(rejected_scope.content[0].text) == {

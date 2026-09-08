@@ -51,8 +51,8 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
   TypeScript does not maintain a fallback tool catalog. LiquidAIty-owned
   controls include `web_search`; CBM and Graphiti tools are discovered from their upstream MCP
   servers and mechanically namespaced as `cbm.<native_name>` and `graphiti.<native_name>`.
-  ThinkGraph uses bounded `constellation.context`, `constellation.inspect`, and
-  `constellation.remember` operations over the pinned engine.
+  ThinkGraph uses native `engraphis_recall_context`, `engraphis_get_memory`, and
+  explicitly granted Engraphis writes through its single Python-rails owner.
 - AutoGen/Mag One card tool ids pass through TypeScript unchanged and resolve
   only in Python's canonical `tool_registry.py`; those runtime tools never
   become replacement graph APIs on native Hermes Cards.

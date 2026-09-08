@@ -12,9 +12,10 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Callable
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from app.python_models.internal_mcp import call_read_tools_via_mcp
-from app.python_models.engraphis import inspect as inspect_thinkgraph
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -59,25 +60,56 @@ def read_thinkgraph_exact(
     native_id: str,
     *,
     db_path: str | Path | None = None,
+    bounded_expansion: int = 0,
+    result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
 ) -> dict[str, Any] | None:
     """Read the exact memory through the same Engraphis service used by agents."""
     if db_path is not None:
         raise DataAnchorError("data_anchor_database_override_not_supported")
+    if bounded_expansion not in (0, 1) or not 1 <= result_limit <= _KNOWGRAPH_RESULT_LIMIT:
+        raise DataAnchorError("data_anchor_expansion_invalid")
     try:
-        native = inspect_thinkgraph(project_id, native_id)
-    except ValueError:
-        return None
+        # This resolver also runs inside MCP for selected-Card handoffs. Only
+        # Python rails may own Engraphis; never instantiate it in this process.
+        request = Request(
+            os.environ.get("AUTOGEN_ORCHESTRATOR_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
+            data=json.dumps({"projectId": project_id, "operation": "inspect",
+                             "arguments": {"nativeId": native_id}}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urlopen(request, timeout=30) as response:
+            native = json.load(response)
+    except HTTPError as error:
+        if error.code == 409:
+            return None
+        raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
     except Exception as error:
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
     row = native.get("memory")
     if not isinstance(row, dict):
         return None
+    links = native.get("nativeLinks", []) if bounded_expansion else []
+    links = links[:max(0, result_limit - 1)]
+    neighbors = {link["b"] if link["a"] == row["id"] else link["a"] for link in links}
+    relationships = [{
+        "nativeId": json.dumps([link["a"], link["b"], link["relation"]], separators=(",", ":")),
+        "sourceNativeId": link["a"], "targetNativeId": link["b"], "type": link["relation"],
+        "properties": {"reason": link.get("reason", ""), "layer": link.get("layer")},
+    } for link in links]
     return {
         "authority": "ThinkGraph", "nativeId": row["id"], "nativeKind": "node",
         "recordId": row["id"], "type": row.get("mtype", "semantic"),
         "title": row.get("title", ""), "content": str(row.get("content", ""))[:_ANCHOR_BODY_LIMIT],
         "metadata": row.get("metadata", {}), "provenance": row.get("provenance", {}),
         "asOf": "current", "readOperation": "engraphis_get_memory",
+        "relationshipEvidence": [{
+            "nodes": [{"nativeId": link["id"], "title": link["title"]}
+                      for link in native.get("links", []) if link["id"] in neighbors],
+            "relationships": relationships,
+        }] if relationships else [],
+        "resultLimit": result_limit,
+        "truncated": len(str(row.get("content", ""))) > _ANCHOR_BODY_LIMIT
+            or bounded_expansion > 0 and len(native.get("nativeLinks", [])) > len(links),
     }
 
 
@@ -1022,12 +1054,12 @@ def resolve_data_anchors(
         if not native_id:
             continue
         if authority == "ThinkGraph":
-            if anchor["boundedExpansion"] != 0:
-                raise DataAnchorError("data_anchor_expansion_not_supported:ThinkGraph")
             record = read_thinkgraph_exact(
                 project_id,
                 native_id,
                 db_path=thinkgraph_db_path,
+                bounded_expansion=anchor["boundedExpansion"],
+                result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
             )
         elif authority == "KnowGraph":
             record = read_knowgraph_exact(

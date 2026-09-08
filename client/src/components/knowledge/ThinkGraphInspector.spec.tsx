@@ -20,10 +20,10 @@ import type { GraphProjectionV1 } from './NativeAuthorityGraphSurface';
 
 afterEach(() => { cleanup(); observed.renderers.length = 0; observed.layouts.length = 0; });
 const projection: GraphProjectionV1 = {
-  schemaVersion: 'thinkgraph.constellation.v1', authority: 'constellation-engine', projectId: 'p',
+  schemaVersion: 'thinkgraph.engraphis.v1', authority: 'engraphis', projectId: 'p',
   nodes: [{ id: 'q', label: 'Which evidence?', mentionCount: 1, properties: { summary: 'A real stored summary.', fullContent: 'The actual discussion and its uncertainty.', nodeType: 'Question', questionStatus: 'contested', authoredBy: 'assistant', answerRefs: [{ authority: 'knowgraph', nativeId: 'episode', projectId: 'p' }] } },
     { id: 'h', label: 'Initial hypothesis', mentionCount: 1 }],
-  edges: [{ id: '7', source: 'q', target: 'h', predicate: 'questions', mentionCount: 1, properties: { edgeClass: 'explicit', strength: 0.8, rationale: 'The evidence is unresolved.' } }],
+  edges: [{ id: '["q","h","questions"]', source: 'q', target: 'h', predicate: 'questions', mentionCount: 1, properties: { edgeClass: 'explicit', reason: 'The evidence is unresolved.' } }],
 };
 
 describe('ThinkGraph interaction', () => {
@@ -39,7 +39,7 @@ describe('ThinkGraph interaction', () => {
     const count = observed.layouts.length;
     rerender(<ConstellationSigmaSurface projection={{ ...projection, revision: 'content-only' }} status="ready" error={null} onExpand={expand} />);
     expect(observed.layouts).toHaveLength(count);
-    act(() => observed.renderers.at(-1).handlers.clickEdge({ edge: '7' }));
+    act(() => observed.renderers.at(-1).handlers.clickEdge({ edge: '["q","h","questions"]' }));
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('The evidence is unresolved.');
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('explicit');
   });

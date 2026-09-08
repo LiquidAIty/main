@@ -766,25 +766,25 @@ describe('Hermes ACP transport identity', () => {
   it('does not report a completed Run after a Card-authorized effect failed', () => {
     expect(() => {
       requireHermesEffectSuccess(
-        ['constellation.remember'],
-        [{ toolName: 'constellation.remember', toolUseId: 'tool-1', isError: true }],
+        ['engraphis_remember'],
+        [{ toolName: 'engraphis_remember', toolUseId: 'tool-1', isError: true }],
       );
       requireHermesCompletionText('I answered even though the required write failed.');
-    }).toThrow('hermes_required_effect_failed:constellation.remember');
+    }).toThrow('hermes_required_effect_failed:engraphis_remember');
     expect(() => requireHermesEffectSuccess(
-      ['constellation.remember'],
-      [{ toolName: 'constellation.remember', toolUseId: 'tool-1', isError: false }],
+      ['engraphis_remember'],
+      [{ toolName: 'engraphis_remember', toolUseId: 'tool-1', isError: false }],
     )).not.toThrow();
   });
 
   it('maps one Hermes MCP runtime name back to its exact Card effect grant', () => {
-    const effects = new Set(['constellation.remember', 'card.run_assistant_agent']);
+    const effects = new Set(['engraphis_remember', 'card.run_assistant_agent']);
     expect(resolveHermesEffectToolName(
       effects,
-      'mcp__main_runtime_3b25e34a0e05__constellation_remember',
-    )).toBe('constellation.remember');
-    expect(resolveHermesEffectToolName(effects, 'constellation.remember')).toBe('constellation.remember');
-    expect(resolveHermesEffectToolName(effects, 'constellation.inspect')).toBe('constellation.inspect');
+      'mcp__main_runtime_3b25e34a0e05__engraphis_remember',
+    )).toBe('engraphis_remember');
+    expect(resolveHermesEffectToolName(effects, 'engraphis_remember')).toBe('engraphis_remember');
+    expect(resolveHermesEffectToolName(effects, 'engraphis_get_memory')).toBe('engraphis_get_memory');
   });
 
   it('does not guess when normalized Card effect names are ambiguous', () => {
@@ -795,8 +795,8 @@ describe('Hermes ACP transport identity', () => {
 
   it('keeps optional readable-tool failures separate from required effects', () => {
     expect(() => requireHermesEffectSuccess(
-      ['constellation.remember'],
-      [{ toolName: 'constellation.inspect', toolUseId: 'tool-1', isError: true }],
+      ['engraphis_remember'],
+      [{ toolName: 'engraphis_get_memory', toolUseId: 'tool-1', isError: true }],
     )).not.toThrow();
   });
 
@@ -1002,7 +1002,7 @@ describe('Hermes ACP transport identity', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: [],
-      grantedTools: ['constellation.context', 'graphiti.get_status'],
+      grantedTools: ['engraphis_recall_context', 'graphiti.get_status'],
       script: {
         version: 4,
         source: 'from hermes_tools import output\noutput.emit({})\n',
@@ -1013,10 +1013,10 @@ describe('Hermes ACP transport identity', () => {
           type: 'object', properties: { focus: { type: 'string' } }, required: ['focus'],
         },
         outputSchema: { type: 'object', properties: {} },
-        toolHandles: ['constellation.context'],
-        toolStates: { 'constellation.context': 1, 'graphiti.get_status': 0 },
+        toolHandles: ['engraphis_recall_context'],
+        toolStates: { 'engraphis_recall_context': 1, 'graphiti.get_status': 0 },
         offToolIds: ['graphiti.get_status'],
-        scriptToolIds: ['constellation.context'],
+        scriptToolIds: ['engraphis_recall_context'],
         agentToolIds: [],
         timeoutSeconds: 12,
         maxToolCalls: 3,
@@ -1034,20 +1034,20 @@ describe('Hermes ACP transport identity', () => {
     expect(config.enabledTools).toEqual([]);
     expect(config.hostScript.version).toBe(4);
     expect(config.hostScript.toolAliases).toEqual({
-      'constellation.context': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__constellation_context`,
+      'engraphis_recall_context': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__engraphis_recall_context`,
     });
     const bearer = String((projection.mcpServers[0] as any).headers[0].value)
       .replace(/^Bearer /, '');
     const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
-    expect(claims.principal.grantedTools).toEqual(['constellation.context', 'graphiti.get_status']);
-    expect(claims.principal.presentedTools).toEqual(['constellation.context', 'graphiti.get_status']);
+    expect(claims.principal.grantedTools).toEqual(['engraphis_recall_context', 'graphiti.get_status']);
+    expect(claims.principal.presentedTools).toEqual(['engraphis_recall_context', 'graphiti.get_status']);
   });
 
   it('keeps selected tools not consumed by the Script available as exact MCP schemas', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: ['graphiti.get_status'],
-      grantedTools: ['constellation.context', 'graphiti.get_status'],
+      grantedTools: ['engraphis_recall_context', 'graphiti.get_status'],
       script: {
         version: 2,
         source: 'from hermes_tools import output\noutput.emit({})\n',
@@ -1056,10 +1056,10 @@ describe('Hermes ACP transport identity', () => {
         mode: 'tool_recipe',
         inputSchema: { type: 'object', properties: {} },
         outputSchema: { type: 'object', properties: {} },
-        toolHandles: ['constellation.context'],
-        toolStates: { 'constellation.context': 1, 'graphiti.get_status': 2 },
+        toolHandles: ['engraphis_recall_context'],
+        toolStates: { 'engraphis_recall_context': 1, 'graphiti.get_status': 2 },
         offToolIds: [],
-        scriptToolIds: ['constellation.context'],
+        scriptToolIds: ['engraphis_recall_context'],
         agentToolIds: ['graphiti.get_status'],
         timeoutSeconds: 12,
         maxToolCalls: 3,
@@ -1079,7 +1079,7 @@ describe('Hermes ACP transport identity', () => {
     const bearer = String((projection.mcpServers[0] as any).headers[0].value)
       .replace(/^Bearer /, '');
     const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
-    expect(claims.principal.presentedTools).toEqual(['constellation.context', 'graphiti.get_status']);
+    expect(claims.principal.presentedTools).toEqual(['engraphis_recall_context', 'graphiti.get_status']);
   });
 
   it('keeps native web_search outside the host Script MCP alias and state scope', () => {

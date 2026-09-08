@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.python_models import constellation, question_evidence
+from app.python_models import engraphis, question_evidence
 from app.python_models.thinkgraph import validate_cognition
 from app.python_models.thinkgraph_analysis import analyze_graph
 
@@ -25,9 +25,14 @@ def test_runtime_supplies_scope_without_asking_model_to_reconstruct_identity():
 
 
 def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, monkeypatch):
-    owner = constellation.ConstellationProcess("project-one", database_path=tmp_path / "memory.sqlite")
-    monkeypatch.setattr(constellation, "get_constellation", lambda _: owner)
-    request = lambda operation, project, arguments: constellation.invoke_constellation_operation(project, operation, arguments)
+    from engraphis.service import MemoryService
+    from engraphis.mcp_server import set_service
+    owner = MemoryService.create(str(tmp_path / "memory.sqlite"), embed_model="hash",
+                                 extractor="none", graph_extractor="none")
+    monkeypatch.setattr(engraphis, "_service", owner)
+    set_service(owner)
+    request = lambda operation, project, arguments: engraphis.private_operation(project, operation, arguments)
+    call = lambda name, args: asyncio.run(engraphis.invoke_tool("project-one", name, args))
     calls = []
 
     class Driver:
@@ -36,32 +41,33 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
             return SimpleNamespace(records=[{"uuid": params["episode_id"]}])
 
     try:
-        constellation.invoke_constellation_operation("project-one", "remember", {
-            "id": "question", "l0": "Evidence for alternatives", "l1": "A question, not a verified claim.",
-            "l2": "Compare supporting and conflicting evidence before selecting an alternative.", "cognition": question(),
+        saved = call("engraphis_remember", {
+            "title": "Evidence for alternatives", "summary": "A question, not a verified claim.",
+            "content": "Compare supporting and conflicting evidence before selecting an alternative.", "cognition": question(),
         })
+        native_id = saved["id"]
         link = question_evidence.validate_question_evidence(dict(
-            questionRef=dict(authority="thinkgraph", nativeId="question", projectId="project-one"),
+            questionRef=dict(authority="thinkgraph", nativeId=native_id, projectId="project-one"),
             outcome="contested", relation="contradicts"), "project-one", request)
         asyncio.run(question_evidence.link_question_evidence(Driver(), link, "episode-actual", "liquidaity-project-one", request))
         asyncio.run(question_evidence.link_question_evidence(Driver(), link, "episode-actual", "liquidaity-project-one", request))
-        native = owner.request("inspect", {"nativeId": "question", "maxDepth": 0})
-        stored = native["inspectedNode"]["cognition"]
+        native = engraphis.inspect("project-one", native_id)
+        stored = native["memory"]["metadata"]["cognition"]
         assert stored["questionStatus"] == "contested"
         assert len(stored["answerRefs"]) == 1
         assert stored["authoredBy"] == "assistant"
         assert stored["originRefs"] == question()["originRefs"]
-        assert json.loads(calls[0]["link"])["questionRef"]["nativeId"] == "question"
-        projected = constellation._projection("project-one", native)["nodes"][0]
+        assert json.loads(calls[0]["link"])["questionRef"]["nativeId"] == native_id
+        projected = engraphis.projection("project-one")["nodes"][0]
         assert projected["properties"]["summary"] == "A question, not a verified claim."
         assert projected["properties"]["fullContent"].startswith("Compare supporting")
-        assert projected["properties"]["researchSeed"]["questionRef"]["nativeId"] == "question"
-        # The old write contract remains valid and cannot discard cognition.
-        owner.request("remember", {"id": "question", "l0": "Evidence for alternatives", "l1": "A question, not a verified claim.", "l2": "Updated discussion."})
-        assert owner.request("inspect", {"nativeId": "question"})["inspectedNode"]["cognition"] == stored
+        assert projected["properties"]["researchSeed"]["questionRef"]["nativeId"] == native_id
+        # Ordinary metadata updates cannot discard cognition.
+        call("engraphis_update_memory", {"memory_id": native_id, "title": "Evidence for alternatives"})
+        assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"] == stored
         updated = {**stored, "questionStatus": "superseded"}
-        constellation.invoke_constellation_operation("project-one", "update_memory", {"nativeId": "question", "cognition": updated})
-        assert owner.request("inspect", {"nativeId": "question"})["inspectedNode"]["cognition"]["questionStatus"] == "superseded"
+        call("engraphis_update_memory", {"memory_id": native_id, "cognition": updated})
+        assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"]["questionStatus"] == "superseded"
     finally:
         owner.close()
 
@@ -83,6 +89,28 @@ def test_evidence_scope_is_checked_before_question_write(monkeypatch):
     with pytest.raises(ValueError, match="not_found_in_project"):
         asyncio.run(question_evidence.link_question_evidence(SimpleNamespace(execute_query=query), {
             "questionRef": dict(authority="thinkgraph", nativeId="q", projectId="p"), "outcome": "answered"}, "foreign-episode", "p", lambda *args: pytest.fail("must not write ThinkGraph")))
+
+
+def test_native_relationship_projection_does_not_invent_strength_or_authorship(tmp_path, monkeypatch):
+    from engraphis.service import MemoryService
+    from engraphis.mcp_server import set_service
+    owner = MemoryService.create(str(tmp_path / "links.sqlite"), embed_model="hash",
+                                 extractor="none", graph_extractor="none")
+    monkeypatch.setattr(engraphis, "_service", owner)
+    set_service(owner)
+    call = lambda name, args: asyncio.run(engraphis.invoke_tool("project-one", name, args))
+    try:
+        a = call("engraphis_remember", {"content": "An interest in spacecraft components"})["id"]
+        b = call("engraphis_remember", {"content": "A question about supplier profitability"})["id"]
+        call("engraphis_link", {"a": a, "b": b, "relation": "related", "layer": "semantic",
+                               "reason": "Supplier research concerns these components."})
+        native = next(e for e in owner.store.get_links(a) if e["a"] == a and e["b"] == b)
+        projected = next(e for e in engraphis.projection("project-one")["edges"]
+                         if e["source"] == a and e["target"] == b)
+        assert json.loads(projected["id"]) == [a, b, native["relation"]]
+        assert projected["properties"] == {"reason": native["reason"], "layer": native["layer"]}
+    finally:
+        owner.close()
 
 
 def test_weighted_communities_gateways_and_gaps_are_analysis_only():

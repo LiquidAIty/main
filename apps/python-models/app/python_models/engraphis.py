@@ -6,6 +6,7 @@ project; neither tool callers nor the browser choose another database or tenant.
 from __future__ import annotations
 
 import atexit
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -84,6 +85,8 @@ async def native_tools() -> list[dict]:
             if field in schema.get("required", []):
                 schema["required"].remove(field)
         schema["additionalProperties"] = False
+        if tool.name == "engraphis_recall_context":
+            item["annotations"].update(readOnlyHint=True, idempotentHint=True)
         if tool.name in {"engraphis_remember", "engraphis_update_memory"}:
             from .thinkgraph import CognitionRecord
             cognition = CognitionRecord.model_json_schema()
@@ -103,7 +106,17 @@ async def native_tools() -> list[dict]:
 
 
 async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
-    import asyncio
+    # Native FastMCP synchronous tools execute on their caller's thread. Keep
+    # embedding and SQLite work off Python rails' shared HTTP event loop.
+    return await asyncio.to_thread(_invoke_tool_sync, project, name, arguments)
+
+
+def _invoke_tool_sync(project: str, name: str, arguments: dict) -> dict:
+    with _lock:
+        return asyncio.run(_invoke_tool(project, name, arguments))
+
+
+async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:
     from engraphis.mcp_server import classic_mcp, smart_mcp
     if name not in READ_TOOLS | WRITE_TOOLS:
         raise ValueError("thinkgraph_tool_unavailable")
@@ -124,11 +137,11 @@ async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
             cognition = validate_cognition(cognition, project)
         if summary is not None and (not isinstance(summary, str) or len(summary) > 8000):
             raise ValueError("thinkgraph_summary_invalid")
-    await asyncio.to_thread(get_service)
+    service = get_service()
     if name == "engraphis_recall_context":
         # Preload uses the native recall implementation without reinforcement or
         # an Engraphis receipt write. AGE observes tool reads at the existing host.
-        result = await asyncio.to_thread(get_service().recall, workspace=project,
+        result = service.recall(workspace=project, response_mode="compact",
             record_receipt=False, reinforce=False, **arguments)
         if not result.get("semantic_support") or result.get("degraded_mode"):
             raise RuntimeError("thinkgraph_semantic_search_unavailable")
@@ -136,14 +149,16 @@ async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
         result["sources"] = [{**source, **{k: by_id.get(source["id"], {}).get(k)
             for k in ("title", "provenance")}} for source in result.pop("packed_sources", [])]
         return result
-    if name == "engraphis_update_memory" and cognition is not None and not any(
+    if name == "engraphis_update_memory" and (cognition is not None or summary is not None) and not any(
         field in arguments for field in ("title", "mtype", "importance")
     ):
         arguments["title"] = inspect(project, arguments["memory_id"])["memory"]["title"]
     server = smart_mcp if name in SMART_TOOLS else classic_mcp
     response = await server.call_tool(name, {**arguments, "workspace": project})
-    # FastMCP may return content alone or (content, structuredContent).
-    content = response[0] if isinstance(response, tuple) else response
+    # Smart errors are native CallToolResults, not an iterable of text blocks.
+    content = response.content if hasattr(response, "content") else response[0] if isinstance(response, tuple) else response
+    if getattr(response, "isError", False):
+        raise ValueError(" ".join(getattr(block, "text", "") for block in content))
     for block in content:
         if getattr(block, "type", None) == "text":
             text = block.text
@@ -164,9 +179,11 @@ async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
                         record.metadata = {**record.metadata, "cognition": cognition}
                     if summary is not None:
                         record.summary = summary
-                    if title is not None:
-                        record.title = title
                     service.store.add_memory(record)
+                    if title is not None:
+                        # The public edit also updates the native vector and FTS
+                        # mirrors. Assigning record.title alone leaves them stale.
+                        service.update_memory(memory_id, workspace=project, title=title)
                 if name == "engraphis_get_memory":
                     record = inspect(project, data["id"])["memory"]
                     data["metadata"] = record.get("metadata", {})
@@ -177,18 +194,13 @@ async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
 def inspect(project: str, native_id: str) -> dict:
     service = get_service()
     project = project_id(project)
-    if not native_id.startswith("mem_"):
-        # Resolve only a persisted migration mapping, never a guessed replacement ID.
-        rows = service.store.conn.execute(
-            "SELECT m.id FROM memories m JOIN workspaces w ON w.id=m.workspace_id "
-            "WHERE w.name=? AND json_extract(m.metadata, '$.migration.node.id')=?",
-            (project, native_id),
-        ).fetchall()
-        if len(rows) != 1:
-            raise ValueError("thinkgraph_memory_not_found")
-        native_id = rows[0]["id"]
     result = service.inspect(native_id, workspace=project)
     result["memory"]["metadata"] = service.store.get_memory(native_id).metadata
+    # Preserve directional composite identities from the native link store.
+    # The public inspector has already authorized the neighboring records.
+    neighbors = {link["id"] for link in result["links"]}
+    result["nativeLinks"] = [link for link in service.store.get_links(native_id)
+        if (link["b"] if link["a"] == native_id else link["a"]) in neighbors]
     return result
 
 
@@ -264,7 +276,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
     edges = [{
         "id": json.dumps([e["a"], e["b"], e["relation"]], separators=(",", ":")),
         "source": e["a"], "target": e["b"], "predicate": e["relation"], "mentionCount": 1,
-        "properties": {"strength": 1, "edgeClass": "explicit", "reason": e.get("reason", ""), "layer": e.get("layer")},
+        "properties": {"reason": e.get("reason", ""), "layer": e.get("layer")},
         "provenance": {"engine": "engraphis", "nativeKey": [e["a"], e["b"], e["relation"]]},
     } for e in links]
     revision = hashlib.sha256(json.dumps([nodes, edges], sort_keys=True).encode()).hexdigest()
@@ -275,4 +287,5 @@ def projection(project: str, native_id: str | None = None) -> dict:
     return {"schemaVersion": "thinkgraph.engraphis.v1", "authority": "engraphis", "projectId": project,
             "revision": revision, "nodes": nodes, "edges": edges, "analysis": analysis,
             "counts": {"nodes": len(nodes), "edges": len(edges)},
-            "embedding": {"state": "ready"}, "runtime": {"engine": "engraphis", "version": "1.7.1"}}
+            "embedding": {"state": "ready" if service.stats(workspace=project).get("embedding", {}).get("ready") else "unavailable"},
+            "runtime": {"engine": "engraphis", "version": "1.7.1"}}

@@ -884,7 +884,7 @@ describe('AgentManager active builder config', () => {
   it('shows the one IDD vocabulary without runtime assignability filtering', () => {
     const rows = buildDisplayedToolRows(
       [
-        { name: 'constellation.context', title: 'Context', sourceIds: ['constellation'] },
+        { name: 'engraphis_recall_context', title: 'Context', sourceIds: ['main_mcp'] },
         { name: 'graphiti.search_nodes', title: 'Search nodes', sourceIds: ['graphiti'] },
         { name: 'cbm.search_graph', title: 'Search graph', sourceIds: ['cbm'] },
         { name: 'canvas.inspect', title: 'Inspect canvas', sourceIds: ['main_mcp'] },
@@ -896,7 +896,7 @@ describe('AgentManager active builder config', () => {
     expect(rows.map((row) => row.name)).toEqual([
       'graphiti.search_nodes',
       'mystery.tool',
-      'constellation.context',
+      'engraphis_recall_context',
       'cbm.search_graph',
       'canvas.inspect',
       'main.context',

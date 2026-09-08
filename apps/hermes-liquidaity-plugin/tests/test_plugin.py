@@ -247,9 +247,9 @@ def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch
             },
             "required": ["context", "agent"],
         },
-        "toolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "fallbackToolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "toolStates": {"constellation.context": 1},
+        "toolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "fallbackToolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "toolStates": {"engraphis_recall_context": 1},
         "timeoutSeconds": 10,
         "maxToolCalls": 2,
         "maxOutputBytes": 4096,
@@ -266,8 +266,8 @@ def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch
             "duration_seconds": 0.1,
             "tool_calls_made": 1,
             "tool_calls": [{
-                "canonicalId": "constellation.context",
-                "nativeTool": "mcp__card__constellation_context",
+                "canonicalId": "engraphis_recall_context",
+                "nativeTool": "mcp__card__engraphis_recall_context",
                 "durationSeconds": 0.05,
             }],
         })
@@ -283,7 +283,7 @@ def test_host_script_handler_returns_typed_output_and_native_receipt(monkeypatch
     }
     assert result["receipt"]["sourceHash"] == "a" * 64
     assert result["receipt"]["version"] == 7
-    assert result["receipt"]["toolCalls"][0]["canonicalId"] == "constellation.context"
+    assert result["receipt"]["toolCalls"][0]["canonicalId"] == "engraphis_recall_context"
     assert calls[0][0] == "source"
     assert calls[0][1]["host_script"]["toolAliases"] == config["toolAliases"]
 
@@ -304,16 +304,16 @@ def test_host_script_validation_failure_activates_exact_selected_mcp_fallback(mo
             "additionalProperties": False,
         },
         "outputSchema": {"type": "object", "properties": {}},
-        "toolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "fallbackToolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "toolStates": {"constellation.context": 1},
+        "toolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "fallbackToolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "toolStates": {"engraphis_recall_context": 1},
         "timeoutSeconds": 10,
         "maxToolCalls": 2,
         "maxOutputBytes": 4096,
     }
     monkeypatch.setattr(host_profiles, "current_host_script_config", lambda: config)
     monkeypatch.setattr(
-        host_profiles, "activate_host_script_fallback", lambda: ["constellation.context"]
+        host_profiles, "activate_host_script_fallback", lambda: ["engraphis_recall_context"]
     )
 
     result = json.loads(plugin._handle_execute_host_script({}, task_id="session-one"))
@@ -322,7 +322,7 @@ def test_host_script_validation_failure_activates_exact_selected_mcp_fallback(mo
     assert result["fallback"] == {
         "activated": True,
         "presentationMode": "selected-mcp",
-        "tools": ["constellation.context"],
+        "tools": ["engraphis_recall_context"],
     }
     assert result["receipt"]["version"] == 9
     assert result["receipt"]["status"] == "validation_error"
@@ -345,9 +345,9 @@ def test_host_script_failure_after_tool_call_is_terminal_without_fallback(monkey
             "additionalProperties": False,
         },
         "outputSchema": {"type": "object", "properties": {}},
-        "toolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "fallbackToolAliases": {"constellation.context": "mcp__card__constellation_context"},
-        "toolStates": {"constellation.context": 1},
+        "toolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "fallbackToolAliases": {"engraphis_recall_context": "mcp__card__engraphis_recall_context"},
+        "toolStates": {"engraphis_recall_context": 1},
         "timeoutSeconds": 10,
         "maxToolCalls": 2,
         "maxOutputBytes": 4096,
@@ -366,7 +366,7 @@ def test_host_script_failure_after_tool_call_is_terminal_without_fallback(monkey
             "status": "error",
             "error": "script_failed_after_operation",
             "tool_calls_made": 1,
-            "tool_calls": [{"canonicalId": "constellation.context"}],
+            "tool_calls": [{"canonicalId": "engraphis_recall_context"}],
         }),
     )
 

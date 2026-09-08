@@ -4,7 +4,7 @@ The canonical supervised service tree launches one Streamable HTTP host for
 the process lifetime. Hermes and AutoGen use that same authenticated seam; no
 per-turn spawn or fallback host exists.
 
-Exposes this application tool surface plus the process-owned Constellation
+Exposes this application tool surface plus the process-owned Engraphis
 ThinkGraph adapter and dynamically discovered Codebase Memory and official
 Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
@@ -2085,7 +2085,7 @@ def _thinkgraph_via_python_rails_sync(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    timeout = _MCP_CALL_TIMEOUT_SECONDS
+    timeout = _mcp_tool_timeout_seconds(operation)
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - configured Python rails only
             result = json.loads(response.read().decode("utf-8"))
@@ -3715,6 +3715,10 @@ def _attach_execution_receipt(
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
+    if name in {"engraphis_remember", "engraphis_update_memory", "engraphis_correct"}:
+        # Preserve the existing semantic-write allowance through both transports.
+        # Optional Main preload remains governed by its separate two-second budget.
+        return 190.0
     if name in {
         "cbm.index_repository",
         "card.run_assistant_agent",

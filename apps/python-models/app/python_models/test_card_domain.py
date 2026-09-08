@@ -812,7 +812,7 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
         **card["runtimeOptions"],
         "toolCatalogPolicy": "all_healthy",
         "disabledTools": ["graphiti.search_nodes"],
-        "tools": ["constellation.remember"],
+        "tools": ["engraphis_remember"],
         "script": {
             "enabled": True,
             "source": '''CARD_SCRIPT = {
@@ -858,7 +858,7 @@ output.emit({"agent": {"run": False}})
         "discoveredTools": [
             discovered("cbm.search_graph", "cbm", read_only=True),
             discovered("graphiti.search_nodes", "graphiti", read_only=True),
-            discovered("constellation.remember", "constellation", read_only=False),
+            discovered("engraphis_remember", "engraphis", read_only=False),
             discovered("cbm.index_repository", "cbm", read_only=False),
         ],
     })
@@ -867,11 +867,11 @@ output.emit({"agent": {"run": False}})
     assert grants["toolCatalogPolicy"] == "all_healthy"
     assert grants["disabledTools"] == ["graphiti.search_nodes"]
     assert grants["enabledTools"] == [
-        "cbm.search_graph", "constellation.remember", "web_search",
+        "cbm.search_graph", "engraphis_remember", "web_search",
     ]
-    assert grants["presentedTools"] == ["constellation.remember"]
+    assert grants["presentedTools"] == ["engraphis_remember"]
     assert [tool["canonicalId"] for tool in grants["toolDefinitions"]] == [
-        "constellation.remember",
+        "engraphis_remember",
     ]
     assert "cbm.index_repository" not in grants["enabledTools"]
     script = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
@@ -879,7 +879,7 @@ output.emit({"agent": {"run": False}})
     assert script["nativeSupport"]["active"] is True
     assert script["compiled"]["toolStates"] == {
         "cbm.search_graph": 1,
-        "constellation.remember": 2,
+        "engraphis_remember": 2,
         "web_search": 0,
     }
 
@@ -1433,7 +1433,7 @@ def test_native_hermes_task_context_uses_exact_root_run_revision_grants(
     monkeypatch.setattr(
         card_domain,
         "readable_tool_ids",
-        lambda: frozenset({"cbm.search_graph", "constellation.context", "calculator"}),
+        lambda: frozenset({"cbm.search_graph", "engraphis_recall_context", "calculator"}),
     )
     from types import SimpleNamespace
     monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda run_id: {"runId": run_id})
@@ -2595,12 +2595,12 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    from app.python_models import constellation
+    from app.python_models import engraphis
 
     monkeypatch.setattr(
-        constellation,
-        "get_constellation",
-        lambda *_args, **_kwargs: pytest.fail("Main preparation opened Constellation"),
+        engraphis,
+        "get_service",
+        lambda *_args, **_kwargs: pytest.fail("Main preparation opened Engraphis"),
     )
     main = _agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}

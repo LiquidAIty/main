@@ -1,6 +1,6 @@
 """ThinkGraph's product metadata; semantics are authored by its saved worker.
 
-The active backend remains Constellation. These fields live on its native node,
+The active backend remains Engraphis. These fields live on its native node,
 never in a second question store. Structural validation does not interpret prose.
 """
 from __future__ import annotations

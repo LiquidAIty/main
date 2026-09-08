@@ -42,7 +42,7 @@ def test_question_link_follows_native_queue_completion_through_existing_rails(mo
         finally:
             mcp_host._ACTIVE_GRAPHITI_ATTENTION.reset(token)
         await asyncio.wait_for(finished.wait(), 2)
-        assert linked == [(client.driver, question, "native-result", "liquidaity-project-one", mcp_host._constellation_via_python_rails_sync)]
+        assert linked == [(client.driver, question, "native-result", "liquidaity-project-one", mcp_host._thinkgraph_via_python_rails_sync)]
     asyncio.run(run())
 
 

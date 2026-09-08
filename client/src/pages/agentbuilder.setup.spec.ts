@@ -338,7 +338,7 @@ describe('agentbuilder authoring flow', () => {
       ...main.runtimeOptions,
       provider: 'openrouter',
       modelKey: 'saved-main-model',
-      tools: ['constellation.remember'],
+      tools: ['engraphis_remember'],
     };
     coder.runtimeOptions = {
       ...coder.runtimeOptions,
@@ -360,7 +360,7 @@ describe('agentbuilder authoring flow', () => {
     const hydratedHermes = hydrated.nodes.find((node) => node.id === 'card_hermes_steward');
 
     expect(hydrated.version).toBe(77);
-    expect(hydratedMain?.runtimeOptions?.tools).toEqual(['constellation.remember']);
+    expect(hydratedMain?.runtimeOptions?.tools).toEqual(['engraphis_remember']);
     expect(hydratedCoder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
     expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['clear_graph']);
     expect(hydratedMain).toMatchObject({

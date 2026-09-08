@@ -167,11 +167,11 @@ def test_declared_write_contract_extracts_graphiti_nodes_and_edge() -> None:
     }]
 
 
-def test_constellation_context_uses_returned_nodes_and_does_not_invent_edge_ids() -> None:
+def test_engraphis_context_uses_returned_nodes_and_does_not_invent_edge_ids() -> None:
     event = native_attention.build_native_attention_event(
-        "constellation.context",
+        "engraphis_recall_context",
         _result({
-            "nodes": [{"id": "memory-a"}, {"id": "memory-b"}],
+            "sources": [{"id": "memory-a"}, {"id": "memory-b"}],
             "edges": [{
                 "from": "memory-a", "to": "memory-b", "type": "builds_on",
                 "strength": 0.8,
@@ -186,10 +186,10 @@ def test_constellation_context_uses_returned_nodes_and_does_not_invent_edge_ids(
     assert event["nativeEdges"] == []
 
 
-def test_current_constellation_read_and_write_operations_preserve_native_ids() -> None:
+def test_current_engraphis_read_and_write_operations_preserve_native_ids() -> None:
     updated = native_attention.build_native_attention_event(
-        "constellation.update_memory",
-        _result({"ok": True, "id": "memory-a", "updatedFields": ["tags"]}),
+        "engraphis_update_memory",
+        _result({"ok": True, "id": "memory-a"}),
         None,
     )
     assert updated is not None
@@ -197,42 +197,34 @@ def test_current_constellation_read_and_write_operations_preserve_native_ids() -
     assert updated["nativeNodeIds"] == ["memory-a"]
 
     pair = native_attention.build_native_attention_event(
-        "constellation.adjust_edge_pair",
-        _result({"nodeA": "memory-a", "nodeB": "memory-b", "updated": 2}),
+        "engraphis_link",
+        _result({"a": "memory-a", "b": "memory-b", "relation": "related"}),
         None,
     )
     assert pair is not None
     assert pair["nativeNodeIds"] == ["memory-a", "memory-b"]
 
-    edge = native_attention.build_native_attention_event(
-        "constellation.inspect_edge",
-        _result({"edge": {
-            "id": 12,
-            "source": "memory-a",
-            "target": "memory-b",
-            "edge_type": "builds_on",
-        }}),
+    assert pair["nativeEdgeIds"] == []
+    read = native_attention.build_native_attention_event(
+        "engraphis_get_memory",
+        _result({"id": "memory-a", "links": [{"id": "memory-b", "relation": "related"}]}),
         None,
     )
-    assert edge is not None
-    assert edge["operation"] == "read"
-    assert edge["nativeEdgeIds"] == ["12"]
-    assert edge["nativeEdges"] == [{
-        "id": "12",
-        "source": "memory-a",
-        "target": "memory-b",
-        "predicate": "builds_on",
-    }]
+    assert read is not None
+    assert read["operation"] == "read"
+    assert read["nativeNodeIds"] == ["memory-a"]
+    assert read["nativeEdgeIds"] == []
+    assert read["nativeEdges"] == []
 
 
-def test_constellation_receipts_without_native_ids_do_not_fake_attention() -> None:
+def test_engraphis_receipts_without_native_ids_do_not_fake_attention() -> None:
     assert native_attention.build_native_attention_event(
-        "constellation.semantic_status",
-        _result({"state": "ready", "model": "Xenova/bge-m3"}),
+        "engraphis_stats",
+        _result({"embedding": {"ready": True}}),
         None,
     ) is None
     assert native_attention.build_native_attention_event(
-        "constellation.autonomy_status",
+        "engraphis_stats",
         _result({"run": {"id": "not-a-memory-node", "state": "running"}}),
         None,
     ) is None
@@ -259,10 +251,10 @@ def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(
 
 def test_result_hash_is_stable_for_the_same_normalized_reference_set() -> None:
     first = native_attention.build_native_attention_event(
-        "constellation.context", _result({"nodes": [{"id": "memory-one"}]}), None
+        "engraphis_recall_context", _result({"sources": [{"id": "memory-one"}]}), None
     )
     second = native_attention.build_native_attention_event(
-        "constellation.context", _result({"nodes": [{"id": "memory-one"}]}), None
+        "engraphis_recall_context", _result({"sources": [{"id": "memory-one"}]}), None
     )
     assert first is not None and second is not None
     assert first["resultHash"] == second["resultHash"]

@@ -280,7 +280,7 @@ def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(mon
     started = time.monotonic()
     results = internal_mcp.call_read_tools_via_mcp(
         project_id="p", deck_id="d", card_id="main", conversation_id="conversation-1",
-        calls=[("constellation.context", {}), ("graphiti.search_memory_facts", {}), ("cbm.search_graph", {})],
+        calls=[("engraphis_recall_context", {}), ("graphiti.search_memory_facts", {}), ("cbm.search_graph", {})],
         concurrent=True, deadline_seconds=0.1,
     )
     assert time.monotonic() - started < 1

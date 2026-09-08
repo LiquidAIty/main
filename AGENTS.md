@@ -322,7 +322,7 @@ model/tool authority and real streaming/session/failure behavior.
 Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
 selection into the bound native profile and reads it back before inference; actual child provider/model
 and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,
-Kanban worker selection, Magentic-One, or Constellation. External-memory selection remains native
+Kanban worker selection, Magentic-One, or the ThinkGraph engine. External-memory selection remains native
 profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
 general Card memory-provider field or reconfigures memory at Run start.
 
@@ -377,7 +377,7 @@ project, trace, or render ledger artifacts in LiquidAIty.
 ## Graph law
 
 ```text
-ThinkGraph = Constellation Engine project reasoning and operational knowledge
+ThinkGraph = Engraphis project reasoning and operational knowledge
 KnowGraph  = Neo4j/Graphiti sourced knowledge and provenance
 CodeGraph  = native CBM repository structure
 AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and execution telemetry,
@@ -385,6 +385,11 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 ```
 
 One authority and one writer per graph.
+
+Completed Main conversations automatically go only to ThinkGraph. KnowGraph retains sourced research
+findings through its existing research agent and native ingestion, not an automatic conversation copy
+or ThinkGraph-result cascade. Entity/relationship context linking and Main context search/injection
+remain separate proof tasks. Do not force conversation into a Question/answer workflow.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
 - Transient context selection may reference native authorities for bounded IDF hydration; it is not another graph

@@ -30,8 +30,8 @@ describe('CardScriptEditor Monaco contract', () => {
       'thinkgraph-context', 'knowgraph-evidence',
     ]);
     const examples = SCRIPT_EXAMPLES.map((example) => example.source).join('\n');
-    expect(examples).toContain('constellation.context');
-    expect(examples).toContain('constellation.inspect');
+    expect(examples).toContain('engraphis_recall_context');
+    expect(examples).toContain('engraphis_get_memory');
     expect(examples).toContain('graphiti.search_nodes');
     expect(examples).toContain('graphiti.search_memory_facts');
     expect(examples).toContain('graphiti.get_episodes');
@@ -109,7 +109,7 @@ describe('CardScriptEditor Monaco contract', () => {
     expect(source).toContain('sourceModel.dispose()');
     expect(source).toContain('entry.model.dispose()');
     expect(source).not.toContain('{header.source}');
-    expect(builderPage).toContain("['CLI', 'Prompt', 'Runtime', 'Knowledge', 'Tools']");
+    expect(builderPage).toContain("['CLI', 'Prompt', 'Runtime', 'Memory', 'Tools']");
     expect(builderPage).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
     expect(builderPage).toContain('key="deck-card-editor"');
     expect(builderPage).not.toContain('key={`deck-card:${selectedCard.id}:${tab}`}');

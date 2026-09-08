@@ -77,25 +77,25 @@ def test_valid_script_compiles_literal_contract_and_selected_tool_handles() -> N
     "max_tool_calls": 3,
 }
 from hermes_tools import SCRIPT, input, output, tools
-tools.constellation.context = SCRIPT
-context = tools.call("constellation.context", focus=input.mission)
+tools.engraphis_recall_context = SCRIPT
+context = tools.call("engraphis_recall_context", query=input.mission)
 output.emit({"context": context, "agent": {"run": True, "prompt": input.mission}})
 '''
-    compiled = compile_card_script(source, selected_tools=["constellation.context"])
+    compiled = compile_card_script(source, selected_tools=["engraphis_recall_context"])
     assert compiled["mode"] == "tool_recipe"
-    assert compiled["toolHandles"] == ["constellation.context"]
-    assert compiled["toolStates"] == {"constellation.context": 1}
-    assert compiled["scriptToolIds"] == ["constellation.context"]
+    assert compiled["toolHandles"] == ["engraphis_recall_context"]
+    assert compiled["toolStates"] == {"engraphis_recall_context": 1}
+    assert compiled["scriptToolIds"] == ["engraphis_recall_context"]
     assert compiled["agentToolIds"] == []
     assert compiled["maxToolCalls"] == 3
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["constellation.context"],
+        selected_tools=["engraphis_recall_context"],
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == []
     assert presentation["script"]["nativeSupport"]["active"] is True
-    with pytest.raises(ValueError, match="card_script_tool_not_selected:constellation.context"):
+    with pytest.raises(ValueError, match="card_script_tool_not_selected:engraphis_recall_context"):
         compile_card_script(source, selected_tools=["graphiti.get_status"])
 
 
@@ -106,13 +106,13 @@ def test_valid_script_wraps_only_literal_handles_and_leaves_other_selected_mcp_t
     "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
 }
 from hermes_tools import SCRIPT, output, tools
-tools.constellation.context = SCRIPT
-tools.call("constellation.context")
+tools.engraphis_recall_context = SCRIPT
+tools.call("engraphis_recall_context")
 output.emit({"agent": {"run": False}})
 '''
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["constellation.context", "graphiti.get_status"],
+        selected_tools=["engraphis_recall_context", "graphiti.get_status"],
     )
     assert presentation["mode"] == "script"
     assert presentation["presentedTools"] == ["graphiti.get_status"]
@@ -128,34 +128,34 @@ from hermes_tools import AGENT, BOTH, OFF, SCRIPT, output, tools
 tools.cbm.delete_project = 0
 tools.cbm.search_graph = SCRIPT
 tools.graphiti.get_status = AGENT
-tools.constellation.context = BOTH
+tools.engraphis_recall_context = BOTH
 tools.call("cbm.search_graph")
-tools.call("constellation.context")
+tools.call("engraphis_recall_context")
 output.emit({"agent": {"run": True}})
 '''
     selected = [
         "cbm.delete_project", "cbm.search_graph",
-        "graphiti.get_status", "constellation.context",
+        "graphiti.get_status", "engraphis_recall_context",
     ]
     compiled = compile_card_script(source, selected_tools=selected)
     assert compiled["toolStates"] == {
         "cbm.delete_project": 0,
         "cbm.search_graph": 1,
         "graphiti.get_status": 2,
-        "constellation.context": 3,
+        "engraphis_recall_context": 3,
     }
     assert compiled["offToolIds"] == ["cbm.delete_project"]
-    assert compiled["scriptToolIds"] == ["cbm.search_graph", "constellation.context"]
-    assert compiled["agentToolIds"] == ["graphiti.get_status", "constellation.context"]
+    assert compiled["scriptToolIds"] == ["cbm.search_graph", "engraphis_recall_context"]
+    assert compiled["agentToolIds"] == ["graphiti.get_status", "engraphis_recall_context"]
     presentation = script_presentation(
         {"enabled": True, "source": source}, selected_tools=selected,
     )
     assert presentation["presentedTools"] == [
-        "graphiti.get_status", "constellation.context",
+        "graphiti.get_status", "engraphis_recall_context",
     ]
     assert selected == [
         "cbm.delete_project", "cbm.search_graph",
-        "graphiti.get_status", "constellation.context",
+        "graphiti.get_status", "engraphis_recall_context",
     ]
 
 
@@ -172,14 +172,14 @@ output.emit({"agent": {"run": False}})
 '''
     presentation = script_presentation(
         {"enabled": True, "source": source},
-        selected_tools=["cbm.search_graph", "constellation.remember", "web_search"],
-        default_agent_tools=["constellation.remember"],
+        selected_tools=["cbm.search_graph", "engraphis_remember", "web_search"],
+        default_agent_tools=["engraphis_remember"],
     )
     assert presentation["mode"] == "script"
-    assert presentation["presentedTools"] == ["constellation.remember"]
+    assert presentation["presentedTools"] == ["engraphis_remember"]
     assert presentation["script"]["compiled"]["toolStates"] == {
         "cbm.search_graph": 1,
-        "constellation.remember": 2,
+        "engraphis_remember": 2,
         "web_search": 0,
     }
 
@@ -360,17 +360,17 @@ def test_native_side_effect_annotations_do_not_redefine_idd_read_availability():
     assert "graphiti.search_nodes" in readable_tool_ids()
 
 
-def test_constellation_tools_are_bounded_and_codegraph_stays_with_cbm():
+def test_engraphis_tools_are_bounded_and_codegraph_stays_with_cbm():
     from app.python_models.tool_registry import external_mcp_tool_ids, readable_tool_ids, writable_tool_ids
 
-    constellation = {
-        "constellation.context", "constellation.inspect", "constellation.remember",
+    engraphis = {
+        "engraphis_recall_context", "engraphis_get_memory", "engraphis_remember",
     }
     references = {item["canonicalId"]: item for item in materialize_tool_catalog([])}
-    assert constellation.issubset(references)
-    assert constellation.issubset(external_mcp_tool_ids())
-    assert {"constellation.context", "constellation.inspect"}.issubset(readable_tool_ids())
-    assert "constellation.remember" in writable_tool_ids()
+    assert engraphis.issubset(references)
+    assert engraphis.issubset(external_mcp_tool_ids())
+    assert {"engraphis_recall_context", "engraphis_get_memory"}.issubset(readable_tool_ids())
+    assert "engraphis_remember" in writable_tool_ids()
     assert {"cbm.search_graph", "cbm.search_code"}.issubset(readable_tool_ids())
 
 

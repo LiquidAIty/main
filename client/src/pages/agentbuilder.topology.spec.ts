@@ -129,11 +129,11 @@ describe('Main / Hermes / graph authority topology', () => {
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
     const hermesTools = byId.get('card_hermes_steward')?.runtimeOptions?.tools ?? [];
     expect(mainTools).toEqual(expect.arrayContaining([
-      'constellation.remember',
+      'engraphis_remember',
       'run_mag_one',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining([
-      'constellation.context',
+      'engraphis_recall_context',
       'canvas.inspect',
       'agentgraph.inspect',
       'mag_one.describe_connected_agents',

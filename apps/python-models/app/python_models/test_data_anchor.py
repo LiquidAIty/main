@@ -12,7 +12,7 @@ from app.python_models.data_anchor import (
     search_knowgraph_hybrid,
     prepare_main_context,
 )
-from app.python_models.constellation import ConstellationProcess
+from app.python_models import engraphis, data_anchor
 
 
 def test_main_preload_keeps_native_ids_bounds_and_independent_failures():
@@ -21,11 +21,11 @@ def test_main_preload_keeps_native_ids_bounds_and_independent_failures():
     def reader(**kwargs):
         observed.append(kwargs)
         return [
-            {"nodes": [{"id": "decision-1", "l1": "Consider conflicting sources"}] * 4},
+            {"sources": [{"id": "decision-1", "summary": "Consider conflicting sources"}] * 4},
             {"ok": False, "error": "read_timeout", "_readDurationMs": 2000},
             {"runs": [{"runId": "run-1", "state": "completed", "nativeReferences": [{"nativeId": "fact-1", "authority": "KnowGraph"}]}]},
         ]
-    tools = ["constellation.context", "graphiti.search_memory_facts", "cbm.search_graph", "agentgraph.inspect"]
+    tools = ["engraphis_recall_context", "graphiti.search_memory_facts", "cbm.search_graph", "agentgraph.inspect"]
     result = prepare_main_context("p", "d", "main", "conversation", "How should we show sources?", tools, mcp_reader=reader)
     assert observed[0]["deadline_seconds"] == 2
     assert observed[0]["concurrent"] is True
@@ -66,70 +66,72 @@ def test_main_preload_retains_fact_provenance_and_handles_large_records():
     assert len(json.dumps([record, result["references"][0]], ensure_ascii=False).encode()) <= 2000
 
 
-def _database(tmp_path):
-    path = tmp_path / "thinkgraph.sqlite"
-    client = ConstellationProcess("project-1", database_path=path)
-    try:
-        client.request("remember", {
-            "id": "fact:one",
-            "l0": "Current fact",
-            "l1": "Current native graph content",
-            "l2": "Current native graph content",
-            "source": "unit",
-            "projectTag": "liquidaity-project:project-1",
-        })
-        client.request("remember", {
-            "id": "mem-native-1",
-            "l0": "Native Constellation memory",
-            "l1": "Project-scoped native engine content",
-            "l2": "Project-scoped native engine content",
-            "source": "agent",
-            "projectTag": "liquidaity-project:project-1",
-        })
-    finally:
-        client.close()
-    return path
+@pytest.fixture
+def native_graph(tmp_path, monkeypatch):
+    import io
+    import json
+    from urllib.error import HTTPError
+    from engraphis.service import MemoryService
+    # Native persistence/relationship fixture; hash embedding is not semantic proof.
+    service = MemoryService.create(str(tmp_path / "memory.sqlite"), embed_model="hash",
+                                   extractor="none", graph_extractor="none")
+    monkeypatch.setattr(engraphis, "_service", service)
+    first = service.remember("Current native graph content", workspace="project-1", title="Current fact")["id"]
+    second = service.remember("Project-scoped native engine content", workspace="project-1", title="Native memory")["id"]
+    service.link(first, second, workspace="project-1", relation="supports", reason="Retained native evidence")
+    def read(request, **kwargs):
+        assert request.full_url.endswith("/thinkgraph/operation")
+        payload = json.loads(request.data)
+        assert payload["operation"] == "inspect"
+        try:
+            result = engraphis.private_operation(payload["projectId"], "inspect", payload["arguments"])
+        except ValueError as error:
+            raise HTTPError(request.full_url, 409, str(error), {}, io.BytesIO())
+        return io.BytesIO(json.dumps(result).encode())
+    monkeypatch.setattr(data_anchor, "urlopen", read)
+    yield service, first, second
+    service.close()
 
 
-def test_exact_thinkgraph_read_is_project_scoped_and_read_only(tmp_path) -> None:
-    path = _database(tmp_path)
-    before = path.stat().st_mtime_ns
-    record = read_thinkgraph_exact("project-1", "fact:one", db_path=path)
+def test_exact_thinkgraph_read_is_project_scoped_and_read_only(native_graph) -> None:
+    service, first, _ = native_graph
+    before = service.store.conn.total_changes
+    record = read_thinkgraph_exact("project-1", first)
 
     assert record is not None
-    assert record["nativeId"] == "fact:one"
+    assert record["nativeId"] == first
     assert record["content"] == "Current native graph content"
-    assert read_thinkgraph_exact("other-project", "fact:one", db_path=path) is None
-    assert path.stat().st_mtime_ns == before
+    assert read_thinkgraph_exact("other-project", first) is None
+    assert service.store.conn.total_changes == before
 
 
-def test_exact_thinkgraph_read_accepts_project_scoped_native_constellation_id(tmp_path) -> None:
-    path = _database(tmp_path)
-    record = read_thinkgraph_exact("project-1", "mem-native-1", db_path=path)
+def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(native_graph) -> None:
+    _, _, second = native_graph
+    record = read_thinkgraph_exact("project-1", second)
 
     assert record is not None
-    assert record["nativeId"] == "mem-native-1"
-    assert record["recordId"] == "mem-native-1"
+    assert record["nativeId"] == second
+    assert record["recordId"] == second
     assert record["content"] == "Project-scoped native engine content"
 
 
-def test_required_anchor_materializes_real_data_and_stable_reference(tmp_path) -> None:
+def test_required_anchor_materializes_real_data_and_stable_reference(native_graph) -> None:
+    _, first, _ = native_graph
     seed, references = resolve_data_anchors(
         "project-1",
         [{
             "authority": "ThinkGraph",
-            "nativeId": "fact:one",
+            "nativeId": first,
             "reason": "start from the current fact",
             "boundedExpansion": 0,
             "required": True,
         }],
-        thinkgraph_db_path=_database(tmp_path),
     )
 
     assert "Current native graph content" in seed
     assert "Selection reason (guidance, not verified fact)" in seed
     assert "Verified native content" in seed
-    assert references[0]["nativeId"] == "fact:one"
+    assert references[0]["nativeId"] == first
     assert references[0]["authority"] == "ThinkGraph"
     assert references[0]["label"] == "Current fact"
     assert references[0]["selectionScope"] == {"boundedExpansion": 0}
@@ -144,6 +146,26 @@ class _FakeNeo4jResult:
 
     def data(self):
         return self._rows
+
+
+def test_thinkgraph_handoff_preserves_native_entities_relationships_and_bounds(native_graph):
+    service, first, second = native_graph
+    before = service.store.conn.total_changes
+    projection = empty_graph_projection("project-1")
+    text, refs = resolve_data_anchors("project-1", [{
+        "authority": "ThinkGraph", "nativeId": first, "reason": "Use related evidence",
+        "boundedExpansion": 1, "resultLimit": 2, "required": True,
+    }], graph_projection=projection)
+    assert {node["id"] for node in projection["nodes"]} == {first, second}
+    assert len(projection["edges"]) == 1
+    edge = projection["edges"][0]
+    assert (edge["source"], edge["target"], edge["predicate"]) == (first, second, "supports")
+    assert edge["properties"]["reason"] == "Retained native evidence"
+    assert first in text and second in text and "supports" in text
+    assert refs[0]["nativeId"] == first
+    assert service.store.conn.total_changes == before
+    bounded = read_thinkgraph_exact("project-1", first, bounded_expansion=1, result_limit=1)
+    assert bounded["relationshipEvidence"] == [] and bounded["truncated"] is True
 
 
 class _FakeNeo4jSession:
@@ -426,8 +448,7 @@ def test_optional_hybrid_search_returns_honest_empty_context(monkeypatch) -> Non
         )
 
 
-def test_missing_required_anchor_fails_before_provider(tmp_path, monkeypatch) -> None:
-    path = _database(tmp_path)
+def test_missing_required_anchor_fails_before_provider(native_graph, monkeypatch) -> None:
     monkeypatch.setattr(
         "app.python_models.data_anchor.read_knowgraph_exact",
         lambda *_args, **_kwargs: None,
@@ -436,9 +457,9 @@ def test_missing_required_anchor_fails_before_provider(tmp_path, monkeypatch) ->
         resolve_data_anchors("project-1", [{
             "authority": "KnowGraph", "nativeId": "episode:one", "reason": "required",
             "boundedExpansion": 0, "required": True,
-        }], thinkgraph_db_path=path)
+        }])
     with pytest.raises(DataAnchorError, match="data_anchor_required_not_found"):
         resolve_data_anchors("project-1", [{
             "authority": "ThinkGraph", "nativeId": "missing", "reason": "required",
             "boundedExpansion": 0, "required": True,
-        }], thinkgraph_db_path=path)
+        }])

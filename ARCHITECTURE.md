@@ -27,7 +27,7 @@ React/Vite Agent Builder and Chat
            ├─ Card call/IDD/AGE deterministic rails
            ├─ AutoGen AssistantAgent
            ├─ AutoGen MagenticOneGroupChat
-           ├─ ThinkGraph/Constellation Engine
+           ├─ ThinkGraph/Engraphis
            ├─ KnowGraph/Graphiti
            └─ CodeGraph/native CBM through one app-owned AppData frontend
 ```
@@ -52,22 +52,41 @@ Current internal Cards:
 | ThinkGraph | `card_a52fd511ecb14f53` in the current project | Hermes `delegate` binding | `thinkgraph` |
 
 The September 7 cognition configuration retains Graph Agent as the KnowGraph researcher and preserves
-its native Team settings. The new ThinkGraph specialist writes project cognition through Constellation;
+its native Team settings. The ThinkGraph specialist now writes project cognition through Engraphis;
 Graph Agent's ThinkGraph mutation grants are removed. Agent Builder retains its identity and construction
 authority and gains native graph reads for synthesis. Worker output supplies pointers; Builder reads the
-graphs directly. Standalone graph-worker and Builder reads/writing and one Main-to-both-graph-workers
-cascade are live-proven. Main retains compact graph searches and native profile delegation, while
+graphs directly. Standalone graph-worker and Builder reads/writing have historical component proof.
+The former Main-to-both-graph-workers cascade was not the owner's requested boundary and is removed.
+Main retains compact graph searches and native profile delegation, while
 its prior explicit ThinkGraph write grants are removed in favor of the graph worker.
 Main's native profile has Honcho deselected; existing memory data and vendor integration are preserved.
 ThinkGraph currently uses single mode for the owner's component comparison; its Luna subagent
 selection is retained and native orchestrator remains an option. The completed Main hook passes only
 Run/conversation identities to Python's background delivery; Python reads retained input/output and
-invokes the two graph-worker saved-profile bindings in order. Synthesis is a separate requested delegation
+invokes only the saved ThinkGraph profile. KnowGraph receives sourced findings from research work,
+not an automatic copy of every completed conversation or ThinkGraph output. Synthesis is a separate requested delegation
 to Agent Builder, which reads graph evidence directly; completed-pair delivery never invokes Builder.
 Stage correlation IDs identify existing Runs,
 never a second task store. Existing failed, running or interrupted children halt delivery without restart.
-Each graph stage has its own in-process delivery lock, so a slow KnowGraph Run cannot block the next
-pair's ThinkGraph work. This preserves per-stage serialization, not restart-durable queuing.
+One in-process lock serializes ThinkGraph delivery and its correlation lookup. This is not
+restart-durable queuing. Failed or interrupted work is not automatically retried.
+
+The fixed delivery rules in `apps/python-models/app/python_models/cognition.py` are:
+
+| Rule | Data or effect | Limit of this rule |
+| --- | --- | --- |
+| Require an exact completed Hermes Main Run | Read its retained user input and final assistant result | Does not judge whether the conversation is useful knowledge |
+| Resolve exactly one saved `thinkgraph` delegate profile in that deck | Invoke only that Card through the existing Card runner | No Graph Agent, web research, or Builder selection |
+| Preserve speaker fields, Run/conversation identity, time, and selected native references | Send them as dynamic input to ThinkGraph's own IDF | This is still automatic conversation transfer to the configured agent; it is not a privacy/content classifier |
+| Serialize correlation lookup and delivery | Reuse an existing completed `cognition:<Main Run>:thinkgraph` result | In-process coordination only; no durable queue |
+| Halt on any existing noncompleted child or failed invocation | Preserve the child state and Main's already returned answer | No automatic retry or repair |
+| Reject input over 100,000 characters and mismatched/empty results | Fail the delivery rather than silently truncate or invent success | Structural checks do not establish correct entity meaning or attribution |
+
+ThinkGraph's model and saved role decide what to retain and how to relate it. The removed second stage
+sent the same conversation and ThinkGraph's output text to Graph Agent unconditionally. Its hoped-for
+benefit was research grounding, but recent acceptance did not demonstrate that benefit. It did create
+extra Graph Agent work and an unintended data destination. Existing historical Runs remain evidence;
+their presence does not authorize replay or restoration of that path.
 Before configuring a native ACP execution session, the adapter applies the exact saved parent model
 through `session/set_model`. Updating only native profile configuration does not update a restored
 session's older model. Session history, profile identity and native model execution remain Hermes-owned.
@@ -86,8 +105,10 @@ catalog refresh; its enforced HTTP-loopback transport avoids unnecessary TLS cer
 Whole-sentence CodeGraph preload was rejected after live evidence of irrelevant test matches influencing
 Main's answer. CodeGraph remains available through focused saved tools and deliberately selected native
 references; there is no deterministic keyword router replacing the rejected automatic lookup.
-The owner deferred the long-term ThinkGraph-to-KnowGraph automatic handoff decision until the other work
-is complete. The current chain is preserved; KnowGraph's independent delegated web-research path remains.
+The September 8 owner correction explicitly rejects automatic conversation/ThinkGraph-to-KnowGraph
+delivery. KnowGraph's delegated research and sourced ingestion path remains. Useful entity/relationship
+linking and Main context search/injection are separate unfinished work, to be inspected and proven one
+boundary at a time. Optional Question/evidence support is not a required conversation or research mode.
 Background profile handoffs carry source identity in authenticated system context, never public MCP
 arguments. Python binds that identity before the existing Card runner validates the directed handoff.
 
@@ -222,8 +243,8 @@ is a projection over items 2 and 4, not an eighth store.
    knowledge learned or installed for that Card. The bounded native background-review child may create or
    patch only the owning profile's skills. `build_learning_graph()` reads these files and curated-memory
    chunks under that profile's `HERMES_HOME`; the Card Knowledge tab stores no copy.
-5. **ThinkGraph — one Constellation SQLite authority.** Serves project reasoning, hypotheses, relationships,
-   operational knowledge, semantic embeddings, identity segments, and its launcher outbox. The pinned engine
+5. **ThinkGraph — one Engraphis SQLite authority.** Serves project reasoning, hypotheses, relationships,
+   operational knowledge, and semantic embeddings. The pinned engine
    is its sole writer.
 6. **KnowGraph — one Graphiti/Neo4j authority.** Serves sourced entities, facts, episodes, temporal truth, and
    provenance, isolated by native project `group_id`. `Episodic` is a label inside this authority, not another
@@ -319,7 +340,7 @@ Python rails pins OpenAI 2.41.0, the installed Graphiti MCP server's minimum, to
 transport. OpenAI 3/httpx2 loaded standalone truststore after Windows pip-system-certs injected pip's
 vendored copy, causing recursive SSL verification before provider requests. The pin restores actual
 OpenRouter embedding/search and Graphiti ingestion without changing graph/model authority or disabling
-TLS verification. Constellation's long native semantic operations retain their existing 190-second
+TLS verification. Engraphis's long native semantic writes retain their scoped 190-second
 engine and 210-second HTTP allowances through a 220-second outer MCP deadline; ordinary calls retain
 the 30-second deadline. An earlier outer cancellation could lose a write result while the native write
 continued, inviting a duplicate write. Existing affected links require separate data-quality repair.
@@ -444,7 +465,7 @@ terminal row summary uses a constrained two-column layout so its name and status
 structured detail available only in the existing expandable body.
 
 The Script editor's optional ThinkGraph and KnowGraph examples are source templates only. They call the
-canonical `constellation.context`, `constellation.inspect`, `graphiti.search_nodes`,
+canonical `engraphis_recall_context`, `engraphis_get_memory`, `graphiti.search_nodes`,
 `graphiti.search_memory_facts`, and `graphiti.get_episodes` operations through the existing Script tool
 contract. There is no `think.context`, `know.context`, `code.context`, graph-recipe registry, or second graph
 execution owner. Script failure may restore the exact selected MCP presentation only before any operation
@@ -624,7 +645,7 @@ and images. `apps/python-models/app/python_models/idf.py::materialize_idf` is th
 
 | Graph | Native owner | Meaning |
 | --- | --- | --- |
-| ThinkGraph | Constellation Engine through the Python/Node adapter | project reasoning and operational memory |
+| ThinkGraph | Engraphis through the Python-rails adapter | project reasoning and operational memory |
 | KnowGraph | Graphiti/Neo4j/Python | sourced knowledge, evidence, and provenance |
 | CodeGraph | native codebase-memory-mcp | repository structure and impact |
 | AgentGraph | Apache AGE/PostgreSQL | Card relationships, delegation, Runs, tools, references, artifacts |
@@ -632,29 +653,38 @@ and images. `apps/python-models/app/python_models/idf.py::materialize_idf` is th
 No owner copies another graph into itself. Context uses native IDs, bounded selections, and provenance.
 AgentGraph observes execution; it does not own Card configuration or runtime lifecycle.
 
-Constellation is pinned to npm package `constellation-engine` `1.0.5`, revision
-`ac460489f1cd3cd629fa96f2730e5ae9daa4326c`. The existing Constellation child owns the pinned Mímir
-semantic child and passes the exact same database path; there is no daemon/database fallback. Python rails
-own that child. Both the ThinkGraph projection and the official MCP host call the same Python-rails
-operation adapter, so the MCP process never imports the bridge or launches a second child against the
-SQLite database. The current bounded operation surface is:
+Engraphis is pinned to Python package `engraphis==1.7.1`. Python rails owns the one `MemoryService`
+against `db/thinkgraph.sqlite`. Its immutable local embedding selection is
+`sentence-transformers/all-MiniLM-L6-v2`, revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`.
+The service has no semantic backend fallback. Model-authored cognition remains the saved ThinkGraph
+Card's responsibility; automatic extractors and retention supervision are disabled.
 
-- reads/discovery: `capabilities`, `stats`, `context`, `inspect`, `inspect_edge`, `check_duplicate`,
-  `edge_types`, `collide`, `semantic_status`, `semantic_context`, `reembed_status`, `identity_preview`,
-  `autonomy_status`, and `notification_status`;
-- confirmed effects: `remember`, `remember_semantic`, `update_memory`, `link`, `adjust_edge`,
-  `adjust_edge_pair`, `classify_edge`, `classify_edge_pair`, `forget`, `maintain`, `semantic_start`,
-  `semantic_stop`, `reembed_start`, `reembed_cancel`, `identity_apply`, `autonomy_start`,
-  `autonomy_pause`, `autonomy_resume`, `autonomy_stop`, `notify`, `edge_review`, and `inject_message`.
+`engraphis.py` derives the exposed schemas from native classic/smart MCP tools. IDD owns publication
+and effect policy. The authenticated project supplies workspace identity; model schemas expose no
+workspace, repository, session, or scope override. Native names are retained without aliases:
 
-Semantic mode uses the real local BGE-M3 1024-dimensional embedder. Bulk re-embedding is one bounded,
-cancellable process-owned job with progress and exact database receipt. Identity mutation is
-preview/digest/confirm/native-write/readback. Bounded autonomy permits one concurrent native `collide` or
-confirmed maintenance loop with cycle, duration, interval, traversal-depth, aggregate-context and
-per-cycle token budgets; it does not call a model. Launcher notifications use the existing database
-outbox. `kickoffSeedExpansion`, `draftSoulCore`, and `rememberRaw` stay catalog-disclosed but unavailable:
-the pinned upstream contracts respectively require a configured provider plus launcher worker,
-Constellation provider credentials, or a cancellable LLM-fetch timeout that upstream does not expose.
+- retrieval: `engraphis_recall`, `engraphis_recall_context`, `engraphis_get_memory`,
+  `engraphis_timeline`, `engraphis_recall_proactive`, and `engraphis_stats`;
+- explicit effects: `engraphis_remember`, `engraphis_update_memory`, `engraphis_link`,
+  `engraphis_correct`, `engraphis_pin`, and `engraphis_retire`.
+
+Compact context recall uses native semantic recall with reinforcement and receipt writes disabled.
+Ordinary native recall retains its native side-effect annotations. Semantic unavailability fails
+honestly. Synchronous native work runs off the shared HTTP event loop. Semantic writes retain a scoped
+190-second MCP allowance; ordinary reads and the two-second Main preload keep their existing budgets.
+This does not make cold embedding initialization fit inside preload.
+
+The MCP host and `data_anchor.py` exact-reference hydration call the existing Python-rails operation
+route. They never create another memory service. A bounded exact read preserves native IDs, directional
+composite link identities, reasons, layers, and provenance in the receiving Run's canonical IDF. Native
+memory links have no supplied numeric strength or agent-authorship classification; the projection must
+not invent either. Analysis may use unit graph weights internally without presenting them as evidence.
+
+The optional Question/evidence contract is retained; ordinary entities, thoughts, and relationships do
+not require a Q&A workflow. Saved-agent attribution, current-source research, synthesis, and restart/UI
+acceptance are tracked separately in PLAN.md. The owner's subsequent recovery instruction authorizes
+removing obsolete Constellation code and dependencies now; this does not turn partial product proof
+into success. The old adapter and bridge are removed, with no fallback or dual writer.
 
 ## Native attention and Reveal
 
@@ -679,8 +709,8 @@ primitives are intentionally absent.
 ThinkGraph renders through one separate authority chain:
 
 ```text
-Constellation Engine SQLite
-→ Python-owned Constellation child and bounded projection route
+Engraphis SQLite
+→ Python-owned MemoryService and bounded projection route
 → backend proxy
 → GraphProjectionV1
 → ephemeral browser-only Graphology MultiDirectedGraph
@@ -690,7 +720,7 @@ Constellation Engine SQLite
 Graphology preserves surviving view positions during keyed native-ID updates but owns no persistent
 meaning. Sigma owns camera, hit testing, and drawing. The generic force-graph projection surface owns
 KnowGraph only and is not a second ThinkGraph renderer. ThinkGraph attention may decorate an exact ID
-already present in the authoritative Constellation projection; it may never create a visual node from an
+already present in the authoritative Engraphis projection; it may never create a visual node from an
 attention receipt alone. An empty native projection therefore remains visibly and structurally empty.
 
 KnowGraph projection reads first select a deterministic, project-scoped node window (default 200,
@@ -710,7 +740,8 @@ writes, and run completion/failure. Answer prose and hidden reasoning are never 
 - Hermes profile stores: native `state.db`, optional built-in memory files, one selected external
   provider authority, profile skills/usage, and Kanban/project stores where that profile uses them.
 - Neo4j: KnowGraph/Graphiti only.
-- Constellation Engine SQLite: ThinkGraph, semantic embeddings, identity segments and launcher outbox.
+- Engraphis SQLite: active ThinkGraph records, native relationships, provenance, and semantic embeddings.
+  Retained old Constellation files are not active data authority and are not incidental cleanup targets.
 - The checksum-pinned native CBM binary under LiquidAIty AppData: CodeGraph. Its official daemon, watcher,
   embedded UI, and disposable cache remain outside the repository; the Python MCP host owns the only stdio
   frontend. Docker does not own or launch CBM.
@@ -731,7 +762,6 @@ first-party command after install; it is never enabled as an install hook.
 Python dependency owners remain:
 
 - `apps/python-models/requirements.txt` for official MCP, deterministic Card/IDD/AGE rails, and AutoGen;
-- `apps/constellation-engine/package.json` for the exact pinned Constellation Engine dependency;
 - `services/knowgraph/requirements.txt` for Graphiti/Neo4j;
 - `services/esn_rls/requirements.txt` for the separately retained ESN service boundary.
 

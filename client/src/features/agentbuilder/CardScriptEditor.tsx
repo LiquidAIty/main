@@ -119,7 +119,7 @@ const SCRIPT_EXAMPLES = [
   {
     id: 'thinkgraph-context',
     label: 'ThinkGraph context',
-    description: 'Read bounded Constellation context plus one exact native memory.',
+    description: 'Read bounded Engraphis context plus one exact native memory.',
     source: `CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {

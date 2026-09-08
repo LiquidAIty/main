@@ -1,4 +1,4 @@
-"""Deterministic delivery contracts; these tests never invoke a model or graph."""
+"""Conversation delivery boundaries; these tests never invoke a model or graph."""
 import asyncio
 import copy
 import json
@@ -42,22 +42,28 @@ class RunBoundary:
                                             read_deck=self.deck, invoke=self.invoke)
 
 
-def test_saved_runs_order_and_original_pair_without_runtime_overrides():
+def test_completed_conversation_never_invokes_research_or_requires_its_card():
+    boundary = RunBoundary()
+    boundary.cards = [boundary.cards[0]]
+    result = asyncio.run(boundary.deliver())
+    assert result == {"state": "completed", "runId": "cognition:main-turn:thinkgraph", "cardId": "thinkgraph"}
+    assert [call["cardId"] for call in boundary.calls] == ["thinkgraph"]
+
+
+def test_only_thinkgraph_receives_original_pair_without_runtime_overrides():
     boundary = RunBoundary()
     result = asyncio.run(boundary.deliver())
     assert result["state"] == "completed"
-    assert [c["cardId"] for c in boundary.calls] == boundary.profiles
+    assert [c["cardId"] for c in boundary.calls] == ["thinkgraph"]
     for call in boundary.calls:
         assert call["originatingAgentId"] == "main"
         assert call["originatingRunId"] == "main-turn"
         assert not {"model", "provider", "prompt", "tools", "builderOperation"} & call.keys()
         mission = json.loads(call["input"])
         assert mission["completedPair"]["user"] == "Original user message"
+        assert mission["completedPair"]["assistant"] == "Answer already delivered"
+        assert "referenceHints" not in mission
         assert mission["selectedReferences"] == [{"authority": "ThinkGraph", "nativeId": "native:1"}]
-    research = json.loads(boundary.calls[-1]["input"])
-    assert [x["stage"] for x in research["referenceHints"]] == ["thinkgraph"]
-    assert "do not write a final report" in research["purpose"]
-    assert all(call["cardId"] != "liquidaity-agent-builder" for call in boundary.calls)
 
 
 def test_duplicate_completion_reuses_durable_stage_results():
@@ -67,7 +73,7 @@ def test_duplicate_completion_reuses_durable_stage_results():
         second = await boundary.deliver()
         assert first == second
     asyncio.run(run())
-    assert len(boundary.calls) == 2
+    assert len(boundary.calls) == 1
 
 
 def test_concurrent_completion_delivery_does_not_duplicate_children():
@@ -76,7 +82,7 @@ def test_concurrent_completion_delivery_does_not_duplicate_children():
         first, second = await asyncio.gather(boundary.deliver(), boundary.deliver())
         assert first == second
     asyncio.run(run())
-    assert len(boundary.calls) == 2
+    assert len(boundary.calls) == 1
 
 
 def test_non_hermes_run_does_not_start_cognition():
@@ -116,69 +122,60 @@ def test_duplicate_profile_and_parent_scope_fail_before_execution():
     assert boundary.calls == []
 
 
-def test_failed_second_stage_halts_graph_maintenance():
+def test_failed_thinkgraph_halts_without_research():
     boundary = RunBoundary()
-    invoke = boundary.invoke
-    async def fail_knowgraph(args):
-        if args["cardId"] == "liquidaity-hermes-steward":
-            return {"ok": False, "result": {"state": "failed"}}
-        return await invoke(args)
-    boundary.invoke = fail_knowgraph
+    async def fail(args):
+        boundary.calls.append(copy.deepcopy(args))
+        return {"ok": False, "result": {"state": "failed"}}
+    boundary.invoke = fail
     result = asyncio.run(boundary.deliver())
-    assert result["state"] == "halted" and result["stage"] == "knowgraph"
-    assert len(boundary.calls) == 1
+    assert result["state"] == "halted" and result["stage"] == "thinkgraph"
+    assert [call["cardId"] for call in boundary.calls] == ["thinkgraph"]
 
 
-def test_slow_research_does_not_block_next_pairs_reasoning(monkeypatch):
+def test_existing_research_run_is_neither_read_nor_replayed():
+    boundary = RunBoundary()
+    boundary.runs["cognition:main-turn:knowgraph"] = {
+        "runId": "cognition:main-turn:knowgraph", "cardId": "liquidaity-hermes-steward", "state": "failed",
+    }
+    read = boundary.read
+    def only_authorized_delivery(selector):
+        assert selector.get("correlationId") != "cognition:main-turn:knowgraph"
+        return read(selector)
+    boundary.read = only_authorized_delivery
+    assert asyncio.run(boundary.deliver())["state"] == "completed"
+    assert [call["cardId"] for call in boundary.calls] == ["thinkgraph"]
+
+
+def test_distinct_pairs_serialize_thinkgraph_without_research(monkeypatch):
     import app.python_models.cognition as cognition
 
     async def run():
-        # Independent event loop, while retaining the production lock scope.
-        monkeypatch.setattr(cognition, "_stage_locks", {
-            stage: asyncio.Lock() for stage in cognition._STAGES
-        })
+        monkeypatch.setattr(cognition, "_delivery_lock", asyncio.Lock())
         first, second = RunBoundary(), RunBoundary()
         second.context["runId"] = second.parent["runId"] = "second-turn"
-        research_started = asyncio.Event()
-        release_research = asyncio.Event()
-        second_reasoned = asyncio.Event()
-        active = {stage: 0 for stage in first.profiles}
-        maximum = active.copy()
+        active = maximum = 0
 
-        def instrument(boundary):
+        def observe(boundary):
             invoke = boundary.invoke
-
             async def observed(args):
-                stage = args["cardId"]
-                active[stage] += 1
-                maximum[stage] = max(maximum[stage], active[stage])
+                nonlocal active, maximum
+                active += 1
+                maximum = max(maximum, active)
                 try:
-                    if boundary is first and stage == first.profiles[1]:
-                        research_started.set()
-                        await release_research.wait()
-                    result = await invoke(args)
-                    if boundary is second and stage == first.profiles[0]:
-                        second_reasoned.set()
-                    return result
+                    # Allow a concurrent invocation to enter if serialization is lost.
+                    await asyncio.sleep(0.02)
+                    return await invoke(args)
                 finally:
-                    active[stage] -= 1
-
+                    active -= 1
             boundary.invoke = observed
 
-        instrument(first)
-        instrument(second)
-        first_task = asyncio.create_task(first.deliver())
-        await asyncio.wait_for(research_started.wait(), 2)
-        second_task = asyncio.create_task(second.deliver())
-        try:
-            await asyncio.wait_for(second_reasoned.wait(), 2)
-            assert [c["cardId"] for c in second.calls] == ["thinkgraph"]
-        finally:
-            release_research.set()
-            results = await asyncio.gather(first_task, second_task)
+        observe(first)
+        observe(second)
+        results = await asyncio.gather(first.deliver(), second.deliver())
         assert all(result["state"] == "completed" for result in results)
-        assert maximum == {stage: 1 for stage in first.profiles}
-        assert [c["cardId"] for c in second.calls] == second.profiles
-        assert json.loads(second.calls[1]["input"])["referenceHints"][0]["runId"] == "cognition:second-turn:thinkgraph"
+        assert maximum == 1
+        assert [call["cardId"] for call in first.calls + second.calls] == ["thinkgraph", "thinkgraph"]
+        assert second.calls[0]["correlationId"] == "cognition:second-turn:thinkgraph"
 
     asyncio.run(run())

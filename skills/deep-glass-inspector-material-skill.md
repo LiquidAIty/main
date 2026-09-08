@@ -56,7 +56,7 @@ shell, not transparent black.
 ## Where It Is Applied
 
 `client/src/components/graph/RightGlassDrawer.tsx` is the one current shell. Agent Builder,
-Constellation/ThinkGraph, native authority graphs, Hermes Kanban, and the embedded CodeGraph surface
+Engraphis/ThinkGraph, native authority graphs, Hermes Kanban, and the embedded CodeGraph surface
 reuse it. Keep the material in `graphVisualTokens.ts` and the shell in `RightGlassDrawer.tsx`; do not
 create feature-specific drawer copies.
 

@@ -111,15 +111,15 @@ they do not select a runtime implementation.
   Automatic skill settings and complete save-on-leave persistence acceptance remain incomplete. Tools contains the existing Python Script editor
   below the tool selection. This is presentation consolidation,
   not another persistence owner or execution path. Optional ThinkGraph and KnowGraph Script examples call
-  only the canonical `constellation.*` and `graphiti.*` operations and remain inactive until explicitly inserted.
+  only the canonical `engraphis_*` and `graphiti.*` operations and remain inactive until explicitly inserted.
 - After the repaired host-Script boundary is loaded, the first real Agent Builder Script acceptance should
   be one small graph-context recipe: leave unrelated authorized reads `OFF`, claim only the most useful
   bounded native graph reads, and assemble their native references into context for one ordinary Hermes
   turn. The recipe may wrap repeatable sequencing but cannot create a graph owner, widen grants, or run
   before the Card's explicit CLI/Run task starts.
 - Python rails own deterministic runtime work, AutoGen, Magentic-One, native tools, and graph adapters.
-- Python rails own the one Constellation child and database adapter. The official MCP host proxies its
-  Constellation calls through that existing owner and never starts another engine process or database.
+- Python rails own the one Engraphis 1.7.1 service and database adapter. The official MCP host and exact
+  reference hydration proxy through that owner and never open another engine or database.
 - ThinkGraph, KnowGraph, CodeGraph, and AgentGraph have separate owners and never become one copied
   graph.
 - KnowGraph UI reads are deterministically bounded and exclude embedding-vector properties; native IDs,
@@ -146,7 +146,7 @@ they do not select a runtime implementation.
 - Automatic and optionally reviewed one-IDF handoff to one native Magentic-One run.
 - End-to-end Reveal pacing for graph consumption, traversal, handoff, and writes.
 - A canonical reload must load the saved subagent selector chain, child receipt migration,
-  Constellation operation route, bounded KnowGraph/profile readback, and the corrected Main-only Honcho
+  Engraphis operation route, bounded KnowGraph/profile readback, and the corrected Main-only Honcho
   Inspector status. Local proof must record the startup-specific catalog count/hash and retain one actual
   account-Luna child receipt without issuing a duplicate paid call.
 - The new Card Script path still requires one canonical loaded-process proof: saved Main, the Hermes helper and
@@ -259,9 +259,8 @@ owners before this behavior is described as working.
 
 ### ThinkGraph
 
-- The new saved `thinkgraph` profile uses Constellation only, with Luna as its parent and native
-  subagent selection. Delegate task uses Hermes's existing orchestrator mode; internal workers remain
-  within this profile's grants. Graph Agent's SQLite Team is unchanged.
+- The saved `thinkgraph` profile uses Engraphis, with Luna as its parent and native subagent selection.
+  Its current delegation selection is off. Graph Agent's SQLite Team is unchanged.
 - It maintains observed statements, revisable conclusions, decisions, preferences and summaries with
   source/turn identity and native relationships. Assistant proposals never imply user acceptance.
 - Honcho is a behavioral reference for evolving understanding, not another runtime or storage owner.
@@ -273,14 +272,19 @@ owners before this behavior is described as working.
 The project has the new ThinkGraph binding, the existing Graph Agent narrowed to KnowGraph research,
 and the existing Builder extended for synthesis. Deterministic preparation verifies their grants and
 Main's saved delegation edges without inference. The lower reader displays Builder's actual Run output.
-The completed-pair source hook now returns Main independently of background delivery. Python advances
-ThinkGraph and Graph Agent through the existing saved Run doorway, using retained Main input
-and output. Stable stage correlation IDs reuse completed results and halt on existing noncompleted
-children; no child is restarted. Deterministic tests cover ordering, duplicate/concurrent delivery,
+The completed-pair source hook returns Main independently of background delivery. Following the owner's
+September 8 correction, Python delivers retained Main input/output only to ThinkGraph through the
+existing saved Run doorway. The automatic Graph Agent second stage and copied worker-result hints are
+removed; KnowGraph retains sourced findings from research work, not every conversation. Stable
+correlation IDs reuse completed results and halt on existing noncompleted children; no child is restarted.
+Contract tests cover the sole recipient, duplicate/concurrent delivery,
 identity checks and failure stops. This is not live model or graph acceptance.
-Delivery queued in process is not restart-durable. Conversation-scoped output selection and Main
-reading that output still require implementation and proof. Main's existing prompt and explicit graph
-write grants remain unchanged pending the proven replacement; they need alignment with the worker roles.
+Delivery queued in process is not restart-durable. Main reading conversation-scoped Builder output still
+requires proof. Saved Main, Graph Agent, Builder, and ThinkGraph grants now use native Engraphis names;
+Main's existing conversational prompt remains unchanged by this cutover.
+Entity/relationship context linking remains unproven. Main context search and injection remain a separate
+TODO; existing preload code is not acceptance of its relevance, selection, or data boundaries. Inspect
+these pieces one at a time. Do not force a Question/answer workflow or add deterministic semantic routing.
 Automatic message/embedding retrieval and latency tuning come last, after this graph-to-synthesis path.
 For Main's next context decision, use a bounded prepared view of current attention as the starting
 point: active work, pending/completed results and native graph references. AGE supplies observed
@@ -297,7 +301,8 @@ The completed-pair path does not invoke Builder. Its completed Run result remain
 are new requested work. Attention preparation, explicit background research and synthesis delegation
 form the intended blend; no semantic keyword router chooses between them.
 
-September 7 restart exploration: Main's retained slow Run records sixteen CodeGraph searches, one
+Historical September 7 exploration (the engine choice below is superseded by the September 8 cutover):
+Main's retained slow Run records sixteen CodeGraph searches, one
 ThinkGraph write and one ThinkGraph read, with no recorded delegated child. That establishes work done,
 not the cause of the entire elapsed time. Existing native profile delegation supports explicit
 `background: true`; its default is synchronous. Main should retain focused searches for each graph and
@@ -409,6 +414,23 @@ from the graph surfaces. KnowGraph selection now exposes supplied entity summari
 Useful sourced relationship inspection and graph-wide AI summaries still require acceptance with
 appropriate data; no replacement records were inserted and no new model run was launched for cleanup.
 
+September 8 Engraphis cutover is PARTIAL. Native 1.7.1, semantic read-only recall, metadata updates,
+history-preserving correction mechanics, exact relationship hydration, and the saved tool migration
+have focused proof. Four ordinary Main pairs produced four real saved-Luna ThinkGraph records and two
+native relationships; paraphrase recall returned the earlier native IDs. One record incorrectly marked
+assistant-proposed journal details as a user decision. A claim-attribution prompt repair is saved, but
+the follow-up Main Run failed after a 600-second provider timeout, so semantic repair remains unproven.
+Current-report research hit a busy Graph Agent profile; Builder synthesis was not accepted. Do not scale
+data collection or redesign the graph around these failures. The reusable boundary-testing procedure is
+`skills/conversation-graph-acceptance.md`. Research, correction, synthesis, populated UI, and fresh external
+GPT-plugin acceptance remain distinct proof obligations. After the canonical reload, all four native
+IDs and two relationships remain; exact reads took 10-23ms after a 17.145s first initialization, and the
+paraphrase returned the earlier memory first in 336ms. These are read-only persistence measurements,
+not fresh agent interpretation or Main-context quality proof. The loaded public catalog publishes twelve
+native Engraphis descriptors and no Constellation descriptors; existing conversations may retain old
+client descriptors. The automatic KnowGraph second stage is removed, with seventeen delivery-contract
+tests and exact saved Main/Graph Agent prompt readback; no new agent turn was run after that correction.
+
 ### AutoGen
 
 - The checked-in first-party `autogen-main` fork is pinned to official Python AutoGen 0.7.5 and is
@@ -425,15 +447,15 @@ appropriate data; no replacement records were inserted and no new model run was 
 ## Graph and attention plan
 
 ```text
-ThinkGraph  = Constellation Engine project reasoning and memory
+ThinkGraph  = Engraphis project reasoning and memory
 KnowGraph   = Graphiti/Neo4j sourced knowledge and provenance
 CodeGraph   = native CBM repository structure
 AgentGraph  = Cards, relationships, Runs, delegation, references, tools, and artifacts in AGE
 ```
 
-The current ThinkGraph MVP uses the Python-owned Constellation projection route, the renderer-neutral
+The current ThinkGraph MVP uses the Python-owned Engraphis projection route, the renderer-neutral
 `GraphProjectionV1` DTO, one disposable in-memory Graphology `MultiDirectedGraph`, and Sigma v3 WebGL.
-Graphology and Sigma are view state only. Attention decorates exact IDs already returned by Constellation;
+Graphology and Sigma are view state only. Attention decorates exact IDs already returned by Engraphis;
 it cannot create substitute nodes. Empty native results render an honest empty state. A later 3D mode may
 consume the same DTO but is not part of the current renderer.
 
@@ -441,13 +463,12 @@ The foreground graph starts empty and reveals only native objects actually retur
 consumed, traversed, handed off, or written. Inspector detail may show technical receipts. Card faces
 may show correlated tool activity, but Card animation is not a substitute for graph attention.
 
-Constellation uses pinned engine `1.0.5` at revision
-`ac460489f1cd3cd629fa96f2730e5ae9daa4326c` and one database/process owner. Its catalog exposes bounded
-topology reads/writes, BGE-M3 semantic start/status/stop/context/remember, cancellable re-embedding,
-preview-confirm-readback identity mutation, explicit bounded autonomy controls, edge review/pair
-operations, launcher outbox status/notify, and message injection. `kickoffSeedExpansion`,
-`draftSoulCore`, and `rememberRaw` remain disclosed as unavailable until their exact upstream
-provider/worker/timeout contracts are satisfied; no second runtime or database substitutes for them.
+Engraphis is pinned to 1.7.1 and uses the local immutable MiniLM embedding model through one Python-rails
+service. The public MCP catalog derives native read/write schemas and IDD publication from that owner;
+there are no Constellation aliases. The owner's subsequent recovery direction authorizes removing
+obsolete Constellation code and dependency residue now, while product acceptance remains partial. The
+old adapter and bridge are removed and cannot act as a fallback. Preserve the
+useful `ConstellationSigmaSurface` renderer and durable graph files when that cleanup becomes due.
 
 KnowGraph UI projection selects at most 500 project-scoped nodes and 1,000 in-window relationships and
 does not transport embedding arrays. Graphiti remains the only native KnowGraph semantic/search authority.
@@ -456,7 +477,7 @@ does not transport embedding arrays. Graphiti remains the only native KnowGraph 
 
 These are recommendations for later saved-prompt review, not grant changes or catalog pruning:
 
-- Main should begin with its exact server context, use ThinkGraph/Constellation for project reasoning,
+- Main should begin with its exact server context, use ThinkGraph/Engraphis for project reasoning,
   and call downstream Cards only through saved topology. Contextualized plugin turns should keep the
   Honcho bypass marker; direct Main should retain native Main-only Honcho fail-open behavior.
 - Memory use should stay deliberate: profile history and curated memory, then the profile's native
@@ -508,12 +529,14 @@ alternate startup instructions.
 
 ## Ordered delivery
 
-Current owner priority: complete the Card surfaces and report their actual capabilities and gaps first,
-then prove graphs with real project work. Magentic-One execution waits for a prompt prepared by the System3
-agents. Main stays visible above the pull-up Builder surface: a terminal in Canvas and an output reader
-elsewhere. Their configuration Cards open
-on Prompt with no CLI tab. Mag One needs System3 ready to supply a mission and usable connected agents,
-without an additional product gate.
+Current owner priority: clean obsolete code, instructions and memory, explain fixed automation and its
+data destinations, then establish the graph behavior one boundary at a time. Only completed Main
+conversations automatically go to ThinkGraph. Graph Agent receives delegated research and retains
+useful sourced findings in KnowGraph. Entity/relationship linking and Main context search/injection
+remain separate work; actual-agent acceptance is paused during this cleanup. Do not impose Q&A.
+Main stays visible above the pull-up Builder surface: a terminal in Canvas and an output reader
+elsewhere. Their configuration Cards open on Prompt with no CLI tab. Mag One receives Main's
+user-approved mission and usable connected agents, without an additional product gate.
 Product controls should explain themselves through placement and behavior; do not add explanatory panels or filler copy.
 
 Card configuration alignment remains incomplete: IDD must supply the actual editable Card fields, dropdown
@@ -527,8 +550,9 @@ Card configuration with real dynamic input and deliberately selected context at 
 1. Keep cold install, typecheck, build, focused tests, and static startup proof green.
 2. Prove Main alone with one bounded, explicitly approved model call.
 3. Prove Main → Agent Builder and truthful child lineage.
-4. Prove one ordinary Card's headless Auto-Team with Terra decomposition, two to four Luna workers,
-   separate Terra review/synthesis, exact same-session result delivery, and durable rejoin.
+4. Prove one ordinary Card's headless Auto-Team with its saved native configuration, actual bounded
+   workers and synthesis, exact same-session result delivery, and durable rejoin. Do not restore the
+   removed task-count clamp or Card-level Team policy overlay.
 5. Prove transient Mag One Card input → native Magentic-One.
 6. Prove native graph attention and Reveal from real read/write events.
 7. Complete the loaded Card Script/selector/receipt proof, rebuild the canonical IDD/application/MCP

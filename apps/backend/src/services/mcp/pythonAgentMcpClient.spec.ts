@@ -20,7 +20,7 @@ const canonicalHostAvailable = Boolean(
 );
 
 describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery + calls', () => {
-  it('publishes bounded Constellation tools with the native CBM and Graphiti catalogs', async () => {
+  it('publishes bounded Engraphis tools with the native CBM and Graphiti catalogs', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
@@ -32,9 +32,9 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'card.update_configuration',
       'cbm.search_graph',
       'cbm.index_status',
-      'constellation.context',
-      'constellation.inspect',
-      'constellation.remember',
+      'engraphis_recall_context',
+      'engraphis_get_memory',
+      'engraphis_remember',
       'graphiti.search_nodes',
       'graphiti.get_status',
       'agentgraph.inspect',

@@ -6,6 +6,18 @@ Restored at Jeremiah's request on 2026-09-05 after the documentation-system dele
 `2ddadeeb`. The owner's latest instructions take precedence. This section is current;
 the recovered document below is historical evidence, including obsolete paths and old estimates.
 
+The September 8 owner decision replaces active ThinkGraph Constellation with Engraphis 1.7.1.
+Entities, thoughts, and relationships are primary; Question/evidence remains an optional capability.
+Do not restore old Constellation instructions from the historical record. The owner's later recovery
+instruction explicitly authorizes cleaning obsolete code, docs, templates, and Codex memory now.
+Partial conversation/research/synthesis proof must still be reported honestly. Keep acceptance data,
+including incorrect interpretations that still need native correction.
+
+Automatic completed Main conversation delivery belongs only to ThinkGraph. Do not restore an automatic
+ThinkGraph-to-KnowGraph or conversation-to-KnowGraph stage. KnowGraph retains sourced web research;
+models assess the useful findings within the research mission. Entity/relationship linking and Main
+context search/injection require separate, incremental proof. No forced Question/answer workflow.
+
 1. Do the requested work. Preserve unrelated source, saved Cards, profiles, prompts, grants,
    projects, graph data, sessions, layout, and current dirty work. Never perform a broad restore.
 2. Do not copy a nearby implementation because it exists. Trace its real callers, data owner,
@@ -33,7 +45,7 @@ the recovered document below is historical evidence, including obsolete paths an
 12. Required tests/builds may exceed a minute. Poll the existing command; do not duplicate it or
     discard work because it is slow. Source proof, tests, saved readback, loaded runtime and UI
     acceptance are different claims. Report each honestly.
-13. Mag One needs System3 ready to supply its mission and usable connected agents. Do not add
+13. Mag One needs Main's user-approved mission and usable connected agents. Do not add
     another approval workflow or product gate. A stand-in test does not prove that readiness.
 14. Read only relevant reusable procedures, then verify current source and actual runtime evidence.
     Do not restore feature manifests, automatic LLM wiki generation or report-to-graph writes.
@@ -59,7 +71,7 @@ the recovered document below is historical evidence, including obsolete paths an
 
 - **Cognition roles and the permanent conversation.** Keep the existing Graph Agent/Team as the
   KnowGraph researcher and the existing Agent Builder as both synthesizer and Canvas builder. Only
-  ThinkGraph needs a new profile, using Constellation. Workers maintain graphs; synthesis reads native
+  ThinkGraph uses its own profile (now Engraphis; the original engine choice is superseded). Workers maintain graphs; synthesis reads native
   graph evidence directly. Never replace graph authority with a chain of copied reports. Expanding the
   lower surface must not unmount Main or switch its conversation/profile into CLI mode. Automatic
   retrieval from user messages comes after the graph/synthesis path works.

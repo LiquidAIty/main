@@ -240,7 +240,7 @@ export default function ConstellationSigmaSurface({
             <p>{projection?.nodes.find(node => node.id === selectedEdge.source)?.label} → {projection?.nodes.find(node => node.id === selectedEdge.target)?.label}</p>
             <p>{String(selectedEdge.properties?.edgeClass || '')}{selectedEdge.properties?.derivedType ? ` · ${String(selectedEdge.properties.derivedType)}` : ''}</p>
             {selectedEdge.properties?.strength != null ? <p>Strength {Number(selectedEdge.properties.strength).toFixed(2)}</p> : null}
-            {selectedEdge.properties?.rationale || selectedEdge.properties?.content ? <p>{String(selectedEdge.properties.rationale || selectedEdge.properties.content)}</p> : null}
+            {selectedEdge.properties?.reason || selectedEdge.properties?.rationale || selectedEdge.properties?.content ? <p>{String(selectedEdge.properties.reason || selectedEdge.properties.rationale || selectedEdge.properties.content)}</p> : null}
             <details><summary>References</summary><p>{selectedEdge.id}</p><p>{String(selectedEdge.provenance?.source || '')}</p></details>
           </section> : null}
           {selected && projection?.analysis?.gaps.filter(gap => gap.source === selected.id || gap.target === selected.id).map(gap => <p key={`${gap.source}:${gap.target}`} className="thinkgraph-gap">Possible connection: {projection.nodes.find(node => node.id === (gap.source === selected.id ? gap.target : gap.source))?.label}. {gap.reason}</p>)}

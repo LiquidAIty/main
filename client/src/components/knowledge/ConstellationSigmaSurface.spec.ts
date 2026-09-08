@@ -10,16 +10,16 @@ function projection(
   edges: GraphProjectionV1['edges'],
 ): GraphProjectionV1 {
   return {
-    schemaVersion: 'thinkgraph.constellation.v1',
-    authority: 'constellation-engine',
+    schemaVersion: 'thinkgraph.engraphis.v1',
+    authority: 'engraphis',
     projectId: 'project-one',
-    revision: 'constellation-test-revision',
+    revision: 'thinkgraph-test-revision',
     nodes,
     edges,
   };
 }
 
-describe('Constellation Sigma Graphology synchronization', () => {
+describe('ThinkGraph Sigma Graphology synchronization', () => {
   it('gives a small populated graph a two-dimensional layout instead of trapping forces on one line', () => {
     const graph = new MultiDirectedGraph();
     const nodes = Array.from({ length: 12 }, (_, i) => ({ id: String(i), label: String(i), mentionCount: 1 }));
@@ -52,7 +52,7 @@ describe('Constellation Sigma Graphology synchronization', () => {
     const graph = new MultiDirectedGraph();
     const first = projection(
       [
-        { id: 'native-a', canonicalId: 'native-a', label: 'A', mentionCount: 1, properties: { level: 'L2' }, provenance: { engine: 'constellation-engine' } },
+        { id: 'native-a', canonicalId: 'native-a', label: 'A', mentionCount: 1, properties: { detail: 'full' }, provenance: { engine: 'engraphis' } },
         { id: 'native-b', canonicalId: 'native-b', label: 'B', mentionCount: 1, properties: { level: 'L1' } },
       ],
       [
@@ -69,7 +69,7 @@ describe('Constellation Sigma Graphology synchronization', () => {
     });
     expect(graph.edges()).toEqual(expect.arrayContaining(['native-edge-1', 'native-edge-2']));
     expect(graph.getNodeAttribute('native-a', 'nativeId')).toBe('native-a');
-    expect(graph.getNodeAttribute('native-a', 'provenance')).toEqual({ engine: 'constellation-engine' });
+    expect(graph.getNodeAttribute('native-a', 'provenance')).toEqual({ engine: 'engraphis' });
     graph.setNodeAttribute('native-a', 'x', 42);
     graph.setNodeAttribute('native-a', 'y', -17);
 

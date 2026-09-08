@@ -473,14 +473,14 @@ def thinkgraph_projection(
     includeHistorical: bool = False,
     memoryType: str | None = None,
 ):
-    """Read the native Constellation projection for the selected project."""
+    """Read the native Engraphis projection for the selected project."""
     from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()
     if not project_id:
         raise HTTPException(status_code=400, detail="projectId required")
     try:
-        # The route keeps its stable transport contract. Constellation owns the
+        # The route keeps its stable transport contract. Engraphis owns the
         # bounded live topology; historical/type filtering is not fabricated.
         return projection(project_id)
     except Exception as err:
@@ -489,7 +489,7 @@ def thinkgraph_projection(
 
 @app.get("/thinkgraph/neighborhood")
 def thinkgraph_neighborhood(projectId: str, canonicalId: str):
-    """Read one exact Constellation memory and its native neighborhood."""
+    """Read one exact Engraphis memory and its native neighborhood."""
     from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()
