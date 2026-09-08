@@ -2,29 +2,12 @@ import { MultiDirectedGraph } from 'graphology';
 
 import type { GraphProjectionNode, GraphProjectionV1 } from './NativeAuthorityGraphSurface';
 
-const LEVEL_COLORS: Record<string, string> = {
-  L2: '#ffd166',
-  L1: '#7dd3fc',
-  L0: '#a78bfa',
-};
+const COMMUNITY_COLORS = ['#75ccc0', '#d5b47b', '#9ca9e1', '#cb98b5', '#91b9d2', '#a7c68f'];
 
-function stableAngle(id: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < id.length; index += 1) {
-    hash ^= id.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return ((hash >>> 0) / 0xffffffff) * Math.PI * 2;
-}
-
-function nodePosition(node: GraphProjectionNode, index: number, total: number) {
-  const distance = Number(node.properties?.distance);
-  const normalizedDistance = Number.isFinite(distance) ? Math.max(0, distance) : null;
-  const angle = stableAngle(node.id) + index * Math.PI * (3 - Math.sqrt(5));
-  const radius = normalizedDistance == null
-    ? 1.2 + Math.sqrt((index + 1) / Math.max(1, total)) * 8
-    : 1.2 + Math.min(10, normalizedDistance * 7);
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+// A numerical seed only. ForceAtlas2 derives the displayed positions from edges.
+function seedPosition(index: number, count: number) {
+  const columns = Math.max(1, Math.ceil(Math.sqrt(count)));
+  return { x: (index % columns) * 3, y: Math.floor(index / columns) * 3 };
 }
 
 type ProjectionSyncResult = {
@@ -73,6 +56,7 @@ export function synchronizeProjectionGraph(
   }
 
   const degree = new Map<string, number>();
+  const communities = [...new Set(nodes.map(node => String(node.properties?.communityId || '')))].sort();
   for (const edge of edgeById.values()) {
     degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
     degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
@@ -85,14 +69,17 @@ export function synchronizeProjectionGraph(
           x: Number(graph.getNodeAttribute(node.id, 'x')),
           y: Number(graph.getNodeAttribute(node.id, 'y')),
         }
-      : nodePosition(node, index, nodes.length);
+      : seedPosition(index, nodes.length);
     const position = Number.isFinite(existingPosition.x) && Number.isFinite(existingPosition.y)
       ? existingPosition
-      : nodePosition(node, index, nodes.length);
+      : seedPosition(index, nodes.length);
+    const communityId = String(node.properties?.communityId || '');
     const attributes = {
       ...position,
       label: String(node.label || node.title || node.id),
-      color: String(node.properties?.attentionActorColor || LEVEL_COLORS[level] || '#5eead4'),
+      color: String(node.properties?.attentionActorColor || COMMUNITY_COLORS[Math.max(0, communities.indexOf(communityId)) % COMMUNITY_COLORS.length]),
+      communityId,
+      forceLabel: Number(node.properties?.gatewayScore) > 0.05 || Number(node.properties?.currentInterest) > 0.7,
       size: Math.max(3, Math.min(14, 4 + Math.sqrt(nodeDegree + 1) * 1.8)),
       zIndex: level === 'L2' ? 3 : level === 'L1' ? 2 : 1,
       nativeId: node.id,
@@ -107,7 +94,8 @@ export function synchronizeProjectionGraph(
   for (const edge of edgeById.values()) {
     const attributes = {
       label: edge.predicate,
-      color: 'rgba(111, 190, 210, 0.34)',
+      color: edge.properties?.edgeClass === 'derived' ? 'rgba(130, 150, 165, 0.18)' : 'rgba(111, 190, 210, 0.6)',
+      weight: Number(edge.properties?.strength) || 1,
       size: Math.max(0.4, Math.min(3, Number(edge.properties?.strength) || 0.8)),
       nativeId: edge.id,
       properties: edge.properties || {},

@@ -723,6 +723,47 @@ def _delegation_invocation(
     })
 
 
+def test_prepared_main_context_enters_the_same_idf_without_changing_the_mission(monkeypatch):
+    calls = []
+    def preload(*args):
+        calls.append(args)
+        return {"text": "native project decision", "references": [{"authority": "ThinkGraph", "nativeId": "decision-1"}],
+                "reads": [{"authority": "ThinkGraph", "state": "completed", "durationMs": 8}]}
+    monkeypatch.setattr(card_domain, "prepare_main_context", preload)
+    result = _delegation_invocation(monkeypatch, edges=[])
+    assert len(calls) == 1
+    assert result["idf"]["actualGraphData"]["modelText"] == "native project decision"
+    assert result["idf"]["actualGraphData"]["selectedNativeReferences"][0]["nativeId"] == "decision-1"
+    assert calls[0][4] == "delegate only across the saved FLOW relationship"
+    assert result["resolvedNativeReads"][0]["nativeId"] == "decision-1"
+    assert result["preparedContextReads"][0]["durationMs"] == 8
+    calls.clear()
+    _delegation_invocation(monkeypatch, edges=[], parent_runtime={"kind": "hermes", "mode": "delegate", "profile": "parent"})
+    assert calls == []
+
+
+def test_main_context_preview_uses_saved_grants_without_starting_or_materializing_a_run(monkeypatch):
+    main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+    main.update({"_cardRevisionId": "main-revision", "_cardRevision": 1, "_cardRevisionSha256": "main-sha"})
+    main["runtimeOptions"]["tools"] = ["canvas.inspect"]
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
+        "projectId": "00000000-0000-0000-0000-000000000001", "deck": {"nodes": [main], "edges": []},
+    })
+    calls = []
+    context = {"text": "", "references": [], "reads": [{"state": "read_timeout"}]}
+    monkeypatch.setattr(card_domain, "prepare_main_context", lambda *args: calls.append(args) or context)
+    monkeypatch.setattr(card_domain, "materialize_idf", lambda **_: pytest.fail("preview created an IDF"))
+    monkeypatch.setattr(card_domain, "_insert_run", lambda *_, **__: pytest.fail("preview started a Run"))
+    payload = {"projectId": "project-one", "deckId": "deck-one", "conversationId": "conversation-one"}
+    assert "preparedContext" not in card_domain.prepare_main_chat(payload)
+    assert calls == []
+    result = card_domain.prepare_main_chat({**payload, "message": "source validity"})
+    assert result["preparedContext"] == context
+    assert calls == [("00000000-0000-0000-0000-000000000001", "deck-one", "main",
+                      "conversation-one", "source validity", ["canvas.inspect"])]
+    assert "idf" not in result and "runId" not in result
+
+
 def test_enabled_flow_edge_materializes_bounded_target_without_inventing_tool_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

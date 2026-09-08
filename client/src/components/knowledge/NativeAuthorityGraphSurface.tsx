@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph from 'force-graph';
 import { forceCollide, forceX, forceY } from 'd3-force';
 
-import { GraphTab as CbmGraphTab } from '../../vendor/codebase-memory-ui/src/components/GraphTab';
 import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
-import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
+import { GraphNavigationControls } from '../graph/GraphCanvasChrome';
 import './nativeAuthorityGraphSurface.css';
+
+const CbmGraphTab = lazy(async () => {
+  const { GraphTab } = await import('../../vendor/codebase-memory-ui/src/components/GraphTab');
+  return { default: GraphTab };
+});
 
 type GraphAuthority = 'knowgraph';
 
@@ -68,6 +72,12 @@ export type GraphProjectionV1 = {
   authority?: string;
   projectId: string;
   revision?: string;
+  analysis?: {
+    revision: string;
+    communities: Array<{ id: string; memberCount: number; members: string[]; centralNodes: string[]; gateways: string[] }>;
+    gaps: Array<{ source: string; target: string; edgeClass: 'derived'; derivedType: string; reason: string }>;
+    durationMs: number;
+  };
   embedding?: Record<string, unknown>;
   counts?: { nodes: number; edges: number };
   nodes: GraphProjectionNode[];
@@ -76,11 +86,13 @@ export type GraphProjectionV1 = {
 
 export function NativeKnowGraphSurface({
   projection,
+  status = 'ready',
   error,
   onExpand,
   onUseAsContext,
 }: {
   projection: GraphProjectionV1;
+  status?: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   onExpand: (node: GraphProjectionNode) => Promise<void>;
   onUseAsContext?: (node: GraphProjectionNode) => void;
@@ -88,7 +100,7 @@ export function NativeKnowGraphSurface({
   return (
     <NativeGraphProjectionSurface
       projection={projection}
-      status={error ? 'error' : 'ready'}
+      status={error ? 'error' : status}
       error={error}
       authority="knowgraph"
       onExpand={onExpand}
@@ -204,6 +216,9 @@ type NativeLink = {
 };
 
 const TYPE_COLORS: Record<string, string> = {
+  Entity: '#76c8bf',
+  Episodic: '#b9a2d9',
+  Community: '#e1c183',
   Goal: '#37ADAA',
   Question: '#62B0E8',
   Decision: '#7BC8C4',
@@ -227,7 +242,35 @@ function endpointId(value: string | NativeNode): string {
 function shortNodeLabel(node: GraphProjectionV1['nodes'][number]): string {
   const properties = node.properties || {};
   const semantic = String(properties.display_label || node.label || node.title || node.type || 'record').trim();
-  return semantic.split(/\s+/).slice(0, 3).join(' ');
+  return semantic.length > 38 ? `${semantic.slice(0, 37)}…` : semantic;
+}
+
+function nodeRadius(node: NativeNode, size: number) {
+  return node.etype === 'Episodic' ? 2.2 : Math.max(1.8, Math.min(7, size * Math.sqrt(node.val) * 0.45));
+}
+
+function sourceDocument(node: GraphProjectionNode) {
+  const properties = node.properties || {};
+  let body: Record<string, unknown> = {};
+  if (typeof properties.content === 'string') {
+    try {
+      const parsed = JSON.parse(properties.content);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed;
+    } catch { /* Plain-text episodes keep their original content. */ }
+  }
+  const candidates = [properties, body, ...(Array.isArray(body.sources) ? body.sources : [])];
+  const links = new Map<string, { url: string; label: string }>();
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const url = candidate.source_url || candidate.url;
+    if (typeof url !== 'string') continue;
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+      links.set(url, { url, label: String(candidate.title || candidate.publisher || parsed.hostname) });
+    } catch { /* Invalid URLs are not clickable citations. */ }
+  }
+  return { links: [...links.values()], summary: typeof body.summary === 'string' ? body.summary : null };
 }
 
 export function NativeGraphProjectionSurface({
@@ -257,15 +300,14 @@ export function NativeGraphProjectionSurface({
   const appliedForceSettingsRef = useRef('');
   const initialFitRef = useRef(false);
   const initialFitTimerRef = useRef<number | null>(null);
-  const [showLinkLabels, setShowLinkLabels] = useState(false);
-  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<NativeNode | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [expanding, setExpanding] = useState(false);
-  const [settings, setSettings] = useState({
-    font: 10,
+  const [settings] = useState({
+    font: 12,
     labelDensity: 8,
-    size: 5,
+    size: 3,
     linkWidth: 1,
     repel: 120,
     linkDistance: 30,
@@ -393,7 +435,13 @@ export function NativeGraphProjectionSurface({
       .nodeRelSize(1)
       .autoPauseRedraw(true)
       .onNodeClick((node) => {
+        setSelectedEdgeId(null);
         setSelected(node as NativeNode);
+        setInspectorOpen(true);
+      })
+      .onLinkClick((link) => {
+        setSelected(null);
+        setSelectedEdgeId(String((link as NativeLink).id));
         setInspectorOpen(true);
       })
       .onNodeHover((node) => {
@@ -401,6 +449,12 @@ export function NativeGraphProjectionSurface({
         if (hostRef.current) hostRef.current.style.cursor = node ? 'pointer' : 'grab';
       });
     graphRef.current = graph;
+    // A replacement renderer has no data even when React preserves these refs
+    // across an effect replay. Reapply topology and the initial fit to it.
+    appliedTopologyRef.current = '';
+    appliedNodeIdsRef.current = new Set();
+    appliedForceSettingsRef.current = '';
+    initialFitRef.current = false;
     const resize = new ResizeObserver(([entry]) => {
       graph.width(entry.contentRect.width).height(entry.contentRect.height);
     });
@@ -421,7 +475,7 @@ export function NativeGraphProjectionSurface({
     if (!graph) return;
     const labelRank = new Map(
       [...nativeData.nodes]
-        .sort((a, b) => b.degree - a.degree)
+        .sort((a, b) => Number(a.etype === 'Episodic') - Number(b.etype === 'Episodic') || b.degree - a.degree)
         .map((node, index) => [node.id, index]),
     );
     const hasTransient = nativeData.nodes.some((node) => node.transient);
@@ -431,13 +485,16 @@ export function NativeGraphProjectionSurface({
         const neighbors = focused ? adjacencyRef.current.get(focused) : null;
         const connectedFocus = Boolean(focused && neighbors && neighbors.size > 1);
         const isNeighbor = !connectedFocus || node.id === focused || neighbors?.has(node.id);
-        const radius = Math.max(1.2, settings.size * Math.sqrt(node.val) * 0.45);
+        const radius = nodeRadius(node, settings.size);
         const attentionAlpha = node.transient
           ? node.currentState === 'settled' ? 0.48 : 1
           : hasTransient ? 0.2 : 1;
         context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
         context.beginPath();
-        context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
+        if (node.etype === 'Episodic') {
+          const x = node.x || 0, y = node.y || 0;
+          context.moveTo(x, y - radius); context.lineTo(x + radius, y); context.lineTo(x, y + radius); context.lineTo(x - radius, y); context.closePath();
+        } else context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
         context.fillStyle = node.attentionActorColor
           || (node.transient && node.source
           ? LIVE_SOURCE_COLORS[node.source]
@@ -452,7 +509,7 @@ export function NativeGraphProjectionSurface({
         context.globalAlpha = 1;
       })
       .nodePointerAreaPaint((node: NativeNode, color: string, context: CanvasRenderingContext2D) => {
-        const radius = Math.max(3, settings.size * Math.sqrt(node.val) * 0.45) + 2;
+        const radius = Math.max(3, nodeRadius(node, settings.size)) + 2;
         context.beginPath();
         context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
         context.fillStyle = color;
@@ -461,7 +518,7 @@ export function NativeGraphProjectionSurface({
       .linkColor((link: NativeLink) => {
         const focused = hoveredRef.current || selectedRef.current;
         const connected = focused && (endpointId(link.source) === focused || endpointId(link.target) === focused);
-        const defaultAlpha = link.transient ? 0.68 : hasTransient ? 0.1 : Math.min(0.72, 0.16 + 0.18 * settings.linkWidth);
+        const defaultAlpha = link.transient ? 0.68 : hasTransient ? 0.1 : link.label === 'MENTIONS' ? 0.12 : 0.45;
         const alpha = focused ? (connected ? 0.92 : 0.05) : defaultAlpha;
         return link.attentionActorColor
           ? link.attentionActorColor
@@ -475,24 +532,34 @@ export function NativeGraphProjectionSurface({
       })
       .linkDirectionalArrowLength(2)
       .linkDirectionalArrowRelPos(1)
-      .linkCanvasObjectMode(() => (showLinkLabels ? 'after' : undefined))
+      .linkCanvasObjectMode(() => 'after')
       .linkCanvasObject((link: NativeLink, context: CanvasRenderingContext2D, scale: number) => {
         const source = link.source as NativeNode;
         const target = link.target as NativeNode;
-        if (!showLinkLabels || scale < 2.4 || source.x == null || target.x == null) return;
-        context.font = `${(settings.font * 0.82) / scale}px sans-serif`;
-        context.fillStyle = '#7a7a8c';
+        const focused = hoveredRef.current || selectedRef.current;
+        if (!focused || (source.id !== focused && target.id !== focused) || source.x == null || target.x == null) return;
+        context.font = `${11 / scale}px sans-serif`;
+        context.fillStyle = '#b6d8d3';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
-        context.fillText(link.label, ((source.x || 0) + (target.x || 0)) / 2, ((source.y || 0) + (target.y || 0)) / 2);
+        const label = link.label.replaceAll('_', ' ').toLowerCase();
+        const x = ((source.x || 0) + (target.x || 0)) / 2;
+        const y = ((source.y || 0) + (target.y || 0)) / 2;
+        context.lineWidth = 4 / scale;
+        context.strokeStyle = '#0b0e12';
+        context.strokeText(label, x, y);
+        context.fillText(label, x, y);
       })
       .onRenderFramePost((context: CanvasRenderingContext2D, scale: number) => {
-        const cap = Math.round(settings.labelDensity * Math.max(0.3, scale - 1));
+        const cap = nativeData.nodes.length <= 100 ? 100 : Math.round(settings.labelDensity * Math.max(1, scale));
+        const occupied: Array<{ x: number; y: number; w: number; h: number }> = [];
         context.textAlign = 'center';
         context.textBaseline = 'top';
         context.lineJoin = 'round';
-        for (const node of graph.graphData().nodes as NativeNode[]) {
-          const hovered = hoveredRef.current;
+        const focused = hoveredRef.current || selectedRef.current;
+        const ordered = [...graph.graphData().nodes as NativeNode[]].sort((a, b) => Number(b.id === focused) - Number(a.id === focused) || b.degree - a.degree);
+        for (const node of ordered) {
+          const hovered = focused;
           const emphasized = node.id === hovered || node.id === selectedRef.current;
           if (
             node.x == null
@@ -502,10 +569,14 @@ export function NativeGraphProjectionSurface({
           const connectedFocus = Boolean(hovered && neighbors && neighbors.size > 1);
           const isNeighbor = !connectedFocus || node.id === hovered || neighbors?.has(node.id);
           if (!isNeighbor) continue;
-          const radius = Math.max(1.2, settings.size * Math.sqrt(node.val) * 0.45);
+          const radius = nodeRadius(node, settings.size);
           const fontSize = settings.font / scale;
           const y = (node.y || 0) + radius + 2 / scale;
           context.font = `${fontSize}px -apple-system,Segoe UI,sans-serif`;
+          const width = context.measureText(node.label).width;
+          const box = { x: node.x - width / 2, y, w: width, h: fontSize + 4 / scale };
+          if (!emphasized && occupied.some(other => box.x < other.x + other.w && box.x + box.w > other.x && box.y < other.y + other.h && box.y + box.h > other.y)) continue;
+          occupied.push(box);
           context.lineWidth = 3 / scale;
           context.strokeStyle = '#0a0a0f';
           context.strokeText(node.label, node.x, y);
@@ -524,7 +595,7 @@ export function NativeGraphProjectionSurface({
     graph.d3Force('link').distance(settings.linkDistance);
     graph.d3Force('x', forceX(0).strength(settings.gravity / 100));
     graph.d3Force('y', forceY(0).strength(settings.gravity / 100));
-    graph.d3Force('collide', forceCollide((node: NativeNode) => Math.max(2, settings.size * Math.sqrt(node.val) * 0.45) + 1.5));
+    graph.d3Force('collide', forceCollide((node: NativeNode) => nodeRadius(node, settings.size) + 2));
     const nextNodeIds = new Set(nativeData.nodes.map((node) => node.id));
     const topologyChanged = appliedTopologyRef.current !== nativeData.topology;
     const topologyAdded = nativeData.nodes.some((node) => !appliedNodeIdsRef.current.has(node.id));
@@ -552,7 +623,7 @@ export function NativeGraphProjectionSurface({
         initialFitTimerRef.current = null;
       }, 180);
     }
-  }, [adjacency, authority, nativeData, settings, showLinkLabels]);
+  }, [adjacency, authority, nativeData, settings]);
 
   useEffect(() => {
     if (!selected || nativeData.nodes.some((node) => node.id === selected.id)) return;
@@ -560,35 +631,22 @@ export function NativeGraphProjectionSurface({
     setInspectorOpen(false);
   }, [nativeData.nodes, selected]);
 
-  const focusNode = (match: NativeNode) => {
-    setSelected(match);
-    if (match.x != null && match.y != null && graphRef.current) {
-      hoveredRef.current = match.id;
-      graphRef.current.centerAt(match.x, match.y, 700);
-      graphRef.current.zoom(5, 700);
-    }
-  };
-
-  const focusSearch = () => {
-    const query = search.trim().toLowerCase();
-    if (!query || !graphRef.current) return;
-    const match = (graphRef.current.graphData().nodes as NativeNode[]).find((node) => node.label.toLowerCase().includes(query));
-    if (match) focusNode(match);
-  };
-
   const allNodes = projection?.nodes.length ?? 0;
-  const allEdges = projection?.edges.length ?? 0;
-  const topConnected = [...nativeData.nodes].sort((a, b) => b.degree - a.degree).slice(0, 8);
-  const typeCounts = [...nativeData.nodes.reduce((counts, node) => {
-    counts.set(node.etype, (counts.get(node.etype) || 0) + 1);
-    return counts;
-  }, new Map<string, number>())].sort((a, b) => b[1] - a[1]);
-  const connectedCount = nativeData.nodes.filter((node) => node.degree > 0).length;
+  const selectedEdge = projection?.edges.find((edge) => edge.id === selectedEdgeId);
+  const selectedNative = projection?.nodes.find(node => node.id === selected?.id);
+  const selectedSource = selectedNative ? sourceDocument(selectedNative) : null;
+  const selectedRelationships = selected ? projection?.edges.filter(edge => edge.source === selected.id || edge.target === selected.id) || [] : [];
+  const evidenceIds = new Set<string>(selected ? [selected.id] : []);
+  for (const edge of selectedEdge ? [selectedEdge] : selectedRelationships) {
+    const episodes = edge.properties?.episodes;
+    for (const id of Array.isArray(episodes) ? episodes : typeof episodes === 'string' ? [episodes] : []) evidenceIds.add(String(id));
+    if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
+  }
+  const evidence = (projection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
   const surfaceLabel = 'KnowGraph';
   return (
-    <div data-testid={`native-${authority}-surface`} className="native-authority-graph">
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" aria-busy={status === 'loading'}>
       <div className="native-authority-canvas">
-        <GraphPaperBackground />
         <div ref={hostRef} className="native-authority-network" />
         <GraphNavigationControls
           onZoomIn={() => {
@@ -601,13 +659,12 @@ export function NativeGraphProjectionSurface({
           }}
           onFit={() => graphRef.current?.zoomToFit(320, 60)}
         />
-        {status === 'loading' && !projection ? <div className="native-authority-empty">Loading graph…</div> : null}
         {status === 'error' ? <div className="native-authority-empty">Graph failed: {error}</div> : null}
-        {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No {surfaceLabel} data viewed in this attention scope yet.</div> : null}
+        {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No knowledge yet.</div> : null}
       </div>
       <RightGlassDrawer
         isOpen={inspectorOpen}
-        title={`${surfaceLabel} Inspector`}
+        title={surfaceLabel}
         onClose={() => setInspectorOpen(false)}
         onOpen={() => setInspectorOpen(true)}
         collapsedLabel={null}
@@ -622,46 +679,36 @@ export function NativeGraphProjectionSurface({
         zIndex={6}
       >
       <div className="native-authority-controls">
-        {selected ? <section data-testid={`${authority}-node-inspector`}><h3>Identity</h3><h4>{selected.fullLabel}</h4><p>{selected.authority} · {selected.etype} · {selected.degree} connections</p><p>{selected.canonicalId}{selected.currentState ? ` · ${selected.currentState}` : ''}{selected.trustState ? ` · ${selected.trustState}` : ''}{selected.qualityState ? ` · ${selected.qualityState}` : ''}</p>{selected.codeGraphRef ? <p>CodeGraph: {selected.codeGraphRef}</p> : null}{selected.knowGraphRef ? <p>KnowGraph: {selected.knowGraphRef}</p> : null}</section> : null}
-        {selected?.attentionActorCardId ? <section><h3>Attention</h3><p><i style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', marginRight: 6, background: selected.attentionActorColor || DEFAULT_TYPE_COLOR }} />{selected.attentionActorCardId}</p><p>{selected.attentionToolName}</p>{onExpand ? <button disabled={expanding} onClick={() => {
+        {selected ? <section data-testid={`${authority}-node-inspector`} data-native-id={selected.canonicalId}>
+          <h4>{selected.fullLabel}</h4>
+          {typeof selected.properties.summary === 'string' ? <p>{selected.properties.summary}</p> : null}
+          {selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
+          {Array.isArray(selected.properties.question_links) ? selected.properties.question_links.map((encoded, index) => {
+            let link: any;
+            try { link = typeof encoded === 'string' ? JSON.parse(encoded) : encoded; } catch { return null; }
+            return link?.questionRef?.nativeId ? <p key={index}>Question: {link.questionRef.nativeId} · {link.relation} · {String(link.outcome || '').replaceAll('_', ' ')}</p> : null;
+          }) : null}
+        </section> : null}
+        {selectedRelationships.length ? <section className="knowgraph-relationships">{selectedRelationships.filter(edge => edge.predicate !== 'MENTIONS').map(edge => <button key={edge.id} onClick={() => { setSelected(null); setSelectedEdgeId(edge.id); }}>
+          <strong>{projection?.nodes.find(node => node.id === edge.source)?.label}</strong>
+          <span>{edge.predicate.replaceAll('_', ' ').toLowerCase()}</span>
+          <strong>{projection?.nodes.find(node => node.id === edge.target)?.label}</strong>
+        </button>)}</section> : null}
+        {selectedEdge ? <section data-testid="knowgraph-edge-inspector" data-native-id={selectedEdge.id}>
+          <h4>{projection?.nodes.find((node) => node.id === selectedEdge.source)?.label} → {selectedEdge.predicate} → {projection?.nodes.find((node) => node.id === selectedEdge.target)?.label}</h4>
+          {typeof selectedEdge.properties?.fact === 'string' ? <p>{selectedEdge.properties.fact}</p> : null}
+          {typeof selectedEdge.properties?.summary === 'string' ? <p>{selectedEdge.properties.summary}</p> : null}
+        </section> : null}
+        {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) => <div key={node.id}><p>{node.label}</p>{links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>)}</section> : null}
+        {selected ? <div className="native-authority-actions">{onExpand ? <button disabled={expanding} onClick={() => {
           const native = projection?.nodes.find((node) => node.id === selected.id);
           if (!native) return;
           setExpanding(true);
           void onExpand(native).finally(() => setExpanding(false));
-        }}>{expanding ? 'Expanding…' : `Expand from native ${surfaceLabel}`}</button> : null}{onUseAsContext ? <button onClick={() => {
+        }}>{expanding ? 'Expanding…' : 'Expand'}</button> : null}{onUseAsContext ? <button onClick={() => {
           const native = projection?.nodes.find((node) => node.id === selected.id);
           if (native) onUseAsContext(native);
-        }}>Attach native reference to Main</button> : null}</section> : null}
-        <section>
-          <h3>Controls</h3>
-          <div className="native-authority-actions">
-            <button onClick={() => graphRef.current?.d3ReheatSimulation()}>Reheat</button>
-          </div>
-          <label><input type="checkbox" checked={showLinkLabels} onChange={(event) => setShowLinkLabels(event.target.checked)} /> Show link labels</label>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && focusSearch()} placeholder="Find entity…" />
-          {([
-            ['Text size', 'font', 6, 28], ['Label density', 'labelDensity', 5, 200],
-            ['Node size', 'size', 2, 14], ['Line width', 'linkWidth', 0.4, 4],
-            ['Repel force', 'repel', 20, 400], ['Link distance', 'linkDistance', 10, 150],
-            ['Center gravity', 'gravity', 0, 50],
-          ] as const).map(([label, key, min, max]) => (
-            <label className="native-authority-slider" key={key}><span>{label}</span><input type="range" min={min} max={max} step={key === 'linkWidth' ? 0.1 : 1} value={settings[key]} onChange={(event) => setSettings((current) => ({ ...current, [key]: Number(event.target.value) }))} /></label>
-          ))}
-        </section>
-        <section>
-          <h3>Top connected</h3>
-          {topConnected.map((node, index) => <button className="native-authority-rank" key={node.id} onClick={() => { setSearch(node.label); focusNode(node); }}><span>{index + 1}</span><i style={{ background: TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR }} /> <b>{node.label}</b><em>{node.degree}</em></button>)}
-        </section>
-        <section>
-          <h3>Entity types <span>{typeCounts.length}</span></h3>
-          {typeCounts.map(([type, count]) => <div className="native-authority-type" key={type}><i style={{ background: TYPE_COLORS[type] || DEFAULT_TYPE_COLOR }} /><span>{type}</span><b>{count}</b></div>)}
-        </section>
-        <section>
-          <h3>Graph stats</h3>
-          <dl className="native-authority-stats"><div><dt>Entities</dt><dd>{allNodes}</dd></div><div><dt>Relations</dt><dd>{allEdges}</dd></div><div><dt>Connected</dt><dd>{connectedCount}</dd></div><div><dt>Isolated</dt><dd>{Math.max(0, allNodes - connectedCount)}</dd></div></dl>
-        </section>
-        {selected && Object.keys(selected.provenance).length > 0 ? <section><h3>Provenance</h3><pre>{JSON.stringify(selected.provenance, null, 2)}</pre></section> : null}
-        {selected ? <section><h3>Technical details</h3><pre>{JSON.stringify(selected.properties, null, 2)}</pre></section> : null}
+        }}>Use in chat</button> : null}</div> : null}
       </div>
       </RightGlassDrawer>
     </div>

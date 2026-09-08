@@ -146,14 +146,14 @@ const SCRIPT_EXAMPLES = [
 
 from hermes_tools import SCRIPT, input, output, tools
 
-tools.constellation.context = SCRIPT
-tools.constellation.inspect = SCRIPT
+tools.engraphis_recall_context = SCRIPT
+tools.engraphis_get_memory = SCRIPT
 
 bounded_context = tools.call(
-    "constellation.context", focus=input.query, budget=1600, maxDepth=2, maxL2=8
+    "engraphis_recall_context", query=input.query, token_budget=600, k=6
 )
 exact_memory = tools.call(
-    "constellation.inspect", nativeId=input.nativeId, budget=1200, maxDepth=1, maxL2=6
+    "engraphis_get_memory", memory_id=input.nativeId
 )
 result = {"context": bounded_context, "exactMemory": exact_memory}
 output.emit({"result": result})

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { GraphProjectionV1 } from './NativeAuthorityGraphSurface';
 import { synchronizeProjectionGraph } from './constellationSigmaGraph';
+import forceAtlas2 from 'graphology-layout-forceatlas2';
 
 function projection(
   nodes: GraphProjectionV1['nodes'],
@@ -19,6 +20,34 @@ function projection(
 }
 
 describe('Constellation Sigma Graphology synchronization', () => {
+  it('gives a small populated graph a two-dimensional layout instead of trapping forces on one line', () => {
+    const graph = new MultiDirectedGraph();
+    const nodes = Array.from({ length: 12 }, (_, i) => ({ id: String(i), label: String(i), mentionCount: 1 }));
+    const edges = nodes.slice(1).map((node, i) => ({ id: `edge-${i}`, source: String(Math.floor(i / 3)), target: node.id, predicate: 'contains', mentionCount: 1 }));
+    synchronizeProjectionGraph(graph, projection(nodes, edges));
+    forceAtlas2.assign(graph, { iterations: 100, settings: { gravity: 1, scalingRatio: 10 } });
+    const xs = graph.nodes().map(id => graph.getNodeAttribute(id, 'x'));
+    const ys = graph.nodes().map(id => graph.getNodeAttribute(id, 'y'));
+    expect(xs.every(Number.isFinite) && ys.every(Number.isFinite)).toBe(true);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(1);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(1);
+  });
+  it('uses native edges in ForceAtlas2 and distinguishes derived edges without rewriting them', () => {
+    const linked = new MultiDirectedGraph();
+    const disconnected = new MultiDirectedGraph();
+    const nodes = ['a', 'b', 'c', 'd'].map(id => ({ id, label: id, mentionCount: 1, properties: { communityId: id < 'c' ? 'one' : 'two' } }));
+    const edges = [{ id: '1', source: 'a', target: 'b', predicate: 'supports', mentionCount: 1, properties: { edgeClass: 'explicit', strength: 0.8 } }, { id: '2', source: 'c', target: 'd', predicate: 'coactivation', mentionCount: 1, properties: { edgeClass: 'derived', strength: 0.4 } }];
+    synchronizeProjectionGraph(linked, projection(nodes, edges));
+    synchronizeProjectionGraph(disconnected, projection(nodes, []));
+    forceAtlas2.assign(linked, { iterations: 100, settings: { gravity: 1, scalingRatio: 10 } });
+    forceAtlas2.assign(disconnected, { iterations: 100, settings: { gravity: 1, scalingRatio: 10 } });
+    expect(linked.getNodeAttribute('a', 'x')).not.toBe(disconnected.getNodeAttribute('a', 'x'));
+    expect(linked.getEdgeAttribute('1', 'color')).not.toBe(linked.getEdgeAttribute('2', 'color'));
+    expect(linked.getNodeAttribute('a', 'color')).toBe(linked.getNodeAttribute('b', 'color'));
+    expect(linked.getNodeAttribute('a', 'color')).not.toBe(linked.getNodeAttribute('d', 'color'));
+    expect(linked.edges()).toEqual(['1', '2']);
+    expect(edges[1].properties.edgeClass).toBe('derived');
+  });
   it('updates one disposable graph by native ID while preserving surviving view positions', () => {
     const graph = new MultiDirectedGraph();
     const first = projection(

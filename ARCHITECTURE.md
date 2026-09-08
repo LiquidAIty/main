@@ -49,6 +49,47 @@ Current internal Cards:
 | Agent Builder | saved server-minted Card ID | Hermes `delegate` | `liquidaity-agent-builder` |
 | Local Coder | `card_local_coder` | Hermes `delegate` | `coder` |
 | Graph Agent | `card_hermes_steward` | Hermes `delegate` | `liquidaity-hermes-steward` |
+| ThinkGraph | `card_a52fd511ecb14f53` in the current project | Hermes `delegate` binding | `thinkgraph` |
+
+The September 7 cognition configuration retains Graph Agent as the KnowGraph researcher and preserves
+its native Team settings. The new ThinkGraph specialist writes project cognition through Constellation;
+Graph Agent's ThinkGraph mutation grants are removed. Agent Builder retains its identity and construction
+authority and gains native graph reads for synthesis. Worker output supplies pointers; Builder reads the
+graphs directly. Standalone graph-worker and Builder reads/writing and one Main-to-both-graph-workers
+cascade are live-proven. Main retains compact graph searches and native profile delegation, while
+its prior explicit ThinkGraph write grants are removed in favor of the graph worker.
+Main's native profile has Honcho deselected; existing memory data and vendor integration are preserved.
+ThinkGraph currently uses single mode for the owner's component comparison; its Luna subagent
+selection is retained and native orchestrator remains an option. The completed Main hook passes only
+Run/conversation identities to Python's background delivery; Python reads retained input/output and
+invokes the two graph-worker saved-profile bindings in order. Synthesis is a separate requested delegation
+to Agent Builder, which reads graph evidence directly; completed-pair delivery never invokes Builder.
+Stage correlation IDs identify existing Runs,
+never a second task store. Existing failed, running or interrupted children halt delivery without restart.
+Each graph stage has its own in-process delivery lock, so a slow KnowGraph Run cannot block the next
+pair's ThinkGraph work. This preserves per-stage serialization, not restart-durable queuing.
+Before configuring a native ACP execution session, the adapter applies the exact saved parent model
+through `session/set_model`. Updating only native profile configuration does not update a restored
+session's older model. Session history, profile identity and native model execution remain Hermes-owned.
+Native asynchronous profile delivery is now live-proven: Main returned before its one Builder child
+completed, and Hermes delivered that child's result once. The adapter uses the native asynchronous
+delegation registry and completion queue; it observes the already accepted Card Run and never restarts
+an interrupted child. Deterministic tests exercise native queue claims and interruption. The lower result
+now selects the conversation's latest Builder root Run through existing AgentGraph queries and renders
+that Run's retained output. Native start times reject delayed older results and terminal-to-running
+regressions. Full artifact revision/execution binding and fast useful Main context remain incomplete,
+as recorded in PLAN.md.
+Main context preparation uses bounded concurrent reads through the application MCP host, under existing
+saved grants, before the one IDF materialization. The existing Main preparation endpoint can preview the
+same reads without starting a Run or creating an IDF. Preload uses public typed MCP requests without a
+catalog refresh; its enforced HTTP-loopback transport avoids unnecessary TLS certificate loading.
+Whole-sentence CodeGraph preload was rejected after live evidence of irrelevant test matches influencing
+Main's answer. CodeGraph remains available through focused saved tools and deliberately selected native
+references; there is no deterministic keyword router replacing the rejected automatic lookup.
+The owner deferred the long-term ThinkGraph-to-KnowGraph automatic handoff decision until the other work
+is complete. The current chain is preserved; KnowGraph's independent delegated web-research path remains.
+Background profile handoffs carry source identity in authenticated system context, never public MCP
+arguments. Python binds that identity before the existing Card runner validates the directed handoff.
 
 `card_local_coder` and `template_local_coder` are retained identities and now present the Hermes-backed
 Local Coder. They do not imply the removed standalone LocalCoder/OpenClaude runtime.
@@ -61,6 +102,7 @@ The current default topology preserves:
 
 - Main → Agent Builder: `flow`
 - Main → Graph Agent: `flow`
+- Main → ThinkGraph: `flow` in the current project
 - Main → Magentic-One: `magentic_control`
 - Magentic-One → Local Coder: `magentic_option`
 - Main → Local Coder: no direct connection
@@ -272,6 +314,15 @@ in `apps/python-models`; any later fork edit must be registered in
 `apps/python-models/app/mcp_host.py` is the one official shared MCP host. Its public catalog is assembled
 from current registered owners and is discovered dynamically. A fixed numeric catalog promise is not an
 architecture contract.
+
+Python rails pins OpenAI 2.41.0, the installed Graphiti MCP server's minimum, to retain its existing httpx
+transport. OpenAI 3/httpx2 loaded standalone truststore after Windows pip-system-certs injected pip's
+vendored copy, causing recursive SSL verification before provider requests. The pin restores actual
+OpenRouter embedding/search and Graphiti ingestion without changing graph/model authority or disabling
+TLS verification. Constellation's long native semantic operations retain their existing 190-second
+engine and 210-second HTTP allowances through a 220-second outer MCP deadline; ordinary calls retain
+the 30-second deadline. An earlier outer cancellation could lose a write result while the native write
+continued, inviting a duplicate write. Existing affected links require separate data-quality repair.
 
 The external GPT connector publishes every IDD `external-mcp` operation exactly once under its canonical
 unprefixed ID. LiquidAIty is the app/plugin name; it is not a server-side tool-name prefix because ChatGPT

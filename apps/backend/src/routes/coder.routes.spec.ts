@@ -1505,6 +1505,43 @@ describe('coder routes', () => {
     }
   });
 
+  it.each([true, false])('uses only the conversation-scoped native Run selection (found=%s)', async (found) => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    const scoped = { runId: 'conversation-run', cardId: 'builder', conversationId: 'one',
+      startedAt: '2026-09-07T12:00:00Z', state: 'completed', finalResult: 'This conversation',
+      projectId: 'p', deckId: 'd', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder' };
+    orchestratorMocks.runRecords.set('unrelated-run', { ...scoped, runId: 'unrelated-run', conversationId: 'two',
+      finalResult: 'Other conversation', startedAt: '2026-09-07T13:00:00Z' });
+    orchestratorMocks.runRecords.set(scoped.runId, scoped);
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint, init) => {
+      expect(endpoint).toBe('/domain/agentgraph/inspect');
+      expect(JSON.parse(String(init?.body))).toEqual({ projectId: 'p', deckId: 'd', cardId: 'builder',
+        conversationId: 'one', directOnly: true, limit: 1 });
+      return { runs: found ? [scoped] : [] };
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'status', inspectOnly: true, projectId: 'p', deckId: 'd',
+          cardId: 'builder', conversationId: 'one' }),
+      });
+      const payload = await response.json();
+      expect(payload.ok).toBe(true);
+      if (found) {
+        expect(payload.result).toMatchObject({ runId: scoped.runId, conversationId: 'one',
+          startedAt: scoped.startedAt, output: scoped.finalResult });
+        const calls = orchestratorMocks.requestPythonRailsJson.mock.calls;
+        expect(calls.map(([endpoint]) => endpoint)).toEqual(['/domain/agentgraph/inspect', '/domain/runs/read']);
+        expect(JSON.parse(String(calls[1][1]?.body))).toMatchObject({ runId: scoped.runId });
+      } else {
+        expect(payload.result).toBeNull();
+        expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledTimes(1);
+      }
+    } finally { await closeServer(server); }
+  });
+
   it('does not fall back to ordinary ACP for the retired Kanban Card mode', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
 
@@ -1682,6 +1719,48 @@ describe('coder routes', () => {
       );
       expect(beginCalls).toHaveLength(1);
     } finally {
+      await closeServer(server);
+    }
+  });
+
+  it.each(['completed', 'failed'] as const)('accepts a background handoff before its native %s result and retains that result', async (state) => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestFingerprints.clear();
+    chatSessionMocks.startHermesTurn.mockClear();
+    let settle: (value: any) => void = () => undefined;
+    let fail: (reason: Error) => void = () => undefined;
+    const done = new Promise<any>((resolve, reject) => { settle = resolve; fail = reject; });
+    chatSessionMocks.startHermesTurn.mockResolvedValueOnce({ done, cancel: vi.fn(), answer: vi.fn() });
+    const { server, baseUrl } = await createApiServer();
+    const controller = new AbortController();
+    try {
+      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+        body: JSON.stringify({ action: 'execute', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_local_coder', correlationId: `background-${state}`, conversationId: 'main',
+          senderCardId: 'card-main', originatingRunId: 'parent-run', input: 'Inspect graph evidence.', background: true }),
+      });
+      let response: Response | undefined;
+      void request.then((value) => { response = value; }).catch(() => undefined);
+      await vi.waitFor(() => expect(response).toBeDefined(), { timeout: 1500 });
+      expect(response!.status).toBe(202);
+      const accepted = await response!.json() as any;
+      expect(accepted.result).toMatchObject({ runId: `background-${state}`, state: 'running', acceptedAt: expect.any(String) });
+      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(([path]) => path === '/domain/runs/finish')).toHaveLength(0);
+      await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalledTimes(1));
+      if (state === 'completed') settle({ finalText: 'Native graph proposal', usage: chatSessionMocks.usage, transport: {} });
+      else fail(new Error('native failure'));
+      await vi.waitFor(() => {
+        const finished = orchestratorMocks.requestPythonRailsJson.mock.calls
+          .filter(([path]) => path === '/domain/runs/finish')
+          .map(([, init]) => JSON.parse(String(init?.body || '{}')));
+        expect(finished).toHaveLength(1);
+        expect(finished[0]).toMatchObject({ runId: `background-${state}`, state });
+      });
+    } finally {
+      controller.abort();
+      settle({ finalText: 'cleanup', usage: chatSessionMocks.usage, transport: {} });
       await closeServer(server);
     }
   });
@@ -2258,6 +2337,38 @@ describe('coder routes', () => {
       }
     });
 
+    it('returns Main before background cognition acknowledges delivery', async () => {
+      const implementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      let completeDelivery!: (value: any) => void;
+      const pendingDelivery = new Promise((resolve) => { completeDelivery = resolve; });
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockImplementation((route, init) =>
+        route === '/domain/main/completed-pair' ? pendingDelivery : implementation(route, init));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'background-test', message: 'inspect' }),
+          signal: AbortSignal.timeout(2000),
+        });
+        const body = await response.text();
+        expect(body).toContain('Real assistant reply.');
+        expect(body).toContain('event: done');
+        const calls = orchestratorMocks.requestPythonRailsJson.mock.calls;
+        const deliveryIndex = calls.findIndex(([route]) => route === '/domain/main/completed-pair');
+        const finishIndex = calls.findIndex(([route]) => route === '/domain/runs/finish');
+        expect(finishIndex).toBeGreaterThanOrEqual(0);
+        expect(deliveryIndex).toBeGreaterThan(finishIndex);
+        expect(JSON.parse(String(calls[deliveryIndex][1]?.body))).toMatchObject({
+          projectId: 'project-1', conversationId: 'background-test', deckId: 'deck_builder',
+        });
+      } finally {
+        completeDelivery({ accepted: true });
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(implementation);
+        await closeServer(server);
+      }
+    });
+
     it('drives the same Main CLI bridge from the authenticated external-plugin doorway', async () => {
       const priorSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
       process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'test-external-main-secret-0123456789abcdef';
@@ -2385,6 +2496,7 @@ describe('coder routes', () => {
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
           '/domain/main/runs/begin',
           '/domain/runs/finish',
+          '/domain/main/completed-pair',
         ]);
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
         expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
@@ -2396,7 +2508,10 @@ describe('coder routes', () => {
         });
         expect(railsCalls[1]?.[1]?.body).toContain('"state":"completed"');
 
-        // The obsolete post-chat pair handoff must never fire from this route.
+        expect(Object.keys(JSON.parse(String(railsCalls[2]?.[1]?.body))).sort()).toEqual([
+          'conversationId', 'deckId', 'projectId', 'runId',
+        ]);
+        // Background delivery transports identities, never another MCP prompt.
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
         expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally {
@@ -2527,6 +2642,7 @@ describe('coder routes', () => {
     });
 
     it('emits a safe correlated SSE error when the native Main bridge fails', async () => {
+      orchestratorMocks.requestPythonRailsJson.mockClear();
       mainCliBridgeMocks.submit.mockRejectedValueOnce(new Error('provider credential leaked'));
       const { server, baseUrl } = await createApiServer();
       try {
@@ -2542,6 +2658,9 @@ describe('coder routes', () => {
         expect(body).toContain('main_cli_turn_failed');
         expect(body).toContain('"runId":"req_');
         expect(body).not.toContain('provider credential leaked');
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([route]) => route === '/domain/main/completed-pair',
+        )).toBe(false);
       } finally {
         await closeServer(server);
       }

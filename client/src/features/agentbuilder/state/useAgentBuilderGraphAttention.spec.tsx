@@ -53,8 +53,8 @@ function constellationResponse(
     ok: true,
     status: 200,
     json: async () => ({
-      schemaVersion: 'thinkgraph.constellation.v1',
-      authority: 'constellation-engine',
+      schemaVersion: 'thinkgraph.engraphis.v1',
+      authority: 'engraphis',
       projectId: 'project-1',
       revision: 'constellation-test-revision',
       embedding: { state: 'degraded', reason: 'test_embedding_unavailable' },
@@ -65,9 +65,55 @@ function constellationResponse(
   };
 }
 
+function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relationships: Array<Record<string, unknown>> = []) {
+  return { ok: true, status: 200, json: async () => ({ nodes, relationships }) };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('keeps native knowledge when selecting another agent without loading it again', async () => {
+    const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? constellationResponse([{ id: 'idea', label: 'An open question' }])
+      : knowledgeResponse([{ id: 'source', label: 'W3C' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { result, rerender } = renderHook(({ selectedCardId }) => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', selectedCardId,
+    }), { initialProps: { selectedCardId: 'card-one' } });
+    await waitFor(() => expect(result.current.projections.knowgraph.nodes).toHaveLength(1));
+    rerender({ selectedCardId: 'card-two' });
+    expect(result.current.projections.knowgraph.nodes[0].label).toBe('W3C');
+    expect(result.current.projections.thinkgraph.nodes[0].label).toBe('An open question');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads named native knowledge and overlays activity without inventing receipt nodes', async () => {
+    const native = {
+      nodes: [{ id: 'source', label: 'W3C', type: 'Entity', properties: { summary: 'Standards body' } },
+        { id: 'claim', label: 'Provenance model', type: 'Entity', properties: { summary: 'Current native summary' } }],
+      relationships: [{ id: 'element-1', source: 'know', from: 'source', to: 'claim', type: 'RELATES_TO',
+        properties: { uuid: 'native-edge', name: 'PUBLISHED', episodes: ['source-episode'], group_id: 'group-one', valid_at: '2026-09-07T10:00:00Z' } }],
+    };
+    const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? constellationResponse() : { ok: true, json: async () => native });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.projections.knowgraph.nodes).toHaveLength(2));
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+    act(() => result.current.observeAttentionEvent(attention('knowgraph', ['claim', 'old-receipt'])));
+    expect(result.current.projections.knowgraph.nodes.map(node => node.label)).toEqual(['W3C', 'Provenance model']);
+    expect(result.current.projections.knowgraph.nodes[1].properties).toMatchObject({
+      summary: 'Current native summary', attentionActive: true,
+    });
+    expect(result.current.projections.knowgraph.edges).toEqual([
+      expect.objectContaining({ id: 'native-edge', source: 'source', target: 'claim', predicate: 'PUBLISHED',
+        provenance: { groupId: 'group-one', episodes: ['source-episode'] }, validFrom: '2026-09-07T10:00:00Z' }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('projects only exact Python-owned native references without parsing provider JSON', () => {
     const result = projectNativeAttentionEvent({
       event: attention('codegraph', ['pkg.alpha', 'pkg.beta', 'pkg.alpha']),
@@ -125,7 +171,12 @@ describe('attention-activated native graph projection', () => {
     expect(know).toBeNull();
   });
 
-  it('starts all three canvases empty, wakes exact Graphiti write data, and clears on the next scope', async () => {
+  it('loads completed Graphiti writes from the native owner and keeps knowledge across turns', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? constellationResponse() : knowledgeResponse(
+        [{ id: 'node-a', label: 'Alpha' }, { id: 'node-b', label: 'Beta' }],
+        [{ id: 'edge-1', from: 'node-a', to: 'node-b', type: 'USES' }],
+      )));
     const { result } = renderHook(() => useAgentBuilderGraphAttention({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
     }));
@@ -159,19 +210,20 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.knowgraph.nodes[0].properties).toMatchObject({
       attentionOperation: 'write', attentionActorColor: '#EE8C66', attentionRunId: 'server-run-1',
     });
-    expect(result.current.projections.knowgraph.edges[0].provenance).toMatchObject({
+    expect(result.current.projections.knowgraph.edges[0].properties?.attentionProvenance).toMatchObject({
       authority: 'knowgraph', operation: 'write', group_id: 'group-one',
     });
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
     expect(result.current.projections.codegraph.nodes).toEqual([]);
 
     act(() => result.current.startAttentionScope({ ...turn, runId: 'run-2' }));
-    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+    expect(result.current.projections.knowgraph.nodes.map(node => node.label)).toEqual(['Alpha', 'Beta']);
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
   });
 
   it('restores persisted ThinkGraph attention only on an authoritative Constellation node', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(constellationResponse([
-      { id: 'mem-1', canonicalId: 'mem-1', label: 'Real memory', mentionCount: 1, properties: {}, provenance: { engine: 'constellation-engine' } },
+      { id: 'mem-1', canonicalId: 'mem-1', label: 'Real memory', mentionCount: 1, properties: {}, provenance: { engine: 'engraphis' } },
     ])));
     const { result } = renderHook(() => useAgentBuilderGraphAttention({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
@@ -184,7 +236,7 @@ describe('attention-activated native graph projection', () => {
     await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toHaveLength(1));
     expect(result.current.projections.thinkgraph.nodes[0].id).toBe('mem-1');
     expect(result.current.projections.thinkgraph.nodes[0].label).toBe('Real memory');
-    expect(result.current.projections.thinkgraph.nodes[0].provenance).toEqual({ engine: 'constellation-engine' });
+    expect(result.current.projections.thinkgraph.nodes[0].provenance).toEqual({ engine: 'engraphis' });
     expect(result.current.projections.thinkgraph.nodes[0].properties).toMatchObject({
       attentionToolName: 'constellation.context',
     });
@@ -315,17 +367,22 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.coder']);
   });
 
-  it('never lights pending writes and applies only acknowledged native deletions', () => {
+  it('never lights pending writes and rereads native records after acknowledged changes', async () => {
+    let nativeNodes: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? constellationResponse() : knowledgeResponse(nativeNodes)));
     const { result } = renderHook(() => useAgentBuilderGraphAttention({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
     }));
     const event = { ...attention('knowgraph', ['node-a']), operation: 'write' as const, change: 'create' as const };
     act(() => result.current.observeAttentionEvent({ ...event, phase: 'pending' }));
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
+    nativeNodes = [{ id: 'node-a', label: 'Alpha' }];
     act(() => result.current.observeAttentionEvent({ ...event, phase: 'completed' }));
-    expect(result.current.projections.knowgraph.nodes.map((node) => node.id)).toEqual(['node-a']);
+    await waitFor(() => expect(result.current.projections.knowgraph.nodes.map((node) => node.id)).toEqual(['node-a']));
+    nativeNodes = [];
     act(() => result.current.observeAttentionEvent({ ...event, eventId: 'delete', change: 'delete', phase: 'completed' }));
-    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+    await waitFor(() => expect(result.current.projections.knowgraph.nodes).toEqual([]));
   });
 
   it('expands a visible ThinkGraph memory through the native neighborhood route', async () => {
@@ -333,6 +390,7 @@ describe('attention-activated native graph projection', () => {
       .mockResolvedValueOnce(constellationResponse([
         { id: 'mem-1', canonicalId: 'mem-1', label: 'Center', mentionCount: 1, properties: {} },
       ]))
+      .mockResolvedValueOnce(knowledgeResponse())
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -365,6 +423,7 @@ describe('attention-activated native graph projection', () => {
   it('expands a visible KnowGraph UUID through the bounded native Neo4j route', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(constellationResponse())
+      .mockResolvedValueOnce(knowledgeResponse([{ id: 'node-a', label: 'Alpha', type: 'Entity', properties: { uuid: 'node-a' } }]))
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -390,6 +449,7 @@ describe('attention-activated native graph projection', () => {
       ...turn,
       event: attention('knowgraph', ['node-a']),
     }));
+    await waitFor(() => expect(result.current.projections.knowgraph.nodes).toHaveLength(1));
     const center = result.current.projections.knowgraph.nodes[0];
 
     await act(async () => result.current.expandNode({
@@ -404,6 +464,7 @@ describe('attention-activated native graph projection', () => {
   it('expands a visible CodeGraph symbol through native CBM trace_path', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(constellationResponse())
+      .mockResolvedValueOnce(knowledgeResponse())
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({

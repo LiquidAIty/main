@@ -299,6 +299,13 @@ async function executePreparedMainCliRun(
         finalResult: result.finalText,
       }),
     });
+    // Delivery is downstream of the retained answer and does not hold the chat
+    // response open. Python uses the existing saved Card/Run execution boundary.
+    void requestPythonRailsJson('/domain/main/completed-pair', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: run.projectId, deckId: run.deckId,
+        runId: run.runId, conversationId: run.conversationId }),
+    }).catch((error) => console.error('Completed-turn delivery failed', error));
     return { ...result, profileMaterialization: run.profileMaterialization };
   } catch (error) {
     await requestPythonRailsJson('/domain/runs/finish', {
@@ -859,6 +866,8 @@ async function startPreparedHermesTransport(
 
 type ConfiguredCardRunStatus = {
   runId: string;
+  conversationId: string | null;
+  startedAt: string | null;
   correlationId: string;
   cardId: string;
   runtimeKind: string;
@@ -928,13 +937,29 @@ async function readConfiguredCardRunStatus(args: {
   correlationId?: string;
   nativeRootId?: string;
   cardId?: string;
+  conversationId?: string;
   reconcileTerminal?: boolean;
   includeTerminal?: boolean;
 }): Promise<ConfiguredCardRunStatus | null> {
+  const scopedInspection = args.cardId && args.conversationId
+    ? await requestPythonRailsJson('/domain/agentgraph/inspect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: args.projectId, deckId: args.deckId,
+          cardId: args.cardId, conversationId: args.conversationId, directOnly: true, limit: 1 }),
+      }) as any
+    : null;
+  const scopedRun = scopedInspection?.runs?.find((candidate: any) => (
+    candidate.cardId === args.cardId && candidate.conversationId === args.conversationId
+    && !candidate.nativeChildId
+  ));
+  if (args.cardId && args.conversationId && !scopedRun?.runId) return null;
   const response = await requestPythonRailsJson('/domain/runs/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(args),
+    body: JSON.stringify(scopedRun ? {
+      projectId: args.projectId, deckId: args.deckId, runId: scopedRun.runId,
+      includeTerminal: args.includeTerminal,
+    } : args),
   }) as any;
   const run = response?.run;
   if (!run || typeof run !== 'object') return null;
@@ -959,7 +984,7 @@ async function readConfiguredCardRunStatus(args: {
       runtimeProfile: String(run.runtimeProfile || ''),
     });
   }
-  const inspection = await requestPythonRailsJson('/domain/agentgraph/inspect', {
+  const inspection = scopedInspection || await requestPythonRailsJson('/domain/agentgraph/inspect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1011,6 +1036,8 @@ async function readConfiguredCardRunStatus(args: {
   }
   return {
     runId,
+    conversationId: String(telemetryRun?.conversationId || '').trim() || null,
+    startedAt: String(run.startedAt || '').trim() || null,
     correlationId: String(run.correlationId || ''),
     cardId: String(run.cardId || ''),
     runtimeKind: String(run.runtimeKind || ''),
@@ -1096,6 +1123,8 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         ...(correlationId ? { correlationId } : {}),
         ...(nativeRootId ? { nativeRootId } : {}),
         ...(cardId ? { cardId } : {}),
+        ...(cardId && String(body.conversationId || '').trim()
+          ? { conversationId: String(body.conversationId).trim() } : {}),
         reconcileTerminal: body.inspectOnly !== true,
         includeTerminal: body.includeTerminal === true,
       });
@@ -1202,6 +1231,12 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
   if (!cardId || !correlationId || !input) {
     return res.status(400).json({ ok: false, error: 'card_run_args_incomplete' });
   }
+  if (body.background !== undefined && typeof body.background !== 'boolean') {
+    return res.status(400).json({ ok: false, error: 'card_run_background_must_be_boolean' });
+  }
+  if (body.background === true && (!senderCardId || !originatingRunId)) {
+    return res.status(400).json({ ok: false, error: 'card_run_background_source_required' });
+  }
 
   const transientRequest = {
     projectId,
@@ -1239,6 +1274,15 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
       return res.json({ ok: true, result: status });
     }
 
+    // A live native execution must own cancellation before acceptance is sent.
+    // End only the HTTP wait; this handler still retains completion and failure.
+    const acceptBackground = () => {
+      if (body.background === true && !res.destroyed && !res.writableEnded) {
+        res.status(202).json({ ok: true, result: {
+          runId, cardId, state: 'running', acceptedAt: new Date().toISOString(),
+        } });
+      }
+    };
 
     let hermesHandle: HermesTurnHandle | null = null;
     let runFinalized = false;
@@ -1277,6 +1321,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         const response = await executePreparedMainCliRun({
           projectId, deckId, conversationId, cardId, runId, prepared, driverSource: 'internal_chat',
         }, (event) => {
+          if (event.kind === 'started') acceptBackground();
           // Native PTY output remains the displayed CLI's sole output source.
           if (event.kind === 'text' && event.delta) nativeEvents.push({ kind: 'text', text: event.delta });
         }, { bridge: session.delivery.bridge, finishRun: false });
@@ -1302,6 +1347,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
             }
           },
         });
+        acceptBackground();
         const response = await hermesHandle.done;
         output = response.finalText;
         transport = response.transport;

@@ -114,3 +114,7 @@ client/public/worldsignals/
 .pytest_cache/
 .ruff_cache/
 
+# ThinkGraph memory is runtime user data, never repository source.
+/db/thinkgraph.sqlite*
+/db/.thinkgraph.sqlite.*
+

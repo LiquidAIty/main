@@ -11,6 +11,7 @@ let container: HTMLDivElement | null = null;
 afterEach(() => {
   container?.remove();
   container = null;
+  window.localStorage.clear();
 });
 
 async function render(activeDriver: MainDriverSource | null = null) {
@@ -25,6 +26,11 @@ async function render(activeDriver: MainDriverSource | null = null) {
         terminal={<div data-testid="agent-builder-instance">Agent Builder</div>}
       />,
     );
+  });
+  const panel = container.querySelector('[data-testid="main-work-surface"]') as HTMLDivElement;
+  panel.getBoundingClientRect = () => ({
+    x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 600,
+    width: 800, height: 600, toJSON: () => ({}),
   });
   return container;
 }
@@ -41,17 +47,18 @@ describe('Main Chat and Agent Builder work surface', () => {
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 
-  it('expands Agent Builder and restores the split without remounting it', async () => {
+  it('opens and closes the split without remounting Main or Agent Builder', async () => {
     const host = await render();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     const terminal = host.querySelector('[data-testid="agent-builder-instance"]');
+    const chat = host.querySelector('[data-testid="main-chat"]');
     await act(async () => {
       handle.click();
     });
     expect(handle.getAttribute('aria-expanded')).toBe('true');
     expect(host.querySelector('[data-testid="main-work-surface"]')?.getAttribute('data-terminal-mode'))
-      .toBe('expanded');
-    expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
+      .toBe('split');
+    expect(host.querySelector('[data-testid="main-chat"]')).toBe(chat);
     await act(async () => {
       handle.click();
     });
@@ -60,7 +67,7 @@ describe('Main Chat and Agent Builder work surface', () => {
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
   });
 
-  it('can be pulled from collapsed through peek to fully expanded and back', async () => {
+  it('reserves room for Main even when the divider is pulled to the top', async () => {
     const host = await render();
     const panel = host.querySelector('[data-testid="main-work-surface"]') as HTMLDivElement;
     panel.getBoundingClientRect = () => ({
@@ -76,10 +83,10 @@ describe('Main Chat and Agent Builder work surface', () => {
       window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
     expect(panel.getAttribute('data-main-driver')).toBe('internal_chat');
-    expect(panel.getAttribute('data-terminal-mode')).toBe('expanded');
+    expect(panel.getAttribute('data-terminal-mode')).toBe('split');
     expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
-      .toBe('auto');
-    expect(host.querySelector('[data-testid="main-chat"]')).toBeNull();
+      .toBe('408px');
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
 
     await act(async () => {
@@ -93,6 +100,20 @@ describe('Main Chat and Agent Builder work surface', () => {
     expect((host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement).style.height)
       .toBe('0px');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).toBe(terminal);
+  });
+
+  it('never switches the lower reader into direct input when opened', async () => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const modes: boolean[] = [];
+    await act(async () => root.render(<HarnessChatPanel chat={<div>Main</div>}
+      terminal={({ directInput }) => { modes.push(directInput); return <div>Output</div>; }} />));
+    const panel = container.querySelector('[data-testid="main-work-surface"]') as HTMLDivElement;
+    panel.getBoundingClientRect = () => ({ height: 600 } as DOMRect);
+    await act(async () => (container!.querySelector('button') as HTMLButtonElement).click());
+    expect(modes.length).toBeGreaterThan(1);
+    expect(modes.every((mode) => mode === false)).toBe(true);
   });
 
   it('keeps Main visible for an external driver and shows truthful provenance', async () => {

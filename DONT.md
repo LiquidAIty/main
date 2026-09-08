@@ -57,6 +57,13 @@ the recovered document below is historical evidence, including obsolete paths an
 
 ### September 2026 owner corrections
 
+- **Cognition roles and the permanent conversation.** Keep the existing Graph Agent/Team as the
+  KnowGraph researcher and the existing Agent Builder as both synthesizer and Canvas builder. Only
+  ThinkGraph needs a new profile, using Constellation. Workers maintain graphs; synthesis reads native
+  graph evidence directly. Never replace graph authority with a chain of copied reports. Expanding the
+  lower surface must not unmount Main or switch its conversation/profile into CLI mode. Automatic
+  retrieval from user messages comes after the graph/synthesis path works.
+
 - **Prompt sections swallowed or hidden.** The editor recognized only a small heading set and missed
   hyphenated headings, folding their text into Role. Other saved sections were invisible to editing.
   The repair reads explicit block boundaries and edits only the selected bodies. Tests cover repeated

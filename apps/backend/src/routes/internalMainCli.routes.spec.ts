@@ -9,6 +9,9 @@ import {
 } from '../hermes/childExecutionContext';
 import { mainCliBridge, mainCliBridgeToken } from '../hermes/mainCliBridge';
 import router from './internalMainCli.routes';
+import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+
+vi.mock('../services/autogen/pythonRailsClient', () => ({ requestPythonRailsJson: vi.fn() }));
 
 async function createServer(): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
@@ -25,6 +28,31 @@ async function createServer(): Promise<{ server: Server; baseUrl: string }> {
 
 describe('internal Main CLI bridge routes', () => {
   beforeEach(() => clearHermesExecutionContextsForTest());
+
+  it('reads only a stored child of this CLI owner after the foreground turn has ended', async () => {
+    const parent = { runId: 'parent', cardId: 'card_main_chat', projectId: 'p', deckId: 'd',
+      terminal: { children: [{ runId: 'child', parentRunId: 'parent', cardId: 'builder', state: 'completed', result: 'Evidence '.repeat(300) }] } };
+    vi.mocked(requestPythonRailsJson).mockResolvedValue({ ok: true, run: parent });
+    const { server, baseUrl } = await createServer();
+    const read = (runId: string) => fetch(`${baseUrl}/profile-run`, {
+      method: 'POST', headers: { Authorization: `Bearer ${mainCliBridgeToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', deckId: 'd', parentRunId: 'parent', runId, action: 'read' }),
+    });
+    try {
+      const response = await read('child');
+      expect(response.status).toBe(200);
+      const result = (await response.json() as any).result;
+      expect(result).toMatchObject({ runId: 'child', cardId: 'builder', state: 'completed' });
+      expect(result.excerpt).toHaveLength(1200);
+      expect((await read('unrelated')).status).toBe(403);
+      parent.cardId = 'another-card';
+      expect((await read('child')).status).toBe(403);
+      expect(vi.mocked(requestPythonRailsJson).mock.calls.every(([path]) => path === '/domain/runs/read')).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.mocked(requestPythonRailsJson).mockReset();
+    }
+  });
 
   it('requires the process token and transports one structured turn end to end', async () => {
     const { server, baseUrl } = await createServer();

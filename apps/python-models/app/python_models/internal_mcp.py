@@ -11,7 +11,9 @@ from typing import Any
 
 import httpx
 import jwt
+import anyio
 from mcp import ClientSession
+from mcp import types as mcp_types
 from mcp.client.streamable_http import streamable_http_client
 
 _INTERNAL_MCP_ISSUER = "liquidaity-runtime"
@@ -90,6 +92,7 @@ def create_materializer_read_token(
     project_id: str,
     deck_id: str,
     card_id: str,
+    conversation_id: str = "",
 ) -> str:
     """Issue a short-lived read-only principal for pre-dispatch graph hydration.
 
@@ -102,6 +105,7 @@ def create_materializer_read_token(
         "projectId": str(project_id or "").strip(),
         "deckId": str(deck_id or "").strip(),
         "callerCardId": str(card_id or "").strip(),
+        **({"conversationId": conversation_id} if conversation_id else {}),
     }
     if any(not principal[field] for field in ("projectId", "deckId", "callerCardId")):
         raise RuntimeError("internal_mcp_materializer_principal_incomplete")
@@ -191,6 +195,8 @@ async def _call_read_tools_via_mcp_async(
     card_id: str,
     calls: list[tuple[str, dict[str, Any]]],
     concurrent: bool = False,
+    deadline_seconds: float | None = None,
+    conversation_id: str = "",
 ) -> list[dict[str, Any]]:
     from app.python_models.tool_registry import tool_access
 
@@ -201,31 +207,77 @@ async def _call_read_tools_via_mcp_async(
         project_id=project_id,
         deck_id=deck_id,
         card_id=card_id,
+        conversation_id=conversation_id,
     )
-    async with httpx.AsyncClient(
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=httpx.Timeout(30.0),
-    ) as http_client:
-        async with streamable_http_client(
-            internal_mcp_url(),
-            http_client=http_client,
-        ) as (read_stream, write_stream, _):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                async def _call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-                    result = await session.call_tool(name, dict(arguments or {}))
-                    if getattr(result, "isError", False):
-                        raise RuntimeError(f"materializer_mcp_read_failed:{name}")
-                    return _json_result(result, name)
+    if deadline_seconds is not None and not 0 < deadline_seconds <= 30:
+        raise ValueError("materializer_deadline_invalid")
+    started = time.monotonic()
+    results = [{"ok": False, "error": "read_timeout"} for _ in calls]
+    mcp_url = internal_mcp_url()
 
-                if concurrent:
-                    return list(await asyncio.gather(*(
-                        _call(name, arguments) for name, arguments in calls
-                    )))
-                results: list[dict[str, Any]] = []
-                for name, arguments in calls:
-                    results.append(await _call(name, arguments))
-                return results
+    async def read():
+        async with httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=httpx.Timeout(deadline_seconds or 30.0),
+            # internal_mcp_url rejects HTTPS and non-loopback hosts. There is
+            # no TLS connection here; loading the Windows CA store is wasted.
+            **({"verify": False} if deadline_seconds is not None else {}),
+        ) as http_client:
+            async with streamable_http_client(
+                mcp_url, http_client=http_client,
+            ) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    await session.initialize()
+
+                    async def call(index, name, arguments):
+                        try:
+                            if deadline_seconds is None:
+                                result = await session.call_tool(name, dict(arguments or {}))
+                            else:
+                                # These known read results are decoded below by
+                                # their graph owner. The public typed request
+                                # avoids call_tool's extra catalog round trip;
+                                # it retains MCP transport/result validation.
+                                result = await session.send_request(
+                                    mcp_types.ClientRequest(mcp_types.CallToolRequest(
+                                        params=mcp_types.CallToolRequestParams(
+                                            name=name, arguments=dict(arguments or {}),
+                                        ),
+                                    )),
+                                    mcp_types.CallToolResult,
+                                )
+                            if getattr(result, "isError", False):
+                                raise RuntimeError(f"materializer_mcp_read_failed:{name}")
+                            results[index] = _json_result(result, name)
+                        except Exception:
+                            if deadline_seconds is None:
+                                raise
+                            results[index] = {"ok": False, "error": "read_failed"}
+                        if deadline_seconds is not None:
+                            results[index]["_readDurationMs"] = round((time.monotonic() - started) * 1000)
+
+                    if concurrent:
+                        async with anyio.create_task_group() as group:
+                            for index, (name, arguments) in enumerate(calls):
+                                group.start_soon(call, index, name, arguments)
+                    else:
+                        for index, (name, arguments) in enumerate(calls):
+                            await call(index, name, arguments)
+
+    if deadline_seconds is None:
+        await read()
+    else:
+        try:
+            with anyio.move_on_after(deadline_seconds):
+                await read()
+        except Exception:
+            # Optional preload must not discard sources which already returned.
+            for result in results:
+                if result.get("error") == "read_timeout":
+                    result["error"] = "read_failed"
+        for result in results:
+            result.setdefault("_readDurationMs", round((time.monotonic() - started) * 1000))
+    return results
 
 
 def call_read_tools_via_mcp(
@@ -235,6 +287,8 @@ def call_read_tools_via_mcp(
     card_id: str,
     calls: list[tuple[str, dict[str, Any]]],
     concurrent: bool = False,
+    deadline_seconds: float | None = None,
+    conversation_id: str = "",
 ) -> list[dict[str, Any]]:
     """Use one authenticated session on the one official MCP host."""
     if not calls:
@@ -245,4 +299,6 @@ def call_read_tools_via_mcp(
         card_id=card_id,
         calls=calls,
         concurrent=concurrent,
+        deadline_seconds=deadline_seconds,
+        conversation_id=conversation_id,
     ))

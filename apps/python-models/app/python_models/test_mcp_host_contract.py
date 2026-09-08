@@ -26,6 +26,66 @@ def test_public_mcp_identity_is_liquidaity():
     )
 
 
+def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    completed = []
+
+    async def dispatch(name, arguments):
+        await asyncio.sleep(0.03)
+        completed.append(name)
+        return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True, "id": "native-question"}))]
+
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
+    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.005)
+
+    result = asyncio.run(mcp_host.call_tool("constellation.remember_semantic", {}))
+    assert not getattr(result, "isError", False)
+    assert completed == ["constellation.remember_semantic"]
+    # Ordinary reads keep their short deadline; this is not a global increase.
+    result = asyncio.run(mcp_host.call_tool("constellation.context", {}))
+    assert result.isError
+    assert completed == ["constellation.remember_semantic"]
+
+
+def test_constellation_rejection_reaches_agent_without_success_or_retry(monkeypatch):
+    import asyncio
+    import io
+    from urllib.error import HTTPError
+    import mcp_host
+
+    requests = []
+    context = {"projectId": "project-one", "mainCardId": "thinkgraph"}
+
+    def reject(request, **kwargs):
+        requests.append(json.loads(request.data))
+        raise HTTPError(request.full_url, 409, "Conflict", {}, io.BytesIO(
+            b'{"detail":"constellation_edge_type_invalid"}'))
+
+    monkeypatch.setattr(mcp_host, "urlopen", reject)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
+    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: context)
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
+    monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    result = asyncio.run(mcp_host.call_tool("constellation.remember", {
+        "id": "question", "l0": "Question", "l1": "Question", "l2": "Question",
+    }))
+    assert result.isError is True
+    assert json.loads(result.content[0].text) == {
+        "ok": False, "error": "constellation_edge_type_invalid",
+    }
+    receipt = json.loads(result.content[-1].text)["executionReceipt"]
+    assert receipt["state"] == "failed"
+    assert receipt["failureCode"] == "constellation_edge_type_invalid"
+    assert len(requests) == 1
+    assert requests[0]["projectId"] == "project-one"
+
+
 def test_card_team_schema_exposes_only_proven_saved_fields():
     import mcp_host
 
@@ -517,6 +577,36 @@ def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
     ]
 
 
+def test_materializer_native_reads_keep_project_scope_without_a_fake_run(monkeypatch):
+    import asyncio
+    import mcp_host
+    calls = []
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {
+        "kind": "materializer-read", "projectId": "project-1", "deckId": "d",
+        "callerCardId": "main", "conversationId": "conversation-1",
+    })
+    async def initialize():
+        return None
+    async def graphiti_tools():
+        return [mcp_host.Tool(name="search_memory_facts", description="facts", inputSchema={
+            "properties": {"query": {}, "group_ids": {}}})]
+    async def graphiti(name, args):
+        calls.append((name, args))
+        return []
+    monkeypatch.setattr(mcp_host, "_initialize_native_graphiti", initialize)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_tools)
+    monkeypatch.setattr(mcp_host, "_NATIVE_GRAPHITI_NAMES", {"search_memory_facts"})
+    monkeypatch.setattr(mcp_host, "_call_native_graphiti", graphiti)
+    asyncio.run(mcp_host._dispatch_tool("graphiti.search_memory_facts", {"query": "sources"}))
+    assert calls == [("search_memory_facts", {"query": "sources", "group_ids": ["liquidaity-project-1"]})]
+    monkeypatch.setattr(mcp_host, "_constellation_via_python_rails_sync", lambda *args: calls.append(args) or {"nodes": []})
+    asyncio.run(mcp_host._dispatch_tool("constellation.context", {"focus": "sources"}))
+    assert calls[-1] == ("constellation.context", "project-1", {"focus": "sources"})
+    rejected = asyncio.run(mcp_host._dispatch_tool("constellation.context", {"focus": "sources", "projectId": "foreign"}))
+    assert "caller_identity_rejected" in rejected[0].text
+
+
 def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(monkeypatch):
     import mcp_host
 
@@ -756,6 +846,40 @@ def test_card_invocation_injects_caller_identity_and_main_uses_the_external_cli_
         "message": "root entry",
     })]
     assert calls == []
+
+
+def test_background_profile_handoff_binds_parent_from_authenticated_system_context(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+
+    context = {
+        "projectId": "project-1", "deckId": "deck_builder", "conversationId": "main",
+        "parentRunId": "parent-run", "mainCardId": "card-main",
+        "callerRuntimeKind": "hermes", "callerRuntimeMode": "main",
+        "principalKind": "system-root", "grantedTools": ["card.run_assistant_agent"],
+    }
+    calls = []
+
+    async def run(args):
+        calls.append(dict(args))
+        return {"ok": True, "result": {"state": "running", "runId": "child-run"}}
+
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
+    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
+    result = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {
+        "cardId": "card-builder", "input": "Prepare a proposal.", "background": True,
+    }))
+    assert json.loads(result[0].text)["ok"] is True
+    assert calls[-1]["originatingAgentId"] == "card-main"
+    assert calls[-1]["originatingRunId"] == "parent-run"
+    assert calls[-1]["background"] is True
+    forged = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {
+        "cardId": "card-builder", "input": "Prepare a proposal.", "background": True,
+        "originatingRunId": "forged-parent",
+    }))
+    assert "caller_identity_rejected" in json.loads(forged[0].text)["error"]
+    assert len(calls) == 1
 
 
 def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypatch):

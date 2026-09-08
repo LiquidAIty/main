@@ -280,12 +280,7 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
         or payload.get("nativeId")
         or payload.get("node_id")
     )
-    if top_id and tool_name not in {
-        "constellation.inspect_edge",
-        "constellation.adjust_edge",
-        "constellation.classify_edge",
-        "constellation.edge_review",
-    }:
+    if top_id:
         nodes.insert(0, top_id)
     for key in ("a", "b", "sourceId", "source_id", "nodeA", "nodeB"):
         value = _text(payload.get(key))
@@ -303,27 +298,11 @@ def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[s
             if value:
                 nodes.append(value)
     edge_ids: list[str] = []
-    if tool_name in {
-        "constellation.inspect_edge",
-        "constellation.adjust_edge",
-        "constellation.classify_edge",
-        "constellation.edge_review",
-    }:
-        edge = payload.get("edge")
-        edge_id = _text(
-            payload.get("edgeId")
-            or payload.get("edge_id")
-            or (edge.get("id") if isinstance(edge, dict) else None)
-            or payload.get("id")
-        )
-        if edge_id:
-            edge_ids.append(edge_id)
     return nodes, edge_ids
 
 
 def _extract_thinkgraph_edges(_tool_name: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
-    # Constellation returns authoritative edge endpoints/type/strength but does
-    # not currently assign native edge IDs. Attention must not manufacture one.
+    # Native results may include edges. Never infer graph access from prose.
     records = _records(payload, "edges")
     edge = payload.get("edge")
     if isinstance(edge, dict):
@@ -358,45 +337,11 @@ def _contracts() -> dict[str, NativeAttentionContract]:
         "graphiti.build_communities": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
         "graphiti.summarize_saga": NativeAttentionContract("knowgraph", "write", _extract_knowgraph, _extract_knowgraph_edges),
     }
-    for name in (
-        "constellation.capabilities",
-        "constellation.stats",
-        "constellation.context",
-        "constellation.inspect",
-        "constellation.inspect_edge",
-        "constellation.check_duplicate",
-        "constellation.edge_types",
-        "constellation.collide",
-        "constellation.semantic_status",
-        "constellation.semantic_context",
-        "constellation.reembed_status",
-        "constellation.identity_preview",
-        "constellation.autonomy_status",
-        "constellation.notification_status",
-    ):
-        contracts[name] = NativeAttentionContract(
-            "thinkgraph", "read", _extract_thinkgraph, _extract_thinkgraph_edges
-        )
-    for name in (
-        "constellation.remember",
-        "constellation.remember_semantic",
-        "constellation.update_memory",
-        "constellation.link",
-        "constellation.adjust_edge",
-        "constellation.classify_edge",
-        "constellation.forget",
-        "constellation.maintain",
-        "constellation.reembed_start",
-        "constellation.reembed_cancel",
-        "constellation.identity_apply",
-        "constellation.edge_review",
-        "constellation.adjust_edge_pair",
-        "constellation.classify_edge_pair",
-        "constellation.inject_message",
-    ):
-        contracts[name] = NativeAttentionContract(
-            "thinkgraph", "write", _extract_thinkgraph, _extract_thinkgraph_edges
-        )
+    from .engraphis import READ_TOOLS, WRITE_TOOLS
+    for name in READ_TOOLS:
+        contracts[name] = NativeAttentionContract("thinkgraph", "read", _extract_thinkgraph, _extract_thinkgraph_edges)
+    for name in WRITE_TOOLS:
+        contracts[name] = NativeAttentionContract("thinkgraph", "write", _extract_thinkgraph, _extract_thinkgraph_edges)
     return contracts
 
 

@@ -10,8 +10,60 @@ from app.python_models.data_anchor import (
     read_thinkgraph_exact,
     resolve_data_anchors,
     search_knowgraph_hybrid,
+    prepare_main_context,
 )
 from app.python_models.constellation import ConstellationProcess
+
+
+def test_main_preload_keeps_native_ids_bounds_and_independent_failures():
+    import json
+    observed = []
+    def reader(**kwargs):
+        observed.append(kwargs)
+        return [
+            {"nodes": [{"id": "decision-1", "l1": "Consider conflicting sources"}] * 4},
+            {"ok": False, "error": "read_timeout", "_readDurationMs": 2000},
+            {"runs": [{"runId": "run-1", "state": "completed", "nativeReferences": [{"nativeId": "fact-1", "authority": "KnowGraph"}]}]},
+        ]
+    tools = ["constellation.context", "graphiti.search_memory_facts", "cbm.search_graph", "agentgraph.inspect"]
+    result = prepare_main_context("p", "d", "main", "conversation", "How should we show sources?", tools, mcp_reader=reader)
+    assert observed[0]["deadline_seconds"] == 2
+    assert observed[0]["concurrent"] is True
+    assert observed[0]["conversation_id"] == "conversation"
+    assert [ref["nativeId"] for ref in result["references"]] == ["decision-1", "run-1"]
+    assert result["reads"][1]["state"] == "read_timeout"
+    assert json.loads(result["text"])[1]["data"]["nativeReferences"][0]["nativeId"] == "fact-1"
+    assert "cbm.search_graph" not in [name for name, _ in observed[0]["calls"]]
+    assert len(json.dumps([result["text"], result["references"]]).encode()) < 8100
+
+
+def test_main_preload_does_not_widen_grants_or_invent_conversation():
+    calls = []
+    result = prepare_main_context("p", "d", "main", "", "A question", ["agentgraph.inspect"],
+        mcp_reader=lambda **kwargs: calls.append(kwargs))
+    assert calls == []
+    assert result["references"] == []
+
+
+def test_main_preload_does_not_treat_raw_sentence_code_matches_as_evidence():
+    tools = ["cbm.search_graph", "cbm.search_code", "cbm.trace_path"]
+    result = prepare_main_context("p", "d", "main", "conversation", "Should we keep an old claim?", tools,
+        mcp_reader=lambda **_: pytest.fail("Raw conversational text must not preload code matches"))
+    assert result == {"text": "", "references": [], "reads": []}
+    assert tools == ["cbm.search_graph", "cbm.search_code", "cbm.trace_path"]
+
+
+def test_main_preload_retains_fact_provenance_and_handles_large_records():
+    import json
+    result = prepare_main_context("p", "d", "main", "conversation", "sources", ["graphiti.search_memory_facts"],
+        mcp_reader=lambda **kwargs: [{"facts": [{"uuid": "edge-1", "fact": "é" * 2000,
+            "episodes": ["episode-1"], "valid_at": "2026-09-07", "source_node_uuid": "source", "target_node_uuid": "target"}]}])
+    record = json.loads(result["text"])[0]
+    assert record["truncated"] is True
+    assert record["data"]["episodes"] == ["episode-1"]
+    assert record["data"]["valid_at"] == "2026-09-07"
+    assert result["references"][0]["nativeId"] == "edge-1"
+    assert len(json.dumps([record, result["references"][0]], ensure_ascii=False).encode()) <= 2000
 
 
 def _database(tmp_path):

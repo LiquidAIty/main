@@ -933,6 +933,10 @@ export class AcpProcess {
     this.configuringSessions.add(sessionId);
     try {
       bindHermesRootExecutionSession(contextId, sessionId);
+      const selected = toNativeParentModel(args);
+      await this.request('session/set_model', {
+        sessionId, modelId: `${selected.provider}:${selected.model}`,
+      });
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
         process.env,
@@ -1122,6 +1126,12 @@ export class AcpProcess {
       // releases its reservation; a rejected concurrent caller must not do so.
       this.configuringSessions.add(sessionId);
       configuringSessionId = sessionId;
+      // A restored session retains its old model even after profiles.configure.
+      // Apply the receiving Card's selection through the native ACP operation.
+      const selected = toNativeParentModel(args);
+      await this.request('session/set_model', {
+        sessionId, modelId: `${selected.provider}:${selected.model}`,
+      });
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
         process.env,

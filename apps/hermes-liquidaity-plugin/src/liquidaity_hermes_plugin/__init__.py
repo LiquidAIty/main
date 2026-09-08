@@ -279,7 +279,53 @@ class _MainCliBridge:
         if not isinstance(response, dict) or response.get("ok") is not True \
                 or not isinstance(result, dict):
             raise RuntimeError("liquidaity_main_execution_response_invalid")
+        if method == "session/delegate_profile" and params.get("background") is True:
+            return self._deliver_profile_result(params, result)
         return result
+
+    def _deliver_profile_result(self, params: dict, accepted: dict) -> dict:
+        """Attach an accepted Card Run to Hermes's native async completion owner."""
+        from tools.async_delegation import dispatch_async_delegation
+        from tools.delegate_tool import _get_max_async_children
+
+        identity = {key: accepted.get(key) for key in ("projectId", "deckId", "parentRunId", "runId")}
+        session_id = str(params.get("sessionId") or "")
+        if accepted.get("state") != "running" or not session_id or not all(identity.values()):
+            raise RuntimeError("profile_acceptance_identity_invalid")
+        interrupted = threading.Event()
+
+        def stop():
+            interrupted.set()
+            self._request("/profile-run", {**identity, "action": "stop"})
+
+        def observe():
+            while not interrupted.is_set() and not self._stop.is_set():
+                response = self._request("/profile-run", {**identity, "action": "read"})
+                result = response.get("result") if isinstance(response, dict) else None
+                if not isinstance(result, dict) or response.get("ok") is not True:
+                    raise RuntimeError("profile_result_unavailable")
+                if result.get("runId") != identity["runId"]:
+                    raise RuntimeError("profile_result_identity_mismatch")
+                state = result.get("state")
+                if state in {"completed", "failed", "cancelled", "blocked"}:
+                    return {
+                        "status": "completed" if state == "completed" else "error",
+                        "summary": json.dumps({"runId": identity["runId"], "cardId": result.get("cardId"),
+                            "state": state, "excerpt": result.get("excerpt", "")}, ensure_ascii=False),
+                        "error": result.get("error"),
+                    }
+                interrupted.wait(2.0)
+            return {"status": "interrupted", "summary": None, "error": "Profile observation interrupted"}
+
+        dispatched = dispatch_async_delegation(
+            goal=str(params.get("goal") or ""), context=None, toolsets=None,
+            role="profile", model=None, session_key=session_id, parent_session_id=session_id,
+            runner=observe, interrupt_fn=stop, max_async_children=_get_max_async_children(),
+        )
+        if dispatched.get("status") != "dispatched":
+            stop()
+            raise RuntimeError(str(dispatched.get("error") or "profile_delivery_rejected"))
+        return {**accepted, **dispatched, "mode": "background"}
 
     def _bind_active_execution(self, **payload) -> None:
         with self._lock:

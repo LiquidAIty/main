@@ -40,6 +40,23 @@ if (!Number.isInteger(mimirPort) || mimirPort < 1024 || mimirPort > 65535) {
 process.env.MIMIR_PORT = String(mimirPort);
 const { ConstellationEngine } = require(engineModulePath);
 const engine = new ConstellationEngine(dbPath);
+// Optional product metadata on the existing native record. Additive only:
+// no record is moved, replaced, or copied to a parallel graph.
+if (!engine.db.prepare('PRAGMA table_info(nodes)').all().some((column) => column.name === 'cognition_json')) {
+  engine.db.exec('ALTER TABLE nodes ADD COLUMN cognition_json TEXT');
+}
+
+function cognitionData(row) {
+  return row?.cognition_json ? JSON.parse(row.cognition_json) : null;
+}
+
+function writeCognition(id, value) {
+  if (value == null) return;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('cognition_object_required');
+  const encoded = JSON.stringify(value);
+  if (encoded.length > 32000) throw new Error('cognition_too_large');
+  engine.db.prepare('UPDATE nodes SET cognition_json = ?, updated_at = ? WHERE id = ?').run(encoded, new Date().toISOString(), id);
+}
 
 let mimirChild = null;
 let mimirStartedAt = null;
@@ -446,17 +463,28 @@ function render(args, exact) {
     maxDepth: boundedInteger(args.maxDepth, exact ? 1 : 3, 0, 5, 'max_depth'),
     maxL2: boundedInteger(args.maxL2, 12, 0, 128, 'max_l2'),
   });
-  const readTitle = engine.db.prepare("SELECT l0 FROM nodes WHERE id = ? AND state = 'active'");
+  const readTitle = engine.db.prepare("SELECT id, l0, l1, node_type, subkind, source, owner_id, created_at, updated_at, event_at, state, cognition_json FROM nodes WHERE id = ? AND state = 'active'");
   const nodes = result.nodes.map((node) => {
     const record = readTitle.get(node.id);
     if (!record || typeof record.l0 !== 'string') {
       throw new Error(`constellation_native_title_missing:${node.id}`);
     }
-    return { ...node, l0: record.l0 };
+    return { ...node, ...record, l1: record.l1?.slice(0, 4000), cognition: cognitionData(record), cognition_json: undefined };
   });
+  const nativeEdges = [];
+  const ids = new Set(nodes.map((node) => node.id));
+  const readEdges = engine.db.prepare(`SELECT id, source, target, edge_type, fine_type,
+    fine_confidence, fine_source, strength, state, created_at, accessed_at
+    FROM edges WHERE source = ? AND state = 'active' ORDER BY id LIMIT 512`);
+  for (const id of ids) {
+    for (const edge of readEdges.all(id)) {
+      if (ids.has(edge.target)) nativeEdges.push({ ...edge, from: edge.source, to: edge.target, type: edge.edge_type });
+    }
+  }
   return {
     ...result,
     nodes,
+    edges: nativeEdges,
     ...engineReceipt(),
   };
 }
@@ -469,7 +497,7 @@ function inspect(args) {
   // adapter reads it through the same pinned engine instance and database.
   const row = engine.db.prepare(`
     SELECT id, state, created_at, accessed_at, updated_at, l0, l1, l2, tags,
-           tone, valence, arousal, weight, source, node_type, event_at, subkind
+           tone, valence, arousal, weight, source, node_type, event_at, subkind, owner_id, cognition_json
       FROM nodes
      WHERE id = ? AND state = 'active'
   `).get(nativeId);
@@ -491,7 +519,7 @@ function inspect(args) {
   }
   return {
     ...rendered,
-    inspectedNode: { ...row, tags: resolvedTags },
+    inspectedNode: { ...row, cognition_json: undefined, cognition: cognitionData(row), tags: resolvedTags },
     inspectedEdges,
   };
 }
@@ -515,6 +543,7 @@ async function dispatch(message) {
   }
   if (message.operation === 'remember') {
     const id = text(args.id, 'id', 300);
+    const priorCognition = cognitionData(engine.db.prepare('SELECT cognition_json FROM nodes WHERE id = ?').get(id));
     const source = text(args.source || 'liquidaity', 'source', 160);
     const resolvedTags = tags(args.tags);
     const projectTag = optionalText(args.projectTag, 'project_tag', 180);
@@ -536,6 +565,8 @@ async function dispatch(message) {
       event_at: optionalText(args.eventAt, 'event_at', 100),
       subkind: optionalText(args.subkind, 'subkind', 100),
     });
+    if (args.cognition != null && written !== id) throw new Error('cognition_duplicate_identity_requires_update');
+    writeCognition(written, args.cognition ?? (written === id ? priorCognition : null));
     return {
       ok: true,
       id: written,
@@ -582,6 +613,7 @@ async function dispatch(message) {
       maxWaitSeconds: boundedInteger(args.maxWaitSeconds, 90, 1, 180, 'max_wait_seconds'),
     });
     const id = text(args.id, 'id', 300);
+    const priorCognition = cognitionData(engine.db.prepare('SELECT cognition_json FROM nodes WHERE id = ?').get(id));
     const resolvedTags = tags(args.tags);
     const projectTag = optionalText(args.projectTag, 'project_tag', 180);
     if (projectTag && !resolvedTags.includes(projectTag)) resolvedTags.push(projectTag);
@@ -602,6 +634,8 @@ async function dispatch(message) {
       event_at: optionalText(args.eventAt, 'event_at', 100),
       subkind: optionalText(args.subkind, 'subkind', 100),
     });
+    if (args.cognition != null && written !== id) throw new Error('cognition_duplicate_identity_requires_update');
+    writeCognition(written, args.cognition ?? (written === id ? priorCognition : null));
     return { ok: true, id: written, embedded: true, ...engineReceipt() };
   }
   if (message.operation === 'reembed_start') {
@@ -1041,6 +1075,22 @@ async function dispatch(message) {
       ...engineReceipt(),
     };
   }
+  // Internal cross-graph completion only; not a separately granted public tool.
+  if (message.operation === 'attach_answer') {
+    const nativeId = text(args.nativeId, 'native_id', 300);
+    return engine.db.transaction(() => {
+      const row = engine.db.prepare('SELECT cognition_json FROM nodes WHERE id = ?').get(nativeId);
+      const cognition = cognitionData(row);
+      if (cognition?.memoryCategory !== 'question') throw new Error('native_thinkgraph_question_required');
+      if (!['answered', 'partially_answered', 'contested'].includes(args.status)) throw new Error('question_outcome_required');
+      const ref = args.evidence;
+      if (ref?.authority !== 'knowgraph' || ref.projectId !== cognition.projectScope || typeof ref.nativeId !== 'string' || !ref.nativeId) throw new Error('question_evidence_scope_mismatch');
+      const answerRefs = cognition.answerRefs || [];
+      if (!answerRefs.some(item => item.authority === ref.authority && item.nativeId === ref.nativeId && item.projectId === ref.projectId)) answerRefs.push(ref);
+      writeCognition(nativeId, { ...cognition, answerRefs, questionStatus: args.status });
+      return { id: nativeId, answerRefs, questionStatus: args.status };
+    })();
+  }
   if (message.operation === 'update_memory') {
     const nativeId = text(args.nativeId, 'native_id', 300);
     if (!activeNode(nativeId)) throw new Error('constellation_native_id_not_found');
@@ -1052,8 +1102,10 @@ async function dispatch(message) {
     if (args.arousal != null) fields.arousal = boundedNumber(args.arousal, 0.5, 0, 1, 'arousal');
     if (args.weight != null) fields.weight = boundedNumber(args.weight, 1, 0.01, 10, 'weight');
     if (args.nodeType != null) fields.node_type = text(args.nodeType, 'node_type', 100);
-    if (Object.keys(fields).length === 0) throw new Error('constellation_update_fields_required');
-    const updated = await engine.updateNode(nativeId, fields);
+    if (Object.keys(fields).length === 0 && args.cognition == null) throw new Error('constellation_update_fields_required');
+    const updated = Object.keys(fields).length ? await engine.updateNode(nativeId, fields) : nativeId;
+    writeCognition(nativeId, args.cognition);
+    if (args.cognition != null) fields.cognition = args.cognition;
     return { ok: updated === nativeId, id: updated, updatedFields: Object.keys(fields), ...engineReceipt() };
   }
   if (message.operation === 'link') {

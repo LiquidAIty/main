@@ -14,10 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.python_models.internal_mcp import call_read_tools_via_mcp
-from app.python_models.constellation import (
-    ConstellationProcess,
-    constellation_inspect,
-)
+from app.python_models.engraphis import inspect as inspect_thinkgraph
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -63,66 +60,24 @@ def read_thinkgraph_exact(
     *,
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    """Read one current project-scoped Constellation memory by native ID."""
-    client: ConstellationProcess | None = None
+    """Read the exact memory through the same Engraphis service used by agents."""
+    if db_path is not None:
+        raise DataAnchorError("data_anchor_database_override_not_supported")
     try:
-        if db_path is None:
-            native = constellation_inspect(
-                project_id,
-                {"nativeId": native_id, "maxDepth": 0, "budget": 12000},
-            )
-        else:
-            path = Path(db_path).resolve()
-            if not path.is_file():
-                raise DataAnchorError("data_anchor_thinkgraph_unavailable")
-            client = ConstellationProcess(project_id, database_path=path)
-            native = client.request(
-                "inspect",
-                {"nativeId": native_id, "maxDepth": 0, "budget": 12000},
-            )
+        native = inspect_thinkgraph(project_id, native_id)
+    except ValueError:
+        return None
     except Exception as error:
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
-    finally:
-        if client is not None:
-            client.close()
-    nodes = native.get("nodes") if isinstance(native, dict) else None
-    inspected = native.get("inspectedNode") if isinstance(native, dict) else None
-    row = inspected if isinstance(inspected, dict) else next(
-        (
-            item for item in (nodes or [])
-            if isinstance(item, dict) and str(item.get("id") or "") == native_id
-        ),
-        None,
-    )
-    if row is None:
+    row = native.get("memory")
+    if not isinstance(row, dict):
         return None
-    tags = _json_value(row.get("tags"))
-    tags = tags if isinstance(tags, list) else []
-    if f"liquidaity-project:{project_id}" not in {str(tag) for tag in tags}:
-        return None
-    canonical_id = str(row["id"])
-    title = str(row.get("l0") or row.get("content") or canonical_id)
-    content = str(row.get("l2") or row.get("l1") or row.get("content") or title)
     return {
-        "authority": "ThinkGraph",
-        "nativeId": canonical_id,
-        "nativeKind": "node",
-        "recordId": canonical_id,
-        "type": str(row.get("node_type") or "ConstellationMemory"),
-        "title": title,
-        "content": content[:_ANCHOR_BODY_LIMIT],
-        "metadata": {
-            "tags": tags,
-            "level": row.get("level"),
-            "distance": row.get("distance"),
-        },
-        "provenance": {
-            "engine": native.get("engine"),
-            "engineVersion": native.get("engineVersion"),
-            "engineRevision": native.get("engineRevision"),
-        },
-        "asOf": "current",
-        "readOperation": "constellation.inspect",
+        "authority": "ThinkGraph", "nativeId": row["id"], "nativeKind": "node",
+        "recordId": row["id"], "type": row.get("mtype", "semantic"),
+        "title": row.get("title", ""), "content": str(row.get("content", ""))[:_ANCHOR_BODY_LIMIT],
+        "metadata": row.get("metadata", {}), "provenance": row.get("provenance", {}),
+        "asOf": "current", "readOperation": "engraphis_get_memory",
     }
 
 
@@ -702,6 +657,88 @@ def search_knowgraph_hybrid(
             "maxCombinedResults": _KNOWGRAPH_RESULT_LIMIT,
         },
     }
+
+
+def prepare_main_context(
+    project_id: str, deck_id: str, card_id: str, conversation_id: str,
+    message: str, granted_tools: list[str],
+    *, mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+) -> dict[str, Any]:
+    """Optional native reads under one deadline, before the existing Main IDF.
+
+    Native result order supplies ranking. No model, graph write, copied store,
+    or cross-graph semantic ranking participates in this path.
+    """
+    sources = [
+        ("ThinkGraph", "engraphis_recall_context", {"query": message[:500], "token_budget": 600, "k": 6}),
+        ("KnowGraph", "graphiti.search_memory_facts", {"query": message[:2000], "max_facts": 4}),
+        ("AgentGraph", "agentgraph.inspect", {"limit": 4}),
+    ]
+    sources = [source for source in sources if source[1] in granted_tools
+               and (source[0] != "AgentGraph" or conversation_id)]
+    empty = {"text": "", "references": [], "reads": []}
+    if not message.strip() or not sources:
+        return empty
+    try:
+        results = mcp_reader(
+            project_id=project_id, deck_id=deck_id, card_id=card_id,
+            conversation_id=conversation_id,
+            calls=[(name, arguments) for _, name, arguments in sources],
+            concurrent=True, deadline_seconds=2.0,
+        )
+    except Exception:
+        return {**empty, "reads": [{"state": "unavailable"}]}
+
+    fields = {
+        "ThinkGraph": ("id", "title", "content", "summary", "provenance"),
+        "KnowGraph": ("uuid", "fact", "name", "source_node_uuid", "target_node_uuid", "episodes", "valid_at", "invalid_at", "expired_at", "created_at"),
+        "AgentGraph": ("runId", "cardId", "state", "startedAt", "lastAttentionAt", "parentRunIds", "childRunIds", "nativeReferences"),
+    }
+    records, references, reads = [], [], []
+    seen = set()
+    observed_at = _now_iso()
+    for (authority, operation, _arguments), result in zip(sources, results):
+        if not isinstance(result, dict):
+            continue
+        state = result.get("error") if result.get("ok") is False else "completed"
+        reads.append({"authority": authority, "state": state, "durationMs": result.get("_readDurationMs")})
+        if state != "completed":
+            continue
+        rows = _payload_records(result, "facts" if authority == "KnowGraph" else "runs" if authority == "AgentGraph" else "sources")
+        if authority == "ThinkGraph" and rows and isinstance(result.get("context"), str):
+            # Keep the native packed context once, with its exact ordered sources.
+            packed = {"authority": authority, "context": result["context"],
+                      "sources": rows, "truncated": bool((result.get("usage") or {}).get("omitted_count"))}
+            if len(json.dumps(packed, ensure_ascii=False).encode("utf-8")) <= 6000:
+                records.append(packed)
+        source_bytes = 0
+        for row in rows[:4]:
+            native_id = str(row.get("uuid") or row.get("id") or row.get("runId") or "")
+            if not native_id or (authority, native_id) in seen:
+                continue
+            data = {key: _json_safe(row[key]) for key in fields[authority] if key in row}
+            truncated = False
+            for key, value in data.items():
+                # Bound content, never truncate native identity fields.
+                if key in {"l0", "l1", "l2", "content", "fact"} and isinstance(value, str) and len(value) > 500:
+                    data[key] = value[:500]
+                    truncated = True
+            record = {"authority": authority, "nativeId": native_id, "data": data, "truncated": truncated}
+            reference = {"authority": authority, "nativeId": native_id,
+                "nativeKind": "edge" if authority == "KnowGraph" else "run" if authority == "AgentGraph" else "node",
+                "readOperation": operation, "asOf": observed_at, "required": False,
+                "reason": "native retrieval", "truncated": truncated}
+            encoded_size = len(json.dumps([record, reference], ensure_ascii=False).encode("utf-8"))
+            # A conservative UTF-8 byte budget also bounds byte-token input.
+            # Whole records retain IDs and provenance; no invalid JSON slicing.
+            if source_bytes + encoded_size > 2000:
+                continue
+            source_bytes += encoded_size
+            records.append(record)
+            references.append(reference)
+            seen.add((authority, native_id))
+    return {"text": json.dumps(records, ensure_ascii=False) if records else "",
+            "references": references, "reads": reads}
 
 
 def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:

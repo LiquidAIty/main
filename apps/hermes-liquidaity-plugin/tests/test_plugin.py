@@ -698,6 +698,106 @@ def test_main_bridge_reserves_the_long_timeout_for_host_execution(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("state", ["completed", "failed", "cancelled"])
+def test_profile_completion_uses_native_async_owner_without_reexecuting(monkeypatch, state):
+    import sys
+    dispatched = []
+    requests = []
+    monkeypatch.setitem(sys.modules, "tools.async_delegation", SimpleNamespace(
+        dispatch_async_delegation=lambda **kwargs: dispatched.append(kwargs) or {"status": "dispatched", "delegation_id": "native-1"}))
+    monkeypatch.setitem(sys.modules, "tools.delegate_tool", SimpleNamespace(_get_max_async_children=lambda: 7))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    accepted = {"projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"}
+    def request(path, payload):
+        requests.append((path, payload))
+        if path == "/execution":
+            return {"ok": True, "result": accepted}
+        return {"ok": True, "result": {"runId": "child", "cardId": "builder", "state": state, "excerpt": "Graph proposal"}}
+    monkeypatch.setattr(bridge, "_request", request)
+    result = bridge._host_requester("session/delegate_profile", {"sessionId": "native-session", "background": True, "goal": "Compare evidence"})
+    assert result["status"] == "dispatched"
+    assert len(requests) == 1  # acceptance returns before observation/completion
+    native = dispatched[0]
+    assert native["session_key"] == native["parent_session_id"] == "native-session"
+    assert native["max_async_children"] == 7
+    completion = native["runner"]()
+    assert completion["status"] == ("completed" if state == "completed" else "error")
+    assert json.loads(completion["summary"])["runId"] == "child"
+    native["interrupt_fn"]()
+    assert requests[-1][1]["action"] == "stop"
+    assert native["runner"]()["status"] == "interrupted"
+    assert sum(path == "/execution" for path, _ in requests) == 1
+
+
+def test_profile_native_capacity_rejection_stops_only_the_accepted_run(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "tools.async_delegation", SimpleNamespace(
+        dispatch_async_delegation=lambda **kwargs: {"status": "rejected", "error": "capacity"}))
+    monkeypatch.setitem(sys.modules, "tools.delegate_tool", SimpleNamespace(_get_max_async_children=lambda: 1))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    requests = []
+    monkeypatch.setattr(bridge, "_request", lambda path, payload: requests.append((path, payload)) or {"ok": True})
+    with pytest.raises(RuntimeError, match="capacity"):
+        bridge._deliver_profile_result({"sessionId": "session"}, {
+            "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
+    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "action": "stop"})]
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_profile_delivery_through_real_native_registry(tmp_path, monkeypatch, interrupt):
+    import queue
+    import threading
+    from tools import async_delegation as native
+    from tools.process_registry import process_registry
+
+    # Exercise the installed native executor, durable record and delivery claims
+    # in a temporary profile. No provider or application Run is launched.
+    monkeypatch.setattr(native, "get_hermes_home", lambda: tmp_path)
+    completions = queue.Queue()
+    monkeypatch.setattr(process_registry, "completion_queue", completions)
+    observed = threading.Event()
+    release = threading.Event()
+    requests = []
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+
+    def request(path, payload):
+        requests.append((path, payload))
+        if payload["action"] == "read":
+            observed.set()
+            assert release.wait(5)
+        return {"ok": True, "result": {"runId": "child", "cardId": "builder",
+            "state": "running" if interrupt else "completed", "excerpt": "Sourced proposal"}}
+
+    monkeypatch.setattr(bridge, "_request", request)
+    try:
+        accepted = bridge._deliver_profile_result({"sessionId": "parent-session", "goal": "Compare sources"}, {
+            "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
+        assert accepted["status"] == "dispatched"
+        assert observed.wait(5)
+        assert completions.empty()
+        assert native.interrupt_for_session(parent_session_id="unrelated") == 0
+        if interrupt:
+            assert native.interrupt_for_session(parent_session_id="parent-session") == 1
+        release.set()
+        event = completions.get(timeout=5)
+        assert event["parent_session_id"] == "parent-session"
+        assert event["status"] == ("interrupted" if interrupt else "completed")
+        assert event["delegation_id"] == accepted["delegation_id"]
+        claim = native.claim_event_delivery(event, "test-cli")
+        assert claim
+        assert native.claim_event_delivery(event, "other-cli") is None
+        native.complete_event_delivery(event, claim)
+        assert native.restore_undelivered_completions(queue.Queue()) == 0
+        assert native.recover_abandoned_delegations() == 0
+        assert completions.empty()
+        assert all(path == "/profile-run" for path, _ in requests)
+        assert sum(payload["action"] == "stop" for _, payload in requests) == int(interrupt)
+    finally:
+        release.set()
+        bridge._stop.set()
+        native._reset_for_tests()
+
+
 def test_main_bridge_delivers_team_result_once_then_syncs_history(monkeypatch):
     delivered = []
 

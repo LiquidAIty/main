@@ -300,6 +300,8 @@ export type AgentManagerLocalConfig = {
 };
 
 export type StandaloneCardTestResult = {
+  conversationId?: string | null;
+  startedAt?: string | null;
   status: string;
   state?: string | null;
   runId?: string | null;

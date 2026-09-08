@@ -48,6 +48,7 @@ import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgent
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
+import { selectLatestRunResult } from '../features/agentbuilder/state/runResult';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
 import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
@@ -517,7 +518,7 @@ export default function AgentBuilder(): React.ReactElement {
   ) => {
     setStandaloneTestResults((current) => {
       const existing = current[cardId] || null;
-      const nextValue = typeof update === 'function' ? update(existing) : update;
+      const nextValue = selectLatestRunResult(existing, typeof update === 'function' ? update(existing) : update);
       if (nextValue === existing) return current;
       return { ...current, [cardId]: nextValue };
     });
@@ -986,6 +987,8 @@ export default function AgentBuilder(): React.ReactElement {
     Boolean(selectedCard)
     && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
   const toStandaloneRunResult = useCallback((result: any, card: AgentCardInstance): StandaloneCardTestResult => ({
+    conversationId: result?.conversationId || null,
+    startedAt: result?.startedAt || null,
     status: String(result?.status || result?.state || 'unknown'),
     state: result?.state ? String(result.state) : null,
     runId: result?.runId ? String(result.runId) : null,
@@ -1025,7 +1028,7 @@ export default function AgentBuilder(): React.ReactElement {
     nativeEvents: Array.isArray(result?.nativeEvents) ? result.nativeEvents : [],
   }), []);
 
-  const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string }) => {
+  const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string; conversationId?: string }) => {
     if (!canvasProjectId) throw new Error('card_run_project_required');
     const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
       method: 'POST',
@@ -1402,7 +1405,9 @@ export default function AgentBuilder(): React.ReactElement {
       if (staged) continue;
       const hydrationGeneration = (standaloneHydrationGenerationRef.current[card.id] || 0) + 1;
       standaloneHydrationGenerationRef.current[card.id] = hydrationGeneration;
-      void readStandaloneRunStatus({ cardId: card.id })
+      void readStandaloneRunStatus({ cardId: card.id,
+        ...(card.id === agentBuilderCard?.id && workspaceView !== 'canvas' ? { conversationId } : {}),
+      })
         .then(async (result) => {
           if (cancelled || hydrationGeneration !== standaloneHydrationGenerationRef.current[card.id]) return;
           const mapped = toStandaloneRunResult(result, card);
@@ -1436,7 +1441,7 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [agentBuilderCard, canvasProjectId, cardActivity.activeAgentCounts, messages.length,
+  }, [agentBuilderCard, canvasProjectId, cardActivity.activeAgentCounts, messages.length, conversationId, workspaceView,
     pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setCardRunBusy,
     setDeckStatusMessage, setStandaloneTestResultForCard,
     toStandaloneRunResult, transientCardGraphContext, transientCardInputs]);
@@ -1865,8 +1870,10 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Main owns the upper conversation; the lower surface attaches to the saved
-    // Agent Builder native CLI. Full-height mode gives that CLI direct input.
+    // Main stays the conversation. Both lower presentations use the same saved
+    // Agent Builder: its terminal on Canvas, its actual Run output elsewhere.
+    const builderResult = agentBuilderCard && standaloneTestResults[agentBuilderCard.id]?.conversationId === conversationId
+      ? standaloneTestResults[agentBuilderCard.id] : null;
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1897,9 +1904,25 @@ export default function AgentBuilder(): React.ReactElement {
         />
       </div>
     );
-    const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
+    const agentBuilderTerminal = () => (
       agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
+          {workspaceView !== 'canvas' ? (
+            <article
+              data-testid="agent-builder-output"
+              data-card-id={agentBuilderCard.id}
+              data-run-id={builderResult?.runId || undefined}
+              data-conversation-id={conversationId}
+              style={{ height: '100%', overflow: 'auto', padding: '12px 16px', boxSizing: 'border-box' }}
+            >
+              <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.55 }}>
+                {builderResult?.output || ''}
+              </div>
+              {builderResult?.error ? (
+                <p role="alert">{builderResult.error}</p>
+              ) : null}
+            </article>
+          ) : (
           <CoderTerminalPanel
             key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
             open
@@ -1913,8 +1936,9 @@ export default function AgentBuilder(): React.ReactElement {
               cardId: agentBuilderCard.id,
               profile: agentBuilderCard.runtime.profile,
             }}
-            readOnly={!directInput}
+            readOnly={false}
           />
+          )}
         </div>
       ) : null
     );

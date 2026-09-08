@@ -10,6 +10,8 @@ import {
 } from '../hermes/hostExecutionLifecycle';
 import { runHermesProfileDelegation } from '../hermes/profileDelegation';
 import { coderTerminalSessionManager } from '../hermes/coderTerminal';
+import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { cancelHermesRun } from '../hermes/mainAdapter';
 
 function authorized(value: unknown, token: string): boolean {
   const supplied = Buffer.from(String(value || '').replace(/^Bearer\s+/i, ''), 'utf8');
@@ -18,7 +20,7 @@ function authorized(value: unknown, token: string): boolean {
 }
 
 function nativeCliRoutes(resolveDelivery: (req: Request) => {
-  bridge: typeof mainCliBridge; token: string;
+  bridge: typeof mainCliBridge; token: string; ownerCardId: string;
 } | null) {
 const router = Router({ mergeParams: true });
 router.use((req, res, next) => {
@@ -27,6 +29,7 @@ router.use((req, res, next) => {
     return res.status(401).json({ ok: false, error: 'main_cli_bridge_authorization_required' });
   }
   res.locals.cliBridge = delivery.bridge;
+  res.locals.ownerCardId = delivery.ownerCardId;
   return next();
 });
 
@@ -115,6 +118,46 @@ router.post('/execution', async (req, res) => {
   }
 });
 
+// Observe the already-authorized child after its parent's foreground turn ends.
+// The stored lineage is the authority; this route cannot start or restart a Run.
+router.post('/profile-run', async (req, res) => {
+  const { projectId, deckId, parentRunId, runId, action } = req.body || {};
+  if (![projectId, deckId, parentRunId, runId].every((value) => typeof value === 'string' && value.trim())
+    || !['read', 'stop'].includes(action)) {
+    return res.status(400).json({ ok: false, error: 'profile_run_identity_required' });
+  }
+  try {
+    const response = await requestPythonRailsJson('/domain/runs/read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, deckId, runId: parentRunId, includeTerminal: true }),
+    }) as any;
+    const parent = response?.run;
+    const child = parent?.terminal?.children?.find((item: any) => item.runId === runId && item.parentRunId === parentRunId);
+    if (parent?.cardId !== res.locals.ownerCardId || parent?.projectId !== projectId
+      || parent?.deckId !== deckId || !child) {
+      return res.status(403).json({ ok: false, error: 'profile_run_parent_mismatch' });
+    }
+    if (action === 'stop' && ['pending', 'running'].includes(child.state)) {
+      if (child.runtimeKind !== 'hermes') throw new Error('profile_run_runtime_unsupported');
+      const terminal = coderTerminalSessionManager.list()
+        .find((item) => item.ownerCardId === child.cardId && item.projectId === projectId && item.deckId === deckId);
+      const session = terminal ? coderTerminalSessionManager.get(terminal.id) : null;
+      if (session && session.delivery && session.delivery.bridge.status().runId === runId) {
+        session.delivery.bridge.requestCancel(runId);
+        session.write('\x03');
+      } else {
+        cancelHermesRun(child.runtimeProfile, runId);
+      }
+    }
+    return res.json({ ok: true, result: { runId, cardId: child.cardId, state: child.state,
+      // Full output remains in the child Run and the lower reader.
+      excerpt: typeof child.result === 'string' ? child.result.slice(0, 1200) : '',
+      error: child.errorSummary || null } });
+  } catch {
+    return res.status(502).json({ ok: false, error: 'profile_run_observation_failed' });
+  }
+});
+
 router.get('/team-results/next', (_req, res) => {
   const delivery = (res.locals.cliBridge as typeof mainCliBridge).takeTeamResult();
   return delivery ? res.json(delivery) : res.status(204).end();
@@ -142,7 +185,7 @@ return router;
 
 export const builderCliRoutes = nativeCliRoutes((req) => {
   const session = coderTerminalSessionManager.get(String(req.params.sessionId || ''));
-  return session?.isLive() ? session.delivery : null;
+  return session?.isLive() && session.delivery ? { ...session.delivery, ownerCardId: session.info.ownerCardId } : null;
 });
 
-export default nativeCliRoutes(() => ({ bridge: mainCliBridge, token: mainCliBridgeToken }));
+export default nativeCliRoutes(() => ({ bridge: mainCliBridge, token: mainCliBridgeToken, ownerCardId: 'card_main_chat' }));

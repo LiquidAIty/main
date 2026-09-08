@@ -97,8 +97,9 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function attentionProperties(
   native: Record<string, unknown>,
-  context: AttentionContext,
+  context?: AttentionContext,
 ): Record<string, unknown> {
+  if (!context) return native;
   return {
     ...native,
     attentionActorCardId: context.actorCardId,
@@ -164,25 +165,25 @@ function nodeFromRecord(
 function edgeFromRecord(
   record: Record<string, any>,
   authority: GraphAttentionAuthority,
-  context: AttentionContext,
+  context?: AttentionContext,
 ): GraphProjectionEdge | null {
-  const source = String(record.source_node_uuid ?? record.source ?? record.from ?? '').trim();
+  const source = String(record.source_node_uuid ?? record.from ?? record.source ?? '').trim();
   const target = String(record.target_node_uuid ?? record.target ?? record.to ?? '').trim();
   if (!source || !target) return null;
-  const predicate = String(record.name || record.type || record.predicate || record.relation || 'RELATED_TO');
-  const id = String(record.uuid ?? record.id ?? `${source}:${predicate}:${target}`).trim();
+  const predicate = String(record.name || record.properties?.name || record.type || record.predicate || record.relation || 'RELATED_TO');
+  const id = String(record.uuid ?? record.properties?.uuid ?? record.id ?? `${source}:${predicate}:${target}`).trim();
   return {
     id,
     source,
     target,
     predicate,
     mentionCount: 1,
-    properties: attentionProperties(record, context),
+    properties: attentionProperties({ ...record, ...(record.properties || {}) }, context),
     provenance: isRecord(record.provenance)
       ? record.provenance
-      : { groupId: record.group_id, episodes: record.episodes },
-    validFrom: typeof record.valid_at === 'string' ? record.valid_at : undefined,
-    validTo: typeof record.invalid_at === 'string' ? record.invalid_at : null,
+      : { groupId: record.group_id ?? record.properties?.group_id, episodes: record.episodes ?? record.properties?.episodes },
+    validFrom: record.valid_at ?? record.properties?.valid_at,
+    validTo: record.invalid_at ?? record.properties?.invalid_at ?? null,
   };
 }
 
@@ -293,7 +294,7 @@ function decorateNativeProjection(
   authority: GraphAttentionAuthority,
   payload: Record<string, any>,
   projectId: string,
-  context: AttentionContext,
+  context?: AttentionContext,
 ): GraphProjectionV1 {
   const nodes = (Array.isArray(payload.nodes) ? payload.nodes : [])
     .filter(isRecord)
@@ -442,12 +443,15 @@ export function mergeAttentionProjection(
   };
 }
 
-export function overlayAuthoritativeThinkGraphAttention(
+export function overlayAuthoritativeGraphAttention(
   authoritative: GraphProjectionV1,
   attention: GraphProjectionV1,
 ): GraphProjectionV1 {
   const attentionNodes = new Map(attention.nodes.map((node) => [node.id, node]));
   const attentionEdges = new Map(attention.edges.map((edge) => [edge.id, edge]));
+  const decoration = (properties?: Record<string, unknown>) => Object.fromEntries(
+    Object.entries(properties || {}).filter(([key]) => key.startsWith('attention')),
+  );
   return {
     ...authoritative,
     nodes: authoritative.nodes.map((node) => {
@@ -457,7 +461,7 @@ export function overlayAuthoritativeThinkGraphAttention(
         ...node,
         properties: {
           ...node.properties,
-          ...observed.properties,
+          ...decoration(observed.properties),
           attentionProvenance: observed.provenance,
         },
       };
@@ -469,7 +473,7 @@ export function overlayAuthoritativeThinkGraphAttention(
         ...edge,
         properties: {
           ...edge.properties,
-          ...observed.properties,
+          ...decoration(observed.properties),
           attentionProvenance: observed.provenance,
         },
       };
@@ -499,7 +503,7 @@ export default function useAgentBuilderGraphAttention({
   const [projections, setProjections] = useState(() => emptyAttention(projectId));
   const [errors, setErrors] = useState<Partial<Record<GraphAttentionAuthority, string>>>({});
   const [statuses, setStatuses] = useState<Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>>({
-    thinkgraph: 'loading', knowgraph: 'ready', codegraph: 'ready',
+    thinkgraph: 'loading', knowgraph: 'loading', codegraph: 'ready',
   });
   const activeScopeRef = useRef<{ clientRunId: string; serverRunId: string | null } | null>(null);
   const seenEventIdsRef = useRef(new Set<string>());
@@ -507,6 +511,8 @@ export default function useAgentBuilderGraphAttention({
   const mainActorRef = useRef<string | null>(null);
   const authoritativeThinkGraphRef = useRef<GraphProjectionV1>(projection('thinkgraph', projectId));
   const thinkGraphRequestRef = useRef(0);
+  const authoritativeKnowGraphRef = useRef<GraphProjectionV1>(projection('knowgraph', projectId));
+  const knowGraphRequestRef = useRef(0);
 
   useEffect(() => {
     activeScopeRef.current = null;
@@ -515,12 +521,33 @@ export default function useAgentBuilderGraphAttention({
     setErrors({});
     setProjections(emptyAttention(projectId));
     authoritativeThinkGraphRef.current = projection('thinkgraph', projectId);
-    setStatuses({ thinkgraph: 'loading', knowgraph: 'ready', codegraph: 'ready' });
-  }, [deckId, projectId, selectedCardId]);
+    authoritativeKnowGraphRef.current = projection('knowgraph', projectId);
+    setStatuses({ thinkgraph: 'loading', knowgraph: 'loading', codegraph: 'ready' });
+  }, [deckId, projectId]);
+
+  useEffect(() => {
+    activeScopeRef.current = null;
+    seenEventIdsRef.current.clear();
+    selectedRunRef.current = null;
+    setProjections({
+      ...emptyAttention(projectId),
+      thinkgraph: authoritativeThinkGraphRef.current,
+      knowgraph: authoritativeKnowGraphRef.current,
+    });
+  }, [selectedCardId, deckId, projectId]);
 
   useEffect(() => { activeScopeRef.current = null; }, [conversationId]);
 
-  const merge = useCallback((authority: GraphAttentionAuthority, incoming: GraphProjectionV1) => {
+  const merge = useCallback((authority: GraphAttentionAuthority, incoming: GraphProjectionV1, attentionOnly = false) => {
+    if (authority === 'knowgraph' && attentionOnly) {
+      setProjections((current) => ({ ...current,
+        knowgraph: overlayAuthoritativeGraphAttention(current.knowgraph, incoming),
+      }));
+      return;
+    }
+    if (authority === 'knowgraph') {
+      authoritativeKnowGraphRef.current = mergeAttentionProjection(authoritativeKnowGraphRef.current, incoming);
+    }
     if (authority === 'thinkgraph') {
       authoritativeThinkGraphRef.current = mergeAttentionProjection(
         authoritativeThinkGraphRef.current,
@@ -546,13 +573,13 @@ export default function useAgentBuilderGraphAttention({
         throw new Error(String(payload?.error || `HTTP ${response.status}`));
       }
       if (
-        payload.schemaVersion !== 'thinkgraph.constellation.v1'
-        || payload.authority !== 'constellation-engine'
+        payload.schemaVersion !== 'thinkgraph.engraphis.v1'
+        || payload.authority !== 'engraphis'
         || payload.projectId !== projectId
         || !Array.isArray(payload.nodes)
         || !Array.isArray(payload.edges)
       ) {
-        throw new Error('invalid_constellation_projection');
+        throw new Error('invalid_thinkgraph_projection');
       }
       if (requestId !== thinkGraphRequestRef.current) return;
       const authoritative = payload as GraphProjectionV1;
@@ -560,7 +587,7 @@ export default function useAgentBuilderGraphAttention({
       setProjections((current) => ({
         ...current,
         thinkgraph: attention
-          ? overlayAuthoritativeThinkGraphAttention(authoritative, attention)
+          ? overlayAuthoritativeGraphAttention(authoritative, attention)
           : authoritative,
       }));
       setErrors((current) => ({ ...current, thinkgraph: undefined }));
@@ -577,7 +604,40 @@ export default function useAgentBuilderGraphAttention({
 
   useEffect(() => {
     void refreshThinkGraph();
-  }, [refreshThinkGraph]);
+    return () => { thinkGraphRequestRef.current += 1; };
+  }, [refreshThinkGraph, deckId]);
+
+  const refreshKnowGraph = useCallback(async (attention?: GraphProjectionV1) => {
+    const requestId = ++knowGraphRequestRef.current;
+    setStatuses((current) => ({ ...current, knowgraph: 'loading' }));
+    try {
+      const query = new URLSearchParams({ projectId, limit: '200' });
+      const response = await fetch(`/api/knowgraph/graph?${query}`);
+      const payload = await response.json();
+      if (!response.ok || !isRecord(payload) || !Array.isArray(payload.nodes) || !Array.isArray(payload.relationships)) {
+        throw new Error('Knowledge could not be loaded.');
+      }
+      if (requestId !== knowGraphRequestRef.current) return;
+      // Native records supply topology and labels. Activity decorates matching
+      // IDs only; receipts and stale references never create knowledge nodes.
+      const native = decorateNativeProjection('knowgraph', payload, projectId);
+      authoritativeKnowGraphRef.current = native;
+      setProjections((current) => ({ ...current,
+        knowgraph: overlayAuthoritativeGraphAttention(native, attention || current.knowgraph),
+      }));
+      setErrors((current) => ({ ...current, knowgraph: undefined }));
+      setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
+    } catch (caught) {
+      if (requestId !== knowGraphRequestRef.current) return;
+      setErrors((current) => ({ ...current, knowgraph: caught instanceof Error ? caught.message : String(caught) }));
+      setStatuses((current) => ({ ...current, knowgraph: 'error' }));
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void refreshKnowGraph();
+    return () => { knowGraphRequestRef.current += 1; };
+  }, [refreshKnowGraph, deckId]);
 
   const observeAttentionEvent = useCallback((event: NativeAttentionEvent) => {
     if (event.projectId !== projectId || event.deckId !== deckId || !event.runId
@@ -589,6 +649,11 @@ export default function useAgentBuilderGraphAttention({
     const key = `${event.eventId}:${event.phase || 'completed'}:${event.resultHash}`;
     if (seenEventIdsRef.current.has(key)) return;
     if (event.change === 'delete' || event.change === 'clear') {
+      if (event.authority === 'knowgraph') {
+        void refreshKnowGraph();
+        seenEventIdsRef.current.add(key);
+        return;
+      }
       if (event.authority === 'thinkgraph') {
         void refreshThinkGraph();
         seenEventIdsRef.current.add(key);
@@ -612,20 +677,21 @@ export default function useAgentBuilderGraphAttention({
         if (result.projection.nodes.every((node) => authoritativeIds.has(node.id))) {
           setProjections((current) => ({
             ...current,
-            thinkgraph: overlayAuthoritativeThinkGraphAttention(current.thinkgraph, result.projection),
+            thinkgraph: overlayAuthoritativeGraphAttention(current.thinkgraph, result.projection),
           }));
         } else {
           void refreshThinkGraph(result.projection);
         }
       } else {
-        merge(result.authority, result.projection);
+        merge(result.authority, result.projection, true);
+        if (result.authority === 'knowgraph' && event.operation === 'write') void refreshKnowGraph(result.projection);
       }
     }
     seenEventIdsRef.current.add(key);
     if (seenEventIdsRef.current.size > 2048) {
       seenEventIdsRef.current.delete(seenEventIdsRef.current.values().next().value!);
     }
-  }, [deckId, merge, projectId, refreshThinkGraph, selectedCardId]);
+  }, [deckId, merge, projectId, refreshThinkGraph, refreshKnowGraph, selectedCardId]);
 
   const observeAttentionSession = useCallback((session: NativeAttentionSession) => {
     if (session.projectId !== projectId || session.deckId !== deckId) return;
@@ -642,6 +708,7 @@ export default function useAgentBuilderGraphAttention({
         setProjections({
           ...emptyAttention(projectId),
           thinkgraph: authoritativeThinkGraphRef.current,
+          knowgraph: authoritativeKnowGraphRef.current,
         });
       }
     } else if (!selectedCardId && !active) {
@@ -671,7 +738,7 @@ export default function useAgentBuilderGraphAttention({
       if (nodes.length) {
         const incoming = projection(authority, projectId, nodes.slice(0, MAX_OPERATION_NODES));
         if (authority === 'thinkgraph') void refreshThinkGraph(incoming);
-        else merge(authority, incoming);
+        else merge(authority, incoming, true);
       }
     }
   }, [deckId, merge, projectId, refreshThinkGraph, selectedCardId]);
@@ -685,6 +752,7 @@ export default function useAgentBuilderGraphAttention({
     if (actor && (!selectedCardId || actor === selectedCardId)) {
       setProjections((current) => Object.fromEntries(Object.entries(current).map(([authority, value]) => {
         if (authority === 'thinkgraph') return [authority, authoritativeThinkGraphRef.current];
+        if (authority === 'knowgraph') return [authority, authoritativeKnowGraphRef.current];
         const nodes = value.nodes.filter((node) => node.properties?.attentionActorCardId !== actor);
         const ids = new Set(nodes.map((node) => node.id));
         return [authority, projection(authority as GraphAttentionAuthority, projectId, nodes,
@@ -749,7 +817,7 @@ export default function useAgentBuilderGraphAttention({
         const payload = await response.json().catch(() => null);
         if (!response.ok || !isRecord(payload)) throw new Error(String(payload?.error || `HTTP ${response.status}`));
         incoming = decorateNativeProjection(authority, payload, projectId, {
-          actorCardId, actorColor, toolName: 'constellation.inspect',
+          actorCardId, actorColor, toolName: 'engraphis_get_memory',
         });
       } else if (authority === 'knowgraph') {
         const query = new URLSearchParams({ projectId, nodeId: node.id, limit: '50', depth: '1' });

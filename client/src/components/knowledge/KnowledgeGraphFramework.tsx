@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 
-import { GRAPH_THEME, graphDrawerSectionStyle } from '../graph/graphVisualTokens';
+import { graphDrawerSectionStyle } from '../graph/graphVisualTokens';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
 
 const NativeCodeGraphSurface = lazy(async () => {
@@ -87,18 +87,14 @@ export default function KnowledgeGraphFramework({
       <Suspense
         fallback={
           <div
-            style={graphDrawerSectionStyle({
+            aria-busy="true"
+            style={{
               width: '100%',
+              height: '100%',
               minHeight,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: 8,
-              color: GRAPH_THEME.drawer.inputMuted,
-            })}
-          >
-            Loading knowledge graph...
-          </div>
+              background: '#0b0e12',
+            }}
+          />
         }
       >
         {kind === 'codegraph' ? (
@@ -141,6 +137,7 @@ export default function KnowledgeGraphFramework({
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface
             projection={attentionProjections.knowgraph}
+            status={attentionStatuses?.knowgraph || 'ready'}
             error={attentionErrors.knowgraph || null}
             onExpand={(node) => onExpandAttentionNode('knowgraph', node)}
             onUseAsContext={(node) => onUseAttentionNode('knowgraph', node)}

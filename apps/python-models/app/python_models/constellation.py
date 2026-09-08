@@ -8,6 +8,7 @@ functions, so no second writer or alternate graph implementation exists.
 from __future__ import annotations
 
 import atexit
+import hashlib
 from collections import deque
 import json
 import os
@@ -21,6 +22,9 @@ import threading
 import time
 from typing import Any
 import uuid
+
+from .thinkgraph import research_seed, validate_cognition
+from .thinkgraph_analysis import analyze_graph
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -272,6 +276,10 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
             continue
         native_id = str(raw["id"])
+        inspected = native.get("inspectedNode") or {}
+        if inspected.get("id") == native_id:
+            raw = {**raw, **inspected}
+        cognition = raw.get("cognition") or {}
         title = raw.get("l0")
         if not isinstance(title, str):
             raise ConstellationError(f"constellation_native_title_missing:{native_id}")
@@ -281,12 +289,27 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
                 "canonicalId": native_id,
                 "label": title,
                 "title": title,
-                "type": "ConstellationMemory",
+                "type": cognition.get("nodeType") or raw.get("node_type") or "ConstellationMemory",
                 "authority": "constellation-engine",
                 "projectId": project_id,
                 "mentionCount": 1,
                 "properties": {
                     "content": raw.get("content"),
+                    "summary": raw.get("l1"),
+                    "fullContent": raw.get("l2"),
+                    "nodeType": cognition.get("nodeType") or raw.get("node_type"),
+                    "memoryCategory": cognition.get("memoryCategory"),
+                    "projectScope": cognition.get("projectScope", project_id),
+                    "userScope": cognition.get("userScope"),
+                    "authoredBy": cognition.get("authoredBy"),
+                    "decisionState": cognition.get("decisionState"),
+                    "questionStatus": cognition.get("questionStatus"),
+                    "currentInterest": cognition.get("currentInterest"),
+                    "createdAt": raw.get("created_at"),
+                    "updatedAt": raw.get("updated_at"),
+                    "answerRefs": cognition.get("answerRefs", []),
+                    "relatedRefs": cognition.get("relatedRefs", []),
+                    "researchSeed": research_seed(native_id, title, cognition),
                     "level": raw.get("level"),
                     "distance": raw.get("distance"),
                     "tags": _decoded_tags(raw.get("tags")),
@@ -296,6 +319,8 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
                     ) is True,
                 },
                 "provenance": {
+                    "source": raw.get("source"),
+                    "references": cognition.get("provenance", []),
                     "engine": native.get("engine"),
                     "engineVersion": native.get("engineVersion"),
                     "engineRevision": native.get("engineRevision"),
@@ -303,34 +328,49 @@ def _projection(project_id: str, native: dict[str, Any]) -> dict[str, Any]:
             }
         )
     edges: list[dict[str, Any]] = []
-    for index, raw in enumerate(native.get("edges") or []):
+    for raw in native.get("edges") or []:
         if not isinstance(raw, dict):
             continue
         source = str(raw.get("from") or "").strip()
         target = str(raw.get("to") or "").strip()
         if not source or not target:
             continue
-        predicate = str(raw.get("type") or "associative")
+        if raw.get("id") is None:
+            raise ConstellationError("constellation_native_edge_id_missing")
+        coarse_type = str(raw.get("type") or raw.get("edge_type") or "associative")
+        predicate = str(raw.get("fine_type") or coarse_type)
+        derived = coarse_type in {"coactivation", "collision"}
         edges.append(
             {
-                "id": f"{source}:{predicate}:{target}:{index}",
+                "id": str(raw["id"]),
                 "source": source,
                 "target": target,
                 "predicate": predicate,
                 "mentionCount": 1,
-                "properties": {"strength": raw.get("strength")},
+                "properties": {"strength": raw.get("strength"), "coarseType": coarse_type,
+                               "edgeClass": "derived" if derived else "explicit",
+                               "derivedType": coarse_type if derived else None,
+                               "confidence": raw.get("fine_confidence"),
+                               "createdAt": raw.get("created_at")},
                 "provenance": {
+                    "source": raw.get("fine_source"),
                     "engine": native.get("engine"),
                     "engineRevision": native.get("engineRevision"),
                 },
             }
         )
     counts = native.get("counts") if isinstance(native.get("counts"), dict) else {}
+    revision = hashlib.sha256(json.dumps([nodes, edges], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    analysis = analyze_graph(revision, json.dumps({"nodes": sorted(n["id"] for n in nodes),
+        "edges": sorted([[e["source"], e["target"], e["properties"]["strength"] or 0.01] for e in edges])}))
+    for node in nodes:
+        node["properties"].update(analysis["nodes"][node["id"]])
     return {
         "schemaVersion": "thinkgraph.constellation.v1",
         "authority": "constellation-engine",
         "projectId": project_id,
-        "revision": str(native.get("engineRevision") or ""),
+        "revision": revision,
+        "analysis": analysis,
         "embedding": {
             "state": native.get("semanticState"),
             "reason": native.get("semanticReason"),
@@ -486,6 +526,15 @@ def constellation_update_memory(project_id: str, arguments: dict[str, Any]) -> d
     return get_constellation(project_id).request("update_memory", arguments)
 
 
+def constellation_attach_answer(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Internal ingestion completion; no public MCP grant exposes this operation."""
+    from .thinkgraph import GraphReference
+    evidence = GraphReference.model_validate(arguments.get("evidence"))
+    if evidence.authority != "knowgraph" or evidence.projectId != project_id:
+        raise ConstellationError("question_evidence_scope_mismatch")
+    return get_constellation(project_id).request("attach_answer", {**arguments, "evidence": evidence.model_dump()})
+
+
 def constellation_link(project_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return get_constellation(project_id).request("link", arguments)
 
@@ -575,6 +624,7 @@ _OPERATION_HANDLERS = {
     "semantic_stop": constellation_semantic_stop,
     "stats": constellation_stats,
     "update_memory": constellation_update_memory,
+    "attach_answer": constellation_attach_answer,
 }
 
 
@@ -593,4 +643,10 @@ def invoke_constellation_operation(
         )
     if not isinstance(arguments, dict):
         raise ConstellationError("constellation_arguments_invalid")
-    return handler(_project_id(project_id), dict(arguments))
+    resolved_project = _project_id(project_id)
+    resolved = dict(arguments)
+    if "cognition" in resolved:
+        if resolved_operation not in {"remember", "remember_semantic", "update_memory"}:
+            raise ConstellationError("cognition_write_operation_required")
+        resolved["cognition"] = validate_cognition(resolved["cognition"], resolved_project)
+    return handler(resolved_project, resolved)

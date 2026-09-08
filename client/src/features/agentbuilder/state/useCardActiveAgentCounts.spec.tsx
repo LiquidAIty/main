@@ -31,6 +31,24 @@ const deck: DeckDocument = {
 };
 
 describe('useCardActiveAgentCounts', () => {
+  it('keeps the polling schedule when rendering updates leave agent IDs unchanged', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(
+      JSON.stringify({ ok: true, result: null }), { status: 200 },
+    ));
+    const { rerender, unmount } = renderHook(({ currentDeck }) => useCardActiveAgentCounts({
+      projectId: 'project-one', deck: currentDeck,
+    }), { initialProps: { currentDeck: deck } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    for (let index = 0; index < 4; index += 1) {
+      rerender({ currentDeck: { ...deck, nodes: deck.nodes.map((node) => ({ ...node, title: `${node.title} updated` })) } });
+      await act(async () => undefined);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    rerender({ currentDeck: { ...deck, nodes: deck.nodes.slice(0, 1) } });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    unmount();
+  });
+
   it('projects only actual live owner plus child-worker counts without executing or reconciling', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
       const body = JSON.parse(String(init?.body || '{}'));

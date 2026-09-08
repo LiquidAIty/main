@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from typing import Any
 
 from app.python_models.provider_config import ensure_env_loaded
@@ -55,23 +55,32 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/constellation/operation")
-def constellation_operation(payload: dict[str, Any]):
-    """One loopback entrance to the process-owned Constellation child."""
-
-    from app.python_models.constellation import (
-        ConstellationError,
-        invoke_constellation_operation,
-    )
-
+@app.post("/thinkgraph/operation")
+async def thinkgraph_operation(payload: dict[str, Any]):
+    from app.python_models.engraphis import invoke_tool, private_operation
+    import asyncio
     try:
-        return invoke_constellation_operation(
-            str(payload.get("projectId") or ""),
-            str(payload.get("operation") or ""),
-            payload.get("arguments") or {},
-        )
-    except ConstellationError as err:
+        project = str(payload.get("projectId") or "")
+        operation = str(payload.get("operation") or "")
+        arguments = payload.get("arguments") or {}
+        if operation.startswith("engraphis_"):
+            return await invoke_tool(project, operation, arguments)
+        return await asyncio.to_thread(private_operation, project, operation, arguments)
+    except (RuntimeError, ValueError, KeyError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.on_event("startup")
+async def warm_thinkgraph():
+    import asyncio
+    import logging
+    from app.python_models.engraphis import get_service
+    async def warm():
+        try:
+            await asyncio.to_thread(get_service)
+        except Exception:
+            logging.getLogger(__name__).exception("ThinkGraph initialization failed")
+    app.state.thinkgraph_warmup = asyncio.create_task(warm())
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +389,18 @@ def domain_run_read(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@app.post("/domain/main/completed-pair")
+def domain_main_completed_pair(payload: dict[str, Any], background: BackgroundTasks):
+    from app.python_models.cognition import deliver_in_background
+
+    fields = {key: str(payload.get(key) or "").strip()
+              for key in ("projectId", "deckId", "runId", "conversationId")}
+    if set(payload) != set(fields) or not all(fields.values()):
+        raise HTTPException(status_code=400, detail="cognition_turn_identity_required")
+    background.add_task(deliver_in_background, fields)
+    return {"accepted": True, "runId": fields["runId"]}
+
+
 @app.post("/domain/runs/input-files")
 def domain_run_input_files(payload: dict[str, Any]):
     try:
@@ -453,7 +474,7 @@ def thinkgraph_projection(
     memoryType: str | None = None,
 ):
     """Read the native Constellation projection for the selected project."""
-    from app.python_models.constellation import constellation_projection
+    from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()
     if not project_id:
@@ -461,7 +482,7 @@ def thinkgraph_projection(
     try:
         # The route keeps its stable transport contract. Constellation owns the
         # bounded live topology; historical/type filtering is not fabricated.
-        return constellation_projection(project_id)
+        return projection(project_id)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err
 
@@ -469,13 +490,13 @@ def thinkgraph_projection(
 @app.get("/thinkgraph/neighborhood")
 def thinkgraph_neighborhood(projectId: str, canonicalId: str):
     """Read one exact Constellation memory and its native neighborhood."""
-    from app.python_models.constellation import constellation_neighborhood
+    from app.python_models.engraphis import projection
 
     project_id = str(projectId or "").strip()
     canonical_id = str(canonicalId or "").strip()
     if not project_id or not canonical_id:
         raise HTTPException(status_code=400, detail="projectId and canonicalId required")
     try:
-        return constellation_neighborhood(project_id, canonical_id)
+        return projection(project_id, canonical_id)
     except Exception as err:
         raise HTTPException(status_code=500, detail=str(err)) from err

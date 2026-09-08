@@ -30,7 +30,12 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(underChat).toContain('<CoderTerminalPanel');
     expect(underChat).toContain('ownerCardId={agentBuilderCard.id}');
     expect(underChat).toContain('profile: agentBuilderCard.runtime.profile');
-    expect(underChat).toContain('readOnly={!directInput}');
+    expect(underChat).toContain("workspaceView !== 'canvas'");
+    expect(underChat).toContain('data-testid="agent-builder-output"');
+    expect(source).toContain('standaloneTestResults[agentBuilderCard.id]?.conversationId === conversationId');
+    expect(underChat).toContain('builderResult?.output');
+    expect(underChat).toContain('data-conversation-id={conversationId}');
+    expect(underChat).toContain('readOnly={false}');
     expect(underChat).not.toContain('<AdaptiveCardTerminal');
     expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');

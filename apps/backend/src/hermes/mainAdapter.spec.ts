@@ -52,6 +52,7 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
 let heldPromptId;
 let heldConfigureId;
+let selectedModel;
 rl.on('line', (line) => {
   const message = JSON.parse(line);
   const method = message.method;
@@ -62,9 +63,14 @@ rl.on('line', (line) => {
     ${exitAfterRegistration ? "return setImmediate(() => process.exit(0));" : "return send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'provider-free-session' } });"}
   }
   if (method === 'session/set_model') {
-    return send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Card must not override native profile model' } });
+    if (message.params.modelId !== 'openai-codex:gpt-5.6-sol') {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'wrong_saved_model' } });
+    }
+    selectedModel = message.params.modelId;
+    return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }
   if (method === '_session/configure_host') {
+    if (!selectedModel) return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'saved_model_not_applied_to_session' } });
     ${holdConfiguration ? 'heldConfigureId = message.id; return;' : ''}
     return send({ jsonrpc: '2.0', id: message.id, result: {} });
   }

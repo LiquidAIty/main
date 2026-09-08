@@ -205,7 +205,10 @@ the transient Card call. The call carries task meaning and selected context, not
 - Card: saved dedicated Agent Builder identity
 - Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
 - Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
-  inspect current source, edit, run commands/tests, and return evidence. It plans only when asked or blocked.
+  inspect current source, edit, run commands/tests, and return evidence.
+- In normal conversation the same saved profile retrieves ThinkGraph and KnowGraph data directly and
+  writes the requested detailed answer, report, plan, or prompt. Writing does not authorize execution.
+  Main remains the upper conversation; the lower reader does not switch Main into a terminal mode.
 - Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
 - Its actual available CBM operations come from saved grants and the live catalog. Follow the
   current CBM discovery procedure; this document does not narrow that catalog.
@@ -242,16 +245,169 @@ owners before this behavior is described as working.
 
 - Card: `card_hermes_steward`
 - Hermes mode/profile: `delegate` / `liquidaity-hermes-steward`
-- Owns planning, research, memory, and KnowGraph work within its grants. It is an ordinary Card, not
+- Owns external research and sourced KnowGraph work within its grants. It is an ordinary Card, not
   the execution authority for Team; like other authorized Hermes Cards it may use the headless native
   Auto-Team capability internally.
 - Has separate saved-Card identity, prompt, model, grants, stable native session, and native profile home.
-  Its existing identity and saved history are preserved while its later graph boundary remains unsettled.
+  Its existing identity, saved history, model and Team configuration are preserved. It may read
+  ThinkGraph references but no longer has ThinkGraph mutation or downstream prompt-staging grants.
   Migration `031_graph_agent_continuity.sql` creates a new current revision for an existing
   `card_hermes_steward` instead of rewriting historical revisions or Runs; only the product title and
   current runtime mode change.
   Main, Coder, and Graph Agent keep separate native memory and sessions. The ACP adapter reuses a process
   owner per profile; shared integration code does not imply a shared memory database.
+
+### ThinkGraph
+
+- The new saved `thinkgraph` profile uses Constellation only, with Luna as its parent and native
+  subagent selection. Delegate task uses Hermes's existing orchestrator mode; internal workers remain
+  within this profile's grants. Graph Agent's SQLite Team is unchanged.
+- It maintains observed statements, revisable conclusions, decisions, preferences and summaries with
+  source/turn identity and native relationships. Assistant proposals never imply user acceptance.
+- Honcho is a behavioral reference for evolving understanding, not another runtime or storage owner.
+  Main's native external-memory selection is now disabled; no Honcho data was deleted.
+- Worker references locate graph evidence. Agent Builder retrieves that evidence itself before synthesis.
+
+### Cognition implementation status
+
+The project has the new ThinkGraph binding, the existing Graph Agent narrowed to KnowGraph research,
+and the existing Builder extended for synthesis. Deterministic preparation verifies their grants and
+Main's saved delegation edges without inference. The lower reader displays Builder's actual Run output.
+The completed-pair source hook now returns Main independently of background delivery. Python advances
+ThinkGraph and Graph Agent through the existing saved Run doorway, using retained Main input
+and output. Stable stage correlation IDs reuse completed results and halt on existing noncompleted
+children; no child is restarted. Deterministic tests cover ordering, duplicate/concurrent delivery,
+identity checks and failure stops. This is not live model or graph acceptance.
+Delivery queued in process is not restart-durable. Conversation-scoped output selection and Main
+reading that output still require implementation and proof. Main's existing prompt and explicit graph
+write grants remain unchanged pending the proven replacement; they need alignment with the worker roles.
+Automatic message/embedding retrieval and latency tuning come last, after this graph-to-synthesis path.
+For Main's next context decision, use a bounded prepared view of current attention as the starting
+point: active work, pending/completed results and native graph references. AGE supplies observed
+activity; ThinkGraph supplies accepted intent/decisions, and KnowGraph supplies sourced findings.
+The durable graphs can grow; the context supplied to Main must not grow without bounds. Message and
+embedding search may supplement this view. This is the owner's latest direction, not implemented or
+latency-proven. The retained Main Run `req_c5b3ced4` took 9m32.6s; its aggregate record does not expose
+the token/tool breakdown needed to attribute that delay.
+
+Synthesis is requested through Main's existing profile delegation to Agent Builder, not automatically
+rewritten after every conversation pair. Builder reads the native graphs directly and produces a report,
+plan or execution prompt. Graph workers return compact references and changes, not recurring reports.
+The completed-pair path does not invoke Builder. Its completed Run result remains stable; revisions
+are new requested work. Attention preparation, explicit background research and synthesis delegation
+form the intended blend; no semantic keyword router chooses between them.
+
+September 7 restart exploration: Main's retained slow Run records sixteen CodeGraph searches, one
+ThinkGraph write and one ThinkGraph read, with no recorded delegated child. That establishes work done,
+not the cause of the entire elapsed time. Existing native profile delegation supports explicit
+`background: true`; its default is synchronous. Main should retain focused searches for each graph and
+delegate substantial research/synthesis without requiring those results before an ordinary reply.
+The prior OpenRouter embedding repair from `d97582da` remains in source. September 7 live testing traced
+the remaining connection failure to OpenAI 3/httpx2 loading standalone truststore after Databento's
+Windows pip-system-certs injection. Pinning Python rails to Graphiti's required OpenAI 2.41.0 restores
+the existing httpx transport. Real embedding/search and ingestion now succeed with the same provider,
+model, credentials and dimensions; no reindex was performed.
+
+September 7 component acceptance uses useful questions about sourced claims, conflicting evidence,
+and graph visualization. ThinkGraph returned actual existing references in Run
+`graph-visual-reasoning-20260907-01` (235.967 seconds, including first profile/session setup and a
+semantic-search timeout). It launched no orchestrator child. The owner's single-mode comparison
+changed only ThinkGraph's delegation selection to `off`; `graph-visual-single-20260907-01` completed
+in 23.825 seconds using the same warm session. This is not a controlled orchestrator speed comparison.
+Graph Agent's `graph-visual-research-20260907-01` found relevant web/code evidence but only queued
+its KnowGraph write; no materialized native records were confirmed. Its saved Sol selection disagreed
+with the restored session's actual Luna calls. The adapter repair applies the exact saved parent through
+native ACP `session/set_model` before host configuration; native history and profile identity remain.
+The separate ThinkGraph/KnowGraph delivery locks now pass a regression test proving slow research
+does not block the next pair's reasoning while each stage remains serialized. Graph Agent's subsequent
+`graph-visual-retain-20260907-01` used actual Sol and ingested episode
+`313e8bb8-17c5-44de-a59f-d270d84a6cf9`; native fact searches return sourced relationships referring to it.
+Agent Builder's `graph-visual-synthesis-20260907-01` directly read that episode and ThinkGraph, then
+returned a cited proposal. Its unnecessary initial self-handoff read failed honestly; its saved prompt
+now directs graph reads to the existing read tools. Main's saved prompt now delegates graph maintenance
+to the post-pair workers, keeps compact searches and background research/synthesis, and no longer grants
+the superseded ThinkGraph write tools. Other saved models, Scripts, topology and Team configuration remain.
+
+ThinkGraph's `graph-visual-question-20260907-01` created the unresolved visualization question and links,
+but the outer MCP 30-second timeout abandoned a still-running semantic write. The model then repeated
+the write, creating duplicate links and self-supersession. The bounded semantic operation now receives
+its existing native/HTTP allowance through the outer MCP deadline; ordinary read deadlines remain short.
+A focused regression failed before this repair and passes after it. Existing affected edges are not
+declared repaired: a disposable native forget/recreate experiment revived old links, so that experiment
+was not applied to project data.
+
+Connected Run `req_b65d06f4` answered and completed both automatic graph stages. ThinkGraph retained
+the assistant's suggestion as an unaccepted proposal; KnowGraph reused the sourced episode instead of
+ingesting a duplicate. Main's first response took 56 seconds and completion 73 seconds: not fast enough.
+The next Run, `req_27804764`, exposed a real background profile-handoff failure: internal originating
+identity was incorrectly supplied as public MCP arguments. Main substituted an ordinary Luna child,
+so its claim that Agent Builder was writing was not accepted as proof. The adapter now keeps identity
+in authenticated context; Python binds it for background execution. Focused tests reproduce and cover
+the failure, forged identity rejection, and existing synchronous behavior. Live retry remains required.
+
+KnowGraph now loads bounded records from its existing native projection endpoint instead of constructing
+knowledge nodes from activity UUIDs. Activity decorates matching records; selecting another agent retains
+the underlying graph. A real browser exposed two further renderer defects: Strict Mode recreated an empty
+renderer while retaining its applied-topology flag, and the DTO's `source: know` was mistaken for an edge
+endpoint instead of `from`. Both are repaired with regression coverage. Nine named native records and
+eleven relationships were returned; final visual interaction verification follows database recovery.
+
+During connected testing Neo4j reached 620% CPU and Windows had about 500 MB free RAM; queries timed out
+while service health endpoints remained responsive. Docker initially could not stop the container. After
+it exited, the existing image and native data/log volumes were verified and preserved during recreation.
+The health check now uses installed wget to execute HTTP `RETURN 1` and requires an empty error array,
+instead of launching Java command-line clients every three seconds. Native database health passed after
+recreation. No graph data was deleted or reindexed. Recovered app/connector acceptance remains separate.
+One subsequent startup failed the native CBM daemon deadline under severe Windows memory pressure
+(121 MB available RAM). Later canonical startup recovered the existing app-owned catalog and watcher;
+no direct CBM recovery or index mutation was performed. Native KnowGraph reads and the nine-node,
+eleven-edge graph surface have since returned successfully.
+
+The live Main Run `req_112496c0` accepted one asynchronous Builder child,
+`external-mcp:7ed33033-e722-4812-aace-2f8f13a78d12`. Main returned before the child finished; native Hermes
+delivered the completed result once. Both completed-pair graph workers finished separately. No child
+was restarted. Backend focused tests (106), plugin tests including the real native asynchronous registry
+(42), and Card-domain tests (95) pass. Main still took 111 seconds to finish its response and received
+empty prepared context, so fast/smart acceptance is not complete.
+
+A read-only preview reproduced all three preload sources timing out at about two seconds. Investigation
+found roughly one second of unnecessary Windows certificate loading for loopback HTTP and the MCP SDK's
+extra result-validation catalog request. Bounded preload now avoids those costs through the public typed
+request API; existing non-preload behavior remains. Deadline, partial-result retention and transport
+restriction tests pass. A warm loaded preview returned a sourced KnowGraph fact with native provenance;
+ThinkGraph, CodeGraph and KnowGraph reads completed in 125, 156 and 562 milliseconds respectively.
+Cold initialization can still exceed the two-second budget and correctly yields missing optional context.
+Live Main Run `req_e845c33f` streamed first answer text at 39.7 seconds and finished at 42.7 seconds;
+its first model call began at 32.2 seconds. Pre-inference startup/selection costs remain unresolved.
+That answer incorrectly used irrelevant raw-sentence CodeGraph test matches as supporting evidence.
+The automatic raw-sentence CodeGraph preload is therefore removed, including its unused projection branch.
+Main's saved focused CodeGraph grants and exact native-reference hydration remain unchanged. Native
+retrieval quality must be proven before reintroducing automatic code selection. The combined context,
+Card-domain and internal-MCP regression suite passes 117 tests after this correction.
+
+Activity polling now depends on agent IDs instead of the identity of the rendered node array, and unchanged
+counts retain their state identity. The regression reproduced ten requests where two were required; all
+four activity tests pass after repair. Client typecheck and build pass. The lower Detailed view now requests
+the conversation's latest Builder root through existing AGE selection, reads that exact retained Run,
+and rejects delayed older results. Two route tests cover scoped and empty selections; three state tests
+cover out-of-order completion, terminal-state preservation and unrelated conversations. All 57 backend
+route tests and both application typechecks pass. Fifteen frontend tests pass; one unchanged topology
+assertion still expects a retired `runtimeOptions.team` template shape absent from unchanged current source.
+No Team configuration was restored or changed to satisfy that assertion. Full artifact revision identity
+and exact-current-artifact execution remain incomplete. Do not run further
+paid acceptance prompts until the remaining latency and context-quality failures are addressed. Defer the long-term automatic
+ThinkGraph-to-KnowGraph decision; preserve the current chain and separate web-research path meanwhile.
+
+On September 7 the owner rejected the graph visualization test content and requested its removal.
+Graphiti episode `313e8bb8-17c5-44de-a59f-d270d84a6cf9` was removed through the native cascading
+episode operation; its dependent entities and facts no longer return. The four active ThinkGraph
+test entries were made dormant through Constellation's native forget operation. Both application
+projections returned zero nodes and zero relationships afterward. Earlier populated-view results
+above are historical rendering evidence, not accepted knowledge quality or current data counts.
+The unwanted identity/status/statistics/search panels and decorative backgrounds have been removed
+from the graph surfaces. KnowGraph selection now exposes supplied entity summaries and edge claims.
+Useful sourced relationship inspection and graph-wide AI summaries still require acceptance with
+appropriate data; no replacement records were inserted and no new model run was launched for cleanup.
 
 ### AutoGen
 
@@ -354,7 +510,8 @@ alternate startup instructions.
 
 Current owner priority: complete the Card surfaces and report their actual capabilities and gaps first,
 then prove graphs with real project work. Magentic-One execution waits for a prompt prepared by the System3
-agents. Main and Agent Builder keep their existing chat and pull-up CLI; their configuration Cards open
+agents. Main stays visible above the pull-up Builder surface: a terminal in Canvas and an output reader
+elsewhere. Their configuration Cards open
 on Prompt with no CLI tab. Mag One needs System3 ready to supply a mission and usable connected agents,
 without an additional product gate.
 Product controls should explain themselves through placement and behavior; do not add explanatory panels or filler copy.

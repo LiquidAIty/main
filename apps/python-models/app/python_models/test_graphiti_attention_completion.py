@@ -4,7 +4,46 @@ import asyncio
 from types import SimpleNamespace
 
 from app import mcp_host
+from app.python_models import question_evidence
 from services.queue_service import QueueService
+
+
+def test_question_link_follows_native_queue_completion_through_existing_rails(monkeypatch):
+    linked = []
+    finished = asyncio.Event()
+    context = {"projectId": "project-one", "deckId": "deck-one", "mainCardId": "researcher",
+               "parentRunId": "research-run", "conversationId": "conversation"}
+    question = {"questionRef": {"authority": "thinkgraph", "nativeId": "q", "projectId": "project-one"},
+                "outcome": "contested", "relation": "contradicts"}
+
+    async def persist(event, _context):
+        if event["phase"] == "completed": finished.set()
+        return True
+
+    async def link(driver, value, episode, group, request):
+        linked.append((driver, value, episode, group, request))
+        return {"evidenceRef": {"nativeId": episode}}
+
+    async def native_add_episode(**kwargs):
+        return SimpleNamespace(episode=SimpleNamespace(uuid="native-result"), nodes=[], edges=[])
+
+    monkeypatch.setattr(mcp_host, "_persist_native_attention", persist)
+    monkeypatch.setattr(question_evidence, "link_question_evidence", link)
+
+    async def run():
+        client = SimpleNamespace(add_episode=native_add_episode, driver=object())
+        queue = QueueService()
+        await queue.initialize(client)
+        mcp_host._instrument_graphiti_attention(client, queue)
+        token = mcp_host._ACTIVE_GRAPHITI_ATTENTION.set({"context": context, "event": None, "questionEvidence": question})
+        try:
+            await queue.add_episode(group_id="liquidaity-project-one", name="Source", content="Actual source passage",
+                                    source_description="https://example.test", episode_type="text", entity_types={}, uuid=None)
+        finally:
+            mcp_host._ACTIVE_GRAPHITI_ATTENTION.reset(token)
+        await asyncio.wait_for(finished.wait(), 2)
+        assert linked == [(client.driver, question, "native-result", "liquidaity-project-one", mcp_host._constellation_via_python_rails_sync)]
+    asyncio.run(run())
 
 
 def test_native_queue_preserves_each_request_identity_until_actual_completion(monkeypatch):

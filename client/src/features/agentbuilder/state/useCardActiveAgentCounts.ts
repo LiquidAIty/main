@@ -23,7 +23,8 @@ export default function useCardActiveAgentCounts({
   activeAgentCounts: Record<string, number>;
   activeCardIds: string[];
 } {
-  const cardIds = useMemo(() => deck.nodes.map((card) => card.id), [deck.nodes]);
+  const cardIdsKey = JSON.stringify(deck.nodes.map((card) => card.id));
+  const cardIds = useMemo(() => JSON.parse(cardIdsKey) as string[], [cardIdsKey]);
   const [activeAgentCounts, setActiveAgentCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -74,7 +75,12 @@ export default function useCardActiveAgentCounts({
             : 0;
           nextCounts[status.cardId] = 1 + childWorkers;
         }
-        setActiveAgentCounts(nextCounts);
+        setActiveAgentCounts((current) => (
+          Object.keys(current).length === Object.keys(nextCounts).length
+          && Object.entries(nextCounts).every(([cardId, count]) => current[cardId] === count)
+            ? current
+            : nextCounts
+        ));
         consecutiveErrorRetries = 0;
         schedule(Object.keys(nextCounts).length > 0 ? ACTIVE_REFRESH_MS : QUIET_REFRESH_MS);
       } catch (error) {

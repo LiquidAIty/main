@@ -45,6 +45,7 @@ from app.python_models.idf import (
 from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
+    prepare_main_context,
     resolve_data_anchors,
 )
 from app.python_models.postgres import connect_postgres
@@ -2799,6 +2800,19 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     anchor_references = resolved["resolvedNativeReads"]
     graph_projection = resolved["resolvedGraphProjection"]
     images = resolved["images"]
+    context_reads = []
+    if call_config["runtime"].get("kind") == "hermes" and call_config["runtime"].get("mode") == "main":
+        context = prepare_main_context(
+            prepared["projectId"], prepared["deckId"], prepared["cardIdentity"]["cardId"],
+            str(payload.get("conversationId") or ""), assignment, call_config["enabledTools"],
+        )
+        if context["text"]:
+            graph_seed = "\n\n".join(filter(None, (graph_seed, context["text"])))
+        selected = {(ref["authority"], ref["nativeId"]) for ref in references}
+        additional = [ref for ref in context["references"] if (ref["authority"], ref["nativeId"]) not in selected]
+        references = [*references, *additional]
+        anchor_references = [*anchor_references, *additional]
+        context_reads = context["reads"]
     try:
         materialized = materialize_idf(
             stable={
@@ -2846,11 +2860,12 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "resolvedGraphProjection": graph_projection,
         **idf_public(materialized),
         "_materializedIdf": materialized,
+        "preparedContextReads": context_reads,
     }
 
 
 def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    """Prepare saved Main authority and the natural user message."""
+    """Preview saved Main authority and optional context without starting a Run."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     loaded = _load_deck_internal(project_ref, deck_id)
@@ -2876,6 +2891,10 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         **prepared,
         **({"message": message} if message else {}),
+        **({"preparedContext": prepare_main_context(
+            prepared["projectId"], deck_id, main_cards[0]["id"],
+            str(payload.get("conversationId") or ""), message, call_config["enabledTools"],
+        )} if message.strip() else {}),
         "sessionProfile": call_config,
     }
 

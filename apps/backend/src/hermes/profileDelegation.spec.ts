@@ -40,6 +40,22 @@ const currentDeck = {
 };
 
 describe('native profile delegation host adapter', () => {
+  it('keeps background caller identity in authenticated context, outside public tool arguments', async () => {
+    const runner = vi.fn(async () => ({ ok: true, result: {
+      runId: 'child-run', state: 'running', acceptedAt: '2026-09-07T11:00:00Z',
+    } }));
+    const result = await runHermesProfileDelegation(authority, {
+      parentExecutionContextId: 'root-context', nativeChildId: 'profile-abcdef123456',
+      targetProfile: 'liquidaity-hermes-steward', goal: 'Research provenance.', background: true,
+    }, runner as any, vi.fn(async () => currentDeck) as any);
+    expect(result.state).toBe('running');
+    expect(runner.mock.calls[0]).toEqual([
+      expect.objectContaining({ callerCardId: 'card_main_chat', parentRunId: 'parent-run' }),
+      'card.run_assistant_agent',
+      { cardId: 'card_hermes_steward', cardRevisionId: 'graph-revision-one', input: 'Research provenance.', background: true },
+    ]);
+  });
+
   it.each(['controller-off', 'shared-profile', 'reverse-edge'])('rejects %s before any runner call', async (reason) => {
     const deck = structuredClone(currentDeck);
     if (reason === 'controller-off') deck.deck.nodes[0].runtimeOptions!.delegationRole = 'off';

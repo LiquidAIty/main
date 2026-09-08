@@ -64,6 +64,9 @@ export async function runHermesProfileDelegation(
   nativeEvents: unknown[];
   state?: string;
   acceptedAt?: string;
+  projectId?: string;
+  deckId?: string;
+  parentRunId?: string;
 }> {
   if (params.background !== undefined && typeof params.background !== 'boolean') {
     throw new Error('hermes_profile_background_must_be_boolean');
@@ -155,8 +158,6 @@ export async function runHermesProfileDelegation(
     input,
     ...(params.background === true ? {
       background: true,
-      originatingAgentId: authority.sourceCardId,
-      originatingRunId: authority.parentRunId,
     } : {}),
     ...(dataAnchors !== undefined ? { dataAnchors } : {}),
   });
@@ -174,7 +175,8 @@ export async function runHermesProfileDelegation(
       throw new Error('hermes_profile_acceptance_invalid');
     }
     return { nativeChildId, targetProfile, runId, state: 'running',
-      acceptedAt: record.acceptedAt, result: '', nativeEvents: [] };
+      acceptedAt: record.acceptedAt, result: '', nativeEvents: [],
+      projectId: authority.projectId, deckId: authority.deckId, parentRunId: authority.parentRunId };
   }
   const output = bounded(record.output, 'result', 2_000_000);
   const nativeEvents = Array.isArray(record.nativeEvents) ? record.nativeEvents : [];

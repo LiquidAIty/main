@@ -57,9 +57,9 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',
-  'constellation.context',
-  'constellation.inspect',
-  'constellation.remember',
+  'engraphis_recall_context',
+  'engraphis_get_memory',
+  'engraphis_remember',
   'run_mag_one',
 ] as const;
 export const HERMES_CARD_TOOLS = [
