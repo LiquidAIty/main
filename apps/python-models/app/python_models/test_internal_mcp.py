@@ -12,6 +12,13 @@ import pytest
 from app.python_models import internal_mcp
 
 
+def test_query_graph_text_transport_does_not_relax_other_tool_results():
+    result = SimpleNamespace(content=[SimpleNamespace(text="rows: 0  (cols: a)\ntotal: 0")])
+    assert internal_mcp._json_result(result, "cbm.query_graph")["text"].startswith("rows: 0")
+    with pytest.raises(RuntimeError, match="invalid_json_result"):
+        internal_mcp._json_result(result, "cbm.search_graph")
+
+
 @pytest.mark.parametrize("url", ["https://127.0.0.1:8765/mcp", "http://example.com/mcp", "http://localhost/other"])
 def test_preload_rejects_nonlocal_transport_before_constructing_client(monkeypatch, url):
     monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "0" * 32)

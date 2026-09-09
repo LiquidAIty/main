@@ -46,8 +46,7 @@ def test_gpt_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeyp
         schema = tool.inputSchema
         jsonschema.Draft202012Validator.check_schema(schema)
         assert schema["additionalProperties"] is False
-        assert not ({"projectId", "workspace", "repo", "scope", "session_id"}
-                    & schema["properties"].keys())
+        assert not ({"projectId", "workspace"} & schema["properties"].keys())
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         assert payload["securitySchemes"] == [{
             "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
@@ -58,13 +57,14 @@ def test_gpt_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeyp
                          "token_budget": 600}, schemas["engraphis_recall_context"])
     jsonschema.validate({"memory_id": "native-id"}, schemas["engraphis_get_memory"])
     jsonschema.validate({"content": "A tentative assistant suggestion",
-                         "title": "Paper journal", "summary": "A proposal, not a user decision."},
+                         "title": "Paper journal"},
                         schemas["engraphis_remember"])
-    jsonschema.validate({"memory_id": "native-id", "summary": "Clarified summary"},
+    jsonschema.validate({"memory_id": "native-id", "title": "Updated title"},
                         schemas["engraphis_update_memory"])
 
 
-def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch):
+@pytest.mark.parametrize("operation", ["engraphis_remember", "engraphis_ingest"])
+def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch, operation):
     import asyncio
     import mcp_host
 
@@ -81,13 +81,13 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.005)
 
-    result = asyncio.run(mcp_host.call_tool("engraphis_remember", {}))
+    result = asyncio.run(mcp_host.call_tool(operation, {}))
     assert not getattr(result, "isError", False)
-    assert completed == ["engraphis_remember"]
+    assert completed == [operation]
     # Ordinary reads keep their short deadline; this is not a global increase.
     result = asyncio.run(mcp_host.call_tool("engraphis_recall_context", {}))
     assert result.isError
-    assert completed == ["engraphis_remember"]
+    assert completed == [operation]
 
 
 def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch):
@@ -102,7 +102,7 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
     def reject(request, **kwargs):
         requests.append(json.loads(request.data))
         raise HTTPError(request.full_url, 409, "Conflict", {}, io.BytesIO(
-            b'{"detail":"thinkgraph_summary_invalid"}'))
+            b'{"detail":"thinkgraph_project_id_invalid"}'))
 
     monkeypatch.setattr(mcp_host, "urlopen", reject)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
@@ -116,13 +116,31 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
     }))
     assert result.isError is True
     assert json.loads(result.content[0].text) == {
-        "ok": False, "error": "thinkgraph_summary_invalid",
+        "ok": False, "error": "thinkgraph_project_id_invalid",
     }
     receipt = json.loads(result.content[-1].text)["executionReceipt"]
     assert receipt["state"] == "failed"
-    assert receipt["failureCode"] == "thinkgraph_summary_invalid"
+    assert receipt["failureCode"] == "thinkgraph_project_id_invalid"
     assert len(requests) == 1
     assert requests[0]["projectId"] == "project-one"
+
+
+def test_engraphis_native_output_contract_preserved(monkeypatch):
+    import asyncio
+    import jsonschema
+    import mcp_host
+    from app.python_models.engraphis import native_tools
+    schemas = {t["name"]: t.get("outputSchema") for t in asyncio.run(native_tools())}
+    payload = {"a": "one", "b": "two", "linked": True}
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context",
+        lambda: {"projectId": "project-one", "mainCardId": "thinkgraph"})
+    monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_host, "_thinkgraph_via_python_rails_sync", lambda *a: payload)
+    monkeypatch.setitem(mcp_host._ALLOWED_KEYS, "engraphis_link", {"a", "b"})
+    result = asyncio.run(mcp_host._dispatch_tool("engraphis_link", {"a": "one", "b": "two"}))
+    jsonschema.validate(result.structuredContent, schemas["engraphis_link"])
+    assert json.loads(result.structuredContent["result"]) == payload
+    assert result.isError is False
 
 
 def test_card_team_schema_exposes_only_proven_saved_fields():
@@ -966,6 +984,7 @@ def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypa
         "deckId": "deck_builder",
     }, {
         "caller_card_id": "card-agent-builder",
+        "authenticated_user_edit": False,
         "target_card_id": "card-selected-target",
         "target_card_revision_id": "selected-target-revision-one",
         "target_deck_revision": "deck-revision-one",
@@ -978,6 +997,32 @@ def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypa
             "workspaceRoot": "C:/Projects/agents",
         },
     })]
+
+
+def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app import control_plane
+    observed = []
+    async def update(args, **authority):
+        observed.append((args, authority))
+        return {"ok": True}
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "p", "deckId": "deck_builder", "mainCardId": "main",
+        "conversationId": "c", "parentRunId": "r",
+    })
+    monkeypatch.setattr(control_plane, "card_update_configuration", update)
+    result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {
+        "cardId": "main", "updates": {"prompt": "Updated instructions"},
+    }))
+    assert json.loads(result[0].text)["ok"] is True
+    assert observed[0][1]["authenticated_user_edit"] is True
+    forged = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {
+        "cardId": "main", "updates": {"prompt": "x"}, "authenticated_user_edit": True,
+    }))
+    assert json.loads(forged[0].text)["ok"] is False
+    assert len(observed) == 1
 
 
 def test_agent_builder_cbm_read_is_forced_to_the_run_bound_ready_workspace(monkeypatch):
@@ -1585,6 +1630,7 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
     assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("engraphis_remember") == 190.0
+    assert mcp_host._mcp_tool_timeout_seconds("engraphis_ingest") == 190.0
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_status") == 30.0
     assert mcp_host._mcp_tool_timeout_seconds("graphiti.get_status") == 30.0
 

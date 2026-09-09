@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 const HANDLE_HEIGHT = 12;
-const MAIN_MIN_HEIGHT = 180;
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
@@ -37,6 +36,7 @@ export default function HarnessChatPanel({
   const lastOpenHeightRef = useRef(initialSplitHeight);
   const dragMovedRef = useRef(false);
   const [height, setHeightState] = useState(0);
+  const [manualFullCli, setManualFullCli] = useState(false);
   const [dragging, setDragging] = useState(false);
 
   const setHeight = useCallback((next: number) => {
@@ -46,7 +46,7 @@ export default function HarnessChatPanel({
 
   const clampHeight = useCallback((next: number) => {
     const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-    const maximum = Math.max(0, total - HANDLE_HEIGHT - Math.min(MAIN_MIN_HEIGHT, total / 2));
+    const maximum = Math.max(0, total - HANDLE_HEIGHT);
     return next <= HANDLE_HEIGHT ? 0 : Math.min(maximum, Math.max(0, next));
   }, []);
 
@@ -91,8 +91,14 @@ export default function HarnessChatPanel({
       setHeight(nextHeight);
     };
     const up = () => {
-      const settledHeight = clampHeight(heightRef.current);
-      if (settledHeight > 0) rememberSplitHeight(settledHeight);
+      const total = containerRef.current?.getBoundingClientRect().height ?? 0;
+      const maximum = Math.max(0, total - HANDLE_HEIGHT);
+      const fullCli = heightRef.current >= maximum - 1;
+      const settledHeight = fullCli
+        ? maximum
+        : clampHeight(heightRef.current);
+      setManualFullCli(fullCli);
+      if (!fullCli) rememberSplitHeight(settledHeight);
       setHeight(settledHeight);
       removeDragListeners();
       setDragging(false);
@@ -111,20 +117,22 @@ export default function HarnessChatPanel({
       dragMovedRef.current = false;
       return;
     }
-    if (heightRef.current > 0) {
-      rememberSplitHeight(heightRef.current);
-      setHeight(0);
+    if (manualFullCli) {
+      setManualFullCli(false);
+      setHeight(clampHeight(lastOpenHeightRef.current));
     } else {
       const total = containerRef.current?.getBoundingClientRect().height ?? 0;
-      setHeight(clampHeight(lastOpenHeightRef.current || total / 2));
+      setManualFullCli(true);
+      setHeight(Math.max(0, total - HANDLE_HEIGHT));
     }
     window.requestAnimationFrame(() => {
       window.dispatchEvent(new Event('liquidaity:terminal-layout-settled'));
     });
-  }, [clampHeight, rememberSplitHeight, setHeight]);
+  }, [clampHeight, manualFullCli, setHeight]);
 
+  const fullCli = manualFullCli;
   const driverSource: MainDriverSource = activeDriver || 'internal_chat';
-  const terminalMode = height === 0 ? 'collapsed' : 'split';
+  const terminalMode = fullCli ? 'expanded' : height === 0 ? 'collapsed' : 'split';
 
   return (
     <div
@@ -134,9 +142,11 @@ export default function HarnessChatPanel({
       data-terminal-mode={terminalMode}
       style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
-      <div data-testid="main-chat-region" style={{ flex: 1, minHeight: 'min(180px, 50%)', overflow: 'hidden' }}>
-        {chat}
-      </div>
+      {!fullCli ? (
+        <div data-testid="main-chat-region" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {chat}
+        </div>
+      ) : null}
 
       {activeDriver === 'external_plugin' ? (
         <div data-testid="main-driver-indicator" role="status" style={{ padding: '4px 8px' }}>
@@ -147,7 +157,7 @@ export default function HarnessChatPanel({
       <button
         type="button"
         data-testid="main-chat-agent-builder-divider"
-        aria-expanded={height > 0}
+        aria-expanded={fullCli || height > 0}
         aria-controls="agent-builder-region"
         aria-label="Resize Main Chat and Agent Builder"
         title="Resize Main Chat and Agent Builder"
@@ -173,16 +183,16 @@ export default function HarnessChatPanel({
       <div
         id="agent-builder-region"
         data-testid="agent-builder-region"
-        aria-hidden={height === 0}
+        aria-hidden={!fullCli && height === 0}
         style={{
-          flex: '0 1 auto',
-          height,
+          flex: fullCli ? '1 1 auto' : '0 0 auto',
+          height: fullCli ? 'auto' : height,
           minHeight: 0,
           overflow: 'hidden',
           userSelect: dragging ? 'none' : 'auto',
         }}
       >
-        {typeof terminal === 'function' ? terminal({ directInput: false }) : terminal}
+        {typeof terminal === 'function' ? terminal({ directInput: fullCli }) : terminal}
       </div>
     </div>
   );

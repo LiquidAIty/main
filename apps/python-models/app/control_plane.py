@@ -620,33 +620,35 @@ async def card_update_configuration(
     operation_mode: str = "", allowed_fields: list[str] | None = None,
     workspace_root: str = "",
     builder_operation: dict[str, Any] | None = None,
+    authenticated_user_edit: bool = False,
 ) -> dict[str, Any]:
     _require(args, "projectId", "deckId", "cardId")
     updates = args.get("updates")
     if not isinstance(updates, dict) or not updates:
         raise ControlPlaneError("updates_object_required")
     authorization = builder_operation if isinstance(builder_operation, dict) else {}
-    if operation_mode != "edit" or authorization.get("mode") != "edit":
-        raise ControlPlaneError("agent_builder_edit_authority_required")
-    authorized_fields = set(allowed_fields or [])
-    operation_fields = set(authorization.get("allowedFields") or [])
-    if (
-        authorized_fields != operation_fields
-        or not _AGENT_BUILDER_REQUIRED_EDIT_FIELDS.issubset(authorized_fields)
-        or not authorized_fields.issubset(_AGENT_BUILDER_EDIT_FIELDS)
-    ):
-        raise ControlPlaneError("agent_builder_edit_fields_invalid")
-    if (
-        str(authorization.get("targetCardId") or "") != target_card_id
-        or str(authorization.get("targetCardRevisionId") or "")
-        != target_card_revision_id
-        or str(authorization.get("deckRevision") or "") != target_deck_revision
-        or str(authorization.get("workspaceRoot") or "").strip()
-        != workspace_root.strip()
-    ):
-        raise ControlPlaneError("agent_builder_edit_authority_mismatch")
-    if set(updates) - authorized_fields:
-        raise ControlPlaneError("agent_builder_edit_field_forbidden")
+    if not authenticated_user_edit:
+        if operation_mode != "edit" or authorization.get("mode") != "edit":
+            raise ControlPlaneError("agent_builder_edit_authority_required")
+        authorized_fields = set(allowed_fields or [])
+        operation_fields = set(authorization.get("allowedFields") or [])
+        if (
+            authorized_fields != operation_fields
+            or not _AGENT_BUILDER_REQUIRED_EDIT_FIELDS.issubset(authorized_fields)
+            or not authorized_fields.issubset(_AGENT_BUILDER_EDIT_FIELDS)
+        ):
+            raise ControlPlaneError("agent_builder_edit_fields_invalid")
+        if (
+            str(authorization.get("targetCardId") or "") != target_card_id
+            or str(authorization.get("targetCardRevisionId") or "")
+            != target_card_revision_id
+            or str(authorization.get("deckRevision") or "") != target_deck_revision
+            or str(authorization.get("workspaceRoot") or "").strip()
+            != workspace_root.strip()
+        ):
+            raise ControlPlaneError("agent_builder_edit_authority_mismatch")
+        if set(updates) - authorized_fields:
+            raise ControlPlaneError("agent_builder_edit_field_forbidden")
     unknown = [
         key for key in updates
         if key not in _UPDATABLE_TOP_FIELDS and key not in _UPDATABLE_RUNTIME_OPTION_FIELDS
@@ -689,7 +691,7 @@ async def card_update_configuration(
         except ValueError as error:
             raise ControlPlaneError(str(error)) from error
     for field in updates:
-        if updates[field] != authorization.get(field):
+        if not authenticated_user_edit and updates[field] != authorization.get(field):
             raise ControlPlaneError("agent_builder_edit_request_mismatch")
     if "script" in updates:
         from app.python_models.card_script import saved_script
@@ -699,7 +701,7 @@ async def card_update_configuration(
         try:
             updates = {**updates, "script": saved_script({
                 **updates["script"],
-                "author": {"kind": "agent-builder", "id": caller_card_id},
+                "author": {"kind": "user" if authenticated_user_edit else "agent-builder", "id": caller_card_id},
             })}
         except IddValidationError as error:
             raise ControlPlaneError(str(error)) from error
@@ -730,54 +732,55 @@ async def card_update_configuration(
 
     def _apply() -> dict[str, Any]:
         deck, revision = _load_deck(project_id, deck_id)
-        try:
-            caller = _find_card(deck, caller_card_id)
-        except ControlPlaneError as error:
-            raise ControlPlaneError(
-                "card_update_requires_agent_builder"
-            ) from error
-        caller_runtime = caller.get("runtime") or {}
-        if (
-            caller_runtime.get("kind") != "hermes"
-            or caller_runtime.get("mode") != "delegate"
-            or str(caller_runtime.get("profile") or "").strip()
-            != _AGENT_BUILDER_PROFILE
-        ):
-            raise ControlPlaneError("card_update_requires_agent_builder")
-        if not target_card_id or not target_card_revision_id or not target_deck_revision:
-            raise ControlPlaneError("agent_builder_target_authority_required")
-        if card_id != target_card_id:
-            raise ControlPlaneError("agent_builder_target_mismatch")
-        if str(revision or "") != target_deck_revision:
-            raise ControlPlaneError("agent_builder_target_revision_changed")
-        if str(deck.get("workspaceRoot") or "").strip() != workspace_root:
-            raise ControlPlaneError("agent_builder_workspace_changed")
-        if card_id == caller_card_id:
-            raise ControlPlaneError("agent_builder_target_self_forbidden")
         card = _find_card(deck, card_id)
-        if str(card.get("_cardRevisionId") or "") != target_card_revision_id:
-            raise ControlPlaneError("agent_builder_target_revision_changed")
-        if (
-            str(card.get("templateId") or "") != str(authorization.get("templateId") or "")
-            or str(card.get("title") or "") != str(authorization.get("title") or "")
-            or str(card.get("role") or "") != str(authorization.get("role") or "")
-        ):
-            raise ControlPlaneError("agent_builder_target_snapshot_changed")
-        card_runtime = card.get("runtime") or {}
-        if (
-            card_runtime.get("kind") == "autogen"
-            and card_runtime.get("mode") == "magentic_one"
-        ):
-            raise ControlPlaneError("agent_builder_system_target_forbidden")
-        if (
-            card_runtime.get("kind") == "hermes"
-            and (
-                card_runtime.get("mode") == "main"
-                or str(card_runtime.get("profile") or "").strip()
-                in {_AGENT_BUILDER_PROFILE, "liquidaity-hermes-steward"}
-            )
-        ):
-            raise ControlPlaneError("agent_builder_system_target_forbidden")
+        if not authenticated_user_edit:
+            try:
+                caller = _find_card(deck, caller_card_id)
+            except ControlPlaneError as error:
+                raise ControlPlaneError(
+                    "card_update_requires_agent_builder"
+                ) from error
+            caller_runtime = caller.get("runtime") or {}
+            if (
+                caller_runtime.get("kind") != "hermes"
+                or caller_runtime.get("mode") != "delegate"
+                or str(caller_runtime.get("profile") or "").strip()
+                != _AGENT_BUILDER_PROFILE
+            ):
+                raise ControlPlaneError("card_update_requires_agent_builder")
+            if not target_card_id or not target_card_revision_id or not target_deck_revision:
+                raise ControlPlaneError("agent_builder_target_authority_required")
+            if card_id != target_card_id:
+                raise ControlPlaneError("agent_builder_target_mismatch")
+            if str(revision or "") != target_deck_revision:
+                raise ControlPlaneError("agent_builder_target_revision_changed")
+            if str(deck.get("workspaceRoot") or "").strip() != workspace_root:
+                raise ControlPlaneError("agent_builder_workspace_changed")
+            if card_id == caller_card_id:
+                raise ControlPlaneError("agent_builder_target_self_forbidden")
+            if str(card.get("_cardRevisionId") or "") != target_card_revision_id:
+                raise ControlPlaneError("agent_builder_target_revision_changed")
+            if (
+                str(card.get("templateId") or "") != str(authorization.get("templateId") or "")
+                or str(card.get("title") or "") != str(authorization.get("title") or "")
+                or str(card.get("role") or "") != str(authorization.get("role") or "")
+            ):
+                raise ControlPlaneError("agent_builder_target_snapshot_changed")
+            card_runtime = card.get("runtime") or {}
+            if (
+                card_runtime.get("kind") == "autogen"
+                and card_runtime.get("mode") == "magentic_one"
+            ):
+                raise ControlPlaneError("agent_builder_system_target_forbidden")
+            if (
+                card_runtime.get("kind") == "hermes"
+                and (
+                    card_runtime.get("mode") == "main"
+                    or str(card_runtime.get("profile") or "").strip()
+                    in {_AGENT_BUILDER_PROFILE, "liquidaity-hermes-steward"}
+                )
+            ):
+                raise ControlPlaneError("agent_builder_system_target_forbidden")
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")
         for key in _UPDATABLE_TOP_FIELDS:

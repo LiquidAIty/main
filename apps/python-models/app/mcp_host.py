@@ -3399,10 +3399,12 @@ async def _dispatch_tool(
             # that actionable result; the outer handler otherwise replaces it
             # with internal_failure and the caller cannot correct its input.
             result = {"ok": False, "error": _sanitize_failure_detail(error)}
-        return [TextContent(
-            type="text",
-            text=json.dumps(result, ensure_ascii=False),
-        )]
+        native_text = json.dumps(result, ensure_ascii=False)
+        return CallToolResult(
+            content=[TextContent(type="text", text=native_text)],
+            structuredContent={"result": native_text},
+            isError=result.get("ok") is False or bool(result.get("error")),
+        )
     if (
         name == "card.run_assistant_agent"
         and context is not None
@@ -3592,6 +3594,11 @@ async def _dispatch_tool(
                 else
                 control_plane.card_update_configuration(
                     args,
+                    authenticated_user_edit=bool(
+                        context is not None
+                        and context.get("principalKind") is None
+                        and principal is None
+                    ),
                     caller_card_id=caller_card_id,
                     target_card_id=str(args.pop("_effectTargetCardId", "") or ""),
                     target_card_revision_id=str(
@@ -3715,8 +3722,9 @@ def _attach_execution_receipt(
 
 
 def _mcp_tool_timeout_seconds(name: str) -> float:
-    if name in {"engraphis_remember", "engraphis_update_memory", "engraphis_correct"}:
+    if name in {"engraphis_remember", "engraphis_update_memory", "engraphis_correct", "engraphis_ingest"}:
         # Preserve the existing semantic-write allowance through both transports.
+        # Ingest includes the extractor's 135-second account transport before storage.
         # Optional Main preload remains governed by its separate two-second budget.
         return 190.0
     if name in {

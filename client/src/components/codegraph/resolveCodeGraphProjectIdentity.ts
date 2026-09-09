@@ -26,6 +26,7 @@ type CbmProjectStatus = {
 };
 
 export type ResolveCbmProjectOptions = {
+  context?: CbmReadContext;
   configuredProjectName?: string | null;
   canonicalProjectName?: string;
   listProjects?: () => Promise<{ projects?: CbmProjectRow[] }>;
@@ -34,32 +35,27 @@ export type ResolveCbmProjectOptions = {
 
 export const CANONICAL_CBM_PROJECT_NAME = 'C-Projects-LiquidAIty-main';
 
-let nextRpcId = 1;
+export type CbmReadContext = { projectId: string; deckId: string; cardId: string };
 
 export async function callCbmTool<T = unknown>(
   name: string,
   args: Record<string, unknown> = {},
+  context?: CbmReadContext,
 ): Promise<T> {
-  const res = await fetch('/rpc', {
+  if (!context) throw new Error('CodeGraph requires the current saved workspace');
+  const res = await fetch('/api/coder/codegraph/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: nextRpcId++,
-      method: 'tools/call',
-      params: { name, arguments: args },
-    }),
+    body: JSON.stringify({ ...context, name, arguments: args }),
   });
   if (!res.ok) {
-    throw new Error(`CBM RPC HTTP ${res.status}: ${res.statusText}`);
+    throw new Error(`CodeGraph request failed (${res.status})`);
   }
   const json = await res.json();
   if (json?.error) {
-    throw new Error(String(json.error.message || 'CBM RPC error'));
+    throw new Error(String(json.error.message || json.error));
   }
-  const text = json?.result?.content?.[0]?.text;
-  if (typeof text === 'string') return JSON.parse(text) as T;
-  return json?.result as T;
+  return json as T;
 }
 
 /** Normalize a filesystem path for identity comparison: backslashes → slashes,
@@ -91,11 +87,11 @@ export async function resolveCbmProjectName(
 ): Promise<string> {
   const fetchProjects =
     options.listProjects ??
-    (() => callCbmTool<{ projects?: CbmProjectRow[] }>('list_projects'));
+    (() => callCbmTool<{ projects?: CbmProjectRow[] }>('list_projects', {}, options.context));
   const fetchStatus =
     options.getProjectStatus ??
     ((projectName: string) =>
-      callCbmTool<CbmProjectStatus>('index_status', { project: projectName }));
+      callCbmTool<CbmProjectStatus>('index_status', { project: projectName }, options.context));
   const result = await fetchProjects();
   const projects = Array.isArray(result?.projects) ? result.projects : [];
   const canonicalProjectName =

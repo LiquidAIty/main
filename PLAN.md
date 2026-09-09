@@ -199,6 +199,39 @@ the transient Card call. The call carries task meaning and selected context, not
 - Hermes mode/profile: `main` / `liquidaity-main`
 - Owns the persistent conversation front door and approval of downstream work.
 - May use only its saved tools and its saved outgoing relationships.
+- Reads graph context, researches, reasons and gives substantive answers itself. Main chooses
+  whether a specific task benefits from delegation; answer length or format never forces a handoff.
+- The September 9 correction removes the saved one-paragraph limit and mandatory detailed-answer
+  delegation. Main now selects `web_search` and `engraphis_ingest` alongside its existing reads and
+  delegation capability. Its existing Script, model and connections remain. Saved configuration and
+  next-Run preparation are verified. Run `req_cb34c031` used the read Script and `engraphis_ingest`,
+  answered substantively, and did not delegate. It saved five facts; after-chat extraction saved four more.
+  Read-back was blocked by pending review. The implementation-discussion test content and overlapping
+  extraction are not accepted project-memory quality.
+- The latest September 9 decision removes automatic completed-pair extraction. Main reads relevant
+  graph context, answers in chat, and chooses useful explicit Engraphis writes. Delegated extraction
+  is now an available model-selected option, not an automatic trigger. Operating instructions belong
+  in saved Cards, never in stand-in user conversations. The bad architectural test above is rejected.
+- ThinkGraph refreshes on Main completion and attention reconnect. Explicit `engraphis_ingest`
+  receipts expose returned `facts[].id` to the existing attention observer. The removed background
+  extraction notification path does not remain as a fallback. Loaded explicit-write proof is pending.
+- The owner's final visualization decision supersedes the pre-Constellation restoration. ThinkGraph
+  and KnowGraph use the unchanged Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` and its shipped
+  dependencies. The owner rejected the shipped Galaxy/Cyber startup presentation: the host selects
+  the shipped `original` force preset for both graphs, with `classic`
+  style and labels enabled through the public API. No force values or drawing callbacks are replaced.
+  ThinkGraph transports the complete
+  engine scene; Graphiti records use field aliases. CodeGraph and the surrounding controls remain.
+- The owner rejected the test graph. The exact project `1b1a6958-0658-4b1a-bf13-e2066582adb4`
+  was cleared through Engraphis's workspace-delete operation: 12 memories removed; subsequent projection
+  returned zero entities, zero relationships and no pending review IDs. Other graph engines and Cards
+  were not cleared. Main delegation/team redesign remains undecided; no replacement data was generated.
+- The exact inappropriate Main test turn (Hermes session `20260909_013436_8dc5a7`, user row 1575)
+  was removed from active history with Hermes `rewind_to_message`: 13 rows rewound; the prior user/answer
+  rows 1573 and 1574 compared unchanged. Hermes audit history remains; no other session was reset.
+  The saved Main prompt no longer promises automatic enrichment (deck revision
+  `1b48e53a-5028-4723-804e-e3b43817d316`). Its other settings and all other Cards/wires compared unchanged.
+
 
 ### Agent Builder
 
@@ -206,9 +239,13 @@ the transient Card call. The call carries task meaning and selected context, not
 - Hermes mode/profile: `delegate` / `liquidaity-agent-builder`
 - Appears beneath Main Chat as a Run-based coding surface and executes explicit implementation missions:
   inspect current source, edit, run commands/tests, and return evidence.
-- In normal conversation the same saved profile retrieves ThinkGraph and KnowGraph data directly and
-  writes the requested detailed answer, report, plan, or prompt. Writing does not authorize execution.
-  Main remains the upper conversation; the lower reader does not switch Main into a terminal mode.
+- A stopped CLI pane can reattach to an already-running replacement with the same saved Card,
+  project, deck, conversation and profile. This is a read-only session lookup on closure/focus,
+  not permission to launch a process or select another Card.
+- For a specific delegated task, the same saved profile can retrieve ThinkGraph and KnowGraph data
+  and produce an artifact, report, plan or prompt. Main also answers and synthesizes in conversation;
+  there is no blanket detailed-answer handoff. Writing does not authorize execution. The lower Hermes CLI
+  does not switch Main into a terminal mode.
 - Also owns approved Card creation/configuration, canvas wiring, agent UI, IDD, Agent Maker, and CBM work.
 - Its actual available CBM operations come from saved grants and the live catalog. Follow the
   current CBM discovery procedure; this document does not narrow that catalog.
@@ -271,7 +308,8 @@ owners before this behavior is described as working.
 
 The project has the new ThinkGraph binding, the existing Graph Agent narrowed to KnowGraph research,
 and the existing Builder extended for synthesis. Deterministic preparation verifies their grants and
-Main's saved delegation edges without inference. The lower reader displays Builder's actual Run output.
+Main's saved delegation edges without inference. The lower surface opens the saved Builder's native interactive Hermes CLI.
+Historical completed-pair implementation (removed September 9):
 The completed-pair source hook returns Main independently of background delivery. Following the owner's
 September 8 correction, Python delivers retained Main input/output only to ThinkGraph through the
 existing saved Run doorway. The automatic Graph Agent second stage and copied worker-result hints are
@@ -453,11 +491,107 @@ CodeGraph   = native CBM repository structure
 AgentGraph  = Cards, relationships, Runs, delegation, references, tools, and artifacts in AGE
 ```
 
-The current ThinkGraph MVP uses the Python-owned Engraphis projection route, the renderer-neutral
-`GraphProjectionV1` DTO, one disposable in-memory Graphology `MultiDirectedGraph`, and Sigma v3 WebGL.
-Graphology and Sigma are view state only. Attention decorates exact IDs already returned by Engraphis;
-it cannot create substitute nodes. Empty native results render an honest empty state. A later 3D mode may
-consume the same DTO but is not part of the current renderer.
+The owner rejected the ThinkGraph Sigma display on September 8. Its renderer, inspector and
+view-only layout code are removed. Removing the ThinkGraph tab as well was an overbroad change;
+the tab is restored using the existing force-graph projection surface, with hollow nodes and
+native memory text in node and relationship inspection. ThinkGraph uses Engraphis's returned coordinates;
+KnowGraph keeps its force layout. All three graph tabs remain available.
+Engraphis and its Python-owned projection/reference APIs remain. The four rejected generated test
+memories were retired through native Engraphis operations; the live projection then returned zero
+nodes and edges. Historical records and original conversations remain. The subsequent fictional Sam
+conversation initially produced eight native entities and six relationships through the saved ThinkGraph agent.
+After a second ordinary turn, that rejected projection contained sixteen entities and fourteen relationships.
+The worker reused prior memories, retained the hypothetical subject and undecided buying status, and kept
+assistant proposals separate. A paraphrased native semantic read returned the relevant new memories first.
+Semantic acceptance remains partial: several extracted triples have incorrect or incomplete endpoints.
+The second worker Run also reported 179,161 cumulative input tokens over about 102 seconds; its public
+transcript read is blocked by shared/unmapped native-session identity. Investigate that context cost and
+repair extraction before increasing test volume. These examples were subsequently rejected and deleted.
+The owner's subsequent correction conversation exposed two native Sam entities with different types
+(`person` and `invented_persona`) and a separate Gene entity; identity reconciliation remains unproven.
+Sam is a fictional test subject, not Gene. Main incorrectly inferred that no native entity relationships
+existed from a compact memory-search result that omitted them. Missing fields in a search result are not
+proof of absence in the graph. Direct native projection reads contradict that answer.
+Both earlier Main Runs remain stored, but their native session IDs differ across restart. The Main history
+route currently ignores its project/conversation query and returns only the live bridge snapshot; durable
+conversation continuity is not proven. Do not repair this by merging unrelated histories.
+Entity and relationship labels now share collision detection, giving entity names priority while retaining
+all native edges and inspector access. This display repair does not establish extraction correctness.
+The owner's subsequent instruction rejects this entire generated dataset and the person-centered model.
+The native Engraphis workspace for project `1b1a6958-0658-4b1a-bf13-e2066582adb4` was hard-deleted:
+ten records removed, with the live projection returning zero nodes and zero edges. Conversations and
+the other graph authorities remain separate and were not deleted. The existing saved ThinkGraph worker
+The September 9 follow-up enables `card_a52fd511ecb14f53` and existing incoming connection
+`edge_dc7d538ab679` for explicit Main delegation. Main's saved Card now has conditional read, concise
+note, correction, metadata-update, memory-link and extraction options. The worker receives a focused
+task and actual material, not an automatic completed-pair job. Models, the Main read Script and
+unrelated Cards are preserved. These saved settings are read back; useful live execution still needs proof.
+Engraphis owns the scene and its stored entity/evidence links. Its configured regex graph extractor
+is preserved and its structured LLM extractor uses the saved ThinkGraph account/model. The old custom
+review service and complete dashboard mount are removed. The existing canvas loads the unchanged
+Engraphis graph component with its Original force preset, Classic style and labels. The pull tab opens
+graph settings; node selection opens the selected entry and stored relationships. Remove note retires
+that exact Engraphis memory and reloads the scene, retaining history. Arbitrary entity or edge deletion
+is not yet provided by this control. No application approval queue or automatic conversation ingestion
+remains. ThinkGraph notes are brief, intentionally loose prose about evolving intent and perspective.
+KnowGraph can retain longer source-backed research entries. Both are stored by their graph authority,
+not composed by the browser. Real extraction and visual usefulness with accepted project content are still unproven.
+The exact rejected workspace was checked empty after its final orphan entity was removed through
+Engraphis workspace deletion; no replacement data was generated.
+The later cleanup also cleared this project's KnowGraph group, removing 72 nodes (67 entities and
+five documents). This was destructive, the owner rejected that expansion of the ThinkGraph repair,
+and no restoration has been performed. Both project graph endpoints subsequently returned empty
+results. No further deletion or replacement sample data is authorized by this recovery note.
+After the supported app restart on September 8, the public MCP catalog reports 81 tools. The live
+IDD endpoint exposes all 42 distinct Engraphis tools, with input schemas and annotations compared
+against the installed package: no missing or extra entries. A discovered stats action was exercised
+through the actual gateway in a disposable store, including rejection of a different workspace.
+The two project graph endpoints remain empty after restart (573 ms ThinkGraph, 538 ms KnowGraph on
+the observed reads). The preview shows the empty KnowGraph state. Thirty-three focused Python
+checks, a separate gateway check, 22 client checks, client TypeScript checking, and the backend's
+startup compilation passed. These are transport/preservation results, not extraction acceptance.
+The KnowGraph server audit still finds different relationship-ID conventions between overview and
+expansion, an undirected expansion match, and storage relationship types exposed instead of the
+Graphiti fact predicate. Its backend was not edited in this removal. The subsequent restoration repairs
+CodeGraph attention reads and expansion through the existing endpoint and app-published CBM queries,
+using stored relationship IDs and direction. Browser conversion of call-tree rows remains removed.
+Read-only Engraphis context recall, attention retention across refreshes, and the original NetworkX
+analysis utility/test are restored. These restorations do not establish extraction quality or resolve
+the KnowGraph backend discrepancies above.
+The literature review remains incomplete; no claim of having read 100 papers is made. The proposed
+repair must address source-faithful extraction, entity identity across conversation turns, qualified
+relationships, and source-backed inspection/retrieval before changing layout or generating more data.
+Retain proposals, uncertainty and negation instead of promoting them to established facts. Evaluate
+actual answers and their supporting passages, not just non-empty results, graph counts or matching
+words. These are research conclusions, not implemented behavior or approval for another framework.
+Relevant primary reading: [Knowledge Graphs](https://kgbook.org/),
+[DocRED](https://aclanthology.org/P19-1074/),
+[MinIE](https://aclanthology.org/D17-1278/),
+[CaRB](https://aclanthology.org/D19-1651/),
+[relationship summaries](https://aclanthology.org/D19-5414/), and
+[test-driven KG construction](https://w3id.org/kg-construct/workshop/2023/resources/paper4.pdf).
+Current owner priority is Main, ThinkGraph, then delegated KnowGraph research and completion delivery.
+Builder and attention-based CodeGraph work are deferred. Compare one-pair versus larger conversation
+windows, paraphrased recall, corrections, and source-backed research separately; do not change engines.
+
+September 9 comparison remains PARTIAL. The owner now requests a bounded comparison of Main's direct
+writes, processing after a completed pair, and their combination; this does not enable an automatic
+replay loop. Saved Main and ThinkGraph instructions finish writes from their receipts without immediately
+reading them back. Fresh native Main Run `req_b773d1b1` took 66.546 seconds, made one write and no graph
+reads, and preserved tentative ASTS/MSFT interests. Its graph omitted AST SpaceMobile. The subsequent
+`thinkgraph-pair-comparison-20260909-01` took 140.320 seconds: the ingestion caller timed out, then the
+worker added an assistant-proposed framework through a direct write. Subsequent native receipt and
+inspector evidence confirms extraction continued and stored six pending records before that extra write.
+They preserve the tentative interests and identify AST SpaceMobile, but their derived relationships
+still contain generic User endpoints and long phrase endpoints. These records remain pending and inert
+in the visible graph. No retry, deletion, or automatic approval was performed; this is not acceptance.
+The MCP host incorrectly applied its ordinary 30-second deadline to ingestion despite the extractor's
+135-second transport allowance. Ingestion now shares the existing 190-second semantic-write deadline;
+the regression failed before repair and six focused checks pass. The repaired host has restarted, but a
+new extraction receipt through that host remains unproven. After the owner restored Docker, PostgreSQL,
+Neo4j, backend, Python rails, MCP readiness and the app page were verified; a warm graph projection took
+0.400 seconds. Cold graph initialization exceeded a 45-second read deadline. Preserve the existing data
+while resolving extraction quality and visibility; do not replay the same pair to hide the failed receipt.
 
 The foreground graph starts empty and reveals only native objects actually returned, selected,
 consumed, traversed, handed off, or written. Inspector detail may show technical receipts. Card faces
@@ -467,8 +601,8 @@ Engraphis is pinned to 1.7.1 and uses the local immutable MiniLM embedding model
 service. The public MCP catalog derives native read/write schemas and IDD publication from that owner;
 there are no Constellation aliases. The owner's subsequent recovery direction authorizes removing
 obsolete Constellation code and dependency residue now, while product acceptance remains partial. The
-old adapter and bridge are removed and cannot act as a fallback. Preserve the
-useful `ConstellationSigmaSurface` renderer and durable graph files when that cleanup becomes due.
+old adapter and bridge are removed and cannot act as a fallback. The later explicit rejection also
+removed the experimental renderer. Preserve the native engine and durable graph files.
 
 KnowGraph UI projection selects at most 500 project-scoped nodes and 1,000 in-window relationships and
 does not transport embedding arrays. Graphiti remains the only native KnowGraph semantic/search authority.
@@ -530,12 +664,13 @@ alternate startup instructions.
 ## Ordered delivery
 
 Current owner priority: clean obsolete code, instructions and memory, explain fixed automation and its
-data destinations, then establish the graph behavior one boundary at a time. Only completed Main
-conversations automatically go to ThinkGraph. Graph Agent receives delegated research and retains
+data destinations, then establish the graph behavior one boundary at a time. Main deliberately reads and writes ThinkGraph; automatic completed-conversation ingestion is removed. Graph Agent receives delegated research and retains
 useful sourced findings in KnowGraph. Entity/relationship linking and Main context search/injection
 remain separate work; actual-agent acceptance is paused during this cleanup. Do not impose Q&A.
-Main stays visible above the pull-up Builder surface: a terminal in Canvas and an output reader
-elsewhere. Their configuration Cards open on Prompt with no CLI tab. Mag One receives Main's
+The September 9 owner-requested restoration uses the September 6 pull-up behavior: Builder's native
+Hermes terminal appears in every workspace; full-height expansion enables direct CLI input and the
+handle restores Main Chat. Split mode shows Builder output while Main remains the input surface.
+Their configuration Cards open on Prompt with no CLI tab. Mag One receives Main's
 user-approved mission and usable connected agents, without an additional product gate.
 Product controls should explain themselves through placement and behavior; do not add explanatory panels or filler copy.
 

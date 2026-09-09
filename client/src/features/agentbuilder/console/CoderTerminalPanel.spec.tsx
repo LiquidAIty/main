@@ -89,7 +89,29 @@ async function render(element: React.ReactNode) {
 }
 
 describe('CoderTerminalPanel', () => {
-  it('keeps the saved Builder session and Main through pull-up without enabling direct input', async () => {
+  it('reattaches a stopped pane only to an already-running session with the same saved identity', async () => {
+    const stopped = { ...session(), state: 'stopped' as const, pid: null };
+    const replacement = { ...session(), id: 'replacement-session' };
+    const terminalClient = client({
+      getSession: vi.fn(async () => stopped),
+      listSessions: vi.fn(async () => [
+        { ...replacement, id: 'wrong-profile', profile: 'different-profile' },
+        { ...replacement, id: 'wrong-card', ownerCardId: 'different-card' },
+        { ...replacement, id: 'wrong-project', projectId: 'different-project' },
+        replacement,
+      ]),
+      ensureSession: vi.fn(),
+    });
+    await render(<CoderTerminalPanel open client={terminalClient} initialSession={stopped} />);
+    expect(host!.querySelector('[data-testid="coder-terminal-panel"]')?.getAttribute('data-session-id'))
+      .toBe(replacement.id);
+    expect(xtermProps.current?.interactive).toBe(true);
+    await act(async () => { await xtermProps.current?.onData('input'); });
+    expect(terminalClient.sendInput).toHaveBeenCalledExactlyOnceWith(replacement.id, 'input');
+    expect(terminalClient.ensureSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the saved Builder session through pull-up and gives input only to direct mode', async () => {
     const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
       profile: 'liquidaity-agent-builder' };
     const nativeSession = { ...session(), ownerCardId: savedCard.cardId, profile: savedCard.profile };
@@ -108,10 +130,10 @@ describe('CoderTerminalPanel', () => {
     const surface = host!.querySelector('[data-testid="main-work-surface"]') as HTMLDivElement;
     surface.getBoundingClientRect = () => ({ height: 600 } as DOMRect);
     await act(async () => divider.click());
-    expect(host!.querySelector('[data-testid="main-input"]')).not.toBeNull();
-    expect(xtermProps.current?.interactive).toBe(false);
+    expect(host!.querySelector('[data-testid="main-input"]')).toBeNull();
+    expect(xtermProps.current?.interactive).toBe(true);
     await act(async () => { await xtermProps.current?.onData('native input'); });
-    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+    expect(terminalClient.sendInput).toHaveBeenCalledExactlyOnceWith(nativeSession.id, 'native input');
     await act(async () => divider.click());
     expect(host!.querySelector('[data-testid="main-input"]')).not.toBeNull();
     expect(host!.querySelector('[data-testid="coder-terminal-panel"]')).toBe(panel);

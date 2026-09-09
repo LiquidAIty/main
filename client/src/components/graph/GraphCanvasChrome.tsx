@@ -3,8 +3,13 @@ import type { CSSProperties } from 'react';
 import { GRAPH_WORKSPACE, getGraphMajorGridGap } from './graphWorkspaceContract';
 import { GRAPH_THEME, graphControlButtonStyle, graphControlStackStyle } from './graphVisualTokens';
 
-export function GraphPaperBackground({ zIndex = 0 }: { zIndex?: number }) {
-  const majorGap = getGraphMajorGridGap();
+export function GraphPaperBackground({ zIndex = 0, viewport = { x: 0, y: 0, zoom: 1 } }: {
+  zIndex?: number;
+  viewport?: { x: number; y: number; zoom: number };
+}) {
+  const majorGap = getGraphMajorGridGap() * viewport.zoom;
+  const minorGap = GRAPH_WORKSPACE.worldGridGap * viewport.zoom;
+  const lineWidth = GRAPH_THEME.graphPaper.lineWidth * viewport.zoom;
   return (
     <div
       aria-hidden="true"
@@ -13,19 +18,22 @@ export function GraphPaperBackground({ zIndex = 0 }: { zIndex?: number }) {
         inset: 0,
         zIndex,
         pointerEvents: 'none',
-        background: GRAPH_THEME.background.knowledgeSurface,
+        backgroundColor: GRAPH_THEME.surface.base,
         backgroundImage: [
-          `linear-gradient(to right, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
-          `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMinor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
-          `linear-gradient(to right, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
-          `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMajor} ${GRAPH_THEME.graphPaper.lineWidth}px, transparent ${GRAPH_THEME.graphPaper.lineWidth}px)`,
+          `linear-gradient(to right, ${GRAPH_THEME.background.gridMinor} ${lineWidth}px, transparent ${lineWidth}px)`,
+          `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMinor} ${lineWidth}px, transparent ${lineWidth}px)`,
+          `linear-gradient(to right, ${GRAPH_THEME.background.gridMajor} ${lineWidth}px, transparent ${lineWidth}px)`,
+          `linear-gradient(to bottom, ${GRAPH_THEME.background.gridMajor} ${lineWidth}px, transparent ${lineWidth}px)`,
+          GRAPH_THEME.background.agentSurface,
         ].join(','),
         backgroundSize: [
-          `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
-          `${GRAPH_WORKSPACE.worldGridGap}px ${GRAPH_WORKSPACE.worldGridGap}px`,
+          `${minorGap}px ${minorGap}px`,
+          `${minorGap}px ${minorGap}px`,
           `${majorGap}px ${majorGap}px`,
           `${majorGap}px ${majorGap}px`,
+          'auto, auto, auto',
         ].join(','),
+        backgroundPosition: [...Array(4).fill(`${viewport.x}px ${viewport.y}px`), '0 0, 0 0, 0 0'].join(','),
       }}
     />
   );

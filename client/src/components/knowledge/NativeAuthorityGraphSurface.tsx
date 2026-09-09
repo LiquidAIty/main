@@ -1,10 +1,11 @@
 import { lazy, useEffect, useMemo, useRef, useState } from 'react';
-import ForceGraph from 'force-graph';
-import { forceCollide, forceX, forceY } from 'd3-force';
+import '../../vendor/engraphis/vendor/d3.min.js';
+import '../../vendor/engraphis/vendor/force-graph.min.js';
+import '../../vendor/engraphis/engraphis-graph.js';
 
 import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
-import { GraphNavigationControls } from '../graph/GraphCanvasChrome';
+import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import './nativeAuthorityGraphSurface.css';
 
 const CbmGraphTab = lazy(async () => {
@@ -12,7 +13,7 @@ const CbmGraphTab = lazy(async () => {
   return { default: GraphTab };
 });
 
-type GraphAuthority = 'knowgraph';
+type GraphAuthority = 'thinkgraph' | 'knowgraph';
 
 // The server-owned graph projection contract rendered by the native surfaces.
 export type GraphProjectionNode = {
@@ -36,7 +37,7 @@ export type GraphProjectionNode = {
   validTo?: string | null;
   ingestedAt?: string;
   updatedAt?: string;
-  mentionCount: number;
+  mentionCount?: number;
   lastMentionedAt?: string;
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
@@ -58,7 +59,7 @@ export type GraphProjectionEdge = {
   source: string;
   target: string;
   predicate: string;
-  mentionCount: number;
+  mentionCount?: number;
   lastMentionedAt?: string;
   properties?: Record<string, unknown>;
   provenance?: Record<string, unknown>;
@@ -78,6 +79,7 @@ export type GraphProjectionV1 = {
     gaps: Array<{ source: string; target: string; edgeClass: 'derived'; derivedType: string; reason: string }>;
     durationMs: number;
   };
+  scene?: { nodes: GraphProjectionNode[]; edges: GraphProjectionEdge[]; [key: string]: unknown };
   embedding?: Record<string, unknown>;
   counts?: { nodes: number; edges: number };
   nodes: GraphProjectionNode[];
@@ -175,78 +177,24 @@ export function NativeCodeGraphSurface({
   );
 }
 
-type NativeNode = {
-  id: string;
-  canonicalId: string;
-  label: string;
-  fullLabel: string;
-  etype: string;
-  authority: string;
-  currentState?: string;
-  trustState?: string;
-  qualityState?: string;
-  codeGraphRef?: string;
-  knowGraphRef?: string;
-  provenance: Record<string, unknown>;
-  degree: number;
-  val: number;
-  properties: Record<string, unknown>;
-  attentionActorCardId?: string;
-  attentionActorColor?: string;
-  attentionToolName?: string;
-  attentionActive: boolean;
-  source?: 'user' | 'assistant' | 'reasoning' | 'tool';
-  transient: boolean;
-  presentationLayer?: string;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  fx?: number;
-  fy?: number;
+type EngraphisRenderer = {
+  setPreset: (name: 'original') => Record<string, number | boolean | string>;
+  setStyle: (name: 'classic') => void;
+  setSettings: (settings: Record<string, number | boolean | string>) => void;
+  setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }) => void;
+  setHighlight: (id: string | null) => void;
+  graphToScreen: (x: number, y: number) => { x: number; y: number };
+  fit: () => void;
+  destroy: () => void;
 };
 
-type NativeLink = {
-  id: string;
-  source: string | NativeNode;
-  target: string | NativeNode;
-  label: string;
-  transient: boolean;
-  attentionActorColor?: string;
-};
-
-const TYPE_COLORS: Record<string, string> = {
-  Entity: '#76c8bf',
-  Episodic: '#b9a2d9',
-  Community: '#e1c183',
-  Goal: '#37ADAA',
-  Question: '#62B0E8',
-  Decision: '#7BC8C4',
-  Finding: '#91C4B3',
-  CodeInspectionNeed: '#8FA9B3',
-  ResearchNeed: '#6D8F99',
-  Risk: '#8798A0',
-};
-const DEFAULT_TYPE_COLOR = '#A7B0BA';
-const LIVE_SOURCE_COLORS: Record<string, string> = {
-  user: '#F3B35B',
-  reasoning: '#A98BF3',
-  assistant: '#63D8D2',
-  tool: '#EE8C66',
-};
-
-function endpointId(value: string | NativeNode): string {
-  return typeof value === 'string' ? value : value.id;
-}
-
-function shortNodeLabel(node: GraphProjectionV1['nodes'][number]): string {
-  const properties = node.properties || {};
-  const semantic = String(properties.display_label || node.label || node.title || node.type || 'record').trim();
-  return semantic.length > 38 ? `${semantic.slice(0, 37)}…` : semantic;
-}
-
-function nodeRadius(node: NativeNode, size: number) {
-  return node.etype === 'Episodic' ? 2.2 : Math.max(1.8, Math.min(7, size * Math.sqrt(node.val) * 0.45));
+declare global {
+  interface Window {
+    EngraphisGraph: { create: (host: HTMLElement, options: {
+      onNodeClick: (node: { id: string }) => void;
+      onBackgroundClick: () => void;
+    }) => EngraphisRenderer };
+  }
 }
 
 function sourceDocument(node: GraphProjectionNode) {
@@ -280,6 +228,7 @@ export function NativeGraphProjectionSurface({
   authority = 'knowgraph',
   onExpand,
   onUseAsContext,
+  onRemoveEvidence,
 }: {
   projection: GraphProjectionV1 | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -287,349 +236,100 @@ export function NativeGraphProjectionSurface({
   authority?: GraphAuthority;
   onExpand?: (node: GraphProjectionNode) => Promise<void>;
   onUseAsContext?: (node: GraphProjectionNode) => void;
+  onRemoveEvidence?: (memoryId: string) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const graphRef = useRef<any>(null);
-  const hoveredRef = useRef<string | null>(null);
-  const selectedRef = useRef<string | null>(null);
-  const adjacencyRef = useRef(new Map<string, Set<string>>());
-  const nodeObjectsRef = useRef(new Map<string, NativeNode>());
-  const linkObjectsRef = useRef(new Map<string, NativeLink>());
-  const appliedTopologyRef = useRef('');
-  const appliedNodeIdsRef = useRef(new Set<string>());
-  const appliedForceSettingsRef = useRef('');
-  const initialFitRef = useRef(false);
-  const initialFitTimerRef = useRef<number | null>(null);
-  const [selected, setSelected] = useState<NativeNode | null>(null);
+  const graphRef = useRef<EngraphisRenderer | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [settings, setSettings] = useState<Record<string, number | boolean | string>>({});
   const [expanding, setExpanding] = useState(false);
-  const [settings] = useState({
-    font: 12,
-    labelDensity: 8,
-    size: 3,
-    linkWidth: 1,
-    repel: 120,
-    linkDistance: 30,
-    gravity: 14,
-  });
-
-  selectedRef.current = selected?.id || null;
-
-  const nativeData = useMemo(() => {
-    const nodes = projection?.nodes ?? [];
-    const edges = projection?.edges ?? [];
-    const degree = new Map<string, number>();
-    for (const edge of edges) {
-      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
-      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
-    }
-    const nodeDescriptions: NativeNode[] = nodes
-      .map((node) => ({
-        id: node.id,
-        canonicalId: String(node.canonicalId || node.id),
-        label: shortNodeLabel(node),
-        fullLabel: String(node.label || node.title || node.id),
-        etype: node.type || 'person_or_concept',
-        authority: String(node.authority || projection?.authority || authority),
-        currentState: node.currentState,
-        trustState: node.trustState,
-        qualityState: node.qualityState,
-        codeGraphRef: node.codeGraphRef,
-        knowGraphRef: node.knowGraphRef,
-        provenance: node.provenance || {},
-        degree: degree.get(node.id) || 0,
-        val: 1 + (degree.get(node.id) || 0),
-        properties: node.properties || {},
-        attentionActorCardId: typeof node.properties?.attentionActorCardId === 'string'
-          ? node.properties.attentionActorCardId
-          : undefined,
-        attentionActorColor: typeof node.properties?.attentionActorColor === 'string'
-          ? node.properties.attentionActorColor
-          : undefined,
-        attentionToolName: typeof node.properties?.attentionToolName === 'string'
-          ? node.properties.attentionToolName
-          : undefined,
-        attentionActive: node.properties?.attentionActive === true,
-        source: ['user', 'assistant', 'reasoning', 'tool'].includes(String(node.properties?.source))
-          ? node.properties?.source as NativeNode['source']
-          : undefined,
-        transient: node.properties?.transient === true,
-        presentationLayer: typeof node.properties?.presentationLayer === 'string'
-          ? node.properties.presentationLayer
-          : undefined,
-      }));
-    const ids = new Set(nodeDescriptions.map((node) => node.id));
-    const linkDescriptions: NativeLink[] = edges
-      .filter((edge) => ids.has(edge.source) && ids.has(edge.target))
-      .map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        label: edge.predicate,
-        transient: edge.properties?.persisted === false,
-        attentionActorColor: typeof edge.properties?.attentionActorColor === 'string'
-          ? edge.properties.attentionActorColor
-          : undefined,
-      }));
-
-    const nextNodes = new Map<string, NativeNode>();
-    const visibleNodes = nodeDescriptions.map((description) => {
-      const existing = nodeObjectsRef.current.get(description.id);
-      if (!existing) {
-        nextNodes.set(description.id, description);
-        return description;
-      }
-      Object.assign(existing, description);
-      nextNodes.set(existing.id, existing);
-      return existing;
-    });
-    nodeObjectsRef.current = nextNodes;
-
-    const nextLinks = new Map<string, NativeLink>();
-    const links = linkDescriptions.map((description) => {
-      const existing = linkObjectsRef.current.get(description.id);
-      if (!existing) {
-        nextLinks.set(description.id, description);
-        return description;
-      }
-      if (endpointId(existing.source) !== description.source) existing.source = description.source;
-      if (endpointId(existing.target) !== description.target) existing.target = description.target;
-      existing.label = description.label;
-      existing.transient = description.transient;
-      existing.attentionActorColor = description.attentionActorColor;
-      nextLinks.set(existing.id, existing);
-      return existing;
-    });
-    linkObjectsRef.current = nextLinks;
-    return {
-      nodes: visibleNodes,
-      links,
-      topology: `${visibleNodes.map((node) => node.id).sort().join('|')}::${links
-        .map((link) => `${link.id}:${endpointId(link.source)}>${endpointId(link.target)}`)
-        .sort()
-        .join('|')}`,
-    };
-  }, [authority, projection]);
-
-  const adjacency = useMemo(() => {
-    const result = new Map<string, Set<string>>();
-    for (const link of nativeData.links) {
-      const source = endpointId(link.source);
-      const target = endpointId(link.target);
-      if (!result.has(source)) result.set(source, new Set());
-      if (!result.has(target)) result.set(target, new Set());
-      result.get(source)!.add(target);
-      result.get(target)!.add(source);
-    }
-    return result;
-  }, [nativeData.links]);
-  adjacencyRef.current = adjacency;
-
-  useEffect(() => {
-    if (!hostRef.current || graphRef.current) return;
-    const graph = new ForceGraph(hostRef.current)
-      .backgroundColor('rgba(0,0,0,0)')
-      .cooldownTime(900)
-      .warmupTicks(20)
-      .nodeRelSize(1)
-      .autoPauseRedraw(true)
-      .onNodeClick((node) => {
-        setSelectedEdgeId(null);
-        setSelected(node as NativeNode);
-        setInspectorOpen(true);
-      })
-      .onLinkClick((link) => {
-        setSelected(null);
-        setSelectedEdgeId(String((link as NativeLink).id));
-        setInspectorOpen(true);
-      })
-      .onNodeHover((node) => {
-        hoveredRef.current = node ? String(node.id) : null;
-        if (hostRef.current) hostRef.current.style.cursor = node ? 'pointer' : 'grab';
-      });
-    graphRef.current = graph;
-    // A replacement renderer has no data even when React preserves these refs
-    // across an effect replay. Reapply topology and the initial fit to it.
-    appliedTopologyRef.current = '';
-    appliedNodeIdsRef.current = new Set();
-    appliedForceSettingsRef.current = '';
-    initialFitRef.current = false;
-    const resize = new ResizeObserver(([entry]) => {
-      graph.width(entry.contentRect.width).height(entry.contentRect.height);
-    });
-    resize.observe(hostRef.current);
-    return () => {
-      resize.disconnect();
-      if (initialFitTimerRef.current != null) {
-        window.clearTimeout(initialFitTimerRef.current);
-        initialFitTimerRef.current = null;
-      }
-      graph._destructor?.();
-      graphRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
+  const [renderError, setRenderError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const selected = projection?.nodes.find(node => node.id === selectedId);
+  const selectedProperties = selected?.properties || {};
+  const syncPaper = () => {
     const graph = graphRef.current;
     if (!graph) return;
-    const labelRank = new Map(
-      [...nativeData.nodes]
-        .sort((a, b) => Number(a.etype === 'Episodic') - Number(b.etype === 'Episodic') || b.degree - a.degree)
-        .map((node, index) => [node.id, index]),
-    );
-    const hasTransient = nativeData.nodes.some((node) => node.transient);
-    graph
-      .nodeCanvasObject((node: NativeNode, context: CanvasRenderingContext2D) => {
-        const focused = hoveredRef.current || selectedRef.current;
-        const neighbors = focused ? adjacencyRef.current.get(focused) : null;
-        const connectedFocus = Boolean(focused && neighbors && neighbors.size > 1);
-        const isNeighbor = !connectedFocus || node.id === focused || neighbors?.has(node.id);
-        const radius = nodeRadius(node, settings.size);
-        const attentionAlpha = node.transient
-          ? node.currentState === 'settled' ? 0.48 : 1
-          : hasTransient ? 0.2 : 1;
-        context.globalAlpha = attentionAlpha * (isNeighbor ? 1 : 0.12);
-        context.beginPath();
-        if (node.etype === 'Episodic') {
-          const x = node.x || 0, y = node.y || 0;
-          context.moveTo(x, y - radius); context.lineTo(x + radius, y); context.lineTo(x, y + radius); context.lineTo(x - radius, y); context.closePath();
-        } else context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-        context.fillStyle = node.attentionActorColor
-          || (node.transient && node.source
-          ? LIVE_SOURCE_COLORS[node.source]
-          : TYPE_COLORS[node.etype] || DEFAULT_TYPE_COLOR);
-        context.fill();
-        context.shadowBlur = 0;
-        if (connectedFocus && node.id === focused) {
-          context.lineWidth = 1.6;
-          context.strokeStyle = '#A9ECE8';
-          context.stroke();
-        }
-        context.globalAlpha = 1;
-      })
-      .nodePointerAreaPaint((node: NativeNode, color: string, context: CanvasRenderingContext2D) => {
-        const radius = Math.max(3, nodeRadius(node, settings.size)) + 2;
-        context.beginPath();
-        context.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-        context.fillStyle = color;
-        context.fill();
-      })
-      .linkColor((link: NativeLink) => {
-        const focused = hoveredRef.current || selectedRef.current;
-        const connected = focused && (endpointId(link.source) === focused || endpointId(link.target) === focused);
-        const defaultAlpha = link.transient ? 0.68 : hasTransient ? 0.1 : link.label === 'MENTIONS' ? 0.12 : 0.45;
-        const alpha = focused ? (connected ? 0.92 : 0.05) : defaultAlpha;
-        return link.attentionActorColor
-          ? link.attentionActorColor
-          : link.transient
-          ? `rgba(145,211,209,${alpha})`
-          : `rgba(112,154,160,${alpha})`;
-      })
-      .linkWidth((link: NativeLink) => {
-        const focused = hoveredRef.current || selectedRef.current;
-        return (focused && (endpointId(link.source) === focused || endpointId(link.target) === focused) ? 1.8 : 0.75) * settings.linkWidth;
-      })
-      .linkDirectionalArrowLength(2)
-      .linkDirectionalArrowRelPos(1)
-      .linkCanvasObjectMode(() => 'after')
-      .linkCanvasObject((link: NativeLink, context: CanvasRenderingContext2D, scale: number) => {
-        const source = link.source as NativeNode;
-        const target = link.target as NativeNode;
-        const focused = hoveredRef.current || selectedRef.current;
-        if (!focused || (source.id !== focused && target.id !== focused) || source.x == null || target.x == null) return;
-        context.font = `${11 / scale}px sans-serif`;
-        context.fillStyle = '#b6d8d3';
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        const label = link.label.replaceAll('_', ' ').toLowerCase();
-        const x = ((source.x || 0) + (target.x || 0)) / 2;
-        const y = ((source.y || 0) + (target.y || 0)) / 2;
-        context.lineWidth = 4 / scale;
-        context.strokeStyle = '#0b0e12';
-        context.strokeText(label, x, y);
-        context.fillText(label, x, y);
-      })
-      .onRenderFramePost((context: CanvasRenderingContext2D, scale: number) => {
-        const cap = nativeData.nodes.length <= 100 ? 100 : Math.round(settings.labelDensity * Math.max(1, scale));
-        const occupied: Array<{ x: number; y: number; w: number; h: number }> = [];
-        context.textAlign = 'center';
-        context.textBaseline = 'top';
-        context.lineJoin = 'round';
-        const focused = hoveredRef.current || selectedRef.current;
-        const ordered = [...graph.graphData().nodes as NativeNode[]].sort((a, b) => Number(b.id === focused) - Number(a.id === focused) || b.degree - a.degree);
-        for (const node of ordered) {
-          const hovered = focused;
-          const emphasized = node.id === hovered || node.id === selectedRef.current;
-          if (
-            node.x == null
-            || (!emphasized && !node.transient && (labelRank.get(node.id) ?? Number.MAX_SAFE_INTEGER) >= cap)
-          ) continue;
-          const neighbors = hovered ? adjacencyRef.current.get(hovered) : null;
-          const connectedFocus = Boolean(hovered && neighbors && neighbors.size > 1);
-          const isNeighbor = !connectedFocus || node.id === hovered || neighbors?.has(node.id);
-          if (!isNeighbor) continue;
-          const radius = nodeRadius(node, settings.size);
-          const fontSize = settings.font / scale;
-          const y = (node.y || 0) + radius + 2 / scale;
-          context.font = `${fontSize}px -apple-system,Segoe UI,sans-serif`;
-          const width = context.measureText(node.label).width;
-          const box = { x: node.x - width / 2, y, w: width, h: fontSize + 4 / scale };
-          if (!emphasized && occupied.some(other => box.x < other.x + other.w && box.x + box.w > other.x && box.y < other.y + other.h && box.y + box.h > other.y)) continue;
-          occupied.push(box);
-          context.lineWidth = 3 / scale;
-          context.strokeStyle = '#0a0a0f';
-          context.strokeText(node.label, node.x, y);
-          context.globalAlpha = node.transient
-            ? node.currentState === 'settled' ? 0.58 : 1
-            : hasTransient ? 0.28 : 1;
-          context.fillStyle = node.attentionActorColor
-            || (node.transient && node.source
-            ? LIVE_SOURCE_COLORS[node.source]
-            : '#d8d8e2');
-          context.fillText(node.label, node.x, y);
-          context.globalAlpha = 1;
-        }
-      });
-    graph.d3Force('charge').strength(-settings.repel);
-    graph.d3Force('link').distance(settings.linkDistance);
-    graph.d3Force('x', forceX(0).strength(settings.gravity / 100));
-    graph.d3Force('y', forceY(0).strength(settings.gravity / 100));
-    graph.d3Force('collide', forceCollide((node: NativeNode) => nodeRadius(node, settings.size) + 2));
-    const nextNodeIds = new Set(nativeData.nodes.map((node) => node.id));
-    const topologyChanged = appliedTopologyRef.current !== nativeData.topology;
-    const topologyAdded = nativeData.nodes.some((node) => !appliedNodeIdsRef.current.has(node.id));
-    const forceSettings = [settings.size, settings.repel, settings.linkDistance, settings.gravity].join(':');
-    const forceSettingsChanged = Boolean(
-      appliedForceSettingsRef.current
-      && appliedForceSettingsRef.current !== forceSettings,
-    );
-    if (topologyChanged) {
-      graph.graphData({ nodes: nativeData.nodes, links: nativeData.links });
-      appliedTopologyRef.current = nativeData.topology;
-      appliedNodeIdsRef.current = nextNodeIds;
-    } else {
-      graph.refresh?.();
-    }
-    appliedForceSettingsRef.current = forceSettings;
-    if (topologyAdded || forceSettingsChanged) {
-      graph.cooldownTime(900);
-      graph.d3ReheatSimulation();
-    }
-    if (!initialFitRef.current && nativeData.nodes.length > 0) {
-      initialFitRef.current = true;
-      initialFitTimerRef.current = window.setTimeout(() => {
-        graph.zoomToFit(320, 60);
-        initialFitTimerRef.current = null;
-      }, 180);
-    }
-  }, [adjacency, authority, nativeData, settings]);
+    const origin = graph.graphToScreen(0, 0);
+    const unit = graph.graphToScreen(1, 0);
+    const current = { x: origin.x, y: origin.y, scale: unit.x - origin.x };
+    const previous = cameraRef.current;
+    cameraRef.current = current;
+    if (previous && previous.scale > 0) setPaperViewport(paper => ({
+      x: paper.x + current.x - previous.x, y: paper.y + current.y - previous.y,
+      zoom: paper.zoom * current.scale / previous.scale,
+    }));
+  };
+  const beginCameraGesture = () => { cameraRef.current = null; syncPaper(); };
+  const zoom = (key: '+' | '-') => {
+    beginCameraGesture();
+    const canvas = hostRef.current?.querySelector('canvas');
+    if (!canvas) return;
+    const bounds = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true,
+      clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2,
+      deltaY: key === '+' ? -120 : 120 }));
+  };
 
   useEffect(() => {
-    if (!selected || nativeData.nodes.some((node) => node.id === selected.id)) return;
-    setSelected(null);
-    setInspectorOpen(false);
-  }, [nativeData.nodes, selected]);
+    if (!hostRef.current) return;
+    try {
+      const graph = window.EngraphisGraph.create(hostRef.current, {
+        onNodeClick: node => {
+          setControlsOpen(false);
+          setRemoveError(null);
+          setSelectedId(node.id);
+          setSelectedEdgeId(null);
+          setInspectorOpen(true);
+        },
+        onBackgroundClick: () => {
+          setSelectedId(null);
+          setSelectedEdgeId(null);
+          setInspectorOpen(false);
+        },
+      });
+      const defaults = graph.setPreset('original');
+      graph.setStyle('classic');
+      graph.setSettings({ labels: true });
+      setSettings({ ...defaults, labels: true });
+      graphRef.current = graph;
+      return () => { graph.destroy(); graphRef.current = null; };
+    } catch (failure) {
+      setRenderError(failure instanceof Error ? failure.message : String(failure));
+      return undefined;
+    }
+  }, [authority]);
+
+  useEffect(() => {
+    // Engraphis scenes retain all engine-owned layout and evidence fields.
+    // Graphiti uses the renderer's supported field aliases; no graph is inferred here.
+    const data = projection?.scene || {
+      nodes: projection?.nodes || [],
+      links: (projection?.edges || []).map(edge => ({ ...edge, relation: edge.predicate })),
+    };
+    graphRef.current?.setData(data);
+  }, [projection, authority]);
+
+  useEffect(() => {
+    graphRef.current?.setHighlight(selectedId);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (selectedId && !projection?.nodes.some(node => node.id === selectedId)) {
+      setSelectedId(null);
+      setInspectorOpen(false);
+    }
+    if (selectedEdgeId && !projection?.edges.some(edge => edge.id === selectedEdgeId)) {
+      setSelectedEdgeId(null);
+      setInspectorOpen(false);
+    }
+  }, [projection, selectedId, selectedEdgeId]);
 
   const allNodes = projection?.nodes.length ?? 0;
   const selectedEdge = projection?.edges.find((edge) => edge.id === selectedEdgeId);
@@ -646,23 +346,95 @@ export function NativeGraphProjectionSurface({
   const surfaceLabel = 'KnowGraph';
   return (
     <div data-testid={`native-${authority}-surface`} className="native-authority-graph" aria-busy={status === 'loading'}>
+      <GraphPaperBackground viewport={paperViewport} />
       <div className="native-authority-canvas">
-        <div ref={hostRef} className="native-authority-network" />
-        <GraphNavigationControls
-          onZoomIn={() => {
-            const graph = graphRef.current;
-            if (graph) graph.zoom(graph.zoom() * 1.2, 220);
-          }}
-          onZoomOut={() => {
-            const graph = graphRef.current;
-            if (graph) graph.zoom(graph.zoom() / 1.2, 220);
-          }}
-          onFit={() => graphRef.current?.zoomToFit(320, 60)}
+        <div ref={hostRef} className="native-authority-network graph-canvas"
+          data-renderer="engraphis-1.7.1"
+          onWheelCapture={beginCameraGesture}
+          onWheel={syncPaper}
+          onPointerDown={beginCameraGesture}
+          onPointerMove={event => { if (event.buttons) syncPaper(); }}
+          onKeyDownCapture={beginCameraGesture}
+          onKeyDown={syncPaper}
         />
-        {status === 'error' ? <div className="native-authority-empty">Graph failed: {error}</div> : null}
+        <GraphNavigationControls
+          onZoomIn={() => zoom('+')}
+          onZoomOut={() => zoom('-')}
+          onFit={() => {
+            cameraRef.current = null;
+            setPaperViewport({ x: 0, y: 0, zoom: 1 });
+            graphRef.current?.fit();
+          }}
+        />
+        {status === 'error' || renderError ? <div className="native-authority-empty">Graph failed: {renderError || error}</div> : null}
         {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No knowledge yet.</div> : null}
       </div>
-      <RightGlassDrawer
+      {authority === 'thinkgraph' ? <>
+        <RightGlassDrawer
+          isOpen={controlsOpen}
+          title="Graph settings"
+          onClose={() => setControlsOpen(false)}
+          onOpen={() => { setControlsOpen(true); setInspectorOpen(false); }}
+          collapsedLabel={null}
+          openAriaLabel="Open graph settings"
+          defaultWidth={340} minWidth={280} maxWidth={520}
+          storageKey="liquidaity.drawer.thinkgraph.width"
+          top={48} right={12} bottom={12} zIndex={6}
+        >
+          <div className="native-authority-controls">
+            <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
+              const patch = { labels: event.target.checked };
+              graphRef.current?.setSettings(patch);
+              setSettings(current => ({ ...current, ...patch }));
+            }} />Entity labels</label>
+            {([
+              ['Node size', 'size', 1, 12, 1], ['Text size', 'font', 6, 24, 1],
+              ['Line width', 'linkw', 0.1, 2, 0.01], ['Label density', 'labelDensity', 1, 100, 1],
+              ['Repel force', 'repel', 0, 400, 1], ['Link distance', 'link', 4, 80, 1],
+              ['Center gravity', 'gravity', 0, 400, 1],
+            ] as const).map(([label, key, min, max, step]) => <label key={key}>
+              <span>{label}</span>
+              <input aria-label={label} type="range" min={min} max={max} step={step}
+                value={Number(settings[key] ?? min)} onChange={event => {
+                  const patch = { [key]: Number(event.target.value) };
+                  graphRef.current?.setSettings(patch);
+                  setSettings(current => ({ ...current, ...patch }));
+                }} />
+              <output>{settings[key]}</output>
+            </label>)}
+            <button type="button" onClick={() => {
+              const defaults = graphRef.current?.setPreset('original');
+              graphRef.current?.setSettings({ labels: true });
+              setSettings({ ...defaults, labels: true });
+            }}>Reset to preset defaults</button>
+          </div>
+        </RightGlassDrawer>
+        {inspectorOpen && selected ? <div className="thinkgraph-entry" role="dialog" aria-label={selected.label}>
+          <button type="button" aria-label="Close entry" onClick={() => setInspectorOpen(false)}>×</button>
+          <article data-testid="thinkgraph-node-inspector" data-native-id={selected.id}>
+            <h4>{selected.label}</h4>
+            {typeof selectedProperties.summary === 'string' ? <p>{selectedProperties.summary}</p> : null}
+            {Array.isArray(selectedProperties.evidence) ? selectedProperties.evidence.map((item: any) =>
+              <section key={item.id}>
+                <p>{item.content || item.summary}</p>
+                {onRemoveEvidence && typeof item.id === 'string' ? <button type="button"
+                  disabled={removingId !== null} onClick={async () => {
+                    setRemovingId(item.id);
+                    setRemoveError(null);
+                    try { await onRemoveEvidence(item.id); }
+                    catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
+                    finally { setRemovingId(null); }
+                  }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
+              </section>) : null}
+            {removeError ? <p role="alert">{removeError}</p> : null}
+            {selectedRelationships.length ? <ul>{selectedRelationships.map(edge => <li key={edge.id}>
+              {projection?.nodes.find(node => node.id === edge.source)?.label} · {edge.predicate} · {projection?.nodes.find(node => node.id === edge.target)?.label}
+              {typeof edge.properties?.reason === 'string' && edge.properties.reason ? <p>{edge.properties.reason}</p> : null}
+              {typeof edge.properties?.fact === 'string' && edge.properties.fact ? <p>{edge.properties.fact}</p> : null}
+            </li>)}</ul> : null}
+          </article>
+        </div> : null}
+      </> : <RightGlassDrawer
         isOpen={inspectorOpen}
         title={surfaceLabel}
         onClose={() => setInspectorOpen(false)}
@@ -679,25 +451,26 @@ export function NativeGraphProjectionSurface({
         zIndex={6}
       >
       <div className="native-authority-controls">
-        {selected ? <section data-testid={`${authority}-node-inspector`} data-native-id={selected.canonicalId}>
-          <h4>{selected.fullLabel}</h4>
-          {typeof selected.properties.summary === 'string' ? <p>{selected.properties.summary}</p> : null}
+        {selected ? <section data-testid={`${authority}-node-inspector`} data-native-id={selected.canonicalId || selected.id}>
+          <h4>{selected.label}</h4>
+          {typeof selectedProperties.fullContent === 'string' ? <p>{selectedProperties.fullContent}</p> : typeof selectedProperties.summary === 'string' ? <p>{selectedProperties.summary}</p> : null}
           {selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
-          {Array.isArray(selected.properties.question_links) ? selected.properties.question_links.map((encoded, index) => {
+          {Array.isArray(selectedProperties.question_links) ? selectedProperties.question_links.map((encoded, index) => {
             let link: any;
             try { link = typeof encoded === 'string' ? JSON.parse(encoded) : encoded; } catch { return null; }
             return link?.questionRef?.nativeId ? <p key={index}>Question: {link.questionRef.nativeId} · {link.relation} · {String(link.outcome || '').replaceAll('_', ' ')}</p> : null;
           }) : null}
         </section> : null}
-        {selectedRelationships.length ? <section className="knowgraph-relationships">{selectedRelationships.filter(edge => edge.predicate !== 'MENTIONS').map(edge => <button key={edge.id} onClick={() => { setSelected(null); setSelectedEdgeId(edge.id); }}>
+        {selectedRelationships.length ? <section className="knowgraph-relationships">{selectedRelationships.filter(edge => edge.predicate !== 'MENTIONS').map(edge => <button key={edge.id} onClick={() => { setSelectedId(null); setSelectedEdgeId(edge.id); }}>
           <strong>{projection?.nodes.find(node => node.id === edge.source)?.label}</strong>
           <span>{edge.predicate.replaceAll('_', ' ').toLowerCase()}</span>
           <strong>{projection?.nodes.find(node => node.id === edge.target)?.label}</strong>
         </button>)}</section> : null}
-        {selectedEdge ? <section data-testid="knowgraph-edge-inspector" data-native-id={selectedEdge.id}>
+        {selectedEdge ? <section data-testid={`${authority}-edge-inspector`} data-native-id={selectedEdge.id}>
           <h4>{projection?.nodes.find((node) => node.id === selectedEdge.source)?.label} → {selectedEdge.predicate} → {projection?.nodes.find((node) => node.id === selectedEdge.target)?.label}</h4>
           {typeof selectedEdge.properties?.fact === 'string' ? <p>{selectedEdge.properties.fact}</p> : null}
           {typeof selectedEdge.properties?.summary === 'string' ? <p>{selectedEdge.properties.summary}</p> : null}
+          {typeof selectedEdge.properties?.reason === 'string' ? <p>{selectedEdge.properties.reason}</p> : null}
         </section> : null}
         {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) => <div key={node.id}><p>{node.label}</p>{links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>)}</section> : null}
         {selected ? <div className="native-authority-actions">{onExpand ? <button disabled={expanding} onClick={() => {
@@ -710,7 +483,7 @@ export function NativeGraphProjectionSurface({
           if (native) onUseAsContext(native);
         }}>Use in chat</button> : null}</div> : null}
       </div>
-      </RightGlassDrawer>
+      </RightGlassDrawer>}
     </div>
   );
 }

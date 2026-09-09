@@ -638,12 +638,6 @@ def model_task(idf: Idf) -> str:
         builder_guidance_text,
         builder_operation_text,
         selected_target_text,
-        (
-            f"Saved Card output requirements:\n"
-            f"{idf.stableSavedCardContext.outputRequirements.strip()}"
-            if idf.stableSavedCardContext.outputRequirements.strip()
-            else ""
-        ),
         idf.dynamicContext.task.strip(),
     ) if value)
 
@@ -661,7 +655,9 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
     stable = idf.stableSavedCardContext
     grants = idf.selectedToolsAndGrants
     return {
-        "systemPrompt": stable.instructions,
+        "systemPrompt": "\n\n".join(part for part in (
+            stable.instructions, stable.outputRequirements,
+        ) if part),
         "task": idf.dynamicContext.task,
         "graphContext": idf.actualGraphData.modelText,
         "outputRequirements": stable.outputRequirements,

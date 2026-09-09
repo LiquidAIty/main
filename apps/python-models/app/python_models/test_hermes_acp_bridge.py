@@ -4,6 +4,7 @@ import asyncio
 from contextlib import nullcontext
 import importlib
 import inspect
+import pytest
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,43 @@ from types import SimpleNamespace
 def _bridge(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parent))
     return importlib.import_module("hermes_acp_bridge")
+
+
+def test_account_completion_uses_exact_model_and_prompt_without_agent_or_fallback(monkeypatch, tmp_path):
+    bridge = _bridge(monkeypatch)
+    from agent import auxiliary_client
+    from hermes_cli import profiles
+    from hermes_constants import get_hermes_home
+    monkeypatch.setattr(profiles, "get_profile_dir", lambda name: tmp_path)
+    before = get_hermes_home()
+    calls = []
+    def complete(**kwargs):
+        calls.append(kwargs)
+        assert str(get_hermes_home()) == str(tmp_path)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"facts":[]}'))],
+                               model="gpt-5.6-luna", usage=SimpleNamespace(
+                                   prompt_tokens=100, completion_tokens=20, total_tokens=120))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete)))
+    def resolve(provider, model):
+        assert (provider, model) == ("openai-codex", "gpt-5.6-luna")
+        return client, model
+    monkeypatch.setattr(auxiliary_client, "resolve_provider_client", resolve)
+    monkeypatch.setattr(auxiliary_client, "call_llm", lambda *a, **kw: pytest.fail("fallback router used"))
+    request = {"profile": "thinkgraph", "model": "gpt-5.6-luna", "reasoningEffort": "low",
+               "messages": [{"role": "system", "content": "Extractor system prompt"},
+                            {"role": "user", "content": "Extractor request"}]}
+    result = bridge._account_completion(request)
+    assert result["content"] == '{"facts":[]}'
+    assert result["usage"] == {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+    assert calls[0]["messages"] == request["messages"]
+    assert "tools" not in calls[0]
+    assert get_hermes_home() == before
+    def fail(**kwargs):
+        raise RuntimeError("provider unavailable")
+    client.chat.completions.create = fail
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        bridge._account_completion(request)
+    assert get_hermes_home() == before
 
 
 def test_native_kanban_extensions_create_rejoin_and_read_back(monkeypatch, tmp_path):

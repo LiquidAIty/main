@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import re
+import shlex
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError
@@ -27,6 +29,102 @@ _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
 
 class DataAnchorError(ValueError):
     """Typed failure before a provider can receive an ungrounded request."""
+
+
+def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
+    """Interactive native reads through the same app-owned MCP hydration seam."""
+    from app.python_models.card_domain import load_deck
+    name = str(payload.get("name") or "")
+    if name not in {"list_projects", "index_status", "trace_path", "graph"}:
+        raise DataAnchorError("codegraph_read_operation_not_allowed")
+    project_id, deck_id, card_id = (str(payload.get(k) or "")
+        for k in ("projectId", "deckId", "cardId"))
+    deck = load_deck(project_id, deck_id)
+    if not any(card["id"] == card_id for card in deck["deck"]["nodes"]):
+        raise DataAnchorError("codegraph_saved_card_required")
+    arguments = dict(payload.get("arguments") or {})
+    if name != "list_projects" and arguments.get("project") != _CODEGRAPH_PROJECT:
+        raise DataAnchorError("codegraph_project_mismatch")
+    if name == "graph":
+        return _read_codegraph_projection(deck["projectId"], deck_id, card_id, arguments)
+    if name == "trace_path":
+        arguments.update(depth=1, limit=100, include_tests=False)
+    result = call_read_tools_via_mcp(project_id=deck["projectId"], deck_id=deck_id,
+        card_id=card_id, calls=[("cbm." + name, arguments)])[0]
+    if result.get("error") or result.get("ok") is False:
+        raise DataAnchorError(str(result.get("error") or "codegraph_read_failed"))
+    return result
+
+
+def _cbm_table(result: dict[str, Any], columns: list[str]) -> list[list[str]]:
+    """Decode CBM's labelled table; reject a changed or incomplete wire format."""
+    lines = str(result.get("text", "")).strip().splitlines()
+    header = re.fullmatch(r"rows: (\d+)\s+\(cols: (.*)\)", lines[0]) if lines else None
+    if not header or header[2].split() != columns:
+        raise DataAnchorError("codegraph_query_format_invalid")
+    count = int(header[1])
+    if len(lines) < count + 2 or lines[count + 1] != f"total: {count}":
+        raise DataAnchorError("codegraph_query_rows_invalid")
+    rows = [shlex.split(line) for line in lines[1:count + 1]]
+    if len(rows) != int(header[1]) or any(len(row) != len(columns) for row in rows):
+        raise DataAnchorError("codegraph_query_rows_invalid")
+    return rows
+
+
+def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
+                               arguments: dict[str, Any]) -> dict[str, Any]:
+    node_ids = arguments.get("node_ids", [])
+    if any(not isinstance(ids, list) or len(ids) > 200
+           or any(not isinstance(value, str) or not value or len(value) > 4096 for value in ids)
+           for ids in (node_ids,)):
+        raise DataAnchorError("codegraph_selection_invalid")
+    if not isinstance(arguments.get("expand", False), bool):
+        raise DataAnchorError("codegraph_expansion_invalid")
+    result = empty_graph_projection(project_id)
+    result["authority"] = "codegraph"
+    if not node_ids:
+        return result
+    # Values are Cypher string literals; no user-supplied predicate or query.
+    selected = json.dumps(node_ids, ensure_ascii=True)
+    a = f"a.qualified_name IN {selected}"
+    b = f"b.qualified_name IN {selected}"
+    endpoints = f"({a} OR {b})" if arguments.get("expand", False) else f"({a} AND {b})"
+    node_columns = ["a.qualified_name", "a.name", "a.label", "id(a)"]
+    edge_columns = node_columns + ["b.qualified_name", "b.name", "b.label", "id(b)", "id(r)", "type(r)"]
+    queries = [
+        f"MATCH (a) WHERE {a} RETURN {', '.join(node_columns)} LIMIT 200",
+        f"MATCH (a)-[r]->(b) WHERE {endpoints} "
+        f"RETURN {', '.join(edge_columns)} LIMIT 300",
+    ]
+    responses = call_read_tools_via_mcp(project_id=project_id, deck_id=deck_id, card_id=card_id,
+        calls=[("cbm.query_graph", {"project": _CODEGRAPH_PROJECT, "query": query}) for query in queries])
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: dict[str, dict[str, Any]] = {}
+
+    def node(row: list[str]) -> str:
+        qualified_name, name, label, stored_id = row
+        if any(not value or value == "null" for value in row):
+            raise DataAnchorError("codegraph_record_identity_missing")
+        nodes[qualified_name] = {
+            "id": qualified_name, "canonicalId": qualified_name, "label": name,
+            "type": label, "authority": "codegraph", "codeGraphRef": qualified_name,
+            "properties": {"qualified_name": qualified_name, "id": stored_id},
+            "provenance": {"project": _CODEGRAPH_PROJECT, "nodeId": stored_id, "tool": "cbm.query_graph"},
+        }
+        return qualified_name
+
+    for row in _cbm_table(responses[0], node_columns):
+        node(row)
+    for row in _cbm_table(responses[1], edge_columns):
+        source, target = node(row[:4]), node(row[4:8])
+        edge_id, predicate = row[8:]
+        if not edge_id or not predicate or "null" in (edge_id, predicate):
+            raise DataAnchorError("codegraph_relationship_identity_missing")
+        edges[edge_id] = {"id": edge_id, "source": source, "target": target, "predicate": predicate,
+            "properties": {}, "provenance": {"project": _CODEGRAPH_PROJECT, "edgeId": edge_id, "tool": "cbm.query_graph"}}
+    result.update(nodes=list(nodes.values()), edges=list(edges.values()),
+                  counts={"nodes": len(nodes), "edges": len(edges)})
+    return result
 
 
 def _json_value(value: Any) -> Any:
@@ -85,6 +183,24 @@ def read_thinkgraph_exact(
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
     except Exception as error:
         raise DataAnchorError("data_anchor_thinkgraph_read_failed") from error
+    entity = native.get("entity")
+    if isinstance(entity, dict):
+        evidence = entity.get("evidence", [])
+        body = "\n\n".join(str(item.get("excerpt", "")) for item in evidence)
+        relations = entity.get("relations", [])[:max(0, result_limit - 1)] if bounded_expansion else []
+        return {
+            "authority": "ThinkGraph", "nativeId": entity["canonical_id"], "nativeKind": "node",
+            "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
+            "content": body[:_ANCHOR_BODY_LIMIT], "metadata": {"evidence": evidence},
+            "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
+            "asOf": "current", "readOperation": "graph_entity",
+            "relationshipEvidence": [{"nodes": [{"nativeId": r["other_id"], "title": r["other_label"]} for r in relations],
+                "relationships": [{"nativeId": r["id"], "sourceNativeId": r["source"],
+                    "targetNativeId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
+            "resultLimit": result_limit, "truncated": len(body) > _ANCHOR_BODY_LIMIT
+                or any(entity.get("truncation", {}).values())
+                or bounded_expansion > 0 and len(entity.get("relations", [])) > len(relations),
+        }
     row = native.get("memory")
     if not isinstance(row, dict):
         return None

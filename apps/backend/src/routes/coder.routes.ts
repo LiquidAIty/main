@@ -65,6 +65,17 @@ import {
 } from './hermesKanban.routes';
 
 const router = Router();
+
+router.post('/codegraph/read', async (req, res) => {
+  try {
+    return res.json(await requestPythonRailsJson('/codegraph/read', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    }));
+  } catch (error) {
+    return res.status(502).json({ error: error instanceof Error ? error.message : 'codegraph_read_failed' });
+  }
+});
 const CODER_CARD_ID = 'card_local_coder';
 const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
 
@@ -299,13 +310,6 @@ async function executePreparedMainCliRun(
         finalResult: result.finalText,
       }),
     });
-    // Delivery is downstream of the retained answer and does not hold the chat
-    // response open. Python uses the existing saved Card/Run execution boundary.
-    void requestPythonRailsJson('/domain/main/completed-pair', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: run.projectId, deckId: run.deckId,
-        runId: run.runId, conversationId: run.conversationId }),
-    }).catch((error) => console.error('Completed-turn delivery failed', error));
     return { ...result, profileMaterialization: run.profileMaterialization };
   } catch (error) {
     await requestPythonRailsJson('/domain/runs/finish', {

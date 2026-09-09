@@ -472,6 +472,25 @@ class TestCardCreate:
 
 
 class TestCardUpdateConfiguration:
+    def test_authenticated_user_can_edit_builder_without_impersonating_a_card(self, fake_backend):
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "deck_builder", "cardId": "builder-card",
+            "updates": {"prompt": "Updated instructions"},
+        }, authenticated_user_edit=True))
+        assert result["ok"] is True
+        assert fake_backend["expectedRevision"] == "rev1"
+        assert fake_backend["deck"]["nodes"][:2] == DECK["nodes"][:2]
+        updated = fake_backend["deck"]["nodes"][2]
+        assert updated == {**DECK["nodes"][2], "prompt": "Updated instructions"}
+
+    def test_authenticated_user_edit_keeps_structural_field_allowlist(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_update_fields_rejected"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "deck_builder", "cardId": "builder-card",
+                "updates": {"runtime": {"kind": "other"}},
+            }, authenticated_user_edit=True))
+        assert fake_backend == {}
+
     def test_update_requires_agent_builder_and_cannot_target_system_cards(self, fake_backend):
         with pytest.raises(
             cp.ControlPlaneError, match="card_update_requires_agent_builder"

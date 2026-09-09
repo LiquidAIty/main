@@ -2337,36 +2337,19 @@ describe('coder routes', () => {
       }
     });
 
-    it('returns Main before background cognition acknowledges delivery', async () => {
-      const implementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
-      let completeDelivery!: (value: any) => void;
-      const pendingDelivery = new Promise((resolve) => { completeDelivery = resolve; });
+    it('completes Main without automatic graph extraction', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
-      orchestratorMocks.requestPythonRailsJson.mockImplementation((route, init) =>
-        route === '/domain/main/completed-pair' ? pendingDelivery : implementation(route, init));
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'background-test', message: 'inspect' }),
-          signal: AbortSignal.timeout(2000),
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'chat', message: 'hello' }),
         });
-        const body = await response.text();
-        expect(body).toContain('Real assistant reply.');
-        expect(body).toContain('event: done');
-        const calls = orchestratorMocks.requestPythonRailsJson.mock.calls;
-        const deliveryIndex = calls.findIndex(([route]) => route === '/domain/main/completed-pair');
-        const finishIndex = calls.findIndex(([route]) => route === '/domain/runs/finish');
-        expect(finishIndex).toBeGreaterThanOrEqual(0);
-        expect(deliveryIndex).toBeGreaterThan(finishIndex);
-        expect(JSON.parse(String(calls[deliveryIndex][1]?.body))).toMatchObject({
-          projectId: 'project-1', conversationId: 'background-test', deckId: 'deck_builder',
-        });
-      } finally {
-        completeDelivery({ accepted: true });
-        orchestratorMocks.requestPythonRailsJson.mockImplementation(implementation);
-        await closeServer(server);
-      }
+        expect(await response.text()).toContain('event: done');
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
+          '/domain/main/runs/begin', '/domain/runs/finish',
+        ]);
+      } finally { await closeServer(server); }
     });
 
     it('drives the same Main CLI bridge from the authenticated external-plugin doorway', async () => {
@@ -2496,7 +2479,6 @@ describe('coder routes', () => {
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
           '/domain/main/runs/begin',
           '/domain/runs/finish',
-          '/domain/main/completed-pair',
         ]);
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"hello"');
         expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
@@ -2508,10 +2490,6 @@ describe('coder routes', () => {
         });
         expect(railsCalls[1]?.[1]?.body).toContain('"state":"completed"');
 
-        expect(Object.keys(JSON.parse(String(railsCalls[2]?.[1]?.body))).sort()).toEqual([
-          'conversationId', 'deckId', 'projectId', 'runId',
-        ]);
-        // Background delivery transports identities, never another MCP prompt.
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
         expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally {

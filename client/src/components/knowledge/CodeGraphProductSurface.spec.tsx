@@ -128,6 +128,9 @@ describe('product Graphs tab CodeGraph preservation', () => {
     expect(scene.textContent).toContain('NativeAuthorityGraphSurface.NativeCodeGraphSurface');
     expect(scene.textContent).toContain('KnowledgeGraphFramework.KnowledgeGraphFramework');
     expect(scene.textContent).toContain('CALLS');
+    expect(screen.getByRole('button', { name: 'ThinkGraph', exact: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'KnowGraph', exact: true })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'CodeGraph', exact: true })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   }, 45_000);
 });

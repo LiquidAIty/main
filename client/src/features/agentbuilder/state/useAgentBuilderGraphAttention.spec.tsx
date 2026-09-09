@@ -4,7 +4,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import useAgentBuilderGraphAttention, {
-  projectNativeAttentionEvent,
+  mergeAttentionProjection,
+  overlayAuthoritativeGraphAttention,
   type NativeAttentionEdge,
   type NativeAttentionEvent,
 } from './useAgentBuilderGraphAttention';
@@ -72,6 +73,92 @@ function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relations
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('refreshes the stored projection after Main completes even without attention delivery', async () => {
+    let response = thinkgraphResponse();
+    const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? response : knowledgeResponse());
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+    const records = [{ id: 'stored-entity', label: 'Stored entity' }];
+    response = thinkgraphResponse(records);
+    await act(async () => result.current.finishAttentionScope({ ...turn, status: 'completed' }));
+    await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toEqual(records));
+    const count = fetchMock.mock.calls.length;
+    await act(async () => result.current.finishAttentionScope({
+      ...turn, projectId: 'another-project', status: 'completed',
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(count);
+    response = thinkgraphResponse();
+    await act(async () => result.current.refreshThinkGraph());
+    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+  });
+  it('loads CodeGraph records from the saved-workspace reader and preserves stored edge identity', async () => {
+    const prefix = 'C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention.';
+    const source = prefix + 'overlayAuthoritativeGraphAttention';
+    const target = prefix + 'retain';
+    const records = { schemaVersion: 'native-card-context.v1', authority: 'codegraph', projectId: 'project-1',
+      nodes: [{ id: source, label: 'overlayAuthoritativeGraphAttention', properties: { id: '2130' } },
+        { id: target, label: 'retain', properties: { id: '2131' } }],
+      edges: [{ id: '17367', source, target, predicate: 'CALLS', provenance: { edgeId: '17367' } }],
+    };
+    const fetchMock = vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+      ? { ok: true, json: async () => records }
+      : url.startsWith('/api/thinkgraph/') ? thinkgraphResponse() : knowledgeResponse());
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await act(async () => result.current.observeAttentionEvent(attention('codegraph', [source, target], ['17367'])));
+    expect(result.current.projections.codegraph.nodes.map(node => node.id)).toEqual([source, target]);
+    expect(result.current.projections.codegraph.edges[0]).toMatchObject(records.edges[0]);
+    const request = fetchMock.mock.calls.find(call => call[0] === '/api/coder/codegraph/read');
+    expect(request).toBeDefined();
+    await act(async () => result.current.expandNode({ authority: 'codegraph', node: records.nodes[0],
+      projectId: 'project-1', codeGraphProject: 'C-Projects-LiquidAIty-main', readerCardId: 'card_main_chat' }));
+    expect(result.current.projections.codegraph.edges.map(edge => edge.id)).toEqual(['17367']);
+  });
+
+  it('does not bring a late CodeGraph result into another selected Card', async () => {
+    let finish!: (value: unknown) => void;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+      ? { ok: true, json: () => new Promise(resolve => { finish = resolve; }) }
+      : url.startsWith('/api/thinkgraph/') ? thinkgraphResponse() : knowledgeResponse()));
+    const { result, rerender } = renderHook(({ selectedCardId }) => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', selectedCardId,
+    }), { initialProps: { selectedCardId: null as string | null } });
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    act(() => result.current.observeAttentionEvent(attention('codegraph', ['absent'])));
+    await waitFor(() => expect(finish).toBeDefined());
+    rerender({ selectedCardId: 'card_main_chat' });
+    await act(async () => finish({ authority: 'codegraph', projectId: 'project-1', nodes: [{
+      id: 'C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention.retain',
+      label: 'retain',
+    }], edges: [] }));
+    expect(result.current.projections.codegraph.nodes).toEqual([]);
+    expect(result.current.errors.codegraph).toBeUndefined();
+  });
+
+  it('retains attention across refreshes without retaining removed graph records or old knowledge', () => {
+    const current = { schemaVersion: 'projection', projectId: 'project-1',
+      nodes: [{ id: 'existing', label: 'Current label', properties: { summary: 'Current content' } }],
+      edges: [],
+    };
+    const previous = { ...current, nodes: [
+      { id: 'existing', label: 'Old label', properties: { summary: 'Old content', attentionActive: true, attentionRunId: 'run-1' } },
+      { id: 'removed', label: 'Removed', properties: { attentionActive: true, attentionRunId: 'run-1' } },
+    ] };
+    const result = overlayAuthoritativeGraphAttention(current, previous);
+    expect(result.nodes).toEqual([{ id: 'existing', label: 'Current label', properties: {
+      summary: 'Current content', attentionActive: true, attentionRunId: 'run-1',
+    } }]);
+    expect(result.edges).toEqual([]);
+    expect(overlayAuthoritativeGraphAttention({ ...current, nodes: [] }, previous).nodes).toEqual([]);
+  });
   it('keeps native knowledge when selecting another agent without loading it again', async () => {
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? thinkgraphResponse([{ id: 'idea', label: 'An open question' }])
@@ -108,68 +195,15 @@ describe('attention-activated native graph projection', () => {
       summary: 'Current native summary', attentionActive: true,
     });
     expect(result.current.projections.knowgraph.edges).toEqual([
-      expect.objectContaining({ id: 'native-edge', source: 'source', target: 'claim', predicate: 'PUBLISHED',
-        provenance: { groupId: 'group-one', episodes: ['source-episode'] }, validFrom: '2026-09-07T10:00:00Z' }),
+      expect.objectContaining({ id: 'element-1', source: 'source', target: 'claim', predicate: 'RELATES_TO',
+        properties: native.relationships[0].properties }),
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('projects only exact Python-owned native references without parsing provider JSON', () => {
-    const result = projectNativeAttentionEvent({
-      event: attention('codegraph', ['pkg.alpha', 'pkg.beta', 'pkg.alpha']),
-      projectId: 'project-1',
-    });
 
-    expect(result?.authority).toBe('codegraph');
-    expect(result?.projection.nodes.map((node) => node.id)).toEqual(['pkg.alpha', 'pkg.beta']);
-    expect(result?.projection.edges).toEqual([]);
-    expect(result?.projection.nodes[0].properties).toMatchObject({
-      nativeId: 'pkg.alpha',
-      attentionActorCardId: 'card_main_chat',
-      attentionActorColor: '#37ADAA',
-      attentionToolName: 'cbm.search_graph',
-    });
-  });
 
-  it('uses the canonical Python-owned tool name without browser normalization', () => {
-    const event = attention('codegraph', ['pkg.alpha']);
-    const result = projectNativeAttentionEvent({
-      event,
-      projectId: 'project-1',
-    });
 
-    expect(result?.authority).toBe('codegraph');
-    expect(result?.projection.nodes[0].properties?.attentionToolName).toBe(
-      'cbm.search_graph',
-    );
-  });
-
-  it('uses neutral provenance when no Card identity is proven', () => {
-    const result = projectNativeAttentionEvent({
-      event: attention('thinkgraph', ['memory-one'], [], null),
-      projectId: 'project-1',
-    });
-
-    expect(result?.projection.nodes[0].properties).toMatchObject({
-      attentionActorCardId: null,
-      attentionActorColor: '#8B95A7',
-    });
-  });
-
-  it('keeps authorities separate and never invents endpoints for edge-only events', () => {
-    const think = projectNativeAttentionEvent({
-      event: attention('thinkgraph', ['mem-1']),
-      projectId: 'project-1',
-    })!;
-    const know = projectNativeAttentionEvent({
-      event: attention('knowgraph', [], ['edge-1']),
-      projectId: 'project-1',
-    });
-
-    expect(think.authority).toBe('thinkgraph');
-    expect(think.projection.nodes.map((node) => node.id)).toEqual(['mem-1']);
-    expect(know).toBeNull();
-  });
 
   it('loads completed Graphiti writes from the native owner and keeps knowledge across turns', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
@@ -210,9 +244,8 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.knowgraph.nodes[0].properties).toMatchObject({
       attentionOperation: 'write', attentionActorColor: '#EE8C66', attentionRunId: 'server-run-1',
     });
-    expect(result.current.projections.knowgraph.edges[0].properties?.attentionProvenance).toMatchObject({
-      authority: 'knowgraph', operation: 'write', group_id: 'group-one',
-    });
+    expect(result.current.projections.knowgraph.edges[0].properties?.attentionOperation).toBe('write');
+    expect(result.current.projections.knowgraph.edges[0].provenance).toBeUndefined();
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
     expect(result.current.projections.codegraph.nodes).toEqual([]);
 
@@ -240,38 +273,10 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.thinkgraph.nodes[0].properties).toMatchObject({
       attentionToolName: 'engraphis_recall_context',
     });
-    expect(result.current.projections.codegraph.nodes[0].id).toBe('pkg.materialize_idf');
+    expect(result.current.projections.codegraph.nodes).toEqual([]);
     expect(result.current.projections.knowgraph.nodes).toEqual([]);
   });
 
-  it('rejects duplicate, wrong-project, and wrong-Run live attention', async () => {
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({
-      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-    }));
-    act(() => result.current.startAttentionScope(turn));
-    act(() => result.current.observeNativeTurnEvent({
-      ...turn,
-      event: {
-        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
-        deckId: 'deck_builder', conversationId: 'main',
-      },
-    }));
-    const valid = attention('codegraph', ['pkg.alpha']);
-    act(() => {
-      result.current.observeNativeTurnEvent({ ...turn, event: valid });
-      result.current.observeNativeTurnEvent({ ...turn, event: valid });
-      result.current.observeNativeTurnEvent({
-        ...turn,
-        event: { ...attention('codegraph', ['pkg.wrong-project']), eventId: 'wrong-project', projectId: 'project-2' },
-      });
-      result.current.observeNativeTurnEvent({
-        ...turn,
-        event: { ...attention('codegraph', ['pkg.wrong-run']), eventId: 'wrong-run', runId: 'server-run-2' },
-      });
-    });
-
-    await waitFor(() => expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.alpha']));
-  });
 
   it('restores only the latest scoped Run and ignores duplicate event identities', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(thinkgraphResponse([
@@ -289,6 +294,7 @@ describe('attention-activated native graph projection', () => {
       ...attention('thinkgraph', ['current-memory']),
       eventId: 'current-event', runId: 'current-run', timestamp: '2026-08-18T12:00:00Z',
     };
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
     act(() => result.current.observeAttentionSession({
       projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
       runId: 'current-run', state: 'running',
@@ -298,74 +304,21 @@ describe('attention-activated native graph projection', () => {
       latest,
       latest,
       { ...latest, eventId: 'wrong-project', projectId: 'project-2', timestamp: '2026-08-18T13:00:00Z' },
+      { ...latest, eventId: 'wrong-run', runId: 'old-run' },
+      { ...latest, eventId: 'wrong-card', cardId: 'card-other' },
     ].forEach(result.current.observeAttentionEvent));
 
     await waitFor(() => expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
       'current-memory',
     ]));
-  });
-
-  it('uses the same AGE events for GPT, Hermes, Kanban, Coder and Mag One without a Main turn', () => {
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({
-      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-    }));
-    act(() => {
-      ['gpt', 'hermes', 'kanban', 'coder', 'mag-one'].forEach((cardId) => {
-        result.current.observeAttentionEvent({ ...attention('codegraph', [`pkg.${cardId}`], [], cardId),
-          eventId: `event-${cardId}`, runId: `run-${cardId}`, conversationId: `conversation-${cardId}` });
-      });
+    expect(result.current.projections.thinkgraph.nodes[0].properties).toMatchObject({
+      attentionEventId: 'current-event', attentionRunId: 'current-run',
+      attentionTimestamp: latest.timestamp,
     });
-    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual([
-      'pkg.gpt', 'pkg.hermes', 'pkg.kanban', 'pkg.coder', 'pkg.mag-one',
-    ]);
-    act(() => result.current.startAttentionScope(turn));
-    expect(result.current.projections.codegraph.nodes).toHaveLength(5);
   });
 
-  it('includes current internal Team activity under its Card and clears it when the root finishes', () => {
-    const { result } = renderHook(() => useAgentBuilderGraphAttention({
-      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', selectedCardId: 'card-kanban',
-    }));
-    const session = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-kanban',
-      runId: 'root-run', state: 'running', materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.input' }] };
-    act(() => result.current.observeAttentionSession(session));
-    act(() => {
-      const direct = { ...attention('codegraph', ['pkg.direct'], [], 'card-kanban'), eventId: 'direct', runId: 'root-run' };
-      result.current.observeAttentionEvent(direct);
-      result.current.observeAttentionEvent({ ...direct, eventId: 'child', nativeChildId: 'native-worker', nativeNodeIds: ['pkg.child'] });
-      result.current.observeAttentionEvent({ ...direct, eventId: 'old', runId: 'old-run', nativeNodeIds: ['pkg.old'] });
-      result.current.observeAttentionSession({ ...session, runId: 'child-run', rootRunId: 'root-run', nativeChildId: 'native-worker',
-        state: 'completed',
-        materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.child-input' }] });
-      result.current.observeAttentionEvent({ ...direct, eventId: 'worker-event', runId: 'child-run', rootRunId: 'root-run',
-        nativeChildId: 'native-worker', runState: 'completed', nativeNodeIds: ['pkg.worker'] });
-      result.current.observeAttentionEvent({ ...direct, eventId: 'profile-event', cardId: 'other-card',
-        rootRunId: 'root-run', nativeNodeIds: ['pkg.other-card'] });
-      result.current.observeAttentionEvent({ ...direct, eventId: 'older-team', runId: 'old-child',
-        rootRunId: 'old-root', nativeChildId: 'old-worker', nativeNodeIds: ['pkg.old-team'] });
-      result.current.observeAttentionSession({ ...session, cardId: 'other-card', runId: 'profile-run',
-        materializedNativeReferences: [{ authority: 'CodeGraph', nativeId: 'pkg.profile-input' }] });
-    });
-    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual([
-      'pkg.input', 'pkg.direct', 'pkg.child', 'pkg.child-input', 'pkg.worker',
-    ]);
-    expect(result.current.projections.codegraph.nodes.find(node => node.id === 'pkg.worker')?.provenance)
-      .toMatchObject({ cardId: 'card-kanban', runId: 'child-run', rootRunId: 'root-run', nativeChildId: 'native-worker' });
-    act(() => result.current.observeAttentionSession({ ...session, state: 'completed' }));
-    expect(result.current.projections.codegraph.nodes).toEqual([]);
-    act(() => result.current.observeAttentionEvent({ ...attention('codegraph', ['pkg.stale'], [], 'card-kanban'), runId: 'root-run' }));
-    expect(result.current.projections.codegraph.nodes).toEqual([]);
-  });
 
-  it('keeps independent Card attention when Main switches conversations', () => {
-    const { result, rerender } = renderHook(({ conversationId }) => useAgentBuilderGraphAttention({
-      projectId: 'project-1', deckId: 'deck_builder', conversationId,
-    }), { initialProps: { conversationId: 'main' } });
-    act(() => result.current.observeAttentionEvent({ ...attention('codegraph', ['pkg.coder'], [], 'card-coder'),
-      eventId: 'coder-event', runId: 'coder-run', conversationId: 'coder-conversation' }));
-    rerender({ conversationId: 'other-main-conversation' });
-    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.coder']);
-  });
+
 
   it('never lights pending writes and rereads native records after acknowledged changes', async () => {
     let nativeNodes: Array<Record<string, unknown>> = [];
@@ -461,51 +414,31 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.knowgraph.edges.map((edge) => edge.id)).toEqual(['edge-1']);
   });
 
-  it('expands a visible CodeGraph symbol through native CBM trace_path', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(thinkgraphResponse())
-      .mockResolvedValueOnce(knowledgeResponse())
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-        result: {
-          content: [{ type: 'text', text: JSON.stringify({
-            function: 'pkg.alpha',
-            callers: [],
-            callees: [{ qualified_name: 'pkg.beta', name: 'beta', label: 'Function', file_path: 'src/b.ts' }],
-          }) }],
-        },
-      }),
-      });
-    vi.stubGlobal('fetch', fetchMock);
+
+  it('keeps every graph empty after activity and materialized references, including unknown IDs', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+      ? { ok: true, json: async () => ({ authority: 'codegraph', projectId: 'project-1', nodes: [], edges: [] }) }
+      : url.startsWith('/api/thinkgraph/')
+      ? thinkgraphResponse() : knowledgeResponse()));
     const { result } = renderHook(() => useAgentBuilderGraphAttention({
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
     }));
-    act(() => result.current.startAttentionScope(turn));
-    act(() => result.current.observeNativeTurnEvent({
-      ...turn,
-      event: {
-        kind: 'session', runId: 'server-run-1', projectId: 'project-1',
-        deckId: 'deck_builder', conversationId: 'main',
-      },
-    }));
-    act(() => result.current.observeNativeTurnEvent({
-      ...turn,
-      event: attention('codegraph', ['pkg.alpha']),
-    }));
-    const center = result.current.projections.codegraph.nodes[0];
-
-    await act(async () => result.current.expandNode({
-      authority: 'codegraph', node: center, projectId: 'project-1', codeGraphProject: 'C-Projects-LiquidAIty-main',
-    }));
-
-    const rpcCall = fetchMock.mock.calls.find((call) => call[1]?.body);
-    const rpcBody = JSON.parse(String(rpcCall?.[1].body));
-    expect(rpcBody.params).toMatchObject({
-      name: 'trace_path',
-      arguments: { project: 'C-Projects-LiquidAIty-main', function_name: 'pkg.alpha', depth: 1 },
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await act(async () => {
+      for (const authority of ['thinkgraph', 'knowgraph', 'codegraph'] as const) {
+        result.current.observeAttentionEvent(attention(authority, ['unknown-id'], ['unknown-edge'], 'card_main_chat', [
+          { id: 'unknown-edge', source: 'unknown-id', target: 'another-unknown-id', predicate: 'unused' },
+        ]));
+        result.current.observeAttentionSession({ projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_main_chat', runId: 'server-run-1', state: 'running',
+          materializedNativeReferences: [{ authority, nativeId: 'unknown-id' }] });
+      }
     });
-    expect(result.current.projections.codegraph.nodes.map((node) => node.id)).toEqual(['pkg.alpha', 'pkg.beta']);
-    expect(result.current.projections.codegraph.edges.map((edge) => edge.id)).toEqual(['pkg.alpha:CALLS:pkg.beta']);
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    for (const value of Object.values(result.current.projections)) {
+      expect(value.nodes).toEqual([]);
+      expect(value.edges).toEqual([]);
+    }
   });
+
 });

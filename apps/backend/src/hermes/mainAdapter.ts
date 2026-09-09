@@ -1047,7 +1047,7 @@ export class AcpProcess {
     await this.ready;
     const nativeManagerMethod = method === '_native/call';
     const runtimeMethod = /^_(?:session|kanban)\/[a-z_]+$/.test(method);
-    if (!nativeManagerMethod && !runtimeMethod) {
+    if (!nativeManagerMethod && !runtimeMethod && method !== '_model/complete') {
       throw new Error('hermes_acp_extension_method_invalid');
     }
     return this.request(method, params);

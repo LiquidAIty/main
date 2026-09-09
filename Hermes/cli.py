@@ -5702,13 +5702,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         self._slash_confirm_state = None
         self._slash_confirm_deadline = 0
         self._model_picker_state = None
-        # Rotating task-oriented composer placeholder (C-09), chosen once per
-        # session so it stays stable while the empty input box is on screen.
-        try:
-            from hermes_cli.tips import get_random_composer_placeholder
-            self._composer_placeholder = get_random_composer_placeholder()
-        except Exception:
-            self._composer_placeholder = ""
         self._command_palette_state = None
         # Armed when a bare `/resume` prints the recent-sessions list so the
         # very next bare numeric input (e.g. `3`) resolves to that session.
@@ -19872,11 +19865,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 _stash_hint = ""
             if _stash_hint:
                 return _stash_hint
-            # Idle + empty composer: show a rotating task-oriented example to
-            # nudge the user toward a high-value first action (C-09). Chosen
-            # once per session (self._composer_placeholder) so it stays stable
-            # while being read, not flickering every render.
-            return getattr(cli_ref, "_composer_placeholder", "") or ""
+            # Keep the idle composer blank; retain the actionable state hints above.
+            return ""
 
         input_area.control.input_processors.append(_PlaceholderProcessor(_get_placeholder))
 

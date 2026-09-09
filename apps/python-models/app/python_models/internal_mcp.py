@@ -133,6 +133,10 @@ def _json_result(result: Any, tool_name: str) -> dict[str, Any]:
     try:
         parsed = json.loads(text)
     except (TypeError, ValueError) as error:
+        # query_graph supplies a column-labelled text table, unlike CBM's
+        # JSON search/trace responses. Its reader validates those columns.
+        if tool_name == "cbm.query_graph":
+            return {"text": text}
         raise RuntimeError(f"internal_mcp_invalid_json_result: {tool_name}") from error
     if not isinstance(parsed, dict):
         raise RuntimeError(f"internal_mcp_invalid_result: {tool_name}")

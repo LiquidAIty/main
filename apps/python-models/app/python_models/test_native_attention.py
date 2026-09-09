@@ -230,6 +230,23 @@ def test_engraphis_receipts_without_native_ids_do_not_fake_attention() -> None:
     ) is None
 
 
+def test_engraphis_ingest_observes_fact_ids_without_constructing_entities():
+    payload = {"extracted": True, "facts": [
+        {"id": "mem_01M22ECE8MA25NHRZ5VS91TZAC", "title": "Main responsibilities"},
+        {"id": "mem_01M22ECEQHC9F19PFCMDR23FVQ"},
+    ]}
+    before = copy.deepcopy(payload)
+    event = native_attention.build_native_attention_event("engraphis_ingest", _result(payload), None)
+    assert event["operation"] == "write"
+    assert event["nativeNodeIds"] == [fact["id"] for fact in payload["facts"]]
+    assert event["nativeEdges"] == event["nativeEdgeIds"] == []
+    assert payload == before
+    for facts in ([], [{"title": "No stored ID"}]):
+        assert native_attention.build_native_attention_event(
+            "engraphis_ingest", _result({"extracted": True, "facts": facts}), None,
+        ) is None
+
+
 def test_duplicate_ids_are_deduplicated_and_caps_are_deterministic(
     monkeypatch,
 ) -> None:

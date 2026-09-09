@@ -125,8 +125,39 @@ function CoderTerminalPanelInner({
   const refreshSession = useCallback(async () => {
     if (!session?.id) return;
     const refreshed = await client.getSession(session.id);
+    if (!refreshed || ['stopped', 'failed'].includes(refreshed.state)) {
+      const sessions = await client.listSessions();
+      const replacement = sessions.find((candidate) => (
+        candidate.id !== session.id
+        && candidate.ownerCardId === session.ownerCardId
+        && candidate.projectId === session.projectId
+        && candidate.deckId === session.deckId
+        && candidate.conversationId === session.conversationId
+        && candidate.profile === session.profile
+        && candidate.runtimeSource === 'repository_hermes_cli'
+        && ['starting', 'running'].includes(candidate.state)
+        && Boolean(candidate.pid)
+      ));
+      if (replacement) {
+        setTerminalError(null);
+        setSession(replacement);
+        return;
+      }
+    }
     if (refreshed) setSession(refreshed);
   }, [client, session?.id]);
+
+  useEffect(() => {
+    if (!open || !['stopped', 'failed'].includes(status)) return;
+    const reconnect = () => {
+      void refreshSession().catch((error) => {
+        setTerminalError(error instanceof Error ? error.message : String(error));
+      });
+    };
+    reconnect();
+    window.addEventListener('focus', reconnect);
+    return () => window.removeEventListener('focus', reconnect);
+  }, [open, status, refreshSession]);
 
   const sendData = useCallback(
     async (data: string) => {

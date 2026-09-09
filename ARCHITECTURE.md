@@ -57,36 +57,30 @@ Graph Agent's ThinkGraph mutation grants are removed. Agent Builder retains its 
 authority and gains native graph reads for synthesis. Worker output supplies pointers; Builder reads the
 graphs directly. Standalone graph-worker and Builder reads/writing have historical component proof.
 The former Main-to-both-graph-workers cascade was not the owner's requested boundary and is removed.
-Main retains compact graph searches and native profile delegation, while
-its prior explicit ThinkGraph write grants are removed in favor of the graph worker.
+The September 9 saved-Main correction retains graph reads and profile delegation, removes its
+one-paragraph limit and mandatory delegation of detailed answers, and selects `web_search` and
+`engraphis_ingest`. Main decides when a specific task needs delegation. Its existing Script source,
+model, profile, other grants and connections remain. The Script compiler exposes the newly selected
+tools as ordinary agent tools; it does not wrap them. Saved readback and Run preparation confirm this
+configuration. Actual answer, search and deliberate write quality remain
+separate live acceptance checks. Only Main received a new Card revision in this correction.
 Main's native profile has Honcho deselected; existing memory data and vendor integration are preserved.
 ThinkGraph currently uses single mode for the owner's component comparison; its Luna subagent
-selection is retained and native orchestrator remains an option. The completed Main hook passes only
-Run/conversation identities to Python's background delivery; Python reads retained input/output and
-invokes only the saved ThinkGraph profile. KnowGraph receives sourced findings from research work,
-not an automatic copy of every completed conversation or ThinkGraph output. Synthesis is a separate requested delegation
-to Agent Builder, which reads graph evidence directly; completed-pair delivery never invokes Builder.
-Stage correlation IDs identify existing Runs,
-never a second task store. Existing failed, running or interrupted children halt delivery without restart.
-One in-process lock serializes ThinkGraph delivery and its correlation lookup. This is not
-restart-durable queuing. Failed or interrupted work is not automatically retried.
+selection is retained and native orchestrator remains an option. The September 9 owner correction
+removes completed-pair automatic intake, its HTTP endpoint, handler and extraction-context subclass.
+Main uses its granted graph tools during its Run. A separately delegated enrichment task remains an
+unproven option. KnowGraph receives sourced research through its existing agent. Stable Card output
+requirements travel in the system prompt, not the dynamic task. Main/Builder roles and tools remain
+saved-Card configuration. No instruction-text classifier or user-word filter is used.
 
-The fixed delivery rules in `apps/python-models/app/python_models/cognition.py` are:
+The removed automatic delivery path is not retained as a fallback. Explicit Main tool calls use
+`engraphis_ingest` through the existing MCP adapter and Engraphis's `StructuredLLMExtractor`.
+`engraphis_recall_context` and `engraphis_get_memory` supply reads. The account adapter preserves the
+saved ThinkGraph model selection for the extractor; there is no conversation-specific extraction
+subclass or appended role-context block. The separate review adapter remains for already supported
+visual review; it does not launch extraction. A useful Main read/write/retrieval cycle still requires
+live semantic evaluation.
 
-| Rule | Data or effect | Limit of this rule |
-| --- | --- | --- |
-| Require an exact completed Hermes Main Run | Read its retained user input and final assistant result | Does not judge whether the conversation is useful knowledge |
-| Resolve exactly one saved `thinkgraph` delegate profile in that deck | Invoke only that Card through the existing Card runner | No Graph Agent, web research, or Builder selection |
-| Preserve speaker fields, Run/conversation identity, time, and selected native references | Send them as dynamic input to ThinkGraph's own IDF | This is still automatic conversation transfer to the configured agent; it is not a privacy/content classifier |
-| Serialize correlation lookup and delivery | Reuse an existing completed `cognition:<Main Run>:thinkgraph` result | In-process coordination only; no durable queue |
-| Halt on any existing noncompleted child or failed invocation | Preserve the child state and Main's already returned answer | No automatic retry or repair |
-| Reject input over 100,000 characters and mismatched/empty results | Fail the delivery rather than silently truncate or invent success | Structural checks do not establish correct entity meaning or attribution |
-
-ThinkGraph's model and saved role decide what to retain and how to relate it. The removed second stage
-sent the same conversation and ThinkGraph's output text to Graph Agent unconditionally. Its hoped-for
-benefit was research grounding, but recent acceptance did not demonstrate that benefit. It did create
-extra Graph Agent work and an unintended data destination. Existing historical Runs remain evidence;
-their presence does not authorize replay or restoration of that path.
 Before configuring a native ACP execution session, the adapter applies the exact saved parent model
 through `session/set_model`. Updating only native profile configuration does not update a restored
 session's older model. Session history, profile identity and native model execution remain Hermes-owned.
@@ -331,6 +325,11 @@ in `apps/python-models`; any later fork edit must be registered in
 `autogen-main/LIQUIDAITY_FORK.md` with tests and an update/removal strategy.
 
 ## MCP and transport
+
+User-directed external MCP `card.update_configuration` uses the authenticated project context and
+the existing field allowlist/revision-checked save. It requires no Builder task or approval. Internal
+Card calls retain their saved grants and bounded Builder edit authority. Caller arguments cannot
+assert the external-user privilege.
 
 `apps/python-models/app/mcp_host.py` is the one official shared MCP host. Its public catalog is assembled
 from current registered owners and is discovered dynamically. A fixed numeric catalog promise is not an
@@ -656,21 +655,35 @@ AgentGraph observes execution; it does not own Card configuration or runtime lif
 Engraphis is pinned to Python package `engraphis==1.7.1`. Python rails owns the one `MemoryService`
 against `db/thinkgraph.sqlite`. Its immutable local embedding selection is
 `sentence-transformers/all-MiniLM-L6-v2`, revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`.
-The service has no semantic backend fallback. Model-authored cognition remains the saved ThinkGraph
-Card's responsibility; automatic extractors and retention supervision are disabled.
+Engraphis supplies graph scenes; the application no longer supplies authored graph objects through
+added MCP fields. The adapter preserves Engraphis's configured graph extractor (package default:
+regex) and connects its `StructuredLLMExtractor` to the saved ThinkGraph Card's existing account/model
+through the private completion transport. The regex component performs heuristic entity extraction;
+it is not merely preprocessing. The LLM extractor distills supplied material into facts. Failed LLM
+extraction may return package-marked text chunks; that is not successful structured extraction.
+The custom `ConversationMemoryService`, full dashboard mount, and automatic completed-conversation
+intake are removed. Main chooses explicit notes, corrections, links, or a focused delegation to the
+saved ThinkGraph Card. Operating instructions live in those Cards. Normal local-agent writes retain
+the package's immediate eligibility; no application human-approval queue is added. Engraphis retains
+its own handling of external/untrusted input. The graph entry's Remove note action calls Engraphis
+retirement and reloads the scene. Retirement preserves history; it is not permanent erasure or an
+arbitrary entity/edge deletion operation. Provider-backed semantic quality remains unproven after
+this repair. Retention supervision remains disabled.
 
 `engraphis.py` derives the exposed schemas from native classic/smart MCP tools. IDD owns publication
-and effect policy. The authenticated project supplies workspace identity; model schemas expose no
-workspace, repository, session, or scope override. Native names are retained without aliases:
+and effect policy. The authenticated project supplies workspace identity. The source catalog contains
+35 classic tools plus nine smart-interface tools, with two shared names,
+for 42 distinct names. Shared names use the classic argument contract. Repository, session, and
+visibility arguments remain Engraphis fields; they are not silently removed. Gateway capability
+execution binds the same project when the discovered action has a workspace parameter. This uses
+the installed package's private capability resolver and must be checked when upgrading Engraphis.
 
-- retrieval: `engraphis_recall`, `engraphis_recall_context`, `engraphis_get_memory`,
-  `engraphis_timeline`, `engraphis_recall_proactive`, and `engraphis_stats`;
-- explicit effects: `engraphis_remember`, `engraphis_update_memory`, `engraphis_link`,
-  `engraphis_correct`, `engraphis_pin`, and `engraphis_retire`.
-
-Compact context recall uses native semantic recall with reinforcement and receipt writes disabled.
-Ordinary native recall retains its native side-effect annotations. Semantic unavailability fails
-honestly. Synchronous native work runs off the shared HTTP event loop. Semantic writes retain a scoped
+`engraphis_recall_context` retains the application's read-only recall contract: the engine runs
+without reinforcement or receipt writes, and returned sources retain titles and provenance.
+Its read-only/idempotent annotations describe that application behavior.
+Its complete argument schema remains exposed; the package response-budget helper applies the requested
+response limit. Other tools retain their package behavior and annotations. Semantic unavailability
+fails honestly. Synchronous native work runs off the shared HTTP event loop. Semantic writes retain a scoped
 190-second MCP allowance; ordinary reads and the two-second Main preload keep their existing budgets.
 This does not make cold embedding initialization fit inside preload.
 
@@ -678,7 +691,9 @@ The MCP host and `data_anchor.py` exact-reference hydration call the existing Py
 route. They never create another memory service. A bounded exact read preserves native IDs, directional
 composite link identities, reasons, layers, and provenance in the receiving Run's canonical IDF. Native
 memory links have no supplied numeric strength or agent-authorship classification; the projection must
-not invent either. Analysis may use unit graph weights internally without presenting them as evidence.
+not invent either. `thinkgraph_analysis.py` and its original test are restored: they calculate NetworkX
+communities and centrality from supplied topology without creating stored knowledge. The active Engraphis
+scene does not call that helper; it keeps the engine's own layout and analysis.
 
 The optional Question/evidence contract is retained; ordinary entities, thoughts, and relationships do
 not require a Q&A workflow. Saved-agent attribution, current-source research, synthesis, and restart/UI
@@ -702,26 +717,50 @@ into success. The old adapter and bridge are removed, with no fallback or dual w
 ```
 
 `NativeAuthorityGraphSurface.tsx` converts bounded native projections without changing native IDs.
-The embedded CodeGraph view starts from returned objects and expands explicitly; it does not auto-load
-the entire repository graph. The former standalone CBM UI app/package/demo shell and duplicated UI
+The embedded CodeGraph view remains present. Its existing read endpoint obtains selected symbols and
+directed relationships through app-published `cbm.query_graph` on Python rails. Stored qualified names,
+node IDs, edge IDs and relationship types are read from the query result. The browser renders those
+records and decorates matching IDs with activity; it never reconstructs edges from call-tree rows.
+The table decoder validates the CBM column contract and rejects changed formats. Empty reads remain empty.
+The former standalone CBM UI app/package/demo shell and duplicated UI
 primitives are intentionally absent.
 
-ThinkGraph renders through one separate authority chain:
+ThinkGraph retains this data authority chain:
 
 ```text
 Engraphis SQLite
 → Python-owned MemoryService and bounded projection route
 → backend proxy
 → GraphProjectionV1
-→ ephemeral browser-only Graphology MultiDirectedGraph
-→ LiquidAIty ConstellationSigmaSurface using Sigma v3 WebGL
 ```
 
-Graphology preserves surviving view positions during keyed native-ID updates but owns no persistent
-meaning. Sigma owns camera, hit testing, and drawing. The generic force-graph projection surface owns
-KnowGraph only and is not a second ThinkGraph renderer. ThinkGraph attention may decorate an exact ID
-already present in the authoritative Engraphis projection; it may never create a visual node from an
-attention receipt alone. An empty native projection therefore remains visibly and structurally empty.
+The September 9 replacement imports Engraphis 1.7.1's unmodified Every-node WebGL2 renderer
+and its unmodified layout worker. ThinkGraph selects the package's `radial` preset; KnowGraph
+selects `original`. This is the shipped renderer embedded in the existing application surface,
+not the complete Engraphis dashboard. The app retains its tabs, shared 24px paper, zoom/fit
+controls, stored-evidence inspector, and exact-ID context selection. It supplies records and
+selection/highlight IDs; it does not implement node painting, label placement, layout forces,
+clustering or semantic extraction. The former modified `engraphis-graph.js` is deleted with its
+custom rendering API extensions. The package handles pointer/keyboard navigation and rendering;
+app zoom buttons forward the package's own +/- keyboard controls. Relationships are inspected
+from an entity's stored relationship list. Attention may highlight an existing ID through
+`setHighlight`; the removed renderer's custom per-edge colour and edge-click extensions are absent.
+Activity/evidence refresh does not call `setData` again unless entity/relationship topology changes.
+
+ThinkGraph requests Engraphis's complete scene with memory nodes and weak co-occurrence disabled.
+The full scene preserves engine-supplied relationship support references; the compact `all` payload
+omits those references and is not used as the inspector's evidence source. Engine capacity errors
+remain errors, not truncated or fabricated replacement graphs. The account extraction adapter supplies
+Engraphis's own JSON output schema through its supported `extract_json` interface. The engine's
+context argument frames both messages as one evolving project exchange and includes the engine's
+2000-token recall context, read before extraction without reinforcement or receipt writes. There is
+no extra extraction model, regex cleanup, or browser knowledge writer. Prompt quality still requires
+actual account-backed conversation acceptance; passing structural checks is not that proof.
+
+The owner explicitly authorized clearing the rejected dataset again on September 9: Engraphis deleted
+8 memories in project `1b1a6958-0658-4b1a-bf13-e2066582adb4`; the same project's Graphiti group deleted
+13 nodes and 26 relationships. Both returned empty afterwards. The 7,284 unrelated Neo4j nodes were
+unchanged. Conversations, Cards, libraries, CodeGraph and other projects were not deleted or replayed.
 
 KnowGraph projection reads first select a deterministic, project-scoped node window (default 200,
 maximum 500), then return only relationships whose endpoints are inside that window (maximum 1,000).
@@ -792,6 +831,19 @@ this is not a GPT plugin readiness blocker. Do not print, copy, export, or repla
 
 ## Controlled vendor divergence
 
+The final September 9 owner decision replaces the application drawing callbacks with the unmodified
+Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js`, plus its shipped D3 7.9.0 and force-graph 1.51.4
+assets in `client/src/vendor/engraphis`. Source: installed PyPI distribution `engraphis==1.7.1`.
+The renderer SHA-256 is `a76d482781de76bccdf8e3955fadf6e8b2de71129511e90f3832b30de78bbde0`.
+There are no vendor edits or replacement drawing/physics functions. The owner rejected Galaxy/Cyber
+startup visuals and then the radial preset; the host uses the public setters for `original` on both graphs,
+`classic` style and enabled labels. Preset force/size values remain Engraphis-owned. The host supplies graph
+records, selection callbacks, existing inspection and navigation. ThinkGraph transports the complete
+Engraphis scene, including its engine-owned layout metadata. Graphiti records use supported field
+aliases. CodeGraph remains separate. Asset upgrades require comparison with the installed package;
+these copies add distribution maintenance, not a second graph algorithm. Loaded data acceptance is
+separate from empty-render and transport checks.
+
 The owner requested no product-name or profile-name prefix in the embedded terminal UI.
 `Hermes/cli.py::HermesCLI._get_tui_prompt_symbols` therefore renders only the native skin symbol.
 The existing skin hook controls the symbol but cannot suppress the hardcoded profile prefix;
@@ -801,6 +853,14 @@ unchanged. The upstream is the pinned NousResearch Hermes fork described below. 
 `Hermes/tests/cli/test_cli_skin_integration.py::TestCliSkinPromptIntegration` plus live terminal
 readback after reload. The fork cost is one removed display block; rollback would restore that block
 only, and an upstream profile-label display setting would allow removing this divergence.
+
+The September 9 owner request also removes the classic CLI's rotating idle composer example.
+`Hermes/cli.py` no longer selects an example during initialization and its idle `_get_placeholder`
+branch returns empty text. The pinned upstream has no display setting for this example. Command,
+approval, secret-entry, voice and parked-draft hints remain native; input, model selection, prompts,
+profiles and sessions are unchanged. Validation uses the existing CLI skin tests and a live idle
+terminal check. The fork cost is two small display blocks; rollback restores only example selection
+and its idle display. No terminal-output filtering or replacement renderer is involved.
 
 Hermes is the vendor boundary shared by the internal Hermes Cards. LiquidAIty-owned integration
 stays in the backend adapter whenever possible. Any Hermes edit must remain narrowly recorded, tested,

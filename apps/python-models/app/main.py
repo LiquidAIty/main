@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from typing import Any
 
 from app.python_models.provider_config import ensure_env_loaded
@@ -55,6 +55,15 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/codegraph/read")
+def codegraph_read(payload: dict[str, Any]):
+    from app.python_models.data_anchor import read_codegraph_tool
+    try:
+        return read_codegraph_tool(payload)
+    except (RuntimeError, ValueError, KeyError) as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.post("/thinkgraph/operation")
 async def thinkgraph_operation(payload: dict[str, Any]):
     from app.python_models.engraphis import invoke_tool, private_operation
@@ -68,6 +77,8 @@ async def thinkgraph_operation(payload: dict[str, Any]):
         return await asyncio.to_thread(private_operation, project, operation, arguments)
     except (RuntimeError, ValueError, KeyError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 
 
 @app.on_event("startup")
@@ -387,18 +398,6 @@ def domain_run_read(payload: dict[str, Any]):
         return read_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/main/completed-pair")
-def domain_main_completed_pair(payload: dict[str, Any], background: BackgroundTasks):
-    from app.python_models.cognition import deliver_in_background
-
-    fields = {key: str(payload.get(key) or "").strip()
-              for key in ("projectId", "deckId", "runId", "conversationId")}
-    if set(payload) != set(fields) or not all(fields.values()):
-        raise HTTPException(status_code=400, detail="cognition_turn_identity_required")
-    background.add_task(deliver_in_background, fields)
-    return {"accepted": True, "runId": fields["runId"]}
 
 
 @app.post("/domain/runs/input-files")

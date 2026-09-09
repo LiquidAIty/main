@@ -430,6 +430,7 @@ export default function AgentBuilder(): React.ReactElement {
       ...(selectedCardId ? { cardId: selectedCardId } : {}),
     });
     const stream = new EventSource(`/api/coder/main/session/attention?${params.toString()}`, { withCredentials: true });
+    stream.onopen = () => { void graphAttention.refreshThinkGraph(); };
     stream.addEventListener('session', (event) => {
       graphAttention.observeAttentionSession(JSON.parse((event as MessageEvent).data));
     });
@@ -437,11 +438,10 @@ export default function AgentBuilder(): React.ReactElement {
       graphAttention.observeAttentionEvent(JSON.parse((event as MessageEvent).data));
     });
     stream.onerror = (error) => {
-      stream.close();
       console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
     };
     return () => stream.close();
-  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession]);
+  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession, graphAttention.refreshThinkGraph]);
   const handleUseAttentionNode = useCallback((
     authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
     node: GraphProjectionNode,
@@ -690,7 +690,10 @@ export default function AgentBuilder(): React.ReactElement {
   const [codeGraphProjectError, setCodeGraphProjectError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void resolveCbmProjectName(DEFAULT_WORKSPACE_ROOT)
+    if (!canvasProjectId || !mainCardId) return;
+    void resolveCbmProjectName(DEFAULT_WORKSPACE_ROOT, {
+      context: { projectId: canvasProjectId, deckId: BUILDER_DECK_ID, cardId: mainCardId },
+    })
       .then((name) => {
         if (!cancelled) {
           setCodeGraphProjectName(name);
@@ -708,7 +711,7 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canvasProjectId, mainCardId]);
   const {
     handleNativeSend,
     messages,
@@ -1870,10 +1873,7 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Main stays the conversation. Both lower presentations use the same saved
-    // Agent Builder: its terminal on Canvas, its actual Run output elsewhere.
-    const builderResult = agentBuilderCard && standaloneTestResults[agentBuilderCard.id]?.conversationId === conversationId
-      ? standaloneTestResults[agentBuilderCard.id] : null;
+    // Main stays the conversation; the pull-up always opens the saved Builder's CLI.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1904,25 +1904,9 @@ export default function AgentBuilder(): React.ReactElement {
         />
       </div>
     );
-    const agentBuilderTerminal = () => (
+    const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
       agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
-          {workspaceView !== 'canvas' ? (
-            <article
-              data-testid="agent-builder-output"
-              data-card-id={agentBuilderCard.id}
-              data-run-id={builderResult?.runId || undefined}
-              data-conversation-id={conversationId}
-              style={{ height: '100%', overflow: 'auto', padding: '12px 16px', boxSizing: 'border-box' }}
-            >
-              <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: 1.55 }}>
-                {builderResult?.output || ''}
-              </div>
-              {builderResult?.error ? (
-                <p role="alert">{builderResult.error}</p>
-              ) : null}
-            </article>
-          ) : (
           <CoderTerminalPanel
             key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
             open
@@ -1936,9 +1920,8 @@ export default function AgentBuilder(): React.ReactElement {
               cardId: agentBuilderCard.id,
               profile: agentBuilderCard.runtime.profile,
             }}
-            readOnly={false}
+            readOnly={!directInput}
           />
-          )}
         </div>
       ) : null
     );
@@ -2036,6 +2019,7 @@ export default function AgentBuilder(): React.ReactElement {
             minHeight={minHeight}
             surfaceRole={surfaceRole}
             attentionProjections={graphAttention.projections}
+            onRemoveThinkGraphEvidence={graphAttention.removeThinkGraphEvidence}
             attentionErrors={graphAttention.errors}
             attentionStatuses={graphAttention.statuses}
             onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
@@ -2043,6 +2027,7 @@ export default function AgentBuilder(): React.ReactElement {
               node,
               projectId: activeProject,
               codeGraphProject: codeGraphProjectName || null,
+              readerCardId: mainCardId,
             })}
             onUseAttentionNode={handleUseAttentionNode}
             onKindChange={setKnowledgeGraphKind}

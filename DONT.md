@@ -10,13 +10,17 @@ The September 8 owner decision replaces active ThinkGraph Constellation with Eng
 Entities, thoughts, and relationships are primary; Question/evidence remains an optional capability.
 Do not restore old Constellation instructions from the historical record. The owner's later recovery
 instruction explicitly authorizes cleaning obsolete code, docs, templates, and Codex memory now.
-Partial conversation/research/synthesis proof must still be reported honestly. Keep acceptance data,
-including incorrect interpretations that still need native correction.
+Partial conversation/research/synthesis proof must still be reported honestly. The owner's latest
+September 8 decision explicitly rejects and authorizes deletion of the generated ThinkGraph dataset.
+Its rejected current-project Engraphis data was deleted. The September 9 follow-up enables the existing
+worker and Main connection only for model-selected delegation. Do not reseed or replay old conversations.
+ThinkGraph represents the ideas, subjects, plans and constraints expressed in conversation; the person
+typing and invented test personas are not graph nodes. Attribution belongs with source evidence.
 
-Automatic completed Main conversation delivery belongs only to ThinkGraph. Do not restore an automatic
-ThinkGraph-to-KnowGraph or conversation-to-KnowGraph stage. KnowGraph retains sourced web research;
-models assess the useful findings within the research mission. Entity/relationship linking and Main
-context search/injection require separate, incremental proof. No forced Question/answer workflow.
+The September 9 owner decision removes automatic completed-conversation extraction. Main reads
+ThinkGraph, answers in chat, and chooses explicit graph writes. Main may delegate a focused extraction or enrichment task; do not launch it after every turn. KnowGraph retains sourced research through its
+existing research agent. Operating instructions belong in saved Cards, not dynamic user input or
+stand-in test conversations. Do not turn implementation instructions into project knowledge.
 
 1. Do the requested work. Preserve unrelated source, saved Cards, profiles, prompts, grants,
    projects, graph data, sessions, layout, and current dirty work. Never perform a broad restore.
@@ -73,7 +77,8 @@ context search/injection require separate, incremental proof. No forced Question
   KnowGraph researcher and the existing Agent Builder as both synthesizer and Canvas builder. Only
   ThinkGraph uses its own profile (now Engraphis; the original engine choice is superseded). Workers maintain graphs; synthesis reads native
   graph evidence directly. Never replace graph authority with a chain of copied reports. Expanding the
-  lower surface must not unmount Main or switch its conversation/profile into CLI mode. Automatic
+  lower surface follows the September 9 explicit restoration of the September 6 pull-up: full-height
+  Builder hides Main Chat until the handle restores it, without changing Main's profile or conversation. Automatic
   retrieval from user messages comes after the graph/synthesis path works.
 
 - **Prompt sections swallowed or hidden.** The editor recognized only a small heading set and missed

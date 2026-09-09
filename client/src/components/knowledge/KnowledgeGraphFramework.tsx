@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react';
 
 import { graphDrawerSectionStyle } from '../graph/graphVisualTokens';
+import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import type { KnowledgeGraphKind } from '../../types/agentgraph';
 
 const NativeCodeGraphSurface = lazy(async () => {
@@ -11,9 +12,10 @@ const NativeKnowGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeKnowGraphSurface };
 });
+
 const NativeThinkGraphSurface = lazy(async () => {
-  const mod = await import('./ConstellationSigmaSurface');
-  return { default: mod.default };
+  const mod = await import('./NativeAuthorityGraphSurface');
+  return { default: mod.NativeGraphProjectionSurface };
 });
 
 type KnowledgeSurfaceKind = KnowledgeGraphKind;
@@ -42,6 +44,7 @@ type Props = {
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
   ) => void;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
+  onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
 };
 
 export default function KnowledgeGraphFramework({
@@ -56,6 +59,7 @@ export default function KnowledgeGraphFramework({
   onExpandAttentionNode,
   onUseAttentionNode,
   onKindChange,
+  onRemoveThinkGraphEvidence,
 }: Props) {
   return (
     <div
@@ -63,6 +67,7 @@ export default function KnowledgeGraphFramework({
       data-graph-framework="active"
       style={{ position: 'relative', width: '100%', height: '100%', minHeight, overflow: 'hidden' }}
     >
+      <GraphPaperBackground />
       <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 6, display: 'flex', gap: 6 }}>
         {GRAPH_AUTHORITIES.map((authority) => (
           <button
@@ -92,7 +97,7 @@ export default function KnowledgeGraphFramework({
               width: '100%',
               height: '100%',
               minHeight,
-              background: '#0b0e12',
+              position: 'relative',
             }}
           />
         }
@@ -125,15 +130,6 @@ export default function KnowledgeGraphFramework({
               onUseAsContext={(node) => onUseAttentionNode('codegraph', node)}
             />
           )
-        ) : kind === 'thinkgraph' ? (
-          <NativeThinkGraphSurface
-            projection={attentionProjections.thinkgraph}
-            status={attentionStatuses?.thinkgraph || (attentionErrors.thinkgraph ? 'error' : 'ready')}
-            error={attentionErrors.thinkgraph || null}
-            authority="thinkgraph"
-            onExpand={(node) => onExpandAttentionNode('thinkgraph', node)}
-            onUseAsContext={(node) => onUseAttentionNode('thinkgraph', node)}
-          />
         ) : kind === 'knowgraph' ? (
           <NativeKnowGraphSurface
             projection={attentionProjections.knowgraph}
@@ -142,7 +138,17 @@ export default function KnowledgeGraphFramework({
             onExpand={(node) => onExpandAttentionNode('knowgraph', node)}
             onUseAsContext={(node) => onUseAttentionNode('knowgraph', node)}
           />
-        ) : null}
+        ) : (
+          <NativeThinkGraphSurface
+            authority="thinkgraph"
+            onRemoveEvidence={onRemoveThinkGraphEvidence}
+            projection={attentionProjections.thinkgraph}
+            status={attentionStatuses?.thinkgraph || (attentionErrors.thinkgraph ? 'error' : 'ready')}
+            error={attentionErrors.thinkgraph || null}
+            onExpand={(node) => onExpandAttentionNode('thinkgraph', node)}
+            onUseAsContext={(node) => onUseAttentionNode('thinkgraph', node)}
+          />
+        )}
       </Suspense>
     </div>
   );

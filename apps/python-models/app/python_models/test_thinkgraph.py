@@ -42,10 +42,15 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
 
     try:
         saved = call("engraphis_remember", {
-            "title": "Evidence for alternatives", "summary": "A question, not a verified claim.",
-            "content": "Compare supporting and conflicting evidence before selecting an alternative.", "cognition": question(),
+            "title": "Evidence for alternatives",
+            "content": "Compare supporting and conflicting evidence before selecting an alternative.",
         })
         native_id = saved["id"]
+        # Existing metadata remains readable by the retained evidence-linking
+        # contract; it is no longer an added field on Engraphis MCP tools.
+        legacy = owner.store.get_memory(native_id)
+        legacy.metadata = {"cognition": validate_cognition(question(), "project-one")}
+        owner.store.add_memory(legacy)
         link = question_evidence.validate_question_evidence(dict(
             questionRef=dict(authority="thinkgraph", nativeId=native_id, projectId="project-one"),
             outcome="contested", relation="contradicts"), "project-one", request)
@@ -58,18 +63,28 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
         assert stored["authoredBy"] == "assistant"
         assert stored["originRefs"] == question()["originRefs"]
         assert json.loads(calls[0]["link"])["questionRef"]["nativeId"] == native_id
-        projected = engraphis.projection("project-one")["nodes"][0]
-        assert projected["properties"]["summary"] == "A question, not a verified claim."
-        assert projected["properties"]["fullContent"].startswith("Compare supporting")
-        assert projected["properties"]["researchSeed"]["questionRef"]["nativeId"] == native_id
         # Ordinary metadata updates cannot discard cognition.
         call("engraphis_update_memory", {"memory_id": native_id, "title": "Evidence for alternatives"})
         assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"] == stored
-        updated = {**stored, "questionStatus": "superseded"}
-        call("engraphis_update_memory", {"memory_id": native_id, "cognition": updated})
-        assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"]["questionStatus"] == "superseded"
     finally:
         owner.close()
+
+
+def test_weighted_communities_gateways_and_gaps_are_analysis_only():
+    nodes = list("abcdef") + ["isolated"]
+    edges = [[a, b, 1] for a, b in [("a", "b"), ("a", "c"), ("b", "c"), ("d", "e"), ("d", "f"), ("e", "f"), ("c", "d")]]
+    encoded = json.dumps({"nodes": nodes, "edges": edges})
+    analysis = analyze_graph("revision", encoded)
+    assert analysis["nodes"]["c"]["gatewayScore"] > analysis["nodes"]["a"]["gatewayScore"]
+    assert analysis["nodes"]["a"]["communityId"] != analysis["nodes"]["f"]["communityId"]
+    assert ["isolated"] in analysis["components"]
+    assert analysis["gaps"]
+    for gap in analysis["gaps"]:
+        assert gap["edgeClass"] == "derived"
+        assert not any({a, b} == {gap["source"], gap["target"]} for a, b, _ in edges)
+    assert json.loads(encoded) == {"nodes": nodes, "edges": edges}
+    assert analyze_graph("revision", encoded) is analysis
+    assert analyze_graph("empty", '{"nodes":[],"edges":[]}')["communities"] == []
 
 
 @pytest.mark.parametrize("change,error", [
@@ -104,27 +119,14 @@ def test_native_relationship_projection_does_not_invent_strength_or_authorship(t
         b = call("engraphis_remember", {"content": "A question about supplier profitability"})["id"]
         call("engraphis_link", {"a": a, "b": b, "relation": "related", "layer": "semantic",
                                "reason": "Supplier research concerns these components."})
-        native = next(e for e in owner.store.get_links(a) if e["a"] == a and e["b"] == b)
-        projected = next(e for e in engraphis.projection("project-one")["edges"]
-                         if e["source"] == a and e["target"] == b)
-        assert json.loads(projected["id"]) == [a, b, native["relation"]]
-        assert projected["properties"] == {"reason": native["reason"], "layer": native["layer"]}
+        scene = owner.graph_scene(workspace="project-one")
+        projected = engraphis.projection("project-one")
+        assert [n["id"] for n in projected["nodes"]] == [n["id"] for n in scene["nodes"]]
+        assert [e["id"] for e in projected["edges"]] == [e["id"] for e in scene["edges"]]
+        for original, visible in zip(scene["nodes"], projected["nodes"]):
+            assert all(visible[key] == value for key, value in original.items())
+        for original, visible in zip(scene["edges"], projected["edges"]):
+            assert all(visible[key] == value for key, value in original.items())
+            assert visible["predicate"] == original["relation"]
     finally:
         owner.close()
-
-
-def test_weighted_communities_gateways_and_gaps_are_analysis_only():
-    nodes = list("abcdef") + ["isolated"]
-    edges = [[a, b, 1] for a, b in [("a", "b"), ("a", "c"), ("b", "c"), ("d", "e"), ("d", "f"), ("e", "f"), ("c", "d")]]
-    encoded = json.dumps({"nodes": nodes, "edges": edges})
-    analysis = analyze_graph("revision", encoded)
-    assert analysis["nodes"]["c"]["gatewayScore"] > analysis["nodes"]["a"]["gatewayScore"]
-    assert analysis["nodes"]["a"]["communityId"] != analysis["nodes"]["f"]["communityId"]
-    assert ["isolated"] in analysis["components"]
-    assert analysis["gaps"]
-    for gap in analysis["gaps"]:
-        assert gap["edgeClass"] == "derived"
-        assert not any({a, b} == {gap["source"], gap["target"]} for a, b, _ in edges)
-    assert json.loads(encoded) == {"nodes": nodes, "edges": edges}
-    assert analyze_graph("revision", encoded) is analysis
-    assert analyze_graph("empty", '{"nodes":[],"edges":[]}')["communities"] == []

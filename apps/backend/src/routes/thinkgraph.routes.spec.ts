@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   fetchThinkGraphProjection: vi.fn(),
   fetchThinkGraphNeighborhood: vi.fn(),
+  requestHermesExtension: vi.fn(),
 }));
+
+vi.mock('../hermes/mainAdapter', () => ({ requestHermesExtension: mocks.requestHermesExtension }));
+
 
 vi.mock('../services/autogen/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
@@ -36,9 +40,31 @@ afterEach(() => {
   vi.restoreAllMocks();
   mocks.fetchThinkGraphProjection.mockReset();
   mocks.fetchThinkGraphNeighborhood.mockReset();
+  mocks.requestHermesExtension.mockReset();
+  vi.unstubAllEnvs();
 });
 
 describe('ThinkGraph native read transport', () => {
+  it('preserves the engine messages and selected account model on the private extraction route', async () => {
+    const secret = 'extraction-transport-contract-secret';
+    vi.stubEnv('LIQUIDAITY_INTERNAL_MCP_SECRET', secret);
+    const body = { profile: 'thinkgraph', model: 'gpt-5.6-luna', reasoningEffort: 'low',
+      messages: [{ role: 'system', content: 'Engine prompt' }, { role: 'user', content: 'Engine input' }] };
+    const result = { content: '{"facts":[]}', provider: 'openai-codex', model: body.model };
+    mocks.requestHermesExtension.mockResolvedValue(result);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const denied = await fetch(`${baseUrl}/extraction-completion`, { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      expect(denied.status).toBe(403);
+      expect(mocks.requestHermesExtension).not.toHaveBeenCalled();
+      const accepted = await fetch(`${baseUrl}/extraction-completion`, { method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-internal-secret': secret }, body: JSON.stringify(body) });
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toEqual(result);
+      expect(mocks.requestHermesExtension).toHaveBeenCalledWith('_model/complete', body);
+    } finally { await closeServer(server); }
+  });
   it('passes one exact native memory identity to the Engraphis neighborhood reader', async () => {
     mocks.fetchThinkGraphNeighborhood.mockResolvedValue({
       centerId: 'mem-1',

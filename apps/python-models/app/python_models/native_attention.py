@@ -263,6 +263,8 @@ def _extract_knowgraph_edges(tool_name: str, payload: dict[str, Any]) -> list[di
 
 
 def _extract_thinkgraph(tool_name: str, payload: dict[str, Any]) -> tuple[list[str], list[str]]:
+    if tool_name == "engraphis_ingest":
+        return _values(_records(payload, "facts"), "id"), []
     records = _records(
         payload,
         "memories",

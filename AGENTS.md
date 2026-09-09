@@ -386,10 +386,11 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Completed Main conversations automatically go only to ThinkGraph. KnowGraph retains sourced research
-findings through its existing research agent and native ingestion, not an automatic conversation copy
-or ThinkGraph-result cascade. Entity/relationship context linking and Main context search/injection
-remain separate proof tasks. Do not force conversation into a Question/answer workflow.
+Main reads ThinkGraph, answers in chat, and chooses explicit Engraphis writes. Automatic completed-pair
+extraction is removed by the September 9 owner decision. Main may delegate focused extraction or
+enrichment to ThinkGraph; it is not an automatic conversation replay. KnowGraph retains sourced research through its
+existing research agent and Graphiti intake. Operating instructions belong in saved Cards; dynamic
+input carries the actual task and selected data. Do not submit system-design guidance as test chatter.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
 - Transient context selection may reference native authorities for bounded IDF hydration; it is not another graph

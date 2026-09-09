@@ -2,6 +2,28 @@ from __future__ import annotations
 
 import pytest
 
+
+def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
+    from app.python_models import card_domain, data_anchor
+    monkeypatch.setattr(card_domain, "load_deck", lambda p, d: {
+        "projectId": p, "deck": {"nodes": [{"id": "saved-main"}]}})
+    calls = []
+    def read(**kwargs):
+        calls.append(kwargs)
+        return [{"projects": [{"name": "native-project"}]}]
+    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
+    scope = {"projectId": "p", "deckId": "d", "cardId": "saved-main"}
+    assert data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})["projects"]
+    assert calls[0]["card_id"] == "saved-main"
+    assert calls[0]["calls"] == [("cbm.list_projects", {})]
+    with pytest.raises(ValueError, match="not_allowed"):
+        data_anchor.read_codegraph_tool({**scope, "name": "delete_project"})
+    with pytest.raises(ValueError, match="saved_card"):
+        data_anchor.read_codegraph_tool({**scope, "cardId": "absent", "name": "list_projects"})
+    with pytest.raises(ValueError, match="project_mismatch"):
+        data_anchor.read_codegraph_tool({**scope, "name": "index_status", "arguments": {"project": "other"}})
+    assert len(calls) == 1
+
 from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
@@ -13,6 +35,43 @@ from app.python_models.data_anchor import (
     prepare_main_context,
 )
 from app.python_models import engraphis, data_anchor
+
+
+def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):
+    # Captured columns/rows from the app-published CBM query_graph, September 8.
+    prefix = "C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention."
+    source, target = prefix + "overlayAuthoritativeGraphAttention", prefix + "retain"
+    nodes = f'rows: 1  (cols: a.qualified_name a.name a.label id(a))\n  {source} overlayAuthoritativeGraphAttention Function "2130"\ntotal: 1\n'
+    edges = f'rows: 1  (cols: a.qualified_name a.name a.label id(a) b.qualified_name b.name b.label id(b) id(r) type(r))\n  {source} overlayAuthoritativeGraphAttention Function "2130" {target} retain Function "2131" "17367" CALLS\ntotal: 1\n'
+    observed = []
+    def read(**kwargs):
+        observed.append(kwargs)
+        return [{"text": nodes}, {"text": edges}]
+    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
+    result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": [source], "expand": True})
+    assert [node["id"] for node in result["nodes"]] == [source, target]
+    assert result["edges"] == [{"id": "17367", "source": source, "target": target,
+        "predicate": "CALLS", "properties": {}, "provenance": {
+            "project": "C-Projects-LiquidAIty-main", "edgeId": "17367", "tool": "cbm.query_graph"}}]
+    assert result["nodes"][0]["provenance"]["nodeId"] == "2130"
+    assert all(name == "cbm.query_graph" for name, _ in observed[0]["calls"])
+    assert "MATCH (a)-[r]->(b)" in observed[0]["calls"][1][1]["query"]
+
+
+def test_codegraph_empty_and_changed_wire_format_do_not_create_records(monkeypatch):
+    def read(**kwargs):
+        results = []
+        for _, args in kwargs["calls"]:
+            columns = args["query"].split(" RETURN ")[1].split(" LIMIT ")[0].replace(",", "")
+            results.append({"text": f'rows: 0  (cols: {columns})\ntotal: 0\nhint: "Query returned no results."'})
+        return results
+    monkeypatch.setattr(data_anchor, "call_read_tools_via_mcp", read)
+    result = data_anchor._read_codegraph_projection("p", "d", "card", {"node_ids": ["absent"]})
+    assert result["nodes"] == result["edges"] == []
+    with pytest.raises(DataAnchorError, match="format_invalid"):
+        data_anchor._cbm_table({"text": "unrecognized format"}, ["a"])
+    with pytest.raises(DataAnchorError, match="rows_invalid"):
+        data_anchor._cbm_table({"text": "rows: 1  (cols: a)\ntotal: 0"}, ["a"])
 
 
 def test_main_preload_keeps_native_ids_bounds_and_independent_failures():

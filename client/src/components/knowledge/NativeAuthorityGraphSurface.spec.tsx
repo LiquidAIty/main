@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode, Suspense } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,23 +10,29 @@ vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
 
 const forceGraphMocks = vi.hoisted(() => ({ instances: [] as any[] }));
 
-vi.mock('force-graph', () => ({ default: function ForceGraphMock() {
-  const instance: any = {
-    data: { nodes: [], links: [] },
-    backgroundColor() { return this; }, cooldownTime() { return this; }, warmupTicks() { return this; },
-    nodeRelSize() { return this; }, autoPauseRedraw() { return this; }, onNodeClick(handler: unknown) { this.nodeClick = handler; return this; },
-    onLinkClick(handler: unknown) { this.linkClick = handler; return this; },
-    onNodeHover() { return this; }, nodeCanvasObject() { return this; }, nodePointerAreaPaint() { return this; },
-    linkColor() { return this; }, linkWidth() { return this; }, linkDirectionalArrowLength() { return this; },
-    linkDirectionalArrowRelPos() { return this; }, linkCanvasObjectMode() { return this; }, linkCanvasObject() { return this; },
-    onRenderFramePost() { return this; }, d3Force() { return { strength: () => undefined, distance: () => undefined }; },
-    graphData(value?: unknown) { if (value === undefined) return this.data; this.data = value; return this; },
-    d3ReheatSimulation: vi.fn(function (this: any) { return this; }), refresh: vi.fn(function (this: any) { return this; }),
-    width() { return this; }, height() { return this; }, zoomToFit() { return this; }, _destructor() {},
-  };
-  forceGraphMocks.instances.push(instance);
-  return instance;
-} }));
+vi.mock('../../vendor/engraphis/vendor/d3.min.js', () => ({}));
+vi.mock('../../vendor/engraphis/vendor/force-graph.min.js', () => ({}));
+vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
+  window.EngraphisGraph = { create(host, options) {
+    expect(Object.keys(options).sort()).toEqual(['onBackgroundClick', 'onNodeClick']);
+    const canvas = document.createElement('canvas');
+    host.appendChild(canvas);
+    const instance: any = {
+      data: { nodes: [], links: [] }, nodeClick: options.onNodeClick,
+      setData: vi.fn(function (this: any, data: any) {
+        this.data = { ...data, nodes: data.nodes.map((node: any) => ({ ...node })), links: data.links || data.edges || [] };
+      }),
+      setHighlight: vi.fn(), graphToScreen: (x: number, y: number) => ({ x, y }),
+      setPreset: vi.fn(() => ({ size: 3, font: 13, linkw: 1, labelDensity: 40, repel: 120, link: 30, gravity: 14 })), setStyle: vi.fn(), setSettings: vi.fn(),
+      fit: vi.fn(), destroy: vi.fn(() => canvas.remove()),
+      wheel: vi.fn(),
+    };
+    canvas.addEventListener('wheel', instance.wheel);
+    forceGraphMocks.instances.push(instance);
+    return instance;
+  } };
+  return {};
+});
 
 class ResizeObserverStub { observe() {} disconnect() {} }
 vi.stubGlobal('ResizeObserver', ResizeObserverStub);
@@ -55,6 +61,39 @@ describe('native authority graph surfaces', () => {
   it('passes the bounded native projection to the embedded CBM GraphTab', async () => {
     render(<Suspense fallback={null}><NativeCodeGraphSurface project="C-Projects-main" projection={empty('codegraph')} onExpand={vi.fn()} /></Suspense>);
     await waitFor(() => expect(screen.getByTestId('cbm-graph-tab').textContent).toBe('C-Projects-main:0'));
+  });
+
+  it.each(['knowgraph'] as const)('uses the selected Engraphis preset for %s with zoom and shared paper', (authority) => {
+    const { container } = render(<NativeGraphProjectionSurface authority={authority}
+      projection={empty(authority)} status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(container.querySelector('[data-renderer="engraphis-1.7.1"]')).toBeTruthy();
+    expect(graph.setPreset).toHaveBeenCalledWith('original');
+    expect(graph.setStyle).toHaveBeenCalledWith('classic');
+    expect(graph.setSettings).toHaveBeenCalledWith({ labels: true });
+    const paper = container.querySelector('[aria-hidden="true"]') as HTMLElement;
+    expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(graph.wheel.mock.calls.at(-1)[0].deltaY).toBe(-120);
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(graph.wheel.mock.calls.at(-1)[0].deltaY).toBe(120);
+    fireEvent.click(screen.getByRole('button', { name: 'Fit view' }));
+    expect(graph.fit).toHaveBeenCalledOnce();
+    expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
+    for (const name of ['Freeze', 'Resume', 'Reheat', 'Focus']) {
+      expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
+    }
+    expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
+  it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
+    const scene = { nodes: [], edges: [], communities: [], meta: { layout_seed: 7 } };
+    render(<NativeGraphProjectionSurface authority="knowgraph"
+      projection={{ ...empty('thinkgraph'), scene }} status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.setData.mock.calls[0][0]).toBe(scene);
+    expect(graph.data.nodes).toEqual([]);
+    expect(graph.data.links).toEqual([]);
   });
 
   it('starts KnowGraph empty without loading the complete Neo4j graph', async () => {
@@ -112,7 +151,7 @@ describe('native authority graph surfaces', () => {
     expect(container.querySelector('[data-testid="cbm-graph-tab"]')).toBeNull();
   });
 
-  it('reuses surviving node objects and reheats only when topology grows', async () => {
+  it('preserves selection and supplied records across activity refreshes', async () => {
     const first = {
       schemaVersion: 'knowgraph.attention.projection.v1',
       authority: 'knowgraph',
@@ -136,12 +175,10 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
     const survivingNode = graph.data.nodes[0];
-    expect(survivingNode.attentionActorColor).toBe('#37ADAA');
+    expect(survivingNode.properties.attentionActorColor).toBe('#37ADAA');
     act(() => graph.nodeClick(survivingNode));
     expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
-    expect(survivingNode.attentionActorCardId).toBe('card_main_chat');
-    survivingNode.x = 42;
-    const initialReheats = graph.d3ReheatSimulation.mock.calls.length;
+    expect(survivingNode.properties.attentionActorCardId).toBe('card_main_chat');
 
     rerender(
       <NativeGraphProjectionSurface
@@ -153,10 +190,10 @@ describe('native authority graph surfaces', () => {
         error={null}
       />,
     );
-    await waitFor(() => expect(graph.refresh).toHaveBeenCalled());
-    expect(graph.data.nodes[0]).toBe(survivingNode);
-    expect(graph.data.nodes[0].x).toBe(42);
-    expect(graph.d3ReheatSimulation).toHaveBeenCalledTimes(initialReheats);
+    await waitFor(() => expect(graph.data.nodes).toHaveLength(1));
+    expect(graph.data.nodes[0].id).toBe(survivingNode.id);
+    expect(graph.data.nodes[0].currentState).toBe('settled');
+    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
 
     rerender(
       <NativeGraphProjectionSurface
@@ -185,9 +222,11 @@ describe('native authority graph surfaces', () => {
       />,
     );
     await waitFor(() => expect(graph.data.nodes).toHaveLength(2));
-    expect(graph.data.nodes[0]).toBe(survivingNode);
-    expect(graph.data.nodes[0].x).toBe(42);
-    expect(graph.d3ReheatSimulation).toHaveBeenCalledTimes(initialReheats + 1);
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['mem-one', 'mem-two']);
+    expect(screen.getByTestId('knowgraph-node-inspector').getAttribute('data-native-id')).toBe('mem-one');
+    expect(graph.data.links[0].properties.attentionActorColor).toBe('#37ADAA');
+    expect(graph.data.links.map((link: any) => [link.id, link.source, link.target, link.relation]))
+      .toEqual([['memory-edge', 'mem-one', 'mem-two', 'related']]);
   });
 
   it('attaches only the exact selected native node to Main', async () => {
@@ -216,6 +255,74 @@ describe('native authority graph surfaces', () => {
     }));
   });
 
+  it('passes recorded predicates as Engraphis link labels without changing endpoints or evidence', () => {
+    const projection = {
+      ...empty('thinkgraph'),
+      nodes: [{ id: 'subject', label: 'Subject' }, { id: 'idea', label: 'Idea' }],
+      edges: [{ id: 'edge', source: 'subject', target: 'idea', predicate: 'considers',
+        provenance: { memoryId: 'stored-memory' }, properties: { summary: 'Recorded relationship.' } }],
+    };
+    const before = JSON.stringify(projection);
+    render(<NativeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.data.links).toHaveLength(1);
+    expect(graph.data.links[0]).toMatchObject({ ...projection.edges[0], relation: 'considers' });
+    expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([['subject', 'Subject'], ['idea', 'Idea']]);
+    expect(JSON.stringify(projection)).toBe(before);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    fireEvent.click(screen.getByRole('button', { name: 'Subject considers Idea' }));
+    expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Recorded relationship.');
+  });
+
+  it('renders ThinkGraph in the existing canvas and binds the pull tab to Engraphis settings', async () => {
+    const { container } = render(<KnowledgeGraphFramework codeGraphProjectName={null} codeGraphProjectError={null}
+      kind="thinkgraph" attentionProjections={{ thinkgraph: empty('thinkgraph'), knowgraph: empty('knowgraph'), codegraph: empty('codegraph') }}
+      attentionErrors={{}} onKindChange={vi.fn()} onExpandAttentionNode={vi.fn()} onUseAttentionNode={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId('native-thinkgraph-surface')).toBeTruthy());
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(screen.getByText('No knowledge yet.')).toBeTruthy();
+    await waitFor(() => expect(forceGraphMocks.instances.at(-1)?.data.nodes).toEqual([]));
+    const graph = forceGraphMocks.instances.at(-1);
+    expect(graph.data.nodes).toEqual([]);
+    expect(graph.setPreset).toHaveBeenCalledWith('original');
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
+    expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 7 });
+    expect(graph.data.nodes).toEqual([]);
+    expect(graph.data.links).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
+    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
+    expect(screen.queryByRole('button', { name: /Freeze/ })).toBeNull();
+  });
+
+  it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
+    const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: { summary: 'Saved note.' } }] };
+    render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    expect(screen.getByRole('dialog', { name: 'Existing entry' }).textContent).toContain('Saved note.');
+    expect(screen.queryByRole('button', { name: 'Expand', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
+  });
+
+  it('removes only the selected stored note and reports a failed removal without hiding data', async () => {
+    const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
+    const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
+      properties: { evidence: [{ id: 'memory-id', summary: 'Saved note.' }] } }] };
+    render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
+      status="ready" error={null} onRemoveEvidence={remove} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
+    expect(remove).toHaveBeenCalledExactlyOnceWith('memory-id');
+    expect(screen.getByText('Saved note.')).toBeTruthy();
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['stored']);
+  });
+
   it('opens the exact selected relationship with its recorded claim and keeps diagnostics out of the inspector', () => {
     const projection = {
       ...empty('knowgraph'),
@@ -230,7 +337,7 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The recorded source summary.');
-    act(() => graph.linkClick(graph.data.links[0]));
+    fireEvent.click(screen.getByRole('button', { name: 'Source supports Claim' }));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
     expect(inspector.getAttribute('data-native-id')).toBe('evidence');
     expect(inspector.textContent).toContain('SUPPORTS');

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
-  Background,
-  BackgroundVariant,
   ConnectionMode,
   ReactFlow,
   addEdge,
@@ -40,6 +38,7 @@ import {
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
 import { buildPresentationLandingViewport } from '../../features/agentbuilder/core/agentBuilderViewportMath';
+import { GraphPaperBackground } from '../graph/GraphCanvasChrome';
 import {
   GRAPH_WORKSPACE,
   buildFocusedNodeSet,
@@ -603,6 +602,7 @@ export default function BuilderCanvas({
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [layoutLocked, setLayoutLocked] = useState(false);
+  const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const initialViewportAppliedRef = useRef(false);
   const flowNodes = useMemo(
@@ -1142,6 +1142,7 @@ export default function BuilderCanvas({
           )
         }
         onInit={setReactFlowInstance}
+        onMove={(_event, viewport) => setPaperViewport(viewport)}
         onNodesChange={onNodesChange}
         onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
@@ -1176,18 +1177,7 @@ export default function BuilderCanvas({
           markerEnd: 'agent-edge-circle',
         }}
       >
-        <Background
-          variant={BackgroundVariant.Lines}
-          gap={GRAPH_THEME.graphPaper.minorStep}
-          size={GRAPH_THEME.graphPaper.lineWidth}
-          color={GRAPH_THEME.background.gridMinor}
-        />
-        <Background
-          variant={BackgroundVariant.Lines}
-          gap={GRAPH_THEME.graphPaper.majorStep}
-          size={GRAPH_THEME.graphPaper.lineWidth}
-          color={GRAPH_THEME.background.gridMajor}
-        />
+        <GraphPaperBackground viewport={paperViewport} />
       </ReactFlow>
     </div>
   );

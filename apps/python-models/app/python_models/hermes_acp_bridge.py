@@ -4,8 +4,9 @@ The stock Hermes ACP agent remains the runtime.  This adapter subclasses its
 public agent surface only to expose native manager operations and native
 Kanban persistence over ACP.  Each write delegates one flat operation to an
 existing Hermes handler and then reads the native owner back; it does not
-assemble profile files, prompt a model, decompose tasks, dispatch workers, or
-synthesize results. Those lifecycle steps remain owned by Hermes.
+assemble profile files, decompose tasks, dispatch workers, or synthesize results.
+The extraction extension transports a library-owned prompt through Hermes's
+account client without starting an agent session.
 """
 
 from __future__ import annotations
@@ -175,6 +176,52 @@ def _exact_roots(conn: Any, *, title: str, body: str, created_by: str) -> list[A
     return sorted(matches, key=lambda task: (task.created_at, task.id))
 
 
+def _account_completion(params: dict[str, Any]) -> dict[str, Any]:
+    """Transport an extractor request through Hermes' existing account client.
+
+    No agent session, tools, profile edits, or auxiliary provider-fallback chain.
+    The calling library owns the prompt and validates the returned content.
+    """
+    if set(params) != {"profile", "model", "messages", "reasoningEffort"}:
+        raise ValueError("extraction_completion_fields_invalid")
+    profile = _required_native_text(params, "profile")
+    model = _required_native_text(params, "model")
+    messages = params["messages"]
+    effort = params["reasoningEffort"]
+    if (not isinstance(messages, list) or not messages
+            or any(not isinstance(m, dict) or set(m) != {"role", "content"}
+                   or m["role"] not in {"system", "user", "assistant"}
+                   or not isinstance(m["content"], str) for m in messages)
+            or effort not in {"low", "medium", "high", "xhigh"}):
+        raise ValueError("extraction_completion_request_invalid")
+    from hermes_cli.profiles import get_profile_dir
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from agent.auxiliary_client import resolve_provider_client
+
+    profile_dir = get_profile_dir(profile)
+    if not profile_dir or not profile_dir.is_dir():
+        raise ValueError("extraction_profile_missing")
+    token = set_hermes_home_override(str(profile_dir))
+    try:
+        client, resolved_model = resolve_provider_client("openai-codex", model=model)
+        if client is None or resolved_model != model:
+            raise ValueError("extraction_account_model_unavailable")
+        response = client.chat.completions.create(
+            model=model, messages=messages, timeout=120,
+            extra_body={"reasoning": {"effort": effort}},
+        )
+        content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("extraction_completion_empty")
+        return {"content": content, "provider": "openai-codex", "model": model,
+                "responseModel": getattr(response, "model", None),
+                "usage": {key: getattr(response.usage, key, None) for key in (
+                    "prompt_tokens", "completion_tokens", "total_tokens",
+                )} if response.usage else None}
+    finally:
+        reset_hermes_home_override(token)
+
+
 def _task_snapshot(task_id: str) -> dict[str, Any]:
     from hermes_cli import kanban_db as kb
 
@@ -200,6 +247,8 @@ class LiquidAItyHermesACPAgent(HermesACPAgent):
     """Stock Hermes ACP agent plus contained native-Kanban transport calls."""
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "model/complete":
+            return await asyncio.to_thread(_account_completion, params)
         if method == "native/call":
             if not isinstance(params, dict):
                 raise ValueError("hermes_native_call_params_must_be_object")
