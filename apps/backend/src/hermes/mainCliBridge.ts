@@ -9,6 +9,16 @@ import type {
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 export type MainContextAuthorityMode = 'main_native_honcho' | 'plugin_context_only';
 
+export type MainCliUsage = {
+  providerInputTokens: number | null;
+  providerOutputTokens: number | null;
+  providerCachedTokens: number | null;
+  providerReasoningTokens: number | null;
+  totalCostUsd: number | null;
+  usageAvailable: boolean;
+  usageSource: string;
+};
+
 export type MainCliProjection = {
   schemaVersion: 'liquidaity.main.projection.v1';
   id: string;
@@ -42,6 +52,7 @@ export type MainCliBridgeEvent = {
   kind: 'accepted' | 'started' | 'text' | 'projection' | 'completed' | 'failed' | 'rejected' | 'cancel_requested';
   delta?: string;
   finalText?: string;
+  usage?: MainCliUsage;
   error?: string;
   nativeSessionId?: string;
   nativeTurnId?: string;
@@ -74,7 +85,7 @@ type MainCliTurn = {
   profileAuthority: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
   projectionIdentity: MainCliHistoryProjection['identity'];
   onEvent: (event: MainCliBridgeEvent) => void;
-  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string;
+  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string; usage?: MainCliUsage;
     contextAuthorityMode: MainContextAuthorityMode }) => void;
   reject: (error: Error) => void;
 };
@@ -132,7 +143,7 @@ export class MainCliBridge {
     profileAuthority?: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
     projectionIdentity?: MainCliHistoryProjection['identity'];
     onEvent: (event: MainCliBridgeEvent) => void;
-  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string;
+  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string; usage?: MainCliUsage;
     contextAuthorityMode: MainContextAuthorityMode }> {
     if (!this.ready()) throw new Error('main_cli_bridge_unavailable');
     if (this.active) throw new Error('main_driver_turn_already_running');
@@ -336,6 +347,7 @@ export class MainCliBridge {
         nativeSessionId: String(event.nativeSessionId || ''),
         nativeTurnId: String(event.nativeTurnId || ''),
         contextAuthorityMode: active.contextAuthorityMode,
+        ...(event.usage ? { usage: event.usage } : {}),
       });
     } else if (event.kind === 'failed' || event.kind === 'rejected') {
       this.active = null;

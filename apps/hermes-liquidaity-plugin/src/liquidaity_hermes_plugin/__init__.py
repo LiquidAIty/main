@@ -22,6 +22,7 @@ _DEFAULT_ENDPOINT = "http://127.0.0.1:4000/api/internal/hermes-kanban/worker-bea
 _TIMEOUT_SECONDS = 3.0
 _EXECUTION_TIMEOUT_SECONDS = 310.0
 _MAX_RESPONSE_BYTES = 64 * 1024
+_MAX_PROFILE_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAIN_BRIDGE_POLL_SECONDS = 0.2
 _SCRIPT_OUTPUT_PREFIX = "HERMES_CARD_SCRIPT_OUTPUT:"
 _MAIN_PROJECTION_SCHEMA = "liquidaity.main.projection.v1"
@@ -163,9 +164,17 @@ class _MainCliBridge:
         timeout_seconds = (
             _EXECUTION_TIMEOUT_SECONDS if path == "/execution" else _TIMEOUT_SECONDS
         )
+        # Profile delegation returns a completed answer plus native tool events.
+        # Keep control/credential reads small without rejecting valid child output.
+        response_limit = (
+            _MAX_PROFILE_RESPONSE_BYTES
+            if path == "/execution" and payload is not None
+            and payload.get("method") == "session/delegate_profile"
+            else _MAX_RESPONSE_BYTES
+        )
         try:
             with opener.open(request, timeout=timeout_seconds) as response:
-                body = response.read(_MAX_RESPONSE_BYTES + 1)
+                body = response.read(response_limit + 1)
         except urllib.error.HTTPError as error:
             if error.code == 204:
                 return None
@@ -182,7 +191,7 @@ class _MainCliBridge:
             raise RuntimeError(
                 reason or f"liquidaity_main_bridge_http_{error.code}"
             ) from error
-        if len(body) > _MAX_RESPONSE_BYTES:
+        if len(body) > response_limit:
             raise RuntimeError("liquidaity_main_bridge_response_too_large")
         if not body:
             return None
@@ -300,7 +309,13 @@ class _MainCliBridge:
 
         def observe():
             while not interrupted.is_set() and not self._stop.is_set():
-                response = self._request("/profile-run", {**identity, "action": "read"})
+                try:
+                    response = self._request("/profile-run", {**identity, "action": "read"})
+                except TimeoutError:
+                    # A status-read timeout says nothing about the saved child
+                    # Run. Keep observing that exact Run; never redispatch it.
+                    interrupted.wait(2.0)
+                    continue
                 result = response.get("result") if isinstance(response, dict) else None
                 if not isinstance(result, dict) or response.get("ok") is not True:
                     raise RuntimeError("profile_result_unavailable")
@@ -370,6 +385,9 @@ class _MainCliBridge:
             session_config=session_config,
         ):
             raise RuntimeError("liquidaity_main_execution_parent_unavailable")
+        with self._lock:
+            if self._active and self._active["requestId"] == active["requestId"]:
+                self._active["sessionId"] = session_id
 
     @staticmethod
     def _register_turn_mcp_servers(
@@ -665,8 +683,29 @@ class _MainCliBridge:
             state="completed",
         )
         self._event("completed", finalText=str(response or ""),
-                    nativeSessionId=session_id, nativeTurnId=turn_id)
+                    nativeSessionId=session_id, nativeTurnId=turn_id,
+                    usage=self._turn_usage())
         self._clear()
+
+    def _turn_usage(self) -> dict:
+        from agent.usage_pricing import CanonicalUsage
+
+        with self._lock:
+            reports = dict((self._active or {}).get("apiUsage", {}))
+        complete = bool(reports) and all(report is not None for report in reports.values())
+        total = CanonicalUsage(request_count=0)
+        if complete:
+            for report in reports.values():
+                total += CanonicalUsage(**report)
+        return {
+            "providerInputTokens": total.prompt_tokens if complete else None,
+            "providerOutputTokens": total.output_tokens if complete else None,
+            "providerCachedTokens": total.cache_read_tokens if complete else None,
+            "providerReasoningTokens": total.reasoning_tokens if complete else None,
+            "totalCostUsd": None,
+            "usageAvailable": complete,
+            "usageSource": "native_api_requests" if complete else "native_cli_usage_unavailable",
+        }
 
     def on_pre_tool_call(self, **payload) -> None:
         tool_name = str(payload.get("tool_name") or "")
@@ -752,6 +791,9 @@ class _MainCliBridge:
         )
 
     def on_pre_api_request(self, **payload) -> None:
+        with self._lock:
+            if self._active and self._active.get("sessionId") and self._active["sessionId"] == payload.get("session_id"):
+                self._active.setdefault("apiUsage", {}).setdefault(str(payload.get("api_request_id") or ""), None)
         operation_id = str(payload.get("api_request_id") or "")
         request = payload.get("request") or {}
         body = request.get("body") or {}
@@ -781,6 +823,16 @@ class _MainCliBridge:
 
     def on_post_api_request(self, **payload) -> None:
         operation_id = str(payload.get("api_request_id") or "")
+        usage = payload.get("usage")
+        fields = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens")
+        report = {key: usage.get(key) for key in fields} if isinstance(usage, dict) else None
+        if report is not None and any(type(value) is not int or value < 0 for value in report.values()):
+            report = None
+        with self._lock:
+            if self._active and self._active.get("sessionId") and self._active["sessionId"] == payload.get("session_id"):
+                # Native request IDs deduplicate delivery; another Card/child's
+                # session must not be charged to this parent turn.
+                self._active.setdefault("apiUsage", {})[operation_id] = report if operation_id else None
         self._projection(
             "execution.receipt",
             event_id=f"{operation_id or 'api'}:completed",

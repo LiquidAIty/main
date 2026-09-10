@@ -104,6 +104,24 @@ def test_main_preload_does_not_widen_grants_or_invent_conversation():
     assert result["references"] == []
 
 
+def test_main_preload_preserves_every_reference_in_native_packed_context():
+    import json
+    sources = [{"id": f"mem_source_{index}", "title": f"Subject {index}"} for index in range(6)]
+    context = "Native packed context for all six returned sources."
+    result = prepare_main_context("p", "d", "main", "conversation", "subjects",
+        ["engraphis_recall_context"], mcp_reader=lambda **_: [{
+            "sources": sources, "context": context, "usage": {"omitted_count": 2},
+        }])
+    records = json.loads(result["text"])
+    assert records[0]["context"] == context
+    assert records[0]["sources"] == sources
+    assert records[0]["truncated"] is True
+    assert [ref["nativeId"] for ref in result["references"]] == [row["id"] for row in sources]
+    assert all(ref["readOperation"] == "engraphis_recall_context" for ref in result["references"])
+    assert len(records) == 1  # The same notes need not occupy Main's input twice.
+    assert len(json.dumps([records, result["references"]], ensure_ascii=False).encode()) <= 8000
+
+
 def test_main_preload_does_not_treat_raw_sentence_code_matches_as_evidence():
     tools = ["cbm.search_graph", "cbm.search_code", "cbm.trace_path"]
     result = prepare_main_context("p", "d", "main", "conversation", "Should we keep an old claim?", tools,

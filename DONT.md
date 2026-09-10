@@ -71,6 +71,132 @@ stand-in test conversations. Do not turn implementation instructions into projec
 
 ## 2. Failure record
 
+### September 9 recovery diary — Constellation migration through graph recovery
+
+The owner requested this entry from the complaints in the current conversation and the removal
+history, not as another model prompt. This episode covers `07ec833e^..8ebccf23` plus the current
+uncommitted repairs. Git removal counts and commit titles establish what changed, not whether
+every removed line was harmful or every replacement worked. Preserve that distinction.
+
+**What the owner experienced.** Repeated graph replacements, inappropriate data, lost controls,
+slow Main responses and unexpected restrictions made previously useful behavior hard to trust.
+The owner's reported decline around the Constellation switch is an audit hypothesis, not proof
+that every later defect has the same cause. Investigate exact changes and current consumers.
+
+**Graph data and visualization.** The owner repeatedly rejected instruction-derived entities,
+simulated-investment-journal plans, fabricated milestones/deferred relationships, generic
+`relates to` edges without explanation, long duplicated research prose, and metadata presented
+as useful node content. Later they explicitly chose to retain real research and accepted the
+native graph as progress. Do not use earlier deletion requests to erase the retained data now.
+ThinkGraph holds concise evolving intent/interpretation with attribution; KnowGraph holds sourced
+research with temporal evidence. Neither is a store for this diary or operating instructions.
+
+The owner rejected space-toy/black-hole effects, unreadable labels, a separate dashboard stuffed
+into the app, and a custom renderer replacing Engraphis. Use the existing native Engraphis asset,
+real IDs and public controls. Node/edge inspection concerns that object; the pull-tab controls the
+graph. It must not open an Agent Card or a replacement report. Preserve settings, resizing, pan,
+zoom, fit and source access. Small/faint/offscreen data is not visual acceptance.
+
+**Main, prompts and delegation.** Main must understand, answer, use memory and choose useful
+delegation; reducing latency must not reduce it to forced short replies or deterministic routing.
+Stable operating instructions and selected tools/skills belong to the saved Card/profile. Do not
+replay this design conversation as test input, add implementation instructions to dynamic data,
+silently load every skill/schema, or require the user to explain tool use in each message.
+The current default is deliberate Main writes or focused delegation. Direct writes versus
+post-conversation extraction remains an explicitly requested experiment, not permission for an
+automatic production replay loop. Main need not wait for unrelated child work. Native timeout,
+acceptance and completion are distinct states; do not retry or declare failure from one status
+read timing out. Later recall is useful; repetitive write/readback loops are not the chat design.
+
+**Extraction and source intake.** The owner explicitly requested regex-on followed by regex-off
+testing. Do not classify all deterministic preprocessing as semantic routing or disable native
+extraction on that assumption. Preserve native defaults until the comparison justifies a change.
+Verify actual URL/body/document intake before claiming Graphiti replaces fetching/parsing. Separate
+extraction correctness, graph query/recall, and visualization; no one layer proves the others.
+
+**Controls and scope.** Builder's native Hermes CLI/pull-up, Card prompt/tool/profile/team controls,
+Main Chat, and WorldSignals were repeatedly reported changed or lost without the requested task.
+Do not replace a CLI with assistant text, add help banners, narrow Builder to a fake capability
+subset, or test Builder before it has a relevant task. Card editing is not reserved to one UI
+role by an invented approval step; honor the actual authenticated grants and current owner decisions.
+Preserve saved Cards, graph records, sessions, credentials and unrelated dirty work. A graph repair
+does not authorize changes to runtime topology, WorldSignals, trading, or Magentic-One.
+
+**Proof and cost.** The owner asked for a stopwatch and a scale: time, actual token receipts,
+context usefulness and duplicate work. An external stand-in does its real job and separately
+evaluates defects. Its tools/runtime may differ from Hermes; matching a model name is not native
+runtime proof. Retained IDF metadata is not automatically provider-visible context. Cached repeated
+input, repeated content inside a request, and duplicate tool/research work are different issues.
+Do not call an HTTP acknowledgment, a passing typecheck, or a pretty graph complete product proof.
+Do not reduce model selection by assumption or invent costs/quality scores. Stop and tell the owner
+if Docker is down; do not reset it or launch a duplicate stack.
+
+**Mistakes during this recovery.** A malformed JSX conditional introduced a Vite parse overlay
+and was corrected. A Windows default-encoding write failed after truncating the surface file;
+the exact previously clean file was recovered from read-only Git output and the scoped edits
+reapplied as UTF-8. Encode content before replacing a file, inspect complete current source, and
+verify parsing before reporting an interface repaired. Newly introduced CSS also overrode the
+drawer width control; its correction requires direct layout proof. These are defects to fix,
+not evidence that broad rewrites are needed.
+
+**Lost skills.** `2ddadeeb` deleted 14 `skills/*.md` files, including the double-agent stand-in,
+test, context, reporting, graph and research procedures. All 14 are restored and refreshed in this
+working tree by the owner's September 9 request. This supersedes the earlier blanket decision not
+to restore these procedure files. It does not restore the deleted Neo4j skill importer, automatically
+load all skills into Cards, or establish a new wiki runtime. Recovered guidance is not automatically
+behaviorally validated. The code-wiki idea remains a candidate, not a dead idea or an installed system.
+
+**Removal timeline.** Every commit in the following reachable range contains removals. These are
+investigation anchors, including updates and intentional replacements, not a list of proven bad
+deletions. Read `git show --numstat <commit>` and the exact removed source for the affected boundary.
+
+| Commit | Boundary recorded by the commit |
+| --- | --- |
+| `07ec833e` | Constellation/Sigma introduced; vendored Engraphis tree removed |
+| `7f2da7dc` | Graph, memory and Hermes runtime changes |
+| `2ddadeeb` | Card/catalog/learning cleanup; 14 skills and old skill importer removed |
+| `8a108d32` | Card subagent model and Main Honcho routing |
+| `badabd4d` | Public MCP namespace/configuration; old tunnel script removed |
+| `ae8e4a99` | Canonical MCP names and plugin refresh |
+| `e9a78bd9` | Card Python harness and native delegation preparation |
+| `b83b133e` | Hermes Auto-Team execution controls and hardening |
+| `1980e2a5` | Team lifecycle and session correlation |
+| `c6e4e7c9` | Team lifecycle/first-turn changes |
+| `b78b79ac` | First-turn plugin/lifecycle changes |
+| `ed590648` | Canvas persistence; graph-domain execution/recipe paths removed |
+| `4fa80c1e` | Card teams and graph continuity; old Kanban UI/routes removed |
+| `51b645a9` | Team behavior private to each Card |
+| `66482dbd` | Profile delegation and Graph Agent runtime |
+| `50ab3d19` | Graph Agent profile delegation repair |
+| `020fd7a3` | Main-to-Graph-Agent delegation |
+| `ae92fbe8` | Profile delegation and IDF references |
+| `d07c44d9` | Main/Graph Agent IDF handoff |
+| `0b5da1cc` | Builder staged invocation lifecycle |
+| `1c5f4a46` | Selected-Card Builder foundation |
+| `cfbaecd1` | Builder creation/edit readiness |
+| `fc0437eb` | Builder readiness and old configuration/rule files |
+| `5973deb6` | Trading Card subsystem foundation |
+| `ce6eefb4` | Trading/LumiBot lifecycle |
+| `3d9cfb81` | WorldView pipeline and analyst Cards |
+| `d949a02b` | WorldView signal-chain wiring |
+| `04ef3f2c` | Magentic-One diagnostics and team runtime |
+| `6f36cf85` | Card delegation and Magentic-One wire contracts |
+| `00d1b0bf` | Main/Builder/Hermes integration and operation-state removal |
+| `72701888` | Card, trading, WorldView and skill-graph interface changes |
+| `b33b9e0e` | Team restoration and Card/graph repairs |
+| `500df331` | Hermes update preparation and Card/attention changes |
+| `47c9c446` | Large Hermes update, including bot/desktop and provider/tool removals |
+| `6b5a409c` | Engraphis restoration and MCP/attention changes |
+| `cf00a10d` | Engraphis cutover; Constellation engine/adapter/tests removed |
+| `8ebccf23` | Native graph extraction/UI recovery and remaining Constellation surface removal |
+
+Audit removed identities against surviving imports, registrations, tools, routes, tests and dynamic
+references. Use CBM inverse traversal for surviving indexed symbols, historical source for deleted
+ones, and direct-source search for uncovered files and runtime strings. Do not claim every symbol
+audited from this timeline or zero CBM results. Classify restored capability, intentional removal,
+broken residue and unknown separately. Delete only proven abandoned paths; retain a replacement
+only after its requested behavior and affected invariants work. Do not reset the project.
+
 ### September 2026 owner corrections
 
 - **Cognition roles and the permanent conversation.** Keep the existing Graph Agent/Team as the

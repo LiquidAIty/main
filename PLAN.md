@@ -4,6 +4,52 @@ This is the current product plan. It describes what the repository owns now, wha
 separate, and the smallest proof required before live model testing. Historical failure records belong in `DONT.md`, clearly separated from current architecture.
 Git retains exact historical source; old implementation instructions are not current requirements.
 
+## September 9 context and measurement repair
+
+Loaded acceptance after the supported restart remains PARTIAL. Normal UI Run `req_387c8e83`
+compared tentative RKLB/MSFT interests. Submission at 23:55:38.779Z preceded Run creation by
+101.3 seconds; the Run completed at 00:05:33.629Z (594.9 seconds after submission).
+Ten native model requests retained 434,796 aggregate input tokens, including 361,856 cached,
+5,066 output tokens and 1,485 reasoning tokens. These are aggregate provider totals, not a
+single context length. The loaded usage repair works; the response is not a usable fast-chat baseline.
+Main delegated research, but acceptance took 143.4 seconds, then Main repeated substantial research
+locally and instructed its research child not to write KnowGraph. Its long report did not establish
+the requested reusable graph context. The child `external-mcp:4fb3b2b5-6f8a-4c8e-8f42-ec438aec1c33`
+was still running when a three-second status-read timeout made the native completion observer fail.
+Main consequently reported a research timeout without proof of child failure. A focused regression
+now proves that a status timeout resumes observation of the same Run without redispatch or stop;
+all 44 plugin tests pass. That additional plugin fix is not loaded into the active CLI yet.
+The owner explicitly requests a small graph representation of the existing comparison and comparison
+of direct writes, focused extraction, and possible post-conversation processing. This does not enable
+an automatic replay loop. Preserve actual records and source attribution while evaluating those options.
+The first restart also exposed an orphaned app ngrok tunnel that caused the coupled supervisor to exit;
+the exact orphan was stopped and the supported stack restarted successfully. Docker remained up.
+Windows had roughly 0.8 GB free of 7.9 GB during startup; this is environmental evidence, not a complete
+explanation of latency. No UI redesign, graph reset, saved Card change, or model substitution was made.
+
+The owner requires latency, token usage and context-quality testing for Main and every system Card,
+including prompts, selected tools, Scripts, skills, MCP and delegation. Inventory and retained Run
+inspection cover the current eleven Cards; this is not eleven new acceptance runs. Historical tasks
+and configurations differ, so their elapsed times and token totals are not comparable benchmarks.
+Main's inspected Run `req_b773d1b1` took 66.55 seconds, retained one ThinkGraph reference and duplicated
+that source's metadata in its input, and has no retained provider token totals.
+
+The context repair preserves all references when native packed ThinkGraph context is included and
+avoids a second copy of its source entries. A failing six-source/four-reference test reproduced the
+defect before repair. The context/MCP suite passes 28 tests. Main CLI token reporting now carries
+native per-request totals through completion to the existing Run fields; plugin tests (43) and
+bridge/route tests (64) pass, as do backend typecheck/build and Python compilation. Saved Cards,
+grants, prompts, graph data, sessions and the restored UI were not changed by this repair.
+Repacking that saved Main input reduced its graph-context estimate from 407 to 310 tokens while
+preserving the exact native context text and all its source IDs. This is input packing evidence,
+not an answer-quality or latency claim. The broader backend spec typecheck still reports errors
+in migration, Kanban recovery, earlier route fixtures and the MCP client unit fixture; the touched
+production typecheck and focused executable tests pass.
+Python rails and the persistent CLI plugin require reload before loaded acceptance. Per-tool
+latency and context usefulness, current all-Card model measurements, and useful end-to-end graph
+behavior remain unproven. Continue with `skills/conversation-graph-acceptance.md`; it no longer directs
+tests through deleted automatic completed-pair code. Magentic-One remains on hold.
+
 ## Product boundary
 
 The owner's delivery target is to finish the existing Trading application and freeze that delivery,

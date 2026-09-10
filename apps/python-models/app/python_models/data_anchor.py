@@ -857,8 +857,24 @@ def prepare_main_context(
             # Keep the native packed context once, with its exact ordered sources.
             packed = {"authority": authority, "context": result["context"],
                       "sources": rows, "truncated": bool((result.get("usage") or {}).get("omitted_count"))}
-            if len(json.dumps(packed, ensure_ascii=False).encode("utf-8")) <= 6000:
+            packed_references = []
+            packed_ids = set()
+            for row in rows:
+                native_id = str(row.get("id") or "")
+                if not native_id or native_id in packed_ids:
+                    continue
+                packed_ids.add(native_id)
+                packed_references.append({"authority": authority, "nativeId": native_id,
+                    "nativeKind": "node", "readOperation": operation, "asOf": observed_at,
+                    "required": False, "reason": "native retrieval", "truncated": packed["truncated"]})
+            # Keep context and its references together. Dropping only references
+            # leaves Main unable to pass on some of the sources it was given.
+            if (len(json.dumps(packed, ensure_ascii=False).encode("utf-8")) <= 6000
+                    and len(json.dumps([packed, packed_references], ensure_ascii=False).encode("utf-8")) <= 8000):
                 records.append(packed)
+                references.extend(packed_references)
+                seen.update((authority, native_id) for native_id in packed_ids)
+                continue
         source_bytes = 0
         for row in rows[:4]:
             native_id = str(row.get("uuid") or row.get("id") or row.get("runId") or "")

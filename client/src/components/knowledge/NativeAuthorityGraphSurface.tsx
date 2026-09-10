@@ -177,14 +177,22 @@ export function NativeCodeGraphSurface({
   );
 }
 
+type NativeLayout = 'compact' | 'original' | 'communities' | 'radial';
+type NativeStyle = 'classic' | 'cyber' | 'galaxy' | 'solar';
 type EngraphisRenderer = {
-  setPreset: (name: 'original') => Record<string, number | boolean | string>;
-  setStyle: (name: 'classic') => void;
+  setPreset: (name: NativeLayout) => Record<string, number | boolean | string>;
+  setStyle: (name: NativeStyle) => void;
   setSettings: (settings: Record<string, number | boolean | string>) => void;
   setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }) => void;
   setHighlight: (id: string | null) => void;
   graphToScreen: (x: number, y: number) => { x: number; y: number };
   fit: () => void;
+  resize: () => void;
+  focus: (id: string) => boolean;
+  clearFocus: () => void;
+  freeze: (on: boolean) => void;
+  reheat: () => void;
+  setCollapse: (mode: boolean | 'auto') => void;
   destroy: () => void;
 };
 
@@ -206,7 +214,7 @@ function sourceDocument(node: GraphProjectionNode) {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed;
     } catch { /* Plain-text episodes keep their original content. */ }
   }
-  const candidates = [properties, body, ...(Array.isArray(body.sources) ? body.sources : [])];
+  const candidates = [properties, body, ...(Array.isArray(body.sources) ? body.sources : []), ...(Array.isArray(body.findings) ? body.findings : [])];
   const links = new Map<string, { url: string; label: string }>();
   for (const candidate of candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
@@ -215,7 +223,7 @@ function sourceDocument(node: GraphProjectionNode) {
     try {
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol)) continue;
-      links.set(url, { url, label: String(candidate.title || candidate.publisher || parsed.hostname) });
+      links.set(url, { url, label: String(candidate.source_title || candidate.title || candidate.publisher || parsed.hostname) });
     } catch { /* Invalid URLs are not clickable citations. */ }
   }
   return { links: [...links.values()], summary: typeof body.summary === 'string' ? body.summary : null };
@@ -245,6 +253,10 @@ export function NativeGraphProjectionSurface({
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>({});
+  const [layout, setLayout] = useState<NativeLayout>('compact');
+  const [style, setStyle] = useState<NativeStyle>('classic');
+  const [frozen, setFrozen] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [expanding, setExpanding] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -294,7 +306,9 @@ export function NativeGraphProjectionSurface({
           setInspectorOpen(false);
         },
       });
-      const defaults = graph.setPreset('original');
+      const defaults = graph.setPreset('compact');
+      graph.setCollapse(false);
+      setLayout('compact'); setStyle('classic'); setFrozen(false); setFocused(false);
       graph.setStyle('classic');
       graph.setSettings({ labels: true });
       setSettings({ ...defaults, labels: true });
@@ -305,6 +319,8 @@ export function NativeGraphProjectionSurface({
       return undefined;
     }
   }, [authority]);
+
+  useEffect(() => { graphRef.current?.resize(); }, [controlsOpen, inspectorOpen]);
 
   useEffect(() => {
     // Engraphis scenes retain all engine-owned layout and evidence fields.
@@ -343,9 +359,15 @@ export function NativeGraphProjectionSurface({
     if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
   }
   const evidence = (projection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
-  const surfaceLabel = 'KnowGraph';
+  const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
+  const notes = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
+    item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
+  const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
+  const nativeLabel = (id: string) => projection?.nodes.find(node => node.id === id)?.label || id;
+  const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
+    typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
   return (
-    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" aria-busy={status === 'loading'}>
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}>
       <GraphPaperBackground viewport={paperViewport} />
       <div className="native-authority-canvas">
         <div ref={hostRef} className="native-authority-network graph-canvas"
@@ -369,7 +391,7 @@ export function NativeGraphProjectionSurface({
         {status === 'error' || renderError ? <div className="native-authority-empty">Graph failed: {renderError || error}</div> : null}
         {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No knowledge yet.</div> : null}
       </div>
-      {authority === 'thinkgraph' ? <>
+      <>
         <RightGlassDrawer
           isOpen={controlsOpen}
           title="Graph settings"
@@ -378,10 +400,30 @@ export function NativeGraphProjectionSurface({
           collapsedLabel={null}
           openAriaLabel="Open graph settings"
           defaultWidth={340} minWidth={280} maxWidth={520}
-          storageKey="liquidaity.drawer.thinkgraph.width"
+          storageKey={`liquidaity.drawer.${authority}.width`}
           top={48} right={12} bottom={12} zIndex={6}
         >
           <div className="native-authority-controls">
+            <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
+              const next = event.target.value as NativeLayout;
+              const defaults = graphRef.current?.setPreset(next);
+              setLayout(next); setSettings(current => ({ ...current, ...defaults }));
+            }}>
+              <option value="compact">Compact</option><option value="original">Original</option>
+              <option value="communities">Communities</option><option value="radial">Radial</option>
+            </select></label>
+            <label>Style<select aria-label="Style" value={style} onChange={event => {
+              const next = event.target.value as NativeStyle;
+              graphRef.current?.setStyle(next); setStyle(next);
+            }}>
+              <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
+              <option value="galaxy">Galaxy</option><option value="solar">Solar</option>
+            </select></label>
+            <div className="native-authority-actions">
+              <button type="button" onClick={() => { graphRef.current?.freeze(!frozen); setFrozen(!frozen); }}>{frozen ? 'Resume' : 'Freeze'}</button>
+              <button type="button" disabled={frozen} onClick={() => graphRef.current?.reheat()}>Reheat</button>
+              {focused ? <button type="button" onClick={() => { graphRef.current?.clearFocus(); setFocused(false); graphRef.current?.fit(); }}>Show all</button> : null}
+            </div>
             <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
               const patch = { labels: event.target.checked };
               graphRef.current?.setSettings(patch);
@@ -403,87 +445,76 @@ export function NativeGraphProjectionSurface({
               <output>{settings[key]}</output>
             </label>)}
             <button type="button" onClick={() => {
-              const defaults = graphRef.current?.setPreset('original');
+              const defaults = graphRef.current?.setPreset(layout);
               graphRef.current?.setSettings({ labels: true });
               setSettings({ ...defaults, labels: true });
             }}>Reset to preset defaults</button>
           </div>
         </RightGlassDrawer>
-        {inspectorOpen && selected ? <div className="thinkgraph-entry" role="dialog" aria-label={selected.label}>
-          <button type="button" aria-label="Close entry" onClick={() => setInspectorOpen(false)}>×</button>
-          <article data-testid="thinkgraph-node-inspector" data-native-id={selected.id}>
-            <h4>{selected.label}</h4>
-            {typeof selectedProperties.summary === 'string' ? <p>{selectedProperties.summary}</p> : null}
-            {Array.isArray(selectedProperties.evidence) ? selectedProperties.evidence.map((item: any) =>
-              <section key={item.id}>
-                <p>{item.content || item.summary}</p>
-                {onRemoveEvidence && typeof item.id === 'string' ? <button type="button"
-                  disabled={removingId !== null} onClick={async () => {
-                    setRemovingId(item.id);
-                    setRemoveError(null);
-                    try { await onRemoveEvidence(item.id); }
-                    catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
-                    finally { setRemovingId(null); }
-                  }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
-              </section>) : null}
-            {removeError ? <p role="alert">{removeError}</p> : null}
-            {selectedRelationships.length ? <ul>{selectedRelationships.map(edge => <li key={edge.id}>
-              {projection?.nodes.find(node => node.id === edge.source)?.label} · {edge.predicate} · {projection?.nodes.find(node => node.id === edge.target)?.label}
-              {typeof edge.properties?.reason === 'string' && edge.properties.reason ? <p>{edge.properties.reason}</p> : null}
-              {typeof edge.properties?.fact === 'string' && edge.properties.fact ? <p>{edge.properties.fact}</p> : null}
-            </li>)}</ul> : null}
-          </article>
-        </div> : null}
-      </> : <RightGlassDrawer
-        isOpen={inspectorOpen}
-        title={surfaceLabel}
-        onClose={() => setInspectorOpen(false)}
-        onOpen={() => setInspectorOpen(true)}
-        collapsedLabel={null}
-        openAriaLabel={`Open ${surfaceLabel} Inspector`}
-        defaultWidth={340}
-        minWidth={320}
-        maxWidth={520}
-        storageKey={`liquidaity.drawer.${authority}.width`}
-        top={48}
-        right={12}
-        bottom={12}
-        zIndex={6}
-      >
-      <div className="native-authority-controls">
-        {selected ? <section data-testid={`${authority}-node-inspector`} data-native-id={selected.canonicalId || selected.id}>
+      </>
+      {inspectorOpen && (selected || selectedEdge) ? <div className="thinkgraph-entry" role="dialog" aria-label={entryTitle}>
+        <button type="button" aria-label="Close entry" onClick={() => setInspectorOpen(false)}>×</button>
+        {selected ? <article data-testid={`${authority}-node-inspector`} data-native-id={selected.id}>
           <h4>{selected.label}</h4>
-          {typeof selectedProperties.fullContent === 'string' ? <p>{selectedProperties.fullContent}</p> : typeof selectedProperties.summary === 'string' ? <p>{selectedProperties.summary}</p> : null}
+          {typeof selectedProperties.summary === 'string' && selectedProperties.summary ? <p>{selectedProperties.summary}</p> : null}
           {selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
-          {Array.isArray(selectedProperties.question_links) ? selectedProperties.question_links.map((encoded, index) => {
-            let link: any;
-            try { link = typeof encoded === 'string' ? JSON.parse(encoded) : encoded; } catch { return null; }
-            return link?.questionRef?.nativeId ? <p key={index}>Question: {link.questionRef.nativeId} · {link.relation} · {String(link.outcome || '').replaceAll('_', ' ')}</p> : null;
-          }) : null}
+          <button type="button" onClick={() => {
+            if (graphRef.current?.focus(selected.id)) { setFocused(true); graphRef.current.fit(); }
+          }}>Focus</button>
+        </article> : null}
+        {selectedRelationships.length ? <section className="knowgraph-relationships">
+          {selectedRelationships.map(edge => <button type="button" key={edge.id} data-edge-id={edge.id}
+            onClick={() => { setSelectedId(null); setSelectedEdgeId(edge.id); }}>
+            <strong>{nativeLabel(edge.source)}</strong><span>{edge.predicate}</span><strong>{nativeLabel(edge.target)}</strong>
+          </button>)}
         </section> : null}
-        {selectedRelationships.length ? <section className="knowgraph-relationships">{selectedRelationships.filter(edge => edge.predicate !== 'MENTIONS').map(edge => <button key={edge.id} onClick={() => { setSelectedId(null); setSelectedEdgeId(edge.id); }}>
-          <strong>{projection?.nodes.find(node => node.id === edge.source)?.label}</strong>
-          <span>{edge.predicate.replaceAll('_', ' ').toLowerCase()}</span>
-          <strong>{projection?.nodes.find(node => node.id === edge.target)?.label}</strong>
-        </button>)}</section> : null}
-        {selectedEdge ? <section data-testid={`${authority}-edge-inspector`} data-native-id={selectedEdge.id}>
-          <h4>{projection?.nodes.find((node) => node.id === selectedEdge.source)?.label} → {selectedEdge.predicate} → {projection?.nodes.find((node) => node.id === selectedEdge.target)?.label}</h4>
-          {typeof selectedEdge.properties?.fact === 'string' ? <p>{selectedEdge.properties.fact}</p> : null}
-          {typeof selectedEdge.properties?.summary === 'string' ? <p>{selectedEdge.properties.summary}</p> : null}
-          {typeof selectedEdge.properties?.reason === 'string' ? <p>{selectedEdge.properties.reason}</p> : null}
-        </section> : null}
-        {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) => <div key={node.id}><p>{node.label}</p>{links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}</div>)}</section> : null}
-        {selected ? <div className="native-authority-actions">{onExpand ? <button disabled={expanding} onClick={() => {
-          const native = projection?.nodes.find((node) => node.id === selected.id);
-          if (!native) return;
-          setExpanding(true);
-          void onExpand(native).finally(() => setExpanding(false));
-        }}>{expanding ? 'Expanding…' : 'Expand'}</button> : null}{onUseAsContext ? <button onClick={() => {
-          const native = projection?.nodes.find((node) => node.id === selected.id);
-          if (native) onUseAsContext(native);
-        }}>Use in chat</button> : null}</div> : null}
-      </div>
-      </RightGlassDrawer>}
+        {selectedEdge ? <article data-testid={`${authority}-edge-inspector`} data-native-id={selectedEdge.id}>
+          <h4>{nativeLabel(selectedEdge.source)} → {selectedEdge.predicate} → {nativeLabel(selectedEdge.target)}</h4>
+          {(['fact', 'summary', 'reason'] as const).map(key => typeof selectedEdge.properties?.[key] === 'string'
+            && selectedEdge.properties[key] ? <p key={key}>{String(selectedEdge.properties[key])}</p> : null)}
+          <button type="button" onClick={() => { setSelectedId(selectedEdge.source); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.source)}</button>
+          <button type="button" onClick={() => { setSelectedId(selectedEdge.target); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.target)}</button>
+        </article> : null}
+        {notes.map(item => <section className="graph-note" key={item.id} data-memory-id={item.id}>
+          <details>
+            <summary>{item.title || 'Supporting note'}</summary>
+            <p>{item.content || item.summary}</p>
+            <code>{item.id}</code>
+            {item.provenance && typeof item.provenance === 'object' ? <dl>{fields(item.provenance).map(([key, value]) =>
+              <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
+            {authority === 'thinkgraph' && onRemoveEvidence ? <button type="button" disabled={removingId !== null} onClick={async () => {
+              setRemovingId(item.id); setRemoveError(null);
+              try { await onRemoveEvidence(item.id); }
+              catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
+              finally { setRemovingId(null); }
+            }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
+          </details>
+        </section>)}
+        {removeError ? <p role="alert">{removeError}</p> : null}
+        {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
+          <details key={node.id}>
+            <summary>{node.label}</summary>
+            {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}
+            {typeof node.properties?.content === 'string' ? <pre>{node.properties.content}</pre> : null}
+            <code>{node.id}</code>
+          </details>)}</section> : null}
+        <details className="graph-record"><summary>Record</summary>
+          <code>{selected?.id || selectedEdge?.id}</code>
+          {selectedEdge ? <dl><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd></dl> : null}
+          <dl>{fields((selected || selectedEdge || {}) as Record<string, unknown>).filter(([key]) =>
+            !['id', 'label', 'source', 'target'].includes(key)).map(([key, value]) =>
+            <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>
+          <pre>{JSON.stringify({ properties: (selected || selectedEdge)?.properties,
+            provenance: (selected || selectedEdge)?.provenance }, null, 2)}</pre>
+        </details>
+        {authority === 'knowgraph' && selected ? <div className="native-authority-actions">
+          {onExpand ? <button type="button" disabled={expanding} onClick={() => {
+            setExpanding(true);
+            void onExpand(selected).finally(() => setExpanding(false));
+          }}>{expanding ? 'Expanding…' : 'Expand'}</button> : null}
+          {onUseAsContext ? <button type="button" onClick={() => onUseAsContext(selected)}>Use in chat</button> : null}
+        </div> : null}
+      </div> : null}
     </div>
   );
 }

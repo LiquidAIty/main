@@ -87,15 +87,22 @@ session's older model. Session history, profile identity and native model execut
 Native asynchronous profile delivery is now live-proven: Main returned before its one Builder child
 completed, and Hermes delivered that child's result once. The adapter uses the native asynchronous
 delegation registry and completion queue; it observes the already accepted Card Run and never restarts
-an interrupted child. Deterministic tests exercise native queue claims and interruption. The lower result
-now selects the conversation's latest Builder root Run through existing AgentGraph queries and renders
-that Run's retained output. Native start times reject delayed older results and terminal-to-running
-regressions. Full artifact revision/execution binding and fast useful Main context remain incomplete,
+an interrupted child. Deterministic tests exercise native queue claims and interruption. The lower
+surface is restored to the saved Builder's native CLI and full-height pull-up; it is not a retained-output
+report panel. Full artifact revision/execution binding and fast useful Main context remain incomplete,
 as recorded in PLAN.md.
+The CLI plugin now sums native per-request token buckets for the bound parent session using Hermes'
+`CanonicalUsage`, deduplicated by request ID. Another session's usage is excluded and an absent or
+incomplete report leaves totals unavailable. Backend transport forwards those totals to the existing
+Run completion fields and chat completion event. Provider-free plugin, bridge and route tests cover
+the path; loaded native-session measurement after this repair remains unproven. No cost is inferred.
 Main context preparation uses bounded concurrent reads through the application MCP host, under existing
 saved grants, before the one IDF materialization. The existing Main preparation endpoint can preview the
 same reads without starting a Run or creating an IDF. Preload uses public typed MCP requests without a
 catalog refresh; its enforced HTTP-loopback transport avoids unnecessary TLS certificate loading.
+Accepted native packed ThinkGraph context retains every included source reference and appears once
+in the input. Context plus references remain byte-bounded; the prior four-reference truncation and
+duplicate per-source input entries are removed for accepted packed results.
 Whole-sentence CodeGraph preload was rejected after live evidence of irrelevant test matches influencing
 Main's answer. CodeGraph remains available through focused saved tools and deliberately selected native
 references; there is no deterministic keyword router replacing the rejected automatic lookup.

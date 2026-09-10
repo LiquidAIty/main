@@ -24,7 +24,7 @@ vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
       }),
       setHighlight: vi.fn(), graphToScreen: (x: number, y: number) => ({ x, y }),
       setPreset: vi.fn(() => ({ size: 3, font: 13, linkw: 1, labelDensity: 40, repel: 120, link: 30, gravity: 14 })), setStyle: vi.fn(), setSettings: vi.fn(),
-      fit: vi.fn(), destroy: vi.fn(() => canvas.remove()),
+      resize: vi.fn(), setCollapse: vi.fn(), focus: vi.fn(() => true), clearFocus: vi.fn(), freeze: vi.fn(), reheat: vi.fn(), fit: vi.fn(), destroy: vi.fn(() => canvas.remove()),
       wheel: vi.fn(),
     };
     canvas.addEventListener('wheel', instance.wheel);
@@ -68,7 +68,7 @@ describe('native authority graph surfaces', () => {
       projection={empty(authority)} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     expect(container.querySelector('[data-renderer="engraphis-1.7.1"]')).toBeTruthy();
-    expect(graph.setPreset).toHaveBeenCalledWith('original');
+    expect(graph.setPreset).toHaveBeenCalledWith('compact');
     expect(graph.setStyle).toHaveBeenCalledWith('classic');
     expect(graph.setSettings).toHaveBeenCalledWith({ labels: true });
     const paper = container.querySelector('[aria-hidden="true"]') as HTMLElement;
@@ -80,10 +80,21 @@ describe('native authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fit view' }));
     expect(graph.fit).toHaveBeenCalledOnce();
     expect(paper.style.backgroundSize.startsWith('24px 24px')).toBe(true);
-    for (const name of ['Freeze', 'Resume', 'Reheat', 'Focus']) {
-      expect(screen.queryByRole('button', { name, exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.getByRole('combobox', { name: 'Layout' }).getAttribute('aria-label')).toBe('Layout');
+    expect(graph.setCollapse).toHaveBeenCalledWith(false);
+    for (const value of ['original', 'communities', 'radial', 'compact']) {
+      fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), { target: { value } });
+      expect(graph.setPreset).toHaveBeenLastCalledWith(value);
+      expect(graph.data.nodes).toEqual([]);
     }
-    expect(screen.queryByRole('combobox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze', exact: true }));
+    expect(graph.freeze).toHaveBeenLastCalledWith(true);
+    expect((screen.getByRole('button', { name: 'Reheat' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Resume', exact: true }));
+    expect(graph.freeze).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Reheat' }));
+    expect(graph.reheat).toHaveBeenCalledOnce();
   });
 
   it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
@@ -101,7 +112,7 @@ describe('native authority graph surfaces', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<NativeKnowGraphSurface projection={empty('knowgraph')} error={null} onExpand={vi.fn()} />);
     await waitFor(() => expect(screen.getByTestId('native-knowgraph-surface')).toBeTruthy());
-    expect(screen.getByRole('button', { name: 'Open KnowGraph Inspector' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open graph settings' })).toBeTruthy();
     expect(screen.getByText('No knowledge yet.')).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -284,7 +295,7 @@ describe('native authority graph surfaces', () => {
     await waitFor(() => expect(forceGraphMocks.instances.at(-1)?.data.nodes).toEqual([]));
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.nodes).toEqual([]);
-    expect(graph.setPreset).toHaveBeenCalledWith('original');
+    expect(graph.setPreset).toHaveBeenCalledWith('compact');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '7' } });
     expect(graph.setSettings).toHaveBeenLastCalledWith({ size: 7 });
@@ -292,7 +303,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.links).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
-    expect(screen.queryByRole('button', { name: /Freeze/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Freeze', exact: true })).toBeTruthy();
   });
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
@@ -316,6 +327,7 @@ describe('native authority graph surfaces', () => {
       status="ready" error={null} onRemoveEvidence={remove} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
+    fireEvent.click(screen.getByText('Supporting note'));
     fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
     expect(remove).toHaveBeenCalledExactlyOnceWith('memory-id');
@@ -337,13 +349,13 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The recorded source summary.');
-    fireEvent.click(screen.getByRole('button', { name: 'Source supports Claim' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Source SUPPORTS Claim' }));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
     expect(inspector.getAttribute('data-native-id')).toBe('evidence');
     expect(inspector.textContent).toContain('SUPPORTS');
     expect(inspector.textContent).toContain(projection.edges[0].properties.fact);
     expect(screen.queryByTestId('knowgraph-node-inspector')).toBeNull();
-    for (const label of ['Identity', 'Controls', 'Graph stats', 'Technical details', 'Reheat']) {
+    for (const label of ['Identity', 'Controls', 'Graph stats', 'Technical details']) {
       expect(screen.queryByText(label)).toBeNull();
     }
     expect(screen.queryByPlaceholderText('Find entity…')).toBeNull();
@@ -363,9 +375,10 @@ describe('native authority graph surfaces', () => {
     render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
+    fireEvent.click(screen.getByText('NASA launch report'));
     expect(screen.getByRole('link', { name: 'NASA' }).getAttribute('href')).toBe('https://www.nasa.gov/mission');
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
-    act(() => screen.getByRole('button', { name: 'Rocket Lab provided launch for CAPSTONE' }).click());
+    act(() => screen.getByRole('button', { name: 'Rocket Lab PROVIDED_LAUNCH_FOR CAPSTONE' }).click());
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
     act(() => graph.nodeClick(graph.data.nodes[2]));

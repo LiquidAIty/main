@@ -2337,6 +2337,33 @@ describe('coder routes', () => {
       }
     });
 
+    it('persists and streams the native Main token totals without inventing cost', async () => {
+      const usage = { providerInputTokens: 240, providerOutputTokens: 20,
+        providerCachedTokens: 40, providerReasoningTokens: 6, totalCostUsd: null,
+        usageAvailable: true, usageSource: 'native_api_requests' };
+      mainCliBridgeMocks.submit.mockImplementationOnce(async () => ({
+        finalText: 'Measured reply.', nativeSessionId: 'native-main-session',
+        nativeTurnId: 'native-main-turn', contextAuthorityMode: 'main_native_honcho', usage,
+      }));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'chat', message: 'hello' }),
+        });
+        const body = await response.text();
+        const doneFrame = body.split('\n\n').find((frame) => frame.startsWith('event: done'))!;
+        expect(JSON.parse(doneFrame.split('\ndata: ')[1]).usage).toEqual(usage);
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(([route, init]) => {
+          if (route !== '/domain/runs/finish') return false;
+          const payload = JSON.parse(String(init?.body));
+          return payload.finalResult === 'Measured reply.' && payload.providerInputTokens === 240
+            && payload.providerOutputTokens === 20 && payload.providerCachedTokens === 40
+            && payload.providerReasoningTokens === 6 && payload.totalCostUsd === null;
+        })).toBe(true);
+      } finally { await closeServer(server); }
+    });
+
     it('completes Main without automatic graph extraction', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       const { server, baseUrl } = await createApiServer();

@@ -11,7 +11,7 @@ import liquidaity_hermes_plugin as plugin
 
 
 def test_pre_model_receipt_uses_actual_request_tools():
-    bridge = plugin._MainCliBridge.__new__(plugin._MainCliBridge)
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
     events = []
     bridge._projection = lambda kind, **event: events.append(event)
     schema = {"type": "object", "properties": {"query": {"type": "string"}}}
@@ -426,6 +426,42 @@ def test_main_bridge_emits_only_structured_native_hook_events(monkeypatch):
     assert bridge._active is None
 
 
+def test_main_bridge_preserves_native_usage_without_double_counting_children(monkeypatch):
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    bridge._active = {"requestId": "request-1", "runId": "run-1",
+                      "driverSource": "internal_chat", "sessionId": "main-session"}
+    events = []
+    monkeypatch.setattr(bridge, "_request", lambda path, payload=None: events.append(payload) or {"ok": True})
+    usage = {"input_tokens": 100, "output_tokens": 10, "cache_read_tokens": 20,
+             "cache_write_tokens": 0, "reasoning_tokens": 3}
+    for session, request in [("main-session", "one"), ("main-session", "one"),
+                             ("child-session", "child"), ("main-session", "two")]:
+        bridge.on_pre_api_request(session_id=session, api_request_id=request)
+        bridge.on_post_api_request(session_id=session, api_request_id=request, usage=usage)
+    bridge.on_turn_complete(session_id="main-session", turn_id="turn", assistant_response="answer")
+    result = events[-1]["usage"]
+    assert result["providerInputTokens"] == 240
+    assert result["providerOutputTokens"] == 20
+    assert result["providerCachedTokens"] == 40
+    assert result["providerReasoningTokens"] == 6
+    assert result["usageAvailable"] is True
+    assert result["totalCostUsd"] is None
+    # A later turn does not inherit the previous turn's totals.
+    bridge._active = {"requestId": "request-2", "runId": "run-2",
+                      "driverSource": "internal_chat", "sessionId": "main-session"}
+    bridge.on_post_api_request(session_id="main-session", api_request_id="three", usage=None)
+    bridge.on_turn_complete(session_id="main-session", turn_id="next", assistant_response="next")
+    assert events[-1]["usage"]["usageAvailable"] is False
+    assert events[-1]["usage"]["providerInputTokens"] is None
+    bridge._active = {"requestId": "request-3", "runId": "run-3",
+                      "driverSource": "internal_chat", "sessionId": "main-session"}
+    bridge.on_pre_api_request(session_id="main-session", api_request_id="missing-result")
+    bridge.on_post_api_request(session_id="main-session", api_request_id="reported-result", usage=usage)
+    bridge.on_turn_complete(session_id="main-session", turn_id="partial", assistant_response="partial")
+    assert events[-1]["usage"]["usageAvailable"] is False
+    assert events[-1]["usage"]["providerOutputTokens"] is None
+
+
 def test_main_bridge_projects_tool_child_receipt_and_error_identity(monkeypatch):
     bridge = plugin._MainCliBridge(
         SimpleNamespace(), "http://127.0.0.1:4000", "token"
@@ -698,6 +734,35 @@ def test_main_bridge_reserves_the_long_timeout_for_host_execution(monkeypatch):
     ]
 
 
+def test_profile_result_larger_than_control_message_arrives_intact(monkeypatch):
+    result = {"runId": "child-run", "result": "Company evidence. " * 5000,
+              "nativeEvents": [{"kind": "tool_result", "output": "Source evidence. " * 5000}]}
+    body = json.dumps({"ok": True, "result": result}).encode("utf-8")
+    assert len(body) > 64 * 1024
+    reads = []
+
+    class Response(_Response):
+        def read(self, limit):
+            reads.append(limit)
+            return self._payload[:limit]
+
+    monkeypatch.setattr(plugin.urllib.request, "build_opener",
+                        lambda *_args: _Opener(Response(body)))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    assert bridge._host_requester("session/delegate_profile", {"background": False}) == result
+    with pytest.raises(RuntimeError, match="main_bridge_response_too_large"):
+        bridge._request("/next")
+    assert reads[-1] == 64 * 1024 + 1
+
+
+def test_profile_execution_response_still_has_a_byte_limit(monkeypatch):
+    response = _Response(b"x" * (8 * 1024 * 1024 + 1))
+    monkeypatch.setattr(plugin.urllib.request, "build_opener", lambda *_args: _Opener(response))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    with pytest.raises(RuntimeError, match="main_bridge_response_too_large"):
+        bridge._host_requester("session/delegate_profile", {"background": False})
+
+
 @pytest.mark.parametrize("state", ["completed", "failed", "cancelled"])
 def test_profile_completion_uses_native_async_owner_without_reexecuting(monkeypatch, state):
     import sys
@@ -727,6 +792,34 @@ def test_profile_completion_uses_native_async_owner_without_reexecuting(monkeypa
     assert requests[-1][1]["action"] == "stop"
     assert native["runner"]()["status"] == "interrupted"
     assert sum(path == "/execution" for path, _ in requests) == 1
+
+
+def test_profile_observation_timeout_keeps_observing_same_run(monkeypatch):
+    import sys
+    dispatched = []
+    monkeypatch.setitem(sys.modules, "tools.async_delegation", SimpleNamespace(
+        dispatch_async_delegation=lambda **kwargs: dispatched.append(kwargs) or
+        {"status": "dispatched", "delegation_id": "d"}))
+    monkeypatch.setitem(sys.modules, "tools.delegate_tool", SimpleNamespace(_get_max_async_children=lambda: 1))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    requests = []
+
+    def request(path, payload):
+        requests.append((path, dict(payload)))
+        if len(requests) == 1:
+            raise TimeoutError("status transport timed out")
+        return {"ok": True, "result": {"runId": "child", "cardId": "research",
+            "state": "completed", "excerpt": "Retained sourced findings"}}
+
+    monkeypatch.setattr(bridge, "_request", request)
+    bridge._deliver_profile_result({"sessionId": "parent-session"}, {
+        "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
+    result = dispatched[0]["runner"]()
+    assert result["status"] == "completed"
+    assert json.loads(result["summary"])["state"] == "completed"
+    assert len(dispatched) == 1
+    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d",
+        "parentRunId": "parent", "runId": "child", "action": "read"})] * 2
 
 
 def test_profile_native_capacity_rejection_stops_only_the_accepted_run(monkeypatch):

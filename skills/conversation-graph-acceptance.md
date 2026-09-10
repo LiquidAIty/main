@@ -17,9 +17,12 @@ and existing native Runs; do not create another evidence store or task document.
 ## Establish the actual path
 
 Use `skills/codebasedmemory.md` to resolve the affected owners, then read current source. The current
-seams are `cognition.py` for completed-pair delivery, `idf.py::materialize_idf` for exact input,
-`engraphis.py` for ThinkGraph, `mcp_host.py` for tool publication, and the existing Hermes profile
-delegation adapter for connected saved Cards. Verify these pointers before relying on them.
+seams are `data_anchor.py::prepare_main_context` for bounded Main context,
+`idf.py::materialize_idf` for exact input, `engraphis.py` for ThinkGraph,
+`mcp_host.py` for tool publication, and the existing Hermes profile delegation adapter for
+connected saved Cards. Automatic completed-pair processing is removed. Main chooses direct writes
+or focused delegated extraction; conversation completion does not launch a graph worker.
+Verify these pointers before relying on them.
 
 Read saved Card IDs, prompts, parent models, native subagent selections, grants, Scripts, topology,
 and current deck revision. Compare saved selections with the loaded native profile and actual Run
@@ -51,8 +54,9 @@ tools or understand graphs. Adapt the content; do not reuse a memorized expected
 5. Correct one interpretation and explicitly request a bounded Builder draft when useful context exists.
 6. Return later with a paraphrase that should retrieve the earlier context.
 
-After each completed pair, inspect the exact correlated ThinkGraph Run and native IDs before increasing
-volume. Prove the recipient boundary: conversation completion must not invoke Graph Agent, send it the
+After an actual write or delegation, inspect its correlated tool call, receiving Run when applicable,
+and native IDs before increasing volume. An ordinary reply need not create a ThinkGraph Run.
+Prove the recipient boundary: conversation completion must not invoke Graph Agent, send it the
 conversation, or depend on that Card being present. Research is separately delegated; its useful sourced
 findings are retained in KnowGraph. The removed automatic research stage demonstrated unwanted delivery
 and extra profile activity, not a useful research benefit. A busy response is a failed handoff, not
@@ -60,13 +64,14 @@ accepted research; do not add another runner or restart the existing child to ma
 
 ## Audit meaning before adding more data
 
-Compare each retained claim against the actual separate `completedPair.user` and `.assistant` fields
-in the worker's retained `in.idf`, not a reconstructed transcript summary.
+Compare each retained claim against the actual user and assistant messages, the submitted write
+arguments, and any delegated task's retained `in.idf`. Preserve speaker attribution; do not reconstruct
+a completed-pair payload or send the conversation through a removed ingestion path.
 
 Check:
 
-- Speaker attribution: an assistant suggestion is not an accepted user decision. Accepting a journal
-  does not accept the assistant's proposed thresholds, fields, companies, or rules.
+- Speaker attribution: an assistant suggestion is not an accepted user decision. Accepting a broad
+  goal does not accept the assistant's proposed details or rules.
 - Status: interests, possibilities, disagreements, and questions retain their uncertainty. Do not turn
   a tentative explanation into a diagnosis or preference.
 - Relationship fidelity: exact native endpoints, direction, relation, reason, and provenance survive
@@ -78,7 +83,7 @@ Check:
   successful extraction counts are not quality metrics by themselves.
 
 When a claim is wrong, stop increasing test volume. Determine whether the earliest divergence is in
-the saved prompt, selected context, completed-pair input, model-authored write, ingestion, or projection.
+the saved prompt, selected context, delegated input, model-authored write, ingestion, or projection.
 Repair that owner and repeat the discriminating case. Prompt wording alone is not proof of repair.
 Use the native correction/history path when the actual agent corrects a claim; never erase the failed
 case or reset the graph to make acceptance look clean.
@@ -108,6 +113,13 @@ temporary saved Cards, or a second scheduler to work around a rejected call.
 Record cold initialization/warmup, warm semantic recall, exact read, native write, projection, Main
 preload, first useful answer, full Main response, background processing, research, and synthesis.
 Keep the existing bounded preload budget. Missing optional context must not block ordinary Main chat.
+
+For Main and every affected system Card, inventory the saved prompt, Script, selected tools, skills,
+MCP connections and delegation mode. Measure each exercised component's elapsed time and returned
+context size, plus actual provider input/output/cache/reasoning tokens when the native receipt supplies
+them. Keep estimates distinct from provider usage; missing usage is unknown, not zero. Evaluate
+context relevance, attribution, useful content, native references and truncation separately from size.
+Do not label an unexercised component tested or use latency as a reason to remove useful capability.
 
 For a slow Run, correlate native logs and tool/provider receipts with its exact Run ID. Distinguish
 pre-inference setup, large tool results, provider latency, invalid tool arguments, profile contention,

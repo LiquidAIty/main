@@ -308,6 +308,13 @@ async function executePreparedMainCliRun(
         providerThreadRef: result.nativeSessionId || null,
         providerTurnRef: result.nativeTurnId || null,
         finalResult: result.finalText,
+        ...(result.usage ? {
+          providerInputTokens: result.usage.providerInputTokens,
+          providerOutputTokens: result.usage.providerOutputTokens,
+          providerCachedTokens: result.usage.providerCachedTokens,
+          providerReasoningTokens: result.usage.providerReasoningTokens,
+          totalCostUsd: result.usage.totalCostUsd,
+        } : {}),
       }),
     });
     return { ...result, profileMaterialization: run.profileMaterialization };
@@ -1795,7 +1802,7 @@ router.post('/main/session/chat', async (req, res) => {
     writeSse('done', {
       fullText: result.finalText,
       contextAuthorityMode: result.contextAuthorityMode,
-      usage: {
+      usage: result.usage || {
         providerInputTokens: null,
         providerOutputTokens: null,
         totalCostUsd: null,

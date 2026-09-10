@@ -7,6 +7,9 @@ describe('MainCliBridge', () => {
     const bridge = new MainCliBridge();
     const onEvent = vi.fn();
     bridge.notePoll();
+    const usage = { providerInputTokens: 240, providerOutputTokens: 20,
+      providerCachedTokens: 40, providerReasoningTokens: 6, totalCostUsd: null,
+      usageAvailable: true, usageSource: 'native_api_requests' };
 
     const done = bridge.submit({
       runId: 'run-1',
@@ -47,11 +50,13 @@ describe('MainCliBridge', () => {
       finalText: 'answer',
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
+      usage,
       contextAuthorityMode: 'main_native_honcho',
     });
 
     await expect(done).resolves.toEqual({
       finalText: 'answer',
+      usage,
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
       contextAuthorityMode: 'main_native_honcho',
