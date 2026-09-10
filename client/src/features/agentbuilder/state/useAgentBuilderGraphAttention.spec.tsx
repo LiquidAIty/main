@@ -105,7 +105,7 @@ describe('attention-activated native graph projection', () => {
         { id: target, label: 'retain', properties: { id: '2131' } }],
       edges: [{ id: '17367', source, target, predicate: 'CALLS', provenance: { edgeId: '17367' } }],
     };
-    const fetchMock = vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+    const fetchMock = vi.fn(async (url: string) => url === '/api/codegraph/read'
       ? { ok: true, json: async () => records }
       : url.startsWith('/api/thinkgraph/') ? thinkgraphResponse() : knowledgeResponse());
     vi.stubGlobal('fetch', fetchMock);
@@ -116,7 +116,7 @@ describe('attention-activated native graph projection', () => {
     await act(async () => result.current.observeAttentionEvent(attention('codegraph', [source, target], ['17367'])));
     expect(result.current.projections.codegraph.nodes.map(node => node.id)).toEqual([source, target]);
     expect(result.current.projections.codegraph.edges[0]).toMatchObject(records.edges[0]);
-    const request = fetchMock.mock.calls.find(call => call[0] === '/api/coder/codegraph/read');
+    const request = fetchMock.mock.calls.find(call => call[0] === '/api/codegraph/read');
     expect(request).toBeDefined();
     await act(async () => result.current.expandNode({ authority: 'codegraph', node: records.nodes[0],
       projectId: 'project-1', codeGraphProject: 'C-Projects-LiquidAIty-main', readerCardId: 'card_main_chat' }));
@@ -125,7 +125,7 @@ describe('attention-activated native graph projection', () => {
 
   it('does not bring a late CodeGraph result into another selected Card', async () => {
     let finish!: (value: unknown) => void;
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/codegraph/read'
       ? { ok: true, json: () => new Promise(resolve => { finish = resolve; }) }
       : url.startsWith('/api/thinkgraph/') ? thinkgraphResponse() : knowledgeResponse()));
     const { result, rerender } = renderHook(({ selectedCardId }) => useAgentBuilderGraphAttention({
@@ -416,7 +416,7 @@ describe('attention-activated native graph projection', () => {
 
 
   it('keeps every graph empty after activity and materialized references, including unknown IDs', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/coder/codegraph/read'
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url === '/api/codegraph/read'
       ? { ok: true, json: async () => ({ authority: 'codegraph', projectId: 'project-1', nodes: [], edges: [] }) }
       : url.startsWith('/api/thinkgraph/')
       ? thinkgraphResponse() : knowledgeResponse()));

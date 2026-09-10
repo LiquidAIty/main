@@ -932,7 +932,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         response = await asyncio.to_thread(
             _backend_json,
             "POST",
-            "/api/coder/mcp-bridge/run_configured_card",
+            "/api/cards/run",
             payload,
         )
         if response.get("ok") is False:
@@ -984,7 +984,7 @@ async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
         response = await asyncio.to_thread(
             _backend_json,
             "POST",
-            "/api/coder/mcp-bridge/run_configured_card",
+            "/api/cards/run",
             {
                 **payload,
                 "action": "execute",

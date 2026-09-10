@@ -44,7 +44,7 @@ export default function useCardActiveAgentCounts({
     const refresh = async (): Promise<void> => {
       try {
         const statuses = await Promise.all(cardIds.map(async (cardId): Promise<CardRunActivity | null> => {
-          const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+          const response = await fetch('/api/cards/run', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',

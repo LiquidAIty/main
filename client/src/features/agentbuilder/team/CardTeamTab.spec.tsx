@@ -9,7 +9,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('Team Card recovery', () => {
   it('selects Team without creating limits or overwriting existing saved settings', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => ({
-      ok: String(input) === '/api/coder/card-editor/options',
+      ok: String(input) === '/api/cards/options',
       json: async () => ({ ok: true, catalogs: {}, fields: [
         { name: 'delegationRole', label: 'Delegate task', path: 'delegationRole', control: 'select',
           options: ['off', 'profile', 'team'].map(value => ({ value, label: value })) },

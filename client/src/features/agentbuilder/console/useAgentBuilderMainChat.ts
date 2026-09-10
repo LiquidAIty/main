@@ -652,7 +652,7 @@ export default function useAgentBuilderMainChat({
       throw new SessionStreamError({
         code: 'expected_run_id_required',
         message: 'The accepted Main Run identity is not available yet.',
-        route: '/api/coder/main/session/stop',
+        route: '/api/main/session/stop',
       });
     }
     try {

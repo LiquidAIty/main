@@ -189,20 +189,15 @@ describe('Main / Hermes / graph authority topology', () => {
       });
     }
     for (const card of [coder, steward]) {
-      expect(card?.runtimeOptions?.team).toEqual({
-        mode: 'auto', maxWorkers: 4, retryLimit: 1,
-        workerModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
-        },
-        leadModel: {
-          provider: 'openai', accessMode: 'chatgpt-account',
-          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
-        },
-      });
+      expect(card?.runtimeOptions?.delegationRole).toBe('team');
     }
-    expect(main?.runtimeOptions?.team?.mode).toBe('off');
-    expect(agentBuilder?.runtimeOptions?.team?.mode).toBe('off');
+    // Native delegation consumes the saved role and subagent model. The
+    // removed host Team configuration must not return in new-project seeds.
+    for (const card of [main, coder, agentBuilder, steward]) {
+      expect(card?.runtimeOptions).not.toHaveProperty('team');
+    }
+    expect(main?.runtimeOptions?.delegationRole).toBe('profile');
+    expect(agentBuilder?.runtimeOptions?.delegationRole ?? 'off').toBe('off');
 
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');

@@ -125,4 +125,4 @@ function createTerminalClient(base: string): CoderTerminalClient {
   };
 }
 
-export const coderTerminalClient = createTerminalClient('/api/coder/hermes/coder-terminal');
+export const coderTerminalClient = createTerminalClient('/api/hermes/terminal');

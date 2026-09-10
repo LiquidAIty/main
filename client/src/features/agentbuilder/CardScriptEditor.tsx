@@ -545,7 +545,7 @@ export function CardScriptEditor({
     const controller = new AbortController();
     setToolStatus('loading');
     setToolError(null);
-    void fetch(`/api/coder/input-data-dictionary/script-tools?${selectionQuery}`, {
+    void fetch(`/api/idd/script-tools?${selectionQuery}`, {
       signal: controller.signal,
     }).then(async (response) => {
       const payload = await response.json();
@@ -900,7 +900,7 @@ export function CardScriptEditor({
     setValidationBusy(true);
     setValidationError(null);
     try {
-      const response = await fetch('/api/coder/card-script/validate', {
+      const response = await fetch('/api/cards/script/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runtimeKind, toolCatalogPolicy, selectedTools, disabledTools, script }),

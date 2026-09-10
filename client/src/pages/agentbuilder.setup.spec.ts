@@ -140,7 +140,8 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'gpt-5.6-sol',
       providerModelId: 'gpt-5.6-sol',
     });
-    expect(agentBuilder?.runtimeOptions?.team?.mode).toBe('off');
+    expect(agentBuilder?.runtimeOptions).not.toHaveProperty('team');
+    expect(agentBuilder?.runtimeOptions?.delegationRole ?? 'off').toBe('off');
     expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.runtimeOptions?.skills).toEqual([
       'hermes-agent', 'agent-builder-inspection',

@@ -55,10 +55,10 @@ const runtimeOptions = {
 function mockEditorFetch(optionsAvailable = true, toolsAvailable = true) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === '/api/coder/card-editor/options') {
+    if (url === '/api/cards/options') {
       return { ok: optionsAvailable, json: async () => optionsAvailable ? runtimeOptions : { ok: false } };
     }
-    if (url.startsWith('/api/coder/input-data-dictionary/tools?')) {
+    if (url.startsWith('/api/idd/tools?')) {
       return { ok: toolsAvailable, json: async () => ({ ok: toolsAvailable, references: [],
         selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 0 }) };
     }
@@ -79,7 +79,7 @@ describe('AgentManager active builder config', () => {
   it.each(['openai', 'openrouter'] as const)('saves the selected %s catalog model ID through the Card editor and retains it on reopen', async (targetProvider) => {
     const fetchMock = mockEditorFetch();
     const originalFetch = fetchMock.getMockImplementation()!;
-    fetchMock.mockImplementation(async (input) => String(input) === '/api/coder/card-editor/options'
+    fetchMock.mockImplementation(async (input) => String(input) === '/api/cards/options'
       ? { ok: true, json: async () => ({ ...runtimeOptions, catalogs: { 'configured-models': [
           { provider: targetProvider, key: 'catalog-choice', label: 'Selected model', providerModelId: 'provider/model-version' },
         ] } }) }
@@ -279,7 +279,7 @@ describe('AgentManager active builder config', () => {
     const fetchMock = mockEditorFetch();
     const fallback = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input) => {
-      if (String(input).startsWith('/api/coder/input-data-dictionary/tools?')) {
+      if (String(input).startsWith('/api/idd/tools?')) {
         return { ok: true, json: async () => ({ ok: true,
           references: [{ canonicalId: 'web_search', displayName: 'Web search', access: 'read', availability: 'available' }],
           selectedKnownReferences: [], unresolvedSelectedIds: ['calculator'], total: 1 }) };
@@ -825,8 +825,8 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain('aria-label="Temperature"');
     expect(source).toContain('aria-label="Max tokens"');
     expect(source).toContain('aria-label="Max turns"');
-    expect(source).toContain('/api/coder/card-editor/options');
-    expect(source).not.toContain('/api/coder/input-data-dictionary/card-editor');
+    expect(source).toContain('/api/cards/options');
+    expect(source).not.toContain('/api/idd/card-editor');
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');

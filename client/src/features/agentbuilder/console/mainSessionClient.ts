@@ -18,7 +18,7 @@ export type NativeSessionEvent = {
   [key: string]: unknown;
 };
 
-const BASE = '/api/coder/main/session';
+const BASE = '/api/main/session';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 

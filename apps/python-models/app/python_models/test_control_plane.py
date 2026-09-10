@@ -732,7 +732,7 @@ class TestRunAssistantAgent:
         assert response["result"]["runId"] == "run-existing"
         assert calls == [(
             "POST",
-            "/api/coder/mcp-bridge/run_configured_card",
+            "/api/cards/run",
             {
                 "projectId": "p",
                 "deckId": "deck_builder",
@@ -760,7 +760,7 @@ class TestRunAssistantAgent:
             "cardRevisionId": "revision-c", "correlationId": "x", "input": "hi",
         }))
         method, path, payload = calls[0]
-        assert path == "/api/coder/mcp-bridge/run_configured_card"
+        assert path == "/api/cards/run"
         assert sorted(payload.keys()) == [
             "action", "cardId", "cardRevisionId", "correlationId", "deckId", "input", "projectId",
         ]

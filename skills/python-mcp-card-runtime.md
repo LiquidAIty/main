@@ -13,12 +13,12 @@ parallel runtime, second host, second registry, or direct-DB side path.
 
 ```
 canvas card (deck_builder)            ← identity, prompt, model, enabled, tools (source of truth)
-  → /api/coder/mcp-bridge/run_configured_card (backend transport)
+  → /api/cards/run (backend transport)
                                     ← ids and exact prepared bytes forwarded; overrides rejected
   → /autogen/dispatch (Python)       ← Python selects the saved AssistantAgent or Mag One runtime
                                       (AssistantAgent or typed runtime adapter)
   → card tools (tool_registry)       ← FunctionTools resolved by saved grants, never invented model args
-  → mcp-bridge endpoints (backend)   ← transport to the single store authority
+  → domain endpoints (backend)      ← transport to the single store authority
   → transactional store writer       ← structural/provenance/idempotency validation ONLY; one txn or honest failure
 ```
 
@@ -38,7 +38,7 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - **Front doors take exact references** (message ids, correlation keys) — never
   "the latest X". Deterministic correlation = idempotent re-fire.
 - **MCP host = thin stdio transport** (`apps/python-models/app/mcp_host.py`, official
-  `mcp` SDK) bridging to `/api/coder/mcp-bridge/*`. No product logic in the host;
+  `mcp` SDK) bridging to existing `/api/cards`, `/api/main` and `/api/hermes` routes. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
 - **Canonical model context = the exact transient Inspector-visible Card call.** Runtime-specific adapters
   may mechanically frame it, but may not rebuild another context packet or append IDD definitions to

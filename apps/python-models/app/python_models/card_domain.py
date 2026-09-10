@@ -85,7 +85,6 @@ KNOWN_CARD_FIELDS = {
 
 PROTECTED_CARD_IDS = frozenset({
     "card_main_chat",
-    "card_local_coder",
     "card_hermes_steward",
     "card_magentic",
     "card_trading_workbench",

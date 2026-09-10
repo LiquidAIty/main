@@ -9,6 +9,7 @@ import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
 import { requestHermesNative } from '../hermes/mainAdapter';
 
 const router = Router();
+export const iddRoutes = Router();
 const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
 
 function commaSeparatedIds(value: unknown): string[] {
@@ -92,7 +93,7 @@ async function builderNativeOptions(projectId: string, deckId: string, cardId: s
   return { nativeOptions: options, selectedIds: [...new Set(selectedIds)] };
 }
 
-router.get('/card-editor/options', async (_req, res) => {
+router.get('/options', async (_req, res) => {
   try {
     const options = await requestPythonRailsJson('/card-editor/options', {
       method: 'POST',
@@ -110,7 +111,7 @@ router.get('/card-editor/options', async (_req, res) => {
   }
 });
 
-router.get('/input-data-dictionary/card-editor', async (req, res) => {
+iddRoutes.get('/card-editor', async (req, res) => {
   try {
     const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
     const materialized = await requestPythonRailsJson('/idd/card-editor/materialize', {
@@ -142,7 +143,7 @@ router.get('/input-data-dictionary/card-editor', async (req, res) => {
   }
 });
 
-router.get('/input-data-dictionary/tools', async (req, res) => {
+iddRoutes.get('/tools', async (req, res) => {
   try {
     const catalog = await loadInputDictionaryToolCatalog();
     const selectedIds = commaSeparatedIds(req.query.selectedIds);
@@ -175,7 +176,7 @@ router.get('/input-data-dictionary/tools', async (req, res) => {
   }
 });
 
-router.get('/input-data-dictionary/script-tools', async (req, res) => {
+iddRoutes.get('/script-tools', async (req, res) => {
   try {
     const catalog = await loadInputDictionaryToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
@@ -216,7 +217,7 @@ router.get('/input-data-dictionary/script-tools', async (req, res) => {
   }
 });
 
-router.post('/card-script/validate', async (req, res) => {
+router.post('/script/validate', async (req, res) => {
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const selectedToolIds: string[] = Array.isArray(body.selectedTools)

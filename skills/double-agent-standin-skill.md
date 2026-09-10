@@ -30,7 +30,8 @@ to fit the test. An external stand-in is not the Hermes runtime, even when its m
 
 The current executable case list, budgets and approval status belong in
 [PLAN.md](../PLAN.md#controlled-agent-test-plan). This file is the reusable operating procedure.
-It coordinates existing Card Runs and, when authorized, one coding-agent stand-in; it installs
+It coordinates existing Card Runs and, when authorized, one coding-agent stand-in per participating
+software role; it installs
 no scheduler, runtime, instrumentation service or automatic agent team.
 
 ### Choose the position explicitly
@@ -45,13 +46,43 @@ Start with replay analysis when it answers the question without another model ca
 that only criticizes a transcript has not performed the Card job. A real Card must receive ordinary
 user input, without evaluator instructions or a coached solution added to its saved prompt.
 
+### Mirror the actual scenario
+
+Enumerate participating roles from current saved Cards, topology and native runtime configuration
+before spawning. One software role gets one fresh-context stand-in; N participating roles get N.
+Count actual controllers/planners, workers and synthesizers, including Main only if it participates.
+An eligible but unused Card, transport process or the independent Codex parent is not another role.
+There is no arbitrary two-actor limit and no extra helper/reviewer swarm.
+
+For a native worker without a saved Card, resolve its role, model, tools and permitted context from
+the actual owning Card/runtime evidence. Do not invent private worker prompts or reconstruct
+AutoGen Task/Progress Ledgers. Missing essential role evidence blocks exact parity.
+
+The parent creates the matching role topology and owns evaluation. Do not allow grandchildren
+unless the real scenario requires that exact nesting and the host supports it. Read available
+host slots at dispatch. Preserve intended concurrency where possible; otherwise use explicitly
+reported dependency-ordered waves while retaining all N roles. Wave execution proves neither native
+parallel latency nor exact concurrency parity. Never silently merge or remove roles to fit slots.
+
+Keep each actor's role context separate. Pass only the actual permitted upstream output/reference
+selection to its intended recipient. Record sender, receiver, source IDs, payload bytes, timing,
+missing required information and actual completion/failure. Do not pass evaluator hypotheses or
+manufacture a missing worker answer. An upstream failure stops dependent work honestly.
+
 ### Bind a coding subagent to the actual Card
 
 This is the owner's primary diagnostic method, not a generic review delegation. After execution
-is approved, the supervisor uses its existing subagent facility to create one actor for the selected
-Card. Read the current Card and effective native request first. The Card's parent model selects
+is approved, the supervisor uses its existing subagent facility to create one actor for each selected
+software role. Read the current Card and effective native request first. The Card's parent model selects
 the stand-in model; its bounded-child model applies only if the task actually exercises a child.
 Do not use yesterday's snapshot or the supervisor's model as a silent substitute.
+
+Follow the Card exactly: its actual instructions, model/provider/effort, selected skills,
+enabled/presented tools and Script, bounded context, task and handoff authority. Do not summarize
+away role instructions, simplify the job, or choose a smaller tool/skill set for convenience.
+If a required setting or interface cannot be matched, stop the exact-parity case and report the
+specific mismatch. Only an explicitly owner-chosen exception permits an approximate diagnostic;
+that result cannot establish exact parity. Do not edit the Card to make the host match it.
 
 | Bind from current authority | Verify in the stand-in | If it cannot match |
 | --- | --- | --- |
@@ -79,7 +110,8 @@ prompt restriction is not an enforced grant boundary and must not be described a
 Card grants remain unchanged. The actor never edits code, Cards or its own prompt to make its task
 pass unless that editing is the actual separately authorized role task.
 
-Dispatch once after the tool map is ready. While the actor performs the job, the supervisor owns
+Dispatch each role once after the tool map and role dependencies are ready. While actors perform
+their jobs, the supervisor owns
 the stopwatch, request/tool receipts and boundary verification. Do not repeatedly send hints or
 ask for status inside the actor's task. Preserve native events when available; if a Codex subagent
 does not expose first-token timing or provider usage, leave those fields unknown. Wall-clock timing
@@ -141,7 +173,9 @@ feeding it hints. If a stand-in is approved, give it the same task and material,
 separate outputs: the product result first, then its diagnostic report. Keep that report in the
 coding conversation. Do not inject it into Main, a tool result, an episode or a graph memory.
 
-For a comparison, execute arms serially against equivalent starting state. One arm must not learn
+For a comparison, execute the real-software and stand-in arms serially against equivalent starting
+state. Preserve the intended concurrency within each arm, subject to the declared wave limitation.
+One arm must not learn
 from the other's writes. Prefer retained inputs/read-only work; graph-write comparisons require
 an explicitly authorized isolated native workspace with actual source material. Never reset the
 user's graphs for parity. If isolation is unavailable, report the comparison inconclusive.
@@ -160,6 +194,7 @@ the deadline. Never change Builder's grants or runtime limits to implement a tes
 | Context sources | Stable Card instructions, tool schemas, native system/skills index, explicitly opened skills, selected graph data, memory, history, tool results, current task |
 | Usage | Per-request input, cached input, output and reasoning tokens from native receipts; aggregate once per request ID; mark inclusive counters to avoid double counting |
 | Tools | Requested name, actual interface/schema, elapsed time, result size, failure, repeat and native result IDs |
+| Role topology and handoffs | Actual software roles versus exact stand-in count, intended/achieved concurrency, waves, sender/recipient, payload bytes and lost required information |
 | Cost | Provider/account receipt when exposed; otherwise unknown, with token totals. Cached input is not assumed free |
 | Parity | Same task, sources, model, effort, tools, context and starting state? List every difference, including runtime and cache warmth |
 
@@ -170,6 +205,49 @@ Neither byte counts nor a successful tool call prove that the model used a fact 
 
 Unknown usage is unknown, not zero; an external stand-in is not free. Explain whether the
 information helped the task without inventing attention measurements or actually-used-token counts.
+
+The September 10 source audit demonstrated two relevant traps. Builder's native CLI supplied usage
+but an outer Run finish dropped it; that forwarding now has a regression test. Require the native
+receipt and final retained Run fields before claiming measurements. A status helper may coerce
+missing values to numeric zero; that response alone cannot establish zero usage. Separately, Builder's
+PLAN vision heading included unrelated role/history sections until its next level-two heading. The
+real-file regression now checks the boundary. Compare actual selected context, not just prompt names
+or a small fixture, and never insert evaluator prose into that product section.
+
+Resolve `delegationRole` through its current native consumer instead of treating a saved legacy
+`team` object as active. Missing saved reasoning effort means native default/unknown, not low.
+Main's compact native `execute_host_script` and its profile-delegation doorway are not equivalent to
+separate public MCP calls. If the host lacks either, report unsupported parity and do not substitute
+silently. A newly created local profile is not a saved Card, authenticated account or launch-ready arm.
+
+Inventory both saved toolsets and the native profile's toolset configuration. The existing Hermes
+session projection unions them: the September 10 old Builder profile pinned `computer_use` and
+`hermes-acp` in addition to the Card's six selections. Expanding the selected toolsets in source found
+23 unique names plus six explicit native selections, but did not establish live availability or the
+complete effective catalog. Record the native readback and schemas; never treat a static count as
+callability or silently give a stand-in only the visible Card subset. The concrete inventory and
+unapproved construction contract are in `ARCHITECTURE.md`, outside product input and memory.
+
+For graph comparisons, separate source selection, executing role, extraction method and scheduling.
+A completed user/assistant pair can be input to a focused existing Card without an automatic post-chat
+hook. Preserve attribution and order. Do not change all four variables in one arm and attribute the
+result to regex or delegation alone. Compare on eligible real material and comparable initial knowledge;
+if supported isolation is unavailable, graph-mutating comparison remains blocked. No graph reset,
+test-chatter ingestion, extra engine or direct store access supplies that missing isolation.
+
+The September 10 source audit established that an Engraphis ingestion can use the saved ThinkGraph
+model for an extractor completion without a ThinkGraph Card Run. A delegated ThinkGraph Run can also
+invoke that extractor. Record both kinds of actual work, plus provider-reported usage where available,
+deduplicated by request identity. Do not count only saved Runs or assume ingestion is model-free.
+Its structured extraction and configured regex graph enrichment can both contribute to one memory.
+Keep an extractor-setting comparison separate from a source/role comparison.
+
+Judge stored note, entity/relation enrichment, queued versus completed Graphiti extraction, independent
+later recall, materialized context and final answer separately. Engraphis may retain a note after an
+enrichment warning or return marked extraction fallback. Neither is successful structured extraction.
+A graph scene can omit memory-only nodes and weak edges without losing the underlying note. A later
+answer must preserve attribution, uncertainty and provenance; a native ID, node count or write/readback
+loop alone cannot pass semantic quality. Keep evaluation criteria outside the actor's product input.
 
 ## Job report
 
@@ -191,6 +269,7 @@ Use this compact report shape, outside the product:
 
 ```text
 Case / position / Run IDs / commit:
+Software roles / stand-in count / topology / concurrency or waves:
 Task and expected assertions:
 Card, profile, provider, models, effort, tools, skills and Script:
 Parity differences and unavailable evidence:
@@ -198,6 +277,7 @@ A. Product result and native references:
 B. Stopwatch events and input-size table:
 Actor diagnostic overhead / extra host capabilities used:
 Provider usage / tool calls / exposed cost:
+Handoff receipts and missing information:
 Assertions: pass | fail | inconclusive, with evidence:
 Observed defects; hypotheses kept separate:
 Product verdict / integration verdict:

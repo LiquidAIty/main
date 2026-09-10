@@ -3,6 +3,11 @@
 Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only work intentionally
 deferred until the static baseline and explicitly approved live proofs pass.
 
+September 10 review: PLAN's current MVP roadmap and owner decisions govern. Historical Team-only,
+Coder-delegation and Constellation entries below require reconciliation in the final design review;
+they do not authorize removed tooling, an old roster, graph consolidation or automatic ingestion.
+They remain visible as decision evidence rather than silently becoming current implementation tasks.
+
 ## Live proof sequence
 
 1. Main Hermes returns one bounded response through the saved account/model.
@@ -94,8 +99,10 @@ inside Graph Agent.
   identifiers and do not create new branded technical names, aliases, or fallbacks.
 - Rename stable historical IDs such as `card_local_coder` only through an explicit persisted-data
   migration with readback proof.
-- Rename the load-bearing `/api/coder/mcp-bridge/` transport only with coordinated Python/backend
-  callers and compatibility tests.
+- The September 10 domain-route migration is implemented with coordinated Python/browser callers,
+  focused preservation tests and canonical loaded route/catalog readback recorded in PLAN.md.
+  Fresh selected-plugin and agent execution acceptance remain separate; do not repeat the rename
+  as a future workstream.
 - Replace the current dev supervisor only if its dev-only advisory cannot be contained and the
   replacement preserves one attached six-service process tree.
 - Upgrade React-three/Drei only as a measured compatibility task because the active CodeGraph renderer

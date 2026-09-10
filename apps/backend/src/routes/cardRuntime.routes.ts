@@ -57,6 +57,8 @@ import {
 } from './hermesKanban.routes';
 
 const router = Router();
+export const mainRoutes = Router();
+export const hermesRoutes = Router();
 
 const CODER_CARD_ID = 'card_local_coder';
 const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
@@ -292,7 +294,7 @@ async function executePreparedMainCliRun(
 // MCP SDK, so they are safe in the Nx serve graph. The separate MCP host
 // process bridges MCP tool/resource calls to these endpoints without owning
 // another domain store.
-router.post('/mcp-bridge/external_main_context', async (req, res) => {
+mainRoutes.post('/context', async (req, res) => {
   const issuer = String(req.body?.issuer || '').trim();
   const subject = String(req.body?.subject || '').trim();
   if (!issuer || !subject) {
@@ -327,7 +329,7 @@ router.post('/mcp-bridge/external_main_context', async (req, res) => {
   }
 });
 
-router.post('/mcp-bridge/external_main_chat', async (req, res) => {
+mainRoutes.post('/chat', async (req, res) => {
   if (!internalMcpBridgeAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
     return res.status(401).json({ ok: false, error: 'internal_mcp_bridge_authorization_required' });
   }
@@ -384,7 +386,7 @@ router.post('/mcp-bridge/external_main_chat', async (req, res) => {
   }
 });
 
-router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
+router.post('/connected', async (req, res) => {
   try {
     const projectId = String(req.body?.projectId || '').trim();
     const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
@@ -395,7 +397,7 @@ router.post('/mcp-bridge/describe_connected_agents', async (req, res) => {
   }
 });
 
-router.post('/mcp-bridge/internal_execution_context', (req, res) => {
+hermesRoutes.post('/execution-context', (req, res) => {
   try {
     const context = resolveHermesExecutionContext({
       contextId: String(req.body?.contextId || ''),
@@ -828,7 +830,7 @@ async function readConfiguredCardRunStatus(args: {
 // Thin configured-Card transport. Python owns saved Card authorization, the one
 // canonical IDF materializer, runtime-owner selection, and separate Run
 // persistence. This route never rebuilds the model call.
-router.post('/mcp-bridge/run_configured_card', async (req, res) => {
+router.post('/run', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
   if (
@@ -1049,6 +1051,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
+    let nativeCliUsage: MainCliBridgeEvent['usage'];
     let nativeRuntimeResult: Awaited<ReturnType<typeof dispatchConfiguredRuntime>> | null = null;
     try {
       if (prepared.runtimeOwner === 'hermes'
@@ -1071,6 +1074,7 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
           if (event.kind === 'text' && event.delta) nativeEvents.push({ kind: 'text', text: event.delta });
         }, { bridge: session.delivery.bridge, finishRun: false });
         output = response.finalText;
+        nativeCliUsage = response.usage;
         transport = { threadId: response.nativeSessionId, turnId: response.nativeTurnId,
           terminalSessionId: info.id, runtimeSource: 'repository_hermes_cli' };
       } else if (prepared.runtimeOwner === 'hermes') {
@@ -1116,6 +1120,13 @@ router.post('/mcp-bridge/run_configured_card', async (req, res) => {
         providerInputTokens,
         providerOutputTokens,
         totalCostUsd,
+        ...(nativeCliUsage ? {
+          providerInputTokens: nativeCliUsage.providerInputTokens,
+          providerOutputTokens: nativeCliUsage.providerOutputTokens,
+          providerCachedTokens: nativeCliUsage.providerCachedTokens,
+          providerReasoningTokens: nativeCliUsage.providerReasoningTokens,
+          totalCostUsd: nativeCliUsage.totalCostUsd,
+        } : {}),
         finalResult: output,
         ...(nativeRuntimeResult ? { nativePhase: nativeRuntimeResult.runtimeEvidence?.stage } : {}),
         ...(prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script'
@@ -1332,7 +1343,7 @@ function latestScopedNativeAttentionEvents(
   });
 }
 
-router.get('/main/session/attention', async (req, res) => {
+mainRoutes.get('/session/attention', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
   const conversationId = String(req.query?.conversationId || '').trim();
@@ -1426,7 +1437,7 @@ router.get('/main/session/attention', async (req, res) => {
   }
 });
 
-router.get('/main/session/driver', (_req, res) => {
+mainRoutes.get('/session/driver', (_req, res) => {
   const status = mainCliBridge.status();
   return res.json({
     ok: true,
@@ -1436,7 +1447,7 @@ router.get('/main/session/driver', (_req, res) => {
   });
 });
 
-router.post('/main/session/chat', async (req, res) => {
+mainRoutes.post('/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
   const conversationId = String(req.body?.conversationId || 'default').trim();
@@ -1563,7 +1574,7 @@ router.post('/main/session/chat', async (req, res) => {
   }
   return undefined;
 });
-router.post('/main/session/stop', async (req, res) => {
+mainRoutes.post('/session/stop', async (req, res) => {
   const expectedRunId = String(req.body?.expectedRunId || '').trim();
   if (!expectedRunId) {
     return res.status(400).json({ ok: false, error: 'expected_run_id_required' });
@@ -1582,13 +1593,13 @@ router.post('/main/session/stop', async (req, res) => {
   }
   return res.status(202).json({ ok: true, runId: expectedRunId, state: 'stopping' });
 });
-router.post('/main/session/answer', (_req, res) => {
+mainRoutes.post('/session/answer', (_req, res) => {
   return res.status(409).json({
     ok: false,
     error: 'main_cli_structured_answer_unavailable',
   });
 });
-router.get('/main/session/history', (_req, res) => {
+mainRoutes.get('/session/history', (_req, res) => {
   const history = mainCliBridge.history();
   if (!history) {
     return res.status(503).json({
@@ -1606,13 +1617,13 @@ router.get('/main/session/history', (_req, res) => {
       .map(({ identity, projection }) => projectMainRuntimeEvent(identity, projection)),
   });
 });
-router.delete('/main/session/history', (_req, res) => {
+mainRoutes.delete('/session/history', (_req, res) => {
   return res.status(405).json({
     ok: false,
     error: 'main_cli_history_is_native_owned',
   });
 });
-router.get('/main/session/conversations', async (req, res) => {
+mainRoutes.get('/session/conversations', async (req, res) => {
   const projectId = String(req.query?.projectId || '');
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId_required', conversations: [] });
@@ -1638,17 +1649,17 @@ function mountConsoleSessionRoutes(
   prefix: string,
   manager: typeof coderTerminalSessionManager,
 ): void {
-  router.get(`${prefix}/sessions`, (_req, res) => {
+  hermesRoutes.get(`${prefix}/sessions`, (_req, res) => {
     return res.json({ ok: true, sessions: manager.list() });
   });
 
-  router.get(`${prefix}/sessions/:id`, (req, res) => {
+  hermesRoutes.get(`${prefix}/sessions/:id`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     return res.json({ ok: true, session: session.info });
   });
 
-  router.get(`${prefix}/sessions/:id/pty`, (req, res) => {
+  hermesRoutes.get(`${prefix}/sessions/:id/pty`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     if (!session.isLive()) {
@@ -1682,7 +1693,7 @@ function mountConsoleSessionRoutes(
     return undefined;
   });
 
-  router.post(`${prefix}/sessions/:id/input`, (req, res) => {
+  hermesRoutes.post(`${prefix}/sessions/:id/input`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     const data = typeof req.body?.data === 'string' ? req.body.data : '';
@@ -1697,7 +1708,7 @@ function mountConsoleSessionRoutes(
     });
   });
 
-  router.post(`${prefix}/sessions/:id/resize`, (req, res) => {
+  hermesRoutes.post(`${prefix}/sessions/:id/resize`, (req, res) => {
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     const resized = session.resize(Number(req.body?.cols), Number(req.body?.rows));
@@ -1710,9 +1721,9 @@ function mountConsoleSessionRoutes(
 
 }
 
-mountConsoleSessionRoutes('/hermes/coder-terminal', coderTerminalSessionManager);
+mountConsoleSessionRoutes('/terminal', coderTerminalSessionManager);
 
-router.post('/hermes/coder-terminal/sessions', async (req, res) => {
+hermesRoutes.post('/terminal/sessions', async (req, res) => {
   try {
     const session = await ensureSavedBuilderTerminal({
       projectId: String(req.body?.projectId || ''),

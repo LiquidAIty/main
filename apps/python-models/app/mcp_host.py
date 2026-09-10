@@ -14,7 +14,7 @@ Graphiti MCP registries:
     card.run_assistant_agent         (private canonical saved-Card execution handler;
                                       handlers live in app.control_plane — Python)
 
-Bridge tools are thin transport to the backend's existing /api/coder/mcp-bridge/*
+Bridge tools are thin transport to the backend's Main, Card and Hermes domain routes
 endpoints on loopback — the backend remains the single authority for deck state,
 conversation store, card resolution, and graph persistence. Control tools dispatch
 to Python handlers (app/control_plane.py) which own validation/policy and use the
@@ -2047,12 +2047,21 @@ def _backend_bridge_timeout_seconds(path: str) -> float:
     return _MCP_CALL_TIMEOUT_SECONDS
 
 
+_BACKEND_ROUTES = {
+    "external_main_context": "/api/main/context",
+    "external_main_chat": "/api/main/chat",
+    "describe_connected_agents": "/api/cards/connected",
+    "internal_execution_context": "/api/hermes/execution-context",
+    "run_configured_card": "/api/cards/run",
+}
+
+
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
     if path == "external_main_chat" and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
     request = Request(
-        f"{BACKEND}/api/coder/mcp-bridge/{path}",
+        f"{BACKEND}{_BACKEND_ROUTES[path]}",
         data=json.dumps(payload).encode("utf-8"),
         headers=headers,
         method="POST",

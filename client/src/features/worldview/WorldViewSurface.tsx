@@ -36,7 +36,7 @@ async function readLatestCardOutput(args: {
   deckId: string;
   cardId: string;
 }): Promise<{ runId: string; value: unknown } | null> {
-  const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+  const response = await fetch('/api/cards/run', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

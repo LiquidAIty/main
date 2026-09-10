@@ -167,7 +167,7 @@ describe('streamSession', () => {
 
   it('rejects an SSE error frame with the route and correlation evidence', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
-      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/coder/main/session/chat","status":502}\n\n',
+      'event: error\ndata: {"code":"harness_turn_failed","message":"The chat run failed.","correlationId":"req_123","route":"/api/main/session/chat","status":502}\n\n',
       'event: end\ndata: {}\n\n',
     ])));
 
@@ -180,7 +180,7 @@ describe('streamSession', () => {
       name: 'SessionStreamError',
       code: 'harness_turn_failed',
       correlationId: 'req_123',
-      route: '/api/coder/main/session/chat',
+      route: '/api/main/session/chat',
       status: 502,
     } satisfies Partial<SessionStreamError>);
   });
@@ -292,7 +292,7 @@ describe('loadSessionHistory', () => {
     })).rejects.toMatchObject({
       code: 'conversation_history_read_failed',
       status: 500,
-      route: '/api/coder/main/session/history',
+      route: '/api/main/session/history',
     });
   });
 
@@ -309,7 +309,7 @@ describe('loadSessionHistory', () => {
       timeoutMs: 5,
     })).rejects.toMatchObject({
       code: 'conversation_history_timeout',
-      route: '/api/coder/main/session/history',
+      route: '/api/main/session/history',
     });
   });
 });

@@ -38,6 +38,8 @@ def _expected_delegate(card_id: str = "child") -> dict:
     }
 
 
+
+
 def test_controller_setting_and_unique_profiles_use_existing_saved_fields():
     controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     controller["runtimeOptions"]["delegationRole"] = "profile"
@@ -379,46 +381,6 @@ def test_agent_builder_run_materializes_one_idd_backed_create_operation(monkeypa
     ]
 
 
-def test_agent_builder_guidance_fails_visibly_for_missing_sources(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    operation = {
-        "mode": "edit", "templateId": "template_assist", "tools": [],
-    }
-    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", tmp_path / "missing-plan")
-    with pytest.raises(card_domain.CardDomainError, match="agent_builder_vision_missing"):
-        card_domain._agent_builder_guidance(
-            operation, selected_skills=["agent-builder-inspection"]
-        )
-
-    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", card_domain._REPOSITORY_ROOT / "PLAN.md")
-    monkeypatch.setattr(
-        card_domain, "load_input_data_dictionary",
-        lambda: (_ for _ in ()).throw(card_domain.IddValidationError("idd_load_failed")),
-    )
-    with pytest.raises(card_domain.CardDomainError, match="agent_builder_idd_unavailable"):
-        card_domain._agent_builder_guidance(
-            operation, selected_skills=["agent-builder-inspection"]
-        )
-
-
-def test_agent_builder_guidance_requires_selected_existing_native_skill(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    operation = {
-        "mode": "edit", "templateId": "template_assist", "tools": [],
-    }
-    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_not_selected"):
-        card_domain._agent_builder_guidance(operation, selected_skills=[])
-    monkeypatch.setattr(card_domain, "AGENT_BUILDER_SKILL_PATH", tmp_path / "missing-skill")
-    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_missing"):
-        card_domain._agent_builder_guidance(
-            operation, selected_skills=["agent-builder-inspection"]
-        )
-
-
 @pytest.mark.parametrize("system_target", [
     _agent(
         "main",
@@ -518,8 +480,10 @@ def test_explicit_card_deletion_requires_intent_and_rejects_protected_cards() ->
         )
 
 
+@pytest.mark.parametrize("card_id", ["accidental", "card_local_coder", "card_61d994e5044b4e44"])
 def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     monkeypatch: pytest.MonkeyPatch,
+    card_id: str,
 ) -> None:
     statements: list[tuple[str, object]] = []
     deleted_edges: list[str] = []
@@ -569,12 +533,12 @@ def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
         "deck": {
             "nodes": [
                 {"id": "keep-one", "_cardRevisionId": "keep-revision"},
-                {"id": "accidental", "_cardRevisionId": "card-revision"},
+                {"id": card_id, "_cardRevisionId": "card-revision"},
                 {"id": "keep-two", "_cardRevisionId": "keep-revision-two"},
             ],
             "edges": [
-                {"id": "edge-in", "source": "keep-one", "target": "accidental"},
-                {"id": "edge-out", "source": "accidental", "target": "keep-two"},
+                {"id": "edge-in", "source": "keep-one", "target": card_id},
+                {"id": "edge-out", "source": card_id, "target": "keep-two"},
                 {"id": "edge-keep", "source": "keep-one", "target": "keep-two"},
             ],
         },
@@ -596,23 +560,23 @@ def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     })
 
     result = card_domain.delete_card(
-        "project-one", "deck-one", "accidental",
+        "project-one", "deck-one", card_id,
         expected_deck_revision="deck-revision",
         expected_card_revision_id="card-revision",
         deletion_intent="delete-card",
     )
 
     assert deleted_edges == ["edge-in", "edge-out"]
-    assert deleted_cards == ["accidental"]
+    assert deleted_cards == [card_id]
     assert connection.committed is True
     assert result["meta"]["deckRevision"] == "new-revision"
     assert any("FROM ag_catalog.trading_jobs" in query for query, _ in statements)
     assert any("FROM ag_catalog.trading_lifecycle_runs" in query for query, _ in statements)
     mutation_params = [params for query, params in statements if "DELETE FROM" in query]
     assert mutation_params == [
-        ("project-one", "deck-one", "accidental"),
-        ("project-one", "deck-one", "accidental"),
-        ("project-one", "deck-one", "accidental"),
+        ("project-one", "deck-one", card_id),
+        ("project-one", "deck-one", card_id),
+        ("project-one", "deck-one", card_id),
     ]
 
 
@@ -3261,3 +3225,53 @@ def test_native_attention_observation_requires_existing_run_card_identity(monkey
     before = len(statements)
     assert card_domain.observe_native_attention({**event, "cardId": None}) is False
     assert len(statements) == before
+
+
+def test_agent_builder_guidance_fails_visibly_for_missing_sources(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    operation = {
+        "mode": "edit", "templateId": "template_assist", "tools": [],
+    }
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", tmp_path / "missing-plan")
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_vision_missing"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
+
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_VISION_PATH", card_domain._REPOSITORY_ROOT / "PLAN.md")
+    monkeypatch.setattr(
+        card_domain, "load_input_data_dictionary",
+        lambda: (_ for _ in ()).throw(card_domain.IddValidationError("idd_load_failed")),
+    )
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_idd_unavailable"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
+
+
+def test_agent_builder_guidance_requires_selected_existing_native_skill(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    operation = {
+        "mode": "edit", "templateId": "template_assist", "tools": [],
+    }
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_not_selected"):
+        card_domain._agent_builder_guidance(operation, selected_skills=[])
+    monkeypatch.setattr(card_domain, "AGENT_BUILDER_SKILL_PATH", tmp_path / "missing-skill")
+    with pytest.raises(card_domain.CardDomainError, match="agent_builder_skill_missing"):
+        card_domain._agent_builder_guidance(
+            operation, selected_skills=["agent-builder-inspection"]
+        )
+
+
+def test_builder_product_vision_excludes_other_roles_and_implementation_history():
+    vision = card_domain._agent_builder_vision()
+    assert vision["sourcePath"] == "PLAN.md"
+    assert vision["content"].startswith("## Agent Builder product vision\n")
+    assert "IDD" in vision["content"]
+    assert "### Local Coder" not in vision["content"]
+    assert "### Cognition implementation status" not in vision["content"]
+    assert "### AutoGen" not in vision["content"]

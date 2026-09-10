@@ -61,6 +61,26 @@ stand-in test conversations. Do not turn implementation instructions into projec
     never collapse the prompt into Role or silently hide its other sections. Main and Builder open
     on Prompt without a CLI tab; their existing chat and pull-up CLI remain the input surfaces.
 
+## September 10 demonstrated traps
+
+- Keep runtime-selected documentation sections bounded. Builder's PLAN vision loader reads until
+  the next `##` heading; subordinate role/history headings caused 19,341 bytes of unrelated guidance
+  to enter explicit Builder operations. The corrected section is 1,212 bytes, with a real-PLAN
+  regression. Do not put test results, evaluator instructions or implementation history inside it.
+- The two catalog failures were stale assumptions about the removed AutoGen-only schema and private
+  tools in the canonical catalog. Test canonical presence and public exclusion separately. Guard
+  native CBM/Graphiti discovery in unit tests; an unisolated import/catalog call can launch another
+  frontend. Retain exact schemas, descriptor identity, OAuth and duplicate-name assertions.
+- If an inner native call leaves completion to its outer owner, forward its returned usage to that
+  owner's existing finish call. Builder dropped all five metrics this way. Missing values remain
+  unknown; numeric coercion in a status response is not proof of zero tokens or cost.
+- Saved legacy Team payloads and current `delegationRole` are distinct. Verify the actual consumer
+  before changing a test or saved configuration. The seed tests were stale; no seed reset was needed.
+- The owner has requested removal of the old Local Coder and Agent Builder Cards and a clean
+  `builder` Card/profile. Do not preserve their old roles as product requirements. Retain useful
+  create/edit tools, authentication and historical data; do not disguise a disabled Card as deleted,
+  bypass reference checks or copy the old profile's instruction/memory/session state into the new one.
+
 ## Documentation roles
 
 - `PLAN.md`: current product direction and unfinished work, clearly distinguished.
@@ -168,6 +188,10 @@ the whole runtime is clean. File size and an imperfect name are investigation si
 deletion criteria. A literal-word bug means using prose/title matching to infer intent, identity
 or authority. Explicit saved IDs, profile contracts and descriptive identifiers are not that bug.
 Do not replace meaningful names with generic abstractions or move code merely to hide its size.
+The September 10 coordinated domain-route migration changes HTTP addresses and all known source
+callers together. It does not change Card types, prompts or runtimes. Preserve each mount's existing
+authentication and the MCP bridge's process-secret/timeout distinctions. A passing source test is
+not permission to refresh one side of a live transport contract while the other side remains stale.
 
 | Commit | Boundary recorded by the commit |
 | --- | --- |

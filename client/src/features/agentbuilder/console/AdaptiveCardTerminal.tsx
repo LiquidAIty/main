@@ -44,7 +44,7 @@ export function reconcileCardTerminal(previous: CardTerminalObservation | null |
 export async function requestCardTranscript(args: {
   action: 'transcript' | 'delete_transcript'; projectId: string; deckId: string; cardId: string; runId: string;
 }): Promise<{ events?: CardTerminalEvent[]; deleted?: boolean }> {
-  const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+  const response = await fetch('/api/cards/run', {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(args),
   });

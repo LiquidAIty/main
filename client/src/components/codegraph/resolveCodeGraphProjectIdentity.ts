@@ -43,7 +43,7 @@ export async function callCbmTool<T = unknown>(
   context?: CbmReadContext,
 ): Promise<T> {
   if (!context) throw new Error('CodeGraph requires the current saved workspace');
-  const res = await fetch('/api/coder/codegraph/read', {
+  const res = await fetch('/api/codegraph/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...context, name, arguments: args }),

@@ -3,11 +3,16 @@ import type { Server } from 'node:http';
 import { once } from 'node:events';
 import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import cardRuntime from './cardRuntime.routes';
-import cardEditor from './cardEditor.routes';
+import cardRuntime, { mainRoutes, hermesRoutes } from './cardRuntime.routes';
+import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
 
-const router = express.Router().use(codegraph, cardEditor, cardRuntime);
+const router = express.Router()
+  .use('/cards', cardEditor, cardRuntime)
+  .use('/main', mainRoutes)
+  .use('/hermes', hermesRoutes)
+  .use('/idd', iddRoutes)
+  .use('/codegraph', codegraph);
 import * as executionContext from '../hermes/childExecutionContext';
 import {
   ensurePersistentCoderTerminal,
@@ -635,12 +640,12 @@ vi.mock('../db/pool', () => ({
 async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
-  app.use('/api/coder', router);
+  app.use('/api', router);
   const server = await new Promise<Server>((resolve) => {
     const nextServer = app.listen(0, '127.0.0.1', () => resolve(nextServer));
   });
   const address = server.address() as AddressInfo;
-  return { server, baseUrl: `http://127.0.0.1:${address.port}/api/coder` };
+  return { server, baseUrl: `http://127.0.0.1:${address.port}/api` };
 }
 
 async function closeServer(server: Server): Promise<void> {
@@ -650,6 +655,20 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('saved Card routes', () => {
+  it('serves Main at its own namespace without retaining the old global Coder route', async () => {
+    const { server, baseUrl } = await createApiServer();
+    const origin = new URL(baseUrl).origin;
+    try {
+      const response = await fetch(`${origin}/api/main/session/driver`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ ok: true });
+      const retired = await fetch(`${origin}/api/coder/main/session/driver`);
+      expect(retired.status).toBe(404);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('observes the same ordinary Card Run through status without executing or rejoining another root', async () => {
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -667,7 +686,7 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        const response = await fetch(`${baseUrl}/cards/run`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
             action: 'status', projectId: 'p', deckId: 'd', runId: 'terminal-root', includeTerminal: true, inspectOnly: true,
           }),
@@ -695,7 +714,7 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       for (const action of ['transcript', 'delete_transcript']) {
-        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        const response = await fetch(`${baseUrl}/cards/run`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
             action, projectId: 'p', deckId: 'd', cardId: 'research', runId: run.runId,
             sessionId: 'browser-must-not-select-this', profile: 'wrong-profile',
@@ -724,7 +743,7 @@ describe('saved Card routes', () => {
       });
       const { server, baseUrl } = await createApiServer();
       try {
-        const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+        const response = await fetch(`${baseUrl}/cards/run`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
             action: 'delete_transcript', projectId: 'p', deckId: 'd', cardId: 'research', runId: 'terminal-root',
           }),
@@ -784,7 +803,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/input-data-dictionary/tools?selectedIds=calculator,missing.tool`);
+      const response = await fetch(`${baseUrl}/idd/tools?selectedIds=calculator,missing.tool`);
       expect(response.status).toBe(200);
       const payload = await response.json();
       expect(payload.references).toHaveLength(2);
@@ -865,7 +884,7 @@ describe('saved Card routes', () => {
       });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/input-data-dictionary/script-tools?policy=selected&selectedIds=canvas.inspect`);
+      const response = await fetch(`${baseUrl}/idd/script-tools?policy=selected&selectedIds=canvas.inspect`);
       expect(response.status).toBe(200);
       const payload = await response.json() as any;
       expect(payload.ok).toBe(true);
@@ -918,7 +937,7 @@ describe('saved Card routes', () => {
         version: 3,
         source: 'def run(input, tools, output):\n    output.emit(tools.call("canvas.inspect", {}))',
       };
-      const response = await fetch(`${baseUrl}/card-script/validate`, {
+      const response = await fetch(`${baseUrl}/cards/script/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -953,7 +972,7 @@ describe('saved Card routes', () => {
     chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/card-editor/options`);
+      const response = await fetch(`${baseUrl}/cards/options`);
       expect(response.status).toBe(200);
       const payload = await response.json();
       expect(Object.keys(payload).sort()).toEqual(['catalogs', 'fields', 'ok']);
@@ -978,7 +997,7 @@ describe('saved Card routes', () => {
     else orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce(failure);
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/card-editor/options`);
+      const response = await fetch(`${baseUrl}/cards/options`);
       expect(response.status).toBe(503);
       expect(await response.json()).toEqual({ ok: false, error: 'runtime_options_unavailable' });
     } finally { await closeServer(server); }
@@ -988,7 +1007,7 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
-        `${baseUrl}/input-data-dictionary/card-editor?projectId=p&deckId=d&cardId=card_agent_builder`,
+        `${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=card_agent_builder`,
       );
       expect(response.status).toBe(200);
       const payload = await response.json();
@@ -1016,7 +1035,7 @@ describe('saved Card routes', () => {
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(
-          `${baseUrl}/input-data-dictionary/card-editor?projectId=p&deckId=d&cardId=${cardId}`,
+          `${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=${cardId}`,
         );
         expect(response.status).toBe(503);
         expect(await response.json()).toEqual({
@@ -1045,7 +1064,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/input-data-dictionary/card-editor?projectId=p&deckId=d&cardId=custom`);
+      const response = await fetch(`${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=custom`);
       expect(response.status).toBe(200);
       const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
       const body = JSON.parse(String((call?.[1] as RequestInit).body));
@@ -1124,7 +1143,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1160,7 +1179,7 @@ describe('saved Card routes', () => {
     chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1217,11 +1236,14 @@ describe('saved Card routes', () => {
     const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
       finalText: 'Builder reply', nativeSessionId: 'native-builder-session', nativeTurnId: 'builder-turn',
       contextAuthorityMode: 'main_native_honcho',
+      usage: { providerInputTokens: 240, providerOutputTokens: 20,
+        providerCachedTokens: 100, providerReasoningTokens: 5, totalCostUsd: 0.012,
+        usageAvailable: true, usageSource: 'native_cli' },
     });
     delivery.bridge.notePoll();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1258,6 +1280,15 @@ describe('saved Card routes', () => {
       });
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(submit).toHaveBeenCalledOnce();
+      const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+        ([endpoint]) => endpoint === '/domain/runs/finish',
+      );
+      expect(finishCalls).toHaveLength(1);
+      expect(JSON.parse(String(finishCalls[0][1]?.body))).toMatchObject({
+        runId: 'corr-builder-1', state: 'completed', finalResult: 'Builder reply',
+        providerInputTokens: 240, providerOutputTokens: 20,
+        providerCachedTokens: 100, providerReasoningTokens: 5, totalCostUsd: 0.012,
+      });
       const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
       expect(registration).toHaveBeenCalledWith(expect.objectContaining({
         cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
@@ -1314,7 +1345,7 @@ describe('saved Card routes', () => {
         providerModelId: 'gpt-5.6-luna',
         accessMode: 'chatgpt-account',
       };
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1341,6 +1372,13 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(submit).toHaveBeenCalledOnce();
+      const finishCalls = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+        ([endpoint]) => endpoint === '/domain/runs/finish',
+      );
+      expect(finishCalls).toHaveLength(1);
+      expect(JSON.parse(String(finishCalls[0][1]?.body))).toMatchObject({
+        providerInputTokens: null, providerOutputTokens: null, totalCostUsd: null,
+      });
       const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
       expect(registration).toHaveBeenCalledWith(expect.objectContaining({
         cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
@@ -1379,13 +1417,13 @@ describe('saved Card routes', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/api/coder', router);
+    app.use('/api', router);
     const server = app.listen(0);
     await once(server, 'listening');
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('server_address_unavailable');
     try {
-      const response = await fetch(`http://127.0.0.1:${address.port}/api/coder/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1430,7 +1468,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1482,7 +1520,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1524,7 +1562,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'status', inspectOnly: true, projectId: 'p', deckId: 'd',
           cardId: 'builder', conversationId: 'one' }),
@@ -1549,13 +1587,13 @@ describe('saved Card routes', () => {
 
     const app = express();
     app.use(express.json());
-    app.use('/api/coder', router);
+    app.use('/api', router);
     const server = app.listen(0);
     await once(server, 'listening');
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('server_address_unavailable');
     try {
-      const response = await fetch(`http://127.0.0.1:${address.port}/api/coder/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1579,7 +1617,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1650,7 +1688,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1690,7 +1728,7 @@ describe('saved Card routes', () => {
     chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1737,7 +1775,7 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     const controller = new AbortController();
     try {
-      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const request = fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ action: 'execute', projectId: 'project-1', deckId: 'deck_builder',
           cardId: 'card_local_coder', correlationId: `background-${state}`, conversationId: 'main',
@@ -1791,7 +1829,7 @@ describe('saved Card routes', () => {
     const controller = new AbortController();
     const { server, baseUrl } = await createApiServer();
     try {
-      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const request = fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
@@ -1844,7 +1882,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const request = fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const request = fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1854,7 +1892,7 @@ describe('saved Card routes', () => {
         }),
       });
       await vi.waitFor(() => expect(chatSessionMocks.startHermesTurn).toHaveBeenCalled());
-      const stoppedResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const stoppedResponse = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1891,7 +1929,7 @@ describe('saved Card routes', () => {
     const startupSession = ensurePersistentCoderTerminal();
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`);
+      const response = await fetch(`${baseUrl}/hermes/terminal/sessions`);
       const payload = await response.json();
       expect(response.status, JSON.stringify(payload)).toBe(200);
       expect(payload.ok).toBe(true);
@@ -1926,7 +1964,7 @@ describe('saved Card routes', () => {
       expect(mcpClientMocks.resolvePythonAgentMcpServerSpec).not.toHaveBeenCalled();
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
-      const createResponse = await fetch(`${baseUrl}/hermes/coder-terminal/sessions`, {
+      const createResponse = await fetch(`${baseUrl}/hermes/terminal/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
@@ -1964,7 +2002,7 @@ describe('saved Card routes', () => {
     try {
       const outputController = new AbortController();
       const outputResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/pty`,
+        `${baseUrl}/hermes/terminal/sessions/${startupSession.id}/pty`,
         { signal: outputController.signal },
       );
       expect(outputResponse.status).toBe(200);
@@ -1978,7 +2016,7 @@ describe('saved Card routes', () => {
       );
 
       const directResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/input`,
+        `${baseUrl}/hermes/terminal/sessions/${startupSession.id}/input`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1989,7 +2027,7 @@ describe('saved Card routes', () => {
       expect(child.write).toHaveBeenCalledWith('Inspect one bounded symbol.\r');
 
       const resizeResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/resize`,
+        `${baseUrl}/hermes/terminal/sessions/${startupSession.id}/resize`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1999,7 +2037,7 @@ describe('saved Card routes', () => {
       expect(resizeResponse.status).toBe(200);
       expect(child.resize).toHaveBeenCalledWith(166, 47);
 
-      const assignedResponse = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const assignedResponse = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2023,12 +2061,12 @@ describe('saved Card routes', () => {
       });
       expect(child.write).toHaveBeenCalledTimes(1);
       const terminalSession = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}`,
+        `${baseUrl}/hermes/terminal/sessions/${startupSession.id}`,
       ).then((response) => response.json());
       expect(terminalSession.session.state).toBe('running');
       expect(terminalSession).not.toHaveProperty('transcript');
       const stopResponse = await fetch(
-        `${baseUrl}/hermes/coder-terminal/sessions/${startupSession.id}/stop`,
+        `${baseUrl}/hermes/terminal/sessions/${startupSession.id}/stop`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
       );
       expect(stopResponse.status).toBe(404);
@@ -2078,7 +2116,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2124,7 +2162,7 @@ describe('saved Card routes', () => {
     }));
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/run_configured_card`, {
+      const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
           correlationId: 'failed-native-root', input: 'Bounded test mission', action: 'execute' }),
@@ -2161,7 +2199,7 @@ describe('saved Card routes', () => {
     });
     const { server, baseUrl } = await createApiServer();
     try {
-      const response = await fetch(`${baseUrl}/mcp-bridge/external_main_context`, {
+      const response = await fetch(`${baseUrl}/main/context`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ issuer: 'https://tenant.auth0.com/', subject: 'auth0|jeremiah' }),
@@ -2388,7 +2426,7 @@ describe('saved Card routes', () => {
       mainCliBridgeMocks.submit.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
-        const denied = await fetch(`${baseUrl}/mcp-bridge/external_main_chat`, {
+        const denied = await fetch(`${baseUrl}/main/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2400,7 +2438,7 @@ describe('saved Card routes', () => {
         expect(denied.status).toBe(401);
         expect(mainCliBridgeMocks.submit).not.toHaveBeenCalled();
 
-        const response = await fetch(`${baseUrl}/mcp-bridge/external_main_chat`, {
+        const response = await fetch(`${baseUrl}/main/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

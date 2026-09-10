@@ -1650,7 +1650,16 @@ def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
     assert mcp_host._backend_bridge_timeout_seconds("external_main_context") == 30.0
 
 
-def test_external_main_backend_bridge_uses_the_process_owned_secret(monkeypatch):
+@pytest.mark.parametrize("operation,route,has_secret", [
+    ("external_main_chat", "/api/main/chat", True),
+    ("external_main_context", "/api/main/context", False),
+    ("describe_connected_agents", "/api/cards/connected", False),
+    ("internal_execution_context", "/api/hermes/execution-context", False),
+    ("run_configured_card", "/api/cards/run", False),
+])
+def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
+    monkeypatch, operation, route, has_secret,
+):
     import mcp_host
 
     secret = "external-main-test-secret-0123456789abcdef"
@@ -1675,12 +1684,19 @@ def test_external_main_backend_bridge_uses_the_process_owned_secret(monkeypatch)
     monkeypatch.setattr(mcp_host, "urlopen", open_request)
 
     assert json.loads(mcp_host._bridge_sync(
-        "external_main_chat", {"message": "hello"}
+        operation, {"message": "hello"}
     )) == {"ok": True}
+    assert captured["request"].full_url == f"{mcp_host.BACKEND}{route}"
+    assert captured["request"].get_method() == "POST"
+    assert json.loads(captured["request"].data) == {"message": "hello"}
     assert captured["request"].get_header(
         "X-liquidaity-internal-mcp-secret"
-    ) == secret
-    assert captured["timeout"] == mcp_host._NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    ) == (secret if has_secret else None)
+    assert captured["timeout"] == (
+        mcp_host._NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+        if operation in {"external_main_chat", "run_configured_card"}
+        else mcp_host._MCP_CALL_TIMEOUT_SECONDS
+    )
 
 
 
@@ -1819,9 +1835,28 @@ def test_graphiti_timeout_cancels_work_and_later_dispatch_recovers(monkeypatch):
     assert json.loads(later.content[0].text)["ok"] is True
 
 
-def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
+def test_application_catalog_preserves_saved_card_schemas_without_native_discovery(monkeypatch):
     import asyncio
+    import jsonschema
     import mcp_host
+    from app.python_models.idd import load_input_data_dictionary
+
+    # This checks application schemas, not upstream process initialization.
+    # The separate GPT projection test supplies native catalog fixtures.
+    application_ids = {
+        item["id"] for item in load_input_data_dictionary()["operations"]
+        if item["namespace"] in {"main", "engraphis"}
+    }
+
+    async def unexpected_native_discovery():
+        pytest.fail("application schema test must not initialize a native MCP provider")
+
+    monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
+    monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: application_ids)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", unexpected_native_discovery)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", unexpected_native_discovery)
 
     async def check():
         tools = await mcp_host.list_tools()
@@ -1862,10 +1897,25 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
             "projectId", "deckId", "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools",
         }
-        assert by_name["card.create"].inputSchema["properties"]["runtime"]["properties"]["mode"] == {
-            "type": "string",
-            "enum": ["assistant"],
+        runtime_schema = by_name["card.create"].inputSchema["properties"]["runtime"]
+        assert runtime_schema == {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "minLength": 1},
+                "mode": {"type": "string", "minLength": 1},
+            },
+            "required": ["kind", "mode"],
+            "additionalProperties": False,
         }
+        # The receiving Card domain checks the exact IDD template binding;
+        # transport must not impose the removed AutoGen-only creation rule.
+        for binding in ({"kind": "hermes", "mode": "delegate"},
+                        {"kind": "autogen", "mode": "assistant"}):
+            jsonschema.validate(binding, runtime_schema)
+        for binding in ({"kind": "hermes"}, {"kind": "hermes", "mode": ""},
+                        {"kind": "hermes", "mode": "delegate", "override": True}):
+            with pytest.raises(jsonschema.ValidationError):
+                jsonschema.validate(binding, runtime_schema)
         update_properties = by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["properties"]
@@ -1889,7 +1939,8 @@ def test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas():
         )
         assert not any(name.startswith("worldsignals.") for name in by_name)
         assert by_name
-        assert len(by_name) == len(set(by_name))
+        assert len(tools) == len(by_name)
+        assert set(by_name) == application_ids
         return {name: tool.model_dump() for name, tool in by_name.items()}
 
     catalog = asyncio.run(check())
@@ -1985,12 +2036,16 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: None)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", cbm_tools)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_tools)
 
     canonical = asyncio.run(mcp_host._materialize_complete_catalog())
     canonical_by_name = {tool.name: tool for tool in canonical}
-    assert set(canonical_by_name) == external_ids
+    # Canonical construction retains the private saved-Card doorway. Only
+    # HTTP publication projects it away; exposing it to GPT is a regression.
+    assert set(canonical_by_name) == external_ids | {"card.run_assistant_agent"}
+    assert len(canonical) == len(canonical_by_name)
 
     private_only = private_ids - external_ids
     private_tools = [
@@ -1999,7 +2054,7 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
                 native_tool(name, name)
             )
         ])[0]
-        for name in sorted(private_only)
+        for name in sorted(private_only - canonical_by_name.keys())
     ]
     complete_internal = [*canonical, *private_tools]
     monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(complete_internal))
@@ -2012,6 +2067,21 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
     assert private_only.isdisjoint(published_names)
     assert len(mcp_host._http_catalog_or_error()) == len(complete_internal)
     assert all(canonical_by_name[tool.name] is tool for tool in published)
+    for tool in published:
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        assert payload["securitySchemes"] == [{
+            "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
+        }]
+        assert payload["_meta"]["securitySchemes"] == payload["securitySchemes"]
+    for namespace, fixtures in by_namespace.items():
+        for fixture in fixtures:
+            tool = canonical_by_name[f"{namespace}.{fixture.name}"]
+            assert tool.title == fixture.title
+            assert tool.description == fixture.description
+            assert tool.outputSchema == fixture.outputSchema
+            assert tool.annotations == fixture.annotations
+            assert tool.meta["canonicalFixture"] == fixture.meta["canonicalFixture"]
+            assert tool.inputSchema["properties"]["probe"] == {"type": "string"}
     assert canonical_by_name["web_search"].meta["liquidaitySource"]["sourceId"] == "main_mcp"
     assert {
         "cbm.delete_project",

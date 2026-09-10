@@ -32,3 +32,21 @@ failed. Inspect its existing state before any retry, stop, or re-dispatch.
 HTTP 200, compile success, a mock, or an external stand-in is not proof that the user's UI path
 works. Conversely, do not launch a live model to test a reversible CSS or schema change when
 the relevant deterministic and visual checks suffice. Report proof tiers separately.
+
+For MCP catalog tests, replace native discovery with fail-on-call guards unless discovery is the
+explicit test subject. The application host owns the sole CBM frontend; importing a catalog test
+must not acquire that lifecycle. Control inherited allowlists explicitly. Assert the canonical
+private tool is present before testing public projection exclusion, preserve native descriptors
+and OAuth metadata, and validate supported and invalid runtime inputs against actual schemas.
+These boundaries repaired the September 10 failures without changing publication or authentication.
+
+Test runtime-selected documentation against its real file as well as small fixtures. Builder's
+PLAN heading accidentally included other roles and audit history despite isolated fixture tests.
+Keep those evaluator assertions in tests, outside the selected product section.
+
+Check invocation paths before classifying a source-reading test failure. Some client tests resolve
+`client/src/...` against `process.cwd()` and require running Vitest from the repo root with
+`--config client/vite.config.ts`. Running those from `client/` produced eight ENOENT failures on
+September 10; all 54 tests in the two affected suites passed from root without weakened assertions.
+Use `npm --workspace client run build` for the client bundle: the root Vite is 6.3.5 while the client's
+own pinned Vite is 7.1.3. A build with the wrong CLI is not the workspace's release-build proof.

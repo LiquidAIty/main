@@ -429,7 +429,7 @@ export default function AgentBuilder(): React.ReactElement {
       stream: 'true',
       ...(selectedCardId ? { cardId: selectedCardId } : {}),
     });
-    const stream = new EventSource(`/api/coder/main/session/attention?${params.toString()}`, { withCredentials: true });
+    const stream = new EventSource(`/api/main/session/attention?${params.toString()}`, { withCredentials: true });
     stream.onopen = () => { void graphAttention.refreshThinkGraph(); };
     stream.addEventListener('session', (event) => {
       graphAttention.observeAttentionSession(JSON.parse((event as MessageEvent).data));
@@ -1033,7 +1033,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string; conversationId?: string }) => {
     if (!canvasProjectId) throw new Error('card_run_project_required');
-    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+    const response = await fetch('/api/cards/run', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -1058,7 +1058,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const readStandaloneRunInputs = useCallback(async (runId: string): Promise<RetainedRunInputs> => {
     if (!canvasProjectId) throw new Error('card_run_project_required');
-    const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+    const response = await fetch('/api/cards/run', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -1181,7 +1181,7 @@ export default function AgentBuilder(): React.ReactElement {
       });
     }
     try {
-      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+      const response = await fetch('/api/cards/run', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -1331,7 +1331,7 @@ export default function AgentBuilder(): React.ReactElement {
     const active = standaloneActiveRunRef.current[card.id];
     if (!active || !canvasProjectId) return;
     try {
-      const response = await fetch('/api/coder/mcp-bridge/run_configured_card', {
+      const response = await fetch('/api/cards/run', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -1525,7 +1525,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
     let runtime: { kind: 'hermes'; mode: 'delegate' };
     try {
-      const response = await fetch('/api/coder/input-data-dictionary/card-editor');
+      const response = await fetch('/api/idd/card-editor');
       const dictionary = await response.json();
       const binding = dictionary?.templates?.template_assist?.runtime;
       if (!response.ok || dictionary?.ok !== true

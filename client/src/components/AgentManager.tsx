@@ -721,7 +721,7 @@ export function AgentManager({
     setRuntimeOptionsStatus('loading');
     setCardEditorFields([]);
     setModelsByProvider({});
-    void fetch('/api/coder/card-editor/options')
+    void fetch('/api/cards/options')
       .then(async (response) => {
         const payload = await response.json();
         if (!response.ok || payload?.ok !== true) {
@@ -1201,7 +1201,7 @@ export function AgentManager({
           });
           if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
           if (!completeHealthyCatalog && savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
-          const response = await fetch(`/api/coder/input-data-dictionary/tools?${params}`, {
+          const response = await fetch(`/api/idd/tools?${params}`, {
             signal: controller.signal,
           });
           const payload = await response.json();

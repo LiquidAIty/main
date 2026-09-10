@@ -25,7 +25,7 @@ installed source/documentation, not an assumption based on model training.
 | --- | --- | --- |
 | Card input and context size | [idf.py](apps/python-models/app/python_models/idf.py): `materialize_idf`, `runtime_projection`, `model_task` | One retained/reloaded input; actual provider request before context removal |
 | Saved Card execution | [card_domain.py](apps/python-models/app/python_models/card_domain.py): `_retain_run_idf` | Saved identity, prompt, model and grants; receiving Card owns its Run |
-| HTTP route ownership | [routes/index.ts](apps/backend/src/routes/index.ts), [cardEditor.routes.ts](apps/backend/src/routes/cardEditor.routes.ts), [cardRuntime.routes.ts](apps/backend/src/routes/cardRuntime.routes.ts), [codegraph.routes.ts](apps/backend/src/routes/codegraph.routes.ts) | Mount table, editor/IDD transport, saved Run transport and CodeGraph transport; URL prefix is compatibility, not Card identity |
+| HTTP route ownership | [routes/index.ts](apps/backend/src/routes/index.ts), [cardEditor.routes.ts](apps/backend/src/routes/cardEditor.routes.ts), [cardRuntime.routes.ts](apps/backend/src/routes/cardRuntime.routes.ts), [codegraph.routes.ts](apps/backend/src/routes/codegraph.routes.ts) | Authenticated domain mounts; Main conversation, saved Card Run, Hermes terminal, IDD and CodeGraph transport |
 | Hermes profile selections | [mainAdapter.ts](apps/backend/src/hermes/mainAdapter.ts): `materializeHermesProfileSelections` | Parent/child model distinction, installed selected skills, readback |
 | Native provider request | [conversation_loop.py](Hermes/agent/conversation_loop.py), [chat_completion_helpers.py](Hermes/agent/chat_completion_helpers.py): `build_api_kwargs` | API mode, transport preparation and hooks; vendor excluded from CBM |
 | Hermes procedural context | [system_prompt.py](Hermes/agent/system_prompt.py), [prompt_builder.py](Hermes/agent/prompt_builder.py): `build_skills_system_prompt` | Profile-scoped index versus opened contents; no assumption of whole-library injection |
@@ -54,15 +54,242 @@ uses an explicitly selected coding subagent, actual tools and separate diagnosti
 the saved Card's job. It is a testing procedure, not another product runtime; native Hermes parity
 and performance improvement require actual evidence.
 
-`Builder` names the saved Card; `Agent Builder` names the workspace for building Cards, their UI
-and selected run context. Local Coder is a separate saved Card. Route names describe responsibilities,
+`builder` is the requested replacement Card/profile; `Agent Builder` names the workspace for building
+Cards, their UI and selected run context. The old Builder and Local Coder Cards are still saved;
+their requested removal/replacement is incomplete. The lower terminal belongs to Builder. Route names describe responsibilities,
 not identities inferred from historical filenames. The former 2,014-line `coder.routes.ts` mixed
 editor, graph, Main and execution transport. Editor/IDD and CodeGraph read now have separate modules;
 `cardRuntime.routes.ts` retains shared execution/session transport without changed handler bodies.
-`routes/index.ts` mounts them once behind the existing `/coder` authentication boundary. Public
-clients and MCP still use `/api/coder/...`; a coordinated URL migration is separate work.
-The runtime module remains large (about 1,747 lines), especially configured-Card dispatch. This is
-incomplete cleanup, not proof that the remaining module is well-sized.
+`routes/index.ts` now mounts `/api/main`, `/api/cards`, `/api/hermes`, `/api/idd` and `/api/codegraph`,
+each behind the same `authMiddleware`. Current client and Python MCP/control-plane callers were
+migrated together; the old global `/api/coder` mount is absent, with a 404 regression check.
+These are transport addresses, not five runtimes or a semantic agent router. No Card identity,
+saved profile, tool name, handler schema or session history changes as a result of this migration.
+The owner-authorized September 10 `npm run dev:fresh` loaded the changed backend/Python callers
+together. Authenticated Main/CBM reads, all 11 saved Card status reads, editor options and native
+terminal listing work; retired global Coder HTTP returns 404. PLAN records exact startup/source
+identity. Fresh selected-plugin acceptance and new model execution remain separate proofs.
+The runtime module remains large, especially configured-Card dispatch. Complete source review found
+a specific lost-usage defect: Builder used `finishRun: false` for its native CLI call, then the outer
+finish call discarded returned usage. The existing finish call now retains all five supplied usage
+fields; route/bridge tests and backend typecheck pass. Missing usage stays unknown. No additional
+module extraction was justified solely by line count; loaded behavior still needs separate proof.
+
+| HTTP entrance | Responsibility |
+| --- | --- |
+| `POST /api/cards/run` | Execute, inspect or stop the exact saved Card Run using its existing action schema |
+| `POST /api/cards/connected` | Read connected-agent relationships |
+| `GET /api/cards/options`, `POST /api/cards/script/validate` | Ordinary Card editor choices and selected-tool Script validation |
+| `POST /api/main/context`, `POST /api/main/chat` | MCP's authenticated Main context and external Main conversation transport |
+| `/api/main/session/*` | Existing browser Main chat, history, driver, attention and exact-Run Stop routes |
+| `POST /api/hermes/execution-context` | Existing internal native execution-context lookup with its existing checks |
+| `/api/hermes/terminal/sessions/*` | Existing persistent Hermes terminal transport |
+| `GET /api/idd/card-editor`, `/api/idd/tools`, `/api/idd/script-tools` | IDD-backed editor and tool projections |
+| `POST /api/codegraph/read` | Existing saved-workspace CodeGraph read |
+
+The five MCP backend operations retain their process-secret and timeout behavior through a literal
+URL map in `mcp_host.py`. No legacy HTTP alias remains. The 65 route/bridge tests and 12 focused
+MCP catalog/transport tests pass; production TypeScript checks pass for both backend and client.
+
+### Using Builder and finding its tools
+
+Open the Agent Builder workspace. Main stays in the upper conversation; the lower coding surface is
+the saved Builder Card's terminal/session presentation. Card selection and its Tools/Script controls
+belong to the existing inspector. Select the actual saved tools and skills there; availability is
+checked against native/MCP catalogs. Ordinary prompt, research and implementation work does not need
+a create/edit operation. This describes current entrances, not completed acceptance of the new profile.
+
+| Need | Existing owner / entry | Current limitation |
+| --- | --- | --- |
+| Inspect current Cards and wires | Public `canvas.inspect` → `control_plane.canvas_inspect` | Bounded identity/runtime/tool view, not full prompt/configuration editor |
+| Select Card settings/tools or validate Script | Card inspector → `cardEditor.routes.ts` → IDD/Python owners | Native choices come from the bound profile; no invented callable schemas |
+| Create or edit a Card | `card.create` / `card.update_configuration` → `control_plane.py` | Writes currently require prefilled Builder operation authority; general tool workflow remains incomplete |
+| Run an ordinary Builder assignment | Saved Card Run → `cardRuntime.routes.ts` → existing native profile/CLI | Saved new `builder` binding is not activated yet; do not confuse a passing test with a working replacement |
+| Inspect implementation | Selected application `cbm.*`, then current source | Native CBM remains app-owned; no direct frontend or indexing |
+
+The new local profile `Hermes/.hermes/profiles/builder` was created through native Hermes profile
+creation with no clone. Only `hermes-agent` and the revised `agent-builder-inspection` skill were
+selected; no old memory, sessions or credentials were copied. Profile creation does not establish
+account authentication, a saved Card binding or effective native tool availability.
+
+#### Builder capability inventory — observed September 10
+
+The saved Card is still `card_61d994e5044b4e44`, title `Agent Builder`, bound to
+`liquidaity-agent-builder`. The clean `builder` profile is not its replacement until the saved binding
+and loaded application agree. The following is an inventory of selections and source owners, not a
+claim that every selected tool has passed a live call.
+
+| Selected MCP tool | Owner and effect | Target / evidence limit |
+| --- | --- | --- |
+| `canvas.inspect` | Python control plane; read | Current deck, bounded Cards and wires; not full selected-Card configuration |
+| `card.create` | Python control plane → saved Card domain; write | Current deck; currently requires a prefilled create operation and generates a profile name |
+| `card.update_configuration` | Python control plane → saved Card domain; write | Exact Card; current Builder operation restricts fields and values in advance |
+| `cbm.search_graph` | App-owned native CBM; read | Repository symbols and native identities |
+| `cbm.trace_path` | App-owned native CBM; read | Callers, callees and structural paths |
+| `cbm.get_code_snippet` | App-owned native CBM; read | Source for a resolved symbol; partial coverage remains possible |
+| `cbm.check_index_coverage` | App-owned native CBM; read | Projection coverage, not authorization to index |
+| `cbm.detect_changes` | App-owned native CBM; read | Repository change impact |
+| `engraphis_recall_context` | Native Engraphis; read | ThinkGraph context |
+| `engraphis_get_memory` | Native Engraphis; read | Selected ThinkGraph memory |
+| `graphiti.search_nodes` | Native Graphiti; read | KnowGraph nodes |
+| `graphiti.search_memory_facts` | Native Graphiti; read | KnowGraph facts |
+| `graphiti.get_episodes` | Native Graphiti; read | KnowGraph source episodes |
+| `card.load_graph_references` | Python Card/graph adapters; native read plus transient receiving-Card context handoff | Write-class grant; does not persist a Card change, write graph knowledge or start a Run. Self-target is restricted except Main's self-selection |
+
+The six individually selected native tools are `memory`, `session_search`, `todo`, `skills_list`,
+`skill_view` and `skill_manage`. They cover native profile memory, prior sessions, task notes and
+profile skills; memory, todo and skill management can write their corresponding native state.
+Selected skills are `hermes-agent` and `agent-builder-inspection`.
+
+The six selected toolsets expand in the checked-in Hermes `TOOLSETS` definitions as follows:
+
+| Toolset | Native tool names | Effect / target |
+| --- | --- | --- |
+| `web` | `web_search`, `web_extract` | Fetch/search external web content |
+| `terminal` | `terminal`, `process` | Execute commands and manage their processes in the configured workspace |
+| `file` | `read_file`, `write_file`, `patch`, `search_files` | Read/search/edit workspace files |
+| `browser` | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_scroll`, `browser_back`, `browser_press`, `browser_get_images`, `browser_vision`, `browser_console`, `browser_cdp`, `browser_dialog`, `browser_exec`, `web_search` | Read and interact with browser pages; actions can change external state |
+| `vision` | `vision_analyze` | Analyze supplied image input |
+| `code_execution` | `execute_code` | Native code execution and tool composition |
+
+There are 23 unique toolset names plus six individually selected native names. This is a static
+selection count, not 29 proven callable tools. Native environment, credentials and browser backend
+can change availability. The existing session projection also unions saved Card toolsets with native
+profile toolsets. The old profile pins `computer_use` and `hermes-acp`; these can widen its effective
+catalog beyond the six saved toolsets above. The clean profile has only the six CLI selections and no
+such pin. Effective schemas and grants must be read back before the replacement or a stand-in test.
+
+The loaded old-profile readback confirms native name `liquidaity-agent-builder`, Sol parent,
+materialized child selection, pinned toolsets, enabled `computer_use`, the two selected skills and no
+native MCP servers. The checked-in `hermes-acp` set also contains `delegate_task`; together these yield
+31 candidate native names, not 31 available tools. Saved delegation remains off. The profile response
+and static expansion are complementary evidence, not a substitute for the actual per-Run schemas.
+
+The saved parent is `openai/gpt-5.6-sol` with ChatGPT-account access; its native child selection is
+`openai/gpt-5.6-luna`. Reasoning effort and generation-limit overrides are not saved, so native defaults
+are unknown here. Delegation is off. Script is blank and disabled, version 8. CBM `search_code` and
+`query_graph` are absent from these saved grants despite their use in the repository audit procedure.
+There is no selected or published `card.delete` tool; the existing HTTP deletion operation refuses
+Cards with retained history. Neither missing capability is silently supplied through a substitute.
+
+#### Proposed general Builder contract — deferred until Main works and owner review
+
+Builder remains an ordinary Hermes Card in Agent Canvas and the existing lower terminal. It receives
+the actual request and deliberately selected context through the single IDF materializer. It can
+research, author prompts, edit code or build UI without first declaring a create/edit operation.
+It chooses tools; TypeScript transports requests and Python validates and performs operations.
+
+For creating an agent, the proposed interaction is:
+
+1. Read the current deck and the applicable IDD/template/model/tool choices. Extend the existing
+   inspection doorway to expose an explicitly selected Card's editable configuration and revisions;
+   its current bounded response does not yet supply this. IDD remains the definition owner.
+2. Builder chooses concrete Card values from the request: name, prompt, Hermes/AutoGen binding,
+   model, selected tools, skills, native toolsets and any requested UI. It presents these for review
+   when requested, or saves within the owner's existing authorization. There is no new approval
+   framework, hidden prompt rewriting or predetermined create packet choosing those values.
+3. Builder calls the existing `card.create` with the reviewed values. Honor an explicit short profile
+   name instead of generating one. Keep authentication, effective permissions, schema validation,
+   current catalog checks and revision conflicts. Save and read back the Card; saving does not run it.
+4. For changes, inspect the exact target and call `card.update_configuration` with an explicit patch
+   and current revision. Preserve unspecified fields, other Cards, profiles and histories. Remove
+   the requirement that another caller pre-author every eventual field value in an operation packet.
+5. Build agent UI/pages through selected file and terminal tools against the existing app, then
+   compile/test the affected UI and saved-Card path. The terminal is Hermes infrastructure, not a
+   revived Local Coder runtime. A real saved-Card Run is a separate, explicitly requested proof.
+
+The construction tools need their actual accepted schemas aligned with the fields they advertise,
+including native selections and model settings. Add the missing selected CBM `search_code` and
+`query_graph` capabilities so Builder can follow the existing audit procedure. Do not grant the whole
+catalog. This proposal does not merge graphs, remove IDD/skills/PlanFlow, invent a new agent runtime,
+or impose a classifier that forces every assignment through agent creation.
+
+Card removal is a separate unresolved storage contract: both old Cards have retained completed Runs,
+and canonical deletion rejects those references. No archive mode, dummy Card, history deletion or
+database bypass is approved here. Review that concrete conflict before changing the deletion rule.
+The general create/edit changes above have not been implemented or live-proven; this is the contract
+to review before changing their behavior.
+
+#### Main, Builder and graph design review — September 10
+
+This review uses saved Card configuration, native profile readback, app-published CBM discovery and
+complete current source. It changes documentation only. It does not change saved prompts, tools,
+models, graph data or delegation. The clean `builder` profile remains unbound.
+
+| Saved agent | Current responsibility and settings | Material limits |
+| --- | --- | --- |
+| Main Chat / `liquidaity-main` | Sol parent, Luna native child, profile delegation; answers directly, reads graphs, writes ThinkGraph, delegates useful work | Enabled Script v2 compacts ten selected reads; graph preload adds automatic bounded reads. Magentic-One is on hold by saved instruction |
+| Agent Builder / `liquidaity-agent-builder` | Sol parent, Luna child, delegation off; native implementation tools, graph reads, optional Card creation/editing | Old profile/skill and control-plane restrictions below remain active; new `builder` is not bound |
+| ThinkGraph / `thinkgraph` | Luna parent with saved low effort, Luna child selection, delegation off; seven Engraphis tools for focused extraction/reconciliation | No web, KnowGraph or Card writes. Native ingestion uses an additional extractor completion when needed |
+| Graph Agent / `liquidaity-hermes-steward` | Sol parent, Luna child, Team delegation; web research, KnowGraph reads/writes, ThinkGraph and CBM reads | No ThinkGraph mutation; no outgoing saved-Card delegation. Its prompt still assigns detailed reports/plans/prompt writing to Builder |
+
+Only ThinkGraph saves an explicit low reasoning effort among these four Cards. Missing effort on the
+others is native default/unknown. Main has directed flow edges to Builder, Graph Agent and ThinkGraph.
+Builder has no Magentic-One edge. Graph Agent's native Team workers are not extra saved Cards.
+The product graph and its engine are different concepts: ThinkGraph is stored/queried by Engraphis;
+KnowGraph is stored/queried by Graphiti/Neo4j. The similarly named ThinkGraph Card is a model worker,
+not the Engraphis runtime. Several authorized callers may use the same native graph writer.
+
+The remaining Builder restrictions are concrete, not inferred from old route names:
+
+- Its saved prompt prohibits editing Main, Graph Agent or itself, changing wires, running the target
+  Card and joining Magentic-One. It permits ordinary writing/implementation without a create/edit task.
+- Its selected old inspection skill says exact AutoGen assistant creation, mandatory public-repository
+  research even for prompt-only work, a prefilled operation, one effect, and no subsequent Card run or
+  wire edit. Some source contracts already support more than this skill describes. The new unbound
+  profile's revised skill does not repair the old active profile merely by existing.
+- `control_plane.card_create` and `card_update_configuration` require the exact old Builder caller
+  profile and prefilled operation authority. Field values must equal the values pre-authored in that
+  operation. This constrains what Builder can design after inspecting the task.
+- Create rejects native tools, skills, toolsets, MCP connection IDs, subagent model and position even
+  though the public schema accepts those fields. It mints an `agent-{uuid}` profile rather than
+  honoring the requested short name. General creation/configuration parity is incomplete.
+- `canvas.inspect` supplies a bounded deck view, not every editable field and revision needed for
+  reliable model-driven editing. Builder also lacks saved CBM `search_code` and `query_graph` grants
+  required by its repository procedure. File/terminal capability does not make the tool contract complete.
+
+Keep authenticated project/caller identity, schema typing, actual grants, workspace containment,
+revision conflicts and native runtime checks. Review the pre-authored value requirements, role-name
+guards, stale skill rules and schema disagreement against the intended general Builder behavior.
+These are distinct from necessary authentication; removing one does not justify weakening the other.
+Native terminal/file/browser/code tools already confer meaningful workspace/external-action capability.
+The prohibition on a Card-management tool is not a full sandbox against all effects those tools can
+perform. A precise workspace/credential/external-action authority review is still needed before
+describing Builder as isolated or safe for arbitrary untrusted projects.
+
+Main's current prompt no longer forces a short answer or delegation for a long answer. It may write a
+concise supported ThinkGraph note, invoke extraction for short material, or delegate substantial
+reconciliation to ThinkGraph. It may research directly; Graph Agent handles useful deeper research and
+KnowGraph retention. Graph Agent's remaining "not a report" instruction and assigning detailed
+reports/plans to Builder is a role-design choice to review, not a runtime necessity.
+
+Main's Script wraps two Engraphis reads, three Graphiti reads, four CBM reads and `canvas.inspect`.
+Each invocation selects one exact operation and permits one underlying call, 60 seconds and 20,000
+output bytes; these are per-Script-call limits, not an entire Main-Run budget. Recall uses 600 tokens/k6;
+Graphiti nodes/facts/episodes are limited to 6/8/4, with episode bodies omitted; CBM searches/traces are
+similarly compact. The remaining selected tools, including writes, stay separate. This reduces schema
+presentation but also hides some native arguments. Saved validation is valid; executionTested is false.
+Do not confuse a static valid Script with current live execution acceptance.
+
+Before Main's IDF, `data_anchor.prepare_main_context` still automatically performs granted bounded
+ThinkGraph and KnowGraph reads concurrently under a two-second deadline. Current Main gets up to six
+ThinkGraph candidates/600 packed tokens and four KnowGraph facts. Whole-sentence CBM preload was
+removed after irrelevant matches. These are automatic reads, not the removed automatic conversation
+writes. Evaluate useful recall, timeouts and input relevance before adding or deleting context.
+
+PLAN previously contained both a product vision consumed by Builder and a much larger roadmap. The
+repaired heading boundary keeps only the explicit vision in that consumer. PLAN now explains this
+exception, restores the MVP outcomes and separates test instructions from product input. Moving the
+vision to saved Card authority would be a distinct approved source change; IDD and the single IDF
+remain intact. Historical FUTURE guidance still contains conflicting Constellation/Team/Coder language;
+it is deferred-review evidence, not permission to revive those paths.
+
+`card_domain._agent_builder_guidance` adds IDD, selected skill and the product-vision section only for
+an explicit Builder operation. `_agent_builder_vision` reads from the exact `## Agent Builder product
+vision` heading to the next level-two heading in PLAN. A real-file regression demonstrated that
+the old heading hierarchy included unrelated roles and implementation history (19,341 bytes).
+The corrected section is 1,212 bytes and contains only product guidance. Do not append audit results,
+evaluation instructions or other roles inside this runtime-selected section.
 
 ```text
 React/Vite Agent Builder and Chat
@@ -468,10 +695,12 @@ refresh or recreate/publish that app definition through the applicable workspace
   change, then test from a fresh chat with LiquidAIty selected. Browser rendering and one real Codex-account
   Team Run also remain unproven. Do not call the complete launch path live-ready.
 
-Backend routes containing `/api/coder/mcp-bridge/` are retained transport names used by the official
-Python MCP host to reach server-owned Card, conversation, Run, and persistence operations. They are not
-a second MCP server and do not represent the removed Coder runtime. Rename only with a versioned caller
-migration.
+The official Python MCP host reaches server-owned Card, conversation, Run and persistence operations
+through the domain routes documented above. It remains one MCP server. The September 10 source
+migration moved Python and browser callers together and retained authentication, schemas and timeouts.
+No external persisted consumer of the old global Coder HTTP prefix was identified. The September 10
+canonical reload supplies loaded route/catalog readback; fresh-connector and agent execution proof
+remain separate from those reads and the passing source tests.
 
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
 honestly. There is no server-side app prefix, prefix-stripping alias, provider substitution, duplicate
@@ -731,6 +960,60 @@ its own handling of external/untrusted input. The graph entry's Remove note acti
 retirement and reloads the scene. Retirement preserves history; it is not permanent erasure or an
 arbitrary entity/edge deletion operation. Provider-backed semantic quality remains unproven after
 this repair. Retention supervision remains disabled.
+
+### Main-to-graph entry alternatives and remaining quality risks
+
+Post-chat pairs, direct notes and delegation answer different questions. A pair specifies source
+material; delegation specifies who interprets it; an automatic trigger specifies when it happens.
+A focused ThinkGraph assignment can receive an attributed pair without restoring the removed
+always-on conversation hook. The owner reopened pairs for comparison on September 10. No automatic
+intake, historical replay, new queue or ThinkGraph-to-KnowGraph promotion was enabled.
+
+Direct `engraphis_remember` embeds/stores Main's supplied note and performs native conflict resolution
+and eligible graph enrichment. It does not invoke the structured LLM fact extractor. `engraphis_ingest`
+invokes that extractor using the saved ThinkGraph Card's account/model through the private completion
+route; it does not by itself execute a full ThinkGraph Card Run or use that Card's entire saved prompt.
+Delegating to the ThinkGraph Card adds its own model/tool loop, which may then call ingestion and incur
+another extractor completion. Count actual provider requests across both paths when measuring cost.
+
+The native graph writer can feed validated structured entity/relation metadata and then its configured
+regex extractor for the same memory. Regex recognizes capitalized names, email/mention/tag forms and
+relations from names near a recognized verb (a 60-character window on each side). This is heuristic
+semantic extraction, not just text cleanup. Its stopword list does not establish acceptance, speaker
+identity, negation or temporal correction. It is a plausible contributor to noisy entities or wrong
+relationships, not proof it caused every historical bad graph. No vendor regex/policy was changed.
+
+A memory-free call to the installed `RegexGraphExtractor.extract` demonstrated a specific negation
+error: both `Acme uses Graphiti.` and `Acme no longer uses Graphiti.` return the same positive
+`(Acme, uses, Graphiti)` relation. This is a native heuristic limitation, not a stale test expectation.
+The diagnostic opened no graph store, called no model and retained no product data. It does not prove
+that every end-to-end ingestion preserves that incorrect relation; native conflict resolution,
+structured metadata and projection must be inspected separately in the later authorized comparison.
+
+Native enrichment failures can be warned while the note remains stored; ingestion can return marked
+passthrough/text chunks after extraction failure. A write receipt therefore cannot establish useful
+structured graph creation. The UI intentionally hides memory-only nodes and weak co-occurrence edges;
+successful recall and a visually sparse scene can coexist. Inspect native notes and evidence before
+concluding that an invisible note was lost or changing the accepted graph presentation.
+
+Engraphis also retains upstream secret rejection and trust/quarantine/conflict-resolution policies.
+The app does not insert an approval queue for ordinary trusted local-agent notes. These native policies
+are separate from the retired application prompt filters; changing them needs specific evidence and
+vendor-boundary review. Do not claim all filtering or deterministic logic has been removed.
+
+KnowGraph ingestion remains sourced research through Graph Agent and Graphiti. Distinguish web fetch,
+source content, queued episode, completed entity/fact extraction and later retrieval. An accepted URL
+or queue response proves neither extracted knowledge nor a useful answer. Main currently has Graphiti
+reads, while Graph Agent has `graphiti.add_memory`; Main's answer alone is not automatic retention.
+The MCP boundary rejects caller-supplied Graphiti group scope and injects authenticated project scope;
+Engraphis similarly binds workspace. This is inspected structural protection, not complete cross-tenant
+penetration-test proof for every native-ID lookup or native file/browser capability.
+
+The recommended first comparison is existing direct entry versus one focused extraction/delegation
+alternative on a small set of real attributed material, followed by independent later Main recall.
+Keep the candidate pair boundary explicit and compare regex separately rather than changing source,
+worker, model and extractor together. PLAN defines isolation prerequisites and quality/usage criteria.
+No new model work, graph writes or quality improvement was measured in this review.
 
 `engraphis.py` derives the exposed schemas from native classic/smart MCP tools. IDD owns publication
 and effect policy. The authenticated project supplies workspace identity. The source catalog contains

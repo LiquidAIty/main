@@ -39,6 +39,16 @@ restore removed tools, impose retired gates, or override the owner's latest inst
 
 Never collapse CURRENT and TARGET into one claim.
 
+September 10 owner update: remove the saved Local Coder Card and replace the old Agent Builder Card
+with a general Card/profile named exactly `builder`. This supersedes the earlier requirement to retain
+the Local Coder Card, not the requirement to preserve historical Runs, sessions or unrelated data.
+The clean native `builder` profile is prepared; saved Card replacement and runtime binding migration
+are not complete. The CURRENT descriptions below still identify the saved/loaded legacy bindings.
+Builder makes prompts, agents, apps, UI pages and webpages; create/edit are optional tools, not a
+mandatory semantic router. The lower terminal is Builder's. Do not restore OpenClaude or its standalone
+runtime. A future downloadable Coder will be a separate new Card. Graph-Card consolidation remains an
+unaccepted option; do not merge ThinkGraph/KnowGraph owners or silently change their write policy.
+
 ### CURRENT
 
 - Main Chat, Agent Builder, Local Coder, and Kanban are saved Cards served through one persistent

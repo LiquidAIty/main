@@ -3,7 +3,7 @@ import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 
 const router = Router();
 
-router.post('/codegraph/read', async (req, res) => {
+router.post('/read', async (req, res) => {
   try {
     return res.json(await requestPythonRailsJson('/codegraph/read', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
