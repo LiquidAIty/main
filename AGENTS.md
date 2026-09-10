@@ -39,11 +39,10 @@ restore removed tools, impose retired gates, or override the owner's latest inst
 
 Never collapse CURRENT and TARGET into one claim.
 
-September 10 owner update: remove the saved Local Coder Card and replace the old Agent Builder Card
-with a general Card/profile named exactly `builder`. This supersedes the earlier requirement to retain
-the Local Coder Card, not the requirement to preserve historical Runs, sessions or unrelated data.
-The clean native `builder` profile is prepared; saved Card replacement and runtime binding migration
-are not complete. The CURRENT descriptions below still identify the saved/loaded legacy bindings.
+September 10 owner update is implemented: saved Card/profile `builder` replaces the old Agent Builder.
+Exactly `card_local_coder` and `card_61d994e5044b4e44`, their old profiles and exclusively owned blocking
+Runs/receipts were removed under the owner's explicit exception. Unrelated Cards, Runs and shared
+state remain preserved. This exception supersedes older retention language for those two Cards only.
 Builder makes prompts, agents, apps, UI pages and webpages; create/edit are optional tools, not a
 mandatory semantic router. The lower terminal is Builder's. Do not restore OpenClaude or its standalone
 runtime. A future downloadable Coder will be a separate new Card. Graph-Card consolidation remains an
@@ -51,33 +50,24 @@ unaccepted option; do not merge ThinkGraph/KnowGraph owners or silently change t
 
 ### CURRENT
 
-- Main Chat, Agent Builder, Local Coder, and Kanban are saved Cards served through one persistent
-  repo-owned Hermes ACP adapter with separate profiles, sessions, memory, prompts, parent models,
-  bounded-subagent model selections, and grants.
-- Local Coder is the Hermes delegate Card `card_local_coder` / profile `coder`, owns work against an
-  explicitly selected local repository, remains a Magentic-One option, and is not Agent Builder.
-- Agent Builder is Main's directly connected Hermes implementation/coding Card. Main Chat remains the
-  upper conversation and the lower split is another presentation of this same saved Agent Builder
-  Card/Run authority. Agent Builder also owns approved Card construction/configuration, canvas wiring,
-  agent UI, IDD, Agent Maker, and CBM work; it is not connected to Magentic-One and receives no Local
-  Coder state.
-- OpenClaude, the removed standalone LocalCoder runtime, and Bun are absent from the supported
-  dependency graph. The user-facing Local Coder is Hermes-backed.
-- Microsoft AutoGen 0.7.5 is checked in at `autogen-main` as first-party execution infrastructure;
-  Python rails install its three packages only from that tree. The 0.7.5 upstream base is frozen;
-  do not upgrade or rebase it onto later Microsoft AutoGen versions.
-- The canonical stack, direct saved Main response, and saved Local Coder account-backed Run are live-proven.
-  Main-to-Agent-Builder, Main-to-Kanban, Magentic-One team execution, and external GPT-plugin acceptance
-  remain separate proofs.
-- The Knowledge workspace has a real 2D native force-directed graph surface.
-- The Agent Builder Graphs workspace renders bounded native ThinkGraph, KnowGraph, and CodeGraph
-  attention projections; the redundant standalone CodeGraph app/package shell is deleted.
-- AGE/Card activity and native graph attention are structurally wired, but complete end-to-end
-  attribution and Reveal pacing remain incomplete.
+- Main, Builder and the graph helpers are saved Cards on the repo-owned Hermes adapter, with
+  separate profiles, sessions, prompts, models, native subagent selections and grants.
+- Builder is Card `builder`, display `Builder`, profile `builder`. Main reaches it through a
+  direct saved flow; the Agent Builder application's lower terminal presents that same Card.
+  It builds prompts, Cards, agent apps, UI pages and supporting code using explicit tools.
+- The owner authorized exact removal of `card_local_coder` and `card_61d994e5044b4e44`, their
+  old profiles and exclusively owned blocking records. This exception never authorizes deletion
+  of another Card or Run. Do not add a general history lifecycle for this one-time removal.
+- OpenClaude, the standalone LocalCoder runtime and Bun are outside the supported graph.
+- AutoGen 0.7.5 remains checked in at `autogen-main`; its upstream base is frozen.
+- Engraphis owns ThinkGraph, Graphiti owns KnowGraph, native CBM owns CodeGraph and AGE owns
+  Card topology/Run observations. Preserve the accepted graph surfaces and data.
+- Static tests, loaded application execution and external plugin acceptance are separate proofs.
+  Current acceptance evidence and remaining work belong in PLAN.md and ARCHITECTURE.md.
 
 ### APPROVED TARGET
 
-- Repo-owned Hermes Main, Coder, and Kanban complete live proof without another runtime or fallback.
+- Repo-owned Hermes Main, Builder, and graph helpers complete live proof without another runtime or fallback.
 - Main approves exact IDF handoff to the one native AutoGen Magentic-One runtime.
 - Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
   two visual canvases.
@@ -117,6 +107,13 @@ If a new explicit decision replaces an older approach:
 3. preserve unrelated working behavior;
 4. delete the superseded path when the replacement is actually implemented and proven;
 5. update canonical docs so contradictory plans do not coexist.
+
+### Implementation workers
+
+Use subagents when bounded work can run independently. Choose the lowest-capability reliable
+worker: Luna for small bounded work, Terra for normal implementation, Sol for complex work,
+and Astra only when its reasoning is needed. Astra remains lead and final integrator. Product
+Card stand-ins instead match the actual saved Card exactly and report unsupported parity.
 
 ### Existing branded technical identifiers
 
@@ -271,7 +268,7 @@ data, card topology, UI controls, tool grants, authentication, session behavior,
 - card prompts/models/tools are overridden outside saved-card authority;
 - another writer appears for an existing graph;
 - a test is deleted, weakened, skipped, or redefined to match a bug;
-- Coder is damaged while Main moves to Hermes;
+- unrelated saved Cards are damaged while Builder changes;
 - a graph animation claims an operation that did not happen;
 - code scope expands opportunistically beyond the active CoderPacket.
 
@@ -344,22 +341,15 @@ Kanban card." It is an ordinary Hermes-backed card and may run either `single` o
 changing its identity, profile home, memory, or capability ceiling. Temporary Hermes swarm workers are
 not saved LiquidAIty cards.
 
-### Hermes Local Coder
+### Hermes Builder
 
-The saved Local Coder Card uses the repo-owned Hermes adapter in `delegate` mode with profile `coder`
-and a backend-owned terminal. Its stable `card_local_coder` ID must not be interpreted as a runtime
-selector. Local Coder uses CBM first for an explicitly selected local repository and remains connected
-to Magentic-One through `edge_coder_magentic_option`. Do not restore OpenClaude, add a hidden coding
-runtime, or give Local Coder Agent Builder/IDD authority.
-
-### Hermes Agent Builder
-
-The saved Agent Builder Card uses the repo-owned Hermes adapter in `delegate` mode with profile
-`liquidaity-agent-builder`. Main reaches it through a direct `flow`; the user reaches the same Card Run
-authority through the lower Agent Builder coding surface beneath Main Chat. It executes bounded coding
-missions by inspecting current source, editing, running commands/tests, and returning evidence. Its
-Card/profile memory, skills, tools, sessions, Runs, and history are independent of Local Coder, and it
-has no Magentic-One edge.
+The saved `builder` Card uses Hermes `delegate` mode and profile `builder`. Main and the
+Agent Builder lower terminal reach the same saved Card/Run authority. It accepts ordinary
+missions and chooses granted tools for files, terminal, research, prompts, Card configuration
+and application/UI construction. Card creation and configuration use explicit tool arguments,
+exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
+Saving a Card and invoking a Card remain separate actions. Builder has no Magentic-One edge.
+The future downloadable Local Coder is deferred; do not restore its retired Card or runtime.
 
 ### Magentic-One
 
@@ -488,10 +478,10 @@ copying their choices. Creation, editing, Builder operations, validation and nor
 This is the approved target; the complete consumer parity remains unproven until tested and loaded.
 IDD is not runtime authority, an authenticator, a checksum gate or a second IDF materializer.
 Full builder context belongs only to the Agent Builder Card in explicit Agent Builder work directed by
-Main after user approval. Ordinary Runs and Local Coder receive selected values/references, never the
+Main after user approval. Ordinary Runs receive selected values/references, never the
 whole palette. Ordinary prompt prose stays Markdown. Every Card has the same Python editor below its Tools selection
 in the Agent Builder workspace. IDD supplies current tool contracts, while the Card's effective
-Tools-tab grants limit autocomplete and execution. The user or the authenticated Agent Builder profile
+Tools-tab grants limit autocomplete and execution. The user or the authenticated Builder profile
 may validate, save and activate the next Script version; a running Card receives one immutable saved
 version/hash and cannot rewrite it. Valid Hermes Scripts execute through Hermes' existing child-process
 Python runner and native tool dispatcher. Literal `tools.call()` handles are replaced by one compact
@@ -702,7 +692,7 @@ direction. Do not solve uncertainty by writing another document.
 - No UI-as-brain or TypeScript semantic logic.
 - No edits to vendored AutoGen private ledger behavior.
 - No unrelated cleanup inside a bounded task.
-- No deletion of Coder while moving Main to Hermes.
+- No deletion outside the owner-authorized exact Card scope.
 - No calling TARGET behavior CURRENT.
 - No success claim without matching proof.
 

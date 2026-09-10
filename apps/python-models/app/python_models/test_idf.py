@@ -18,11 +18,7 @@ from app.python_models.idf import (
 )
 
 
-def _idf(
-    *, graph_context: str = "", secret: bool = False,
-    selected_target: bool = False, builder_operation: bool = False,
-    builder_mode: str = "edit",
-):
+def _idf(*, graph_context: str = "", secret: bool = False):
     reference = {
         "authority": "CodeGraph",
         "nativeId": "project.module.materialize_idf",
@@ -53,42 +49,6 @@ def _idf(
         }] if graph_context else []),
         "edges": [],
     }
-    operation = None
-    if builder_operation:
-        operation = ({
-            "mode": "create",
-            "deckRevision": "deck-revision-one",
-            "workspaceRoot": "C:/Projects/agents",
-            "cbmProject": None,
-            "allowedFields": [
-                "templateId", "title", "role", "prompt", "runtime", "model", "tools",
-            ],
-            "templateId": "template_assist",
-            "title": "New Assistant",
-            "role": "A bounded specialist",
-            "prompt": "Perform only the assigned specialist task.",
-            "tools": ["web_search"],
-            "runtime": {"kind": "autogen", "mode": "assistant"},
-            "model": {
-                "provider": "openai",
-                "modelKey": "gpt-5.6-luna",
-                "providerModelId": "gpt-5.6-luna",
-                "accessMode": "chatgpt-account",
-            },
-        } if builder_mode == "create" else {
-            "mode": "edit",
-            "deckRevision": "deck-revision-one",
-            "workspaceRoot": "C:/Projects/agents",
-            "cbmProject": None,
-            "allowedFields": ["prompt", "tools"],
-            "templateId": "template_assist",
-            "title": "Selected Assistant",
-            "role": "Selected specialist",
-            "prompt": "Complete the revised bounded mission.",
-            "tools": ["web_search"],
-            "targetCardId": "selected-card",
-            "targetCardRevisionId": "selected-revision-one",
-        })
     return materialize_idf(
         stable={
             "projectId": "project-one",
@@ -107,33 +67,6 @@ def _idf(
         },
         variable={
             "task": "Inspect the exact bounded slice.",
-            "selectedCardTarget": ({
-                "cardId": "selected-card",
-                "cardRevisionId": "selected-revision-one",
-                "deckRevision": "deck-revision-one",
-                "title": "Selected Assistant",
-                "templateId": "template_assist",
-                "role": "Selected specialist",
-                "prompt": "Complete the selected bounded mission.",
-                "outputContract": {"type": "object"},
-                "runtime": {"kind": "autogen", "mode": "assistant"},
-                "runtimeOptions": {"tools": ["web_search"]},
-            } if selected_target else None),
-            "agentBuilderGuidance": ({
-                "vision": {
-                    "sourcePath": "PLAN.md", "sourceSha256": "a" * 64,
-                    "content": "## Agent Builder product vision\nBuild one Card.",
-                },
-                "idd": {
-                    "sourcePath": "LiquidAIty.idd", "sourceSha256": "b" * 64,
-                    "content": {"template": {"id": "template_assist"}},
-                },
-                "skill": {
-                    "sourcePath": "Hermes/.hermes/profiles/builder/skills/build/SKILL.md",
-                    "sourceSha256": "c" * 64, "content": "Build exactly one Card.",
-                },
-            } if builder_operation else None),
-            "agentBuilderOperation": operation,
             "images": [],
         },
         capabilities={
@@ -196,72 +129,26 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     assert summary["estimatedGraphContextTokens"] > 0
 
 
-def test_selected_card_target_is_retained_and_projected_before_the_mission() -> None:
-    materialized = _idf(selected_target=True, builder_operation=True)
-    target = materialized.idf.dynamicContext.selectedCardTarget
-    assert target is not None
-    assert target.cardId == "selected-card"
-    assert target.cardRevisionId == "selected-revision-one"
-    message = model_task(materialized.idf)
-    assert message.index("Agent Builder guidance") < message.index(
-        "Agent Builder operation"
-    )
-    assert message.index("Agent Builder operation") < message.index(
-        "Selected Agent Builder target"
-    )
-    assert message.index("Selected Agent Builder target") < message.index(
-        "Inspect the exact bounded slice."
-    )
-    projection = runtime_projection(materialized)
-    assert projection["buildTarget"]["deckRevision"] == "deck-revision-one"
-    assert projection["builderOperation"] == {
-        "mode": "edit",
-        "deckRevision": "deck-revision-one",
-        "workspaceRoot": "C:/Projects/agents",
-        "cbmProject": None,
-        "allowedFields": ["prompt", "tools"],
-        "templateId": "template_assist",
-        "title": "Selected Assistant",
-        "role": "Selected specialist",
-        "prompt": "Complete the revised bounded mission.",
-        "tools": ["web_search"],
-        "runtime": None,
-        "model": None,
-        "targetCardId": "selected-card",
-        "targetCardRevisionId": "selected-revision-one",
+def test_builder_input_has_no_operation_authority() -> None:
+    materialized = _idf()
+    assert set(materialized.idf.dynamicContext.model_dump()) == {"task", "images"}
+    projected = runtime_projection(materialized)
+    assert not ({"buildTarget", "builderOperation", "builderGuidance"} & projected.keys())
+
+
+def test_unrelated_old_idf_with_empty_operation_fields_keeps_exact_bytes() -> None:
+    value = json.loads(_idf().idf_bytes)
+    value["dynamicContext"] = {
+        "task": value["dynamicContext"]["task"], "selectedCardTarget": None,
+        "agentBuilderGuidance": None, "agentBuilderOperation": None, "images": [],
     }
-    assert projection["builderGuidance"]["vision"]["sourcePath"] == "PLAN.md"
-
-
-def test_agent_builder_create_authority_round_trips_through_the_canonical_idf() -> None:
-    materialized = _idf(builder_operation=True, builder_mode="create")
-
-    projection = runtime_projection(load_idf_bytes(materialized.idf_bytes))
-
-    assert projection["buildTarget"] is None
-    assert projection["builderOperation"] == {
-        "mode": "create",
-        "deckRevision": "deck-revision-one",
-        "workspaceRoot": "C:/Projects/agents",
-        "cbmProject": None,
-        "allowedFields": [
-            "templateId", "title", "role", "prompt", "runtime", "model", "tools",
-        ],
-        "templateId": "template_assist",
-        "title": "New Assistant",
-        "role": "A bounded specialist",
-        "prompt": "Perform only the assigned specialist task.",
-        "tools": ["web_search"],
-        "runtime": {"kind": "autogen", "mode": "assistant"},
-        "model": {
-            "provider": "openai",
-            "modelKey": "gpt-5.6-luna",
-            "providerModelId": "gpt-5.6-luna",
-            "accessMode": "chatgpt-account",
-        },
-        "targetCardId": None,
-        "targetCardRevisionId": None,
-    }
+    raw = (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+    loaded = load_idf_bytes(raw)
+    assert loaded.idf_bytes == raw
+    assert runtime_projection(loaded)["message"] == value["dynamicContext"]["task"]
+    value["dynamicContext"]["agentBuilderOperation"] = {"mode": "create"}
+    with pytest.raises(InputMaterializationError):
+        load_idf_bytes((json.dumps(value, separators=(",", ":")) + "\n").encode())
 
 
 def test_each_run_writes_one_file_and_reloads_exact_bytes(

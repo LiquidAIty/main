@@ -206,27 +206,43 @@ Neither byte counts nor a successful tool call prove that the model used a fact 
 Unknown usage is unknown, not zero; an external stand-in is not free. Explain whether the
 information helped the task without inventing attention measurements or actually-used-token counts.
 
-The September 10 source audit demonstrated two relevant traps. Builder's native CLI supplied usage
-but an outer Run finish dropped it; that forwarding now has a regression test. Require the native
-receipt and final retained Run fields before claiming measurements. A status helper may coerce
-missing values to numeric zero; that response alone cannot establish zero usage. Separately, Builder's
-PLAN vision heading included unrelated role/history sections until its next level-two heading. The
-real-file regression now checks the boundary. Compare actual selected context, not just prompt names
-or a small fixture, and never insert evaluator prose into that product section.
+The September 10 repairs prove three reusable traps. Native CLI usage must survive transport;
+unknown usage/cost remains unknown. A PLAN section loader can pull unrelated roadmap text into
+input when headings change: remove that runtime dependency and compare actual IDF bytes with the
+file changed/missing. Finally, test fixtures containing revision fields can conceal their absence
+from public saved-deck reads. Use actual Card revision readback before testing an explicit edit.
 
-Resolve `delegationRole` through its current native consumer instead of treating a saved legacy
-`team` object as active. Missing saved reasoning effort means native default/unknown, not low.
-Main's compact native `execute_host_script` and its profile-delegation doorway are not equivalent to
-separate public MCP calls. If the host lacks either, report unsupported parity and do not substitute
-silently. A newly created local profile is not a saved Card, authenticated account or launch-ready arm.
+Focused implementation evidence: 103 IDF/Card-domain tests passed, 63 control-plane/MCP tests
+passed, and native transport/terminal fixtures preserve usage, identity and failures. These tests
+are mechanical evidence, not actor acceptance or proof that all selected native tools are callable.
+The canonical `in.idf` remains; legacy prefilled create/edit operation tasks are removed. Ordinary
+Builder missions select explicit inspect/create/update tools with targets, revisions and grants.
 
-Inventory both saved toolsets and the native profile's toolset configuration. The existing Hermes
-session projection unions them: the September 10 old Builder profile pinned `computer_use` and
-`hermes-acp` in addition to the Card's six selections. Expanding the selected toolsets in source found
-23 unique names plus six explicit native selections, but did not establish live availability or the
-complete effective catalog. Record the native readback and schemas; never treat a static count as
-callability or silently give a stand-in only the visible Card subset. The concrete inventory and
-unapproved construction contract are in `ARCHITECTURE.md`, outside product input and memory.
+Before a stand-in, read the current saved `builder` Card and actual native profile catalog. Its
+saved native tools/toolsets are candidates until materialized and available. Do not copy the retired
+profiles' `computer_use`/`hermes-acp` pins or restore hidden `delegate_task` availability. Report an
+unavailable selected capability; never silently replace it with a Codex tool or grant everything.
+
+The completed native Builder task supplied a further measurement lesson: persisted provider token
+usage and actual graph read receipts can coexist with null aggregate tool count, null cost and an
+unavailable transcript. Compare raw Run fields with normalized status; a displayed zero does not
+establish zero cost or zero calls. The cost/tool-count projection now has focused null-versus-zero
+regression proof; loaded behavior must still be checked after its next authorized reload. Keep observed
+file activity distinct from a retained file receipt.
+Report multi-call input/cached totals separately from the canonical input's byte size.
+
+Native readiness must include delivery, not just a live PTY. The clean Builder profile initially
+excluded the existing `liquidaity-card-mcp` integration, so a real Run timed out before inference.
+Enabling only that integration restored bridge delivery and actual native work without copying old
+profile overrides. Profile startup can also install a canonical skill already copied elsewhere;
+compare duplicate identities/content and repair the profile, preserving IDD uniqueness validation.
+Isolated script-bootstrap tests are needed when pytest path setup could mask an application import
+failure. Runtime receipt values emitted as zero before completion are not final measured usage.
+
+Implementation helpers and product stand-ins have different model-selection rules. For independent
+implementation work, choose Luna for small bounded work, Terra for normal implementation, Sol for
+complex work, and Astra only where its reasoning is needed; Astra leads final integration. For a
+Card stand-in, match the actual Card's model/settings. Lower helper cost never overrides Card parity.
 
 For graph comparisons, separate source selection, executing role, extraction method and scheduling.
 A completed user/assistant pair can be input to a focused existing Card without an automatic post-chat

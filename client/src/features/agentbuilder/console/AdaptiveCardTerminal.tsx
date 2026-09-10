@@ -12,7 +12,7 @@ export type TerminalRun = {
 export function usesAdaptiveCardTerminal(kind: string | undefined, runtime: CardRuntime | undefined): boolean {
   if (kind !== 'agent' || !runtime) return false;
   if (runtime.kind === 'autogen') return runtime.mode === 'assistant' || runtime.mode === 'magentic_one';
-  return runtime.kind === 'hermes' && runtime.mode !== 'main' && runtime.profile.toLowerCase() !== 'coder';
+  return runtime.kind === 'hermes' && runtime.mode !== 'main';
 }
 
 const PUBLIC_KINDS = new Set(['session', 'mission', 'model', 'tool_call', 'tool_result', 'tool_error',

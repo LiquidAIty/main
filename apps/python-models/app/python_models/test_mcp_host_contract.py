@@ -943,64 +943,31 @@ def test_background_profile_handoff_binds_parent_from_authenticated_system_conte
     assert len(calls) == 1
 
 
-def test_agent_builder_update_receives_only_the_run_bound_effect_target(monkeypatch):
+def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(monkeypatch):
     import asyncio
     import mcp_host
     from app import control_plane
-
     observed = []
-
     async def update(args, **authority):
         observed.append((dict(args), dict(authority)))
         return {"ok": True, "cardId": args["cardId"]}
-
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "parentRunId": "builder-run-1",
-        "mainCardId": "card-agent-builder",
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "delegate",
-        "principalKind": "card-runtime",
+        "projectId": "project-1", "deckId": "deck_builder", "conversationId": "conversation-1",
+        "parentRunId": "builder-run-1", "mainCardId": "builder", "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate", "principalKind": "card-runtime",
         "grantedTools": ["card.update_configuration"],
-        "effectTargetCardId": "card-selected-target",
-        "effectTargetCardRevisionId": "selected-target-revision-one",
-        "effectTargetDeckRevision": "deck-revision-one",
-        "builderOperation": {
-            "mode": "edit",
-            "allowedFields": ["prompt", "tools"],
-            "workspaceRoot": "C:/Projects/agents",
-        },
     })
     monkeypatch.setattr(control_plane, "card_update_configuration", update)
-
-    result = asyncio.run(mcp_host._dispatch_tool(
-        "card.update_configuration",
-        {"cardId": "card-selected-target", "updates": {"prompt": "New prompt"}},
-    ))
-
+    args = {"cardId": "selected", "expectedRevision": "deck-revision-one",
+            "expectedCardRevisionId": "selected-revision", "updates": {"prompt": "New prompt"}}
+    result = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", args))
     assert json.loads(result[0].text)["ok"] is True
-    assert observed == [({
-        "cardId": "card-selected-target",
-        "updates": {"prompt": "New prompt"},
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-    }, {
-        "caller_card_id": "card-agent-builder",
-        "authenticated_user_edit": False,
-        "target_card_id": "card-selected-target",
-        "target_card_revision_id": "selected-target-revision-one",
-        "target_deck_revision": "deck-revision-one",
-        "operation_mode": "edit",
-        "allowed_fields": ["prompt", "tools"],
-        "workspace_root": "C:/Projects/agents",
-        "builder_operation": {
-            "mode": "edit",
-            "allowedFields": ["prompt", "tools"],
-            "workspaceRoot": "C:/Projects/agents",
-        },
-    })]
+    assert observed == [({**args, "projectId": "project-1", "deckId": "deck_builder"},
+                         {"caller_card_id": "builder", "authenticated_user_edit": False})]
+    for forged in ("_builderOperation", "_effectTargetCardId", "authenticated_user_edit"):
+        rejected = asyncio.run(mcp_host._dispatch_tool("card.update_configuration", {**args, forged: True}))
+        assert json.loads(rejected[0].text)["ok"] is False
+    assert len(observed) == 1
 
 
 def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monkeypatch):
@@ -1029,73 +996,22 @@ def test_external_card_edit_uses_authenticated_context_not_caller_arguments(monk
     assert len(observed) == 1
 
 
-def test_agent_builder_cbm_read_is_forced_to_the_run_bound_ready_workspace(monkeypatch):
+def test_builder_cbm_read_forwards_explicit_native_arguments_without_operation_tasks(monkeypatch):
+    import asyncio
     import mcp_host
-
     calls = []
-
-    def native_call(name, arguments):
-        calls.append((name, dict(arguments)))
-        return [mcp_host.TextContent(
-            type="text",
-            text=json.dumps({
-                "status": "ready",
-                "root_path": "C:\\Projects\\agents",
-            }),
-        )]
-
-    monkeypatch.setattr(mcp_host, "_call_native_cbm", native_call)
-    context = {
-        "builderOperation": {
-            "mode": "edit",
-            "workspaceRoot": "C:/Projects/agents",
-            "cbmProject": "C-Projects-agents",
-        },
-    }
-
-    scoped = mcp_host._scope_agent_builder_cbm_call(
-        context,
-        "detect_changes",
-        {"depth": 2},
-    )
-
-    assert scoped == {"depth": 2, "project": "C-Projects-agents"}
-    assert calls == [("index_status", {"project": "C-Projects-agents"})]
-
-
-def test_agent_builder_cbm_read_rejects_missing_or_different_run_bound_project(monkeypatch):
-    import mcp_host
-
-    monkeypatch.setattr(
-        mcp_host,
-        "_call_native_cbm",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("invalid scope must fail before a native CBM call")
-        ),
-    )
-    missing = {
-        "builderOperation": {
-            "mode": "edit",
-            "workspaceRoot": "C:/Projects/agents",
-            "cbmProject": None,
-        },
-    }
-    with pytest.raises(PermissionError, match="agent_builder_cbm_project_required"):
-        mcp_host._scope_agent_builder_cbm_call(missing, "search_graph", {})
-
-    bound = {
-        "builderOperation": {
-            "mode": "edit",
-            "workspaceRoot": "C:/Projects/agents",
-            "cbmProject": "C-Projects-agents",
-        },
-    }
-    with pytest.raises(PermissionError, match="agent_builder_cbm_project_mismatch"):
-        mcp_host._scope_agent_builder_cbm_call(
-            bound,
-            "search_graph",
-            {"project": "C-Projects-LiquidAIty-main"},
-        )
+    async def catalog():
+        return []
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "p", "deckId": "d", "mainCardId": "builder",
+        "principalKind": "card-runtime", "grantedTools": ["cbm.search_graph"],
+    })
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", catalog)
+    monkeypatch.setattr(mcp_host, "_NATIVE_CBM_NAMES", {"search_graph"})
+    monkeypatch.setattr(mcp_host, "_call_native_cbm", lambda name, args: calls.append((name, args)) or [])
+    args = {"project": "C-Projects-LiquidAIty-main", "query": "materialize_idf"}
+    asyncio.run(mcp_host._dispatch_tool("cbm.search_graph", args))
+    assert calls == [("search_graph", args)]
 
 
 def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypatch):
@@ -1895,7 +1811,8 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert by_name["card.create"].inputSchema["additionalProperties"] is False
         assert set(by_name["card.create"].inputSchema["properties"]) == {
             "projectId", "deckId", "expectedRevision", "templateId", "title",
-            "role", "prompt", "runtime", "model", "tools",
+            "role", "prompt", "runtime", "model", "tools", "nativeTools", "skills",
+            "toolsets", "mcpConnectionIds", "subagentModel", "position",
         }
         runtime_schema = by_name["card.create"].inputSchema["properties"]["runtime"]
         assert runtime_schema == {
@@ -1903,6 +1820,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             "properties": {
                 "kind": {"type": "string", "minLength": 1},
                 "mode": {"type": "string", "minLength": 1},
+                "profile": {"type": "string", "minLength": 1},
             },
             "required": ["kind", "mode"],
             "additionalProperties": False,
@@ -1920,8 +1838,13 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             "properties"
         ]["updates"]["properties"]
         assert set(update_properties) == {
-            "configuration", "prompt", "script", "subsystems", "tools",
+            "configuration", "prompt", "title", "script", "subsystems", "tools",
+            "nativeTools", "skills", "toolsets", "mcpConnectionIds", "modelKey", "provider",
+            "providerModelId", "accessMode", "subagentModel", "reasoningEffort", "temperature", "maxTokens",
         }
+        assert by_name["card.update_configuration"].inputSchema["required"] == [
+            "projectId", "deckId", "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
+        ]
         assert by_name["card.update_configuration"].inputSchema[
             "properties"
         ]["updates"]["minProperties"] == 1
@@ -3787,3 +3710,14 @@ def test_oauth_http_publishes_metadata_and_rejects_anonymous_mcp(monkeypatch):
                 await server_task
 
     asyncio.run(check())
+
+
+def test_script_bootstrap_imports_card_schema_without_pythonpath(tmp_path):
+    import subprocess
+    host = os.path.join(_APP_DIR, "mcp_host.py")
+    # Isolated Python reproduces the supervised script's missing app-package path.
+    # run_path imports definitions only: no host, native frontend or listener starts.
+    probe = "import runpy; ns=runpy.run_path(" + repr(host) + ", run_name='bootstrap_probe'); assert ns['card_tool_schema']('card.create')['additionalProperties'] is False"
+    result = subprocess.run([sys.executable, "-I", "-c", probe], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stderr

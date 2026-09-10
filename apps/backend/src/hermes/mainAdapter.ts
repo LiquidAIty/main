@@ -101,19 +101,6 @@ export type HermesRuntimeConfig = {
     maxOutputBytes: number;
   };
   profileTargets?: HermesProfileTarget[];
-  buildTarget?: {
-    cardId: string;
-    cardRevisionId: string;
-    deckRevision: string;
-    title: string;
-    templateId: string;
-    role: string;
-    prompt: string;
-    outputContract?: unknown;
-    runtime: Record<string, unknown>;
-    runtimeOptions: Record<string, unknown>;
-  };
-  builderOperation?: Record<string, unknown>;
 };
 
 export type CardAccessMode = 'chatgpt-account' | 'openai-api' | 'openrouter-api';
@@ -1105,14 +1092,6 @@ export class AcpProcess {
       cardId: args.cardId,
       runtimeMode: args.runtime.mode,
       grantedTools: (args.grantedTools ?? args.tools).filter((name) => name !== 'web_search'),
-      ...(args.buildTarget ? { effectTarget: {
-        cardId: args.buildTarget.cardId,
-        cardRevisionId: args.buildTarget.cardRevisionId,
-        deckRevision: args.buildTarget.deckRevision,
-      } } : {}),
-      ...(args.builderOperation ? {
-        builderOperation: args.builderOperation,
-      } : {}),
     });
     let sessionId: string;
     let active: ActiveTurn;

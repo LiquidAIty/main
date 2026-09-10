@@ -19,10 +19,6 @@ export type HermesExecutionContext = {
   childProvider: string | null;
   childModel: string | null;
   grantedTools: string[];
-  effectTargetCardId?: string | null;
-  effectTargetCardRevisionId?: string | null;
-  effectTargetDeckRevision?: string | null;
-  builderOperation?: Record<string, unknown> | null;
   expiresAt: number;
   state: 'active' | 'closing' | 'closed';
 };
@@ -60,12 +56,6 @@ export function registerHermesRootExecutionContext(args: {
   cardId: string;
   runtimeMode: 'main' | 'delegate' | 'kanban';
   grantedTools: string[];
-  effectTarget?: {
-    cardId: string;
-    cardRevisionId: string;
-    deckRevision: string;
-  };
-  builderOperation?: Record<string, unknown>;
   now?: number;
 }): HermesExecutionContext {
   const required = [
@@ -73,16 +63,6 @@ export function registerHermesRootExecutionContext(args: {
     args.conversationId, args.cardId,
   ].map((value) => String(value || '').trim());
   if (required.some((value) => !value)) throw new Error('hermes_root_execution_context_incomplete');
-  const effectTarget = args.effectTarget
-    ? {
-        cardId: String(args.effectTarget.cardId || '').trim(),
-        cardRevisionId: String(args.effectTarget.cardRevisionId || '').trim(),
-        deckRevision: String(args.effectTarget.deckRevision || '').trim(),
-      }
-    : null;
-  if (effectTarget && Object.values(effectTarget).some((value) => !value)) {
-    throw new Error('hermes_effect_target_incomplete');
-  }
   const context: HermesExecutionContext = {
     contextId: randomUUID(),
     sessionId: required[0],
@@ -98,12 +78,6 @@ export function registerHermesRootExecutionContext(args: {
     childProvider: null,
     childModel: null,
     grantedTools: uniqueStrings(args.grantedTools),
-    effectTargetCardId: effectTarget?.cardId || null,
-    effectTargetCardRevisionId: effectTarget?.cardRevisionId || null,
-    effectTargetDeckRevision: effectTarget?.deckRevision || null,
-    builderOperation: args.builderOperation
-      ? structuredClone(args.builderOperation)
-      : null,
     expiresAt: (args.now ?? Date.now()) + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
   };
@@ -111,9 +85,6 @@ export function registerHermesRootExecutionContext(args: {
   return {
     ...context,
     grantedTools: [...context.grantedTools],
-    builderOperation: context.builderOperation
-      ? structuredClone(context.builderOperation)
-      : null,
   };
 }
 
@@ -182,9 +153,6 @@ export async function createHermesChildExecutionContext(args: {
   return {
     ...context,
     grantedTools: [...context.grantedTools],
-    builderOperation: context.builderOperation
-      ? structuredClone(context.builderOperation)
-      : null,
   };
 }
 
@@ -214,9 +182,6 @@ export function resolveHermesExecutionContext(args: {
   return {
     ...context,
     grantedTools: [...context.grantedTools],
-    builderOperation: context.builderOperation
-      ? structuredClone(context.builderOperation)
-      : null,
   };
 }
 

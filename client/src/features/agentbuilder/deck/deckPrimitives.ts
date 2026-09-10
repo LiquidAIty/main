@@ -46,14 +46,14 @@ export const CODEBASE_MEMORY_CODER_TOOLS = [
   'cbm.check_index_coverage',
   'cbm.detect_changes',
 ] as const;
-// Seed default only for the dedicated Agent Builder Card. Its CodeGraph reads
-// are removed from prompt/tools-only Runs and become callable only when the
-// Run carries an exact workspace-bound CBM project.
+// Builder seed selections. Runtime availability and saved grants remain authoritative.
 export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'card.create',
   'card.update_configuration',
   ...CODEBASE_MEMORY_CODER_TOOLS,
+  'cbm.search_code',
+  'cbm.query_graph',
 ] as const;
 export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'canvas.inspect',

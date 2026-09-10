@@ -53,116 +53,38 @@ describe('agentbuilder authoring flow', () => {
     expect(loaded.nodes[0]?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
   });
 
-  it('ships the default example using the real magentic-led agent graph', () => {
-    expect(INITIAL_DECK.nodes.map((node) => node.title)).toEqual([
-      'Main Chat',
-      'Agent Builder',
-      'Magentic-One',
-      'Local Coder',
-      'Graph Agent',
-      'Trading Agent',
-      'WorldSignals Agent',
+  it('seeds Builder and keeps the remaining Card bindings and topology explicit', () => {
+    expect(INITIAL_DECK.nodes.map(node => [node.id, node.title, node.runtime])).toEqual([
+      ['card_main_chat', 'Main Chat', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }],
+      ['builder', 'Builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }],
+      ['card_magentic', 'Magentic-One', { kind: 'autogen', mode: 'magentic_one' }],
+      ['card_hermes_steward', 'Graph Agent', { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' }],
+      ['card_trading_workbench', 'Trading Agent', { kind: 'hermes', mode: 'delegate', profile: 'trading' }],
+      ['card_worldsignals_agent', 'WorldSignals Agent', { kind: 'autogen', mode: 'assistant' }],
     ]);
-
-    expect(INITIAL_DECK.nodes.map((node) => node.runtime)).toEqual([
-      { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
-      { kind: 'autogen', mode: 'magentic_one' },
-      { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-      { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' },
-      { kind: 'hermes', mode: 'delegate', profile: 'trading' },
-      { kind: 'autogen', mode: 'assistant' },
+    expect(INITIAL_DECK.nodes.map(node => node.templateId)).toEqual([
+      'template_main_chat', 'template_agent_builder', 'template_magentic',
+      'template_hermes_steward', 'template_trading_workbench', 'template_worldsignals_agent',
     ]);
-    expect(INITIAL_DECK.nodes.map((node) => node.templateId)).toEqual([
-      'template_main_chat',
-      'template_agent_builder',
-      'template_magentic',
-      'template_local_coder',
-      'template_hermes_steward',
-      'template_trading_workbench',
-      'template_worldsignals_agent',
-    ]);
-
-    expect(INITIAL_DECK.edges.map((edge) => ({
-      source: edge.source,
-      target: edge.target,
-      edgeType: edge.edgeType,
-    }))).toEqual([
+    expect(INITIAL_DECK.edges.map(({ source, target, edgeType }) => ({ source, target, edgeType }))).toEqual([
       { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
-      {
-        source: 'card_main_chat',
-        target: 'card_magentic',
-        edgeType: 'magentic_control',
-      },
-      {
-        source: 'card_worldsignals_agent',
-        target: 'card_magentic',
-        edgeType: 'magentic_option',
-      },
-      {
-        source: 'card_magentic',
-        target: 'card_trading_workbench',
-        edgeType: 'magentic_option',
-      },
-      {
-        source: 'card_magentic',
-        target: 'card_local_coder',
-        edgeType: 'magentic_option',
-      },
+      { source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_magentic', edgeType: 'magentic_control' },
+      { source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' },
+      { source: 'card_magentic', target: 'card_trading_workbench', edgeType: 'magentic_option' },
     ]);
-    const systemCoder = INITIAL_DECK.nodes.find((node) => node.id === 'card_local_coder');
-    const agentBuilder = INITIAL_DECK.nodes.find((node) => node.id === 'card_agent_builder');
-    expect(systemCoder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
-    expect(agentBuilder?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' });
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic')?.runtime).toEqual({ kind: 'autogen', mode: 'magentic_one' });
-    expect(systemCoder?.runtimeOptions?.tools).toEqual([
-      'cbm.search_graph',
-      'cbm.trace_path',
-      'cbm.get_code_snippet',
-      'cbm.check_index_coverage',
-      'cbm.detect_changes',
-    ]);
-    expect(agentBuilder?.runtimeOptions?.tools).toEqual([
-      'canvas.inspect',
-      'card.create',
-      'card.update_configuration',
-      'cbm.search_graph',
-      'cbm.trace_path',
-      'cbm.get_code_snippet',
-      'cbm.check_index_coverage',
-      'cbm.detect_changes',
-    ]);
-    expect(agentBuilder?.runtimeOptions?.toolsets).toEqual([
-      'hermes-acp',
-    ]);
-    expect(agentBuilder?.runtimeOptions).toMatchObject({
-      modelKey: 'gpt-5.6-sol',
-      providerModelId: 'gpt-5.6-sol',
+    const builder = INITIAL_DECK.nodes.find(node => node.id === 'builder');
+    expect(builder?.runtimeOptions).toMatchObject({
+      modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol', delegationRole: 'off',
+      toolCatalogPolicy: 'selected', skills: ['hermes-agent', 'agent-builder-inspection'],
+      toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
+      tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
+        'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
+        'cbm.search_code', 'cbm.query_graph'],
     });
-    expect(agentBuilder?.runtimeOptions).not.toHaveProperty('team');
-    expect(agentBuilder?.runtimeOptions?.delegationRole ?? 'off').toBe('off');
-    expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
-    expect(agentBuilder?.runtimeOptions?.skills).toEqual([
-      'hermes-agent', 'agent-builder-inspection',
-    ]);
-    expect(systemCoder?.runtimeOptions?.tools).toContain('cbm.search_graph');
-    expect(systemCoder?.runtimeOptions?.tools).not.toContain('run_local_coder');
-    expect(systemCoder?.runtimeOptions?.toolsets).toEqual(['hermes-acp', 'computer_use']);
-    expect(systemCoder?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
-    expect(systemCoder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
-    expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
-      source: 'card_magentic', target: 'card_local_coder', edgeType: 'magentic_option',
-    }));
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow',
-    }));
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
-    }));
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_main_chat')?.runtime).toEqual({ kind: 'hermes', mode: 'main', profile: 'liquidaity-main' });
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')?.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' });
-    expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_worldsignals_agent')?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
+    expect(builder?.runtimeOptions).not.toHaveProperty('team');
+    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_local_coder')).toBe(false);
+    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_agent_builder')).toBe(false);
   });
 
   it('loads a real saved deck and preserves its visible chain', () => {
@@ -330,9 +252,9 @@ describe('agentbuilder authoring flow', () => {
     const stale = JSON.parse(JSON.stringify(INITIAL_DECK)) as DeckDocument;
     stale.version = 77;
     const main = stale.nodes.find((node) => node.id === 'card_main_chat');
-    const coder = stale.nodes.find((node) => node.id === 'card_local_coder');
+    const builder = stale.nodes.find((node) => node.id === 'builder');
     const hermes = stale.nodes.find((node) => node.id === 'card_hermes_steward');
-    if (!main || !coder || !hermes) throw new Error('system_cards_missing');
+    if (!main || !builder || !hermes) throw new Error('system_cards_missing');
     main.prompt = 'Saved Main prompt';
     main.position = { x: 111, y: 222 };
     main.runtimeOptions = {
@@ -341,10 +263,10 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'saved-main-model',
       tools: ['engraphis_remember'],
     };
-    coder.runtimeOptions = {
-      ...coder.runtimeOptions,
+    builder.runtimeOptions = {
+      ...builder.runtimeOptions,
       provider: 'openrouter',
-      modelKey: 'saved-coder-model',
+      modelKey: 'saved-builder-model',
       tools: ['cbm.delete_project'],
     };
     hermes.runtimeOptions = {
@@ -357,12 +279,12 @@ describe('agentbuilder authoring flow', () => {
 
     const hydrated = readDeckDocument(stale);
     const hydratedMain = hydrated.nodes.find((node) => node.id === 'card_main_chat');
-    const hydratedCoder = hydrated.nodes.find((node) => node.id === 'card_local_coder');
+    const hydratedBuilder = hydrated.nodes.find((node) => node.id === 'builder');
     const hydratedHermes = hydrated.nodes.find((node) => node.id === 'card_hermes_steward');
 
     expect(hydrated.version).toBe(77);
     expect(hydratedMain?.runtimeOptions?.tools).toEqual(['engraphis_remember']);
-    expect(hydratedCoder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
+    expect(hydratedBuilder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
     expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['clear_graph']);
     expect(hydratedMain).toMatchObject({
       prompt: 'Saved Main prompt',
@@ -372,9 +294,9 @@ describe('agentbuilder authoring flow', () => {
         modelKey: 'saved-main-model',
       },
     });
-    expect(hydratedCoder?.runtimeOptions).toMatchObject({
+    expect(hydratedBuilder?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
-      modelKey: 'saved-coder-model',
+      modelKey: 'saved-builder-model',
     });
     expect(hydratedHermes?.runtimeOptions).toMatchObject({
       provider: 'openrouter',

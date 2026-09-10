@@ -40,10 +40,10 @@ type CoderTerminalPanelProps = {
 
 function CoderTerminalPanelInner({
   open,
-  title = 'Coder',
+  title = 'Builder',
   placement = 'overlay',
   testIdPrefix = 'coder-terminal',
-  ownerCardId = 'card_local_coder',
+  ownerCardId = 'builder',
   savedCard,
   onClose,
   client = coderTerminalClient,

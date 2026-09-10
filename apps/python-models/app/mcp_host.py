@@ -86,6 +86,7 @@ def _startup_source_identity() -> tuple[str, str]:
         source_sha256 = ""
     return revision, source_sha256
 
+from app.control_plane import card_tool_schema
 from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
@@ -190,8 +191,7 @@ _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
-     "nativeChildId", "nativeRunId", "effectTargetCardId",
-     "effectTargetCardRevisionId", "effectTargetDeckRevision"}
+     "nativeChildId", "nativeRunId"}
 )
 
 
@@ -775,18 +775,7 @@ def _request_execution_context() -> dict[str, Any] | None:
         "callerRuntimeMode": str(context.get("runtimeMode") or ""),
         "principalKind": "card-runtime",
         "nativeChildId": str(context.get("nativeChildId") or ""),
-        "effectTargetCardId": str(context.get("effectTargetCardId") or ""),
-        "effectTargetCardRevisionId": str(
-            context.get("effectTargetCardRevisionId") or ""
-        ),
-        "effectTargetDeckRevision": str(
-            context.get("effectTargetDeckRevision") or ""
-        ),
-        "builderOperation": (
-            dict(context["builderOperation"])
-            if isinstance(context.get("builderOperation"), dict)
-            else None
-        ),
+
         "grantedTools": sorted({str(item).strip() for item in grants if str(item).strip()}),
     }
 
@@ -2438,123 +2427,18 @@ async def _materialize_complete_catalog() -> list[Tool]:
         ),
         Tool(
             name="canvas.inspect",
-            description=(
-                "Bounded saved canvas/deck view: cards (id, title, runtime binding/type, tools) and wires. "
-                "Read-only, project-scoped, no secrets."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {"projectId": {"type": "string"}, "deckId": {"type": "string"}},
-                "required": ["projectId", "deckId"],
-            },
+            description='Read the saved deck; optionally inspect one exact Card with its editable configuration, revisions and current IDD/catalog choices.',
+            inputSchema=card_tool_schema("canvas.inspect"),
         ),
         Tool(
             name="card.create",
-            description=(
-                "Create ONE Card exactly matching the current "
-                "Agent Builder Run operation. Use its IDD template, title, role, prompt, "
-                "template execution binding, configured model, explicit tools, and "
-                "deck revision unchanged. The server "
-                "mints the identity. This never launches the Card, creates wires, or runs Mag One."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string", "minLength": 1},
-                    "deckId": {"type": "string", "minLength": 1},
-                    "expectedRevision": {"type": "string", "minLength": 1},
-                    "templateId": {"type": "string", "minLength": 1},
-                    "title": {"type": "string", "minLength": 1},
-                    "role": {"type": "string", "minLength": 1},
-                    "prompt": {"type": "string", "minLength": 1},
-                    "runtime": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {"type": "string", "minLength": 1},
-                            "mode": {"type": "string", "minLength": 1},
-                        },
-                        "required": ["kind", "mode"],
-                        "additionalProperties": False,
-                    },
-                    "model": {
-                        "type": "object",
-                        "properties": {
-                            "provider": {"type": "string", "minLength": 1},
-                            "modelKey": {"type": "string", "minLength": 1},
-                            "accessMode": {"type": "string", "minLength": 1},
-                            "providerModelId": {"type": "string", "minLength": 1},
-                        },
-                        "required": [
-                            "provider", "modelKey", "accessMode", "providerModelId",
-                        ],
-                        "additionalProperties": False,
-                    },
-                    "tools": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "default": [],
-                    },
-                },
-                "required": [
-                    "projectId", "deckId", "expectedRevision", "templateId",
-                    "title", "role", "prompt", "runtime", "model",
-                ],
-                "additionalProperties": False,
-            },
+            description='Create one saved Card with explicit configuration and expected deck revision. Honor its requested native profile. Does not run the Card or create wires.',
+            inputSchema=card_tool_schema("card.create"),
         ),
         Tool(
             name="card.update_configuration",
-            description=(
-                "Update only the exact prompt, explicit MCP tools, structured configuration, "
-                "saved Python Script, and product-neutral subsystem attachments authorized for "
-                "the one ordinary Card "
-                "selected by the current Agent Builder Run. The request must match that "
-                "run-issued target and field authority; every other field is rejected."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "updates": {
-                        "type": "object",
-                        "properties": {
-                            "prompt": {"type": "string"},
-                            "tools": {
-                                "type": "array",
-                                "items": {"type": "string", "minLength": 1},
-                            },
-                            "configuration": {
-                                "type": "object",
-                                "description": (
-                                    "Structured Card settings already selected by the current "
-                                    "Agent Builder operation; replaces no runtime identity."
-                                ),
-                            },
-                            "script": {
-                                "type": "object",
-                                "description": (
-                                    "Exact saved Card Python Script selected by the current "
-                                    "Agent Builder operation."
-                                ),
-                            },
-                            "subsystems": {
-                                "type": "array",
-                                "description": (
-                                    "Exact product-neutral Python subsystem attachments selected "
-                                    "by the current Agent Builder operation."
-                                ),
-                                "items": {"type": "object"},
-                            },
-                        },
-                        "minProperties": 1,
-                        "additionalProperties": False,
-                    },
-                },
-                "required": ["projectId", "deckId", "cardId", "updates"],
-                "additionalProperties": False,
-            },
+            description='Update one exact saved Card using current deck and Card revision IDs. Preserve unspecified fields. Does not run the Card.',
+            inputSchema=card_tool_schema("card.update_configuration"),
         ),
         Tool(
             name="canvas.upsert_wire",
@@ -3114,17 +2998,9 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "nativeId", "reason", "order", "depth", "resultLimit", "required",
         "_sourceCardId", "_sourceRunId",
     },
-    "canvas.inspect": {"projectId", "deckId"},
-    "card.create": {
-        "projectId", "deckId", "expectedRevision", "title", "role", "prompt",
-        "runtime", "model", "tools", "templateId", "_builderOperation",
-    },
-    "card.update_configuration": {
-        "projectId", "deckId", "cardId", "updates",
-        "_effectTargetCardId", "_effectTargetCardRevisionId",
-        "_effectTargetDeckRevision",
-        "_builderOperation",
-    },
+    "canvas.inspect": set(card_tool_schema("canvas.inspect")["properties"]),
+    "card.create": set(card_tool_schema("card.create")["properties"]),
+    "card.update_configuration": set(card_tool_schema("card.update_configuration")["properties"]),
     "canvas.upsert_wire": {"projectId", "deckId", "op", "wire"},
     "worldsignals.package": {
         "command", "reason", "arguments", "domains", "sourceRefs",
@@ -3182,58 +3058,6 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.load_graph_references": "card_load_graph_references",
 }
 
-_AGENT_BUILDER_CBM_READ_TOOLS = frozenset({
-    "search_graph", "search_code", "trace_path", "get_code_snippet",
-    "check_index_coverage", "detect_changes",
-})
-
-
-def _normalized_workspace_path(value: Any) -> str:
-    return str(value or "").strip().replace("\\", "/").rstrip("/").casefold()
-
-
-def _native_result_payload(result: Any) -> dict[str, Any]:
-    blocks = result.content if isinstance(result, CallToolResult) else result
-    for block in blocks if isinstance(blocks, list) else []:
-        text = getattr(block, "text", "")
-        if not isinstance(text, str) or not text.strip():
-            continue
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            return payload
-    return {}
-
-
-def _scope_agent_builder_cbm_call(
-    context: dict[str, Any], native_name: str, arguments: dict[str, Any],
-) -> dict[str, Any]:
-    """Force an Agent Builder CBM read to its run-bound deck workspace."""
-
-    operation = context.get("builderOperation")
-    if not isinstance(operation, dict):
-        return arguments
-    if native_name not in _AGENT_BUILDER_CBM_READ_TOOLS:
-        raise PermissionError("agent_builder_cbm_tool_forbidden")
-    project = str(operation.get("cbmProject") or "").strip()
-    workspace_root = str(operation.get("workspaceRoot") or "").strip()
-    if not project or not workspace_root:
-        raise PermissionError("agent_builder_cbm_project_required")
-    supplied_project = str(arguments.get("project") or "").strip()
-    if supplied_project and supplied_project != project:
-        raise PermissionError("agent_builder_cbm_project_mismatch")
-    status = _native_result_payload(_call_native_cbm("index_status", {"project": project}))
-    if status.get("status") != "ready":
-        raise PermissionError("agent_builder_cbm_project_not_ready")
-    if _normalized_workspace_path(status.get("root_path")) != _normalized_workspace_path(
-        workspace_root
-    ):
-        raise PermissionError("agent_builder_cbm_workspace_mismatch")
-    return {**arguments, "project": project}
-
-
 async def _dispatch_tool(
     name: str,
     arguments: dict[str, Any],
@@ -3253,10 +3077,6 @@ async def _dispatch_tool(
         native_name = name.removeprefix(_NATIVE_PREFIXES["cbm"])
         if native_name in _NATIVE_CBM_NAMES:
             native_arguments = dict(arguments or {})
-            if context is not None:
-                native_arguments = _scope_agent_builder_cbm_call(
-                    context, native_name, native_arguments,
-                )
             return await asyncio.to_thread(
                 _call_native_cbm,
                 native_name,
@@ -3341,21 +3161,6 @@ async def _dispatch_tool(
                 if context.get("principalKind") != "system-root" or args.get("background") is True:
                     args["originatingAgentId"] = str(context["mainCardId"])
                     args["originatingRunId"] = str(context["parentRunId"])
-            if name == "card.update_configuration":
-                args["_effectTargetCardId"] = str(
-                    context.get("effectTargetCardId") or ""
-                )
-                args["_effectTargetCardRevisionId"] = str(
-                    context.get("effectTargetCardRevisionId") or ""
-                )
-                args["_effectTargetDeckRevision"] = str(
-                    context.get("effectTargetDeckRevision") or ""
-                )
-            if name in {"card.create", "card.update_configuration"}:
-                operation = context.get("builderOperation")
-                args["_builderOperation"] = (
-                    dict(operation) if isinstance(operation, dict) else {}
-                )
             from app.python_models.tool_registry import required_tool_caller_runtime
 
             if required_tool_caller_runtime(name) is not None:
@@ -3594,14 +3399,10 @@ async def _dispatch_tool(
         from app import control_plane
 
         try:
-            operation = args.pop("_builderOperation", None)
             result = await (
                 control_plane.card_create(
                     args,
                     caller_card_id=caller_card_id,
-                    builder_operation=(
-                        operation if isinstance(operation, dict) else None
-                    ),
                 )
                 if name == "card.create"
                 else
@@ -3613,22 +3414,6 @@ async def _dispatch_tool(
                         and principal is None
                     ),
                     caller_card_id=caller_card_id,
-                    target_card_id=str(args.pop("_effectTargetCardId", "") or ""),
-                    target_card_revision_id=str(
-                        args.pop("_effectTargetCardRevisionId", "") or ""
-                    ),
-                    target_deck_revision=str(
-                        args.pop("_effectTargetDeckRevision", "") or ""
-                    ),
-                    operation_mode=str((operation or {}).get("mode") or "")
-                    if isinstance(operation, dict) else "",
-                    allowed_fields=list((operation or {}).get("allowedFields") or [])
-                    if isinstance(operation, dict) else [],
-                    workspace_root=str((operation or {}).get("workspaceRoot") or "")
-                    if isinstance(operation, dict) else "",
-                    builder_operation=(
-                        operation if isinstance(operation, dict) else None
-                    ),
                 )
                 if name == "card.update_configuration"
                 else getattr(control_plane, handler_name)(args)

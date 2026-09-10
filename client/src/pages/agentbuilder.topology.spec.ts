@@ -45,8 +45,7 @@ describe('Main / Hermes / graph authority topology', () => {
       'card_main_chat',
       'card_hermes_steward',
       'card_magentic',
-      'card_local_coder',
-      'card_agent_builder',
+      'builder',
     ]));
     expect(INITIAL_DECK.nodes.find((node) => node.id === 'card_hermes_steward')).toMatchObject({
       title: 'Graph Agent',
@@ -85,30 +84,28 @@ describe('Main / Hermes / graph authority topology', () => {
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
       expect.objectContaining({ source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' }),
     ]));
-    for (const internalCardId of ['card_main_chat', 'card_agent_builder', 'card_hermes_steward']) {
+    for (const internalCardId of ['card_main_chat', 'builder', 'card_hermes_steward']) {
       expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
         source: internalCardId,
         target: 'card_magentic',
         edgeType: 'magentic_option',
       }));
     }
-    expect(INITIAL_DECK.edges).toContainEqual(expect.objectContaining({
-      source: 'card_magentic', target: 'card_local_coder', edgeType: 'magentic_option',
-    }));
+    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_local_coder')).toBe(false);
   });
 
   it('connects Main only to Builder, Graph Agent, and Mag One, with other workers on the bus', () => {
     expect(INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'flow')).toEqual([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' }),
-      expect.objectContaining({ source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' }),
+      expect.objectContaining({ source: 'card_main_chat', target: 'builder', edgeType: 'flow' }),
     ]);
-    expect(INITIAL_DECK.edges).toHaveLength(6);
+    expect(INITIAL_DECK.edges).toHaveLength(5);
     expect(INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'magentic_control')).toEqual([
       expect.objectContaining({ source: 'card_main_chat', target: 'card_magentic' }),
     ]);
     const workerEdges = INITIAL_DECK.edges.filter((edge) => edge.edgeType === 'magentic_option');
     expect(workerEdges.map((edge) => edge.source === 'card_magentic' ? edge.target : edge.source).sort())
-      .toEqual(['card_local_coder', 'card_trading_workbench', 'card_worldsignals_agent']);
+      .toEqual(['card_trading_workbench', 'card_worldsignals_agent']);
     expect(workerEdges.every((edge) => edge.source === 'card_magentic' || edge.target === 'card_magentic')).toBe(true);
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_local_coder', edgeType: 'flow',
@@ -117,7 +114,7 @@ describe('Main / Hermes / graph authority topology', () => {
       source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow',
     }));
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_agent_builder', target: 'card_magentic', edgeType: 'magentic_option',
+      source: 'builder', target: 'card_magentic', edgeType: 'magentic_option',
     }));
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });
@@ -175,12 +172,11 @@ describe('Main / Hermes / graph authority topology', () => {
   it('keeps broad read discovery separate from explicit write selections', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const main = byId.get('card_main_chat');
-    const coder = byId.get('card_local_coder');
-    const agentBuilder = byId.get('card_agent_builder');
+    const agentBuilder = byId.get('builder');
     const steward = byId.get('card_hermes_steward');
     const magOne = byId.get('card_magentic');
 
-    for (const card of [main, coder, agentBuilder, steward]) {
+    for (const card of [main, agentBuilder, steward]) {
       expect(card?.runtimeOptions?.subagentModel).toEqual({
         provider: 'openai',
         accessMode: 'chatgpt-account',
@@ -188,12 +184,12 @@ describe('Main / Hermes / graph authority topology', () => {
         providerModelId: 'gpt-5.6-luna',
       });
     }
-    for (const card of [coder, steward]) {
+    for (const card of [steward]) {
       expect(card?.runtimeOptions?.delegationRole).toBe('team');
     }
     // Native delegation consumes the saved role and subagent model. The
     // removed host Team configuration must not return in new-project seeds.
-    for (const card of [main, coder, agentBuilder, steward]) {
+    for (const card of [main, agentBuilder, steward]) {
       expect(card?.runtimeOptions).not.toHaveProperty('team');
     }
     expect(main?.runtimeOptions?.delegationRole).toBe('profile');
@@ -211,46 +207,19 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.prompt).toContain('existing Card CLI input and Context editors');
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
-    expect(coder).toMatchObject({
-      title: 'Local Coder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-      runtimeOptions: {
-        accessMode: 'chatgpt-account',
-        nativeTools: ['memory'],
-        toolsets: ['hermes-acp', 'computer_use'],
-        toolCatalogPolicy: 'all_healthy',
-      },
-    });
-    expect(coder?.runtimeOptions?.tools).toEqual([
-      'cbm.search_graph',
-      'cbm.trace_path',
-      'cbm.get_code_snippet',
-      'cbm.check_index_coverage',
-      'cbm.detect_changes',
-    ]);
-    expect(coder?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
-    expect(coder?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
-      'run_mag_one',
-      'graphiti.add_memory',
-    ]));
-    expect(coder?.prompt).toContain('You are Local Coder');
-    expect(coder?.prompt).toContain('Native delegate_task is available');
-    expect(coder?.prompt).toContain('children remain parts of this Coder Card');
-    expect(coder?.prompt).not.toContain('retask the saved Kanban Card');
-
     expect(agentBuilder).toMatchObject({
-      title: 'Agent Builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      title: 'Builder',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: {
         accessMode: 'chatgpt-account',
         nativeTools: ['memory'],
         skills: ['hermes-agent', 'agent-builder-inspection'],
-        toolsets: ['hermes-acp'],
+        toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
         toolCatalogPolicy: 'selected',
         tools: [
           'canvas.inspect', 'card.create', 'card.update_configuration',
           'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
-          'cbm.check_index_coverage', 'cbm.detect_changes',
+          'cbm.check_index_coverage', 'cbm.detect_changes', 'cbm.search_code', 'cbm.query_graph',
         ],
       },
     });
@@ -259,10 +228,10 @@ describe('Main / Hermes / graph authority topology', () => {
       modelKey: 'gpt-5.6-sol',
       providerModelId: 'gpt-5.6-sol',
     });
-    expect(agentBuilder?.prompt).toContain('Execute the one run-issued Agent Builder create or edit operation');
-    expect(agentBuilder?.prompt).toContain('Use card.update_configuration only in edit mode');
-    expect(agentBuilder?.prompt).toContain('IDD supplies compositional templates, types, and effect contracts');
-    expect(agentBuilder?.prompt).toContain('Never copy Local Coder memory');
+    expect(agentBuilder?.prompt).toContain('general construction agent');
+    expect(agentBuilder?.prompt).toContain('card.create or card.update_configuration with explicit arguments');
+    expect(agentBuilder?.prompt).toContain('Saving a Card and running it are separate actions');
+    expect(agentBuilder?.prompt).not.toMatch(/agentBuilderOperation|agentBuilderGuidance|PLAN\.md|edit mode|create mode/);
 
     expect(steward?.runtimeOptions?.tools).not.toContain('run_mag_one');
     expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');

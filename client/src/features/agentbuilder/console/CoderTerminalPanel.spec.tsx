@@ -36,7 +36,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 function session(state: ConsoleSessionInfo['state'] = 'running'): ConsoleSessionInfo {
   return {
     id: 'coder-terminal-1',
-    ownerCardId: 'card_local_coder',
+    ownerCardId: 'builder',
     projectId: 'project-1',
     deckId: 'deck_builder',
     conversationId: 'main',
@@ -45,7 +45,7 @@ function session(state: ConsoleSessionInfo['state'] = 'running'): ConsoleSession
     state,
     runtimeSource: 'repository_hermes_cli',
     transportMode: 'pty',
-    profile: 'coder',
+    profile: 'builder',
     executable: 'C:/Projects/LiquidAIty/main/Hermes/venv/Scripts/hermes.exe',
     hermesHome: 'C:/Projects/LiquidAIty/main/Hermes/.hermes',
     interactiveSupported: true,
@@ -113,7 +113,7 @@ describe('CoderTerminalPanel', () => {
 
   it('keeps the saved Builder session through pull-up and gives input only to direct mode', async () => {
     const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
-      profile: 'liquidaity-agent-builder' };
+      profile: 'builder' };
     const nativeSession = { ...session(), ownerCardId: savedCard.cardId, profile: savedCard.profile };
     const terminalClient = client({ ensureSession: vi.fn(async () => nativeSession) });
     await render(<HarnessChatPanel chat={<div data-testid="main-input">Main</div>}
@@ -143,9 +143,9 @@ describe('CoderTerminalPanel', () => {
 
   it('shows an error when the acquired terminal belongs to another profile', async () => {
     const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
-      profile: 'liquidaity-agent-builder' };
+      profile: 'builder' };
     await render(<CoderTerminalPanel open ownerCardId={savedCard.cardId} savedCard={savedCard}
-      client={client({ ensureSession: vi.fn(async () => ({ ...session(), ownerCardId: savedCard.cardId })) })} />);
+      client={client({ ensureSession: vi.fn(async () => ({ ...session(), ownerCardId: savedCard.cardId, profile: 'foreign' })) })} />);
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
     expect(xtermProps.current).toBeNull();
   });
@@ -299,11 +299,11 @@ describe('CoderTerminalPanel', () => {
 
   it('shows the same ACP Card Run in the existing external console without sending it to the CLI', async () => {
     const terminalClient = client();
-    const identity = { projectId: 'p', deckId: 'd', cardId: 'card_local_coder', cardName: 'Coder',
+    const identity = { projectId: 'p', deckId: 'd', cardId: 'builder', cardName: 'Coder',
       runId: 'coder-run', parentRunId: 'main-run', nativeChildId: null };
     await render(<CoderTerminalPanel open client={terminalClient} initialSession={session()}
-      cardIdentity={{ projectId: 'p', deckId: 'd', cardId: 'card_local_coder', profile: 'coder' }}
-      cardRun={{ runId: 'coder-run', cardId: 'card_local_coder', state: 'running', status: 'running', output: '', error: null,
+      cardIdentity={{ projectId: 'p', deckId: 'd', cardId: 'builder', profile: 'builder' }}
+      cardRun={{ runId: 'coder-run', cardId: 'builder', state: 'running', status: 'running', output: '', error: null,
         terminal: { ...identity, observation: 'live', activeAgentCount: 1, unavailableReason: null,
           finalText: '', errorCode: null, errorSummary: '', transcript: { sessionId: 'acp-native', unavailableReason: null },
           events: [{ ...identity, id: 'coder-run:text:1', kind: 'model', sequence: 1, timestamp: null, text: 'Actual ACP output' }],

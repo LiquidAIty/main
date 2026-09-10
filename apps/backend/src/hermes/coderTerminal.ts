@@ -40,9 +40,9 @@ type StartConsoleSessionRequest = {
   projectId: string;
   deckId: string;
   conversationId: string;
-  ownerCardId?: string;
+  ownerCardId: string;
   targetRoot?: string;
-  profile?: string;
+  profile: string;
 };
 
 export type HermesCoderPtyLaunch = {
@@ -75,7 +75,7 @@ function terminalIdentity(request: StartConsoleSessionRequest): string {
     request.projectId,
     request.deckId,
     request.conversationId,
-    request.ownerCardId || 'card_local_coder',
+    request.ownerCardId,
   ].join(':');
 }
 
@@ -95,7 +95,7 @@ export class HermesCoderTerminalSession {
     readonly info: ConsoleSessionInfo,
     private readonly ptyFactory: PtyFactory = spawnPty,
   ) {
-    this.delivery = info.profile === 'liquidaity-agent-builder'
+    this.delivery = info.profile === 'builder'
       ? { bridge: new MainCliBridge(), token: randomBytes(32).toString('hex') }
       : null;
     this.emitter.setMaxListeners(64);
@@ -217,7 +217,7 @@ export class HermesCoderTerminalManager {
     const projectId = String(request.projectId || '').trim();
     const deckId = String(request.deckId || '').trim();
     const conversationId = String(request.conversationId || '').trim();
-    if (!projectId || !deckId || !conversationId) {
+    if (!projectId || !deckId || !conversationId || !request.ownerCardId?.trim() || !request.profile?.trim()) {
       return { ok: false, error: 'hermes_coder_terminal_identity_required', missing: [] };
     }
     const targetRoot = path.resolve(request.targetRoot || resolveRepoRoot());
@@ -236,7 +236,7 @@ export class HermesCoderTerminalManager {
     const now = new Date().toISOString();
     const info: ConsoleSessionInfo = {
       id: `coder_terminal_${Date.now()}_${++this.counter}`,
-      ownerCardId: request.ownerCardId || 'card_local_coder',
+      ownerCardId: request.ownerCardId,
       projectId,
       deckId,
       conversationId,
@@ -245,7 +245,7 @@ export class HermesCoderTerminalManager {
       state: 'starting',
       runtimeSource: 'repository_hermes_cli',
       transportMode: 'pty',
-      profile: request.profile || 'coder',
+      profile: request.profile,
       executable: null,
       hermesHome: null,
       interactiveSupported: true,
@@ -277,18 +277,10 @@ export class HermesCoderTerminalManager {
 
 export const coderTerminalSessionManager = new HermesCoderTerminalManager();
 
-const PERSISTENT_CODER_TERMINAL_IDENTITY = {
-  projectId: 'liquidaity',
-  deckId: 'deck_builder',
-  conversationId: 'main',
-  ownerCardId: 'card_local_coder',
-  profile: 'coder',
-} as const;
-
 function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
   const install = resolveHermesCliInstall();
   const hermesHome = path.join(install.root, '.hermes');
-  const profile = session.info.profile || 'coder';
+  const profile = session.info.profile;
   session.start({
     executable: install.executable,
     args: ['-p', profile, 'chat', '--cli', '--in', session.info.targetRoot],
@@ -313,7 +305,7 @@ export async function ensurePersistentBuilderTerminal(): Promise<ConsoleSessionI
     const { deck } = await getDeckDocument(project.id, BUILDER_DECK_ID);
     for (const card of deck?.nodes || []) {
       if (card.runtime.kind === 'hermes' && card.runtime.mode === 'delegate'
-        && card.runtime.profile === 'liquidaity-agent-builder') {
+        && card.runtime.profile === 'builder') {
         identities.push({ projectId: project.id, deckId: BUILDER_DECK_ID, cardId: card.id });
       }
     }
@@ -336,11 +328,11 @@ export async function ensureSavedBuilderTerminal(
   const card = deck?.nodes.find((node) => node.id === cardId);
   if (!deck || !card || card.runtime.kind !== 'hermes'
     || card.runtime.mode !== 'delegate'
-    || card.runtime.profile !== 'liquidaity-agent-builder'
+    || card.runtime.profile !== 'builder'
     || (card as unknown as { enabled?: boolean }).enabled === false
     || (card.runtimeOptions as { enabled?: boolean } | undefined)?.enabled === false
     || deck.nodes.filter((node) => node.runtime.kind === 'hermes'
-      && node.runtime.profile.trim().toLowerCase() === 'liquidaity-agent-builder').length !== 1) {
+      && node.runtime.profile.trim().toLowerCase() === 'builder').length !== 1) {
     throw new Error('builder_terminal_saved_card_required');
   }
   const targetRoot = String(deck.workspaceRoot || '').trim();
@@ -385,29 +377,6 @@ function startMainTerminalSession(session: HermesCoderTerminalSession): void {
     profile,
     hermesHome,
   });
-}
-
-export function ensurePersistentCoderTerminal(
-  manager: HermesCoderTerminalManager = coderTerminalSessionManager,
-  launch: (session: HermesCoderTerminalSession) => void = startCoderTerminalSession,
-): ConsoleSessionInfo {
-  const acquired = manager.acquire(PERSISTENT_CODER_TERMINAL_IDENTITY);
-  if (!acquired.ok) throw new Error(acquired.error);
-  if (acquired.created) {
-    try {
-      launch(acquired.session);
-    } catch (error) {
-      const reason = error instanceof Error
-        ? error.message
-        : 'hermes_coder_terminal_prepare_failed';
-      acquired.session.markFailed(reason);
-      throw new Error(reason);
-    }
-  }
-  if (!acquired.session.isLive()) {
-    throw new Error(acquired.session.info.error || 'hermes_coder_terminal_startup_failed');
-  }
-  return acquired.session.info;
 }
 
 const PERSISTENT_MAIN_TERMINAL_IDENTITY = {

@@ -11,13 +11,13 @@ describe('requested initial Card topology', () => {
     expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
       { id: 'edge_main_chat_hermes', source: main.id, target: 'card_hermes_steward', edgeType: 'flow' },
-      { id: 'edge_main_chat_agent_builder', source: main.id, target: 'card_agent_builder', edgeType: 'flow' },
+      { id: 'edge_main_chat_agent_builder', source: main.id, target: 'builder', edgeType: 'flow' },
     ]);
     expect(INITIAL_DECK.edges.find(edge => edge.edgeType === 'magentic_control')).toMatchObject({
       source: main.id, target: 'card_magentic', targetHandle: 'task-bus-top',
     });
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option').map(edge => edge.id))
-      .toEqual(['edge_worldsignals_magentic_bus', 'edge_trading_magentic_bus', 'edge_coder_magentic_option']);
+      .toEqual(['edge_worldsignals_magentic_bus', 'edge_trading_magentic_bus']);
     for (const edge of INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option')) {
       const busHandle = edge.source === 'card_magentic' ? edge.sourceHandle : edge.targetHandle;
       const cardHandle = edge.source === 'card_magentic' ? edge.targetHandle : edge.sourceHandle;
@@ -26,7 +26,15 @@ describe('requested initial Card topology', () => {
     }
     const profiles = INITIAL_DECK.nodes.flatMap(card => card.runtime.kind === 'hermes' ? [card.runtime.profile] : []);
     expect(new Set(profiles).size).toBe(profiles.length);
-    for (const id of ['card_main_chat', 'card_agent_builder', 'card_hermes_steward']) {
+    expect(profiles).not.toContain('coder');
+    expect(profiles).not.toContain('liquidaity-agent-builder');
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'builder')).toMatchObject({ title: 'Builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' } });
+    expect(INITIAL_DECK.nodes.some(card => card.id === 'card_local_coder')).toBe(false);
+    for (const edge of INITIAL_DECK.edges) {
+      expect(INITIAL_DECK.nodes.some(card => card.id === edge.source)).toBe(true);
+      expect(INITIAL_DECK.nodes.some(card => card.id === edge.target)).toBe(true);
+    }
+    for (const id of ['card_main_chat', 'builder', 'card_hermes_steward']) {
       expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
     }
   });

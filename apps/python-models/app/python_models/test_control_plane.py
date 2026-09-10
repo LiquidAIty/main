@@ -26,8 +26,8 @@ DECK = {
          "_cardRevisionId": "revision:worker"},
         {"id": "builder-card", "title": "Agent Builder",
          "runtime": {"kind": "hermes", "mode": "delegate",
-                     "profile": "liquidaity-agent-builder"},
-         "prompt": "Build saved Cards.", "runtimeOptions": {"tools": []},
+                     "profile": "builder"},
+         "prompt": "Build saved Cards.", "runtimeOptions": {"tools": ["card.create", "card.update_configuration"]},
          "_cardRevisionId": "revision:builder-card"},
     ],
     "edges": [{"id": "w1", "source": "worker", "target": "signals-card", "edgeType": "flow"}],
@@ -52,70 +52,15 @@ def fake_backend(monkeypatch):
     return saved
 
 
-def builder_target_authority(
-    card_id="signals-card", deck_revision="rev1", *,
-    prompt="new prompt", tools=None, configuration=None, script=None, subsystems=None,
-    workspace_root="C:/Projects/agents",
-):
-    optional = {
-        key: value for key, value in {
-            "configuration": configuration,
-            "script": script,
-            "subsystems": subsystems,
-        }.items() if value is not None
-    }
-    allowed_fields = sorted(["prompt", "tools", *optional])
-    authority = {
-        "caller_card_id": "builder-card",
-        "target_card_id": card_id,
-        "target_card_revision_id": f"revision:{card_id}",
-        "target_deck_revision": deck_revision,
-        "operation_mode": "edit",
-        "allowed_fields": allowed_fields,
-        "workspace_root": workspace_root,
-    }
-    authority["builder_operation"] = {
-        "mode": "edit",
-        "deckRevision": deck_revision,
-        "workspaceRoot": workspace_root,
-        "allowedFields": allowed_fields,
-        "templateId": "template_assist",
-        "title": "WorldSignals" if card_id == "signals-card" else card_id,
-        "role": "",
-        "prompt": prompt,
-        "tools": list(tools or []),
-        **optional,
-        "targetCardId": card_id,
-        "targetCardRevisionId": f"revision:{card_id}",
-    }
-    return authority
-
-
-def builder_create_authority(
-    *, title="Search Agent", role="Bounded live-web researcher",
-    prompt="Return cited sources and claims. Do not write KnowGraph.",
-    tools=None, template_id="template_assist", deck_revision="rev1",
-):
-    model = {
-        "provider": "openrouter",
-        "modelKey": "research-model",
-        "providerModelId": "research-model",
-        "accessMode": "openrouter-api",
-    }
+def create_args(**overrides):
     return {
-        "mode": "create",
-        "deckRevision": deck_revision,
-        "workspaceRoot": "C:/Projects/agents",
-        "allowedFields": [
-            "templateId", "title", "role", "prompt", "runtime", "model", "tools",
-        ],
-        "templateId": template_id,
-        "title": title,
-        "role": role,
-        "prompt": prompt,
-        "tools": list(tools or []),
-        "runtime": {"kind": "hermes", "mode": "delegate"},
-        "model": model,
+        "projectId": "p", "deckId": "d", "expectedRevision": "rev1",
+        "templateId": "template_assist", "title": "Research", "role": "Research sources",
+        "prompt": "Return sourced findings.",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
+        "model": {"provider": "openrouter", "modelKey": "research-model",
+                  "providerModelId": "research-model", "accessMode": "openrouter-api"},
+        "tools": [], **overrides,
     }
 
 
@@ -329,151 +274,45 @@ def test_card_graph_reference_handler_uses_the_one_card_domain_owner(monkeypatch
 
 
 class TestCardCreate:
-    def test_run_authority_creates_one_hermes_card_without_launching(
-        self, fake_backend,
-    ):
-        operation = builder_create_authority()
-        result = asyncio.run(cp.card_create({
-            "projectId": "p",
-            "deckId": "d",
-            "expectedRevision": "rev1",
-            "templateId": operation["templateId"],
-            "title": "Search Agent",
-            "role": "Bounded live-web researcher",
-            "prompt": "Return cited sources and claims. Do not write KnowGraph.",
-            "runtime": {"kind": "hermes", "mode": "delegate"},
-            "model": operation["model"],
-            "tools": [],
-        }, caller_card_id="builder-card", builder_operation=operation))
-
-        assert result["ok"] is True
-        assert result["created"] is True
-        assert result["started"] is False
+    def test_granted_builder_creates_requested_profile_and_native_selections(self, fake_backend):
+        args = create_args(nativeTools=["read_file"], skills=["hermes-agent"],
+                           toolsets=["file", "terminal"], position={"x": 12, "y": 8})
+        result = asyncio.run(cp.card_create(args, caller_card_id="builder-card"))
+        assert result["ok"] and result["created"] and result["started"] is False
         assert result["deckRevision"] == "rev2"
-        assert result["cardId"].startswith("card_")
         assert fake_backend["expectedRevision"] == "rev1"
-        assert len(fake_backend["deck"]["nodes"]) == len(DECK["nodes"]) + 1
-        card = fake_backend["deck"]["nodes"][-1]
-        assert card["title"] == "Search Agent"
-        assert card["role"] == "Bounded live-web researcher"
-        assert card["runtime"]["kind"] == "hermes"
-        assert card["runtime"]["mode"] == "delegate"
-        assert card["runtime"]["profile"].startswith("agent-")
-        assert card["runtime"]["profile"] not in [n["runtime"].get("profile") for n in DECK["nodes"]]
-        assert card["runtimeOptions"] == {
-            "provider": "openrouter",
-            "modelKey": "research-model",
-            "providerModelId": "research-model",
-            "accessMode": "openrouter-api",
-            "tools": [],
-            "nativeTools": [],
-            "skills": [],
-            "toolsets": [],
-            "mcpConnectionIds": [],
-            "subagentModel": cp._DEFAULT_HERMES_SUBAGENT_MODEL,
-        }
+        card = result["card"]
+        assert card["runtime"] == args["runtime"]
+        for key in ("nativeTools", "skills", "toolsets"):
+            assert card["runtimeOptions"][key] == args[key]
+        assert card["position"] == args["position"]
+        assert fake_backend["deck"]["nodes"][:-1] == DECK["nodes"]
         assert fake_backend["deck"]["edges"] == DECK["edges"]
 
-    def test_direct_or_non_assistant_creation_is_rejected(self, fake_backend):
-        operation = builder_create_authority()
-        base = {
-            "projectId": "p",
-            "deckId": "d",
-            "expectedRevision": "rev1",
-            "templateId": operation["templateId"],
-            "title": operation["title"],
-            "role": operation["role"],
-            "prompt": operation["prompt"],
-            "runtime": {"kind": "hermes", "mode": "delegate"},
-            "model": operation["model"],
-            "tools": [],
-        }
+    def test_create_requires_saved_caller_and_grant(self, fake_backend, monkeypatch):
         with pytest.raises(cp.ControlPlaneError, match="card_create_requires_agent_builder"):
-            asyncio.run(cp.card_create(base))
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_request_mismatch"):
-            asyncio.run(cp.card_create({
-                **base,
-                "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
-            }, caller_card_id="builder-card", builder_operation=operation))
-        forged_operation = {
-            **operation,
-            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "research"},
-        }
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_runtime_forbidden"):
-            asyncio.run(cp.card_create({
-                **base,
-                "runtime": forged_operation["runtime"],
-            }, caller_card_id="builder-card", builder_operation=forged_operation))
-        assert "deck" not in fake_backend
+            asyncio.run(cp.card_create(create_args()))
+        monkeypatch.setitem(DECK["nodes"][2]["runtimeOptions"], "tools", [])
+        with pytest.raises(cp.ControlPlaneError, match="card_create_not_granted"):
+            asyncio.run(cp.card_create(create_args(), caller_card_id="builder-card"))
+        assert fake_backend == {}
 
-    def test_rejects_unavailable_tools_system_templates_and_request_drift(self, fake_backend):
-        operation = builder_create_authority()
-        base = {
-            "projectId": "p",
-            "deckId": "d",
-            "expectedRevision": "rev1",
-            "templateId": operation["templateId"],
-            "title": operation["title"],
-            "role": operation["role"],
-            "prompt": operation["prompt"],
-            "runtime": {"kind": "hermes", "mode": "delegate"},
-            "model": operation["model"],
-            "tools": [],
-        }
-        with pytest.raises(
-            cp.ControlPlaneError,
-            match="card_create_tool_unavailable:unclassified_read",
-        ):
-            asyncio.run(cp.card_create(
-                {**base, "tools": ["unclassified_read"]},
-                caller_card_id="builder-card",
-                builder_operation=operation,
-            ))
-        system_operation = builder_create_authority(template_id="template_main_chat")
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_system_template_forbidden"):
-            asyncio.run(cp.card_create(
-                {**base, "templateId": "template_main_chat"},
-                caller_card_id="builder-card",
-                builder_operation=system_operation,
-            ))
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_create_request_mismatch"):
-            asyncio.run(cp.card_create(
-                {**base, "prompt": "Drifted after the Run began."},
-                caller_card_id="builder-card",
-                builder_operation=operation,
-            ))
-        assert "deck" not in fake_backend
-
-    def test_requires_current_revision_and_rejects_unknown_fields(self, fake_backend):
-        operation = builder_create_authority()
-        base = {
-            "projectId": "p",
-            "deckId": "d",
-            "expectedRevision": "stale",
-            "templateId": operation["templateId"],
-            "title": operation["title"],
-            "role": operation["role"],
-            "prompt": operation["prompt"],
-            "runtime": {"kind": "hermes", "mode": "delegate"},
-            "model": operation["model"],
-            "tools": [],
-        }
-        with pytest.raises(cp.ControlPlaneError, match="deck_conflict"):
-            asyncio.run(cp.card_create(
-                base, caller_card_id="builder-card", builder_operation=operation,
-            ))
-        with pytest.raises(cp.ControlPlaneError, match="card_create_fields_rejected"):
-            asyncio.run(cp.card_create(
-                {**base, "expectedRevision": "rev1", "launch": True},
-                caller_card_id="builder-card",
-                builder_operation=operation,
-            ))
-        assert "deck" not in fake_backend
+    @pytest.mark.parametrize(("change", "error"), [
+        ({"expectedRevision": "stale"}, "deck_conflict"),
+        ({"launch": True}, "card_create_fields_rejected"),
+        ({"tools": ["unclassified_read"]}, "card_create_tool_unavailable"),
+        ({"templateId": "template_main_chat"}, "card_create_template_runtime_mismatch"),
+        ({"runtime": {"kind": "hermes", "mode": "delegate"}}, "card_create_profile_required"),
+    ])
+    def test_create_preserves_structural_rejections(self, fake_backend, change, error):
+        with pytest.raises(cp.ControlPlaneError, match=error):
+            asyncio.run(cp.card_create(create_args(**change), caller_card_id="builder-card"))
+        assert fake_backend == {}
 
 
 class TestCardUpdateConfiguration:
     def test_authenticated_user_can_edit_builder_without_impersonating_a_card(self, fake_backend):
-        result = asyncio.run(cp.card_update_configuration({
+        result = asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:builder-card",
             "projectId": "p", "deckId": "deck_builder", "cardId": "builder-card",
             "updates": {"prompt": "Updated instructions"},
         }, authenticated_user_edit=True))
@@ -485,44 +324,40 @@ class TestCardUpdateConfiguration:
 
     def test_authenticated_user_edit_keeps_structural_field_allowlist(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_fields_rejected"):
-            asyncio.run(cp.card_update_configuration({
+            asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:builder-card",
                 "projectId": "p", "deckId": "deck_builder", "cardId": "builder-card",
                 "updates": {"runtime": {"kind": "other"}},
             }, authenticated_user_edit=True))
         assert fake_backend == {}
 
-    def test_update_requires_agent_builder_and_cannot_target_system_cards(self, fake_backend):
-        with pytest.raises(
-            cp.ControlPlaneError, match="card_update_requires_agent_builder"
-        ):
+    def test_update_requires_builder_and_protects_self_and_main(self, fake_backend, monkeypatch):
+        args = {"projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+                "updates": {"prompt": "new prompt"}}
+        with pytest.raises(cp.ControlPlaneError, match="card_update_requires_agent_builder"):
+            asyncio.run(cp.card_update_configuration(args, caller_card_id="signals-card"))
+        with pytest.raises(cp.ControlPlaneError, match="card_update_self_forbidden"):
+            asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:builder-card",**args, "cardId": "builder-card"}, caller_card_id="builder-card"))
+        monkeypatch.setitem(DECK["nodes"][0], "runtime", {"kind": "hermes", "mode": "main", "profile": "main"})
+        with pytest.raises(cp.ControlPlaneError, match="card_update_main_forbidden"):
+            asyncio.run(cp.card_update_configuration(args, caller_card_id="builder-card"))
+        assert fake_backend == {}
+
+    @pytest.mark.parametrize("field", ["runtimeCode", "runtime", "team", "cardId"])
+    def test_immutable_or_unsupported_fields_rejected(self, fake_backend, field):
+        with pytest.raises(cp.ControlPlaneError, match="card_update_fields_rejected"):
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"prompt": "new prompt"},
-            }, **{**builder_target_authority(), "caller_card_id": "signals-card"}))
-        with pytest.raises(
-            cp.ControlPlaneError, match="agent_builder_target_self_forbidden"
-        ):
-            asyncio.run(cp.card_update_configuration({
-                "projectId": "p", "deckId": "d", "cardId": "builder-card",
-                "updates": {"prompt": "new prompt"},
-            }, **builder_target_authority("builder-card")))
-
-    def test_arbitrary_runtime_and_authority_fields_rejected(self, fake_backend):
-        for field in (
-            "runtimeCode", "title", "modelKey", "script", "nativeTools",
-            "skills", "toolsets", "mcpConnectionIds", "team",
-        ):
-            with pytest.raises(cp.ControlPlaneError, match="agent_builder_edit_field_forbidden"):
-                asyncio.run(cp.card_update_configuration({
-                    "projectId": "p", "deckId": "d", "cardId": "signals-card", "updates": {field: "x"},
-                }, **builder_target_authority()))
-        assert "deck" not in fake_backend  # nothing was saved
+                "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+                "updates": {field: "x"},
+            }, caller_card_id="builder-card"))
+        assert fake_backend == {}
 
     def test_prompt_and_tools_update_persists_with_revision(self, fake_backend):
-        result = asyncio.run(cp.card_update_configuration({
+        result = asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"prompt": "new prompt", "tools": ["web_search"]},
-        }, **builder_target_authority(tools=["web_search"])))
+        }, caller_card_id="builder-card"))
         assert result["ok"] is True
         assert fake_backend["expectedRevision"] == "rev1"
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
@@ -531,10 +366,10 @@ class TestCardUpdateConfiguration:
 
     def test_structured_card_configuration_persists_with_revision(self, fake_backend):
         configuration = {"schemaVersion": "trading.card.v1", "trading": {"paperOnly": True}}
-        result = asyncio.run(cp.card_update_configuration({
+        result = asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"configuration": configuration},
-        }, **builder_target_authority(configuration=configuration)))
+        }, caller_card_id="builder-card"))
         assert result["ok"] is True
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["runtimeOptions"]["configuration"] == configuration
@@ -551,74 +386,68 @@ class TestCardUpdateConfiguration:
             "cardTab": {"enabled": True},
             "configurationSchema": "trading.card.v1",
         }]
-        result = asyncio.run(cp.card_update_configuration({
+        result = asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"subsystems": subsystems},
-        }, **builder_target_authority(subsystems=subsystems)))
+        }, caller_card_id="builder-card"))
         assert result["ok"] is True
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["runtimeOptions"]["subsystems"] == subsystems
 
-    def test_prompt_and_tools_cannot_drift_from_the_run_operation(self, fake_backend):
-        with pytest.raises(
-            cp.ControlPlaneError, match="agent_builder_edit_request_mismatch"
-        ):
-            asyncio.run(cp.card_update_configuration({
-                "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"prompt": "different prompt"},
-            }, **builder_target_authority(prompt="authorized prompt")))
-        with pytest.raises(
-            cp.ControlPlaneError, match="agent_builder_edit_request_mismatch"
-        ):
-            asyncio.run(cp.card_update_configuration({
-                "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"tools": ["web_search"]},
-            }, **builder_target_authority(tools=[])))
-        assert "deck" not in fake_backend
+    def test_builder_chooses_updates_without_prefilled_packet(self, fake_backend):
+        updates = {"prompt": "Chosen after inspection", "title": "New title", "tools": ["web_search"],
+                   "nativeTools": ["read_file"], "skills": ["hermes-agent"], "toolsets": ["file"]}
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+            "updates": updates,
+        }, caller_card_id="builder-card"))
+        assert result["deckRevision"] == "rev2"
+        assert result["card"]["prompt"] == updates["prompt"]
+        assert result["card"]["runtime"] == DECK["nodes"][0]["runtime"]
+        for key in ("tools", "nativeTools", "skills", "toolsets"):
+            assert result["card"]["runtimeOptions"][key] == updates[key]
+        assert fake_backend["deck"]["nodes"][1:] == DECK["nodes"][1:]
+        assert fake_backend["deck"]["edges"] == DECK["edges"]
 
     def test_tools_update_must_be_string_list(self, fake_backend):
         with pytest.raises(cp.ControlPlaneError, match="card_update_tools_must_be_string_list"):
-            asyncio.run(cp.card_update_configuration({
+            asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
                 "updates": {"tools": [{"name": "shell"}]},
-            }, **builder_target_authority()))
+            }, caller_card_id="builder-card"))
 
     def test_tools_update_rejects_unclassified_and_accepts_explicit_read_or_write(self, fake_backend):
         with pytest.raises(
             cp.ControlPlaneError,
             match="card_update_tool_unavailable:unclassified_read",
         ):
-            asyncio.run(cp.card_update_configuration({
+            asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
                 "updates": {"tools": ["unclassified_read"]},
-            }, **builder_target_authority()))
+            }, caller_card_id="builder-card"))
 
-        result = asyncio.run(cp.card_update_configuration({
+        result = asyncio.run(cp.card_update_configuration({"expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
             "projectId": "p", "deckId": "d", "cardId": "signals-card",
             "updates": {"tools": ["card.update_configuration", "web_search"]},
-        }, **builder_target_authority(
-            tools=["card.update_configuration", "web_search"],
-        )))
+        }, caller_card_id="builder-card"))
         assert result["ok"] is True
         saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
         assert saved["runtimeOptions"]["tools"] == ["card.update_configuration", "web_search"]
 
-    def test_target_revision_and_workspace_are_bound_to_the_builder_run(self, fake_backend):
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_target_mismatch"):
+    @pytest.mark.parametrize(("deck_rev", "card_rev", "error"), [
+        ("stale", "revision:signals-card", "deck_conflict"),
+        ("rev1", "revision:worker", "card_revision_conflict"),
+        ("rev1", "", "expectedCardRevisionId_required"),
+    ])
+    def test_exact_target_revisions_are_required(self, fake_backend, deck_rev, card_rev, error):
+        with pytest.raises(cp.ControlPlaneError, match=error):
             asyncio.run(cp.card_update_configuration({
                 "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "expectedRevision": deck_rev, "expectedCardRevisionId": card_rev,
                 "updates": {"prompt": "new prompt"},
-            }, **builder_target_authority("worker")))
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_target_revision_changed"):
-            asyncio.run(cp.card_update_configuration({
-                "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"prompt": "new prompt"},
-            }, **builder_target_authority(deck_revision="stale")))
-        with pytest.raises(cp.ControlPlaneError, match="agent_builder_workspace_changed"):
-            asyncio.run(cp.card_update_configuration({
-                "projectId": "p", "deckId": "d", "cardId": "signals-card",
-                "updates": {"prompt": "new prompt"},
-            }, **builder_target_authority(workspace_root="C:/Projects/other")))
+            }, caller_card_id="builder-card"))
+        assert fake_backend == {}
 
 
 class TestUpsertWire:
@@ -899,3 +728,18 @@ class TestRunAssistantAgent:
                 "correlationId": "search-run-1", "originatingAgentId": "card_hermes_steward",
                 "originatingRunId": "main-turn-1", "input": "Find one source.",
             }))
+
+
+@pytest.mark.parametrize("profile", ["../escape", "has space", "Upper", "root", "a" * 65])
+def test_card_create_rejects_invalid_native_profile_names(fake_backend, profile):
+    with pytest.raises(cp.ControlPlaneError, match="card_create_profile_invalid"):
+        asyncio.run(cp.card_create(create_args(runtime={"kind": "hermes", "mode": "delegate", "profile": profile}), caller_card_id="builder-card"))
+    assert fake_backend == {}
+
+
+def test_selected_card_inspection_contains_full_configuration_and_revisions(fake_backend):
+    result = asyncio.run(cp.canvas_inspect({"projectId": "p", "deckId": "d", "cardId": "signals-card"}))
+    assert result["selectedCard"] == DECK["nodes"][0]
+    assert result["deckRevision"] == "rev1"
+    assert result["selectedCard"]["_cardRevisionId"] == "revision:signals-card"
+    assert fake_backend == {}

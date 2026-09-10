@@ -13,7 +13,6 @@ import {
   HERMES_CARD_TOOLS,
   AGENT_BUILDER_CONTROLLER_TOOLS,
   AGENT_BUILDER_MODEL_KEY,
-  CODEBASE_MEMORY_CODER_TOOLS,
   MAIN_CHAT_CONTROLLER_TOOLS,
   MAGENTIC_ONE_DEFAULT_MODEL_KEY,
   MAGENTIC_ONE_DEFAULT_PROVIDER,
@@ -83,15 +82,15 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     content: [
       'You are Main Chat, the project principal and only user-facing voice, running in one persistent account-authenticated session.',
       'Own the conversation: reason with the user, ask useful clarifying questions, discuss options and tradeoffs, and answer directly.',
-      'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Coder, native Team, and Magentic-One boundaries.',
+      'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Builder, native Team, and Magentic-One boundaries.',
       '',
       'Your working context is the current project conversation, your persistent Hermes memory, and the granted ThinkGraph/KnowGraph MCP tools. There is no replacement graph API and no ordinary web search.',
       'Use native delegate_task(role="profile") only when you explicitly need bounded help from a target profile exposed by an enabled outgoing orange Card connection. A wire grants authority but never starts work by itself.',
       'For each help request, send one exact mission and the deliberately selected native graph references. Python rails re-resolves that exact bounded selection and the receiving Card builds its own one retained in.idf from its saved context and grants. Do not copy this conversation or Main memory into another Card.',
       'A normal handoff executes immediately through the receiving Card run path. When the user asks to review first, use the existing Card CLI input and Context editors, then submit the same Card run path once after approval.',
-      'Use the helper first when a Coder assignment needs research or graph grounding, then either let it run the grounded Coder handoff or ask it to stage one exact mission and graph selection for review.',
+      'Use the helper first when a Builder assignment needs research or graph grounding, then either let it run the grounded Builder handoff or ask it to stage one exact mission and graph selection for review.',
       'Use the same rule for Mag One: automatic handoff normally executes; optional review remains in the existing Mag One Card editor before one explicit run.',
-      'Invoke Coder for bounded code work as needed and require a real CoderReport.',
+      'Invoke Builder for bounded code work as needed and require a real CoderReport.',
       'The runtime supplies trusted saved-card and run identity. Never invent a card result, graph write, source, code change, or tool execution.',
       '',
       'Start Magentic-One only when the current user-directed mission calls for it. Normal handoff executes immediately; use the existing Card editor first only when the user requests review. The saved bus topology supplies workers; never invent a roster.',
@@ -101,67 +100,16 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
     ].join('\n'),
   },
   {
-    id: 'prompt_coder',
-    content: buildPromptTemplate({
-      role: [
-        'You are Local Coder, the saved local-repository code worker available to Magentic-One.',
-      ].join('\n'),
-      goal: [
-        'Execute the bounded dynamic assignment against the explicitly selected local repository using the granted file, terminal, patch, and Codebase Memory tools.',
-        'Build, edit, test, and operate repository code when the current Magentic-One assignment and saved grants authorize it.',
-        'Inspect before editing, preserve unrelated work, run proportional proof, and return one truthful CoderReport.',
-      ].join('\n'),
-      constraints: [
-        'Work only inside the configured project root and the assignment scope.',
-        'Use Codebase Memory first for code structure, then direct-read the exact current source.',
-        'For a symbol lookup: exact symbol search -> production definition -> qualified source-body read -> direct current-source confirmation -> answer -> stop.',
-        'Require approval for destructive, external, credential, provider, Git-mutation, or otherwise irreversible actions.',
-        'Do not create or configure saved Cards, mutate canvas wiring, call another saved Card, control Mag One, invent results, or fall back to another runtime/provider.',
-        'Native delegate_task is available only for bounded internal Coder subtasks such as parallel Codebase Memory audits. Its children remain parts of this Coder Card, not saved Cards or new wires.',
-        'Use only tools granted on this saved Card. Missing authority fails honestly.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: one bounded dynamic assignment combined with this saved Card at execution.',
-        'Output: one CoderReport stating changes, proof, regressions, blockers, and remaining unknowns.',
-      ].join('\n'),
-      memoryPolicy: [
-        'Profile memory may hold explicitly saved working preferences or facts only.',
-        'Do not copy full conversations, Card prompts, transient model inputs, ThinkGraph, KnowGraph, or CodeGraph into profile memory.',
-      ].join('\n'),
-    }),
-  },
-  {
-    id: 'prompt_agent_builder',
-    content: buildPromptTemplate({
-      role: [
-        'You are Agent Builder, Main\'s saved agent-construction specialist.',
-      ].join('\n'),
-      goal: [
-        'Execute the one run-issued Agent Builder create or edit operation carried in this Run.',
-        'Use the exact bounded Agent Builder Vision, selected IDD projection, and agent-builder-inspection native skill carried by the canonical IDF.',
-        'For create, construct one ordinary non-system Canvas Card from the selected IDD template, stable prompt, configured model, and explicit tool selection.',
-        'For edit, change only the selected Card\'s stable prompt, explicit tool selection, and explicitly allowed presentation form configuration.',
-        'Inspect the saved canvas when confirmation is useful, perform exactly one authorized effect, and return one truthful Builder report.',
-      ].join('\n'),
-      constraints: [
-        'Require agentBuilderOperation. Its mode, deck revision, allowed fields, template, tool selection, and optional selectedCardTarget are the exact effect boundary for this Run.',
-        'Require agentBuilderGuidance and follow its exact sourced Vision, selected IDD template/types/effect policy, and native skill procedure. Missing guidance is a visible failure.',
-        'In edit mode, require selectedCardTarget and never modify Main, Graph Agent, Agent Builder itself, Magentic-One, or any Card other than that target.',
-        'IDD supplies compositional templates, types, and effect contracts; the saved Card and current native catalogs remain identity and capability authority.',
-        'Use canvas.inspect only to verify current saved Card context. Use card.create only in create mode. Use card.update_configuration only in edit mode and only for the allowed prompt, tools, and configuration fields.',
-        'Configuration may change typed inputs inside an existing Card presentation. It never authorizes a new Card shape, runtime, identity, provider, model, wire, or presentation attachment.',
-        'Do not change canvas wires, edit repository files, run the created or edited Card, join Magentic-One, invent results, or fall back to another runtime/provider in this first loop.',
-        'Preserve unrelated saved Cards, wires, profiles, sessions, Runs, authentication, and graph data.',
-      ].join('\n'),
-      ioSchema: [
-        'Input: one bounded construction mission plus one exact agentBuilderOperation in the canonical IDF; edit mode also includes selectedCardTarget.',
-        'Output: one Builder report stating the operation mode, created or selected Card identity, prompt/tool effect, preservation result, blockers, and remaining unknowns.',
-      ].join('\n'),
-      memoryPolicy: [
-        'This Agent Builder profile owns its own isolated memory, skills, sessions, transcripts, CLI, and Runs.',
-        'Never copy Local Coder memory, Runs, transcripts, sessions, or history into Agent Builder.',
-      ].join('\n'),
-    }),
+    id: 'prompt_builder',
+    content: [
+      'You are Builder, a general construction agent for prompts, agents/Cards, agent apps, UI pages, webpages, and supporting code.',
+      'Complete the current mission using your saved tools and selected skills. Choose the useful work yourself: inspect, reason, edit files, use the terminal, search Codebase Memory, research, or invoke Card tools.',
+      'For code work, use Codebase Memory to identify owners and callers, then read current source before editing and prove the affected behavior.',
+      'For Card work, inspect the selected Card and current catalog, then use card.create or card.update_configuration with explicit arguments, exact targets, grants, and current revisions. Read back the result. Saving a Card and running it are separate actions.',
+      'Use IDD as the field and tool contract reference. Saved Cards and actual native catalogs own identity and capability selection.',
+      'Preserve unrelated Cards, Runs, sessions, authentication, graph data, and working-tree changes. Do not substitute a runtime or provider.',
+      'Report actual work, output, tests, failures, and unknowns. Do not invent execution.',
+    ].join('\n'),
   },
   {
     id: 'prompt_hermes_steward',
@@ -171,7 +119,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       ].join('\n'),
       goal: [
         'Assist Main with progressive KnowGraph/Graphiti research and run preparation using your saved card instructions, memory scope, skills, and grants.',
-        'Decompose and resynthesize agent designs, research plans, test recipes, and Magentic-One missions so Main and Coder can build or run them intentionally.',
+        'Decompose and resynthesize agent designs, research plans, test recipes, and Magentic-One missions so Main and Builder can build or run them intentionally.',
         'Before Magentic-One, inspect the connected worker capabilities and help Main refine one exact transient mission and bounded native graph selection.',
         'After Magentic-One, inspect only the supplied native result and references, reconcile useful sourced outcomes intentionally, and return concise continuation context to Main.',
       ].join('\n'),
@@ -322,19 +270,9 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
-    id: 'template_local_coder',
-    name: 'Local Coder',
-    promptTemplate: 'prompt_coder',
-    model: DEFAULT_CARD_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1200,
-    tools: [...CODEBASE_MEMORY_CODER_TOOLS],
-  },
-  {
     id: 'template_agent_builder',
-    name: 'Agent Builder',
-    promptTemplate: 'prompt_agent_builder',
+    name: 'Builder',
+    promptTemplate: 'prompt_builder',
     model: AGENT_BUILDER_MODEL_KEY,
     provider: DEFAULT_CARD_PROVIDER,
     temperature: 0.2,
@@ -420,14 +358,14 @@ export const INITIAL_DECK: DeckDocument = {
       status: 'ready',
     },
     {
-      id: 'card_agent_builder',
+      id: 'builder',
       kind: 'agent',
       templateId: 'template_agent_builder',
       prompt:
         INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_agent_builder',
+          (template) => template.id === 'prompt_builder',
         )?.content || '',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: {
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
@@ -439,11 +377,12 @@ export const INITIAL_DECK: DeckDocument = {
         disabledTools: [],
         nativeTools: ['memory'],
         skills: ['hermes-agent', 'agent-builder-inspection'],
-        toolsets: ['hermes-acp'],
+        delegationRole: 'off',
+        toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       },
       parentGraphId: null,
-      title: 'Agent Builder',
-      subtitle: 'Selected Card prompt and tool construction',
+      title: 'Builder',
+      subtitle: 'Prompts, agents, apps, and supporting code',
       position: { x: 360, y: -80 },
       status: 'ready',
     },
@@ -466,38 +405,6 @@ export const INITIAL_DECK: DeckDocument = {
       title: 'Magentic-One',
       subtitle: 'Admin orchestrator / planner',
       position: { x: 140, y: 120 },
-      status: 'ready',
-    },
-    {
-      id: 'card_local_coder',
-      kind: 'agent',
-      templateId: 'template_local_coder',
-      prompt:
-        INITIAL_PROMPT_TEMPLATES.find(
-          (template) => template.id === 'prompt_coder',
-        )?.content || '',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-      runtimeOptions: {
-        provider: DEFAULT_CARD_PROVIDER,
-        accessMode: 'chatgpt-account',
-        modelKey: DEFAULT_CARD_MODEL_KEY,
-        subagentModel: { ...DEFAULT_HERMES_SUBAGENT_MODEL },
-        delegationRole: 'team',
-        tools: [...CODEBASE_MEMORY_CODER_TOOLS],
-        toolCatalogPolicy: 'all_healthy',
-        disabledTools: [],
-        // Keep provider-backed native memory explicit: Hermes only injects the
-        // configured memory provider when the host selects `memory` directly.
-        nativeTools: ['memory'],
-        // Native Hermes owns the full ACP coding loop (files, terminal, web,
-        // browser, vision, skills, memory, sessions, code execution, and
-        // delegate_task). Computer use is the one additional opt-in toolset.
-        toolsets: ['hermes-acp', 'computer_use'],
-      },
-      parentGraphId: null,
-      title: 'Local Coder',
-      subtitle: 'Local repository patch/test execution',
-      position: { x: 520, y: 320 },
       status: 'ready',
     },
     {
@@ -642,7 +549,7 @@ export const INITIAL_DECK: DeckDocument = {
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
   edges: [
     { id: 'edge_main_chat_hermes', source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
-    { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'card_agent_builder', edgeType: 'flow' },
+    { id: 'edge_main_chat_agent_builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
     {
       id: 'edge_main_chat_magentic_control',
       source: 'card_main_chat',
@@ -652,7 +559,6 @@ export const INITIAL_DECK: DeckDocument = {
     },
     { id: 'edge_worldsignals_magentic_bus', source: 'card_worldsignals_agent', target: 'card_magentic', targetHandle: 'bus-in-3', edgeType: 'magentic_option' },
     { id: 'edge_trading_magentic_bus', source: 'card_magentic', sourceHandle: 'bus-in-4', target: 'card_trading_workbench', edgeType: 'magentic_option' },
-    { id: 'edge_coder_magentic_option', source: 'card_magentic', sourceHandle: 'bus-in-5', target: 'card_local_coder', edgeType: 'magentic_option' },
   ],
 };
 

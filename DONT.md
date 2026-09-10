@@ -1,5 +1,44 @@
 # DONT.md — preserve the real product
 
+## September 10 Builder repair lessons
+
+- PLAN is human documentation only. The old bounded heading loader still leaked unrelated roadmap
+  text when headings changed. Removing the loader is proven by unchanged IDF bytes with PLAN
+  changed or missing; do not replace it with another automatic instruction loader.
+- Ordinary Builder work has no prefilled create/edit packet or run-bound effect target. Explicit
+  tool arguments, exact revisions, saved grants and readback remain required. IDF is retained.
+- Public Card inspection must return real revision metadata. A fixture containing internal revision
+  fields can conceal their absence from live deck reads; compare against actual saved readback.
+- Catalog tests must isolate native discovery. An unisolated catalog test can start another CBM
+  frontend. Preserve public/private publication assertions and native schemas rather than fixing a
+  stale catalog expectation by weakening boundaries.
+- A PTY mock whose kill never emits exit remains stopping. Use an isolated saved terminal identity
+  in its test; do not weaken production session reuse/stop handling to satisfy that fixture.
+- The owner authorized exact removal of two obsolete Cards and exclusively owned blockers. This
+  is not authority for a general history purge, unrelated Run deletion or permanent delete grants.
+  A stale persisted running status is not proof of a native active process or successful cancellation.
+
+A September 10 reload exposed an import-order regression: the shared Card-schema import was
+placed before MCP's existing package-path bootstrap. Pytest's configured PYTHONPATH masked it.
+Keep application imports after the one bootstrap and test an isolated script import with no
+PYTHONPATH. That regression was repaired before an owner-authorized additional canonical reload.
+
+Builder native startup installed its canonical `autonomous-ai-agents/hermes-agent` skill while
+an earlier identical root copy existed. IDD correctly rejected duplicate identity. Compare the
+copies before removing a redundant discovery entry; do not weaken uniqueness validation. The
+redundant copy is currently retained at `Hermes/.hermes/profiles/builder/duplicate-hermes-agent`
+because host policy rejected recursive deletion; it is outside native skill discovery.
+
+A clean native profile still needs the existing `liquidaity-card-mcp` integration plugin. An empty
+`plugins.enabled` list disables the only MainCliBridge registration path: a live Builder PTY then
+fails delivery before inference. Enable only that integration; do not copy an old profile's memory,
+credentials, prompt overrides or unrelated plugins, and do not replace the fail-closed bridge.
+
+A completed Builder Run exposed two different receipt issues. JavaScript `Number(null)` renders
+unknown cost/tool count as zero; preserve null separately from an actual measured zero. An unmapped
+historical Run can also block a later session transcript. Do not remove that privacy check merely to
+make a test readable: establish native attribution and preserve rejection of shared/unknown content.
+
 ## 1. Current mandatory prohibitions
 
 Restored at Jeremiah's request on 2026-09-05 after the documentation-system deletion in

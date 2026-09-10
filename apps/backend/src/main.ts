@@ -11,7 +11,6 @@ import { listenAfterRequiredMigrations } from "./db/migrations";
 import { runPythonOwnedStartupTasks } from "./startup/pythonOwnedStartup";
 import {
   coderTerminalSessionManager,
-  ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
   ensurePersistentBuilderTerminal,
 } from "./hermes/coderTerminal";
@@ -226,10 +225,8 @@ async function startServer() {
   try {
     const mainTerminal = ensurePersistentMainTerminal();
     console.log(`[BOOT] Main CLI ready profile=${mainTerminal.profile} pid=${mainTerminal.pid}`);
-    const terminal = ensurePersistentCoderTerminal();
-    console.log(`[BOOT] Coder terminal ready profile=${terminal.profile} pid=${terminal.pid}`);
   } catch (error) {
-    console.error(`[BOOT] Coder terminal failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[BOOT] Main CLI failed: ${error instanceof Error ? error.message : String(error)}`);
     await closeServer(server).catch(() => undefined);
     process.exitCode = 1;
     return;
@@ -238,7 +235,7 @@ async function startServer() {
     isActive: () => globalThis.__liquidaityBackendServer__ === server,
     startBuilder: async () => {
       const terminal = await ensurePersistentBuilderTerminal();
-      console.log(`[BOOT] Agent Builder CLI ready profile=${terminal.profile} pid=${terminal.pid}`);
+      console.log(`[BOOT] Builder CLI ready profile=${terminal.profile} pid=${terminal.pid}`);
     },
   })
     .then(({ discovered, started }) => {

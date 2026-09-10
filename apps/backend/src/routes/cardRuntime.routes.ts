@@ -60,8 +60,8 @@ const router = Router();
 export const mainRoutes = Router();
 export const hermesRoutes = Router();
 
-const CODER_CARD_ID = 'card_local_coder';
-const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
+const BUILDER_CARD_ID = 'builder';
+const BUILDER_PROFILE = 'builder';
 
 type RemoteMainDriverSource = Exclude<MainDriverSource, 'native_cli'>;
 
@@ -177,12 +177,6 @@ async function executePreparedMainCliRun(
       runtimeMode: turnArgs.runtime.mode,
       grantedTools: (turnArgs.grantedTools ?? turnArgs.tools)
         .filter((name) => name !== 'web_search'),
-      ...(turnArgs.buildTarget ? { effectTarget: {
-        cardId: turnArgs.buildTarget.cardId,
-        cardRevisionId: turnArgs.buildTarget.cardRevisionId,
-        deckRevision: turnArgs.buildTarget.deckRevision,
-      } } : {}),
-      ...(turnArgs.builderOperation ? { builderOperation: turnArgs.builderOperation } : {}),
     });
     rootExecutionContextId = rootContext.contextId;
     const hostProjection = buildHermesHostSessionProjection(
@@ -442,6 +436,13 @@ function resolveHermesTurnArgs(
   ) {
     throw new Error('prepared_hermes_transport_invalid');
   }
+  const retiredFields = ['builderOperation', 'agentBuilderOperation', 'buildTarget',
+    'selectedCardTarget', 'effectTarget', 'effectTargetCardId',
+    'effectTargetCardRevisionId', 'effectTargetDeckRevision']
+    .filter((field) => Object.prototype.hasOwnProperty.call(input, field));
+  if (retiredFields.length) {
+    throw new Error(`prepared_hermes_fields_retired:${retiredFields.join(',')}`);
+  }
   const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
   const scriptState = input.runtimeOptions?.script;
   const scriptCompiled = scriptState?.compiled;
@@ -458,61 +459,6 @@ function resolveHermesTurnArgs(
         && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(target.profile)
       ))
     : [];
-  const rawBuildTarget = input?.buildTarget;
-  const buildTarget = rawBuildTarget && typeof rawBuildTarget === 'object'
-    && !Array.isArray(rawBuildTarget)
-    && String(rawBuildTarget.cardId || '').trim()
-    && String(rawBuildTarget.cardRevisionId || '').trim()
-    && String(rawBuildTarget.deckRevision || '').trim()
-    ? {
-        cardId: String(rawBuildTarget.cardId),
-        cardRevisionId: String(rawBuildTarget.cardRevisionId),
-        deckRevision: String(rawBuildTarget.deckRevision),
-        title: String(rawBuildTarget.title || rawBuildTarget.cardId),
-        templateId: String(rawBuildTarget.templateId || ''),
-        role: String(rawBuildTarget.role || ''),
-        prompt: String(rawBuildTarget.prompt || ''),
-        outputContract: rawBuildTarget.outputContract,
-        runtime: rawBuildTarget.runtime && typeof rawBuildTarget.runtime === 'object'
-          ? rawBuildTarget.runtime : {},
-        runtimeOptions: rawBuildTarget.runtimeOptions && typeof rawBuildTarget.runtimeOptions === 'object'
-          ? rawBuildTarget.runtimeOptions : {},
-      }
-    : undefined;
-  const rawBuilderOperation = input?.builderOperation;
-  let builderOperation: Record<string, unknown> | undefined;
-  if (rawBuilderOperation !== undefined && rawBuilderOperation !== null) {
-    if (typeof rawBuilderOperation !== 'object' || Array.isArray(rawBuilderOperation)) {
-      throw new Error('prepared_agent_builder_operation_invalid');
-    }
-    const operation = rawBuilderOperation as Record<string, unknown>;
-    const mode = String(operation.mode || '');
-    const allowedFields = Array.isArray(operation.allowedFields)
-      ? operation.allowedFields.map(String)
-      : [];
-    const baseValid = (
-      ['create', 'edit'].includes(mode)
-      && Boolean(String(operation.deckRevision || '').trim())
-      && Boolean(String(operation.workspaceRoot || '').trim())
-      && allowedFields.length > 0
-    );
-    const createRuntime = operation.runtime;
-    const createValid = mode !== 'create' || (
-      typeof createRuntime === 'object'
-      && createRuntime !== null
-      && !Array.isArray(createRuntime)
-      && typeof (createRuntime as Record<string, unknown>).kind === 'string'
-      && typeof (createRuntime as Record<string, unknown>).mode === 'string'
-    );
-    const editValid = mode !== 'edit' || (
-      Boolean(String(operation.targetCardId || '').trim())
-      && Boolean(String(operation.targetCardRevisionId || '').trim())
-    );
-    if (!baseValid || !createValid || !editValid) {
-      throw new Error('prepared_agent_builder_operation_invalid');
-    }
-    builderOperation = structuredClone(operation);
-  }
   const script = scriptPresentation?.mode === 'script'
     && scriptState?.nativeSupport?.active === true
     && typeof scriptState?.source === 'string'
@@ -566,8 +512,6 @@ function resolveHermesTurnArgs(
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
     ...(script ? { script } : {}),
     ...(profileTargets.length ? { profileTargets } : {}),
-    ...(buildTarget ? { buildTarget } : {}),
-    ...(builderOperation ? { builderOperation } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
       args.conversationId,
@@ -629,14 +573,14 @@ type ConfiguredCardRunStatus = {
   activeWorkers: number;
   teamReceipt: ReturnType<typeof readHermesTeamReceipt>;
   elapsedMs: number;
-  toolCallCount: number;
+  toolCallCount: number | null;
   graphReads: number;
   graphWrites: number;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
-  costUsd: number;
+  costUsd: number | null;
   resultReady: boolean;
   output: string | null;
   errorCode: string | null;
@@ -647,6 +591,10 @@ type ConfiguredCardRunStatus = {
 function nonNegativeNumber(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : 0;
+}
+
+function nullableNonNegativeNumber(value: unknown): number | null {
+  return value === null || value === undefined ? null : nonNegativeNumber(value);
 }
 
 function readCardScriptToolExecution(events: HermesSessionEvent[]): {
@@ -811,14 +759,14 @@ async function readConfiguredCardRunStatus(args: {
     activeWorkers: nonNegativeNumber(run.activeWorkers),
     teamReceipt,
     elapsedMs,
-    toolCallCount: nonNegativeNumber(run.toolCallCount),
+    toolCallCount: nullableNonNegativeNumber(run.toolCallCount),
     graphReads,
     graphWrites,
     inputTokens: nonNegativeNumber(run.inputTokens),
     outputTokens: nonNegativeNumber(run.outputTokens),
     cachedTokens: nonNegativeNumber(run.cachedTokens),
     reasoningTokens: nonNegativeNumber(run.reasoningTokens),
-    costUsd: nonNegativeNumber(run.costUsd),
+    costUsd: nullableNonNegativeNumber(run.costUsd),
     resultReady: output !== null,
     output,
     errorCode: String(run.errorCode || '').trim() || null,
@@ -832,6 +780,14 @@ async function readConfiguredCardRunStatus(args: {
 // persistence. This route never rebuilds the model call.
 router.post('/run', async (req, res) => {
   const body = req.body || {};
+  const retiredFields = ['builderOperation', 'agentBuilderOperation', 'buildTarget',
+    'selectedCardTarget', 'effectTarget', 'effectTargetCardId',
+    'effectTargetCardRevisionId', 'effectTargetDeckRevision']
+    .filter((field) => Object.prototype.hasOwnProperty.call(body, field));
+  if (retiredFields.length) {
+    return res.status(400).json({ ok: false,
+      error: `card_run_fields_retired:${retiredFields.join(',')}` });
+  }
   const action = body.action;
   if (
     action !== 'execute'
@@ -995,7 +951,6 @@ router.post('/run', async (req, res) => {
     conversationId,
     dataAnchors: Array.isArray(body.dataAnchors) ? body.dataAnchors : [],
     images: Array.isArray(body.images) ? body.images : [],
-    builderOperation: body.builderOperation,
   };
 
   try {
@@ -1055,7 +1010,7 @@ router.post('/run', async (req, res) => {
     let nativeRuntimeResult: Awaited<ReturnType<typeof dispatchConfiguredRuntime>> | null = null;
     try {
       if (prepared.runtimeOwner === 'hermes'
-        && prepared.hermesTransport?.request?.runtime?.profile === AGENT_BUILDER_PROFILE) {
+        && prepared.hermesTransport?.request?.runtime?.profile === BUILDER_PROFILE) {
         const info = await ensureSavedBuilderTerminal({ projectId, deckId, cardId });
         const session = coderTerminalSessionManager.get(info.id);
         if (!session?.delivery) throw new Error('builder_cli_delivery_unavailable');
@@ -1084,7 +1039,7 @@ router.post('/run', async (req, res) => {
           deckId,
           conversationId,
           parentRunId: runId,
-          ...(cardId === CODER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
+          ...(cardId === BUILDER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
           onEvent: (event) => {
             // Preserve real child tool effects for the parent/UI observer. Text,
             // reasoning, and memory remain inside the child Hermes session.

@@ -128,49 +128,25 @@ describe('Hermes child execution attribution', () => {
     })).toThrow('hermes_execution_context_principal_mismatch');
   });
 
-  it('retains one exact Agent Builder effect target through native children', async () => {
+  it('inherits Builder identity and saved grants without a preselected effect target', async () => {
     const builder = registerHermesRootExecutionContext({
-      sessionId: 'builder-session',
-      runId: 'builder-run',
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      conversationId: 'builder-conversation',
-      cardId: 'card_agent_builder',
-      runtimeMode: 'delegate',
-      grantedTools: ['card.update_configuration'],
-      builderOperation: {
-        mode: 'edit',
-        deckRevision: 'deck-revision-one',
-        workspaceRoot: 'C:/Projects/agents',
-        allowedFields: ['prompt', 'tools'],
-        targetCardId: 'card_selected_target',
-        targetCardRevisionId: 'selected-target-revision-one',
-        prompt: 'Updated prompt',
-        tools: [],
-      },
-      effectTarget: {
-        cardId: 'card_selected_target',
-        cardRevisionId: 'selected-target-revision-one',
-        deckRevision: 'deck-revision-one',
-      },
+      sessionId: 'builder-session', runId: 'builder-run', projectId: 'project-1',
+      deckId: 'deck_builder', conversationId: 'builder-conversation', cardId: 'card_agent_builder',
+      runtimeMode: 'delegate', grantedTools: ['card.update_configuration', 'canvas.inspect'],
     });
     const child = await createHermesChildExecutionContext({
-      sessionId: 'builder-session',
-      parentExecutionContextId: builder.contextId,
-      nativeChildId: 'builder-helper',
-      request: vi.fn(persistRequestedRun),
+      sessionId: 'builder-session', parentExecutionContextId: builder.contextId,
+      nativeChildId: 'builder-helper', request: vi.fn(persistRequestedRun),
     });
-
-    expect(child).toMatchObject({
-      effectTargetCardId: 'card_selected_target',
-      effectTargetCardRevisionId: 'selected-target-revision-one',
-      effectTargetDeckRevision: 'deck-revision-one',
-      builderOperation: {
-        mode: 'edit',
-        targetCardId: 'card_selected_target',
-        targetCardRevisionId: 'selected-target-revision-one',
-      },
-    });
+    expect(child).toMatchObject({ cardId: builder.cardId, parentRunId: builder.runId,
+      rootRunId: builder.runId, grantedTools: ['canvas.inspect', 'card.update_configuration'] });
+    expect(child.runId).not.toBe(builder.runId);
+    for (const context of [builder, child]) {
+      expect(context).not.toHaveProperty('builderOperation');
+      expect(context).not.toHaveProperty('effectTargetCardId');
+      expect(context).not.toHaveProperty('effectTargetCardRevisionId');
+      expect(context).not.toHaveProperty('effectTargetDeckRevision');
+    }
   });
 
   it('keeps an ephemeral child on the originating saved Card with a distinct Run', async () => {

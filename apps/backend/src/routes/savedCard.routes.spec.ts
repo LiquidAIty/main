@@ -15,7 +15,6 @@ const router = express.Router()
   .use('/codegraph', codegraph);
 import * as executionContext from '../hermes/childExecutionContext';
 import {
-  ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
   ensureSavedBuilderTerminal,
   coderTerminalSessionManager,
@@ -38,10 +37,10 @@ const deckMocks = vi.hoisted(() => ({
           runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
         },
         {
-          id: 'card_agent_builder',
+          id: 'builder',
           kind: 'agent',
           templateId: 'template_agent_builder',
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
           runtimeOptions: {
             tools: ['card.create', 'card.update_configuration', 'canvas.upsert_wire'],
             nativeTools: ['memory'],
@@ -78,12 +77,12 @@ const chatSessionMocks = vi.hoisted(() => {
     deleteHermesHistory: vi.fn(async () => ({ sessionId: 'persisted-session', deleted: true })),
     readHermesHistory: vi.fn(async (): Promise<any> => ({ sessionId: null, messages: [] })),
     readHermesRunSnapshot: vi.fn((): any => null),
-    materializeHermesProfileSelections: vi.fn(async () => ({
+    materializeHermesProfileSelections: vi.fn(async (_args: unknown) => ({
       native: { name: 'default', toolsets: [], mcp_servers: [] },
     })),
     requestHermesNative: vi.fn(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'profiles.describe') return {
-        name: String(params?.name || 'liquidaity-agent-builder'),
+        name: String(params?.name || 'builder'),
         description: 'Agent Builder',
         soul: 'Build saved agents.',
         model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
@@ -294,43 +293,7 @@ const orchestratorMocks = vi.hoisted(() => {
       const mainChat = endpoint === '/domain/main/runs/begin';
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const graphAgent = cardId === 'card_hermes_steward';
-      const agentBuilder = cardId === 'card_agent_builder';
-      const builderTargetId = agentBuilder
-        ? String(body.builderOperation?.targetCardId || '').trim()
-        : '';
-      const preparedBuilderOperation = agentBuilder && body.builderOperation
-        ? body.builderOperation.mode === 'create'
-          ? {
-              mode: 'create',
-              deckRevision: 'deck-revision-one',
-              workspaceRoot: 'C:/Projects/agents',
-              cbmProject: null,
-              allowedFields: [
-                'templateId', 'title', 'role', 'prompt', 'runtime', 'model', 'tools',
-              ],
-              templateId: String(body.builderOperation.templateId || ''),
-              title: String(body.builderOperation.title || ''),
-              role: String(body.builderOperation.role || ''),
-              prompt: String(body.builderOperation.prompt || ''),
-              tools: Array.isArray(body.builderOperation.tools) ? body.builderOperation.tools : [],
-              runtime: { kind: 'hermes', mode: 'delegate' },
-              model: body.builderOperation.model,
-            }
-          : {
-              mode: 'edit',
-              deckRevision: 'deck-revision-one',
-              workspaceRoot: 'C:/Projects/agents',
-              cbmProject: null,
-              allowedFields: ['prompt', 'tools'],
-              templateId: 'template_assist',
-              title: 'Selected Assistant',
-              role: 'Selected specialist',
-              prompt: String(body.builderOperation.prompt || ''),
-              tools: Array.isArray(body.builderOperation.tools) ? body.builderOperation.tools : [],
-              targetCardId: builderTargetId,
-              targetCardRevisionId: `revision:${builderTargetId}`,
-            }
-        : undefined;
+      const agentBuilder = cardId === 'builder';
       const legacyKanban = cardId === 'card_legacy_kanban';
       const graphConfigured = graphAgent || legacyKanban;
       const coderCard = cardId === 'card_local_coder';
@@ -346,7 +309,7 @@ const orchestratorMocks = vi.hoisted(() => {
            state: 'running',
            runtimeKind: 'hermes',
            runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
-           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'liquidaity-agent-builder'
+           runtimeProfile: mainChat ? 'default' : agentBuilder ? 'builder'
              : graphConfigured ? 'liquidaity-hermes-steward' : 'coder',
            startedAt: new Date().toISOString(),
         });
@@ -400,20 +363,7 @@ const orchestratorMocks = vi.hoisted(() => {
           },
           dynamicContext: {
             task: String(mainChat ? body.message || '' : body.assignment || ''),
-            ...(preparedBuilderOperation
-              ? { agentBuilderOperation: preparedBuilderOperation }
-              : {}),
-            selectedCardTarget: builderTargetId ? {
-              cardId: builderTargetId,
-              cardRevisionId: `revision:${builderTargetId}`,
-              deckRevision: 'deck-revision-one',
-              title: 'Selected Assistant',
-              templateId: 'template_assist',
-              role: 'Selected specialist',
-              prompt: 'Old prompt',
-              runtime: { kind: 'autogen', mode: 'assistant' },
-              runtimeOptions: { tools: [] },
-            } : null,
+
           },
         },
         inputSummary: { idfBytes: 400 },
@@ -430,20 +380,6 @@ const orchestratorMocks = vi.hoisted(() => {
               ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
               : coderCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
             task: String(mainChat ? body.message || '' : body.assignment || ''),
-            buildTarget: builderTargetId ? {
-              cardId: builderTargetId,
-              cardRevisionId: `revision:${builderTargetId}`,
-              deckRevision: 'deck-revision-one',
-              title: 'Selected Assistant',
-              templateId: 'template_assist',
-              role: 'Selected specialist',
-              prompt: 'Old prompt',
-              runtime: { kind: 'autogen', mode: 'assistant' },
-              runtimeOptions: { tools: [] },
-            } : null,
-            ...(preparedBuilderOperation
-              ? { builderOperation: preparedBuilderOperation }
-              : {}),
             message: [
               graphConfigured
                 ? '## Resolved ThinkGraph\nNative bounded context for think-root-1.'
@@ -461,7 +397,7 @@ const orchestratorMocks = vi.hoisted(() => {
               : coderCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'coder' }
                 : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
-                    profile: agentBuilder ? 'liquidaity-agent-builder' : 'liquidaity-hermes-steward' },
+                    profile: agentBuilder ? 'builder' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -1007,7 +943,7 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
-        `${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=card_agent_builder`,
+        `${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=builder`,
       );
       expect(response.status).toBe(200);
       const payload = await response.json();
@@ -1029,32 +965,39 @@ describe('saved Card routes', () => {
     }
   });
 
-  it.each(['card_local_coder', 'card_main_chat'])(
-    'does not load the full Builder palette for ordinary Card %s', async (cardId) => {
-      orchestratorMocks.requestPythonRailsJson.mockClear();
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(
-          `${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=${cardId}`,
-        );
-        expect(response.status).toBe(503);
-        expect(await response.json()).toEqual({
-          ok: false,
-          error: 'input_data_dictionary_card_editor_unavailable',
-          fields: [],
-          catalogs: { 'configured-models': [] },
-        });
-        expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalledWith(
-          '/idd/card-editor/materialize',
-          expect.anything(),
-        );
-      } finally { await closeServer(server); }
-    },
-  );
+  it('loads the selected ordinary Hermes Card catalog using its actual profile', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=card_main_chat`);
+      expect(response.status).toBe(200);
+      const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
+      const body = JSON.parse(String(call?.[1]?.body));
+      expect(body.selectedIds).toContain('profile:default');
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+    } finally { await closeServer(server); }
+  });
+
+  it('returns the current catalog for an AutoGen Card without loading a Hermes profile', async () => {
+    deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [{ id: 'assistant',
+      templateId: 'template_assist', runtime: { kind: 'autogen', mode: 'assistant' },
+      runtimeOptions: { tools: ['canvas.inspect'] } }], edges: [] } } as any);
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=assistant`);
+      expect(response.status).toBe(200);
+      const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
+      const body = JSON.parse(String(call?.[1]?.body));
+      expect(body.selectedIds).toEqual(['template_assist', 'canvas.inspect']);
+      expect(body.nativeOptions.some((option: any) => option.kind === 'profile')).toBe(false);
+      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+    } finally { await closeServer(server); }
+  });
 
   it('projects native discovery and preserves missing saved selections without rewriting the Card', async () => {
     const card = { id: 'custom', templateId: 'template_agent_builder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: { tools: ['removed.tool'], nativeTools: [], provider: 'openrouter', modelKey: 'removed-model' } };
     const before = JSON.stringify(card);
     deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [card], edges: [] } } as any);
@@ -1070,13 +1013,13 @@ describe('saved Card routes', () => {
       const body = JSON.parse(String((call?.[1] as RequestInit).body));
       expect(body.selectedIds).toEqual([
         'template_agent_builder', 'removed.tool', 'model:openrouter:removed-model',
-        'profile:liquidaity-agent-builder',
+        'profile:builder',
       ]);
       expect(body.nativeOptions).toEqual(expect.arrayContaining([{
         id: 'new.tool', kind: 'tool', owner: 'native-source', source: 'native-source', available: true,
         schema: { type: 'object', properties: { q: { type: 'string' } } },
       }, expect.objectContaining({
-        id: 'profile:liquidaity-agent-builder', kind: 'profile', owner: 'Hermes', available: true,
+        id: 'profile:builder', kind: 'profile', owner: 'Hermes', available: true,
       })]));
       expect(JSON.stringify(card)).toBe(before);
     } finally { await closeServer(server); }
@@ -1226,12 +1169,12 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('binds an Agent Builder Run to one selected Card snapshot', async () => {
+  it('runs an ordinary Builder mission and forwards native usage once', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
     chatSessionMocks.materializeHermesProfileSelections.mockClear();
     const registration = vi.spyOn(executionContext, 'registerHermesRootExecutionContext');
-    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
+    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' });
     const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
     const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
       finalText: 'Builder reply', nativeSessionId: 'native-builder-session', nativeTurnId: 'builder-turn',
@@ -1249,15 +1192,7 @@ describe('saved Card routes', () => {
         body: JSON.stringify({
           projectId: 'project-1',
           deckId: 'deck_builder',
-          cardId: 'card_agent_builder',
-          builderOperation: {
-            mode: 'edit',
-            expectedDeckRevision: 'deck-revision-one',
-            targetCardId: 'card_selected_target',
-            targetCardRevisionId: 'revision:card_selected_target',
-            prompt: 'Updated prompt',
-            tools: [],
-          },
+          cardId: 'builder',
           correlationId: 'corr-builder-1',
           conversationId: 'main',
           input: 'Update the selected Card prompt and explicit tools.',
@@ -1270,13 +1205,8 @@ describe('saved Card routes', () => {
         ([endpoint]) => endpoint === '/domain/runs/begin',
       );
       expect(JSON.parse(String(beginCall?.[1]?.body || '{}'))).toMatchObject({
-        cardId: 'card_agent_builder',
-        builderOperation: {
-          mode: 'edit',
-          expectedDeckRevision: 'deck-revision-one',
-          targetCardId: 'card_selected_target',
-          targetCardRevisionId: 'revision:card_selected_target',
-        },
+        cardId: 'builder',
+        assignment: 'Update the selected Card prompt and explicit tools.',
       });
       expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(submit).toHaveBeenCalledOnce();
@@ -1291,46 +1221,29 @@ describe('saved Card routes', () => {
       });
       const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
       expect(registration).toHaveBeenCalledWith(expect.objectContaining({
-        cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
-        ...(projected.buildTarget ? { effectTarget: {
-          cardId: projected.buildTarget.cardId,
-          cardRevisionId: projected.buildTarget.cardRevisionId,
-          deckRevision: projected.buildTarget.deckRevision,
-        } } : {}),
+        cardId: 'builder', runtimeMode: 'delegate',
       }));
+      for (const value of [projected, registration.mock.calls[0][0]]) {
+        expect(value).not.toHaveProperty('builderOperation');
+        expect(value).not.toHaveProperty('buildTarget');
+        expect(value).not.toHaveProperty('effectTarget');
+      }
       expect((await response.json() as any).result.transport).toMatchObject({
         terminalSessionId: cli.id, threadId: 'native-builder-session',
       });
-      expect(chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0]).toMatchObject({
-        cardId: 'card_agent_builder',
-        builderOperation: {
-          mode: 'edit',
-          deckRevision: 'deck-revision-one',
-          workspaceRoot: 'C:/Projects/agents',
-          allowedFields: ['prompt', 'tools'],
-          prompt: 'Updated prompt',
-          tools: [],
-          targetCardId: 'card_selected_target',
-          targetCardRevisionId: 'revision:card_selected_target',
-        },
-        buildTarget: {
-          cardId: 'card_selected_target',
-          cardRevisionId: 'revision:card_selected_target',
-          deckRevision: 'deck-revision-one',
-        },
-      });
+
     } finally {
       registration.mockRestore();
       await closeServer(server);
     }
   });
 
-  it('binds an Agent Builder create Run to one template configuration', async () => {
+  it('runs a Builder construction mission without prewritten values and preserves unknown usage', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
     chatSessionMocks.materializeHermesProfileSelections.mockClear();
     const registration = vi.spyOn(executionContext, 'registerHermesRootExecutionContext');
-    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_agent_builder' });
+    const cli = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' });
     const delivery = coderTerminalSessionManager.get(cli.id)!.delivery!;
     const submit = vi.spyOn(delivery.bridge, 'submit').mockResolvedValue({
       finalText: 'Builder reply', nativeSessionId: 'native-builder-session', nativeTurnId: 'builder-create-turn',
@@ -1339,29 +1252,13 @@ describe('saved Card routes', () => {
     delivery.bridge.notePoll();
     const { server, baseUrl } = await createApiServer();
     try {
-      const model = {
-        provider: 'openai',
-        modelKey: 'gpt-5.6-luna',
-        providerModelId: 'gpt-5.6-luna',
-        accessMode: 'chatgpt-account',
-      };
       const response = await fetch(`${baseUrl}/cards/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: 'project-1',
           deckId: 'deck_builder',
-          cardId: 'card_agent_builder',
-          builderOperation: {
-            mode: 'create',
-            expectedDeckRevision: 'deck-revision-one',
-            templateId: 'template_assist',
-            title: 'New Assistant',
-            role: 'A bounded specialist',
-            prompt: 'Perform only the assigned specialist task.',
-            tools: ['web_search'],
-            model,
-          },
+          cardId: 'builder',
           correlationId: 'corr-builder-create-1',
           conversationId: 'main',
           input: 'Create one ordinary saved Assistant Card.',
@@ -1381,36 +1278,41 @@ describe('saved Card routes', () => {
       });
       const projected = chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0];
       expect(registration).toHaveBeenCalledWith(expect.objectContaining({
-        cardId: 'card_agent_builder', builderOperation: projected.builderOperation,
-        ...(projected.buildTarget ? { effectTarget: {
-          cardId: projected.buildTarget.cardId,
-          cardRevisionId: projected.buildTarget.cardRevisionId,
-          deckRevision: projected.buildTarget.deckRevision,
-        } } : {}),
+        cardId: 'builder', runtimeMode: 'delegate',
       }));
-      expect(chatSessionMocks.materializeHermesProfileSelections.mock.calls[0][0]).toMatchObject({
-        cardId: 'card_agent_builder',
-        builderOperation: {
-          mode: 'create',
-          deckRevision: 'deck-revision-one',
-          workspaceRoot: 'C:/Projects/agents',
-          allowedFields: [
-            'templateId', 'title', 'role', 'prompt', 'runtime', 'model', 'tools',
-          ],
-          templateId: 'template_assist',
-          title: 'New Assistant',
-          role: 'A bounded specialist',
-          prompt: 'Perform only the assigned specialist task.',
-          tools: ['web_search'],
-          runtime: { kind: 'hermes', mode: 'delegate' },
-          model,
-        },
-      });
+      for (const value of [projected, registration.mock.calls[0][0]]) {
+        expect(value).not.toHaveProperty('builderOperation');
+        expect(value).not.toHaveProperty('buildTarget');
+        expect(value).not.toHaveProperty('effectTarget');
+      }
+
     } finally {
       registration.mockRestore();
       await closeServer(server);
     }
   });
+
+  it.each(['builderOperation', 'agentBuilderOperation', 'buildTarget', 'selectedCardTarget',
+    'effectTarget', 'effectTargetCardId', 'effectTargetCardRevisionId', 'effectTargetDeckRevision'])(
+    'rejects retired %s arguments before preparing or starting a Run', async (field) => {
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.startHermesTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/cards/run`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', deckId: 'deck_builder',
+            cardId: 'builder', correlationId: 'retired-packet',
+            conversationId: 'main', input: 'Inspect the saved Card.', action: 'execute',
+            [field]: { mode: 'edit' } }),
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ ok: false,
+          error: `card_run_fields_retired:${field}` });
+        expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
+        expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
+      } finally { await closeServer(server); }
+    });
 
   it('rejects the retired Kanban Card mode without creating a native root', async () => {
     chatSessionMocks.startHermesTurn.mockClear();
@@ -1579,6 +1481,45 @@ describe('saved Card routes', () => {
         expect(payload.result).toBeNull();
         expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledTimes(1);
       }
+    } finally { await closeServer(server); }
+  });
+
+  it.each([
+    { label: 'unknown', raw: null, expected: null },
+    { label: 'explicit zero', raw: 0, expected: 0 },
+  ])('preserves $label configured-Run cost and tool count', async ({ label, raw, expected }) => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    const runId = `usage-${label.replace(' ', '-')}`;
+    orchestratorMocks.runRecords.set(runId, {
+      runId,
+      correlationId: runId,
+      projectId: 'p',
+      deckId: 'd',
+      cardId: 'builder',
+      runtimeKind: 'hermes',
+      runtimeMode: 'delegate',
+      runtimeProfile: 'builder',
+      state: 'completed',
+      finalResult: 'Done.',
+      startedAt: '2026-09-10T12:00:00Z',
+      finishedAt: '2026-09-10T12:00:01Z',
+      toolCallCount: raw,
+      totalCostUsd: raw,
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'status', inspectOnly: true,
+          projectId: 'p', deckId: 'd', runId }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: { runId, toolCallCount: expected, costUsd: expected },
+      });
     } finally { await closeServer(server); }
   });
 
@@ -1921,12 +1862,12 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('exposes only the startup-owned saved Coder Hermes CLI ConPTY', async () => {
+  it('exposes only the saved Builder Hermes CLI ConPTY', async () => {
     ptyMocks.spawn.mockClear();
     mcpClientMocks.resolvePythonAgentMcpServerSpec.mockClear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
     chatSessionMocks.startHermesTurn.mockClear();
-    const startupSession = ensurePersistentCoderTerminal();
+    const startupSession = await ensureSavedBuilderTerminal({ projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'builder' });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/hermes/terminal/sessions`);
@@ -1936,10 +1877,10 @@ describe('saved Card routes', () => {
       expect(payload.sessions).toEqual(expect.arrayContaining([
         expect.objectContaining({
           id: startupSession.id,
-          ownerCardId: 'card_local_coder',
+          ownerCardId: 'builder',
           state: 'running',
           transportMode: 'pty',
-          profile: 'coder',
+          profile: 'builder',
           runtimeSource: 'repository_hermes_cli',
           executable: expect.stringMatching(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/),
           hermesHome: expect.stringMatching(/Hermes[\\/]\.hermes$/),
@@ -1949,7 +1890,7 @@ describe('saved Card routes', () => {
       expect(ptyMocks.spawn).toHaveBeenCalledTimes(1);
       expect(ptyMocks.spawn.mock.calls[0]?.[0]).toMatch(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/);
       expect(ptyMocks.spawn.mock.calls[0]?.[1]).toEqual([
-        '-p', 'coder',
+        '-p', 'builder',
         'chat',
         '--cli',
         '--in', expect.any(String),
@@ -1994,7 +1935,7 @@ describe('saved Card routes', () => {
     }));
     chatSessionMocks.startHermesTurn.mockClear();
     const spawnCount = ptyMocks.spawn.mock.calls.length;
-    const startupSession = ensurePersistentCoderTerminal();
+    const startupSession = await ensureSavedBuilderTerminal({ projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'builder' });
     expect(ptyMocks.spawn).toHaveBeenCalledTimes(spawnCount);
     const child = ptyMocks.children.find((candidate) => candidate.pid === startupSession.pid);
     if (!child) throw new Error('startup_terminal_child_missing');

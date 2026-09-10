@@ -6,7 +6,6 @@ import { resolveRepoRoot } from '../coder/workspaceRoot';
 import {
   HermesCoderTerminalManager,
   HermesCoderTerminalSession,
-  ensurePersistentCoderTerminal,
   ensurePersistentMainTerminal,
   ensureSavedBuilderTerminal,
   type ConsoleSessionInfo,
@@ -44,7 +43,7 @@ class FakePty {
 function sessionInfo(): ConsoleSessionInfo {
   return {
     id: 'coder_terminal_test',
-    ownerCardId: 'card_local_coder',
+    ownerCardId: 'builder',
     projectId: 'project-1',
     deckId: 'deck_builder',
     conversationId: 'main',
@@ -53,7 +52,7 @@ function sessionInfo(): ConsoleSessionInfo {
     state: 'starting',
     runtimeSource: 'repository_hermes_cli',
     transportMode: 'pty',
-    profile: 'coder',
+    profile: 'builder',
     executable: null,
     hermesHome: null,
     interactiveSupported: true,
@@ -69,9 +68,9 @@ function sessionInfo(): ConsoleSessionInfo {
 function launch(onExit?: HermesCoderPtyLaunch['onExit']): HermesCoderPtyLaunch {
   return {
     executable: 'C:/repo/Hermes/venv/Scripts/hermes.exe',
-    args: ['-p', 'coder', 'chat', '--cli', '--in', 'C:/repo'],
+    args: ['-p', 'builder', 'chat', '--cli', '--in', 'C:/repo'],
     env: { HERMES_HOME: 'C:/repo/Hermes/.hermes' },
-    profile: 'coder',
+    profile: 'builder',
     hermesHome: 'C:/repo/Hermes/.hermes',
     onExit,
   };
@@ -81,6 +80,8 @@ const identity = {
   projectId: 'project-1',
   deckId: 'deck_builder',
   conversationId: 'main',
+  ownerCardId: 'builder',
+  profile: 'builder',
 };
 
 describe('Hermes Coder real PTY boundary', () => {
@@ -99,54 +100,31 @@ describe('Hermes Coder real PTY boundary', () => {
     expect(String(settings['python.defaultInterpreterPath'])).not.toMatch(/Hermes[\\/]/i);
   });
 
-  it('starts one idle persistent Coder terminal from the backend startup owner', () => {
-    const child = new FakePty();
-    const manager = new HermesCoderTerminalManager((() => child) as unknown as PtyFactory);
-    const launchPersistent = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
-
-    const first = ensurePersistentCoderTerminal(manager, launchPersistent);
-    const second = ensurePersistentCoderTerminal(manager, launchPersistent);
-
-    expect(first).toMatchObject({
-      ownerCardId: 'card_local_coder',
-      profile: 'coder',
-      state: 'running',
-      pid: 42,
-    });
-    expect(second.id).toBe(first.id);
-    expect(launchPersistent).toHaveBeenCalledOnce();
-  });
-
-  it('keeps one persistent Main CLI process distinct from the Local Coder CLI', () => {
+  it('keeps the persistent Main CLI distinct from a saved Builder CLI', async () => {
     const children = [new FakePty(), new FakePty()];
-    const manager = new HermesCoderTerminalManager(
-      vi.fn(() => children.shift()!) as unknown as PtyFactory,
-    );
-    const launchCoder = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
-    const launchMain = vi.fn((session: HermesCoderTerminalSession) => session.start({
-      ...launch(),
-      args: ['-p', 'liquidaity-main', 'chat', '--cli', '--in', 'C:/repo'],
-      profile: 'liquidaity-main',
-    }));
-
-    const coder = ensurePersistentCoderTerminal(manager, launchCoder);
+    const manager = new HermesCoderTerminalManager(vi.fn(() => children.shift()!) as unknown as PtyFactory);
+    const readDeck = vi.fn(async () => ({ deck: { workspaceRoot: process.cwd(), nodes: [{
+      id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
+    }] } as any, meta: { deckRevision: 'r', deckSavedAt: null } }));
+    const launchBuilder = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
+    const builder = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+      manager, readDeck, launchBuilder);
+    const launchMain = vi.fn((session: HermesCoderTerminalSession) => session.start({ ...launch(), profile: 'liquidaity-main' }));
     const main = ensurePersistentMainTerminal(manager, launchMain);
-    const sameMain = ensurePersistentMainTerminal(manager, launchMain);
-
-    expect(coder).toMatchObject({ ownerCardId: 'card_local_coder', profile: 'coder' });
+    expect(ensurePersistentMainTerminal(manager, launchMain).id).toBe(main.id);
+    expect(main.id).not.toBe(builder.id);
     expect(main).toMatchObject({ ownerCardId: 'card_main_chat', profile: 'liquidaity-main' });
-    expect(main.id).not.toBe(coder.id);
-    expect(sameMain.id).toBe(main.id);
-    expect(launchCoder).toHaveBeenCalledOnce();
+    expect(builder).toMatchObject({ ownerCardId: 'builder', profile: 'builder' });
     expect(launchMain).toHaveBeenCalledOnce();
+    expect(launchBuilder).toHaveBeenCalledOnce();
   });
 
-  it('reuses one saved Builder CLI across attachments without crossing into Coder', async () => {
+  it('reuses one saved Builder CLI across attachments without changing saved authority', async () => {
     const child = new FakePty();
     const factory = vi.fn(() => child) as unknown as PtyFactory;
     const manager = new HermesCoderTerminalManager(factory);
     const deck = { workspaceRoot: process.cwd(), nodes: [{
-      id: 'saved-builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder' },
+      id: 'saved-builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: { tools: ['canvas.inspect'], modelKey: 'saved-model' }, prompt: 'Saved prompt',
     }] } as any;
     const before = JSON.stringify(deck);
@@ -160,7 +138,7 @@ describe('Hermes Coder real PTY boundary', () => {
       ensureSavedBuilderTerminal(request, manager, readDeck, launchBuilder),
       ensureSavedBuilderTerminal(request, manager, readDeck, launchBuilder),
     ]);
-    expect(first).toMatchObject({ ownerCardId: 'saved-builder', profile: 'liquidaity-agent-builder',
+    expect(first).toMatchObject({ ownerCardId: 'saved-builder', profile: 'builder',
       projectId: 'project-1', deckId: 'deck_builder', runtimeSource: 'repository_hermes_cli', state: 'running' });
     expect(first.id).toBe(second.id);
     expect(launchBuilder).toHaveBeenCalledOnce();
@@ -179,9 +157,9 @@ describe('Hermes Coder real PTY boundary', () => {
     const launchBuilder = vi.fn();
     const manager = new HermesCoderTerminalManager();
     for (const nodes of [[],
-      [{ id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' } }],
+      [{ id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'foreign' } }],
       ['builder', 'other'].map((id) => ({ id, runtime: {
-        kind: 'hermes', mode: 'delegate', profile: 'liquidaity-agent-builder',
+        kind: 'hermes', mode: 'delegate', profile: 'builder',
       } })),
     ]) {
       const readDeck = vi.fn(async () => ({ deck: { nodes, workspaceRoot: process.cwd() } as any,
@@ -198,6 +176,7 @@ describe('Hermes Coder real PTY boundary', () => {
       projectId: '',
       deckId: '',
       conversationId: '',
+      ownerCardId: '', profile: '',
     });
     expect(result).toEqual({
       ok: false,
@@ -224,7 +203,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
     expect(factory).toHaveBeenCalledWith(
       'C:/repo/Hermes/venv/Scripts/hermes.exe',
-      ['-p', 'coder', 'chat', '--cli', '--in', 'C:/repo'],
+      ['-p', 'builder', 'chat', '--cli', '--in', 'C:/repo'],
       expect.objectContaining({
         cwd: process.cwd(),
         env: { HERMES_HOME: 'C:/repo/Hermes/.hermes' },
@@ -237,7 +216,7 @@ describe('Hermes Coder real PTY boundary', () => {
       pid: 42,
       executable: 'C:/repo/Hermes/venv/Scripts/hermes.exe',
       hermesHome: 'C:/repo/Hermes/.hermes',
-      profile: 'coder',
+      profile: 'builder',
     });
   });
 

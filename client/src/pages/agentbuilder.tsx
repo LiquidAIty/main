@@ -356,7 +356,7 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes'
       && card.runtime.mode === 'delegate'
-      && card.runtime.profile === 'liquidaity-agent-builder'
+      && card.runtime.profile === 'builder'
     )) || null,
     [deck.nodes],
   );
@@ -1245,7 +1245,7 @@ export default function AgentBuilder(): React.ReactElement {
             return next;
           });
           if (card.runtime.kind === 'hermes'
-            && card.runtime.profile === 'liquidaity-agent-builder') {
+            && card.runtime.profile === 'builder') {
             setDeckReloadToken((current) => current + 1);
           }
         }
@@ -1691,16 +1691,18 @@ export default function AgentBuilder(): React.ReactElement {
                     registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
-                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile.toLowerCase() === 'coder'
-                        ? <div data-testid="local-coder-card-terminal">
+                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile === 'builder'
+                        ? <div data-testid="builder-card-terminal">
                              {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
                              <div style={{ height: 360, minHeight: 240 }}>
                                <CoderTerminalPanel
                                  open
                                  placement="docked"
-                                 title="Local Coder CLI"
-                                 testIdPrefix="local-coder-cli"
-                                 ownerCardId="card_local_coder"
+                                 title="Builder CLI"
+                                 testIdPrefix="builder-cli"
+                                 ownerCardId={selectedCard.id}
+                                 savedCard={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
+                                   cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
                                  cardIdentity={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
                                    cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
                                  cardRun={standaloneTestResult}
@@ -1910,7 +1912,7 @@ export default function AgentBuilder(): React.ReactElement {
           <CoderTerminalPanel
             key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
             open
-            title="Agent Builder"
+            title="Builder"
             placement="docked"
             testIdPrefix="agent-builder-terminal"
             ownerCardId={agentBuilderCard.id}

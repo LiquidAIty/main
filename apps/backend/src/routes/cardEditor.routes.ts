@@ -10,7 +10,6 @@ import { requestHermesNative } from '../hermes/mainAdapter';
 
 const router = Router();
 export const iddRoutes = Router();
-const AGENT_BUILDER_PROFILE = 'liquidaity-agent-builder';
 
 function commaSeparatedIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean);
@@ -40,18 +39,11 @@ async function loadInputDictionaryToolCatalog() {
   return indexToolCatalogReferences(materialized.references as ToolCatalogReference[]);
 }
 
-async function builderNativeOptions(projectId: string, deckId: string, cardId: string) {
+async function cardNativeOptions(projectId: string, deckId: string, cardId: string) {
   if (!projectId || !deckId || !cardId) return { nativeOptions: [], selectedIds: [] };
   const { deck } = await getDeckDocument(projectId, deckId);
   const card = deck?.nodes.find((node) => node.id === cardId);
   if (!deck || !card) throw new Error('card_not_found');
-  if (
-    card.runtime.kind !== 'hermes'
-    || card.runtime.mode !== 'delegate'
-    || card.runtime.profile !== AGENT_BUILDER_PROFILE
-  ) {
-    throw new Error('agent_builder_card_required');
-  }
   const saved = card.runtimeOptions || {};
   const selectedIds = [card.templateId, ...(saved.tools || []),
     ...(saved.nativeTools || []).map((name) => 'hermes:tool:' + name),
@@ -65,6 +57,7 @@ async function builderNativeOptions(projectId: string, deckId: string, cardId: s
     id: tool.name, kind: 'tool', owner: tool.sourceId, source: tool.sourceId,
     schema: tool.inputSchema, available: tool.available !== false,
   }));
+  if (card.runtime.kind !== 'hermes') return { nativeOptions: options, selectedIds };
   const { native } = await hydrateHermesCardProfile(card, deck);
   const [tools, plugins] = await Promise.all([
     requestHermesNative('tools.show', {}, card.runtime.profile),
@@ -119,7 +112,7 @@ iddRoutes.get('/card-editor', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         models: listConfiguredModelOptions(openaiDefault),
-        ...await builderNativeOptions(
+        ...await cardNativeOptions(
           String(req.query.projectId || ''), String(req.query.deckId || ''), String(req.query.cardId || ''),
         ),
       }),

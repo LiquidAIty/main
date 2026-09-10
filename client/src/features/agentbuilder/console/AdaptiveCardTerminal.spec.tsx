@@ -66,12 +66,11 @@ describe('ordinary saved Card adaptive terminal', () => {
     expect(screen.getByText('failed')).toBeTruthy();
   });
 
-  it('uses canonical runtime bindings and keeps Main and Coder on their specialized surfaces', () => {
-    expect(usesAdaptiveCardTerminal('agent', runtime)).toBe(true);
-    for (const specialized of [
-      { kind: 'hermes', mode: 'main', profile: 'main' },
-      { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-    ] as CardRuntime[]) expect(usesAdaptiveCardTerminal('agent', specialized)).toBe(false);
+  it('uses runtime kind and mode without interpreting a delegate profile name', () => {
+    for (const profile of ['research', 'builder', 'coder']) {
+      expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'delegate', profile })).toBe(true);
+    }
+    expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'main', profile: 'main' })).toBe(false);
     expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'kanban', profile: 'anything' })).toBe(true);
     for (const mode of ['assistant', 'magentic_one'] as const) {
       expect(usesAdaptiveCardTerminal('agent', { kind: 'autogen', mode })).toBe(true);
