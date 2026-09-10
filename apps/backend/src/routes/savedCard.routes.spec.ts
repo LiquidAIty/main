@@ -3,9 +3,11 @@ import type { Server } from 'node:http';
 import { once } from 'node:events';
 import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
-// Static imports: NodeNext ESM rejects extensionless dynamic import('./coder.routes')
-// after the '.routes' infix strip. vitest hoists vi.mock() above these.
-import router from './coder.routes';
+import cardRuntime from './cardRuntime.routes';
+import cardEditor from './cardEditor.routes';
+import codegraph from './codegraph.routes';
+
+const router = express.Router().use(codegraph, cardEditor, cardRuntime);
 import * as executionContext from '../hermes/childExecutionContext';
 import {
   ensurePersistentCoderTerminal,
@@ -647,7 +649,7 @@ async function closeServer(server: Server): Promise<void> {
   });
 }
 
-describe('coder routes', () => {
+describe('saved Card routes', () => {
   it('observes the same ordinary Card Run through status without executing or rejoining another root', async () => {
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestPythonRailsJson.mockClear();

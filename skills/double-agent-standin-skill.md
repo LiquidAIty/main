@@ -28,6 +28,83 @@ to fit the test. An external stand-in is not the Hermes runtime, even when its m
 
 ## Preparation
 
+The current executable case list, budgets and approval status belong in
+[PLAN.md](../PLAN.md#controlled-agent-test-plan). This file is the reusable operating procedure.
+It coordinates existing Card Runs and, when authorized, one coding-agent stand-in; it installs
+no scheduler, runtime, instrumentation service or automatic agent team.
+
+### Choose the position explicitly
+
+| Position | Product intention | Evaluation intention | What it can prove |
+| --- | --- | --- | --- |
+| User of the real Card | Send the ordinary task through the approved UI/API doorway | Observe the real Run and user-visible result | Actual integration, subject to retained evidence |
+| Card stand-in | Perform that Card's job using its selected material and available equivalent tools | Explain useful/missing context and encountered defects separately | Reasoning/tool usability; native integration only if actually exercised |
+| Replay analyst | Inspect an existing input, output and receipt | Locate duplication, missing outputs and timing gaps | Retained-run evidence; no fresh behavior or causal speed improvement |
+
+Start with replay analysis when it answers the question without another model call. A stand-in
+that only criticizes a transcript has not performed the Card job. A real Card must receive ordinary
+user input, without evaluator instructions or a coached solution added to its saved prompt.
+
+### Bind a coding subagent to the actual Card
+
+This is the owner's primary diagnostic method, not a generic review delegation. After execution
+is approved, the supervisor uses its existing subagent facility to create one actor for the selected
+Card. Read the current Card and effective native request first. The Card's parent model selects
+the stand-in model; its bounded-child model applies only if the task actually exercises a child.
+Do not use yesterday's snapshot or the supervisor's model as a silent substitute.
+
+| Bind from current authority | Verify in the stand-in | If it cannot match |
+| --- | --- | --- |
+| Saved provider, parent model and effort | Explicit supported spawn selection and returned execution identity where available | Report the exact mismatch; no provider/model speed comparison |
+| Stable Card instructions and ordinary dynamic task | Supply relevant exact text separately; no whole parent-chat fork or edited task | Identify omitted or higher-priority host instructions; the stand-in cannot reproduce a native system role exactly |
+| Effective native/MCP tools and Script presentation | Resolve actual callable tools and compare argument/result schemas, defaults and errors | Mark unavailable tools or different interfaces; never mock a result or invent a tool alias |
+| Selected skill contents/index, graph references and relevant memory/history | Reuse the actual bounded material available for this case | Record missing or extra context before comparing answers |
+| Project, native IDs and authorized writes | Preserve identities and operate only on the approved scope | Use read-only/proposed operations if writes lack an isolated authorized target; label them unexecuted |
+
+Start the actor with no inherited conversation when supported, then provide only its Card role,
+task, selected evidence and compact evaluation instructions. This prevents this long engineering
+conversation, abandoned ideas and supervisor research from becoming its task context. Existing
+host system instructions still apply and may differ from Hermes; report that rather than claiming
+an exact clone. Do not reconstruct or persist a second IDF.
+
+Tool matching means executing the real operation through an available authenticated application
+tool, with its actual response and native IDs. Quoting its schema does not make it callable. A
+corresponding Codex web tool is not automatically equivalent to Hermes web search. If only a
+different doorway is available, explicitly name both and narrow the finding to what they share.
+Do not build proxy tools, wrappers or another MCP host to manufacture parity.
+
+An external subagent may inherit more host tools than the Card owns. Supply the selected allowed
+tool list, inspect its actual calls and disqualify a comparison that uses extra capabilities. A
+prompt restriction is not an enforced grant boundary and must not be described as one. Production
+Card grants remain unchanged. The actor never edits code, Cards or its own prompt to make its task
+pass unless that editing is the actual separately authorized role task.
+
+Dispatch once after the tool map is ready. While the actor performs the job, the supervisor owns
+the stopwatch, request/tool receipts and boundary verification. Do not repeatedly send hints or
+ask for status inside the actor's task. Preserve native events when available; if a Codex subagent
+does not expose first-token timing or provider usage, leave those fields unknown. Wall-clock timing
+alone cannot identify model latency.
+
+Give the actor this compact structure, with actual values filled from the verified case rather
+than a new persisted packet or a copied library manual:
+
+```text
+Position: stand in for the selected Card; complete its real task.
+Card/model/tool parity: verified values and explicit differences.
+Stable role: selected Card instructions.
+Task and evidence: unchanged ordinary request and bounded source material.
+Tools: actual callable names/contracts within the approved scope.
+Completion and stop: frozen task assertions, authorized writes and deadline.
+Return A: the useful product result with actual native references.
+Return B: separate observed context/tool defects and uncertainty; no product-memory writes.
+```
+
+The diagnostic intent changes the actor's input and may add output/time. Record its instruction
+and report size separately. Measure product completion before the diagnostic report where
+observable; otherwise report a combined duration. A double-agent finding can expose a bug without
+being a clean latency experiment. A claimed performance improvement needs the affected real Card
+case after a specific fix, with ordinary input and no added evaluator prompt.
+
 - Identify project, conversation, task, Card, and exact retained Run/input when applicable.
 - Read only relevant role instructions, selected context, and callable tool contracts. Inspect
   the actual saved/runtime input before calling it representative; do not invent a second IDF.
@@ -40,24 +117,93 @@ to fit the test. An external stand-in is not the Hermes runtime, even when its m
 
 ## Stopwatch and scale
 
-Record wall-clock start/end and relevant tool timings. Separate startup, queueing, inference,
-retrieval, and final delivery when receipts support it. Record input/output bytes or characters
-with units, tool calls, repeated requests, and provider input/output/cached/reasoning tokens
-where exposed. Unknown token usage is unknown, not zero; an external subagent is not free.
+### Before an authorized run
 
-Cached repeated input, duplicated material within one request, and repeated research are different
-findings. A large schema is not itself proof of waste. Report whether the agent needed the tool,
-whether the same information already existed, and whether it helped complete the task. Do not
-invent numerical attention, actually-used-token counts, or subjective precision scores.
+1. Select one case from the approved plan. Name its unresolved question, expected result,
+   permitted writes, services, hard deadline and token/call budget. If Docker is unavailable,
+   stop and tell the owner; do not start or repair it as part of this test.
+2. Record the current commit, Card ID, profile, provider/access mode, parent and child models,
+   reasoning setting, native tool names and schema hashes, selected skills, Script version,
+   history/session state and graph selection IDs. Read existing authority; do not change it.
+3. Use the actual retained `in.idf` and its native projection when available. Copying a task for
+   a stand-in is a test input, never a second runtime materializer or persisted Card definition.
+   Record omissions, transport differences and unavailable tools before interpreting results.
+4. Freeze the ordinary task and expected assertions before inspecting the new answer. Include
+   relevant negation, uncertainty and attribution from the real input. Preserve source dates.
+   Do not improve one arm's task with lessons learned from the other arm.
+5. Start a monotonic stopwatch immediately before submission. Record UTC alongside it for
+   correlation. Reuse native Run/tool/provider receipts; no new event bus or report database.
+
+### Perform, then evaluate
+
+Run the ordinary task once. Let the actor select its own useful granted tools. Observe without
+feeding it hints. If a stand-in is approved, give it the same task and material, and require two
+separate outputs: the product result first, then its diagnostic report. Keep that report in the
+coding conversation. Do not inject it into Main, a tool result, an episode or a graph memory.
+
+For a comparison, execute arms serially against equivalent starting state. One arm must not learn
+from the other's writes. Prefer retained inputs/read-only work; graph-write comparisons require
+an explicitly authorized isolated native workspace with actual source material. Never reset the
+user's graphs for parity. If isolation is unavailable, report the comparison inconclusive.
+
+Stop the same Run through its existing supported cancellation path at the predeclared deadline.
+Record whether cancellation actually completed and whether child work remains active. A timed-out
+status read is not proof that the child failed. Do not launch a replacement or continue increasing
+the deadline. Never change Builder's grants or runtime limits to implement a test budget.
+
+### Measurement record
+
+| Measure | Required distinction |
+| --- | --- |
+| Time | Submission, acceptance, first useful text, useful answer complete, each delegated result available; queue/startup separated where observable |
+| Input scale | UTF-8 bytes by retained-IDF section versus actual provider-request section; tokenizer name for estimates; unknown when unavailable |
+| Context sources | Stable Card instructions, tool schemas, native system/skills index, explicitly opened skills, selected graph data, memory, history, tool results, current task |
+| Usage | Per-request input, cached input, output and reasoning tokens from native receipts; aggregate once per request ID; mark inclusive counters to avoid double counting |
+| Tools | Requested name, actual interface/schema, elapsed time, result size, failure, repeat and native result IDs |
+| Cost | Provider/account receipt when exposed; otherwise unknown, with token totals. Cached input is not assumed free |
+| Parity | Same task, sources, model, effort, tools, context and starting state? List every difference, including runtime and cache warmth |
+
+For duplication, identify both exact locations in the **same final provider request**, their
+bytes and surviving canonical owner. Repeating stable context across requests, cached prefixes,
+large retained descriptors and repeating a completed research action are separate observations.
+Neither byte counts nor a successful tool call prove that the model used a fact correctly.
+
+Unknown usage is unknown, not zero; an external stand-in is not free. Explain whether the
+information helped the task without inventing attention measurements or actually-used-token counts.
 
 ## Job report
 
-**A. Position output:** the real user-facing result, with native references and sources where relevant.
+### Assess usefulness against the frozen task
 
-**B. Evaluation:** position/model/runtime; project/conversation/task; elapsed time; measurable input,
-retrieval and output sizes; token receipts or unknown; tool calls; duplicate work; useful/missing
-context; observed defects versus hypotheses; actual writes or missing capability; next discriminating
-check. Explain severity using the consequence, not a fabricated quality score.
+Check whether the result answers the actual question, distinguishes the user's intent from
+assistant suggestions, preserves uncertainty, uses supported facts, and enables the next useful
+action. For graph work, inspect entity identity, attributed notes, meaningful relationship
+predicates, provenance, update behavior and later retrieval. Node count and visual complexity
+are not quality criteria. An episode/source document is not automatically a useful entity.
+
+For each defect, retain its earliest supporting event, the affected input/output excerpt or
+native ID, practical consequence, confidence and one discriminating follow-up. Separate observed
+facts from suspected causes. An actor's self-evaluation is evidence to check, not independent truth;
+the supervising evaluator verifies it against receipts and actual results without another model
+call when possible.
+
+Use this compact report shape, outside the product:
+
+```text
+Case / position / Run IDs / commit:
+Task and expected assertions:
+Card, profile, provider, models, effort, tools, skills and Script:
+Parity differences and unavailable evidence:
+A. Product result and native references:
+B. Stopwatch events and input-size table:
+Actor diagnostic overhead / extra host capabilities used:
+Provider usage / tool calls / exposed cost:
+Assertions: pass | fail | inconclusive, with evidence:
+Observed defects; hypotheses kept separate:
+Product verdict / integration verdict:
+One recommended repair or next distinguishing test:
+Writes, remaining child work, cleanup and preserved state:
+```
 
 Useful defect categories: context, retrieval, execution, persistence, scope, authority, proof,
 visualization, attribution, and cost. Report the earliest evidenced failure, not merely its symptom.
@@ -65,9 +211,11 @@ Do not promote an evaluator's recommendation into an accepted design change.
 
 ## Keep the real task moving
 
-Repair a proven blocker within the authorized boundary and retest that case. Other observations
-stay in the report or the existing canonical plan when they merit follow-up. No duplicate fan-out
-just to reconfirm a finding, no new diagnostic store, no automatic report-to-graph ingestion.
+After one case, decide: keep the proven behavior; repair one evidenced defect within authorized
+scope; or stop on missing evidence. Repeat only the affected case after a material change. Do not
+run a model matrix or swarm to compensate for an unexplained failure. Promote a reusable lesson
+into the relevant skill only after evidence; store a demonstrated prevention rule in `DONT.md`.
+Keep current proof gaps in `PLAN.md`. No automatic report-to-graph or new task-document pipeline.
 
 Use actual native write tools only when writes are authorized for the test. Otherwise label proposed
 payloads unexecuted. Do not fabricate a successful operation or pollute production with fixtures.

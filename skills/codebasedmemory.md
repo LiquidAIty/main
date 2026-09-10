@@ -20,7 +20,9 @@ This is the canonical CBM skill. Do not create a second general CBM manual under
 
 Code Based Memory is a Tree-Sitter knowledge graph of the repository, exposed via MCP. It answers structural questions that grep cannot: who calls this, what breaks if I change this, which routes hit this handler, is this function dead.
 
-The research paper (arXiv 2603.27277, Vogel et al.) benchmarked CBM against file-exploration agents: 83% quality at 10x fewer tokens and 2.1x fewer tool calls. Graph queries resolve in <1ms vs 10-30s for file exploration.
+Do not use upstream benchmark claims as this application's latency or quality measurements.
+Measure the complete application-MCP call, including transport and response size, on the current
+checkout. Structural results can save exploration; they do not establish runtime correctness.
 
 CBM stores **relationships**, not source text. For exact text matching, use `rg`.
 
@@ -122,7 +124,7 @@ from filesystem freshness such as `metadata_changed`. Every result is best-effor
 not treat absence of a recorded issue as completeness proof.
 
 **index_repository** — Lifecycle maintenance, never discovery. Initial projection creation is an explicit
-application-MCP administrative operation. Normal freshness belongs to the upstream Docker watcher. The active
+application-MCP administrative operation. Normal freshness belongs to the upstream host watcher. The active
 agent does not call this tool during an ordinary coding response.
 
 **detect_changes** — Maps working-tree changes to affected symbols.
@@ -154,11 +156,18 @@ current task. It is an optional cold-start/broad-orientation tool, not a normal 
 
 **search_graph** — Locate symbols by name, label, file pattern.
 Parameters: `{"project":"C-Projects-LiquidAIty-main","query":"<name>","label":"Function"}`
-Uses BM25 ranking. Returns name, qualified_name, file_path, start_line, end_line, rank. Supports pagination with has_more. Prefer this over rg when the question concerns a symbol or structural entity. Use the `name` field (not qualified_name) for subsequent trace_path calls.
+Uses BM25 ranking or exact `name_pattern` matching. Current JSON results group rows by qualified-name
+prefix and file; inspect the returned columns before reading them as objects. Query text is ranked,
+not an exact-name absence check. Preserve returned names/qualified names and inspect `has_more`.
 
 **trace_path** — Inbound callers / outbound callees. This is the current MCP name.
 Parameters: `{"project":"C-Projects-LiquidAIty-main","function_name":"<simple-name>","direction":"inbound|outbound","depth":2}`
-Uses simple function names (the `name` field from search_graph), NOT qualified names. Returns caller/callee lists with hop distance. Depth 2 is usually sufficient. Depth 1 = direct, depth 2 = transitive. Known limitation: does not resolve Python functions or TypeScript dotted methods.
+Pass an actual returned name or qualified name, according to the live schema. September 9 recovery
+successfully traced the qualified Python `idf.runtime_projection` and TypeScript
+`mainAdapter.materializeHermesProfileSelections` identities. The old blanket Python/qualified-name
+prohibition is obsolete. Depth 1 is direct; larger depths include transitive callers. Check
+`truncated` and continue the returned cursor when complete neighbors are necessary. A Markdown
+Module is not a callable function; audit its links and discovery consumers directly.
 
 Some older documentation and older clients called this operation `trace_call_path`. Treat that as a
 historical alias only. The installed v0.10.8 MCP surface exposed to this repository is `trace_path`;
@@ -269,7 +278,7 @@ authority proves it remains required, and document that contract. Never leave an
 
 ## Cold Start & Performance
 
-The connected application MCP keeps one native frontend warm; the upstream Docker coordination daemon owns its
+The connected application MCP keeps one native frontend warm; the upstream host coordination daemon owns its
 watcher and embedded UI. Neither lifecycle depends on Hermes.
 
 Use one doorway per run: LiquidAIty's application-published `cbm.*` federation. It mechanically preserves
@@ -278,7 +287,7 @@ host CLI, or alternate facade. If the application doorway is unavailable, record
 use verified direct-source fallback.
 
 Independent bounded read operations may run concurrently through that same application-owned frontend,
-canonical Docker cache, and project; do not impose an arbitrary concurrency count. Dependent calls wait for
+canonical native projection, and project; do not impose an arbitrary concurrency count. Dependent calls wait for
 their prerequisites, and every mutation, initialization, indexing, deletion, and recovery operation remains
 sequential. Never launch a native process for discovery or concurrency.
 
@@ -550,8 +559,8 @@ When CBM returns `Transport closed`, times out, or exits:
 1. Stop equivalent retries.
 2. Identify which doorway was selected and inspect its owner once.
 3. Distinguish connector/process failure from query or index failure.
-4. Preserve the live owner's native child and stop only a proven orphan.
-5. Retry once only after a specific lifecycle repair.
+4. Preserve the live owner's native child. Ordinary discovery does not authorize stopping an orphan or repairing lifecycle.
+5. Retry only if a separately authorized owner repair has actually changed the failing condition.
 6. Use verified direct-source fallback when the index is ready but the connector remains unavailable.
 
 Do not repeatedly restart CBM. Do not repeatedly call `index_repository`. Do not compensate by
@@ -576,9 +585,9 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 
 ## LiquidAIty-Specific Patterns
 
-- **trace_path parameter**: Use simple function names (`materialize_invocation`), never qualified. The `name` field from search_graph is correct.
+- **trace_path parameter**: Use actual names returned by discovery; current qualified Python and TypeScript names work. Never manufacture a symbol from task prose.
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
-- **Python functions**: trace_path does not resolve them. Verify via source reads + rg.
+- **Python functions**: Current lookup resolves covered functions. Missing dynamic calls and excluded paths still need source reads and focused searches.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
 - **Protected/excluded dirs**: autogen-main/, worldsignal/, Kronos-main/,
   services/esn_rls/, and EDGAR caches are off-limits for cleanup. Verify index coverage rather

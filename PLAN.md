@@ -50,6 +50,495 @@ latency and context usefulness, current all-Card model measurements, and useful 
 behavior remain unproven. Continue with `skills/conversation-graph-acceptance.md`; it no longer directs
 tests through deleted automatic completed-pair code. Magentic-One remains on hold.
 
+## Recovery scope
+
+The September 9 recovery scope is defined by the controlled test plan below. Graph layout is
+locked at saved baseline `5e86802162f380aa876a9348e862b2dfced7a372`. Historical graph experiments
+later in this document explain prior observations; they do not authorize resetting data or
+restoring their renderer. No new model benchmark is authorized until the owner approves cases.
+
+## Recovery audit and documentation ownership
+
+Local `main` and the local `origin/main` reference matched `5e868021` with a clean worktree at
+2026-09-10 02:23:49 UTC; no fetch was needed or performed. The source map in `ARCHITECTURE.md`
+is the entry point for unfamiliar features/libraries. `AGENTS.md` owns execution law, `DONT.md`
+owns demonstrated failure lessons, and relevant `skills/*.md` own reusable methods. Keep precise
+source references and current/target distinctions rather than another generated feature wiki.
+
+### Restored procedure review
+
+All fourteen paths deleted by `2ddadeeb` are present in the pushed baseline. Each was directly
+read. Their consumer is the coding agent selecting a relevant procedure through repository law
+and links; this is not evidence that Hermes loaded it. `materializeHermesProfileSelections`
+uses saved selections and the installed native profile; restoring these files changes neither.
+The table classifies current guidance, not the removed historical runtime.
+
+| File under `skills/` | Disposition | Intended consumer / distinct use | Stale material and action |
+| --- | --- | --- | --- |
+| `catalyst-research-case.md` | keep | Requested event/issuer research; source mechanism and dates | Old assembler/seed commands already marked retired; preserve |
+| `codegraph.md` | keep | Coding context selection and native provenance | Delegates detailed discovery to CBM skill; no second manual |
+| `coder-report-protocol-skill.md` | keep | Implementer reporting evidence and preservation | Automatic reports-to-graph already removed |
+| `double-agent-standin-skill.md` | refresh | Main/worker actor plus separate evaluator | Expanded position, parity, stopwatch, scale, quality, stop and retest protocol; no test run yet |
+| `graph-context-prompt-writer-skill.md` | keep | Authoring a bounded task and selected evidence | Current sole IDF owner; no old importer prerequisite |
+| `how-to-run-a-test-skill.md` | keep | Choosing a real UI/runtime versus mechanical test | Old Main-as-Mag-One assumption retired; CLI needs its own actual task |
+| `issuer-evidence-case-loop.md` | keep | Requested company research and attribution | Retains evidence discipline without mandatory dossier or future trading work |
+| `knowgraph-skill-ingestion-skill.md` | merge candidate | Maintainer publishing an explicitly selected procedure | Misleading historical name retained; current file/profile publication overlaps `skillgraph`; no deletion now |
+| `knowgraph-skill-retrieval-skill.md` | keep | Selecting a relevant procedure with bounded context | Clearly separates catalog descriptions from loaded content and facts |
+| `knowgraph.md` | keep | Sourced research/Graphiti intake and recall | Current native read family and intake path; fetch/parse proof still required |
+| `no-fake-surfaces-skill.md` | keep | Verifying graph/inspector/activity claims | Native evidence and real usability; not permission to edit locked layout |
+| `skill-packet-fable-handoff-skill.md` | keep | Bounded coding handoff; Builder versus Local Coder | Historical name explicitly does not select a Fable runtime |
+| `skillgraph-neo4j-indexing-skill.md` | retire candidate, retain reference | Historical recovery/code-wiki assessment only | Already `@status reference`; no active indexer consumer claimed; linked historical guidance retained |
+| `skillgraph.md` | keep | Procedure maintenance and evaluating future code-wiki benefit | Explicitly no automatic wiki/import runtime; source/profile owners retained |
+
+No skill was renamed, merged, deleted or attached to a Card in this audit. Metadata/link checks
+are structural validation; useful behavior still requires the approved cases below. The existing
+CBM guide was corrected where it said Docker owned its host watcher and Python/qualified-name
+tracing could not work. Current published calls disproved those claims. Old performance numbers
+were removed as local expectations; actual application call timing is the relevant measurement.
+
+### Main input evidence
+
+Retained Run `req_387c8e83` used
+`runtime/run-inputs/3e538b675b29088f409599814850c8a855da4a407102776ce9f380a2bcfcda52/in.idf`.
+Its serialized tool definitions measured 22,299 characters; selected-tools/grants 24,479;
+stable Card context 16,978; dynamic context 529. These are serialized character counts, not
+tokens or UTF-8 byte measurements. Actual instructions were 8,627 characters; task 423.
+The graph `modelText` was empty. This does not establish duplicated model input.
+
+The verified source chain is saved Card preparation → `card_domain._retain_run_idf` →
+`idf.materialize_idf`/reload → `runtime_projection` and `model_task`. The projection separates
+system prompt, task/graph message, settings and descriptors. Native Hermes constructs the skills
+index through `build_skills_system_prompt`, builds provider kwargs in `build_api_kwargs`, then
+applies transport preflight/middleware before `pre_api_request`. The existing native plugin's
+`on_pre_api_request` records tool names/schemas and counts; this is not a retained complete copy
+of every final provider message. Exact loaded prompt/history/memory duplication remains unproven.
+No schemas, Card prompts or capabilities were removed on the strength of retained file size.
+
+Verified historical Main configuration in that input: `card_main_chat`, profile `liquidaity-main`,
+OpenAI `chatgpt-account`, `gpt-5.6-sol`; selected native child model Luna. Presented tool IDs:
+`run_mag_one`, `card.load_graph_references`, `engraphis_ingest`, `web_search`,
+`engraphis_remember`, `engraphis_correct`, `engraphis_update_memory`, `engraphis_link`.
+Native selections: `memory`, `session_search`, `todo`, `skills_list`, `skill_view`, `web_extract`;
+skill selection `hermes-agent`. The Script wraps additional enabled read handles. This is a
+historical snapshot, not proof of today's effective catalog or a recommended grant change.
+
+### Historical removal audit boundary
+
+Verified anchors: `e6cd8a3f` (July 15 native graph views), `585a4e4d` (August 17 attention),
+`2a65be9c` (August 29 Main/Builder authority), `07ec833e` (Constellation introduction),
+`2ddadeeb` (skill deletion), and current `5e868021`. `DONT.md` retains the intervening timeline.
+Read-only history enumeration includes intermediate deletions, not only the endpoint diff.
+The bounded paths were Python model owners, `apps/constellation-engine`, knowledge components,
+`services/knowgraph` and `skills`. This is not an exhaustive audit of every repository symbol.
+
+| Removed boundary | Current finding / disposition |
+| --- | --- |
+| `cognition.py`, `deliver_completed_pair` | Deleted automatic replay; no current exact symbol result. Preserve explicit Main writes/delegation |
+| `constellation.py`, `apps/constellation-engine/bridge.cjs` | Retired adapter/bridge; current Engraphis owner retained; do not restore fallback |
+| `ConstellationSigmaSurface`, `constellationSigmaGraph`, `ThinkGraphInspector` | Retired visualization family; accepted current graph remains locked |
+| `graph_domain/contracts.py`, `executors.py`, `recipes.py` | Removed competing graph-operation layer; name search finds generic helpers in unrelated current owners, not evidence of dangling imports |
+| `thinkgraph_engraphis.py` | Earlier adapter removed during switch; native `engraphis.py`/`thinkgraph.py` now own the boundary; generic `_text`/`_timestamp` matches do not authorize deletion |
+| `services/knowgraph/skill_ingest.py` and tests | Retired Neo4j skill importer; restored documents explicitly retain file/profile ownership |
+| Fourteen deleted skills | Recovered at baseline; reviewed individually above |
+
+Python AST enumeration covered top-level functions/classes in removed Python files; text
+references were searched in current bounded source. It does not prove removal of nested symbols,
+dynamic external consumers or every JS export. CBM cannot inverse-trace nodes already absent;
+history and current registrations are required. No historical runtime was restored. The owner's
+subsequent route-organization request moved current editor/IDD helpers and handlers to
+`cardEditor.routes.ts`, CodeGraph read to `codegraph.routes.ts`, and remaining shared execution
+transport to `cardRuntime.routes.ts`. The old `coder.routes.ts` and test path are replaced;
+`routes/index.ts` and `savedCard.routes.spec.ts` consume the new owners. All 36 top-level
+function/route declarations match their former bodies exactly. Wider historical removals and
+further decomposition of the runtime module remain audit work, not permission for a purge.
+
+## Collaborator readiness and cleanup sequence
+
+### Outcome, scope and preservation
+
+The owner makes understandable, maintainable code a launch requirement. The requested result is
+a repository a collaborator can navigate, change and verify without reconstructing the migration
+history from chat. `coder.routes.ts` was an example of unclear ownership, not the sole cleanup
+target. Audit the connected application boundaries below for abandoned implementations, mixed
+responsibilities, duplicate authorities, misleading controls and explanatory text substituted for
+working behavior. A suspicious filename, a large module or a keyword match is an investigation
+lead, not sufficient evidence to delete code.
+
+This extends the earlier bounded recovery audit into an ordered cleanup programme. It does not
+claim that the wider audit has already happened. Work on one demonstrated defect at a time and
+finish its preservation checks before moving on. No blanket formatter, package upgrade, renamed
+public API, replacement framework or rewrite is part of this plan.
+
+Keep the accepted graph renderer, layout, physics, labels, controls and CSS locked at the saved
+baseline. Preserve graph records, Cards, prompts, models, grants, profiles, sessions, authentication,
+Main Chat and the Builder pull-up. Builder remains full Hermes; Local Coder remains a distinct
+saved Card with its own selected repository. CLI execution and model benchmarks remain outside
+the cleanup phase. Stable IDs and compatibility routes survive until a separately justified
+migration can preserve their actual consumers.
+
+The practical end of cleanup is a trustworthy Main/graph testing baseline plus an honest map of
+remaining repository debt. It is not zero TODOs or a claim that every vendor file was audited.
+Unrelated optional improvements can remain in `FUTURE.md`; unresolved defects in the selected
+user path cannot be hidden there to declare readiness.
+
+```mermaid
+flowchart TD
+    A[Current saved baseline and preservation checks] --> B[Map a feature from UI to native owner]
+    B --> C[CBM relationships plus complete current source]
+    C --> D{What does evidence show?}
+    D -->|Working and necessary| E[Keep and document]
+    D -->|Useful but mixed ownership| F[Separate at the existing boundary]
+    D -->|Abandoned or duplicate| G[Prove surviving owner and inverse uses]
+    D -->|Broken or uncertain| H[Reproduce the defect or record the missing proof]
+    G --> F
+    H --> I[Repair only the established cause]
+    F --> J[Focused tests and preservation checks]
+    I --> J
+    E --> K[Update source map and current status]
+    J --> K
+    K --> L{Selected cleanup checks complete?}
+    L -->|No| B
+    L -->|Yes| M[Review one Main benchmark before execution]
+```
+
+### Step 1 — Close the present checkpoint
+
+First resolve the two broader MCP catalog test failures already observed. Determine their exact
+failed assertions and compare them with the IDD publication contract, current catalog construction,
+authentication and filtering. Classify each as a production defect, a stale test assumption or an
+environment/fixture failure using evidence. Repair only the established mismatch. Retain assertions
+that private operations stay private and public schemas/security metadata are preserved; do not
+expose extra tools or weaken tests to get a green result. One focused retry follows a specific repair.
+
+The route separation has narrower proof: eight editor/IDD tests and production TypeScript checking
+pass, and all 36 moved top-level function/route bodies are unchanged. This is useful preservation
+evidence, but does not prove every execution or terminal route. Complete a route/mount inventory
+before splitting the remaining runtime file. Verify that each retained URL has one registration,
+the same authentication and request/response contract, and its existing consumer.
+
+Expected result: the current edit set has a classified test baseline, no unexplained new failure,
+and a reviewable changed-file manifest. Until that is true, this checkpoint is **partial** and is
+not described as ready to save simply because the code is shorter.
+
+### Step 2 — Trace features, not filenames
+
+For each row, trace the user action through its current consumer, route, Python/native owner,
+saved identity and observable result. Use the required CBM sequence before changing a production
+symbol. Read complete source for the changed boundary; record excluded/partial coverage and
+check dynamic registrations with direct source. Read Git history only where it answers which
+capability was lost, replaced or left connected.
+
+| Audit slice, in order | What to establish | Suspicious pattern to investigate | Current evidence and exit result |
+| --- | --- | --- | --- |
+| HTTP and saved Run transport | Route mount, authentication, current caller, receiving Card and native session owner | Multiple live entry paths, semantic decisions in transport, old Coder state shared with Builder | First three-module separation is checked; remaining runtime routes still need inventory. Exit with one documented owner per retained operation |
+| Agent Builder workspace and Card editor | Which component edits a saved Card, which displays a Run, where values persist and reload | Page-level feature accumulation, agent panels in unrelated inspectors, hardcoded role inference, copied option catalogs | Small `AgentBuilderWorkspace.tsx` is rendering structure; the large page is not yet fully audited. Exit with preserved working controls and source-backed responsibilities |
+| IDD, editor fields and Script controls | Same applicable definitions/defaults/catalog references reach the editor, Builder and template consumers | Parallel field lists, silent dropped values, whole Builder palette sent to an ordinary Run, a second IDF assembler | Selected editor tests pass; full consumer parity remains unproven. Exit with explicit supported fields and tested round trips for the affected ones |
+| Main input and Hermes adapter | Exact instructions, task, tools, skills, history and memory at the final provider request | Repeated schemas/content in one request, unnecessary code/manual injection, competing prompt assembly | Retained IDF and source chain inspected; final-request duplication not yet proved. Exit with measured sections and identified owners, or an explicit capture gap |
+| ThinkGraph and KnowGraph integration | One writer per native graph, intentional delegation, source attribution and later retrieval | Retired automatic replay, alternate graph adapters, report copies treated as entities, instruction-derived writes | Named Constellation/replay residue scan completed within its stated scope. Extend integration checks only; graph visuals and retained data stay untouched |
+| Product controls and explanatory text | Real action/state behind each control in the audited surfaces | Decorative capability claims, fake status, task prose shown as a control, unused panels or sample defaults in production | No repository-wide claim of absence. Trace matches to rendering and real state before removal; preserve ordinary useful labels, errors and upstream behavior |
+| GPT MCP entrance and restored skills | Current tool publication, canonical handlers, correct procedure discovery and current links | Stale tool names, duplicated catalogs, obsolete operating instructions, all skills loaded without selection | Fourteen skills reviewed; two catalog checks unresolved. Exit with a verified local contract and separately labelled external connection proof |
+
+Do not expand an Agent Builder investigation into a WorldSignals, trading, vendor-runtime or
+Magentic-One rewrite. If a traced dependency crosses one of those boundaries, identify the exact
+contract and inspect it; a repair there needs a concrete prerequisite and its own preservation
+set. Existing vendor modification law still applies.
+
+### Step 3 — Make each refactor reviewable
+
+Choose between keeping, documenting, moving, repairing and removing based on the observed
+responsibility and consumers. Prefer a move with unchanged behavior when the issue is ownership.
+Prefer a focused behavioral repair when there is a reproduced defect. Do not manufacture new
+abstractions merely to meet a line-count target. If a large function genuinely coordinates one
+operation, small named helpers or a clearer contract may be enough; if it owns unrelated routes,
+place those operations with their existing domain owners.
+
+Before removal, resolve exact qualified identities and inverse callers, imports, routes, tool
+registrations, configuration and documentation. A zero-result graph query alone is insufficient.
+Prove the retained replacement before removing the abandoned path in that same change. For a
+move, retain public URLs and stored identities unless the user has approved a migration. Use
+the existing tests to demonstrate that moved behavior remains the same; preserve assertions.
+
+For UI text, inspect its actual rendering path and state source. An obsolete explanatory panel
+can be removed with its abandoned consumer when proven. An error message, field label or help
+provided by a retained native component is not automatically junk. No source scanner becomes a
+production content filter. An accepted visual surface remains outside this cleanup even if a
+search finds text inside it.
+
+Expected result of each change: a simpler path to the same supported behavior, or a specifically
+repaired bug, with no disappeared control, permission change, data rewrite or second authority.
+If preservation fails, restore the affected behavior within the edit before continuing the audit.
+
+### Step 4 — Document enough for the next collaborator
+
+Update the existing feature section in `ARCHITECTURE.md` as its source is verified. Each section
+should answer: what user action it supports; where the action enters; which module and native
+library own the work; which saved IDs/data must survive; how results return; which tests exercise
+the contract; and what remains unproven. Link to definitions and catalogs rather than copying
+their schemas into another document.
+
+Use `PLAN.md` for current work and acceptance gaps, `DONT.md` for demonstrated mistakes and their
+prevention, and `skills/*.md` for a small set of reusable procedures. Record current and target
+behavior separately. Update conflicting old guidance in its existing owner; do not create a
+second documentation system, auto-generated feature wiki, task-file archive or new prompt layer.
+The repository documentation is for maintainers; it is not injected wholesale into Main.
+
+The navigation check is concrete: using these documents and CBM, locate the editor field owner,
+route owner, receiving Run input owner and their focused tests for one existing feature. Explain
+its data flow without relying on the word `coder`, a Card title or this conversation. This can be
+rehearsed read-only now; an independent collaborator's first-use evaluation is a later usability
+check, not proof that has already happened.
+
+### Step 5 — Cleanup acceptance before model experiments
+
+| Check | Method | Expected result | Failure or limitation |
+| --- | --- | --- | --- |
+| Source ownership | CBM ordered discovery, current complete source and registration inventory | Every audited feature has one documented entry and owner; old replaced path is absent | Unknown dynamic consumer blocks deletion, not further read-only investigation |
+| Route preservation | Existing contract tests plus mount/auth comparison | Same URLs, field handling, authentication, streaming/status semantics and receiving Card | Eight current tests cover editor/IDD only; do not extrapolate them to the full runtime |
+| Card/IDD preservation | Focused field/default/selection round trips in existing fixtures | Values remain editable and survive save/reload; no whole catalog added to ordinary input | Current full consumer parity is incomplete; test exact affected contracts before further change |
+| MCP publication | Identity, schema, authenticated-context and public/private catalog tests | Canonical names and handlers; unchanged security and no private-operation leakage | Current two failures require classification and repair; a local pass still does not prove a refreshed external connector |
+| Removed-path audit | Inverse traversal, exact old-name/path search and configuration/import checks | No abandoned live registration or dangling consumer within the changed scope | Vendored/excluded/dynamic coverage is explicitly reported |
+| Build and types | Touched production typecheck/build only where safe for the active app | Edited production boundary compiles; unrelated baseline failures separately recorded | A build that cleans active output is not run blindly against the live stack |
+| Accepted graph | Exact diff against `5e868021` for graph/layout files | No change to renderer, geometry, CSS, labels, controls or data | Any unintended change must be removed before forward work |
+| Documentation | Local link checks, source-owner comparison and navigation rehearsal | New maintainer can find definitions, callers, tests and current gaps | File existence or a long manual is not usability proof |
+| Final checkpoint | Inspect full current status/diff and report affected invariants | No unexplained regression; saved state and unrelated work preserved | Do not label the whole repo clean or launch-ready from a partial slice |
+
+These are cleanup checks, not new production gates. Report the Regression Ratio only for the
+previously working affected invariants actually exercised; the required result is 0.000. Unchecked
+behavior stays unproven and is not counted as a pass. The owner decides when to save/publish;
+the coding agent performs no Git writes. A save-ready checkpoint is distinct from launch readiness,
+which also requires the real Main/graph acceptance below.
+
+### Step 6 — Return to Main, then graph usefulness
+
+Once the selected cleanup checks are complete, return to the original user problem: Main takes
+far too long and produces results the user cannot readily use. Cleaning code alone will not prove
+that solved. Start with the retained-input analysis and one approved ordinary Main exchange.
+Separate time before Run creation, time to first useful text, model time, tool time, delegation
+acceptance and child completion. Do not turn an ordinary chat test into another twenty-minute
+research mission.
+
+After the first failure, identify the earliest evidenced blocker and repair that boundary. Do
+not repeat the same run with progressively more coaching. Proceed to graph work only once Main
+can respond usefully and its measurements are reliable. Use preserved real conversation/research
+material, the accepted native visualization and later natural recall. Do not teach the test user
+to request internal tools or require immediate readback after every write.
+
+## Controlled agent test plan
+
+### Recovery checks before benchmark approval
+
+The September 9/10 cleanup reached source/contract proof, not full product acceptance:
+
+| Task | Result | Evidence / remaining limit |
+| --- | --- | --- |
+| P0-T1 baseline | complete | `main` and `origin/main` at `5e868021`; initially clean; no Git mutation |
+| P0-T2 owners/input discovery | partial | CBM/source paths above; retained metadata measured; exact final provider-message duplication not established |
+| P1-T1 skills/diary | complete for static review | Fourteen individual dispositions, valid metadata/local links; expanded double-agent method; behavioral usefulness still untested |
+| P2-T1 historical residue | complete for bounded scan | Intermediate deletions and current imports inspected; no historical runtime restored; no claim of repository-wide absence |
+| P2-T2 GPT entry | partial | SDK instructions now Main-first; four core identity/schema/auth tests pass; two broader catalog tests fail and remain unresolved; no external refresh |
+| P2-T3 route organization | complete for requested first separation | Editor/IDD and CodeGraph modules separated; remaining execution transport accurately named; 36 declarations unchanged; eight focused route tests and production typecheck pass |
+| P3-T1 benchmark design | ready for review | Ten cases below, two diagrams and reusable protocol; execution still needs owner approval |
+| P3-T2 preservation/inverse proof | partial overall | Old route imports and CBM path nodes absent; relocated helpers source-identical; graph/client untouched; catalog failures and wider runtime audit remain |
+
+Focused route tests passed before (11.30s runner duration) and after (7.82s); only the eight
+editor/IDD cases were selected from 58. This did not launch native CLI/Builder work. A TypeScript
+unused-import failure after moving the editor was repaired; the production typecheck then passed.
+An in-memory TypeScript AST comparison verified all 36 original top-level functions/route
+declarations unchanged across the three modules. Its first temporary command had an extra
+parenthesis; the corrected command passed without changing production behavior.
+
+MCP checks: initial four selected tests passed in 8.91s. Expanded selection produced four passes
+and two failures in 32.02s: `test_external_transport_uses_the_unmodified_canonical_catalog_and_schemas`
+and `test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadata`. These are
+unresolved failures, not waived tests or confirmed new regressions. Full plugin acceptance and
+external loaded instructions remain unproven. No catalog exposure was changed to satisfy a test.
+
+Post-edit CBM returned the relocated editor helpers and their inbound module relationships;
+their source matched the pre-move snippets. Exact old route-file path queries returned zero nodes.
+Coverage still reports `metadata_changed`; `savedCard.routes.spec.ts` has partial ranges at
+604 and 627, so direct source and executable tests own proof there. Hermes remains excluded.
+No index maintenance was performed. Source-verified equality and focused checks do not prove
+every migrated runtime path. Do not describe this checkpoint as a fully cleaned or launch-ready repo.
+
+**Status: design ready for review; live execution not approved.** The reusable operating system
+for these tests is [Double-Agent Stand-In](skills/double-agent-standin-skill.md). It uses existing
+Card Runs, ordinary user input, native receipts and one separately evaluated actor when approved.
+It adds no agent runtime, automatic team, permanent diagnostic store or graph writer.
+
+### Execution and observation
+
+```mermaid
+flowchart LR
+    U[Ordinary user request] --> I[Saved Card plus one IDF]
+    I --> M[Native Hermes Main]
+    M --> R[Useful response to user]
+    M --> D{Useful delegated work?}
+    D -->|explicit task| T[ThinkGraph notes or enrichment]
+    D -->|sourced research| K[Existing KnowGraph intake]
+    T --> L[Native records available later]
+    K --> L
+    L --> N[Later selected context for Main or another Card]
+```
+
+Main's response and chosen delegation are separate branches; background completion is not a
+barrier for an ordinary useful response. This is the acceptance target, not a claim of current
+latency. Automatic conversation replay stays disabled; a comparison arm does not enable it.
+
+```mermaid
+flowchart TD
+    F[Freeze real task and starting evidence] --> C[Real saved Card run]
+    F --> S[Controlled stand-in: same job plus separate diagnostic output]
+    C --> P[Stopwatch, input scale, usage and tool-parity record]
+    S --> P
+    P --> E[Supervisor verifies quality and bugs independently]
+    E --> V{Pass, fail or inconclusive}
+    V --> O[Keep result or repair one evidenced boundary]
+```
+
+Arms run serially. The diagram does not authorize two simultaneous model calls. Self-assessment
+is checked against results; evaluator notes never enter product chat, native memories or episodes.
+
+### Card-matched double-agent operation
+
+The highest-priority reusable testing capability is a coding subagent that stands in for an actual
+saved Card, performs its real job with actual tools, and separately diagnoses defects. A generic
+code reviewer or a model reading a transcript is insufficient. The detailed dispatch contract is in
+[the existing skill](skills/double-agent-standin-skill.md#bind-a-coding-subagent-to-the-actual-card).
+
+Before spawning, resolve the saved parent model and effort, stable instructions, effective tool
+schemas, Script surface, selected skills and bounded native context. Match those to the actual
+Codex subagent controls and callable authenticated tools. Spawn without the parent conversation;
+supply the selected role and data instead. This avoids copying the engineering discussion into a
+pretend Main task. No Card settings are changed to accommodate the stand-in.
+
+```mermaid
+flowchart TD
+    A[Read actual saved Card and effective input] --> B[Map model, effort, context and real callable tools]
+    B --> C{Material interface available?}
+    C -->|No| D[Record exact mismatch and limit the experiment]
+    C -->|Yes| E[Spawn one Card-matched actor without parent history]
+    E --> F[Actor completes ordinary task with actual tool calls]
+    F --> G[Product answer and native references]
+    F --> H[Separate diagnostic report]
+    E --> I[Supervisor times and verifies actual events]
+    G --> I
+    H --> I
+    I --> J[Independent assertion checks and earliest supported defect]
+    J --> K[Focused repair, then one real Card retest if approved]
+```
+
+The actor receives a compact diagnostic instruction in addition to its role. That extra context,
+any inherited host tools and the diagnostic report are measurement differences, not invisible
+overhead. The supervisor records them, checks that no extra capabilities were used, and does not
+coach the actor while it works. A prompt-selected tool list does not enforce native Card grants.
+An unavailable native tool is reported, never replaced by a fabricated response. A different web
+tool or unknown model effort prevents a clean causal model comparison.
+
+This system succeeds when the actor produces a useful task result, the supervisor can tie a
+specific defect to actual input/call/output evidence, and the resulting repair improves the real
+Card on the affected case. It remains unproven until exercised. First-token timing and token cost
+are recorded only where the host/provider exposes them; aggregate account usage cannot substitute
+for per-run evidence. Start with Main, then apply the same method to a worker only when the Main
+case has made that worker's actual job and boundary clear.
+
+### Common contract for every case
+
+Before execution, capture current saved Card/profile/provider/model, reasoning setting, child
+selection, Script version, native tool names and exact schemas, selected skills, session state
+and native context IDs. Compare against the historical Main snapshot above. Missing live identity
+or interface parity makes the case **not ready**, rather than allowing an invented default.
+Builder's known profile is `liquidaity-agent-builder`; resolve its actual saved Card ID rather
+than inferring it from a label. ThinkGraph
+was `card_a52fd511ecb14f53`; the existing research helper is `card_hermes_steward` with profile
+`liquidaity-hermes-steward`. Their current models/grants must be read before execution, not assigned
+from this document. No case changes permanent saved selections.
+
+Use the existing healthy application, PostgreSQL and the selected native owner. KnowGraph cases
+also need Neo4j/Graphiti; web cases need the existing configured provider. No startup or repair is
+part of a benchmark. If Docker is down, stop and tell the owner. Preserve accepted graph visuals,
+all Cards, grants, sessions and unrelated data. Do not use the Builder CLI in this plan.
+
+For every model request record provider input/cached/output/reasoning tokens and request ID;
+measure UTF-8 bytes by section at retained-input and final-request boundaries separately. Record
+tool name/schema, elapsed time, result bytes and errors. Report output tokens, model/tool-call
+counts and exposed cost. Missing usage/cost is **unknown**. Never estimate dollars from account
+percentage. Reasoning/output counters may overlap; follow provider semantics before summing.
+
+Hard deadlines below are experiment stop conditions using existing cancellation, not newly
+imposed Card limits. Start at submission, include queuing, and report child cancellation separately.
+Each case has one attempt per arm. No automatic retry, parallel matrix, changed prompt between arms
+or output truncation to manufacture a pass. Stop subsequent cases on an unexplained failure.
+
+Keep evidence in existing Run/artifact receipts and the coding conversation; record only durable
+findings in this plan or a proven prevention rule in `DONT.md`. No new test-report folder or copied
+prompt archive. Read-only cases need no rollback. Write comparisons require separately approved
+isolated native storage and exact resulting IDs; cleanup uses native deletion only for those IDs.
+If isolation or provenance cannot be proved, do not write. Never reset real graphs for a test.
+
+### Cases, expected results and budgets
+
+All numerical values are proposed targets, not achieved measurements. Time/token budgets apply
+to the whole arm, including delegated work where visible. The historical ten-request Main total
+of 434,796 input tokens is a failure investigation baseline, not an acceptable prompt-size target.
+
+| Case | Question, real input and exact surface | Expected visible/native result | Target and hard stop | Verdict / value of spending |
+| --- | --- | --- | --- | --- |
+| A — Main fast path | Current saved Main through normal chat. One ordinary short exchange; use current granted surface unchanged, no requested research | Useful direct response; one correlated Main Run, no wait for graph/Mag One/all children | Warm first useful text ≤10s, answer ≤30s; hard 120s, ≤3 model requests, ≤4 tool calls, ≤2,000 output tokens | Pass useful answer within targets and truthful receipts. Fail unnecessary dependency barrier or timeout. Inconclusive service failure. Establishes whether user engagement works |
+| B — Exact input weight | Existing `req_387c8e83` IDF/output/receipts first; source chain above and native `pre_api_request` shape. No provider call needed for replay | Section inventory and exact duplicate locations if any; retained metadata distinguished from actual payload | Read-only analysis ≤10min; zero model/tool-provider requests. Later authorized capture limited to A's budget | Pass evidence can account for final input; inconclusive if complete request unavailable. Do not remove context from an estimate. Avoids paying for blind optimization |
+| C — Main web to KnowGraph | Same preserved RKLB/MSFT task/source links. Main `web_search`/native `web_extract`, existing granted research delegation and Graphiti intake; freeze actual selected tool schemas | Main gives useful interim result; existing research owner receives actual URLs/page evidence; source-backed native entities/facts with provenance, not a pasted report | Main useful text ≤30s, response ≤60s; hard Main120s, child300s; ≤6 model requests and ≤12 tools total, ≤6,000 output tokens | Fail if Main waits for all research, repeats it unnecessarily, or a bare URL is claimed as parsed content. Inconclusive queue-only result. Tests the most useful cross-agent handoff |
+| D — Regex on then off | Saved ThinkGraph worker, exact same retained real conversation material. Native Engraphis extraction configuration only; obtain the actual supported switch/schema before running | Inspect identity, missed entities, false entities, useful predicates, source attribution, duplicates and notes; native IDs remain tied to input | Target ≤90s per arm; hard240s each, ≤4 model requests/≤8 tools each, ≤4,000 output tokens each | Pre-annotate explicit entities/relations from source. Precision = supported extracted / evaluated extracted; recall only against annotated explicit mentions. Zero records gives undefined precision, not success. Any invented accepted decision fails. Compare quality and cost; no policy choice beforehand |
+| E — Graphiti versus prior intake | Existing research Card and preserved company page/document. Verify earlier Neo4j Python fetch/parser in Git before comparison; current `services/knowgraph/ingest.py`, granted Graphiti `search_nodes`, `search_memory_facts`, `get_episodes` | Separate evidence for fetch, document parsing, extracted entities/facts, episodes, source links, temporal changes and useful later recall | Read-only source comparison first, zero model calls. Later one approved ingestion per implementation, hard300s each; ≤6 requests/≤12 tools, ≤6,000 output tokens each | Pass only capabilities observed separately. Episode acceptance is not extraction or recall. Missing earlier runnable owner makes that arm inconclusive, not inferior. Resolves what Graphiti actually adds without replacing it |
+| F — Double-agent Main | Actual A or C task and preserved context, one real Main arm and one external stand-in on the saved model where available. Current native tool schemas versus callable stand-in tools recorded | Actor completes the job; independent diagnostics locate waste/bugs with events. Product result and integration verdict separate | Use A or C's budget for each arm; one stand-in only, serial. Prior 173s stand-in is excluded from speed comparison because its web interface differed | Comparable only with documented parity; otherwise usability finding with no model speed ranking. Tests whether context/tools, rather than intelligence, block Main |
+| G — Worker model fit | Choose one already-proven worker case. Reuse its saved-model baseline. Test one explicitly approved Luna or Terra stand-in with the same material/tool contracts; no permanent model change | Required assertions still pass, useful work complete, actual time/usage differences visible | Same case budget; one alternative only before review; no Sol default and no multi-role swarm | Pass only preserved correctness/attribution/required actions with lower measured cost or latency. Any mismatch is inconclusive. One success is provisional, not an all-Card recommendation |
+| H — Builder preservation | Read saved Builder profile/grants and relevant input mapping; no Builder task, no CLI or model execution | Full Hermes capability unchanged; report selected context separately from capability ceiling | Read-only ≤5min; zero model requests, no writes | Fail any benchmark-induced restriction or model/grant change. Current live selection read required. Protects Builder while Main is evaluated |
+| I — Procedure usefulness | Apply the relevant restored skill to A–G, not all skills at once. Use code-navigation/docs work for non-model rehearsal now; later actor gets only its role procedure | Correct owner found, obsolete commands avoided, product work done and diagnosis separated | Reuse existing case budget; zero extra evaluator-model calls unless separately approved | Pass observed decision/use, not file existence or number of skills. Inconclusive until behavior tested. Demonstrates whether recovery prevents the old failure pattern |
+| J — Direct write / extraction / mix | Preserve existing Main reply. Use native `engraphis_remember`/`engraphis_link` for concise direct notes, `engraphis_ingest` through focused worker for extraction; third arm only if both identify a useful hybrid hypothesis | Same attributed intent retained; useful later references, not an immediate Main readback loop or instruction-derived entities | Direct arm hard120s; extraction240s; hybrid240s only separately approved; each ≤4 requests/≤8 tools, ≤4,000 output tokens | Compare time to useful chat and time to usable memory separately. No automatic post-pair workflow enabled. Inconclusive if arms share mutated state. Resolves the owner's original architecture question |
+
+For model cases, propose stopping before another request once observed aggregate input exceeds
+150,000 tokens (A: 75,000). This is a review trigger, not prompt truncation or a provider cap; an
+in-flight request can exceed it. Capture cold/warm state and unavailable counters. A tokenizer
+estimate is labelled with its method; no score claims that measured bytes were actually attended to.
+
+Start with B and H without model execution, then approve A alone. If A fails, fix its earliest
+proved blocker before C/F. D and J need isolated graph-write authorization. E begins with source
+comparison, not an install or migration. G follows a quality-passing baseline. After each case,
+report expected versus observed result and stop for the owner's decision on costly expansion.
+
+### Decisions the comparisons must answer
+
+These are experiment choices, not changes already made to production. The current default remains
+Main's deliberate graph reads/writes and explicitly chosen delegation. Preserve the useful data
+already retained. Fixing a graph integration defect does not reopen the locked visualization.
+
+| Decision | Options to compare | What would justify the choice | Current recommendation / unknown |
+| --- | --- | --- | --- |
+| ThinkGraph writes | Main writes concise notes; focused worker extracts preserved material; a mix of small Main notes and selected worker enrichment | Supported intent/attribution and later useful recall, with time to chat and time to usable graph measured separately | Test direct and worker arms first. A mix is a third hypothesis only if both reveal complementary value |
+| Post-conversation work | Explicitly submitted completed pair versus broader automatic intake | Same input, native extraction and isolated state; no operating instructions promoted into knowledge; useful memory arrives without holding Main's reply | The benchmark may use the pair as input. Automatic production replay remains off; its activation is a separate decision after evidence |
+| Context retrieval | Model-selected native read; existing bounded context selection; later deterministic retrieval transport if a specific need is proved | Relevant facts/provenance reach the actual request once; unrelated graph content is absent; later-turn quality improves | Trace the existing path first. No new semantic router, hardcoded ontology or compulsory readback loop |
+| Extractor preprocessing | Native regex enabled, then disabled on the same source | Compare supported entities, misses, predicates, duplicates and attribution as well as elapsed time and usage | Keep current native configuration until the controlled comparison; no assumption that regex is useless or essential |
+| Research intake | Existing Graphiti intake; verified prior Neo4j URL/document fetch-and-parse capability | Fetching/parsing, extraction, provenance, temporal updates and recall each work separately | Use source comparison before any model call. Restore a missing ingestion capability only when demonstrated; do not replace Graphiti by assumption |
+| Delegation mode | Main single with focused profile delegation; existing Card-owned team/worker mode when the job needs it | Useful Main response does not wait for unrelated completion; no duplicated research; completion reaches the correct owner once | Do not launch a team to diagnose an unexplained single-Card delay. Team comparison comes after the simple path works |
+| Tool and skill selection | Current saved surface; a specifically justified smaller selected surface; existing Script compaction | Actual required tasks still complete, context is accounted for and needless tool exploration drops | Read final-request evidence first. Keep Builder's capability ceiling; do not remove grants or load all Hermes options for a benchmark |
+| Worker model | Current saved model; one appropriate Luna or Terra alternative where actually available | Required quality/actions preserved with measured latency and usage improvement | No Sol-wide default and no automatic downgrade. A stand-in result alone does not change saved selections |
+
+For an approved comparison, freeze the actual task, source material, assertions and starting graph
+state before the first arm. Fill expected versus observed results in the existing coding report:
+first useful text, useful answer completion, background graph completion, request/tool counts,
+input/cached/output tokens, attribution, required facts/actions, and observed failures. Mark a
+missing measure unknown. One case is a diagnostic observation, not a percentile benchmark or a
+claim of reliability across all Cards.
+
+If Main again takes many minutes, classify where the delay began before spending on another arm:
+queue/startup, input preparation, provider request, tool execution, repeated reasoning/tool calls,
+delegation acceptance, or an unnecessary completion barrier. If a response is fast but useless,
+the case still fails. Conversely, an excellent long report does not pass a task whose requested
+result is a concise answer and reusable entity context. Intelligence and speed are judged against
+the actual job, not output length.
+
+The next execution decision after cleanup is approval of one Main case and its exact stand-in
+comparison, with current identities, real callable tools and isolation limits filled in. No model
+matrix, CLI test, graph reset or new automatic processing is implied by accepting this plan.
+
 ## Product boundary
 
 The owner's delivery target is to finish the existing Trading application and freeze that delivery,

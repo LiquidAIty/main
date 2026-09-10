@@ -162,7 +162,11 @@ _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
 _PUBLIC_MCP_DESCRIPTION = (
     "Connect ChatGPT to LiquidAIty projects, saved agent cards, CodeGraph, "
-    "ThinkGraph, KnowGraph, and supported agent runtimes."
+    "ThinkGraph, KnowGraph, and supported agent runtimes. "
+    "Start with main.context to resolve the authenticated Main conversation and project scope. "
+    "Use the currently published tool names and schemas; preserve returned native IDs and provenance. "
+    "Saved Cards own their configuration and granted capabilities. "
+    "An accepted operation is not proof of completion; use its returned status and evidence."
 )
 _ACTIVE_EXECUTION_RECEIPT: ContextVar[dict[str, Any] | None] = ContextVar(
     "mcp_execution_receipt", default=None

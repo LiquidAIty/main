@@ -14,6 +14,56 @@ saved Cards and graph topology = identity and authority
 
 ## System map
 
+### Finding the owner before coding
+
+Use this source map for navigation, then resolve symbols through CBM and read current source.
+It is not a claim that every feature is live-proven. `PLAN.md` owns acceptance gaps; the controlled
+vendor divergence register below owns local upstream changes. Library behavior comes from the
+installed source/documentation, not an assumption based on model training.
+
+| Work | Existing owner | Contract / next evidence |
+| --- | --- | --- |
+| Card input and context size | [idf.py](apps/python-models/app/python_models/idf.py): `materialize_idf`, `runtime_projection`, `model_task` | One retained/reloaded input; actual provider request before context removal |
+| Saved Card execution | [card_domain.py](apps/python-models/app/python_models/card_domain.py): `_retain_run_idf` | Saved identity, prompt, model and grants; receiving Card owns its Run |
+| HTTP route ownership | [routes/index.ts](apps/backend/src/routes/index.ts), [cardEditor.routes.ts](apps/backend/src/routes/cardEditor.routes.ts), [cardRuntime.routes.ts](apps/backend/src/routes/cardRuntime.routes.ts), [codegraph.routes.ts](apps/backend/src/routes/codegraph.routes.ts) | Mount table, editor/IDD transport, saved Run transport and CodeGraph transport; URL prefix is compatibility, not Card identity |
+| Hermes profile selections | [mainAdapter.ts](apps/backend/src/hermes/mainAdapter.ts): `materializeHermesProfileSelections` | Parent/child model distinction, installed selected skills, readback |
+| Native provider request | [conversation_loop.py](Hermes/agent/conversation_loop.py), [chat_completion_helpers.py](Hermes/agent/chat_completion_helpers.py): `build_api_kwargs` | API mode, transport preparation and hooks; vendor excluded from CBM |
+| Hermes procedural context | [system_prompt.py](Hermes/agent/system_prompt.py), [prompt_builder.py](Hermes/agent/prompt_builder.py): `build_skills_system_prompt` | Profile-scoped index versus opened contents; no assumption of whole-library injection |
+| GPT connector | [mcp_host.py](apps/python-models/app/mcp_host.py): `_gpt_public_catalog`, `_authenticated_main_context`, `_dispatch_tool` | SDK initialization instructions, IDD publication, canonical handlers and authentication |
+| ThinkGraph operations | [engraphis.py](apps/python-models/app/python_models/engraphis.py), [thinkgraph.py](apps/python-models/app/python_models/thinkgraph.py) | Engraphis authority, native IDs, extraction and attributed notes; accepted layout locked |
+| KnowGraph intake | [ingest.py](services/knowgraph/ingest.py), [KnowGraph procedure](skills/knowgraph.md) | Fetch/parse versus Graphiti extraction, temporal evidence and recall |
+| Deletion impact | [CBM procedure](skills/codebasedmemory.md) | Coverage, inverse callers, dynamic registrations and current source |
+| Native observations | [native_attention.py](apps/python-models/app/python_models/native_attention.py) | Real events/IDs; observations do not authorize work |
+| Agent usefulness | [double-agent procedure](skills/double-agent-standin-skill.md), [test plan](PLAN.md#controlled-agent-test-plan) | Real role task plus separate evaluation, stopwatch and provider receipts |
+
+When changing a feature, update its existing section with the owner, public entry, persisted
+identity, dependency/version source, focused proof and unresolved limit. Keep full schemas,
+library manuals and source bodies in their existing owners. Read relevant checked-in library
+documentation first, then exact-version primary documentation when local evidence is insufficient.
+Preserve compatibility names until actual callers and saved references can migrate together.
+
+Repository procedures are Markdown under `skills/`; native Hermes skill availability is a separate
+profile contract. Read relevant procedures once per unchanged task. This map, the whole diary and
+the complete skill library do not belong in Main's dynamic input.
+
+Collaborator readiness is a launch requirement. The ordered
+[cleanup sequence](PLAN.md#collaborator-readiness-and-cleanup-sequence) distinguishes reviewed
+source from unaudited areas and defines preservation checks. The
+[Card-matched double-agent procedure](skills/double-agent-standin-skill.md#bind-a-coding-subagent-to-the-actual-card)
+uses an explicitly selected coding subagent, actual tools and separate diagnostics to investigate
+the saved Card's job. It is a testing procedure, not another product runtime; native Hermes parity
+and performance improvement require actual evidence.
+
+`Builder` names the saved Card; `Agent Builder` names the workspace for building Cards, their UI
+and selected run context. Local Coder is a separate saved Card. Route names describe responsibilities,
+not identities inferred from historical filenames. The former 2,014-line `coder.routes.ts` mixed
+editor, graph, Main and execution transport. Editor/IDD and CodeGraph read now have separate modules;
+`cardRuntime.routes.ts` retains shared execution/session transport without changed handler bodies.
+`routes/index.ts` mounts them once behind the existing `/coder` authentication boundary. Public
+clients and MCP still use `/api/coder/...`; a coordinated URL migration is separate work.
+The runtime module remains large (about 1,747 lines), especially configured-Card dispatch. This is
+incomplete cleanup, not proof that the remaining module is well-sized.
+
 ```text
 React/Vite Agent Builder and Chat
   → Node/TypeScript HTTP, SSE, saved-state, and session transport
@@ -341,6 +391,11 @@ assert the external-user privilege.
 `apps/python-models/app/mcp_host.py` is the one official shared MCP host. Its public catalog is assembled
 from current registered owners and is discovered dynamically. A fixed numeric catalog promise is not an
 architecture contract.
+
+The SDK initialization instructions direct GPT to `main.context` first, then published canonical
+schemas and returned native evidence. This is connector entry guidance, not another saved Card
+prompt or plugin package. Local source/test validation does not prove a cached external connector
+loaded new instructions; reconnecting or publishing requires separate owner authorization.
 
 Python rails pins OpenAI 2.41.0, the installed Graphiti MCP server's minimum, to retain its existing httpx
 transport. OpenAI 3/httpx2 loaded standalone truststore after Windows pip-system-certs injected pip's

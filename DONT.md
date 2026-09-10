@@ -74,8 +74,8 @@ stand-in test conversations. Do not turn implementation instructions into projec
 ### September 9 recovery diary — Constellation migration through graph recovery
 
 The owner requested this entry from the complaints in the current conversation and the removal
-history, not as another model prompt. This episode covers `07ec833e^..8ebccf23` plus the current
-uncommitted repairs. Git removal counts and commit titles establish what changed, not whether
+history, not as another model prompt. This episode covers `07ec833e^..5e868021`, including the
+owner's saved recovery baseline. Git removal counts and commit titles establish what changed, not whether
 every removed line was harmful or every replacement worked. Preserve that distinction.
 
 **What the owner experienced.** Repeated graph replacements, inappropriate data, lost controls,
@@ -136,12 +136,13 @@ and was corrected. A Windows default-encoding write failed after truncating the 
 the exact previously clean file was recovered from read-only Git output and the scoped edits
 reapplied as UTF-8. Encode content before replacing a file, inspect complete current source, and
 verify parsing before reporting an interface repaired. Newly introduced CSS also overrode the
-drawer width control; its correction requires direct layout proof. These are defects to fix,
-not evidence that broad rewrites are needed.
+drawer width control. That historical finding does not authorize another layout edit: the owner
+has now locked the accepted graph at `5e868021`. Any later correction requires explicit scope
+and direct layout proof. A known issue is not permission to disturb accepted behavior.
 
 **Lost skills.** `2ddadeeb` deleted 14 `skills/*.md` files, including the double-agent stand-in,
 test, context, reporting, graph and research procedures. All 14 are restored and refreshed in this
-working tree by the owner's September 9 request. This supersedes the earlier blanket decision not
+saved baseline `5e868021` by the owner's September 9 request. This supersedes the earlier blanket decision not
 to restore these procedure files. It does not restore the deleted Neo4j skill importer, automatically
 load all skills into Cards, or establish a new wiki runtime. Recovered guidance is not automatically
 behaviorally validated. The code-wiki idea remains a candidate, not a dead idea or an installed system.
@@ -150,8 +151,27 @@ behaviorally validated. The code-wiki idea remains a candidate, not a dead idea 
 investigation anchors, including updates and intentional replacements, not a list of proven bad
 deletions. Read `git show --numstat <commit>` and the exact removed source for the affected boundary.
 
+**Documentation and measurement follow-up.** The saved CBM guide still claimed Docker ownership
+and inability to trace qualified Python symbols. Current published calls returned
+`idf.runtime_projection` → its `card_domain._retain_run_idf` caller and native coverage identified
+Hermes as excluded. The guide is corrected; an outdated procedure must not become an operational
+workaround. Preserve current owner/version links, distinguish coverage from freshness, and use
+direct source for excluded vendor code. The retained 22,299-character tool descriptor section is
+not proof that the final model request repeats it. Confirm the actual request before deleting
+schemas or reducing capabilities. The detailed double-agent protocol and proposed case budgets
+are now in their existing skill and `PLAN.md`; no new model benchmark proves them yet.
+
+**Names and organization.** The owner identified that `coder.routes.ts` contained editor/IDD,
+CodeGraph, Main, MCP and terminal operations, despite Builder and Local Coder being distinct.
+Separating route owners improves navigation; it does not prove a behavior bug was fixed or that
+the whole runtime is clean. File size and an imperfect name are investigation signals, not
+deletion criteria. A literal-word bug means using prose/title matching to infer intent, identity
+or authority. Explicit saved IDs, profile contracts and descriptive identifiers are not that bug.
+Do not replace meaningful names with generic abstractions or move code merely to hide its size.
+
 | Commit | Boundary recorded by the commit |
 | --- | --- |
+| `5e868021` | Owner-saved native graph recovery and restored procedures; accepted visualization locked |
 | `07ec833e` | Constellation/Sigma introduced; vendored Engraphis tree removed |
 | `7f2da7dc` | Graph, memory and Hermes runtime changes |
 | `2ddadeeb` | Card/catalog/learning cleanup; 14 skills and old skill importer removed |
@@ -916,7 +936,7 @@ No historical command in them is a current instruction to execute or recreate co
 | Automatic learning during model materialization | Source repaired with regression tests; loaded proof pending | Changing the subagent model preserves independent review settings |
 | Output expectations mapped to memory policy | Source repaired with regression tests; loaded save/reload pending | Existing output-contract field; preserve unrelated prompt bytes |
 | Historical commit/stash/branch advice | Superseded authorization advice | Jeremiah owns Git; no mutations without his explicit request |
-| Feature manifests, LLM wiki, obsolete research/skill procedures | Not restored as active or historical workspace files | Keep documentation bounded to existing canonical owners |
+| Feature manifests, LLM wiki, obsolete research/skill procedures | Fourteen procedure files recovered in `5e868021`; old generators/importers remain retired | Current skill text and individual audit own applicability; recovery does not install a wiki or attach skills to Cards |
 
 ## 4. Current replacement rules
 
