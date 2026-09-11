@@ -31,23 +31,16 @@
 .knowgraph-relationships button span { color:#89bcb8; }
 .knowgraph-sources a { display:block; margin:6px 0; color:#85d3ca; font-size:13px; overflow-wrap:anywhere; }
 .native-authority-controls pre { max-height:160px; overflow:auto; color:#a9a9b8; font-size:10px; white-space:pre-wrap; }
-.thinkgraph-entry { position:absolute; top:56px; right:32px; z-index:7; width:min(340px, calc(100% - 48px)); max-height:calc(100% - 80px); overflow:auto; padding:16px; border:1px solid rgba(167,176,186,.3); border-radius:10px; background:rgba(11,20,24,.96); color:#dce8e8; }
-.thinkgraph-entry > button { float:right; background:transparent; border:0; color:inherit; cursor:pointer; padding:0 4px; }
-.thinkgraph-entry h4 { margin:0 24px 12px 0; font-size:14px; }
-.thinkgraph-entry p, .thinkgraph-entry li { font-size:13px; line-height:1.55; overflow-wrap:anywhere; white-space:pre-line; }
-.thinkgraph-entry ul { padding-left:18px; }
-.native-authority-graph[data-panel-open="true"] .native-authority-canvas { margin-right:calc(var(--entry-width) + 24px); }
-.native-authority-graph > aside[data-open="true"], .native-authority-graph .thinkgraph-entry { width:var(--entry-width) !important; right:12px !important; box-sizing:border-box; }
-.native-authority-graph .thinkgraph-entry { top:56px; bottom:12px; max-height:none; }
 .native-authority-controls select { min-width:0; flex:1; padding:7px; background:#101b20; color:inherit; border:1px solid #35454a; border-radius:5px; }
-.thinkgraph-entry button { cursor:pointer; color:inherit; background:#14242a; border:1px solid #35454a; border-radius:5px; padding:5px 8px; }
-.thinkgraph-entry details { margin:12px 0; }
-.thinkgraph-entry summary { cursor:pointer; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
-.thinkgraph-entry pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:11px; max-height:240px; overflow:auto; }
-.thinkgraph-entry code { font-size:11px; overflow-wrap:anywhere; }
-.thinkgraph-entry dl { font-size:11px; }
-.thinkgraph-entry dd { margin:0 0 6px; overflow-wrap:anywhere; }
-@container (max-width: 540px) {
-  .native-authority-graph[data-panel-open="true"] .native-authority-canvas { margin-right:0; margin-bottom:48cqh; }
-  .native-authority-graph > aside[data-open="true"], .native-authority-graph .thinkgraph-entry { width:calc(100% - 24px) !important; top:54% !important; bottom:12px !important; }
+.native-authority-controls article, .native-authority-controls dl { min-width:0; }
+.native-authority-graph > aside { max-width:calc(100% - 24px); }
+.native-authority-controls summary { cursor:pointer; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+.native-authority-controls code, .native-authority-controls dl { font-size:12px; overflow-wrap:anywhere; }
+.native-authority-controls dd { margin:0 0 8px; white-space:pre-wrap; }
+.native-authority-controls dt { color:#dce8e8; font-weight:600; }
+.native-authority-controls button { cursor:pointer; color:#dce8e8; }
+.native-authority-graph :focus-visible { outline:2px solid #b0eee8; outline-offset:3px; }
+@media (prefers-reduced-motion: reduce) {
+  .native-authority-graph > aside, .native-authority-graph > button,
+  .native-authority-graph [aria-label="Resize drawer"] { transition:none !important; }
 }

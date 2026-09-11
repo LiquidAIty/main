@@ -255,8 +255,7 @@ export function NativeGraphProjectionSurface({
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>({});
   const [layout, setLayout] = useState<NativeLayout>('compact');
   const [style, setStyle] = useState<NativeStyle>('classic');
-  const [frozen, setFrozen] = useState(false);
-  const [focused, setFocused] = useState(false);
+  const panelBodyRef = useRef<HTMLDivElement>(null);
   const [expanding, setExpanding] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -304,11 +303,12 @@ export function NativeGraphProjectionSurface({
           setSelectedId(null);
           setSelectedEdgeId(null);
           setInspectorOpen(false);
+          setControlsOpen(true);
         },
       });
       const defaults = graph.setPreset('compact');
       graph.setCollapse(false);
-      setLayout('compact'); setStyle('classic'); setFrozen(false); setFocused(false);
+      setLayout('compact'); setStyle('classic');
       graph.setStyle('classic');
       graph.setSettings({ labels: true });
       setSettings({ ...defaults, labels: true });
@@ -340,12 +340,27 @@ export function NativeGraphProjectionSurface({
     if (selectedId && !projection?.nodes.some(node => node.id === selectedId)) {
       setSelectedId(null);
       setInspectorOpen(false);
+      setControlsOpen(true);
     }
     if (selectedEdgeId && !projection?.edges.some(edge => edge.id === selectedEdgeId)) {
       setSelectedEdgeId(null);
       setInspectorOpen(false);
+      setControlsOpen(true);
     }
   }, [projection, selectedId, selectedEdgeId]);
+
+  useEffect(() => {
+    if (inspectorOpen || controlsOpen) {
+      panelBodyRef.current?.querySelector<HTMLElement>('[tabindex="-1"], select')?.focus();
+    }
+  }, [inspectorOpen, controlsOpen, selectedId, selectedEdgeId]);
+
+  const closePanel = () => {
+    setSelectedId(null);
+    setSelectedEdgeId(null);
+    setInspectorOpen(false);
+    setControlsOpen(inspectorOpen);
+  };
 
   const allNodes = projection?.nodes.length ?? 0;
   const selectedEdge = projection?.edges.find((edge) => edge.id === selectedEdgeId);
@@ -367,7 +382,8 @@ export function NativeGraphProjectionSurface({
   const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
     typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
   return (
-    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}>
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
+      onKeyDown={event => { if (event.key === 'Escape' && (inspectorOpen || controlsOpen)) { event.stopPropagation(); closePanel(); } }}>
       <GraphPaperBackground viewport={paperViewport} />
       <div className="native-authority-canvas">
         <div ref={hostRef} className="native-authority-network graph-canvas"
@@ -391,19 +407,19 @@ export function NativeGraphProjectionSurface({
         {status === 'error' || renderError ? <div className="native-authority-empty">Graph failed: {renderError || error}</div> : null}
         {status === 'ready' && allNodes === 0 ? <div className="native-authority-empty">No knowledge yet.</div> : null}
       </div>
-      <>
         <RightGlassDrawer
-          isOpen={controlsOpen}
-          title="Graph settings"
-          onClose={() => setControlsOpen(false)}
-          onOpen={() => { setControlsOpen(true); setInspectorOpen(false); }}
+          isOpen={controlsOpen || inspectorOpen}
+          title={inspectorOpen ? entryTitle : 'Graph settings'}
+          onClose={closePanel}
+          onOpen={() => { setSelectedId(null); setSelectedEdgeId(null); setControlsOpen(true); setInspectorOpen(false); }}
           collapsedLabel={null}
           openAriaLabel="Open graph settings"
+          movable
           defaultWidth={340} minWidth={280} maxWidth={520}
           storageKey={`liquidaity.drawer.${authority}.width`}
           top={48} right={12} bottom={12} zIndex={6}
         >
-          <div className="native-authority-controls">
+          {!inspectorOpen ? <div ref={panelBodyRef} className="native-authority-controls">
             <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
               const next = event.target.value as NativeLayout;
               const defaults = graphRef.current?.setPreset(next);
@@ -419,11 +435,6 @@ export function NativeGraphProjectionSurface({
               <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
               <option value="galaxy">Galaxy</option><option value="solar">Solar</option>
             </select></label>
-            <div className="native-authority-actions">
-              <button type="button" onClick={() => { graphRef.current?.freeze(!frozen); setFrozen(!frozen); }}>{frozen ? 'Resume' : 'Freeze'}</button>
-              <button type="button" disabled={frozen} onClick={() => graphRef.current?.reheat()}>Reheat</button>
-              {focused ? <button type="button" onClick={() => { graphRef.current?.clearFocus(); setFocused(false); graphRef.current?.fit(); }}>Show all</button> : null}
-            </div>
             <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
               const patch = { labels: event.target.checked };
               graphRef.current?.setSettings(patch);
@@ -449,18 +460,13 @@ export function NativeGraphProjectionSurface({
               graphRef.current?.setSettings({ labels: true });
               setSettings({ ...defaults, labels: true });
             }}>Reset to preset defaults</button>
-          </div>
-        </RightGlassDrawer>
-      </>
-      {inspectorOpen && (selected || selectedEdge) ? <div className="thinkgraph-entry" role="dialog" aria-label={entryTitle}>
-        <button type="button" aria-label="Close entry" onClick={() => setInspectorOpen(false)}>×</button>
+          </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="native-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {selected ? <article data-testid={`${authority}-node-inspector`} data-native-id={selected.id}>
-          <h4>{selected.label}</h4>
-          {typeof selectedProperties.summary === 'string' && selectedProperties.summary ? <p>{selectedProperties.summary}</p> : null}
+          <h4 tabIndex={-1}>{selected.label}</h4>
+          {(['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
+            .filter((value, index, values): value is string => typeof value === 'string' && !!value && values.indexOf(value) === index)
+            .map(value => <p key={value}>{value}</p>)}
           {selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
-          <button type="button" onClick={() => {
-            if (graphRef.current?.focus(selected.id)) { setFocused(true); graphRef.current.fit(); }
-          }}>Focus</button>
         </article> : null}
         {selectedRelationships.length ? <section className="knowgraph-relationships">
           {selectedRelationships.map(edge => <button type="button" key={edge.id} data-edge-id={edge.id}
@@ -469,12 +475,18 @@ export function NativeGraphProjectionSurface({
           </button>)}
         </section> : null}
         {selectedEdge ? <article data-testid={`${authority}-edge-inspector`} data-native-id={selectedEdge.id}>
-          <h4>{nativeLabel(selectedEdge.source)} → {selectedEdge.predicate} → {nativeLabel(selectedEdge.target)}</h4>
+          <h4 tabIndex={-1}>{nativeLabel(selectedEdge.source)} → {selectedEdge.predicate} → {nativeLabel(selectedEdge.target)}</h4>
           {(['fact', 'summary', 'reason'] as const).map(key => typeof selectedEdge.properties?.[key] === 'string'
             && selectedEdge.properties[key] ? <p key={key}>{String(selectedEdge.properties[key])}</p> : null)}
           <button type="button" onClick={() => { setSelectedId(selectedEdge.source); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.source)}</button>
           <button type="button" onClick={() => { setSelectedId(selectedEdge.target); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.target)}</button>
         </article> : null}
+        <dl className="graph-record-fields">
+          <dt>Source graph</dt><dd>{authority === 'thinkgraph' ? 'ThinkGraph / Engraphis' : 'KnowGraph / Graphiti'}</dd>
+          <dt>Native ID</dt><dd>{selected?.id || selectedEdge?.id}</dd>
+          {selectedEdge ? <><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Predicate</dt><dd>{selectedEdge.predicate}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd>
+            <dt>Direction</dt><dd>{selectedEdge.properties?.directed === false ? 'Undirected' : selectedEdge.properties?.directed === true ? 'Source → target' : 'Not supplied'}</dd></> : null}
+        </dl>
         {notes.map(item => <section className="graph-note" key={item.id} data-memory-id={item.id}>
           <details>
             <summary>{item.title || 'Supporting note'}</summary>
@@ -515,6 +527,7 @@ export function NativeGraphProjectionSurface({
           {onUseAsContext ? <button type="button" onClick={() => onUseAsContext(selected)}>Use in chat</button> : null}
         </div> : null}
       </div> : null}
+        </RightGlassDrawer>
     </div>
   );
 }

@@ -9,7 +9,10 @@ Established for configured AutoGen cards. Native Hermes Cards use their saved MC
 never select AutoGen-only tools. Reuse the appropriate pattern; never build a
 parallel runtime, second host, second registry, or direct-DB side path.
 
-## The chain (every link exists and is tested)
+## Source path to verify for the selected runtime
+
+This map is structural guidance, not proof that every link works in the loaded product. Resolve
+the current source and separately prove the selected saved Card path.
 
 ```
 canvas card (deck_builder)            ← identity, prompt, model, enabled, tools (source of truth)
@@ -40,9 +43,9 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
 - **MCP host = thin stdio transport** (`apps/python-models/app/mcp_host.py`, official
   `mcp` SDK) bridging to existing `/api/cards`, `/api/main` and `/api/hermes` routes. No product logic in the host;
   structural argument allow-lists reject smuggled prompts/models/patches.
-- **Canonical model context = the exact transient Inspector-visible Card call.** Runtime-specific adapters
-  may mechanically frame it, but may not rebuild another context packet or append IDD definitions to
-  the prompt. Dynamic input is not saved by default.
+- **Canonical model context = the reloaded `in.idf` produced by `idf.py::materialize_idf`.** The
+  Inspector's transient Card call is input to that owner, not another materializer. Runtime adapters
+  mechanically project those bytes and do not append the complete IDD or rebuild a competing packet.
 
 ## Runtime split
 

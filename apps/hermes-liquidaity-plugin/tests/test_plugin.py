@@ -631,6 +631,7 @@ def test_main_bridge_marks_unfinished_native_stream_cancelled(monkeypatch):
 def test_main_bridge_projects_live_cli_history_without_tool_messages(monkeypatch):
     context = SimpleNamespace(cli_conversation_snapshot=lambda: {
         "session_id": "session-1",
+        "session_key": "hermes:project:conversation:card",
         "messages": [
             {"role": "user", "content": "question"},
             {"role": "tool", "content": "private tool output"},
@@ -652,6 +653,7 @@ def test_main_bridge_projects_live_cli_history_without_tool_messages(monkeypatch
 
     assert calls == [("/history", {
         "sessionId": "session-1",
+        "sessionKey": "hermes:project:conversation:card",
         "messages": [
             {"role": "user", "text": "question"},
             {"role": "assistant", "text": "answer"},
@@ -772,12 +774,12 @@ def test_profile_completion_uses_native_async_owner_without_reexecuting(monkeypa
         dispatch_async_delegation=lambda **kwargs: dispatched.append(kwargs) or {"status": "dispatched", "delegation_id": "native-1"}))
     monkeypatch.setitem(sys.modules, "tools.delegate_tool", SimpleNamespace(_get_max_async_children=lambda: 7))
     bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
-    accepted = {"projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"}
+    accepted = {"projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "state": "running"}
     def request(path, payload):
         requests.append((path, payload))
         if path == "/execution":
             return {"ok": True, "result": accepted}
-        return {"ok": True, "result": {"runId": "child", "cardId": "builder", "state": state, "excerpt": "Graph proposal"}}
+        return {"ok": True, "result": {**accepted, "cardId": "builder", "state": state, "excerpt": "Graph proposal"}}
     monkeypatch.setattr(bridge, "_request", request)
     result = bridge._host_requester("session/delegate_profile", {"sessionId": "native-session", "background": True, "goal": "Compare evidence"})
     assert result["status"] == "dispatched"
@@ -794,6 +796,23 @@ def test_profile_completion_uses_native_async_owner_without_reexecuting(monkeypa
     assert sum(path == "/execution" for path, _ in requests) == 1
 
 
+@pytest.mark.parametrize("field", ["projectId", "deckId", "conversationId", "parentRunId", "runId"])
+def test_profile_observation_rejects_foreign_result_identity(monkeypatch, field):
+    import sys
+    dispatched = []
+    monkeypatch.setitem(sys.modules, "tools.async_delegation", SimpleNamespace(
+        dispatch_async_delegation=lambda **kwargs: dispatched.append(kwargs) or {"status": "dispatched"}))
+    monkeypatch.setitem(sys.modules, "tools.delegate_tool", SimpleNamespace(_get_max_async_children=lambda: 1))
+    bridge = plugin._MainCliBridge(SimpleNamespace(), "http://127.0.0.1:4000", "token")
+    accepted = {"projectId": "p", "deckId": "d", "conversationId": "conversation",
+                "parentRunId": "parent", "runId": "child", "state": "running"}
+    monkeypatch.setattr(bridge, "_request", lambda *args: {"ok": True, "result": {
+        **accepted, field: "foreign", "state": "completed", "excerpt": "private result"}})
+    bridge._deliver_profile_result({"sessionId": "parent-session"}, accepted)
+    with pytest.raises(RuntimeError, match="profile_result_identity_mismatch"):
+        dispatched[0]["runner"]()
+
+
 def test_profile_observation_timeout_keeps_observing_same_run(monkeypatch):
     import sys
     dispatched = []
@@ -808,17 +827,17 @@ def test_profile_observation_timeout_keeps_observing_same_run(monkeypatch):
         requests.append((path, dict(payload)))
         if len(requests) == 1:
             raise TimeoutError("status transport timed out")
-        return {"ok": True, "result": {"runId": "child", "cardId": "research",
+        return {"ok": True, "result": {"projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "cardId": "research",
             "state": "completed", "excerpt": "Retained sourced findings"}}
 
     monkeypatch.setattr(bridge, "_request", request)
     bridge._deliver_profile_result({"sessionId": "parent-session"}, {
-        "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
+        "projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "state": "running"})
     result = dispatched[0]["runner"]()
     assert result["status"] == "completed"
     assert json.loads(result["summary"])["state"] == "completed"
     assert len(dispatched) == 1
-    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d",
+    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d", "conversationId": "conversation",
         "parentRunId": "parent", "runId": "child", "action": "read"})] * 2
 
 
@@ -832,8 +851,8 @@ def test_profile_native_capacity_rejection_stops_only_the_accepted_run(monkeypat
     monkeypatch.setattr(bridge, "_request", lambda path, payload: requests.append((path, payload)) or {"ok": True})
     with pytest.raises(RuntimeError, match="capacity"):
         bridge._deliver_profile_result({"sessionId": "session"}, {
-            "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
-    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "action": "stop"})]
+            "projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "state": "running"})
+    assert requests == [("/profile-run", {"projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "action": "stop"})]
 
 
 @pytest.mark.parametrize("interrupt", [False, True])
@@ -858,13 +877,13 @@ def test_profile_delivery_through_real_native_registry(tmp_path, monkeypatch, in
         if payload["action"] == "read":
             observed.set()
             assert release.wait(5)
-        return {"ok": True, "result": {"runId": "child", "cardId": "builder",
+        return {"ok": True, "result": {"projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "cardId": "builder",
             "state": "running" if interrupt else "completed", "excerpt": "Sourced proposal"}}
 
     monkeypatch.setattr(bridge, "_request", request)
     try:
         accepted = bridge._deliver_profile_result({"sessionId": "parent-session", "goal": "Compare sources"}, {
-            "projectId": "p", "deckId": "d", "parentRunId": "parent", "runId": "child", "state": "running"})
+            "projectId": "p", "deckId": "d", "conversationId": "conversation", "parentRunId": "parent", "runId": "child", "state": "running"})
         assert accepted["status"] == "dispatched"
         assert observed.wait(5)
         assert completions.empty()

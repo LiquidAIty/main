@@ -4,6 +4,9 @@ This is the compact operating playbook for Agent Builder. It teaches a repeatabl
 open-source code—including an existing agent system—into a saved Card without copying its runtime,
 inventing a parallel platform, or putting controls in the wrong surface.
 
+Use only within the active PromptSpec. Builder is the saved `builder` Card; examples and intake
+criteria do not authorize new dependencies, profiles, subsystems, UI changes or live operations.
+
 ## 1. Define the bounded outcome
 
 Record one Requested Delta and one Preservation Set before choosing technology.
@@ -112,7 +115,8 @@ intersection current Run authorization
 intersection required user approval
 ```
 
-Agent Builder receives one exact create/edit operation. An edit may change only its authorized subset of
+Builder receives an ordinary mission and chooses explicit inspect/create/update tools. It does not
+receive a legacy prefilled create/edit operation packet. An edit may change only its authorized subset of
 prompt, tools, typed configuration, saved Script, and subsystem attachments. The canonical deck/revision
 save is the only persistence path. No direct database patch, provider/model fallback, hidden adapter, or
 second runtime is allowed.

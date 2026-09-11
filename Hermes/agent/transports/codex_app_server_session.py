@@ -25,6 +25,8 @@ call is synchronous and behaves like AIAgent's existing chat_completions loop.
 from __future__ import annotations
 
 import logging
+import copy
+import json
 import os
 import threading
 import time
@@ -282,6 +284,11 @@ class CodexAppServerSession:
         on_event: Optional[Callable[[dict], None]] = None,
         request_routing: Optional[_ServerRequestRouting] = None,
         client_factory: Optional[Callable[..., CodexAppServerClient]] = None,
+        dynamic_tools: Optional[list[dict]] = None,
+        tool_executor: Optional[Callable[[str, dict, str], dict]] = None,
+        model: Optional[str] = None,
+        instructions: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
@@ -296,6 +303,25 @@ class CodexAppServerSession:
         self._on_event = on_event  # Display hook (kawaii spinner ticks etc.)
         self._routing = request_routing or _ServerRequestRouting()
         self._client_factory = client_factory or CodexAppServerClient
+        self._dynamic_tools = copy.deepcopy(dynamic_tools)
+        self._tool_executor = tool_executor
+        self._model = model
+        self._instructions = instructions
+        self._effort = effort
+        self._dynamic_schemas: dict = {}
+        self._dynamic_call_responses: dict = {}
+        if dynamic_tools is not None:
+            from jsonschema.validators import validator_for
+            for tool in self._dynamic_tools:
+                name = tool["name"]
+                if tool.get("type") != "function" or name in self._dynamic_schemas:
+                    raise ValueError("dynamic_tool_definition_invalid")
+                schema = tool["inputSchema"]
+                validator = validator_for(schema)
+                validator.check_schema(schema)
+                self._dynamic_schemas[name] = validator(schema)
+            if self._dynamic_schemas and tool_executor is None:
+                raise ValueError("dynamic_tool_executor_required")
 
         self._client: Optional[CodexAppServerClient] = None
         self._thread_id: Optional[str] = None
@@ -326,6 +352,7 @@ class CodexAppServerSession:
             client_name="hermes",
             client_title="Hermes Agent",
             client_version=_get_hermes_version(),
+            **({"capabilities": {"experimentalApi": True}} if self._dynamic_tools is not None else {}),
         )
         # Permission selection is intentionally NOT sent on thread/start.
         # Two reasons (live-tested against codex 0.130.0):
@@ -343,6 +370,13 @@ class CodexAppServerSession:
         # Users who want a write-capable profile configure it in their
         # ~/.codex/config.toml the same way they would for any codex usage.
         params: dict[str, Any] = {"cwd": self._cwd}
+        if self._dynamic_tools is not None:
+            params["dynamicTools"] = self._dynamic_tools
+        if self._model is not None:
+            params["model"] = self._model
+            params["allowProviderModelFallback"] = False
+        if self._instructions is not None:
+            params["baseInstructions"] = self._instructions
         result = self._client.request("thread/start", params, timeout=15)
         # Cross-fill thread.id/sessionId — different codex versions have
         # serialized this under either key. Mirrors openclaw beta.8's
@@ -524,6 +558,8 @@ class CodexAppServerSession:
                 {
                     "threadId": self._thread_id,
                     "input": [{"type": "text", "text": user_input_text}],
+                    **({"model": self._model} if self._model is not None else {}),
+                    **({"effort": self._effort} if self._effort is not None else {}),
                 },
                 timeout=10,
             )
@@ -559,6 +595,7 @@ class CodexAppServerSession:
         result.turn_id = (ts.get("turn") or {}).get("id")
         with self._active_turn_lock:
             self._active_turn_id = result.turn_id
+        self._dynamic_call_responses.clear()
         deadline = time.monotonic() + turn_timeout
         turn_complete = False
         # Post-tool watchdog state. last_tool_completion_at is set whenever
@@ -1013,7 +1050,48 @@ class CodexAppServerSession:
         rid = req.get("id")
         params = req.get("params") or {}
 
-        if method == "item/commandExecution/requestApproval":
+        if method == "item/tool/call":
+            name = params.get("tool")
+            arguments = params.get("arguments")
+            call_id = params.get("callId")
+            error = None
+            if (not self._active_turn_id or params.get("threadId") != self._thread_id
+                    or params.get("turnId") != self._active_turn_id):
+                error = "dynamic_tool_scope_mismatch"
+            elif self._interrupt_event.is_set():
+                error = "dynamic_tool_cancelled"
+            elif params.get("namespace") is not None or not isinstance(name, str) or name not in self._dynamic_schemas:
+                error = "dynamic_tool_not_selected"
+            elif (not isinstance(arguments, dict) or not isinstance(call_id, str) or not call_id
+                  or not self._dynamic_schemas[name].is_valid(arguments)):
+                error = "dynamic_tool_arguments_invalid"
+            if error:
+                self._client.respond(rid, {"success": False, "contentItems": [
+                    {"type": "inputText", "text": json.dumps({"error": error})}]})
+                return
+            call_key = (self._active_turn_id, call_id)
+            original_call = {"tool": name, "arguments": copy.deepcopy(arguments)}
+            previous = self._dynamic_call_responses.get(call_key)
+            if previous is not None:
+                if previous[0] == original_call:
+                    self._client.respond(rid, copy.deepcopy(previous[1]))
+                else:
+                    self._client.respond(rid, {"success": False, "contentItems": [{
+                        "type": "inputText", "text": json.dumps({"error": "dynamic_tool_call_id_conflict"})}]})
+                return
+            try:
+                response = self._tool_executor(name, arguments, call_id)
+                if (not isinstance(response, dict) or not isinstance(response.get("success"), bool)
+                        or not isinstance(response.get("contentItems"), list)):
+                    raise ValueError("dynamic_tool_result_invalid")
+            except Exception as exc:
+                logger.error("Dynamic tool owner failed: %s (%s)", name, type(exc).__name__)
+                response = {"success": False, "contentItems": [{"type": "inputText", "text": json.dumps({
+                    "error": "dynamic_tool_execution_failed", "type": type(exc).__name__})}]}
+            # Cache failures too: a lost reply must never repeat a side effect.
+            self._dynamic_call_responses[call_key] = (original_call, copy.deepcopy(response))
+            self._client.respond(rid, response)
+        elif method == "item/commandExecution/requestApproval":
             decision = self._decide_exec_approval(params)
             self._client.respond(rid, {"decision": decision})
         elif method == "item/fileChange/requestApproval":

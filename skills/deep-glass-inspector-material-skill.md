@@ -3,13 +3,12 @@
 @skill id=deep-glass-inspector-material
 @type Skill
 @status active
-@related_to canvas-wiring-discipline
 
 ## When To Use It
 
-When styling a **floating, focused surface** in LiquidAIty: an object lens, a nav
+Only when the active PromptSpec authorizes styling a **floating, focused surface** in LiquidAIty: an object lens, a nav
 pill, a small menu, or a selected-object inspector shell. This is the
-"an object is being inspected" material.
+"an object is being inspected" material. Existing accepted material stays closed unless explicitly reopened.
 
 Do NOT use it for:
 
@@ -55,12 +54,14 @@ shell, not transparent black.
 
 ## Where It Is Applied
 
-`client/src/components/graph/RightGlassDrawer.tsx` is the one current shell. Agent Builder,
-Engraphis/ThinkGraph, native authority graphs, Hermes Kanban, and the embedded CodeGraph surface
-reuse it. Keep the material in `graphVisualTokens.ts` and the shell in `RightGlassDrawer.tsx`; do not
+`client/src/components/graph/RightGlassDrawer.tsx` is the shared shell. Its direct callers include
+Agent Builder, `NativeGraphProjectionSurface` and the embedded CodeGraph `GraphTab`. CBM excludes
+the vendored GraphTab, so check its source directly; do not infer use by every embedded surface.
+Keep the material in `graphVisualTokens.ts` and the shell in `RightGlassDrawer.tsx`; do not
 create feature-specific drawer copies.
 
-Change only the shared shell material. Do not change feature data, labels, loading/error states,
+Change shared material only within the authorized consumer scope; ask before affecting a closed
+consumer. Do not change feature data, labels, loading/error states,
 selection behavior, graph authority, or write controls while applying this skill.
 
 ## Known Traps

@@ -90,13 +90,16 @@ function isInternalProjectValue(...values: unknown[]): boolean {
   return values.some((value) => normalizeProjectKey(value) === 'admin');
 }
 
-export async function getProjectCard(projectId: string): Promise<ProjectCard | null> {
+export async function getProjectCard(projectId: string, ownerUserId?: string): Promise<ProjectCard | null> {
   const trimmed = String(projectId || '').trim();
   if (!trimmed) return null;
+  const owner = ownerUserId?.trim();
+  if (ownerUserId !== undefined && !owner) return null;
 
   const { clause, params } = projectLookup(trimmed);
+  if (owner) params.push(owner);
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type FROM ${PROJECTS_TABLE} WHERE ${clause} LIMIT 1`,
+    `SELECT id, name, code, status, project_type FROM ${PROJECTS_TABLE} WHERE ${clause}${owner ? ' AND owner_user_id = $2' : ''} LIMIT 1`,
     params,
   );
   if (!rows.length) return null;

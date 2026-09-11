@@ -27,6 +27,12 @@ authRouter.post('/start', async (req, res) => {
       });
     }
 
+    const sessionId = req.cookies?.sid;
+    if (sessionId) {
+      const existingUser = await getUserBySessionId(sessionId);
+      if (existingUser) return res.json({ userId: existingUser.id });
+    }
+
     const { user, session } = await createAnonymousSession();
     setSessionCookie(res, session.id, req);
     return res.json({ userId: user.id });

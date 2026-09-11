@@ -1,7 +1,9 @@
 # LiquidAIty Core v0 Architecture
 
 This document describes current source ownership. `PLAN.md` orders future proof; `FUTURE.md` contains
-deferred work; `AGENTS.md` is execution law.
+deferred work; `AGENTS.md` is execution law. Source descriptions are not loaded-product proof.
+PLAN records the current unloaded-source boundary. Historical receipts describe their dated checkpoint
+only; they are not standing execution, cleanup or maintenance authority.
 
 ## One-line law
 
@@ -36,7 +38,7 @@ installed source/documentation, not an assumption based on model training.
 | Native observations | [native_attention.py](apps/python-models/app/python_models/native_attention.py) | Real events/IDs; observations do not authorize work |
 | Agent usefulness | [double-agent procedure](skills/double-agent-standin-skill.md), [test plan](PLAN.md#controlled-agent-test-plan) | Real role task plus separate evaluation, stopwatch and provider receipts |
 
-When changing a feature, update its existing section with the owner, public entry, persisted
+When documentation work is authorized, update the existing section with the owner, public entry, persisted
 identity, dependency/version source, focused proof and unresolved limit. Keep full schemas,
 library manuals and source bodies in their existing owners. Read relevant checked-in library
 documentation first, then exact-version primary documentation when local evidence is insufficient.
@@ -47,9 +49,9 @@ profile contract. Read relevant procedures once per unchanged task. This map, th
 the complete skill library do not belong in Main's dynamic input.
 
 Collaborator readiness is a launch requirement. The ordered
-[implementation evidence and remaining route](PLAN.md#september-10-implementation-and-current-evidence) distinguishes reviewed
+[implementation evidence and remaining route](PLAN.md#current-repair-status--september-11-2026) distinguishes reviewed
 source from unaudited areas and defines preservation checks. The
-[Card-matched double-agent procedure](skills/double-agent-standin-skill.md#bind-a-coding-subagent-to-the-actual-card)
+[Card-matched double-agent procedure](skills/double-agent-standin-skill.md#bind-a-card-stand-in-to-current-authority)
 uses an explicitly selected coding subagent, actual tools and separate diagnostics to investigate
 the saved Card's job. It is a testing procedure, not another product runtime; native Hermes parity
 and performance improvement require actual evidence.
@@ -65,10 +67,9 @@ each behind the same `authMiddleware`. Current client and Python MCP/control-pla
 migrated together; the old global `/api/coder` mount is absent, with a 404 regression check.
 These are transport addresses, not five runtimes or a semantic agent router. No Card identity,
 saved profile, tool name, handler schema or session history changes as a result of this migration.
-The owner-authorized September 10 `npm run dev:fresh` loaded the changed backend/Python callers
-together. Authenticated Main/CBM reads, the then-current 11 saved Card status reads, editor options and native
-terminal listing work; retired global Coder HTTP returns 404. PLAN records exact startup/source
-identity. Fresh selected-plugin acceptance and new model execution remain separate proofs.
+Historical domain-route acceptance is recorded in the September 10 PLAN checkpoint. It does not
+establish current loaded identity; fresh selected-plugin and saved-Card execution proof remain separate.
+
 The runtime module remains large, especially configured-Card dispatch. Complete source review found
 a specific lost-usage defect: Builder used `finishRun: false` for its native CLI call, then the outer
 finish call discarded returned usage. The existing finish call now retains all five supplied usage
@@ -127,17 +128,9 @@ canonical `in.idf`. Mission, images, selected graph data and tools remain. The r
 unrelated historical IDF bytes containing empty retired fields without executing those fields.
 Requests carrying retired operation fields fail explicitly. PLAN is human documentation only.
 
-Loaded Builder acceptance on September 10 used the exact saved `builder` Card and completed Run
-`builder-acceptance-20260910-0746` in 328,898 ms, native session `20260910_034517_934336`, with
-no provider substitution. Its 50,442-byte canonical IDF presented all 16 selected MCP tools; AGE
-recorded 20 completed CodeGraph reads and zero graph writes. PTY observation proved file reads;
-the final answer explained the existing Card Run, PTY and plugin bridge source chain. Aggregate
-provider usage was 1,447,626 input / 5,921 output / 1,295,360 cached / 1,733 reasoning tokens.
-These totals span model calls, not one context window. Raw cost and total tool count are null.
-The null-preserving cost/tool-count source fix is tested but awaits reload; transcript attribution
-remains a limitation recorded in PLAN; a selected
-native toolset is not proof every member was presented or executed. Live health 200, old Coder
-route 404 and foreign-origin deck access 403 preserve the checked transport boundaries.
+Builder has historical saved-Run execution evidence, summarized in PLAN. Its native tool availability,
+transcript attribution and missing usage fields need separate proof; a saved selection is not evidence
+that every tool was presented or executed.
 
 ### Main and graph responsibilities
 
@@ -159,7 +152,7 @@ A saved Card is the permanent authority for identity, prompt, provider/model/pro
 enabled state, and tool/capability grants. Callers supply input and references, never replacement Card
 definitions.
 
-Current internal Cards:
+Saved-role identity reference (read actual Cards/profile selections before execution):
 
 | User-facing role | Stable Card ID | Runtime | Profile |
 | --- | --- | --- | --- |
@@ -201,8 +194,8 @@ live semantic evaluation.
 Before configuring a native ACP execution session, the adapter applies the exact saved parent model
 through `session/set_model`. Updating only native profile configuration does not update a restored
 session's older model. Session history, profile identity and native model execution remain Hermes-owned.
-Native asynchronous profile delivery is now live-proven: Main returned before its one Builder child
-completed, and Hermes delivered that child's result once. The adapter uses the native asynchronous
+Historical native profile delivery demonstrated one parent returning before its child and receiving
+the result once. Current-source conversation isolation is only contract-tested until loaded. The adapter uses the native asynchronous
 delegation registry and completion queue; it observes the already accepted Card Run and never restarts
 an interrupted child. Deterministic tests exercise native queue claims and interruption. The lower
 surface is restored to the saved Builder's native CLI and full-height pull-up; it is not a retained-output
@@ -448,24 +441,10 @@ in `apps/python-models`; any later fork edit must be registered in
 
 ## MCP and transport
 
-September 10 loaded host proof: process 28784, startup `b578a121a8554a659767bc80456b6bd3`,
-source revision `54390deeec851f915fe348c56c431d93befefd3f`, and MCP source SHA-256
-`72023634b0d0d98a5743810c286ef373aad19a0e7ce96d497bf2d4bcaff45a63` matched the worktree.
-Authenticated `main.context` returned 81 unique public tools, catalog hash
-`ac63e3f0816d28d6124215d110e8a187b0bae2a29afbfc21d47afa8cc3e689e4`.
-The unchanged Git revision alone does not identify uncommitted source; compare source bytes too.
-
-Two local Codex entries describe LiquidAIty: enabled `liquidaity@personal` version
-`0.1.0+codex.20260830025707` points its `main-app` MCP server at the application endpoint but
-still describes a Docker CodeGraph service. The app wrapper
-`dev-6a94dced2ad48191af3e6b4bec2300d2` contains an application connection. That wrapper is not
-proof of a second server. Current callable connector descriptors still include retired names;
-server publication and cached descriptor visibility are distinct. No installed package or
-credential was changed. After Git save, use one selected LiquidAIty connection, disable the
-redundant entry if both are selected, refresh its catalog through the owner UI and verify fresh
-Main/CBM receipts and explicit Card schemas. Do not reconnect credentials or install another
-plugin as a substitute for catalog refresh. Repository-side publication remains `mcp_host.py`.
-
+Repository publication is owned by `mcp_host.py`; installed plugin packages and conversation-cached
+descriptors are separate states. Source revision alone does not identify dirty source: compare the loaded
+source hash as well. Fresh selected-connector receipts are needed after an authorized catalog refresh.
+No architecture paragraph authorizes plugin installation, credential changes or disabling a connection.
 
 User-directed external MCP `card.update_configuration` uses the authenticated project context and
 the existing field allowlist/revision-checked save. It requires no Builder task or approval. Internal
@@ -525,39 +504,17 @@ same pending event with actual UUIDs. Queue acceptance is not rendered as a comp
 Where native CBM declares a JSON output format, the host advertises and uses that default for structured
 attention IDs. Explicit format choices are preserved; non-structured results do not fabricate attention.
 
-Current proof boundary: real AGE 1.6 `EXPLAIN` tests accept the production `SET`/`coalesce` queries and
-reject the former `ON CREATE SET` clause without inserting fixture records. Migration 028 completes the
-existing producer's missing `READ` label through the existing PostgreSQL schema owner. It grants only
-`SELECT/INSERT/UPDATE` on that label and `USAGE` on its sequence; the application retains no schema-create,
-base-label access or READ-delete privilege. The canonical migration runner recorded it once and verified
-an idempotent second pass. Inspection always executes the typed READ query, even with no selected Runs;
-schema failure is explicit, not a metadata-based omission. Focused attention, SSE, bearer and UI-hook
-tests pass. The canonical `npm run dev:fresh` now loads source revision
-`07ec833e833bbf72c7f63d7a639d3446707969fc` and reaches readiness with 43/43 public tools. Loaded AGE
-inspection and the existing SSE endpoint return 200; four retained Main
-events replay chronologically with direct-only attribution. The existing UI projection consumes those
-real SSE events without animating the completed Run. The saved Deck and all six Card and six edge hashes
-remain unchanged. The authenticated external `cbm.list_projects` read at 2026-08-27T23:07:20Z also
-persisted: AGE inspection and SSE return its exact external Main Run, conversation, Card and native
-project reference, and the existing projection consumes the actual event. There is no proven missing
-Run-registration defect. Native tool-read observations use `USED_TOOL`/`USED`; `READ` separately records
-references resolved during canonical input materialization. This external tool read did not materialize
-an input, so its `materializedNativeReferences` remains empty; literal input-materialization `READ`
-proof is still separate. The August 29 connector failure occurred before dispatch because a server-side app
-prefix duplicated the namespace ChatGPT already derives from the selected LiquidAIty app. The canonical
-unprefixed catalog and dispatcher are the source-side repair. The official MCP SDK contract proves canonical
-dispatch and bounded invalid-name receipts, but a loaded-process readback and a genuinely fresh selected-plugin
-conversation remain separate product proof. ChatGPT owns its approved app-action snapshot;
-refresh or recreate/publish that app definition through the applicable workspace control after a public schema
-  change, then test from a fresh chat with LiquidAIty selected. Browser rendering and one real Codex-account
-  Team Run also remain unproven. Do not call the complete launch path live-ready.
+AGE observations use `USED_TOOL`/`USED` for actual tool reads and `READ` for references materialized into
+canonical input. An ordinary external tool read need not materialize an IDF. The existing migration owns
+the READ label; inspection executes typed scoped queries and reports schema errors. Historical migration,
+SSE and external-connector receipts are retained in Git. They do not prove today's loaded source, browser
+behavior, fresh connector schema or native team execution.
 
 The official Python MCP host reaches server-owned Card, conversation, Run and persistence operations
 through the domain routes documented above. It remains one MCP server. The September 10 source
 migration moved Python and browser callers together and retained authentication, schemas and timeouts.
-No external persisted consumer of the old global Coder HTTP prefix was identified. The September 10
-canonical reload supplies loaded route/catalog readback; fresh-connector and agent execution proof
-remain separate from those reads and the passing source tests.
+No external persisted consumer of the retired global Coder HTTP prefix was identified in the historical
+migration audit. Current loaded route/catalog, fresh-connector and agent execution proof remain separate.
 
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
 honestly. There is no server-side app prefix, prefix-stripping alias, provider substitution, duplicate
@@ -591,9 +548,8 @@ compiles into one typed optimized model tool that may call only Card-authorized 
 Card configuration has no added Team policy controls or status panel. Historical overlay values remain
 readable saved data, but are neither validated as runtime policy nor sent to execution.
 Main still uses chat for input and responses.
-Coder's Card invokes its existing Run path and focuses the external Code Console, where the attributed
-Card Run view is distinct from the existing interactive native CLI session. No terminal is embedded in
-Coder's Card. There is no global Kanban workspace, manual task movement, or Card `kanban` execution doorway.
+The obsolete Local Coder Card is retired. Builder owns the lower native terminal; a future downloadable
+Coder is deferred and has no current executable Card contract. There is no global Kanban workspace, manual task movement, or Card `kanban` execution doorway.
 Native Team workers remain execution processes observed through the existing Card Run and telemetry paths.
 Ordinary agent Cards use the shared adaptive terminal, while Mag One remains an orchestrator.
 
@@ -900,9 +856,8 @@ scene does not call that helper; it keeps the engine's own layout and analysis.
 
 The optional Question/evidence contract is retained; ordinary entities, thoughts, and relationships do
 not require a Q&A workflow. Saved-agent attribution, current-source research, synthesis, and restart/UI
-acceptance are tracked separately in PLAN.md. The owner's subsequent recovery instruction authorizes
-removing obsolete Constellation code and dependencies now; this does not turn partial product proof
-into success. The old adapter and bridge are removed, with no fallback or dual writer.
+acceptance are tracked separately in PLAN.md. The Constellation adapter and bridge are retired;
+historical recovery instructions do not authorize new removals or data operations.
 
 ## Native attention and Reveal
 
@@ -937,33 +892,25 @@ Engraphis SQLite
 → GraphProjectionV1
 ```
 
-The September 9 replacement imports Engraphis 1.7.1's unmodified Every-node WebGL2 renderer
-and its unmodified layout worker. ThinkGraph selects the package's `radial` preset; KnowGraph
-selects `original`. This is the shipped renderer embedded in the existing application surface,
-not the complete Engraphis dashboard. The app retains its tabs, shared 24px paper, zoom/fit
-controls, stored-evidence inspector, and exact-ID context selection. It supplies records and
-selection/highlight IDs; it does not implement node painting, label placement, layout forces,
-clustering or semantic extraction. The former modified `engraphis-graph.js` is deleted with its
-custom rendering API extensions. The package handles pointer/keyboard navigation and rendering;
-app zoom buttons forward the package's own +/- keyboard controls. Relationships are inspected
-from an entity's stored relationship list. Attention may highlight an existing ID through
-`setHighlight`; the removed renderer's custom per-edge colour and edge-click extensions are absent.
-Activity/evidence refresh does not call `setData` again unless entity/relationship topology changes.
+`NativeGraphProjectionSurface` uses the Engraphis D3/force-graph assets described in the divergence
+register below. It calls the public `compact` preset on both graphs, `classic` style and labels enabled.
+It forwards scene data when the projection changes, uses native selection highlights and native camera
+controls, and inspects relationships through their stored endpoint/detail references. The current source
+has no Every-node WebGL2 worker or topology-only refresh condition in this surface. These are source
+observations, not an assertion that a particular appearance has Jeremiah's acceptance.
 
-ThinkGraph requests Engraphis's complete scene with memory nodes and weak co-occurrence disabled.
-The full scene preserves engine-supplied relationship support references; the compact `all` payload
-omits those references and is not used as the inspector's evidence source. Engine capacity errors
-remain errors, not truncated or fabricated replacement graphs. The account extraction adapter supplies
-Engraphis's own JSON output schema through its supported `extract_json` interface. The engine's
-context argument frames both messages as one evolving project exchange and includes the engine's
-2000-token recall context, read before extraction without reinforcement or receipt writes. There is
-no extra extraction model, regex cleanup, or browser knowledge writer. Prompt quality still requires
-actual account-backed conversation acceptance; passing structural checks is not that proof.
+ThinkGraph requests the engine scene with memory nodes and weak co-occurrence disabled, retaining
+engine-owned evidence/layout metadata. The account adapter supplies the supported structured extraction
+schema using the saved ThinkGraph model. It does not append the removed conversation-specific context
+or a separate 2,000-token recall block. Native configured graph enrichment remains separate; see the
+entry-alternatives section. Existing native note retirement is not arbitrary entity/relationship deletion.
 
-The owner explicitly authorized clearing the rejected dataset again on September 9: Engraphis deleted
-8 memories in project `1b1a6958-0658-4b1a-bf13-e2066582adb4`; the same project's Graphiti group deleted
-13 nodes and 26 relationships. Both returned empty afterwards. The 7,284 unrelated Neo4j nodes were
-unchanged. Conversations, Cards, libraries, CodeGraph and other projects were not deleted or replayed.
+The graph settings and selected-object details reuse `RightGlassDrawer`. Its existing resize, move,
+detach/dock and collapsed reopening mechanics are retained. Source/provenance details appear when supplied;
+missing evidence is not manufactured. The current repair removes an unused relationship-removal callback,
+not a working native relationship operation. Visual acceptance and exact native removal readback are unproven.
+
+Prior project-specific dataset deletions are historical operations, not ongoing cleanup authority.
 
 KnowGraph projection reads first select a deterministic, project-scoped node window (default 200,
 maximum 500), then return only relationships whose endpoints are inside that window (maximum 1,000).
@@ -1034,18 +981,40 @@ this is not a GPT plugin readiness blocker. Do not print, copy, export, or repla
 
 ## Controlled vendor divergence
 
-The final September 9 owner decision replaces the application drawing callbacks with the unmodified
+The current source embeds the unmodified
 Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js`, plus its shipped D3 7.9.0 and force-graph 1.51.4
 assets in `client/src/vendor/engraphis`. Source: installed PyPI distribution `engraphis==1.7.1`.
 The renderer SHA-256 is `a76d482781de76bccdf8e3955fadf6e8b2de71129511e90f3832b30de78bbde0`.
 There are no vendor edits or replacement drawing/physics functions. The owner rejected Galaxy/Cyber
-startup visuals and then the radial preset; the host uses the public setters for `original` on both graphs,
-`classic` style and enabled labels. Preset force/size values remain Engraphis-owned. The host supplies graph
+startup visuals and then the radial preset in historical review. Current source uses `compact` on both graphs,
+`classic` style and enabled labels; the earlier `original` claim did not match the inspected source. Preset force/size values remain Engraphis-owned. The host supplies graph
 records, selection callbacks, existing inspection and navigation. ThinkGraph transports the complete
 Engraphis scene, including its engine-owned layout metadata. Graphiti records use supported field
 aliases. CodeGraph remains separate. Asset upgrades require comparison with the installed package;
 these copies add distribution maintenance, not a second graph algorithm. Loaded data acceptance is
 separate from empty-render and transport checks.
+
+### Session and selected-tool repair under evaluation
+
+The session correction spans native CLI `plugins.py`, the external Hermes plugin, `mainCliBridge`,
+authenticated Card routes and Python `card_domain.read_run`. Native `session_key` is returned in
+idle history snapshots and bound only on a fresh empty native session. Backend reads and delegated-result
+observation retain Project/conversation/parent/child identity. No named replies, transcript store or
+parent-wakeup behavior is added. Focused tests are not loaded native-session proof.
+
+The App Server work adds `_codex_dynamic_tools` and `_codex_tool_executor` in
+`Hermes/agent/codex_runtime.py`, with stable prompt forwarding through `conversation_loop.py`
+and `run_agent.py`. `codex_app_server_session.py` supplies dynamic definitions, validates calls
+against their schemas and dispatches to Hermes' existing sequential executor; per-turn call identity
+prevents duplicate execution. Existing native permission/configuration owners remain in place.
+
+This fork change is **incomplete**: external `mcp-*` selections other than `mcp-liquidaity-card`
+are omitted with an assumed native Codex connection. Exact saved external-tool availability and
+canonical execution are unproven. The 36 transport and 29 Hermes integration tests provide fixture
+proof only. Fork cost: these existing runtime owners and their tests; no new registry or runtime.
+A generic selected-tool callback is an upstream contribution candidate, not a submitted or accepted PR.
+An authorized rollback would remove definition/dispatch/forwarding changes together, preserving native
+App Server installation/configuration; this paragraph is not permission to perform it.
 
 The owner requested no product-name or profile-name prefix in the embedded terminal UI.
 `Hermes/cli.py::HermesCLI._get_tui_prompt_symbols` therefore renders only the native skin symbol.

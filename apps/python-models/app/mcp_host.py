@@ -307,6 +307,11 @@ def _catalog_diagnostics() -> dict[str, Any]:
         failure_summary = _CATALOG_FAILURE_SUMMARY
         completed_families = list(_CATALOG_COMPLETED_FAMILIES)
         initializing_family = _CATALOG_INITIALIZING_FAMILY
+    try:
+        with open(__file__, "rb") as source_file:
+            current_source_sha256 = hashlib.sha256(source_file.read()).hexdigest()
+    except OSError:
+        current_source_sha256 = None
     return {
         "state": state,
         "catalogState": state,
@@ -321,6 +326,9 @@ def _catalog_diagnostics() -> dict[str, Any]:
         "startupId": _STARTUP_ID,
         "sourceRevision": _STARTUP_SOURCE_REVISION,
         "sourceSha256": _STARTUP_SOURCE_SHA256,
+        "currentSourceSha256": current_source_sha256,
+        "sourceCurrent": (current_source_sha256 == _STARTUP_SOURCE_SHA256
+                          if current_source_sha256 and _STARTUP_SOURCE_SHA256 else None),
     }
 
 

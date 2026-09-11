@@ -121,20 +121,20 @@ router.post('/execution', async (req, res) => {
 // Observe the already-authorized child after its parent's foreground turn ends.
 // The stored lineage is the authority; this route cannot start or restart a Run.
 router.post('/profile-run', async (req, res) => {
-  const { projectId, deckId, parentRunId, runId, action } = req.body || {};
-  if (![projectId, deckId, parentRunId, runId].every((value) => typeof value === 'string' && value.trim())
+  const { projectId, deckId, conversationId, parentRunId, runId, action } = req.body || {};
+  if (![projectId, deckId, conversationId, parentRunId, runId].every((value) => typeof value === 'string' && value.trim())
     || !['read', 'stop'].includes(action)) {
     return res.status(400).json({ ok: false, error: 'profile_run_identity_required' });
   }
   try {
     const response = await requestPythonRailsJson('/domain/runs/read', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, deckId, runId: parentRunId, includeTerminal: true }),
+      body: JSON.stringify({ projectId, deckId, conversationId, runId: parentRunId, includeTerminal: true }),
     }) as any;
     const parent = response?.run;
     const child = parent?.terminal?.children?.find((item: any) => item.runId === runId && item.parentRunId === parentRunId);
-    if (parent?.cardId !== res.locals.ownerCardId || parent?.projectId !== projectId
-      || parent?.deckId !== deckId || !child) {
+    if (parent?.runId !== parentRunId || parent?.cardId !== res.locals.ownerCardId || parent?.projectId !== projectId
+      || parent?.deckId !== deckId || parent?.conversationId !== conversationId || !child) {
       return res.status(403).json({ ok: false, error: 'profile_run_parent_mismatch' });
     }
     if (action === 'stop' && ['pending', 'running'].includes(child.state)) {
@@ -149,7 +149,8 @@ router.post('/profile-run', async (req, res) => {
         cancelHermesRun(child.runtimeProfile, runId);
       }
     }
-    return res.json({ ok: true, result: { runId, cardId: child.cardId, state: child.state,
+    return res.json({ ok: true, result: { projectId, deckId, conversationId, parentRunId,
+      runId, cardId: child.cardId, state: child.state,
       // Full output remains in the child Run and the lower reader.
       excerpt: typeof child.result === 'string' ? child.result.slice(0, 1200) : '',
       error: child.errorSummary || null } });

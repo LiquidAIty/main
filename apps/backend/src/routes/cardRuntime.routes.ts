@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import {
   coderTerminalSessionManager,
@@ -31,6 +31,7 @@ import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, termin
 import { projectMainRuntimeEvent } from '../hermes/mainProjection';
 import { resolveRepoRoot } from '../coder/workspaceRoot';
 import { listConversations } from '../conversations/store';
+import { getProjectCard } from '../services/agentBuilderStore';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
 // The app's one canonical Agent Canvas deck id, defined once on the deck store.
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
@@ -62,6 +63,24 @@ export const hermesRoutes = Router();
 
 const BUILDER_CARD_ID = 'builder';
 const BUILDER_PROFILE = 'builder';
+
+async function authorizeMainProject(req: Request, res: Response, projectId: string): Promise<boolean> {
+  const userId = typeof (req as any).userId === 'string' ? (req as any).userId.trim() : '';
+  if (!userId) {
+    res.status(401).json({ ok: false, error: 'main_owner_authentication_required' });
+    return false;
+  }
+  try {
+    if (!await getProjectCard(projectId, userId)) {
+      res.status(403).json({ ok: false, error: 'main_project_access_denied' });
+      return false;
+    }
+    return true;
+  } catch {
+    res.status(503).json({ ok: false, error: 'main_project_authority_unavailable' });
+    return false;
+  }
+}
 
 type RemoteMainDriverSource = Exclude<MainDriverSource, 'native_cli'>;
 
@@ -195,7 +214,8 @@ async function executePreparedMainCliRun(
       message: String(run.prepared.hermesTransport.request.message || ''),
       profileTargets: turnArgs.profileTargets || [],
       mcpServers: hostProjection.mcpServers,
-      sessionConfig,
+      sessionConfig: { ...sessionConfig,
+        hostSessionKey: deriveHermesSessionKey(run.projectId, run.conversationId, run.cardId) },
       profileAuthority: {
         projectId: run.projectId,
         deckId: run.deckId,
@@ -1399,6 +1419,8 @@ mainRoutes.get('/session/driver', (_req, res) => {
     ready: status.ready,
     activeDriver: status.activeDriver,
     activeContextAuthorityMode: status.activeContextAuthorityMode,
+    runId: status.runId,
+    busy: status.runId !== null,
   });
 });
 
@@ -1410,6 +1432,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
   if (!projectId || !message) {
     return res.status(400).json({ ok: false, error: 'projectId_and_message_required' });
   }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
 
   let run: PreparedMainCliRun;
   try {
@@ -1554,8 +1577,27 @@ mainRoutes.post('/session/answer', (_req, res) => {
     error: 'main_cli_structured_answer_unavailable',
   });
 });
-mainRoutes.get('/session/history', (_req, res) => {
-  const history = mainCliBridge.history();
+mainRoutes.get('/session/history', async (req, res) => {
+  const projectId = String(req.query.projectId || '').trim();
+  const conversationId = String(req.query.conversationId || '').trim();
+  const deckId = String(req.query.deckId || BUILDER_DECK_ID).trim();
+  if (!projectId || !conversationId) {
+    return res.status(400).json({ ok: false, error: 'main_cli_history_scope_required', messages: [] });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+  let history;
+  try {
+    const { deck } = await getDeckDocument(projectId, deckId);
+    const cards = deck?.nodes.filter((card) => card.runtime.kind === 'hermes'
+      && card.runtime.mode === 'main') || [];
+    if (cards.length !== 1) throw new Error('persisted_main_chat_mismatch');
+    history = mainCliBridge.history(deriveHermesSessionKey(projectId, conversationId, cards[0].id));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'main_cli_history_read_failed';
+    return res.status(reason === 'main_cli_history_scope_mismatch' ? 409 : 503)
+      .json({ ok: false, error: ['main_cli_history_scope_mismatch', 'persisted_main_chat_mismatch'].includes(reason)
+        ? reason : 'main_cli_history_read_failed', messages: [] });
+  }
   if (!history) {
     return res.status(503).json({
       ok: false,
@@ -1583,6 +1625,7 @@ mainRoutes.get('/session/conversations', async (req, res) => {
   if (!projectId) {
     return res.status(400).json({ ok: false, error: 'projectId_required', conversations: [] });
   }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
   try {
     const conversations = (await listConversations(projectId))
       .filter((conversation) => !conversation.archivedAt)

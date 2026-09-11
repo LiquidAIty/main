@@ -1,5 +1,10 @@
 # Trading Reference Build Journal
 
+Historical report from September 3, 2026. Its observations, commands, permissions and proposed next
+steps describe that checkpoint only. They are not current runtime proof or execution instructions.
+Current ownership/status is in ARCHITECTURE.md and PLAN.md; retired Coder/operation references below
+must not be restored from this record.
+
 This journal records material construction decisions for the first Card-managed subsystem reference. It
 contains no hidden reasoning, credentials, raw transcripts, or graph writes.
 

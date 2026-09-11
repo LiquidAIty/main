@@ -40,9 +40,9 @@ private tool is present before testing public projection exclusion, preserve nat
 and OAuth metadata, and validate supported and invalid runtime inputs against actual schemas.
 These boundaries repaired the September 10 failures without changing publication or authentication.
 
-Test runtime-selected documentation against its real file as well as small fixtures. Builder's
-PLAN heading accidentally included other roles and audit history despite isolated fixture tests.
-Keep those evaluator assertions in tests, outside the selected product section.
+PLAN is not runtime input. A former heading-based loader leaked other roles and audit history
+despite passing small fixtures; that loader was removed. Preserve the regression that changing
+or removing PLAN leaves the canonical IDF unchanged. Keep evaluator assertions outside product input.
 
 Check invocation paths before classifying a source-reading test failure. Some client tests resolve
 `client/src/...` against `process.cwd()` and require running Vitest from the repo root with

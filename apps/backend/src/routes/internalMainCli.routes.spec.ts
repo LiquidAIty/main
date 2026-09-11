@@ -30,21 +30,33 @@ describe('internal Main CLI bridge routes', () => {
   beforeEach(() => clearHermesExecutionContextsForTest());
 
   it('reads only a stored child of this CLI owner after the foreground turn has ended', async () => {
-    const parent = { runId: 'parent', cardId: 'card_main_chat', projectId: 'p', deckId: 'd',
+    const parent = { runId: 'parent', cardId: 'card_main_chat', projectId: 'p', deckId: 'd', conversationId: 'conversation',
       terminal: { children: [{ runId: 'child', parentRunId: 'parent', cardId: 'builder', state: 'completed', result: 'Evidence '.repeat(300) }] } };
     vi.mocked(requestPythonRailsJson).mockResolvedValue({ ok: true, run: parent });
     const { server, baseUrl } = await createServer();
-    const read = (runId: string) => fetch(`${baseUrl}/profile-run`, {
+    const read = (runId: string, conversationId: string | undefined = 'conversation', action = 'read') => fetch(`${baseUrl}/profile-run`, {
       method: 'POST', headers: { Authorization: `Bearer ${mainCliBridgeToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: 'p', deckId: 'd', parentRunId: 'parent', runId, action: 'read' }),
+      body: JSON.stringify({ projectId: 'p', deckId: 'd', conversationId, parentRunId: 'parent', runId, action }),
     });
     try {
       const response = await read('child');
       expect(response.status).toBe(200);
       const result = (await response.json() as any).result;
-      expect(result).toMatchObject({ runId: 'child', cardId: 'builder', state: 'completed' });
+      expect(result).toMatchObject({ runId: 'child', cardId: 'builder', state: 'completed',
+        projectId: 'p', deckId: 'd', conversationId: 'conversation', parentRunId: 'parent' });
       expect(result.excerpt).toHaveLength(1200);
+      expect(JSON.parse(vi.mocked(requestPythonRailsJson).mock.calls[0][1]!.body as string))
+        .toMatchObject({ conversationId: 'conversation' });
+      expect((await read('child', '')).status).toBe(400);
+      for (const action of ['read', 'stop']) {
+        const denied = await read('child', 'another-conversation', action);
+        expect(denied.status).toBe(403);
+        expect(await denied.json()).toEqual({ ok: false, error: 'profile_run_parent_mismatch' });
+      }
       expect((await read('unrelated')).status).toBe(403);
+      parent.runId = 'unrelated-parent';
+      expect((await read('child')).status).toBe(403);
+      parent.runId = 'parent';
       parent.cardId = 'another-card';
       expect((await read('child')).status).toBe(403);
       expect(vi.mocked(requestPythonRailsJson).mock.calls.every(([path]) => path === '/domain/runs/read')).toBe(true);
@@ -65,11 +77,12 @@ describe('internal Main CLI bridge routes', () => {
         headers: { ...authorization, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId: 'session-1',
+          sessionKey: 'hermes:p:main:card_main_chat',
           messages: [{ role: 'assistant', text: 'prior answer' }],
         }),
       });
       expect(history.status).toBe(200);
-      expect(mainCliBridge.history()).toEqual({
+      expect(mainCliBridge.history('hermes:p:main:card_main_chat')).toEqual({
         sessionId: 'session-1',
         messages: [{ role: 'assistant', text: 'prior answer' }],
         projections: [],

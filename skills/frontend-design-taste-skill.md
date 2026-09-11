@@ -13,9 +13,9 @@ version. The upstream skill is also installable directly (see "Plugin / Install"
 
 ## When To Use It
 
-When improving the LOOK of an EXISTING LiquidAIty surface (graph panels, inspectors,
+Only when the active PromptSpec explicitly authorizes improving the LOOK of an EXISTING LiquidAIty surface (graph panels, inspectors,
 WorldSignal, Energy, Media, agent cards). The job is to make real surfaces look good,
-not to invent new ones.
+not to invent new ones. This skill does not reopen an accepted design or authorize adjacent changes.
 
 Hard rule (the antidote to the deleted /workbench mistake): **audit and fix what's
 there. Do not rewrite from scratch. Do not add a new UI system, route, or design
@@ -64,8 +64,8 @@ states. Stop and review between steps.
 * Work with the existing stack; never migrate frameworks/styling libs (Tailwind v4 here).
 * Don't break functionality, data, labels, or honest missing-state text.
 * Check `package.json` before importing anything new.
-* Keep edits scoped and reviewable; prefer shared-token changes that propagate over
-  per-element copy-paste.
+* Keep edits scoped and reviewable. Trace all shared-token consumers before changing one;
+  propagation into a closed surface requires Jeremiah's approval.
 
 ## Proof
 

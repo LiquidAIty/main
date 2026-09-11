@@ -61,7 +61,8 @@ through an explicit bounded task; that does not change the fork version or upstr
    to this tree.
 6. Run the single-assistant characterization first, then one-worker Mag One, then full connected-team
    tests. Provider tests remain a separately approved stage.
-7. Rebuild the canonical Codebase Memory project only after the source boundary is stable.
+7. AutoGen is excluded from the canonical CBM projection. Use direct source under
+   `skills/codebasedmemory.md`; do not reindex or change exclusions as part of fork maintenance.
 
 ## Tests and rollback
 

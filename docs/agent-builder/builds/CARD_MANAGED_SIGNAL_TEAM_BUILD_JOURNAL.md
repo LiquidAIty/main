@@ -1,10 +1,14 @@
 # Building a Card-Managed Signal Agent Team
 
+Historical report from September 3, 2026. All status, permissions, saved-state snapshots and the
+proposed acceptance mission below belong to that checkpoint. None authorizes execution now or
+proves today's loaded state. Use ARCHITECTURE.md, PLAN.md and the current PromptSpec for current work.
+
 This journal records externally observable construction decisions for the first repository-backed
 signal team. It contains no hidden reasoning, credentials, raw transcripts, copied graph data, or
 fabricated runtime receipts.
 
-Current continuation status (2026-09-03): **LIVE CHAIN, HERMES MIGRATION, AND WIRING PROVEN;
+Reported checkpoint status (2026-09-03): **LIVE CHAIN, HERMES MIGRATION, AND WIRING PROVEN;
 MAG ONE NOT RUN**. The real authenticated Shadowbroker package is visible in WorldView with a valid
 linked Signal Analyst assessment; Quant independently returned a valid INCONCLUSIVE result.
 WorldSignals now runs in place through its native Hermes profile with its original saved model and

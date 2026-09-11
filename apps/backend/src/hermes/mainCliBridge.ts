@@ -66,6 +66,7 @@ export type MainCliHistoryMessage = {
 };
 
 export type MainCliHistoryProjection = {
+  sessionKey?: string;
   identity: { projectId: string; deckId: string; cardId: string; cardName: string; runId: string };
   projection: MainCliProjection;
 };
@@ -109,7 +110,8 @@ type PendingTeamDelivery = MainCliTeamDelivery & {
 export class MainCliBridge {
   private active: MainCliTurn | null = null;
   private lastPollAt = 0;
-  private historySnapshot: { sessionId: string | null; messages: MainCliHistoryMessage[] } | null = null;
+  private historySnapshot: { sessionId: string | null; sessionKey: string | null;
+    messages: MainCliHistoryMessage[] } | null = null;
   /** Bounded replay projection of the bridge's existing native event stream. */
   private executionHistory: MainCliHistoryProjection[] = [];
   private teamDeliveries = new Map<string, PendingTeamDelivery>();
@@ -333,6 +335,7 @@ export class MainCliBridge {
       active.projectionIds.add(projection.id);
       if (projection.category.startsWith('execution.')) {
         this.executionHistory.push({
+          sessionKey: String(active.sessionConfig.hostSessionKey || ''),
           identity: { ...active.projectionIdentity },
           projection: { ...projection },
         });
@@ -377,6 +380,8 @@ export class MainCliBridge {
       throw new Error('main_cli_history_too_large');
     }
     this.historySnapshot = {
+      sessionKey: typeof record.sessionKey === 'string' && record.sessionKey
+        ? record.sessionKey : null,
       sessionId: typeof record.sessionId === 'string' && record.sessionId
         ? record.sessionId
         : null,
@@ -385,13 +390,20 @@ export class MainCliBridge {
     this.notePoll();
   }
 
-  history(): { sessionId: string | null; messages: MainCliHistoryMessage[];
+  history(sessionKey: string): { sessionId: string | null; messages: MainCliHistoryMessage[];
     projections: MainCliHistoryProjection[] } | null {
+    if (!sessionKey) throw new Error('main_cli_history_scope_required');
+    if (this.ready() && this.historySnapshot
+      && this.historySnapshot.sessionKey !== sessionKey
+      && (this.historySnapshot.sessionKey || this.historySnapshot.messages.length)) {
+      throw new Error('main_cli_history_scope_mismatch');
+    }
     return this.ready() && this.historySnapshot
       ? {
           sessionId: this.historySnapshot.sessionId,
           messages: this.historySnapshot.messages.map((message) => ({ ...message })),
-          projections: this.executionHistory.map(({ identity, projection }) => ({
+          projections: this.executionHistory.filter((item) => item.sessionKey === sessionKey)
+            .map(({ identity, projection }) => ({
             identity: { ...identity },
             projection: { ...projection },
           })),

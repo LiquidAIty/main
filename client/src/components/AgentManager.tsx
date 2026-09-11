@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   NativeGraphProjectionSurface,
@@ -555,7 +555,12 @@ export function AgentManager({
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
-  const cardSaveInFlightRef = useRef(false);
+  const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const cardDraftRevisionRef = useRef(0);
+  const nativeDraftRevisionRef = useRef(0);
+  const nativeDraftDirtyRef = useRef(false);
+  const nativeReadbackRef = useRef<NativeHermesCardView | null>(null);
   const runtimeKind = localConfig?.runtime.kind;
   const runtimeMode = localConfig?.runtime.mode;
   const [cardNameDraft, setCardNameDraft] = useState(cardName);
@@ -748,6 +753,8 @@ export function AgentManager({
 
   useEffect(() => {
     if (!isLocalConfigMode || !localConfig) return;
+    // A response to an earlier save must not replace edits made while it was pending.
+    if (draftDirtyRef.current || cardSaveInFlightRef.current) return;
     draftDirtyRef.current = false;
     setDelegationTouched(false);
     setDelegationRole(localConfig.runtime_options?.delegationRole || 'off');
@@ -835,6 +842,7 @@ export function AgentManager({
   }, [isLocalConfigMode, localConfig]);
 
   const acceptNativeReadback = useCallback((state: NativeHermesCardView | null) => {
+    nativeReadbackRef.current = state;
     setNativeHermesState(state);
     setAutomaticLearningDraft(null);
     if (!state) {
@@ -902,6 +910,14 @@ export function AgentManager({
 
   const markDraftDirty = () => {
     draftDirtyRef.current = true;
+    cardDraftRevisionRef.current += 1;
+    setDraftRevision((revision) => revision + 1);
+  };
+
+  const markNativeDraftDirty = () => {
+    nativeDraftDirtyRef.current = true;
+    nativeDraftRevisionRef.current += 1;
+    setDraftRevision((revision) => revision + 1);
   };
 
   const updateScriptDraft = (next: SavedCardScript) => {
@@ -1000,30 +1016,19 @@ export function AgentManager({
   ]);
 
   const runSaveConfig = useCallback(async () => {
-    if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) return false;
-    if (saveCardStatus === 'saving') return false;
+    if (!draftDirtyRef.current) return;
+    if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) throw new Error('card_config_missing');
+    const revision = cardDraftRevisionRef.current;
     const payload = buildCurrentLocalPayload();
-    setSaveCardStatus('saving');
-    setSaveCardErrorMessage(null);
-    try {
-      await Promise.resolve(onSaveLocalConfig(payload));
+    await Promise.resolve(onSaveLocalConfig(payload));
+    if (cardDraftRevisionRef.current === revision) {
       draftDirtyRef.current = false;
-      setSaveCardStatus('saved');
-      return true;
-    } catch (error) {
-      setSaveCardStatus('failed');
-      setSaveCardErrorMessage(
-        error instanceof Error && error.message ? error.message : 'Save failed.',
-      );
-      return false;
     }
   }, [
     isLocalConfigMode,
     localConfig,
     onSaveLocalConfig,
-    saveCardStatus,
     buildCurrentLocalPayload,
-    openDeckRevision,
   ]);
 
   const openNativeLearningNode = useCallback(async (nodeId: string) => {
@@ -1069,14 +1074,14 @@ export function AgentManager({
     }
   }, [projectId, deckId, cardId]);
 
-  const saveOnCardLeave = useCallback(async (): Promise<boolean> => {
-    if (cardSaveInFlightRef.current) return false;
-    cardSaveInFlightRef.current = true;
-    try {
-      if (!(await runSaveConfig())) return false;
-      if (nativeHermesState && projectId && deckId && cardId) {
-        const profile = nativeHermesState.native;
-        const changes: Record<string, unknown> = {};
+  const saveCurrentDraft = useCallback(async (): Promise<void> => {
+      const nativeRevision = nativeDraftRevisionRef.current;
+      const nativeState = nativeReadbackRef.current;
+      const learningEdits = [...learningEditsRef.current];
+      const changes: Record<string, unknown> = {};
+      if (nativeDraftDirtyRef.current) {
+        if (!nativeState || !projectId || !deckId || !cardId) throw new Error('Native profile unavailable.');
+        const profile = nativeState.native;
         if (automaticLearningDraft !== null && profile.backgroundReview
           && automaticLearningDraft !== profile.backgroundReview.enabled) {
           changes.background_review = {
@@ -1101,30 +1106,67 @@ export function AgentManager({
           && memoryProviderDraft !== (profile.honcho.selected ? 'honcho' : 'builtin')) {
           changes.memory_provider = memoryProviderDraft;
         }
-        let latestReadback: NativeHermesCardView | null = null;
+      }
+      await runSaveConfig();
+      if (nativeDraftDirtyRef.current) {
+        let latestReadback = nativeState;
         for (const [field, value] of Object.entries(changes)) {
           const readback = await applyNativeHermesOperation({ projectId, deckId, cardId,
             change: { method: 'profiles.configure', params: { [field]: value } } });
           latestReadback = readback;
+          nativeReadbackRef.current = readback;
+          setNativeHermesState(readback);
         }
-        if (latestReadback) acceptNativeReadback(latestReadback);
-        for (const [id, content] of learningEditsRef.current) {
+        for (const [id, content] of learningEdits) {
           await applyNativeHermesOperation({ projectId, deckId, cardId,
             change: { method: 'learning.edit', params: { id, content } } });
-          learningEditsRef.current.delete(id);
+          if (learningEditsRef.current.get(id) === content) learningEditsRef.current.delete(id);
+        }
+        if (nativeDraftRevisionRef.current === nativeRevision) {
+          nativeDraftDirtyRef.current = false;
+          if (latestReadback) acceptNativeReadback(latestReadback);
         }
       }
-      return true;
-    } catch (error) {
-      setSaveCardStatus('failed');
-      setSaveCardErrorMessage(error instanceof Error ? error.message : 'Could not save Card.');
-      return false;
-    } finally {
-      cardSaveInFlightRef.current = false;
-    }
-  }, [runSaveConfig, nativeHermesState, projectId, deckId, cardId, nativeSoulDraft,
+  }, [runSaveConfig, projectId, deckId, cardId, nativeSoulDraft,
     nativeDisabledSkills, nativeEnabledToolsets, nativeEnabledMcpServers, memoryProviderDraft,
     automaticLearningDraft, acceptNativeReadback]);
+
+  const saveLatestDraftRef = useRef(saveCurrentDraft);
+  useLayoutEffect(() => {
+    saveLatestDraftRef.current = saveCurrentDraft;
+  }, [saveCurrentDraft]);
+
+  const saveOnCardLeave = useCallback((): Promise<boolean> => {
+    // The canvas clears one selection and sets the other in the same click.
+    // Both callers must await the same save, including any newer edits.
+    if (cardSaveInFlightRef.current) return cardSaveInFlightRef.current;
+    if (!draftDirtyRef.current && !nativeDraftDirtyRef.current) return Promise.resolve(true);
+    const save = Promise.resolve().then(async () => {
+      setSaveCardStatus('saving');
+      setSaveCardErrorMessage(null);
+      try {
+        while (draftDirtyRef.current || nativeDraftDirtyRef.current) {
+          await saveLatestDraftRef.current();
+        }
+        setSaveCardStatus('saved');
+        return true;
+      } catch (error) {
+        setSaveCardStatus('failed');
+        setSaveCardErrorMessage(error instanceof Error ? error.message : 'Could not save Card.');
+        return false;
+      } finally {
+        cardSaveInFlightRef.current = null;
+      }
+    });
+    cardSaveInFlightRef.current = save;
+    return save;
+  }, []);
+
+  useEffect(() => {
+    if (!draftDirtyRef.current && !nativeDraftDirtyRef.current) return;
+    const timer = window.setTimeout(() => { void saveOnCardLeave(); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [draftRevision, saveOnCardLeave]);
 
   useEffect(() => {
     registerCardLeave?.(saveOnCardLeave);
@@ -1500,11 +1542,13 @@ export function AgentManager({
                         <input
                           type="checkbox"
                           checked={enabled}
-                          onChange={(event) => setNativeDisabledSkills((current) => (
-                            event.target.checked
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setNativeDisabledSkills((current) => checked
                               ? current.filter((name) => name !== skill.name)
-                              : Array.from(new Set([...current, skill.name]))
-                          ))}
+                              : Array.from(new Set([...current, skill.name])));
+                            markNativeDraftDirty();
+                          }}
                         />{' '}
                         {skill.name}
                       </label>
@@ -1517,7 +1561,10 @@ export function AgentManager({
                 <label style={{ color: '#B8C8CD', fontSize: 12 }}>
                   <input type="checkbox" aria-label="Automatic learning"
                     checked={automaticLearningDraft ?? nativeHermesState.native.backgroundReview.enabled}
-                    onChange={(event) => setAutomaticLearningDraft(event.target.checked)} />{' '}
+                    onChange={(event) => {
+                      setAutomaticLearningDraft(event.target.checked);
+                      markNativeDraftDirty();
+                    }} />{' '}
                   Automatic learning
                 </label>
               ) : null}
@@ -1545,7 +1592,10 @@ export function AgentManager({
                   <select
                     aria-label="Memory provider"
                     value={memoryProviderDraft || 'builtin'}
-                    onChange={(event) => setMemoryProviderDraft(event.target.value as 'builtin' | 'honcho')}
+                    onChange={(event) => {
+                      setMemoryProviderDraft(event.target.value as 'builtin' | 'honcho');
+                      markNativeDraftDirty();
+                    }}
                   >
                     <option value="builtin">Built-in only</option>
                     <option value="honcho">External</option>
@@ -1566,6 +1616,7 @@ export function AgentManager({
                     onChange={(event) => {
                       setNativeLearningDraft(event.target.value);
                       learningEditsRef.current.set(nativeLearningDetail.id, event.target.value);
+                      markNativeDraftDirty();
                     }}
                     rows={10}
                     style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
@@ -1595,7 +1646,10 @@ export function AgentManager({
                     id="card-prompt-soul"
                     aria-label="Soul"
                     value={nativeSoulDraft}
-                    onChange={(event) => setNativeSoulDraft(event.target.value)}
+                    onChange={(event) => {
+                      setNativeSoulDraft(event.target.value);
+                      markNativeDraftDirty();
+                    }}
                     rows={10}
                     style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
                   />
@@ -2153,11 +2207,13 @@ export function AgentManager({
                       <input
                         type="checkbox"
                         checked={nativeEnabledToolsets.includes(toolset.name)}
-                        onChange={(event) => setNativeEnabledToolsets((current) => (
-                          event.target.checked
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setNativeEnabledToolsets((current) => checked
                             ? Array.from(new Set([...current, toolset.name]))
-                            : current.filter((name) => name !== toolset.name)
-                        ))}
+                            : current.filter((name) => name !== toolset.name));
+                          markNativeDraftDirty();
+                        }}
                       />{' '}
                       {toolset.label || toolset.name}{typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
                     </label>
@@ -2182,11 +2238,13 @@ export function AgentManager({
                         <input
                           type="checkbox"
                           checked={nativeEnabledMcpServers.includes(server.name)}
-                          onChange={(event) => setNativeEnabledMcpServers((current) => (
-                            event.target.checked
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setNativeEnabledMcpServers((current) => checked
                               ? Array.from(new Set([...current, server.name]))
-                              : current.filter((name) => name !== server.name)
-                          ))}
+                              : current.filter((name) => name !== server.name));
+                            markNativeDraftDirty();
+                          }}
                         />{' '}
                         {server.name} · {server.credentialStatus.replace('_', ' ')}
                       </label>

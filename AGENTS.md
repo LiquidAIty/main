@@ -249,6 +249,28 @@ directly inspected documentation edit and report the missing Git proof.
 
 ## Requested Delta and Preservation Set
 
+### Scope and closed features
+
+- The supplied PromptSpec is the implementation scope and Preservation Set. An assistant proposal,
+  old plan, TODO, nearby defect or historical approval does not expand it.
+- Ask Jeremiah before editing outside `C:\Projects\LiquidAIty\main`, or a production file or feature
+  not supported by the current PromptSpec. Discovery grants no implementation authority.
+- Report adjacent defects without fixing them. A necessary prerequisite must have evidence of its
+  direct coupling to the requested outcome; record that evidence before expanding the work.
+- Accepted and closed features stay closed. If the requested change necessarily affects one,
+  show the exact coupling and ask first. Better style or possible improvement is not authorization.
+- Creativity stays inside the authorized outcome. Ask before adding a new design, authority,
+  abstraction, dependency, runtime, storage path or user experience.
+- Map every changed file and meaningful hunk to a requirement or proven prerequisite. Keep the
+  ledger in the task, not another repository document. Finish and prove one boundary before the next.
+- Cleanup covers only residue created inside the authorized boundary. Documentation changes also
+  require PromptSpec authorization; do not append an incident diary as a side effect of coding.
+- Ask when a consequential ambiguity remains; do not ask again about routine choices already
+  authorized. The owner's latest explicit preservation decision wins over a general cleanup rule.
+- Tests must preserve the requested behavior. Report source, structural connection, focused tests,
+  build, loaded health, real saved product execution and Jeremiah's visual acceptance separately.
+  Never use restored, complete, safe or passing to conceal unfinished or unproven work.
+
 Every implementation begins with:
 
 ### Requested Delta

@@ -297,9 +297,10 @@ class _MainCliBridge:
         from tools.async_delegation import dispatch_async_delegation
         from tools.delegate_tool import _get_max_async_children
 
-        identity = {key: accepted.get(key) for key in ("projectId", "deckId", "parentRunId", "runId")}
+        identity = {key: accepted.get(key) for key in ("projectId", "deckId", "conversationId", "parentRunId", "runId")}
         session_id = str(params.get("sessionId") or "")
-        if accepted.get("state") != "running" or not session_id or not all(identity.values()):
+        if (accepted.get("state") != "running" or not session_id
+                or not all(isinstance(value, str) and value.strip() for value in identity.values())):
             raise RuntimeError("profile_acceptance_identity_invalid")
         interrupted = threading.Event()
 
@@ -319,7 +320,7 @@ class _MainCliBridge:
                 result = response.get("result") if isinstance(response, dict) else None
                 if not isinstance(result, dict) or response.get("ok") is not True:
                     raise RuntimeError("profile_result_unavailable")
-                if result.get("runId") != identity["runId"]:
+                if any(result.get(key) != value for key, value in identity.items()):
                     raise RuntimeError("profile_result_identity_mismatch")
                 state = result.get("state")
                 if state in {"completed", "failed", "cancelled", "blocked"}:
@@ -519,6 +520,7 @@ class _MainCliBridge:
                 public_messages.append({"role": message["role"], "text": text})
         payload = {
             "sessionId": str(snapshot.get("session_id") or "") or None,
+            "sessionKey": snapshot.get("session_key"),
             "messages": public_messages,
         }
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

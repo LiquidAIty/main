@@ -66,6 +66,7 @@ export async function runHermesProfileDelegation(
   acceptedAt?: string;
   projectId?: string;
   deckId?: string;
+  conversationId?: string;
   parentRunId?: string;
 }> {
   if (params.background !== undefined && typeof params.background !== 'boolean') {
@@ -176,7 +177,8 @@ export async function runHermesProfileDelegation(
     }
     return { nativeChildId, targetProfile, runId, state: 'running',
       acceptedAt: record.acceptedAt, result: '', nativeEvents: [],
-      projectId: authority.projectId, deckId: authority.deckId, parentRunId: authority.parentRunId };
+      projectId: authority.projectId, deckId: authority.deckId,
+      conversationId: authority.conversationId, parentRunId: authority.parentRunId };
   }
   const output = bounded(record.output, 'result', 2_000_000);
   const nativeEvents = Array.isArray(record.nativeEvents) ? record.nativeEvents : [];

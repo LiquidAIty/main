@@ -20,4 +20,4 @@ it; references alone are not useful if the recipient has no granted way to retri
 
 CBM describes structure; it does not decide intent, grants, or runtime success. Do not launch a
 frontend, index, manipulate its cache, add a TypeScript planning layer, or copy repository source
-into a general Main prompt. Agent Builder and Local Coder retain their distinct saved Card roles.
+into a general Main prompt. Builder is the saved construction Card; the downloadable Coder is deferred.

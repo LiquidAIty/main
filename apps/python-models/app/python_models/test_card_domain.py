@@ -7,6 +7,47 @@ import pytest
 from app.python_models import card_domain
 
 
+@pytest.mark.parametrize("conversation_matches", [True, False])
+def test_scoped_run_read_checks_native_conversation_before_output(monkeypatch, conversation_matches):
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value = {"run_id": "parent", "project_id": "p", "deck_id": "d",
+                                   "card_id": "main", "final_result": "private output"}
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **kwargs: connection)
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *args: {"id": "p"})
+    lineage = MagicMock(return_value=[{"run_id": "parent"}] if conversation_matches else [])
+    monkeypatch.setattr(card_domain, "_age_rows", lineage)
+    terminal = MagicMock(return_value={"children": []})
+    monkeypatch.setattr(card_domain, "_read_run_terminal", terminal)
+    result = card_domain.read_run({"projectId": "p", "deckId": "d", "runId": "parent",
+                                   "conversationId": "selected-conversation", "includeTerminal": True})
+    if conversation_matches:
+        assert result["run"]["conversationId"] == "selected-conversation"
+        assert result["run"]["result"] == "private output"
+        assert terminal.call_args.kwargs == {"conversation_id": "selected-conversation"}
+    else:
+        assert result == {"ok": True, "run": None}
+        terminal.assert_not_called()
+    assert lineage.call_args.args[2] == {"projectId": "p", "deckId": "d",
+                                         "runId": "parent", "conversationId": "selected-conversation"}
+
+
+def test_scoped_terminal_lineage_requires_both_runs_in_conversation(monkeypatch):
+    from unittest.mock import MagicMock
+
+    lineage = MagicMock(return_value=[])
+    monkeypatch.setattr(card_domain, "_age_rows", lineage)
+    result = card_domain._read_run_terminal(MagicMock(), {
+        "run_id": "parent", "project_id": "p", "deck_id": "d"}, conversation_id="selected")
+    query, params = lineage.call_args.args[1:3]
+    assert "parent.conversationId=$conversationId" in query
+    assert "child.conversationId=$conversationId" in query
+    assert params["conversationId"] == "selected"
+    assert result["children"] == []
+
+
 def _agent(card_id: str, **overrides):
     card = {
         "id": card_id,

@@ -116,13 +116,14 @@ describe('MainCliBridge', () => {
     const bridge = new MainCliBridge();
     bridge.acceptHistory({
       sessionId: 'session-1',
+      sessionKey: 'hermes:p:main:card_main_chat',
       messages: [
         { role: 'user', text: 'question' },
         { role: 'assistant', text: 'answer' },
       ],
       projections: [],
     });
-    expect(bridge.history()).toEqual({
+    expect(bridge.history('hermes:p:main:card_main_chat')).toEqual({
       sessionId: 'session-1',
       messages: [
         { role: 'user', text: 'question' },
@@ -134,6 +135,14 @@ describe('MainCliBridge', () => {
       sessionId: 'session-1',
       messages: [{ role: 'tool', text: 'private tool output' }],
     })).toThrow('main_cli_history_invalid');
+    expect(() => bridge.history('hermes:other:main:card_main_chat'))
+      .toThrow('main_cli_history_scope_mismatch');
+    expect(() => bridge.history('hermes:p:other:card_main_chat'))
+      .toThrow('main_cli_history_scope_mismatch');
+    expect(() => bridge.history('')).toThrow('main_cli_history_scope_required');
+    bridge.acceptHistory({ sessionId: 'unscoped', messages: [{ role: 'user', text: 'private' }] });
+    expect(() => bridge.history('hermes:p:main:card_main_chat'))
+      .toThrow('main_cli_history_scope_mismatch');
   });
 
   it('delivers each semantic projection ID exactly once without text comparison', async () => {
@@ -143,6 +152,7 @@ describe('MainCliBridge', () => {
     const done = bridge.submit({
       runId: 'run-projection', executionContextId: 'context-projection',
       driverSource: 'internal_chat', message: 'hello', onEvent,
+      sessionConfig: { hostSessionKey: 'hermes:project-one:main:card_main_chat' },
       projectionIdentity: {
         projectId: 'project-one', deckId: 'deck_builder', cardId: 'card_main_chat',
         cardName: 'Main', runId: 'run-projection',
@@ -175,11 +185,14 @@ describe('MainCliBridge', () => {
     bridge.acceptEvent({ requestId: candidate.requestId, runId: candidate.runId,
       kind: 'completed', finalText: 'done', nativeSessionId: 'session-1', nativeTurnId: 'turn-1' });
     await expect(done).resolves.toMatchObject({ finalText: 'done' });
-    bridge.acceptHistory({ sessionId: 'session-1', messages: [
+    bridge.acceptHistory({ sessionId: 'session-1', sessionKey: 'hermes:project-one:main:card_main_chat', messages: [
       { role: 'user', text: 'hello' }, { role: 'assistant', text: 'answer text' },
     ] });
-    expect(bridge.history()?.projections).toHaveLength(1);
-    expect(bridge.history()?.projections[0].projection.category).toBe('execution.tool');
+    expect(bridge.history('hermes:project-one:main:card_main_chat')?.projections).toHaveLength(1);
+    expect(bridge.history('hermes:project-one:main:card_main_chat')?.projections[0].projection.category).toBe('execution.tool');
+    bridge.acceptHistory({ sessionId: 'session-2', sessionKey: 'hermes:project-one:other:card_main_chat',
+      messages: [{ role: 'user', text: 'separate conversation' }] });
+    expect(bridge.history('hermes:project-one:other:card_main_chat')?.projections).toEqual([]);
   });
 
   it('delivers one native Team result with exact task idempotence and visible retry', async () => {

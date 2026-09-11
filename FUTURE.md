@@ -3,19 +3,17 @@
 Core v0 is defined in `PLAN.md` and `ARCHITECTURE.md`. This file contains only work intentionally
 deferred until the static baseline and explicitly approved live proofs pass.
 
-September 10 review: PLAN's current MVP roadmap and owner decisions govern. Historical Team-only,
-Coder-delegation and Constellation entries below require reconciliation in the final design review;
-they do not authorize removed tooling, an old roster, graph consolidation or automatic ingestion.
-They remain visible as decision evidence rather than silently becoming current implementation tasks.
+These are candidates, not execution authorization. PLAN and the current PromptSpec govern order.
+Named-Card conversation/Bot Mode remains a separate feature; do not mix it into the current repair.
 
 ## Live proof sequence
 
 1. Main Hermes returns one bounded response through the saved account/model.
-2. Main delegates one read-only CodeGraph task to the saved Coder Card.
+2. Main delegates one read-only CodeGraph task to the saved Builder Card through its existing flow.
 3. The child Run records actual tool use, exact native references, parent/correlation identity, cost,
    duration, success/failure, and AGE lineage.
-4. One ordinary Hermes Card completes a bounded native Team task with exact saved-policy projection,
-   Card Run/native-root correlation, separate worker/lead models, and durable rejoin.
+4. One ordinary Hermes Card completes a bounded native Team task with its actual native configuration,
+   Card Run/native-root correlation and durable rejoin. Do not restore the removed Card Team-policy overlay.
 5. Main approves one transient Mag One Card input and hands it to native Magentic-One through the official MCP boundary.
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
@@ -33,7 +31,7 @@ These calls require explicit approval. Structural tests must not be presented as
 
 ## Hermes memory
 
-- Measure recall quality and profile isolation across longer real Main, Coder, Agent Builder, and
+- Measure recall quality and profile isolation across longer real Main, Builder, and
   Graph Agent sessions without copying data between profiles.
 - Test Honcho cloud or self-hosted recall/write only after its intended native setup flow supplies the
   owning profile's real OAuth/API-key or base-URL configuration.
@@ -41,7 +39,7 @@ These calls require explicit approval. Structural tests must not be presented as
   selections; do not add a Card-level provider field, SQLite store, or parallel provider registry.
 - Keep memory separation intentional; do not create one automatic cross-agent memory dump.
 
-## Subagents after Team-only MVP
+## Native delegation options
 
 - Keep Leaf available through Hermes' existing internal contract; expose no Leaf UI until its Card-level
   purpose and honest configuration fields are proven.
@@ -52,7 +50,9 @@ These calls require explicit approval. Structural tests must not be presented as
 - Preserve current/last Card Run context after workers stop; do not create a Team history database,
   duplicate SQL task table, or user-facing receipt product.
 
-## Graph Agent evolution
+## Graph Agent evolution — unaccepted proposal
+
+No consolidation of graph Cards or change of graph write authority is approved by this proposal.
 
 Keep one ordinary visible `card_hermes_steward` Graph Agent mapped one-to-one to its native
 `liquidaity-hermes-steward` profile so its sessions, memory, Runs, grants, and history remain continuous.
@@ -63,20 +63,16 @@ revisions. If a responsibility later requires genuinely separate identity, memor
 evaluate a separate ordinary Card through the normal orange-edge contract instead of hiding another agent
 inside Graph Agent.
 
-## Constellation quality work
+## Retired experiments
 
-- Measure the current process-owned BGE-M3 semantic context quality before changing embedding models,
-  dimensions, lifecycle, or startup policy.
-- Exercise bounded autonomy and bulk re-embedding on meaningful retained data only through their
-  existing saved grants, limits, cancellation controls, receipts, and exact database owner.
-- Revisit `kickoffSeedExpansion`, `draftSoulCore`, and `rememberRaw` only if upstream supplies their
-  required provider/launcher contracts and a cancellable timeout for the raw LLM fetch. Do not add a
-  second engine process, database, or hidden model adapter.
+Constellation autonomy, seed expansion and bulk re-embedding are superseded proposals, not current
+owners or future tasks. Their historical description remains in Git; do not revive them during
+Engraphis work. A separate owner decision would be required to reconsider any such capability.
 
 ## UI after runtime proof
 
 - Refine Chat/Graphs as the primary modality and Agent Canvas as the build/test modality.
-- Keep Coder terminal as a revealable second face under Chat.
+- Preserve the existing Builder terminal beneath Chat. A downloadable Coder remains deferred.
 - Explore distinct visual treatment for internal Hermes Cards versus AutoGen/Mag One Cards without
   creating new runtime types.
 - Preserve the current bus layout for now: protected System 3 Cards above it, ordinary information/source/
@@ -97,8 +93,8 @@ inside Graph Agent.
   migration covering saved Cards, Hermes profile homes, source guards, routes, tool/config references,
   and persistence readback. Until that migration is explicitly approved, preserve exact load-bearing
   identifiers and do not create new branded technical names, aliases, or fallbacks.
-- Rename stable historical IDs such as `card_local_coder` only through an explicit persisted-data
-  migration with readback proof.
+- Do not recreate retired Card IDs as part of an identity migration. Preserve references needed
+  for historical readback; current saved identities require exact migration scope.
 - The September 10 domain-route migration is implemented with coordinated Python/browser callers,
   focused preservation tests and canonical loaded route/catalog readback recorded in PLAN.md.
   Fresh selected-plugin and agent execution acceptance remain separate; do not repeat the rename

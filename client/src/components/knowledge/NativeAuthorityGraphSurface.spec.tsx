@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode, Suspense } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as graphVisualTokens from '../graph/graphVisualTokens';
 
 vi.mock('../../vendor/codebase-memory-ui/src/components/GraphTab', () => ({
   GraphTab: ({ project, attentionData }: { project: string | null; attentionData?: { nodes: unknown[] } }) => <div data-testid="cbm-graph-tab">{project}:{attentionData?.nodes.length ?? 'native'}</div>,
@@ -18,7 +19,7 @@ vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
     const canvas = document.createElement('canvas');
     host.appendChild(canvas);
     const instance: any = {
-      data: { nodes: [], links: [] }, nodeClick: options.onNodeClick,
+      data: { nodes: [], links: [] }, nodeClick: options.onNodeClick, backgroundClick: options.onBackgroundClick,
       setData: vi.fn(function (this: any, data: any) {
         this.data = { ...data, nodes: data.nodes.map((node: any) => ({ ...node })), links: data.links || data.edges || [] };
       }),
@@ -46,7 +47,9 @@ import KnowledgeGraphFramework from './KnowledgeGraphFramework';
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   forceGraphMocks.instances.length = 0;
+  window.localStorage.clear();
 });
 
 describe('native authority graph surfaces', () => {
@@ -88,13 +91,9 @@ describe('native authority graph surfaces', () => {
       expect(graph.setPreset).toHaveBeenLastCalledWith(value);
       expect(graph.data.nodes).toEqual([]);
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Freeze', exact: true }));
-    expect(graph.freeze).toHaveBeenLastCalledWith(true);
-    expect((screen.getByRole('button', { name: 'Reheat' }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Resume', exact: true }));
-    expect(graph.freeze).toHaveBeenLastCalledWith(false);
-    fireEvent.click(screen.getByRole('button', { name: 'Reheat' }));
-    expect(graph.reheat).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: /Freeze|Resume|Reheat|Focus/ })).toBeNull();
+    expect(graph.freeze).not.toHaveBeenCalled();
+    expect(graph.reheat).not.toHaveBeenCalled();
   });
 
   it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
@@ -303,7 +302,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.links).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
-    expect(screen.getByRole('button', { name: 'Freeze', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Freeze', exact: true })).toBeNull();
   });
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
@@ -311,11 +310,11 @@ describe('native authority graph surfaces', () => {
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByRole('dialog', { name: 'Existing entry' }).textContent).toContain('Saved note.');
+    expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved note.');
     expect(screen.queryByRole('button', { name: 'Expand', exact: true })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+    expect(screen.queryByRole('region', { name: 'Existing entry details' })).toBeNull();
     expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
   });
 
@@ -383,5 +382,64 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
     act(() => graph.nodeClick(graph.data.nodes[2]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The launch report.');
+  });
+
+  it.each(['thinkgraph', 'knowgraph'] as const)('preserves %s inspector width, provenance, keyboard access and graph settings', authority => {
+    const panelStyles = vi.spyOn(graphVisualTokens, 'graphInspectorPanelStyle');
+    const key = `liquidaity.drawer.${authority}.width`;
+    window.localStorage.setItem(key, '390');
+    const projection = { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
+      runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
+      properties: { statement: 'The complete original statement.', certainty: 0.4, supersedes: 'native-0' },
+      provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] };
+    const { container } = render(<NativeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '5' } });
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    const panel = screen.getByRole('complementary', { name: 'Recorded subject' });
+    expect(panel.style.width).toBe('390px');
+    expect(screen.getByRole('heading', { name: 'Recorded subject' })).toBe(document.activeElement);
+    expect(panel.textContent).toContain('The complete original statement.');
+    expect(panel.textContent).toContain('native-1');
+    expect(panel.textContent).toContain('run-1');
+    expect(panel.textContent).toContain('chat-1');
+    expect(panel.textContent).toContain('2026-09-01');
+    expect(panel.textContent).toContain('Research Agent');
+    expect(panel.textContent).toContain('native-0');
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize drawer' }), { key: 'ArrowLeft' });
+    expect(panel.style.width).toBe('400px');
+    expect(window.localStorage.getItem(key)).toBe('400');
+    fireEvent.click(screen.getByRole('button', { name: 'Detach panel' }));
+    expect(screen.getByRole('button', { name: 'Dock panel' })).toBeTruthy();
+    vi.spyOn(panel.parentElement!, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 1200, bottom: 800, width: 1200, height: 800, toJSON() {},
+    });
+    const previousTop = Number.parseFloat(panel.style.top);
+    fireEvent.keyDown(screen.getByLabelText('Move panel with arrow keys'), { key: 'ArrowDown' });
+    expect(Number.parseFloat(panel.style.top)).toBe(previousTop + 10);
+    fireEvent.click(screen.getByRole('button', { name: 'Dock panel' }));
+    // This jsdom version ignores assigning CSS left:auto over a pixel value.
+    // Check the real material helper's input; browser layout is separate proof.
+    expect(panelStyles).toHaveBeenLastCalledWith(expect.objectContaining({ left: 'auto', right: 12 }));
+    expect(panel.style.right).toBe('12px');
+    expect(screen.getByRole('button', { name: 'Detach panel' })).toBeTruthy();
+    fireEvent.keyDown(panel, { key: 'Escape' });
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBe(document.activeElement);
+    expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
+    expect(screen.getByRole('complementary', { name: 'Graph settings' }).style.width).toBe('400px');
+    expect(container.querySelector('.thinkgraph-entry')).toBeNull();
+    expect(graph.setPreset).toHaveBeenCalledTimes(1);
+    expect(graph.setPreset).toHaveBeenCalledWith('compact');
+    expect(graph.setStyle).toHaveBeenCalledWith('classic');
+    expect(graph.fit).not.toHaveBeenCalled();
+    expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['native-1']);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    act(() => graph.backgroundClick());
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
+    expect(screen.queryByRole('complementary')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.getByRole('complementary', { name: 'Graph settings' }).style.width).toBe('400px');
   });
 });

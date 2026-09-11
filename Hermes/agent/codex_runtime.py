@@ -679,6 +679,69 @@ def make_codex_app_server_event_bridge(agent) -> Callable[[dict], None]:
     return on_event
 
 
+def _codex_dynamic_tools(agent) -> list[dict]:
+    """Expose the effective first-party Hermes registry through dynamicTools."""
+    from tools.registry import registry
+
+    definitions = []
+    seen = set()
+    for tool in agent.tools or []:
+        function = tool.get("function", tool)
+        name = function["name"]
+        if name not in agent.valid_tool_names:
+            raise ValueError(f"codex_tool_not_effective: {name}")
+        if name in seen:
+            raise ValueError(f"codex_duplicate_effective_tool: {name}")
+        seen.add(name)
+        toolset = registry.get_toolset_for_tool(name)
+        if toolset and toolset.startswith("mcp-") and toolset != "mcp-liquidaity-card":
+            # External MCP remains owned by Codex's native MCP connections.
+            # Do not re-export it as a first-party tool or change native config.
+            logger.info("External MCP tool requires its native Codex connection: %s", name)
+            continue
+        definitions.append({"type": "function", "name": name, "description": function.get("description", ""),
+                            "inputSchema": function["parameters"]})
+    return definitions
+
+
+def _codex_tool_executor(agent, messages: list, effective_task_id: str):
+    """Use the same executor and transcript as an ordinary Hermes tool call."""
+    def execute(name: str, arguments: dict, call_id: str) -> dict:
+        from agent.message_metadata import append_message
+        from agent.tool_executor import execute_tool_calls_sequential
+        from agent.tool_guardrails import classify_tool_failure
+        from agent.transports.codex_event_projector import _deterministic_call_id
+
+        if name not in agent.valid_tool_names:
+            raise ValueError("codex_tool_not_effective")
+        native_call_id = _deterministic_call_id(f"dyn_{name}", call_id)
+        function = {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}
+        call = {"id": native_call_id, "type": "function", "function": function}
+        append_message(messages, {"role": "assistant", "content": None, "tool_calls": [call]})
+        assistant = SimpleNamespace(tool_calls=[SimpleNamespace(
+            id=native_call_id, type="function", function=SimpleNamespace(**function))])
+        execute_tool_calls_sequential(agent, assistant, messages, effective_task_id, finalize=False)
+        result = next((row for row in reversed(messages)
+                       if row.get("role") == "tool" and row.get("tool_call_id") == native_call_id), None)
+        if result is None:
+            raise RuntimeError("codex_native_tool_result_missing")
+        content = result.get("content", "")
+        failed, _ = classify_tool_failure(name, content if isinstance(content, str) else json.dumps(content))
+        items = []
+        if isinstance(content, list):
+            for part in content:
+                if part.get("type") == "text":
+                    items.append({"type": "inputText", "text": part["text"]})
+                elif part.get("type") == "image_url":
+                    items.append({"type": "inputImage", "imageUrl": part["image_url"]["url"]})
+                else:
+                    raise ValueError("codex_tool_content_unsupported")
+        else:
+            items = [{"type": "inputText", "text": content if isinstance(content, str) else json.dumps(content)}]
+        return {"success": not failed and not agent._interrupt_requested, "contentItems": items}
+    return execute
+
+
 def run_codex_app_server_turn(
     agent,
     *,
@@ -687,6 +750,7 @@ def run_codex_app_server_turn(
     messages: List[Dict[str, Any]],
     effective_task_id: str,
     should_review_memory: bool = False,
+    active_system_prompt: str | None = None,
 ) -> Dict[str, Any]:
     """Codex app-server runtime path. Hands the entire turn to a `codex
     app-server` subprocess and projects its events back into Hermes'
@@ -766,7 +830,15 @@ def run_codex_app_server_turn(
                 auto_approve_apply_patch=auto_approve_requests,
             ),
             on_event=make_codex_app_server_event_bridge(agent),
+            dynamic_tools=_codex_dynamic_tools(agent),
+            tool_executor=_codex_tool_executor(agent, messages, effective_task_id),
+            model=agent.model,
+            instructions=active_system_prompt,
+            effort=(getattr(agent, "reasoning_config", None) or {}).get("effort"),
         )
+
+    # Refresh the task-scoped closure even when the native thread is reused.
+    agent._codex_session._tool_executor = _codex_tool_executor(agent, messages, effective_task_id)
 
     # NOTE: the user message is ALREADY appended to messages by the
     # standard run_conversation() flow (line ~11823) before the early
@@ -846,6 +918,12 @@ def run_codex_app_server_turn(
         from agent.message_metadata import append_message
 
         for projected_message in turn.projected_messages:
+            call_ids = {row.get("tool_call_id") for row in messages if row.get("role") == "tool"}
+            if projected_message.get("role") == "tool" and projected_message.get("tool_call_id") in call_ids:
+                continue
+            projected_calls = projected_message.get("tool_calls") or []
+            if projected_calls and all(call.get("id") in call_ids for call in projected_calls):
+                continue
             append_message(messages, projected_message)
 
         # Persist the newly-projected assistant/tool messages ourselves.

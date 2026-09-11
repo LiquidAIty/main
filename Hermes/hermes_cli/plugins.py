@@ -2194,8 +2194,12 @@ class PluginContext:
         if not isinstance(history, list):
             return None
         try:
+            session_id = str(getattr(cli, "session_id", "") or "")
+            session_db = getattr(cli, "_session_db", None)
+            session = session_db.get_session(session_id) if session_db is not None else None
             return {
-                "session_id": str(getattr(cli, "session_id", "") or ""),
+                "session_id": session_id,
+                "session_key": (session or {}).get("session_key"),
                 "messages": copy.deepcopy(history),
             }
         except Exception:
@@ -4566,6 +4570,26 @@ class PluginManager:
                 != binding.session_id
             ):
                 return False
+            # LIQUIDAITY VENDOR PATCH: native routing identity also protects
+            # alternate human surfaces. Never claim an old transcript by
+            # merely assigning the next caller's conversation to it.
+            host_key = (binding.session_config or {}).get("hostSessionKey")
+            if host_key:
+                if not isinstance(host_key, str) or len(host_key) > 512:
+                    return False
+                session_db = getattr(cli, "_session_db", None)
+                if session_db is None or getattr(cli, "_agent_running", False):
+                    return False
+                session = session_db.get_session(binding.session_id) or {}
+                existing_key = session.get("session_key")
+                if existing_key != host_key:
+                    if existing_key or getattr(cli, "conversation_history", None):
+                        return False
+                    if session_db.get_messages(binding.session_id):
+                        return False
+                    session_db.create_session(binding.session_id, source="cli", session_key=host_key)
+                    if (session_db.get_session(binding.session_id) or {}).get("session_key") != host_key:
+                        return False
             agent = getattr(cli, "agent", None)
             if agent is not None:
                 try:

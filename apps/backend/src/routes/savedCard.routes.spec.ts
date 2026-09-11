@@ -495,7 +495,10 @@ const orchestratorMocks = vi.hoisted(() => {
 });
 
 const dbMocks = vi.hoisted(() => ({
-  query: vi.fn(),
+  query: vi.fn(async (sql: string, params?: unknown[]) => ({
+    rows: sql.includes('owner_user_id = $2') && params?.[1] === 'owner-user'
+      ? [{ id: params[0], name: 'Owned project' }] : [],
+  })),
 }));
 
 vi.mock('../decks/store', () => ({
@@ -573,9 +576,10 @@ vi.mock('../db/pool', () => ({
   pool: { query: dbMocks.query },
 }));
 
-async function createApiServer(): Promise<{ server: Server; baseUrl: string }> {
+async function createApiServer(userId: string | null = 'owner-user'): Promise<{ server: Server; baseUrl: string }> {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => { (req as any).userId = userId; next(); });
   app.use('/api', router);
   const server = await new Promise<Server>((resolve) => {
     const nextServer = app.listen(0, '127.0.0.1', () => resolve(nextServer));
@@ -591,6 +595,34 @@ async function closeServer(server: Server): Promise<void> {
 }
 
 describe('saved Card routes', () => {
+  it.each([{ userId: null, status: 401 }, { userId: 'another-user', status: 403 }])(
+    'scopes Main history and chat to the authenticated project owner ($userId)', async ({ userId, status }) => {
+      const { server, baseUrl } = await createApiServer(userId);
+      mainCliBridgeMocks.history.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      try {
+        for (const endpoint of ['history', 'conversations', 'chat']) {
+          const response = await fetch(`${baseUrl}/main/session/${endpoint}?projectId=project-1&conversationId=main`,
+            endpoint === 'chat' ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ projectId: 'project-1', conversationId: 'main', message: 'hello' }) } : {});
+          expect(response.status).toBe(status);
+        }
+        expect(mainCliBridgeMocks.history).not.toHaveBeenCalled();
+        expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
+      } finally { await closeServer(server); }
+    });
+
+  it('does not expose a different native conversation on history read', async () => {
+    mainCliBridgeMocks.history.mockImplementationOnce(() => { throw new Error('main_cli_history_scope_mismatch'); });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/main/session/history?projectId=project-1&conversationId=other`);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ ok: false, error: 'main_cli_history_scope_mismatch', messages: [] });
+      expect(mainCliBridgeMocks.history).toHaveBeenLastCalledWith('project-1:other:card_main_chat');
+    } finally { await closeServer(server); }
+  });
+
   it('serves Main at its own namespace without retaining the old global Coder route', async () => {
     const { server, baseUrl } = await createApiServer();
     const origin = new URL(baseUrl).origin;

@@ -1,5 +1,11 @@
 # LiquidAIty-maintained Hermes patches
 
+This is the detailed fork reference. The canonical current divergence summary is in
+[ARCHITECTURE.md](../ARCHITECTURE.md#controlled-vendor-divergence); PLAN owns loaded acceptance.
+Dated test/run receipts below are historical evidence, not current execution permission or proof.
+No upgrade, removal, profile change or rollback is authorized by this reference.
+
+
 This copied Hermes tree tracks upstream
 [`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent). The refresh base for the
 current LiquidAIty integration is stable release `v2026.8.31` (package version `0.21.0`), commit
@@ -388,8 +394,9 @@ non-empty. A validated single-use `external_memory_mode="bypass_automatic"` lets
 external driver skip automatic provider turn-start, prefetch and end-of-turn sync for exactly that
 accepted turn while leaving provider tools callable. The paired `cli_conversation_snapshot()` returns
 a detached copy of the live interactive CLI session ID and conversation only while the agent is idle.
-It adds no process, session, scheduler, provider, tool, or persistence owner and never opens Hermes'
-session database.
+It adds no process, session, scheduler, provider, tool or persistence owner. The current session repair
+also reads the existing native session row to return its opaque host session key; it does not introduce
+a transcript store or read database storage outside Hermes' own session API.
 
 Files and symbols:
 
@@ -406,8 +413,8 @@ Files and symbols:
 - Downstream proof in `apps/hermes-liquidaity-plugin/tests/test_plugin.py` verifies structured native
   hooks, public-text-only forwarding, busy refusal, and cancellation reporting.
 
-Upstream behavior preserved: every existing caller omits the new argument and keeps the original
-interrupt-or-queue semantics. No existing code calls the new observation method. Gateway injection,
+Ordinary callers omitting the new argument keep upstream interrupt-or-queue semantics. The external
+LiquidAIty plugin calls the observation method; backend conversation filtering uses the returned key. Gateway injection,
 plugin consent, roles, session keys, persistence, and native CLI queue ownership are unchanged.
 
 Contribution plan: submit the optional idle-only flag, generic one-turn external-memory mode and
@@ -478,110 +485,24 @@ then remove the downstream compact model-tool registration. Saved Script source 
 remain inspectable but must fail closed as unavailable; never replace this path with direct `exec`, a second
 sandbox or raw MCP schema suppression.
 
-## Patch: headless durable Team on native `delegate_task` and Auto-Kanban
+## Patch: headless durable Team on native Auto-Kanban
 
-Vendored project: `NousResearch/hermes-agent` at the repository-pinned commit.
+The retained `role="team"` branch uses Hermes' existing SQLite task graph, decomposition,
+dispatch, worker profiles and native completion/rejoin. `kanban_team.py::_team_policy` reads
+the native decomposer and worker model configuration, not the removed Card Team-policy overlay.
+`kanban_decompose.py` supplies ordinary native decomposition; the removed two-to-four hard bound
+and origin-only routing must not be restored from the old patch description.
 
-Purpose: add `role="team"` to the one native `delegate_task` tool as a headless durable recipe over
-Hermes' existing Auto-Kanban SQLite graph, decomposer, dispatcher, task workers, dependency handoffs,
-retries, recovery, notifications and rejoin. One originating Card mission/context packet becomes two to
-four bounded worker tasks; the original root then resumes under the Card-projected Team-lead model for final
-synthesis and returns one result to the exact originating Hermes session. Team is not a Card, board UI,
-profile UI, scheduler,
-transcript store, or second Hermes tool.
+The current ownership, affected files, focused recovery evidence and limits are recorded in
+ARCHITECTURE's controlled divergence section. Live acceptance of this current source is separate.
+The original patch history is retained at
+`b6ff569b68bcfec3601b6db4669ac3aa86abecb1:Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+Its claimed editable Card policy, task-count restrictions and corresponding tests describe a
+superseded implementation. They are not current contracts or directions to reapply it.
 
-External alternative check: native `leaf` is one ephemeral child and native `orchestrator` owns a
-recursive dynamic delegation strategy. The former explicit Kanban Card route required a separate saved
-Card Run and is now retired as a product doorway. Neither native alternative gives an ordinary authorized
-Card a bounded, durable, depth-one Auto-Team that rejoins
-its own session. A LiquidAIty-owned task database, scheduler, model fan-out, polling loop or synthesis call
-was rejected because it would duplicate Hermes' native execution owners. The contained adapter is the
-smallest upstream-shaped seam.
-
-Files and symbols:
-
-- `tools/delegate_tool.py`: preserves native `leaf` and `orchestrator`, adds only the top-level `team`
-  branch, validates one goal/context packet and blocks nested delegation in Team processes.
-- `hermes_cli/kanban_team.py`: validates the trusted Card/session Team projection over the bounded native
-  defaults, records the exact applied policy on the native root, creates one blocked/idempotent root,
-  correlates it before activation and then hands ownership to native Auto-Kanban.
-- `hermes_cli/config_defaults.py`: declares the generic maximum-worker and worker provider/model settings.
-- `hermes_cli/kanban_decompose.py`: reads the root's applied policy, applies the depth-one
-  two-to-four-worker recipe, exposes only the persisted originating profile to Team decomposition, pins
-  every parsed child to that profile, retains the lead provider/model on the root, and assigns exact
-  per-task worker provider/model and retry overrides.
-- `hermes_cli/kanban_db.py`: persists the generic workflow/step fields already present in the schema,
-  activates the correlated root, independently canonicalizes every Team child/root assignee to the
-  persisted root owner inside the atomic decomposition transaction, propagates the Team marker and
-  retry/model fields, blocks nested task creation, gives the resumed root every completed worker handoff
-  plus an explicit synthesis contract, and records exact Team provider/model at the native spawn boundary.
-- `acp_adapter/host_profiles.py`: strictly validates the Card-scoped Team policy, generalizes the existing
-  opaque host child-allocation callback to accept
-  any durable native execution ID; the previous leaf helper delegates to it unchanged. A trusted
-  per-session host projection narrows the model-visible native role enum without changing Hermes' native
-  tool contract when that projection is absent. The transport-neutral context attachment lets an
-  already-live native CLI agent enter the same opaque host lifecycle without replacing its configuration.
-- `agent/native_team_result.py`, `acp_adapter/session.py`, and `acp_adapter/server.py`: share bounded
-  result validation/message construction while ACP retains its exact idle-session database/history owner.
-- `hermes_cli/plugins.py`: exposes generic trusted-plugin operations that bind an already-live CLI agent
-  to an opaque host lifecycle, or hold one immutable execution/request/session binding while the first
-  native CLI agent is constructed, and append a terminal result through that CLI's own native session owner.
-- `hermes_cli/cli_agent_setup_mixin.py` and `cli.py`: consume the exact pending binding onto the newly
-  constructed agent before provider inference, and reject/clear it on initialization, route or credential
-  failure instead of allowing an uncorrelated first turn.
-
-Upstream behavior preserved: omission of `role="team"` retains native leaf/orchestrator schemas,
-temporary-agent construction, depth, provider/model and result behavior. LiquidAIty Card sessions project
-Team only when enabled; when Team is Off, `delegate_task` remains only if another separately authorized role
-such as an outgoing profile target exists. This narrows one trusted session without rewriting the native
-tool. Ordinary Kanban tasks keep their existing event shape, profile roster,
-decomposition freedom, manual controls, models, and prompts. Team markers and limits apply only to
-`workflow_template_id="delegate-team-v1"`; no profile, global configuration, credential or user-global
-Hermes home is rewritten by a Team run.
-
-Contracts: the saved Card/PostgreSQL policy owns Off/Auto, maximum workers, retry limit, worker model and
-one Team-lead model. The trusted session projection applies those values without mutating a profile-global
-default: Off omits only the Team role; Auto lets Hermes decide whether to call it. Team rejects fewer than
-two or more than four workers, maps user retries to the native attempt count, rejects fan-in as a single task,
-and stamps every worker plus the root with a process-only recursion guard. Native dependency links make every worker task a
-parent of the original root. A durable `spawned` event records the exact step/provider/model used at the
-process boundary. Host correlation is committed before activation; terminal session append occurs before
-the child Card Run is closed. A busy originating session receives bounded idempotent retries; if that
-window expires, the completed native root and active child Run remain recoverable instead of being
-relabeled as failed. Fresh-CLI staging contains no prompt, configuration or credential, invokes neither
-the host requester nor native task creation, preserves any unsent local prompt buffer, and is consumed only
-after exact CLI/profile/session/request validation. Competing bindings and every mismatch fail closed and
-clear the slot; teardown and cancellation clear it as well. The initialized-agent binding path remains
-unchanged apart from carrying the same request identity.
-
-Tests: `tests/tools/test_delegate_team.py`, `tests/hermes_cli/test_kanban_team.py`,
-`tests/hermes_cli/test_plugin_message_injection.py`, `tests/acp/test_session.py`, and
-`tests/acp_adapter/test_host_profiles.py` prove the one-tool branch, strict Card policy, host projection
-narrowing without changing the native compatibility schema, two-to-four bound, origin-profile-only
-decomposition and database pinning, exact lead/worker/retry application, all-worker synthesis context,
-non-recursion, opaque host
-allocation, ACP/CLI same-session idempotent result append, first-turn construction at the real
-`HermesCLI`/`AIAgent` provider boundary, competing/mismatch/teardown cleanup, preservation of unsent local
-input and unchanged native roles. Downstream
-LiquidAIty lifecycle, recovery and Run-correlation tests live beside the backend/Python owners.
-
-Historical live proof: the first remote turn before the Card-scoped policy layer bound before inference and produced native
-root `t_0c8618b6`, exactly two Luna workers (`t_0a5610dc`, `t_91562520`), one Terra synthesis run, one
-host-correlated child Run and one same-session result append. The parent, child and native root all completed;
-readback found no provider fallback, duplicate task/Run/message, nested delegation or retry. That run does
-not prove the later editable Card-scoped settings; their current proof is provider-free.
-
-Fork cost and contribution plan: nine narrow existing native files, two new adapter modules and focused tests.
-Propose a generic durable `team` delegation recipe upstream using workflow metadata and the existing
-Auto-Kanban lifecycle, independently propose the generic durable native-execution host allocation and
-idle session-result append operations, and keep LiquidAIty Card/IDD/Run policy downstream. Remove each
-piece only when an upstream equivalent exists in a separately authorized Hermes refresh.
-
-Rollback: remove the `team` branch, trusted session Team policy, Team adapter/workflow handling, generic host allocation
-extension and native session append together; restore the previous leaf helper body and unchanged Kanban
-event/context behavior. Native leaf/orchestrator and internal native Kanban operation continue. LiquidAIty must
-then remove only its `team` projection and fail closed for Team rather than route through a standalone
-helper Card, another database, direct model fan-out or a synthetic result.
+A future upstream contribution would expose the generic durable delegation/lifecycle seam without
+Card concepts. No such PR or rollback is performed here; any change must preserve native leaf,
+orchestrator, profile and Kanban behavior and follow the active PromptSpec.
 
 ## Patch: trusted direct profile delegation through native `delegate_task`
 
@@ -668,3 +589,11 @@ Contracts and tests: malformed session/MCP structures, unavailable registered se
 and nested active surfaces fail closed. Focused host-profile, plugin-injection and LiquidAIty plugin tests
 cover binding and restoration; downstream backend tests cover exact private bridge transport. Rollback is to
 remove the session-config field/registration/snapshot while retaining the older lifecycle-only CLI binding.
+
+## Current repair limits
+
+The in-progress App Server dynamic-tool bridge and fresh-session key binding are summarized in
+ARCHITECTURE. The App Server bridge's first-party definitions, schema validation and call dispatch
+have fixture proof. External selected MCP availability and the real saved Card executor path remain
+unproven. This reference must not be used to claim all capabilities are bound or to suppress native
+tools/configuration. Current loaded source differs from disk; no current-product acceptance is implied.

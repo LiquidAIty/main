@@ -17,6 +17,6 @@ typecheck is not runtime proof; an accepted request is not a completed child Run
 regression ratio only against enumerated exercised invariants, not untested repository health.
 
 Keep work reports in the conversation and existing Run artifacts. Update a canonical document
-when its owned behavior changes. The historical instruction to persist every report comparison
+only when the active PromptSpec authorizes that documentation work. The historical instruction to persist every report comparison
 into ThinkGraph is removed: diagnostics and implementation instructions are not project knowledge.
 Do not create a report store, task file, freshness gate, or automatic next execution.

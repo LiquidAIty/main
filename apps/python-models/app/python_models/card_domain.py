@@ -3039,6 +3039,8 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
 
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
+    conversation_id = (_required_text(payload.get("conversationId"), "conversation_id")
+                       if "conversationId" in payload else None)
     selectors = {
         "run_id": str(payload.get("runId") or "").strip(),
         "correlation_id": str(payload.get("correlationId") or "").strip(),
@@ -3104,15 +3106,31 @@ def read_run(payload: dict[str, Any]) -> dict[str, Any]:
                     (project_id, deck_id, value),
                 )
             row = cursor.fetchone()
+            if row is not None and conversation_id is not None:
+                scope = _age_rows(
+                    cursor,
+                    """
+                    MATCH (run:Run {projectId: $projectId, deckId: $deckId,
+                                    runId: $runId, conversationId: $conversationId})
+                    RETURN run.runId
+                    """,
+                    {"projectId": project_id, "deckId": deck_id,
+                     "runId": str(row["run_id"]), "conversationId": conversation_id},
+                    "run_id agtype",
+                )
+                if len(scope) != 1 or scope[0].get("run_id") != str(row["run_id"]):
+                    return {"ok": True, "run": None}
             if row is not None and include_terminal:
-                terminal = _read_run_terminal(cursor, dict(row))
+                terminal = _read_run_terminal(cursor, dict(row), conversation_id=conversation_id)
     run = _run_projection(dict(row)) if row is not None else None
+    if run is not None and conversation_id is not None:
+        run["conversationId"] = conversation_id
     if run is not None and terminal is not None:
         run["terminal"] = terminal
     return {"ok": True, "run": run}
 
 
-def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
+def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str | None = None) -> dict[str, Any]:
     """Read existing Run/lineage authorities; never retain a second transcript."""
     run_id = str(row["run_id"])
     lineage = _age_rows(
@@ -3120,10 +3138,13 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any]) -> dict[str, Any]:
         """
         MATCH (parent:Run {projectId: $projectId, deckId: $deckId})
               -[:CHILD_RUN]->(child:Run {projectId: $projectId, deckId: $deckId})
-        WHERE parent.runId=$runId OR child.rootRunId=$runId OR child.runId=$runId
+        WHERE (parent.runId=$runId OR child.rootRunId=$runId OR child.runId=$runId)
+        """ + ("AND parent.conversationId=$conversationId AND child.conversationId=$conversationId"
+               if conversation_id is not None else "") + """
         RETURN parent.runId, child.runId, child.nativeChildId
         """,
-        {"projectId": str(row["project_id"]), "deckId": row["deck_id"], "runId": run_id},
+        {"projectId": str(row["project_id"]), "deckId": row["deck_id"], "runId": run_id,
+         **({"conversationId": conversation_id} if conversation_id is not None else {})},
         "parent_id agtype, child_id agtype, native_id agtype",
     )
     children_by_id = {

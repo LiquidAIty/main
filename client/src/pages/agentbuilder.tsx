@@ -1572,7 +1572,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const handleSelectCard = useCallback(
     async (cardId: string | null) => {
-      if (cardId !== selectedCardId && cardLeaveRef.current && !(await cardLeaveRef.current())) return;
+      if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
       recordUiOnlyAction('node-selection');
       setSelectedCardId(cardId);
       const selectedNode = cardId
@@ -1602,7 +1602,7 @@ export default function AgentBuilder(): React.ReactElement {
         }));
       }
     },
-    [deck.nodes, recordUiOnlyAction, tab, selectedCardId, mainCardId, agentBuilderCard?.id],
+    [deck.nodes, recordUiOnlyAction, tab, mainCardId, agentBuilderCard?.id],
   );
 
   const handleSelectEdge = useCallback(
@@ -1844,7 +1844,7 @@ export default function AgentBuilder(): React.ReactElement {
   const inspectorDrawerStorageKey = 'liquidaity.drawer.inspector.agent.v1.width';
 
   const closeInspectorDrawer = useCallback(async () => {
-    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
+    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return false;
     setInspectorDrawerOpen(false);
     setSelectedCardId(null);
     setSelectedEdgeId(null);
@@ -1853,6 +1853,7 @@ export default function AgentBuilder(): React.ReactElement {
       cardId: null,
       nonce: (current?.nonce || 0) + 1,
     }));
+    return true;
   }, []);
 
   const closeWorldSignalInspector = useCallback(() => {
@@ -2039,8 +2040,8 @@ export default function AgentBuilder(): React.ReactElement {
     );
   };
 
-  const showCanvasWorkspace = useCallback(() => {
-    closeInspectorDrawer();
+  const showCanvasWorkspace = useCallback(async () => {
+    if (!(await closeInspectorDrawer())) return;
     setWorkspaceView('canvas');
     const params = new URLSearchParams(window.location.search);
     params.delete('workspace');
@@ -2054,8 +2055,8 @@ export default function AgentBuilder(): React.ReactElement {
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
   }, [closeInspectorDrawer]);
 
-  const showKnowledgeWorkspace = useCallback(() => {
-    closeInspectorDrawer();
+  const showKnowledgeWorkspace = useCallback(async () => {
+    if (!(await closeInspectorDrawer())) return;
     setWorkspaceView('knowledge');
     setKnowledgeGraphKind('knowgraph');
     const params = new URLSearchParams(window.location.search);
@@ -2067,7 +2068,8 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [closeInspectorDrawer]);
 
-  const showTradingWorkspace = useCallback(() => {
+  const showTradingWorkspace = useCallback(async () => {
+    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
     // Hide the editor while the operational presentation is open, but preserve
     // the Canvas selection. Returning to the Canvas therefore restores the
     // same Card context instead of treating app navigation as a Card edit.
@@ -2075,13 +2077,13 @@ export default function AgentBuilder(): React.ReactElement {
     setWorkspaceView('trading');
   }, [setInspectorDrawerOpen]);
 
-  const showWorldsignalWorkspace = useCallback(() => {
-    closeInspectorDrawer();
+  const showWorldsignalWorkspace = useCallback(async () => {
+    if (!(await closeInspectorDrawer())) return;
     setWorkspaceView('worldsignal');
   }, [closeInspectorDrawer]);
 
-  const showWorldviewWorkspace = useCallback(() => {
-    closeInspectorDrawer();
+  const showWorldviewWorkspace = useCallback(async () => {
+    if (!(await closeInspectorDrawer())) return;
     setWorkspaceView('worldview');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'worldview');
@@ -2092,7 +2094,8 @@ export default function AgentBuilder(): React.ReactElement {
     );
   }, [closeInspectorDrawer]);
 
-  const handleCompanionTabClick = useCallback((nextTab: string) => {
+  const handleCompanionTabClick = useCallback(async (nextTab: string) => {
+    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
     setTab(nextTab);
   }, []);
 
