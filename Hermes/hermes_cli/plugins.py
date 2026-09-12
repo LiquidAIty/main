@@ -2267,6 +2267,29 @@ class PluginContext:
             execution_context_id=expected,
         )
 
+    def register_cli_turn_lifecycle(self, prepare: Callable, finish: Callable) -> PluginRegistration:
+        """Bind native CLI turns to one trusted host, with fail-closed preparation.
+
+        Unlike observer hooks, preparation errors must prevent inference. The
+        host returns the existing sessionConfig contract; Hermes still owns
+        input, execution, streaming, history, and tools. No gateway is affected.
+        """
+        if not callable(prepare) or not callable(finish):
+            raise TypeError("cli_turn_lifecycle_callbacks_required")
+        required = os.environ.get("HERMES_REQUIRE_CLI_HOST", "").strip()
+        if required and required not in {self.manifest.key, self.manifest.name}:
+            raise PermissionError("cli_turn_lifecycle_owner_mismatch")
+        if self._manager._cli_turn_lifecycle is not None:
+            raise RuntimeError("cli_turn_lifecycle_already_registered")
+        binding = (prepare, finish)
+        self._manager._cli_turn_lifecycle = binding
+
+        def dispose():
+            if self._manager._cli_turn_lifecycle is binding:
+                self._manager._cli_turn_lifecycle = None
+
+        return self._track("cli_turn_lifecycle", self.manifest.name, dispose)
+
     def append_cli_native_team_result(
         self,
         session_id: str,
@@ -4022,6 +4045,7 @@ class PluginManager:
         self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
         self._discovered: bool = False
         self._cli_ref = None  # Set by CLI after plugin discovery
+        self._cli_turn_lifecycle = None
         # LIQUIDAITY VENDOR PATCH: the native plugin manager owns at most one
         # pre-agent host binding for its exact interactive CLI/profile.
         self._cli_host_execution_lock = threading.RLock()
@@ -4496,6 +4520,53 @@ class PluginManager:
         setattr(agent, "_host_execution_request_id", "")
         setattr(agent, "_host_execution_profile_key", "")
 
+    def run_cli_host_turn(self, cli: Any, agent: Any, message: Any, execute: Callable) -> dict:
+        """Execute one native turn under its optional trusted host lifecycle.
+
+        LIQUIDAITY VENDOR PATCH: local input needs the same pre-inference
+        session binding as externally supplied ACP input. This does not use
+        fail-open observer/middleware dispatch or replace the native loop.
+        """
+        from acp_adapter.host_profiles import host_execution_scope
+
+        lifecycle = self._cli_turn_lifecycle
+        if lifecycle is None:
+            if os.environ.get("HERMES_REQUIRE_CLI_HOST"):
+                raise RuntimeError("cli_turn_lifecycle_required")
+            with host_execution_scope(agent):
+                return execute(message)
+        if self._cli_ref is not cli or getattr(cli, "agent", None) is not agent:
+            raise RuntimeError("cli_turn_lifecycle_identity_mismatch")
+        prepare, finish = lifecycle
+        prepared = prepare(message=message, session_id=cli.session_id,
+                           model=str(agent.model), provider=str(agent.provider))
+        context_id = str(prepared.get("executionContextId") or "")
+        result = None
+        error = None
+        try:
+            binding = _PendingCliHostExecution(
+                execution_context_id=context_id, request_id=context_id,
+                session_id=cli.session_id, profile_key=hermes_home_key(),
+                cli_identity=id(cli), requester=prepared["requester"],
+                external_memory_mode="normal", profile_targets=(),
+                session_config=prepared["sessionConfig"],
+            )
+            if not context_id or not self._attach_cli_host_execution(
+                cli, agent, binding, allow_pre_run_active=True,
+            ):
+                raise RuntimeError("cli_turn_lifecycle_binding_failed")
+            with host_execution_scope(agent):
+                result = execute(prepared["message"])
+            return result
+        except Exception as exc:
+            error = str(exc)
+            raise
+        finally:
+            try:
+                finish(prepared=prepared, result=result, error=error)
+            finally:
+                self.clear_cli_host_execution(cli, execution_context_id=context_id)
+
     def _attach_cli_host_execution(
         self,
         cli: Any,
@@ -4875,6 +4946,13 @@ class PluginManager:
         # don't collide even when both manifests say ``name: openai``.
         disabled = _get_disabled_plugins()
         enabled = _get_enabled_plugins()  # None = opt-in default (nothing enabled)
+        # A trusted native CLI host explicitly selects its installed adapter
+        # for this process. Preserve the profile and its explicit deny-list.
+        host_plugin = os.environ.get("HERMES_REQUIRE_CLI_HOST", "").strip()
+        if host_plugin:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", host_plugin):
+                raise ValueError("cli_host_plugin_name_invalid")
+            enabled = set(enabled or ()) | {host_plugin}
         stale_relay_keys = legacy_relay_plugin_keys(enabled)
         if stale_relay_keys:
             logger.warning(

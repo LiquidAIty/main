@@ -3,6 +3,7 @@ import { getUserBySessionId } from '../auth/sessionStore';
 import { getProjectCard } from '../services/agentBuilderStore';
 import { getDeckDocument } from '../decks/store';
 import { agentTerminalManager, requireAgentTerminalCard, type AgentTerminalOwner } from '../hermes/agentTerminal';
+import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
 
 function dimensions(value: unknown): { cols: number; rows: number } {
   const { cols, rows } = (value || {}) as Record<string, unknown>;
@@ -16,8 +17,30 @@ function dimensions(value: unknown): { cols: number; rows: number } {
 export function createAgentTerminalRouter(deps = {
   getUser: getUserBySessionId, getProject: getProjectCard, getDeck: getDeckDocument,
   manager: agentTerminalManager,
+  execution: agentTerminalExecution,
 }) {
   const router = Router();
+  router.post('/internal/:sessionId/:operation', async (req, res) => {
+    try {
+      const owner = deps.manager.authorizeNative(req.params.sessionId, req.headers.authorization || '');
+      if (!await deps.getProject(owner.projectId, owner.userId)) throw new Error('agent_terminal_project_access_denied');
+      if (req.params.operation === 'finish') {
+        res.json(await deps.execution.finish(req.params.sessionId, req.body));
+        return;
+      }
+      if (req.params.operation === 'host') {
+        res.json(await deps.execution.host(req.params.sessionId, req.body));
+        return;
+      }
+      if (req.params.operation !== 'begin') throw new Error('agent_terminal_operation_invalid');
+      const { deck } = await deps.getDeck(owner.projectId, owner.deckId);
+      const card = deck?.nodes.find((entry) => entry.id === owner.cardId);
+      if (!deck || !card) throw new Error('agent_terminal_card_not_found');
+      const profile = requireAgentTerminalCard(card, deck);
+      deps.manager.verifyConfiguration(owner, req.params.sessionId, card, deck);
+      res.json(await deps.execution.begin(owner, req.params.sessionId, profile, req.body));
+    } catch (error) { fail(res, error); }
+  });
   router.use('/:projectId/:deckId/:cardId', async (req, res, next) => {
     try {
       const sid = req.cookies?.sid;

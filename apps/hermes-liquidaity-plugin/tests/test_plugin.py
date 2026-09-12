@@ -212,11 +212,43 @@ def test_agent_terminal_registers_only_the_exact_process_scoped_selection(monkey
         create_custom_toolset=lambda *args, **kwargs: created.append((args, kwargs)),
     ))
 
-    agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research"))
+    monkeypatch.setenv("HERMES_AGENT_TERMINAL_URL", "http://127.0.0.1:4000/api/agent-terminals/internal/session")
+    monkeypatch.setenv("HERMES_AGENT_TERMINAL_TOKEN", "a" * 64)
+    callbacks = []
+    hooks = {}
+    agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research",
+        register_hook=lambda name, callback: hooks.update({name: callback}),
+        register_cli_turn_lifecycle=lambda prepare, finish: callbacks.append((prepare, finish))))
+    assert len(callbacks) == 1
 
     assert created == [(('agent-terminal', 'Process-scoped exact saved Card tool selection.'), {
         "tools": ["terminal", "mcp__liquidaity_card__search_graph"], "includes": ["file"],
     })]
+    import io
+    sent = []
+    def open_request(call, **_):
+        sent.append(json.loads(call.data))
+        return io.BytesIO(json.dumps({"executionContextId": "real-context", "mcpServers": []}).encode())
+    monkeypatch.setattr(agent_terminal.urllib.request, "build_opener", lambda *_: SimpleNamespace(open=open_request))
+    monkeypatch.setitem(sys.modules, "tools.mcp_tool", SimpleNamespace(
+        register_mcp_servers=lambda *_args, **_kwargs: None, get_registered_mcp_server_names=lambda: []))
+    prepare, finish = callbacks[0]
+    prepared = prepare(message="task", session_id="native-own", model="saved", provider="saved")
+    hooks["pre_api_request"](session_id="native-own", api_request_id="request-1")
+    hooks["post_api_request"](session_id="foreign", api_request_id="foreign", usage={"input_tokens": 100})
+    hooks["post_api_request"](session_id="native-own", api_request_id="request-1",
+        usage={"input_tokens": 12, "output_tokens": 3, "cache_read_tokens": 0, "reasoning_tokens": 1})
+    hooks["post_tool_call"](session_id="native-own", tool_name="execute_host_script",
+        result={"receipt": {"native": True}, "fallback": None})
+    finish(prepared=prepared, result={"completed": True, "final_response": "result"}, error=None)
+    assert sent[-1]["usage"] == {"providerInputTokens": 12, "providerOutputTokens": 3,
+        "providerCachedTokens": 0, "providerReasoningTokens": 1}
+    assert sent[-1]["scriptExecution"] == {"invoked": True, "receipt": {"native": True}, "fallback": None}
+    prepared = prepare(message="next", session_id="native-own", model="saved", provider="saved")
+    hooks["pre_api_request"](session_id="native-own", api_request_id="failed-request")
+    finish(prepared=prepared, result=None, error="provider failed")
+    assert all(value is None for value in sent[-1]["usage"].values())
+    assert sent[-1]["scriptExecution"]["invoked"] is False
 
 
 @pytest.mark.parametrize("payload, error", [

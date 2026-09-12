@@ -186,21 +186,13 @@ _GRAPHITI_PROVIDER_HEALTH: dict[str, Any] = {
 _MAIN_CONTEXT_FIELDS = frozenset(
     {"projectId", "deckId", "conversationId", "parentRunId", "mainCardId"}
 )
-_AGENT_TERMINAL_CONTEXT_FIELDS = frozenset({"projectId", "deckId", "mainCardId"})
 _TRUSTED_STDIO_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode"}
 )
 _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
     {"callerRuntimeKind", "callerRuntimeMode", "principalKind", "grantedTools",
-     "nativeChildId", "nativeRunId", "terminalSessionId", "callerProfile"}
+     "nativeChildId", "nativeRunId"}
 )
-_AGENT_TERMINAL_EXCLUDED_CARD_IDS = frozenset({"builder", "card_main_chat"})
-_AGENT_TERMINAL_EXCLUDED_PROFILES = frozenset({"default", "main", "builder", "liquidaity-main"})
-_AGENT_TERMINAL_PROFILE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_AGENT_TERMINAL_PRINCIPAL_FIELDS = frozenset({
-    "kind", "projectId", "deckId", "callerCardId", "terminalSessionId", "profile",
-    "callerRuntimeKind", "callerRuntimeMode", "grantedTools", "presentedTools",
-})
 
 
 def _configured_tool_allowlist() -> frozenset[str] | None:
@@ -717,27 +709,9 @@ def _authenticated_main_context() -> dict[str, Any] | None:
             "nativeChildId": internal.get("nativeChildId"),
             "nativeRunId": internal.get("nativeRunId"),
         }
-    elif isinstance(internal, dict) and internal.get("kind") == "agent-terminal":
-        # A native Card terminal has a real Card/profile/session identity, but
-        # it is not an execution Run and must never borrow one.
-        context = {
-            "projectId": internal.get("projectId"),
-            "deckId": internal.get("deckId"),
-            "mainCardId": internal.get("callerCardId"),
-            "callerRuntimeKind": internal.get("callerRuntimeKind"),
-            "callerRuntimeMode": internal.get("callerRuntimeMode"),
-            "callerProfile": internal.get("profile"),
-            "terminalSessionId": internal.get("terminalSessionId"),
-            "principalKind": "agent-terminal",
-            "grantedTools": internal.get("grantedTools", []),
-        }
     else:
         context = claims.get("main") if isinstance(claims, dict) else None
-    required_fields = (
-        _AGENT_TERMINAL_CONTEXT_FIELDS
-        if isinstance(context, dict) and context.get("principalKind") == "agent-terminal"
-        else _MAIN_CONTEXT_FIELDS
-    )
+    required_fields = _MAIN_CONTEXT_FIELDS
     if not isinstance(context, dict) or not required_fields.issubset(context):
         return None
     resolved: dict[str, Any] = {
@@ -834,7 +808,7 @@ def _request_tool_is_allowed(name: str) -> bool:
         return access == "read"
     if kind == "system-root":
         return name == "card.run_assistant_agent"
-    if kind not in {"card-runtime", "agent-terminal"}:
+    if kind != "card-runtime":
         return False
     active = _ACTIVE_AUTHENTICATED_CONTEXT.get()
     if principal.get("requiresExecutionContext") is True:
@@ -2157,30 +2131,6 @@ def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, 
     return context if isinstance(context, dict) and required.issubset(context) else None
 
 
-def _valid_agent_terminal_principal(principal: dict[str, Any]) -> bool:
-    required = (
-        "projectId", "deckId", "callerCardId", "terminalSessionId", "profile",
-        "callerRuntimeKind", "callerRuntimeMode",
-    )
-    if (set(principal) - _AGENT_TERMINAL_PRINCIPAL_FIELDS
-            or any(not str(principal.get(field) or "").strip() for field in required)):
-        return False
-    profile = str(principal["profile"]).strip()
-    if (str(principal["callerCardId"]).strip() in _AGENT_TERMINAL_EXCLUDED_CARD_IDS
-            or profile in _AGENT_TERMINAL_EXCLUDED_PROFILES
-            or _AGENT_TERMINAL_PROFILE_PATTERN.fullmatch(profile) is None
-            or principal.get("callerRuntimeKind") != "hermes"
-            or principal.get("callerRuntimeMode") not in {"main", "delegate", "kanban"}):
-        return False
-    grants = principal.get("grantedTools")
-    presented = principal.get("presentedTools", grants)
-    return (isinstance(grants, list)
-            and isinstance(presented, list)
-            and all(isinstance(value, str) and value.strip() for value in grants)
-            and all(isinstance(value, str) and value.strip() and value in grants
-                    for value in presented))
-
-
 class Auth0TokenVerifier:
     """Verify Auth0 JWTs and bind the principal to one owned Main project."""
 
@@ -2212,13 +2162,9 @@ class Auth0TokenVerifier:
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
                     "catalog-reader", "materializer-read", "system-root", "card-runtime",
-                    "agent-terminal",
                 }:
                     return None
-                if principal.get("kind") == "agent-terminal":
-                    if not _valid_agent_terminal_principal(principal):
-                        return None
-                elif principal.get("kind") == "materializer-read":
+                if principal.get("kind") == "materializer-read":
                     required = ("projectId", "deckId", "callerCardId")
                     if any(not str(principal.get(field) or "").strip() for field in required):
                         return None
@@ -2227,6 +2173,18 @@ class Auth0TokenVerifier:
                         "projectId", "deckId", "conversationId", "parentRunId",
                         "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
                     )
+                    terminal = principal.get("terminalOwner")
+                    if terminal is not None:
+                        if (principal.get("kind") != "card-runtime"
+                                or principal.get("requiresExecutionContext") is not True
+                                or not isinstance(terminal, dict)
+                                or set(terminal) != {"userId", "terminalSessionId", "profile", "cardRevisionId"}
+                                or any(not isinstance(v, str) or not v.strip() for v in terminal.values())
+                                or terminal["profile"] in {"main", "liquidaity-main", "builder", "default"}
+                                or principal.get("callerCardId") in {"card_main_chat", "builder"}
+                                or principal.get("callerRuntimeKind") != "hermes"):
+                            return None
+                        required = tuple(field for field in required if field != "conversationId")
                     if any(not str(principal.get(field) or "").strip() for field in required):
                         return None
                     grants = principal.get("grantedTools")
@@ -3201,17 +3159,6 @@ async def _dispatch_tool(
     args = dict(arguments or {})
     if context is not None:
         try:
-            terminal_principal = context.get("principalKind") == "agent-terminal"
-            requires_run_context = (
-                "conversationId" in allowed
-                or name in {
-                    "write_mag_one_instructions", "card.load_graph_references",
-                    "worldsignals.package", "card.run_assistant_agent",
-                }
-                or name.startswith("trading.")
-            )
-            if terminal_principal and requires_run_context:
-                raise ValueError("agent_terminal_run_context_unavailable")
             supplied_identity = sorted(_SERVER_OWNED_ARGUMENTS & args.keys())
             if supplied_identity:
                 raise ValueError(f"caller_identity_rejected: {','.join(supplied_identity)}")
@@ -3633,8 +3580,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
         )
         result_category = _tool_result_category(result)
         native_attention = None
-        if result_category == "success" and (
-                _internal_mcp_principal() or {}).get("kind") != "agent-terminal":
+        if result_category == "success":
             from app.python_models.native_attention import build_native_attention_event
 
             attention_context = _authenticated_main_context()

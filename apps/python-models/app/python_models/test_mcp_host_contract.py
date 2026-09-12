@@ -587,7 +587,49 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     assert event["nativeRunId"] == "native-attempt-one"
 
 
-def test_agent_terminal_token_binds_saved_card_tools_without_a_run_or_conversation(monkeypatch):
+def test_terminal_run_token_requires_complete_owner_identity_and_active_context(monkeypatch):
+    import jwt
+    import mcp_host
+    secret = "0123456789abcdef0123456789abcdef"
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(mcp_host.OAuthConfig(
+        resource_url="https://example.ngrok.dev/mcp", issuer_url="https://auth.example/",
+        audience="https://example.ngrok.dev/mcp", client_id="chatgpt-client",
+        required_scope="liquidaity.main"), jwk_client=SimpleNamespace())
+    principal = {"kind": "card-runtime", "projectId": "project-1", "deckId": "deck-1",
+        "conversationId": "", "parentRunId": "persisted-run", "callerCardId": "signal",
+        "callerRuntimeKind": "hermes", "callerRuntimeMode": "delegate",
+        "grantedTools": ["worldsignals.package"], "presentedTools": ["worldsignals.package"],
+        "requiresExecutionContext": True, "executionContextId": "context-1",
+        "terminalOwner": {"userId": "owner", "terminalSessionId": "terminal-1",
+                          "profile": "signal", "cardRevisionId": "revision-1"}}
+    def verify(value):
+        now = int(time.time())
+        return verifier._verify_sync(jwt.encode({"iss": "liquidaity-runtime", "aud": "liquidaity-internal-mcp",
+            "sub": "card-runtime:signal", "iat": now, "exp": now + 60, "principal": value}, secret, algorithm="HS256"))
+    token = verify(principal)
+    assert token is not None
+    for invalid in ({"terminalOwner": None}, {"requiresExecutionContext": False},
+                    {"callerCardId": "builder"}, {"callerRuntimeKind": "autogen"},
+                    *({"terminalOwner": {**principal["terminalOwner"], key: ""}}
+                      for key in principal["terminalOwner"])):
+        assert verify({**principal, **invalid}) is None
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: token)
+    observed = []
+    def bridge(name, args):
+        observed.append((name, args))
+        return json.dumps({"ok": True, "context": {"projectId": "project-1", "deckId": "deck-1",
+            "conversationId": "", "runId": "persisted-run", "rootRunId": "persisted-run",
+            "cardId": "signal", "runtimeMode": "delegate", "grantedTools": ["worldsignals.package"]}})
+    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
+    resolved = mcp_host._request_execution_context()
+    assert resolved["parentRunId"] == "persisted-run"
+    assert resolved["conversationId"] == ""
+    assert observed[0][1]["principal"]["terminalOwner"] == principal["terminalOwner"]
+    assert mcp_host._request_tool_is_allowed("card.create") is False
+
+
+def test_replaced_runless_agent_terminal_token_is_rejected(monkeypatch):
     import asyncio
     import jwt
     import mcp_host
@@ -622,24 +664,7 @@ def test_agent_terminal_token_binds_saved_card_tools_without_a_run_or_conversati
             required_scope="liquidaity.main",
         ), jwk_client=SimpleNamespace(),
     )
-    verified = verifier._verify_sync(token)
-    assert verified is not None
-    monkeypatch.setattr(mcp_host, "get_access_token", lambda: verified)
-    assert mcp_host._authenticated_main_context() == {
-        "projectId": "project-1", "deckId": "deck_builder",
-        "mainCardId": "card_hermes_steward", "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "delegate", "callerProfile": "liquidaity-hermes-steward",
-        "terminalSessionId": "terminal-session-1", "principalKind": "agent-terminal",
-        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
-    }
-    assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
-    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
-        "projectId": "project-1", "deckId": "deck_builder", "mainCardId": "card_hermes_steward",
-        "principalKind": "agent-terminal",
-    })
-    rejected = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {}))
-    assert json.loads(rejected[0].text)["error"] == "agent_terminal_run_context_unavailable"
+    assert verifier._verify_sync(token) is None
 
 
 def test_agent_terminal_verifier_rejects_main_builder_and_incomplete_terminal_identity(monkeypatch):
@@ -678,20 +703,16 @@ def test_agent_terminal_verifier_rejects_main_builder_and_incomplete_terminal_id
         assert verifier._verify_sync(token) is None
 
 
-def test_agent_terminal_tool_success_skips_run_scoped_attention(monkeypatch):
+def test_runless_terminal_cannot_dispatch_even_a_read_tool(monkeypatch):
     import asyncio
     import mcp_host
 
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {"kind": "agent-terminal"})
-    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", lambda *_: asyncio.sleep(
-        0, result=mcp_host.CallToolResult(content=[mcp_host.TextContent(type="text", text='{"ok":true}')])
-    ))
-    monkeypatch.setattr(mcp_host, "_persist_native_attention", lambda *_: (_ for _ in ()).throw(
-        AssertionError("terminal must not create Run-scoped attention")
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", lambda *_: (_ for _ in ()).throw(
+        AssertionError("unsupported principal must not dispatch")
     ))
     result = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
-    assert result.isError is not True
+    assert result.isError is True
 
 
 def test_materializer_principal_can_only_use_idd_reads(monkeypatch):

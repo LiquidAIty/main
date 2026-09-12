@@ -7,6 +7,9 @@ import json
 import os
 from pathlib import Path
 import re
+import urllib.request
+import urllib.error
+from urllib.parse import urlsplit
 from typing import Mapping
 
 
@@ -123,3 +126,91 @@ def register_agent_terminal(ctx) -> None:
         tools=[*config.native_tools, *config.mcp_tools],
         includes=list(config.toolsets),
     )
+    endpoint = os.environ.get("HERMES_AGENT_TERMINAL_URL", "")
+    token = os.environ.get("HERMES_AGENT_TERMINAL_TOKEN", "")
+    address = urlsplit(endpoint)
+    if (address.scheme != "http" or address.hostname != "127.0.0.1"
+            or not address.path.startswith("/api/agent-terminals/internal/")
+            or not re.fullmatch(r"[a-f0-9]{64}", token)):
+        raise ValueError("agent_terminal_execution_endpoint_invalid")
+
+    def request(operation, payload):
+        call = urllib.request.Request(endpoint + "/" + operation,
+            data=json.dumps(payload).encode("utf-8"), method="POST",
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(call, timeout=55) as response:
+                raw_response = response.read(8 * 1024 * 1024 + 1)
+        except urllib.error.HTTPError as error:
+            body = json.loads(error.read(8192).decode("utf-8"))
+            raise RuntimeError(str(body.get("error") or "agent_terminal_execution_failed")) from error
+        if len(raw_response) > 8 * 1024 * 1024:
+            raise RuntimeError("agent_terminal_execution_response_too_large")
+        return json.loads(raw_response)
+
+    def prepare(*, message, session_id, model, provider):
+        prepared = request("begin", {"message": message, "nativeSessionId": session_id,
+                                     "model": model, "provider": provider})
+        try:
+            from tools.mcp_tool import register_mcp_servers, get_registered_mcp_server_names
+            configs = {}
+            for descriptor in prepared["mcpServers"]:
+                name = descriptor["name"]
+                pairs = lambda values: {entry["name"]: entry["value"] for entry in values}
+                configs[name] = ({"url": descriptor["url"], "headers": pairs(descriptor.get("headers", []))}
+                    if descriptor.get("url") else {"command": descriptor["command"],
+                        "args": descriptor.get("args", []), "env": pairs(descriptor.get("env", []))})
+            register_mcp_servers(configs, replace_changed=True)
+            if set(configs) - set(get_registered_mcp_server_names()):
+                raise RuntimeError("agent_terminal_saved_mcp_unavailable")
+            prepared["requester"] = lambda method, params: request("host", {"method": method, "params": params})
+            observation.clear()
+            observation.update(session_id=session_id, usage={}, script={"invoked": False, "receipt": None, "fallback": None})
+            return prepared
+        except Exception as error:
+            request("finish", {"executionContextId": prepared["executionContextId"], "error": str(error)})
+            raise
+
+    def finish(*, prepared, result, error):
+        # The native result owns completion/failure. Do not synthesize output.
+        reports = list(observation.get("usage", {}).values())
+        complete = bool(reports) and all(report is not None for report in reports)
+        usage = {target: sum(report[source] for report in reports) if complete else None
+                 for target, source in (("providerInputTokens", "input_tokens"),
+                     ("providerOutputTokens", "output_tokens"), ("providerCachedTokens", "cache_read_tokens"),
+                     ("providerReasoningTokens", "reasoning_tokens"))}
+        try:
+            request("finish", {"executionContextId": prepared["executionContextId"],
+                "result": {key: result[key] for key in ("final_response", "completed", "failed", "error")
+                           if key in result} if isinstance(result, dict) else None,
+                "usage": usage, "scriptExecution": observation.get("script"), "error": error})
+        finally:
+            observation.clear()
+
+    # Native observers only report measured execution; they never authorize it.
+    observation = {}
+    def observe_api(*, api_request_id="", session_id="", usage=None, **_):
+        if not session_id or session_id != observation.get("session_id"):
+            return
+        fields = ("input_tokens", "output_tokens", "cache_read_tokens", "reasoning_tokens")
+        valid = api_request_id and isinstance(usage, dict) and all(
+            type(usage.get(field)) is int and usage[field] >= 0 for field in fields)
+        observation["usage"][api_request_id] = {field: usage[field] for field in fields} if valid else None
+
+    def observe_script(*, session_id="", tool_name="", result=None, **_):
+        if (session_id != observation.get("session_id") or tool_name != "execute_host_script"
+                or not observation):
+            return
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except ValueError:
+                result = None
+        observation["script"] = {"invoked": True,
+            **{field: result.get(field) if isinstance(result, dict) else None for field in ("receipt", "fallback")}}
+
+    ctx.register_cli_turn_lifecycle(prepare, finish)
+    ctx.register_hook("pre_api_request", observe_api)
+    ctx.register_hook("post_api_request", observe_api)
+    ctx.register_hook("pre_tool_call", observe_script)
+    ctx.register_hook("post_tool_call", observe_script)

@@ -26,21 +26,7 @@ export type InternalMcpPrincipal =
       // change token lifetime, revocation, or execution-context enforcement.
       nativeChildId?: string;
       nativeRunId?: string;
-    }
-  | {
-      // A native Card terminal is a saved-Card capability surface, not a Run.
-      // Its session identity is real and cannot be substituted for runtime
-      // lineage or a user conversation.
-      kind: 'agent-terminal';
-      projectId: string;
-      deckId: string;
-      callerCardId: string;
-      terminalSessionId: string;
-      profile: string;
-      callerRuntimeKind: 'hermes';
-      callerRuntimeMode: 'main' | 'delegate' | 'kanban';
-      grantedTools: string[];
-      presentedTools?: string[];
+      terminalOwner?: { userId: string; terminalSessionId: string; profile: string; cardRevisionId: string };
     };
 
 const TERMINAL_EXCLUDED_CARD_IDS = new Set(['builder', 'card_main_chat']);
@@ -80,31 +66,12 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
+  if (!['catalog-reader', 'system-root', 'card-runtime'].includes(principal.kind)) {
+    throw new Error('internal_mcp_principal_kind_invalid');
+  }
   const normalized = principal.kind === 'catalog-reader'
     ? principal
-    : principal.kind === 'agent-terminal'
-      ? (() => {
-        // Keep this check before any normalization. A forged runtime must not
-        // become Hermes simply because the terminal is Card-owned.
-        if (principal.callerRuntimeKind !== 'hermes') {
-          throw new Error('internal_mcp_agent_terminal_principal_invalid');
-        }
-        // Enumerate the terminal boundary. In particular, never carry an
-        // arbitrary object field into a signed Run/conversation claim.
-        return {
-        kind: 'agent-terminal' as const,
-        projectId: String(principal.projectId || '').trim(),
-        deckId: String(principal.deckId || '').trim(),
-        callerCardId: String(principal.callerCardId || '').trim(),
-        terminalSessionId: String(principal.terminalSessionId || '').trim(),
-        profile: String(principal.profile || '').trim(),
-        callerRuntimeKind: principal.callerRuntimeKind,
-        callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
-        grantedTools: uniqueStrings(principal.grantedTools),
-        presentedTools: uniqueStrings(principal.presentedTools ?? principal.grantedTools),
-        };
-      })()
-      : {
+    : {
         ...principal,
         projectId: String(principal.projectId || '').trim(),
         deckId: String(principal.deckId || '').trim(),
@@ -118,27 +85,7 @@ export function createInternalMcpBearer(
         requiresExecutionContext: principal.requiresExecutionContext === true,
         executionContextId: String(principal.executionContextId || '').trim() || undefined,
       };
-  if (normalized.kind === 'agent-terminal') {
-    const required = [
-      normalized.projectId,
-      normalized.deckId,
-      normalized.callerCardId,
-      normalized.terminalSessionId,
-      normalized.profile,
-      normalized.callerRuntimeKind,
-      normalized.callerRuntimeMode,
-    ];
-    if (required.some((value) => !value)
-      || TERMINAL_EXCLUDED_CARD_IDS.has(normalized.callerCardId)
-      || TERMINAL_EXCLUDED_PROFILES.has(normalized.profile)
-      || !TERMINAL_PROFILE_PATTERN.test(normalized.profile)
-      || !['main', 'delegate', 'kanban'].includes(normalized.callerRuntimeMode)) {
-      throw new Error('internal_mcp_agent_terminal_principal_invalid');
-    }
-    if (normalized.presentedTools.some((name) => !normalized.grantedTools.includes(name))) {
-      throw new Error('internal_mcp_presentation_exceeds_grant');
-    }
-  } else if (normalized.kind !== 'catalog-reader') {
+  if (normalized.kind !== 'catalog-reader') {
     const required = [
       normalized.projectId,
       normalized.deckId,
@@ -148,7 +95,19 @@ export function createInternalMcpBearer(
       normalized.callerRuntimeKind,
       normalized.callerRuntimeMode,
     ];
-    if (required.some((value) => !value)) throw new Error('internal_mcp_principal_incomplete');
+    const terminal = normalized.terminalOwner;
+    if (terminal && (normalized.kind !== 'card-runtime' || !normalized.requiresExecutionContext
+      || normalized.callerRuntimeKind !== 'hermes'
+      || TERMINAL_EXCLUDED_CARD_IDS.has(normalized.callerCardId)
+      || TERMINAL_EXCLUDED_PROFILES.has(terminal.profile)
+      || !TERMINAL_PROFILE_PATTERN.test(terminal.profile)
+      || Object.values(terminal).some((value) => typeof value !== 'string' || !value.trim())
+      || Object.keys(terminal).sort().join(',') !== 'cardRevisionId,profile,terminalSessionId,userId')) {
+      throw new Error('internal_mcp_terminal_run_identity_invalid');
+    }
+    if (required.some((value, index) => !value && !(index === 2 && terminal))) {
+      throw new Error('internal_mcp_principal_incomplete');
+    }
     if (normalized.presentedTools.some((name) => !normalized.grantedTools.includes(name))) {
       throw new Error('internal_mcp_presentation_exceeds_grant');
     }
@@ -159,9 +118,7 @@ export function createInternalMcpBearer(
     aud: INTERNAL_MCP_AUDIENCE,
     sub: normalized.kind === 'catalog-reader'
       ? 'catalog-reader'
-      : normalized.kind === 'agent-terminal'
-        ? `agent-terminal:${normalized.callerCardId}:${normalized.terminalSessionId}`
-        : `${normalized.kind}:${normalized.callerCardId}`,
+      : `${normalized.kind}:${normalized.callerCardId}`,
     iat: nowSeconds,
     exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
     scope: 'liquidaity.main',

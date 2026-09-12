@@ -1,11 +1,10 @@
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
-import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
-import { resolveSavedMcpConnections } from './mcpConnections';
+import { agentTerminalExecution } from './agentTerminalExecution';
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
 export type AgentTerminalState = {
@@ -18,7 +17,7 @@ type Listener = (event: 'output' | 'state', value: Output | AgentTerminalState) 
 type Launch = { file: string; args: string[]; cwd: string; env: Record<string, string>; profile: string };
 type Session = {
   owner: AgentTerminalOwner; fingerprint: string; state: AgentTerminalState;
-  pty: IPty; output: Output[]; outputBytes: number; sequence: number; listeners: Set<Listener>;
+  bearer: string; pty: IPty; output: Output[]; outputBytes: number; sequence: number; listeners: Set<Listener>;
 };
 
 export function agentTerminalFingerprint(card: AgentCardInstance, deck: DeckDocument): string {
@@ -66,42 +65,13 @@ export function prepareAgentTerminal(
     owner.projectId, owner.deckId, card.id, profile,
   ]));
   const options = card.runtimeOptions as Record<string, unknown> | undefined;
-  const model = options?.providerModelId;
+  const model = options?.providerModelId || options?.modelKey;
   const provider = options?.provider === 'openai' && options?.accessMode === 'chatgpt-account'
     ? 'openai-codex' : options?.provider;
   if (typeof model !== 'string' || !model || typeof provider !== 'string' || !provider) {
     throw new Error('agent_terminal_saved_model_missing');
   }
   if (typeof card.prompt !== 'string' || !card.prompt.trim()) throw new Error('agent_terminal_saved_prompt_missing');
-  if (options?.script && (options.script as { enabled?: boolean }).enabled) {
-    throw new Error('agent_terminal_native_script_binding_unavailable');
-  }
-  if (options?.toolCatalogPolicy === 'all_healthy') {
-    throw new Error('agent_terminal_live_catalog_selection_unavailable');
-  }
-  const disabled = new Set(list(options?.disabledTools));
-  const tools = list(options?.tools ?? card.tools).filter((name) => !disabled.has(name));
-  const nativeTools = list(options?.nativeTools).filter((name) => !disabled.has(name));
-  if (tools.includes('web_search') && !nativeTools.includes('web_search')) nativeTools.push('web_search');
-  const mcpTools = tools.filter((name) => name !== 'web_search');
-  const servers: Record<string, Record<string, unknown>> = {};
-  if (mcpTools.length) {
-    const server = resolvePythonAgentMcpServerSpec({
-      kind: 'agent-terminal', projectId: owner.projectId, deckId: owner.deckId,
-      callerCardId: owner.cardId, terminalSessionId: sessionId,
-      profile, callerRuntimeKind: 'hermes', callerRuntimeMode: card.runtime.mode,
-      grantedTools: mcpTools, presentedTools: mcpTools,
-    });
-    servers.agent_terminal = { url: server.url, headers: server.headers, lazy: false };
-  }
-  const toolsets = list(options?.toolsets);
-  for (const connection of resolveSavedMcpConnections(list(options?.mcpConnectionIds))) {
-    if (connection.name === 'agent_terminal') throw new Error('agent_terminal_mcp_name_collision');
-    servers[connection.name] = 'url' in connection
-      ? { url: connection.url, headers: Object.fromEntries(connection.headers.map((entry) => [entry.name, entry.value])), lazy: false }
-      : { command: connection.command, args: connection.args, env: Object.fromEntries(connection.env.map((entry) => [entry.name, entry.value])), lazy: false };
-    toolsets.push(`mcp-${connection.name}`);
-  }
   // OS/process plumbing is inherited; another runtime's selectors and bearer are not.
   const env: Record<string, string> = {};
   for (const name of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT',
@@ -111,14 +81,13 @@ export function prepareAgentTerminal(
   }
   Object.assign(env, {
     HERMES_HOME: profileHome, TERMINAL_CWD: cwd,
+    HERMES_REQUIRE_CLI_HOST: 'liquidaity-card-mcp',
     PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', TERM: 'xterm-256color',
     HERMES_EPHEMERAL_SYSTEM_PROMPT: card.prompt,
     HERMES_AGENT_TERMINAL_CONFIG: JSON.stringify({
-      cardId: card.id, profile, profileHome, toolsets, nativeTools,
-      mcpTools: mcpTools.map((name) => `mcp__agent_terminal__${name.replace(/[^A-Za-z0-9_]/g, '_')}`),
+      cardId: card.id, profile, profileHome, toolsets: [], nativeTools: [], mcpTools: [],
     }),
   });
-  if (Object.keys(servers).length) env.HERMES_MCP_SERVERS = JSON.stringify(servers);
   const args = ['-p', profile, 'chat', '--cli', '--in', cwd, '--model', model,
     '--provider', provider, '--toolsets', 'agent-terminal'];
   if (options?.reasoningEffort) args.push('--reasoning', String(options.reasoningEffort));
@@ -131,7 +100,8 @@ export function prepareAgentTerminal(
 export class AgentTerminalManager {
   private readonly sessions = new Map<string, Session>();
   constructor(private readonly spawn: typeof spawnPty = spawnPty,
-    private readonly prepare = prepareAgentTerminal) {}
+    private readonly prepare = prepareAgentTerminal,
+    private readonly onExit = (id: string) => agentTerminalExecution.abort(id)) {}
 
   open(owner: AgentTerminalOwner, card: AgentCardInstance, deck: DeckDocument, cols: number, rows: number): AgentTerminalState {
     const profile = requireAgentTerminalCard(card, deck);
@@ -150,10 +120,13 @@ export class AgentTerminalManager {
     if (this.sessions.size >= 32) throw new Error('agent_terminal_session_limit');
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId);
+    const bearer = randomBytes(32).toString('hex');
+    launch.env.HERMES_AGENT_TERMINAL_URL = `http://127.0.0.1:${process.env.PORT || '4000'}/api/agent-terminals/internal/${sessionId}`;
+    launch.env.HERMES_AGENT_TERMINAL_TOKEN = bearer;
     const pty = this.spawn(launch.file, launch.args, { name: 'xterm-256color', cols, rows,
       cwd: launch.cwd, env: launch.env, useConpty: true });
     const session: Session = {
-      owner: { ...owner }, fingerprint, pty,
+      owner: { ...owner }, fingerprint, bearer, pty,
       state: { sessionId, cardId: card.id, profile, pid: pty.pid, ptyId: sessionId,
         status: 'running', cols, rows },
       output: [], outputBytes: 0, sequence: 0, listeners: new Set(),
@@ -170,11 +143,26 @@ export class AgentTerminalManager {
       for (const listener of session.listeners) listener('output', output);
     });
     pty.onExit(({ exitCode }) => {
+      void this.onExit(sessionId).catch((error) => {
+        session.state.error = String(error);
+        for (const listener of session.listeners) listener('state', { ...session.state });
+      });
       session.state.status = exitCode === 0 ? 'exited' : 'failed';
       session.state.exitCode = exitCode;
       for (const listener of session.listeners) listener('state', { ...session.state });
     });
     return { ...session.state };
+  }
+
+  authorizeNative(id: string, authorization: string): AgentTerminalOwner {
+    const session = this.sessions.get(id);
+    const supplied = Buffer.from(authorization.replace(/^Bearer /, ''));
+    const expected = Buffer.from(session?.bearer || '');
+    if (!session || session.state.status !== 'running' || !expected.length
+      || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new Error('agent_terminal_native_unauthorized');
+    }
+    return { ...session.owner };
   }
 
   private owned(owner: AgentTerminalOwner, id: string): Session {

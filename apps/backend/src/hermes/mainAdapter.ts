@@ -19,6 +19,7 @@ import {
   startHermesHostTeamMonitor,
 } from './hostExecutionLifecycle';
 import {
+  readSavedSubagentModel,
   sameNativeSubagentModel,
   toNativeSubagentModel,
   type NativeSubagentModel,
@@ -140,6 +141,7 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
   deckRevision?: string;
   message: string;
   workingDirectory?: string;
+  terminalOwner?: import('./childExecutionContext').HermesExecutionContext['terminalOwner'];
 };
 
 export type HermesHistoryArgs = {
@@ -327,6 +329,7 @@ export function buildHermesOfficialMcpServer(
     | 'tools'
     | 'grantedTools'
     | 'script'
+    | 'terminalOwner'
   >,
   env: NodeJS.ProcessEnv = process.env,
   executionContextId = '',
@@ -348,6 +351,7 @@ export function buildHermesOfficialMcpServer(
     presentedTools: presented,
     requiresExecutionContext: true,
     executionContextId: String(executionContextId || '').trim() || undefined,
+    ...(args.terminalOwner ? { terminalOwner: args.terminalOwner } : {}),
   }, env);
   const suffix = createHash('sha256').update(args.sessionKey).digest('hex').slice(0, 12);
   return {
@@ -421,7 +425,7 @@ export function buildHermesHostSessionProjection(
     maxToolCalls: args.script.maxToolCalls,
     maxOutputBytes: args.script.maxOutputBytes,
   } : null;
-  const rawOfficialTools = hostScript && rootOfficial
+  const rawOfficialTools = (hostScript || args.terminalOwner) && rootOfficial
     ? args.tools
         .filter((name) => name !== 'web_search')
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
@@ -443,7 +447,7 @@ export function buildHermesHostSessionProjection(
             ...(args.toolsets || []),
             ...(args.nativeProfileToolsets || []),
             ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),
-            ...(!hostScript ? mcpToolsetNames(rootServers) : []),
+            ...(!hostScript ? mcpToolsetNames(args.terminalOwner ? rootSaved : rootServers) : []),
           ]),
           enabledTools: uniqueStrings([
             ...(args.nativeTools || []),
@@ -471,6 +475,128 @@ export function buildHermesHostSessionProjection(
     },
   };
 }
+
+export type PreparedHermesTransportArgs = {
+  prepared: any;
+  projectId: string;
+  deckId: string;
+  correlationId?: string;
+  conversationId: string;
+  parentRunId?: string;
+  workingDirectory?: string;
+  onEvent: (event: HermesSessionEvent) => void;
+};
+
+export function resolveHermesTurnArgs(
+  args: PreparedHermesTransportArgs,
+  transport: any,
+): HermesTurnArgs {
+  const identity = transport?.cardIdentity || {};
+  const input = transport?.request;
+  const runtime = input?.runtime;
+  const provider = input?.provider;
+  if (
+    !input || typeof input !== 'object'
+    || args.prepared?.runtimeOwner !== 'hermes'
+    || runtime?.kind !== 'hermes'
+    || !['main', 'delegate', 'kanban'].includes(runtime?.mode)
+    || !String(runtime?.profile || '').trim()
+  ) {
+    throw new Error('prepared_hermes_transport_invalid');
+  }
+  const retiredFields = ['builderOperation', 'agentBuilderOperation', 'buildTarget',
+    'selectedCardTarget', 'effectTarget', 'effectTargetCardId',
+    'effectTargetCardRevisionId', 'effectTargetDeckRevision']
+    .filter((field) => Object.prototype.hasOwnProperty.call(input, field));
+  if (retiredFields.length) {
+    throw new Error(`prepared_hermes_fields_retired:${retiredFields.join(',')}`);
+  }
+  const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
+  const scriptState = input.runtimeOptions?.script;
+  const scriptCompiled = scriptState?.compiled;
+  const scriptPresentation = input.scriptPresentation;
+  const profileTargets = Array.isArray(transport?.delegationTargets)
+    ? transport.delegationTargets.map((target: any) => ({
+        cardId: String(target?.cardId || ''),
+        title: String(target?.title || ''),
+        profile: String(target?.profile || '').trim().toLowerCase(),
+        description: String(target?.description || ''),
+        cardRevisionId: String(target?.cardRevisionId || ''),
+      })).filter((target: any) => (
+        target.cardId && target.cardRevisionId && target.title
+        && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(target.profile)
+      ))
+    : [];
+  const script = scriptPresentation?.mode === 'script'
+    && scriptState?.nativeSupport?.active === true
+    && typeof scriptState?.source === 'string'
+    && typeof scriptState?.sourceHash === 'string'
+    && typeof scriptState?.compiledHash === 'string'
+    && Number.isInteger(scriptState?.version)
+    && Number(scriptState.version) >= 1
+    && scriptCompiled && typeof scriptCompiled === 'object'
+    && scriptCompiled.mode === 'tool_recipe'
+    ? {
+        version: Number(scriptState.version),
+        source: scriptState.source,
+        sourceHash: scriptState.sourceHash,
+        compiledHash: scriptState.compiledHash,
+        mode: scriptCompiled.mode,
+        inputSchema: scriptCompiled.inputSchema,
+        outputSchema: scriptCompiled.outputSchema,
+        toolHandles: Array.isArray(scriptCompiled.toolHandles) ? scriptCompiled.toolHandles : [],
+        toolStates: scriptCompiled.toolStates && typeof scriptCompiled.toolStates === 'object'
+          ? scriptCompiled.toolStates : {},
+        offToolIds: Array.isArray(scriptCompiled.offToolIds) ? scriptCompiled.offToolIds : [],
+        scriptToolIds: Array.isArray(scriptCompiled.scriptToolIds) ? scriptCompiled.scriptToolIds : [],
+        agentToolIds: Array.isArray(scriptCompiled.agentToolIds) ? scriptCompiled.agentToolIds : [],
+        timeoutSeconds: Number(scriptCompiled.timeoutSeconds),
+        maxToolCalls: Number(scriptCompiled.maxToolCalls),
+        maxOutputBytes: Number(scriptCompiled.maxOutputBytes),
+      }
+    : undefined;
+  return {
+    cardId: String(identity.cardId || ''),
+    title: String(identity.title || ''),
+    runtime,
+    prompt: String(input.systemPrompt || ''),
+    provider: String(provider?.provider || ''),
+    modelKey: String(provider?.modelKey || ''),
+    providerModelId: String(provider?.providerModelId || ''),
+    ...(savedSubagentModel
+      ? { subagentModel: savedSubagentModel }
+      : {}),
+    delegationRole: input.runtimeOptions?.delegationRole || 'off',
+    accessMode: provider?.accessMode,
+    tools: Array.isArray(input.presentedTools)
+      ? input.presentedTools
+      : Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    grantedTools: Array.isArray(input.enabledTools) ? input.enabledTools : [],
+    toolCatalogPolicy: input.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
+    disabledTools: Array.isArray(input.disabledTools) ? input.disabledTools : [],
+    mcpConnectionIds: Array.isArray(input.mcpConnectionIds) ? input.mcpConnectionIds : [],
+    nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
+    ...(Array.isArray(input.skills) && input.skills.length ? { skills: input.skills } : {}),
+    toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
+    ...(script ? { script } : {}),
+    ...(profileTargets.length ? { profileTargets } : {}),
+    sessionKey: deriveHermesSessionKey(
+      args.projectId,
+      args.conversationId,
+      String(identity.cardId || ''),
+    ),
+    projectId: args.projectId,
+    deckId: args.deckId,
+    conversationId: args.conversationId,
+    parentRunId: args.parentRunId || args.conversationId,
+    deckRevision: String(args.prepared?.deckRevision || ''),
+    message: String(input.message || ''),
+    workingDirectory: args.workingDirectory || resolveProductChatWorkingDirectory(JSON.stringify([
+      args.projectId, args.deckId, String(identity.cardId || ''), runtime.profile,
+    ])),
+  };
+}
+
 
 export class AcpProcess {
   readonly executable: string;

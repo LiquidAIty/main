@@ -37,7 +37,9 @@ function dependencies() {
     getUser: vi.fn().mockResolvedValue({ id: 'owner-1' }),
     getProject: vi.fn().mockResolvedValue({ id: 'project-1' }),
     getDeck: vi.fn().mockResolvedValue({ deck }),
+    execution: { begin: vi.fn().mockResolvedValue({ runId: 'persisted-run' }), finish: vi.fn(), host: vi.fn() },
     manager: {
+      authorizeNative: vi.fn().mockReturnValue({ userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: card.id }),
       open: vi.fn().mockReturnValue({ sessionId: 'terminal-1', status: 'running' }),
       state: vi.fn(), subscribe: vi.fn(), verifyConfiguration: vi.fn(), input: vi.fn(),
       resize: vi.fn().mockReturnValue({ sessionId: 'terminal-1', cols: 120, rows: 30 }), stop: vi.fn(),
@@ -73,6 +75,32 @@ const json = (body: unknown, sid = 'owner-session'): RequestInit => ({
 afterEach(() => vi.clearAllMocks());
 
 describe('native Card terminal routes', () => {
+  it('resolves native execution only from the process bearer and freshly verified Card', async () => {
+    const deps = dependencies();
+    const response = await request(deps, '/internal/terminal-1/begin', {
+      ...json({ message: 'input', userId: 'foreign', cardId: 'builder' }),
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer process-secret' },
+    });
+    expect(response.status).toBe(200);
+    expect(deps.manager.authorizeNative).toHaveBeenCalledWith('terminal-1', 'Bearer process-secret');
+    expect(deps.getUser).not.toHaveBeenCalled();
+    expect(deps.getProject).toHaveBeenCalledWith('project-1', 'owner-1');
+    expect(deps.manager.verifyConfiguration).toHaveBeenCalledWith(
+      deps.manager.authorizeNative.mock.results[0].value, 'terminal-1', card, deck);
+    expect(deps.execution.begin).toHaveBeenCalledWith(
+      deps.manager.authorizeNative.mock.results[0].value, 'terminal-1', 'research', expect.any(Object));
+  });
+
+  it.each(['bearer', 'owner', 'configuration'])('denies native execution on %s mismatch before creating a Run', async (failure) => {
+    const deps = dependencies();
+    if (failure === 'bearer') deps.manager.authorizeNative.mockImplementation(() => { throw new Error('agent_terminal_native_unauthorized'); });
+    if (failure === 'owner') deps.getProject.mockResolvedValue(null);
+    if (failure === 'configuration') deps.manager.verifyConfiguration.mockImplementation(() => { throw new Error('agent_terminal_configuration_changed_stop_required'); });
+    const response = await request(deps, '/internal/terminal-1/begin', json({ message: 'input' }));
+    expect(response.status).toBe(400);
+    expect(deps.execution.begin).not.toHaveBeenCalled();
+  });
+
   it('requires an existing session before any project, deck, or PTY access', async () => {
     const deps = dependencies();
     const response = await request(deps, '/project-1/deck_builder/card_hermes_steward/open', {

@@ -3,7 +3,8 @@ import type { IPty } from 'node-pty';
 import { AgentTerminalManager, requireAgentTerminalCard, type AgentTerminalOwner } from './agentTerminal';
 import type { AgentCardInstance, DeckDocument } from '../types';
 
-vi.mock('../services/mcp/pythonAgentMcpClient', () => ({ resolvePythonAgentMcpServerSpec: vi.fn() }));
+vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
+  listPythonAgentMcpCatalog: vi.fn(), resolvePythonAgentMcpServerSpec: vi.fn() }));
 
 function card(id: string, profile: string): AgentCardInstance {
   return { id, title: id, templateId: 'agent', position: { x: 0, y: 0 }, prompt: `Prompt ${id}`,

@@ -17,6 +17,63 @@ def _context(name: str = "notify-plugin") -> tuple[PluginContext, PluginManager]
     return PluginContext(manifest, manager), manager
 
 
+def test_native_cli_lifecycle_fails_closed_before_execution(monkeypatch):
+    context, manager = _context()
+    agent = SimpleNamespace(model="saved-model", provider="saved-provider")
+    cli = SimpleNamespace(agent=agent, session_id="native-session", _agent_running=True)
+    manager._cli_ref = cli
+    execute = MagicMock()
+    monkeypatch.setenv("HERMES_REQUIRE_CLI_HOST", "notify-plugin")
+    with pytest.raises(RuntimeError, match="lifecycle_required"):
+        manager.run_cli_host_turn(cli, agent, "input", execute)
+    prepare = MagicMock(side_effect=RuntimeError("missing_permission"))
+    finish = MagicMock()
+    registration = context.register_cli_turn_lifecycle(prepare, finish)
+    with pytest.raises(RuntimeError, match="missing_permission"):
+        manager.run_cli_host_turn(cli, agent, "input", execute)
+    execute.assert_not_called()
+    finish.assert_not_called()
+    with pytest.raises(RuntimeError, match="already_registered"):
+        context.register_cli_turn_lifecycle(prepare, finish)
+    registration.dispose()
+    assert manager._cli_turn_lifecycle is None
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_native_cli_lifecycle_binds_exact_turn_and_clears_on_every_exit(monkeypatch, failure):
+    from acp_adapter.host_profiles import current_host_tool_call_meta
+    import acp_adapter.host_profiles as host
+    context, manager = _context()
+    agent = SimpleNamespace(model="saved-model", provider="saved-provider",
+        tools=[], valid_tool_names=set(), enabled_toolsets=[], ephemeral_system_prompt="original")
+    cli = SimpleNamespace(agent=agent, session_id="native-session", _agent_running=True)
+    manager._cli_ref = cli
+    monkeypatch.setattr(host, "host_session_tool_definitions", lambda *_args: [])
+    prepared = {"executionContextId": "run-context", "requester": MagicMock(),
+        "message": "canonical IDF projection", "sessionConfig": {
+            "enabledTools": [], "enabledToolsets": [], "systemPrompt": "saved Card prompt",
+            "executionContextId": "run-context", "toolCallMeta": {"app/execution": "run-context"}}}
+    finish = MagicMock()
+    context.register_cli_turn_lifecycle(lambda **_kwargs: prepared, finish)
+    def execute(message):
+        assert message == "canonical IDF projection"
+        assert agent.ephemeral_system_prompt == "saved Card prompt"
+        assert current_host_tool_call_meta() == {"app/execution": "run-context"}
+        if failure:
+            raise RuntimeError("provider failed")
+        return {"completed": True, "final_response": "native output"}
+    if failure:
+        with pytest.raises(RuntimeError, match="provider failed"):
+            manager.run_cli_host_turn(cli, agent, "input", execute)
+    else:
+        assert manager.run_cli_host_turn(cli, agent, "input", execute)["final_response"] == "native output"
+    assert agent.ephemeral_system_prompt == "original"
+    assert current_host_tool_call_meta() is None
+    assert agent._host_execution_context_id == ""
+    assert finish.call_count == 1
+    assert finish.call_args.kwargs["error"] == ("provider failed" if failure else None)
+
+
 def _write_plugin_config(tmp_path, monkeypatch, entry: dict) -> None:
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()

@@ -21,6 +21,7 @@ const mcp = vi.hoisted(() => ({
 vi.mock('node:fs', () => nativeFs);
 vi.mock('../services/workspaceRoot', () => workspaceRoot);
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
+  listPythonAgentMcpCatalog: vi.fn(),
   resolvePythonAgentMcpServerSpec: mcp.resolvePythonAgentMcpServerSpec,
 }));
 vi.mock('./mcpConnections', () => ({ resolveSavedMcpConnections: mcp.resolveSavedMcpConnections }));
@@ -109,22 +110,12 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       cardId: card.id,
       profile: 'agent-cli-proof',
       profileHome: 'C:\\repo\\Hermes\\.hermes\\profiles\\agent-cli-proof',
-      toolsets: ['saved-toolset', 'mcp-saved-remote'],
-      nativeTools: ['native_saved_tool', 'web_search'],
-      mcpTools: ['mcp__agent_terminal__read_repo'],
+      toolsets: [], nativeTools: [], mcpTools: [],
     });
-    expect(JSON.parse(launch.env.HERMES_MCP_SERVERS)).toEqual({
-      agent_terminal: {
-        url: 'http://127.0.0.1:8765/mcp', headers: { Authorization: 'Bearer exact-saved-grant' }, lazy: false,
-      },
-      'saved-remote': { url: 'https://saved.example/mcp', headers: { 'X-Saved': 'connection' }, lazy: false },
-    });
-    expect(mcp.resolvePythonAgentMcpServerSpec).toHaveBeenCalledWith(expect.objectContaining({
-      kind: 'agent-terminal', projectId: owner.projectId, deckId: owner.deckId, callerCardId: owner.cardId,
-      terminalSessionId: 'session-1', profile: 'agent-cli-proof', grantedTools: ['read_repo'],
-      presentedTools: ['read_repo'], callerRuntimeKind: 'hermes', callerRuntimeMode: 'delegate',
-    }));
-    expect(mcp.resolveSavedMcpConnections).toHaveBeenCalledWith(['saved-remote-id']);
+    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBe('liquidaity-card-mcp');
+    expect(launch.env.HERMES_MCP_SERVERS).toBeUndefined();
+    expect(mcp.resolvePythonAgentMcpServerSpec).not.toHaveBeenCalled();
+    expect(mcp.resolveSavedMcpConnections).not.toHaveBeenCalled();
     for (const name of inheritedNames) expect(launch.env).not.toHaveProperty(name);
   });
 
@@ -139,7 +130,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
 
   it('fails truthfully for an absent saved model and supports Cards without a workspace', () => {
     const modelMissing = savedCard({ runtimeOptions: {
-      ...(savedCard().runtimeOptions as Record<string, unknown>), providerModelId: null,
+      ...(savedCard().runtimeOptions as Record<string, unknown>), providerModelId: null, modelKey: null,
     } as unknown as AgentCardInstance['runtimeOptions'] });
     expect(() => prepareAgentTerminal(owner, modelMissing, savedDeck(modelMissing), 'session-1'))
       .toThrow('agent_terminal_saved_model_missing');
@@ -154,13 +145,23 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       .not.toBe(launch.cwd);
   });
 
-  it.each([
-    ['enabled Script', { script: { enabled: true } }, 'agent_terminal_native_script_binding_unavailable'],
-    ['all-healthy catalog', { toolCatalogPolicy: 'all_healthy' }, 'agent_terminal_live_catalog_selection_unavailable'],
-  ])('fails truthfully for unsupported saved %s', (_name, runtimeOptions, error) => {
+  it('uses the same saved modelKey as canonical Run materialization when providerModelId is absent', () => {
     const card = savedCard({ runtimeOptions: {
-      ...(savedCard().runtimeOptions as Record<string, unknown>), ...runtimeOptions,
-    } as unknown as AgentCardInstance['runtimeOptions'] });
-    expect(() => prepareAgentTerminal(owner, card, savedDeck(card), 'session-1')).toThrow(error);
+      ...savedCard().runtimeOptions, providerModelId: undefined,
+    } });
+    expect(prepareAgentTerminal(owner, card, savedDeck(card), 'session-1').args)
+      .toContain('saved-model-key');
+  });
+
+  it.each([
+    { script: { enabled: true } }, { toolCatalogPolicy: 'all_healthy' },
+  ])('defers capability materialization to the required canonical Run', (options) => {
+    const card = savedCard({ runtimeOptions: {
+      ...savedCard().runtimeOptions, ...options,
+    } as AgentCardInstance['runtimeOptions'] });
+    const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1');
+    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBe('liquidaity-card-mcp');
+    expect(JSON.parse(launch.env.HERMES_AGENT_TERMINAL_CONFIG).mcpTools).toEqual([]);
+    expect(launch.env.HERMES_MCP_SERVERS).toBeUndefined();
   });
 });

@@ -5480,6 +5480,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             self.run_budget_seconds = CLI_CONFIG["agent"].get("run_budget_seconds")
 
         # Parse and validate toolsets
+        if os.environ.get("HERMES_REQUIRE_CLI_HOST"):
+            # A required host may register the process's explicit toolset.
+            # Resolve that registration before validating its CLI selector.
+            from hermes_cli.plugins import discover_plugins
+            discover_plugins()
         self.enabled_toolsets = toolsets
         from agent.skill_utils import parse_config_string_list
 
@@ -17151,19 +17156,21 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 )
                 self._pending_one_turn_model_restore = None
                 try:
-                    # LIQUIDAITY VENDOR PATCH: an accepted Card-driven Main
-                    # turn uses the same execution metadata/Script scope as
-                    # ACP. Native terminal turns enter an inert empty scope.
-                    from acp_adapter.host_profiles import host_execution_scope
-                    with host_execution_scope(self.agent):
-                        result = self.agent.run_conversation(
-                            user_message=agent_message,
+                    # The optional trusted host binds the native CLI turn
+                    # before inference; ordinary standalone behavior is unchanged.
+                    from hermes_cli.plugins import get_plugin_manager
+                    def execute_native_turn(prepared_message):
+                        return self.agent.run_conversation(
+                            user_message=prepared_message,
                             conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
                             stream_callback=stream_callback,
                             task_id=self.session_id,
                             persist_user_message=_persist_clean_user_message,
                             moa_config=_moa_cfg,
                         )
+                    result = get_plugin_manager().run_cli_host_turn(
+                        self, self.agent, agent_message, execute_native_turn,
+                    )
                     if getattr(self, "_pending_moa_disable_after_turn", False):
                         _restore = getattr(self, "_pending_moa_restore_model", None) or {}
                         for _key, _value in _restore.items():

@@ -21,6 +21,7 @@ export type HermesExecutionContext = {
   grantedTools: string[];
   expiresAt: number;
   state: 'active' | 'closing' | 'closed';
+  terminalOwner?: { userId: string; terminalSessionId: string; profile: string; cardRevisionId: string };
 };
 
 const contexts = new Map<string, HermesExecutionContext>();
@@ -57,12 +58,21 @@ export function registerHermesRootExecutionContext(args: {
   runtimeMode: 'main' | 'delegate' | 'kanban';
   grantedTools: string[];
   now?: number;
+  terminalOwner?: HermesExecutionContext['terminalOwner'];
 }): HermesExecutionContext {
   const required = [
     args.sessionId, args.runId, args.projectId, args.deckId,
     args.conversationId, args.cardId,
   ].map((value) => String(value || '').trim());
-  if (required.some((value) => !value)) throw new Error('hermes_root_execution_context_incomplete');
+  const terminal = args.terminalOwner;
+  if (terminal && (Object.values(terminal).some((value) => !value)
+    || ['builder', 'card_main_chat'].includes(args.cardId)
+    || ['main', 'liquidaity-main', 'builder', 'default'].includes(terminal.profile))) {
+    throw new Error('hermes_terminal_execution_identity_invalid');
+  }
+  if (required.some((value, index) => !value && !(index === 4 && terminal))) {
+    throw new Error('hermes_root_execution_context_incomplete');
+  }
   const context: HermesExecutionContext = {
     contextId: randomUUID(),
     sessionId: required[0],
@@ -80,6 +90,7 @@ export function registerHermesRootExecutionContext(args: {
     grantedTools: uniqueStrings(args.grantedTools),
     expiresAt: (args.now ?? Date.now()) + EXECUTION_CONTEXT_TTL_MS,
     state: 'active',
+    ...(terminal ? { terminalOwner: { ...terminal } } : {}),
   };
   contexts.set(context.contextId, context);
   return {
@@ -177,6 +188,7 @@ export function resolveHermesExecutionContext(args: {
     && String(principal.callerRuntimeKind || '') === 'hermes'
     && String(principal.callerRuntimeMode || '') === context.runtimeMode
     && JSON.stringify(principalTools) === JSON.stringify(context.grantedTools)
+    && JSON.stringify(principal.terminalOwner ?? null) === JSON.stringify(context.terminalOwner ?? null)
   );
   if (!matches) throw new Error('hermes_execution_context_principal_mismatch');
   return {
