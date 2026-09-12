@@ -1,9 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import type { AgentCardInstance, DeckDocument } from '../types';
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
 import { resolveSavedMcpConnections } from './mcpConnections';
 
@@ -62,11 +62,9 @@ export function prepareAgentTerminal(
   if (!existsSync(file)) throw new Error('agent_terminal_native_executable_missing');
   const profileHome = path.join(root, 'Hermes', '.hermes', 'profiles', profile);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) throw new Error('agent_terminal_profile_missing');
-  if (!deck.workspaceRoot || !path.isAbsolute(deck.workspaceRoot)
-    || !existsSync(deck.workspaceRoot) || !statSync(deck.workspaceRoot).isDirectory()) {
-    throw new Error('agent_terminal_saved_workspace_missing');
-  }
-  const cwd = realpathSync(deck.workspaceRoot);
+  const cwd = resolveProductChatWorkingDirectory(JSON.stringify([
+    owner.projectId, owner.deckId, card.id, profile,
+  ]));
   const options = card.runtimeOptions as Record<string, unknown> | undefined;
   const model = options?.providerModelId;
   const provider = options?.provider === 'openai' && options?.accessMode === 'chatgpt-account'
@@ -112,7 +110,8 @@ export function prepareAgentTerminal(
     if (process.env[name] !== undefined) env[name] = process.env[name]!;
   }
   Object.assign(env, {
-    HERMES_HOME: profileHome, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', TERM: 'xterm-256color',
+    HERMES_HOME: profileHome, TERMINAL_CWD: cwd,
+    PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', TERM: 'xterm-256color',
     HERMES_EPHEMERAL_SYSTEM_PROMPT: card.prompt,
     HERMES_AGENT_TERMINAL_CONFIG: JSON.stringify({
       cardId: card.id, profile, profileHome, toolsets, nativeTools,

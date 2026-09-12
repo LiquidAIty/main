@@ -30,7 +30,7 @@ import {
 import { readSavedSubagentModel } from '../hermes/subagentModel';
 import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { projectMainRuntimeEvent } from '../hermes/mainProjection';
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveProductChatWorkingDirectory } from '../services/workspaceRoot';
 import { listConversations } from '../conversations/store';
 import { getProjectCard } from '../services/agentBuilderStore';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
@@ -62,7 +62,6 @@ const router = Router();
 export const mainRoutes = Router();
 export const hermesRoutes = Router();
 
-const BUILDER_CARD_ID = 'builder';
 const BUILDER_PROFILE = 'builder';
 
 async function authorizeMainProject(req: Request, res: Response, projectId: string): Promise<boolean> {
@@ -544,7 +543,9 @@ function resolveHermesTurnArgs(
     parentRunId: args.parentRunId || args.conversationId,
     deckRevision: String(args.prepared?.deckRevision || ''),
     message: String(input.message || ''),
-    ...(args.workingDirectory ? { workingDirectory: args.workingDirectory } : {}),
+    workingDirectory: args.workingDirectory || resolveProductChatWorkingDirectory(JSON.stringify([
+      args.projectId, args.deckId, String(identity.cardId || ''), runtime.profile,
+    ])),
   };
 }
 
@@ -1060,7 +1061,6 @@ router.post('/run', async (req, res) => {
           deckId,
           conversationId,
           parentRunId: runId,
-          ...(cardId === BUILDER_CARD_ID ? { workingDirectory: resolveRepoRoot() } : {}),
           onEvent: (event) => {
             // Preserve real child tool effects for the parent/UI observer. Text,
             // reasoning, and memory remain inside the child Hermes session.

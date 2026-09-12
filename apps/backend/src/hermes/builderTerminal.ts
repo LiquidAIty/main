@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnPty, type IPty, type IWindowsPtyForkOptions } from 'node-pty';
 
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { MainCliBridge } from './mainCliBridge';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
@@ -223,18 +223,29 @@ export class BuilderTerminalManager {
     if (request.profile !== 'builder' || request.ownerCardId === 'card_main_chat') {
       return { ok: false, error: 'builder_terminal_saved_profile_required', missing: [] };
     }
-    const targetRoot = path.resolve(request.targetRoot || resolveRepoRoot());
-    if (!existsSync(targetRoot)) {
+    if (request.targetRoot && !path.isAbsolute(request.targetRoot)) {
+      return { ok: false, error: 'builder_terminal_target_root_must_be_absolute', missing: [] };
+    }
+    const requestedRoot = request.targetRoot || resolveProductChatWorkingDirectory(JSON.stringify([
+      projectId, deckId, request.ownerCardId, request.profile,
+    ]));
+    if (!existsSync(requestedRoot) || !statSync(requestedRoot).isDirectory()) {
       return {
         ok: false,
-        error: `hermes_builder_terminal_target_root_missing:${targetRoot}`,
+        error: `hermes_builder_terminal_target_root_missing:${requestedRoot}`,
         missing: [],
       };
     }
+    const targetRoot = realpathSync(requestedRoot);
     const normalizedRequest = { ...request, projectId, deckId, conversationId };
     const identity = terminalIdentity(normalizedRequest);
     const existing = this.sessionsByIdentity.get(identity);
-    if (existing?.hasProcess()) return { ok: true, session: existing, created: false };
+    if (existing?.hasProcess()) {
+      if (existing.info.targetRoot !== targetRoot || existing.info.profile !== request.profile) {
+        return { ok: false, error: 'builder_terminal_saved_binding_changed', missing: [] };
+      }
+      return { ok: true, session: existing, created: false };
+    }
 
     const now = new Date().toISOString();
     const info: ConsoleSessionInfo = {
@@ -290,6 +301,7 @@ function startBuilderTerminalSession(session: BuilderTerminalSession): void {
     env: {
       ...withoutInternalMcpSecret(process.env),
       HERMES_HOME: hermesHome,
+      TERMINAL_CWD: session.info.targetRoot,
       ...(session.delivery ? {
         LIQUIDAITY_MAIN_BRIDGE_URL: `http://127.0.0.1:${process.env.PORT || '4000'}/api/internal/builder-cli/${session.info.id}`,
         LIQUIDAITY_MAIN_BRIDGE_TOKEN: session.delivery.token,
@@ -338,8 +350,9 @@ export async function ensureSavedBuilderTerminal(
       && node.runtime.profile.trim().toLowerCase() === 'builder').length !== 1) {
     throw new Error('builder_terminal_saved_card_required');
   }
-  const targetRoot = String(deck.workspaceRoot || '').trim();
-  if (!targetRoot) throw new Error('builder_terminal_workspace_required');
+  const targetRoot = resolveProductChatWorkingDirectory(JSON.stringify([
+    projectId, deckId, card.id, card.runtime.profile,
+  ]));
   const acquired = manager.acquire({
     projectId, deckId, conversationId: 'main', ownerCardId: card.id,
     profile: card.runtime.profile, targetRoot,

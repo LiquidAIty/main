@@ -5,7 +5,10 @@ const nativeFs = vi.hoisted(() => ({
   realpathSync: vi.fn<(target: string) => string>(),
   statSync: vi.fn<(target: string) => { isDirectory(): boolean }>(),
 }));
-const workspaceRoot = vi.hoisted(() => ({ resolveRepoRoot: vi.fn(() => 'C:\\repo') }));
+const workspaceRoot = vi.hoisted(() => ({
+  resolveRepoRoot: vi.fn(() => 'C:\\repo'),
+  resolveProductChatWorkingDirectory: vi.fn((scope: string) => `C:\\neutral\\${JSON.parse(scope).join('-')}`),
+}));
 const mcp = vi.hoisted(() => ({
   resolvePythonAgentMcpServerSpec: vi.fn(() => ({
     url: 'http://127.0.0.1:8765/mcp', headers: { Authorization: 'Bearer exact-saved-grant' },
@@ -82,21 +85,25 @@ afterEach(() => {
 });
 
 describe('prepareAgentTerminal saved-card launch contract', () => {
-  it('materializes only the saved card model, prompt, selections, MCP grants, and workspace', () => {
+  it('preserves saved selections and uses the Card profile workspace instead of the deck workspace', () => {
     const card = savedCard();
     const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1');
 
     expect(launch).toMatchObject({
       file: 'C:\\repo\\Hermes\\venv\\Scripts\\hermes.exe',
-      cwd: 'C:\\saved-workspace-real',
+      cwd: 'C:\\neutral\\project-1-deck-1-card_agent_cli-agent-cli-proof',
       profile: 'agent-cli-proof',
       args: [
-        '-p', 'agent-cli-proof', 'chat', '--cli', '--in', 'C:\\saved-workspace-real',
+        '-p', 'agent-cli-proof', 'chat', '--cli', '--in', 'C:\\neutral\\project-1-deck-1-card_agent_cli-agent-cli-proof',
         '--model', 'gpt-6-astra', '--provider', 'openai-codex', '--toolsets', 'agent-terminal',
         '--reasoning', 'high', '--max-turns', '7', '--skills', 'saved-skill-a,saved-skill-b',
       ],
     });
     expect(launch.env.HERMES_HOME).toBe('C:\\repo\\Hermes\\.hermes\\profiles\\agent-cli-proof');
+    expect(launch.env.TERMINAL_CWD).toBe(launch.cwd);
+    expect(workspaceRoot.resolveProductChatWorkingDirectory).toHaveBeenCalledWith(JSON.stringify([
+      owner.projectId, owner.deckId, card.id, 'agent-cli-proof',
+    ]));
     expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBe(card.prompt);
     expect(JSON.parse(launch.env.HERMES_AGENT_TERMINAL_CONFIG)).toEqual({
       cardId: card.id,
@@ -130,15 +137,21 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     expect(() => prepareAgentTerminal(owner, card, savedDeck(card), 'session-1')).toThrow(error);
   });
 
-  it('fails truthfully for absent saved model and workspace', () => {
+  it('fails truthfully for an absent saved model and supports Cards without a workspace', () => {
     const modelMissing = savedCard({ runtimeOptions: {
       ...(savedCard().runtimeOptions as Record<string, unknown>), providerModelId: null,
     } as unknown as AgentCardInstance['runtimeOptions'] });
     expect(() => prepareAgentTerminal(owner, modelMissing, savedDeck(modelMissing), 'session-1'))
       .toThrow('agent_terminal_saved_model_missing');
     const card = savedCard();
-    expect(() => prepareAgentTerminal(owner, card, savedDeck(card, { workspaceRoot: null }), 'session-1'))
-      .toThrow('agent_terminal_saved_workspace_missing');
+    const launch = prepareAgentTerminal(owner, card, savedDeck(card, { workspaceRoot: null }), 'session-1');
+    expect(launch.cwd).toBe('C:\\neutral\\project-1-deck-1-card_agent_cli-agent-cli-proof');
+    const other = savedCard({ runtime: { kind: 'hermes', mode: 'delegate', profile: 'other-agent' } });
+    expect(prepareAgentTerminal(owner, other, savedDeck(other), 'session-2').cwd).not.toBe(launch.cwd);
+    expect(prepareAgentTerminal({ ...owner, deckId: 'other-deck' }, card, savedDeck(card), 'session-3').cwd)
+      .not.toBe(launch.cwd);
+    expect(prepareAgentTerminal({ ...owner, projectId: 'other-project' }, card, savedDeck(card), 'session-4').cwd)
+      .not.toBe(launch.cwd);
   });
 
   it.each([

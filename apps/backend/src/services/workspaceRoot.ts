@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -38,14 +39,24 @@ export function resolveRepoRoot(): string {
  * Deliberately outside the repo tree (and stable) so no repo instruction file sits
  * anywhere on the walk-up. Created if absent.
  */
-export function resolveProductChatWorkingDirectory(): string {
-  const dir = process.env.LIQUIDAITY_PRODUCT_CHAT_CWD
-    ? String(process.env.LIQUIDAITY_PRODUCT_CHAT_CWD)
-    : path.join(os.tmpdir(), 'liquidaity-product-chat');
-  try {
-    mkdirSync(dir, { recursive: true });
-  } catch {
-    // best effort — the engine re-validates the directory at session start
+export function resolveProductChatWorkingDirectory(scope?: string): string {
+  const mainDirectory = path.resolve(process.env.LIQUIDAITY_PRODUCT_CHAT_CWD
+    || path.join(process.env.LOCALAPPDATA || os.homedir(), 'LiquidAIty', 'workspaces', 'main'));
+  // Sibling workspaces cannot discover Main's context by walking their ancestors.
+  const dir = scope
+    ? path.join(path.dirname(mainDirectory), createHash('sha256').update(scope).digest('hex').slice(0, 24))
+    : mainDirectory;
+  const inside = (root: string, target: string) => {
+    const relative = path.relative(root, target);
+    return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+  };
+  if (inside(resolveRepoRoot(), dir) || inside(os.tmpdir(), dir)) {
+    throw new Error('product_workspace_must_be_neutral_and_durable');
   }
-  return dir;
+  mkdirSync(dir, { recursive: true });
+  const resolved = realpathSync(dir);
+  if (inside(realpathSync(resolveRepoRoot()), resolved) || inside(realpathSync(os.tmpdir()), resolved)) {
+    throw new Error('product_workspace_must_be_neutral_and_durable');
+  }
+  return resolved;
 }

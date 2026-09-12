@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from './workspaceRoot';
 
 // M-1: a product chat session (Main/Hermes) must NOT run with the repo root as
@@ -64,5 +65,25 @@ describe('resolveProductChatWorkingDirectory — no repo-memory walk', () => {
 
   it('is stable across calls (same session cwd)', () => {
     expect(resolveProductChatWorkingDirectory()).toBe(cwd);
+  });
+
+  it('uses durable sibling directories for distinct Card scopes', () => {
+    const first = resolveProductChatWorkingDirectory('isolation-first');
+    const second = resolveProductChatWorkingDirectory('isolation-second');
+    expect(first).not.toBe(second);
+    expect(path.dirname(first)).toBe(path.dirname(cwd));
+    expect(first.startsWith(os.tmpdir() + path.sep)).toBe(false);
+    expect(resolveProductChatWorkingDirectory('isolation-first')).toBe(first);
+  });
+
+  it.each([repoRoot, path.join(repoRoot, 'Hermes'), os.tmpdir()])('rejects a non-neutral or temporary override: %s', (target) => {
+    const previous = process.env.LIQUIDAITY_PRODUCT_CHAT_CWD;
+    try {
+      process.env.LIQUIDAITY_PRODUCT_CHAT_CWD = target;
+      expect(() => resolveProductChatWorkingDirectory()).toThrow('product_workspace_must_be_neutral_and_durable');
+    } finally {
+      if (previous === undefined) delete process.env.LIQUIDAITY_PRODUCT_CHAT_CWD;
+      else process.env.LIQUIDAITY_PRODUCT_CHAT_CWD = previous;
+    }
   });
 });

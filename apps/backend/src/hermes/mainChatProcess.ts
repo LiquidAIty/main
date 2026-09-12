@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn, type IPty } from 'node-pty';
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { mainCliBridgeToken } from './mainCliBridge';
 
@@ -26,16 +26,18 @@ export class MainChatProcess {
     }
     const repo = resolveRepoRoot();
     const root = path.join(repo, 'Hermes');
+    const cwd = resolveProductChatWorkingDirectory();
     const executable = path.join(root, 'venv', 'Scripts', 'hermes.exe');
     if (!existsSync(executable)) throw new Error(`hermes_repo_cli_missing:${executable}`);
     this.stopping = false;
     try {
       const child = this.spawnChat(executable,
-        ['-p', this.state.profile, 'chat', '--cli', '--in', repo], {
-          name: 'xterm-256color', cols: 120, rows: 30, cwd: repo, useConpty: true,
+        ['-p', this.state.profile, 'chat', '--cli', '--in', cwd], {
+          name: 'xterm-256color', cols: 120, rows: 30, cwd, useConpty: true,
           env: {
             ...withoutInternalMcpSecret(process.env),
             HERMES_HOME: path.join(root, '.hermes'),
+            TERMINAL_CWD: cwd,
             LIQUIDAITY_MAIN_BRIDGE_URL: `http://127.0.0.1:${process.env.PORT || '4000'}/api/internal/main-cli`,
             LIQUIDAITY_MAIN_BRIDGE_TOKEN: mainCliBridgeToken,
           },

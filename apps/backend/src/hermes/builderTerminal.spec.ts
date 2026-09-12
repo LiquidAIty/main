@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveRepoRoot } from '../services/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import {
   BuilderTerminalManager,
   BuilderTerminalSession,
@@ -84,6 +84,18 @@ const identity = {
 };
 
 describe('Builder real PTY boundary', () => {
+  it('does not default an unassigned workspace to the backend checkout', () => {
+    const manager = new BuilderTerminalManager();
+    const acquired = manager.acquire(identity);
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) throw new Error(acquired.error);
+    expect(acquired.session.info.targetRoot).toBe(resolveProductChatWorkingDirectory(JSON.stringify([
+      identity.projectId, identity.deckId, identity.ownerCardId, identity.profile,
+    ])));
+    expect(acquired.session.info.targetRoot).not.toBe(resolveRepoRoot());
+    const sibling = manager.acquire({ ...identity, ownerCardId: 'other-builder' });
+    expect(sibling.ok && sibling.session.info.targetRoot).not.toBe(acquired.session.info.targetRoot);
+  });
   it('keeps normal workspace terminals separate from the Hermes runtime', () => {
     const settings = JSON.parse(
       readFileSync(path.join(resolveRepoRoot(), '.vscode', 'settings.json'), 'utf8'),
@@ -99,11 +111,11 @@ describe('Builder real PTY boundary', () => {
     expect(String(settings['python.defaultInterpreterPath'])).not.toMatch(/Hermes[\\/]/i);
   });
 
-  it('reuses one saved Builder CLI across attachments without changing saved authority', async () => {
+  it.each([null, process.cwd()])('starts neutral with deck workspace %s and preserves saved authority', async (workspaceRoot) => {
     const child = new FakePty();
     const factory = vi.fn(() => child) as unknown as PtyFactory;
     const manager = new BuilderTerminalManager(factory);
-    const deck = { workspaceRoot: process.cwd(), nodes: [{
+    const deck = { workspaceRoot, nodes: [{
       id: 'saved-builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: { tools: ['canvas.inspect'], modelKey: 'saved-model' }, prompt: 'Saved prompt',
     }] } as any;
@@ -121,6 +133,10 @@ describe('Builder real PTY boundary', () => {
     expect(first).toMatchObject({ ownerCardId: 'saved-builder', profile: 'builder',
       projectId: 'project-1', deckId: 'deck_builder', runtimeSource: 'repository_hermes_cli', state: 'running' });
     expect(first.id).toBe(second.id);
+    expect(first.targetRoot).toBe(resolveProductChatWorkingDirectory(JSON.stringify([
+      request.projectId, request.deckId, request.cardId, 'builder',
+    ])));
+    expect(first.targetRoot).not.toBe(process.cwd());
     expect(launchBuilder).toHaveBeenCalledOnce();
     expect(manager.list()).toHaveLength(1);
     expect(child.write).not.toHaveBeenCalled();
@@ -172,6 +188,31 @@ describe('Builder real PTY boundary', () => {
       ok: false,
       error: `hermes_builder_terminal_target_root_missing:${missing}`,
       missing: [],
+    });
+  });
+
+  it('keeps an explicit target local to its session and cannot reuse it for a later neutral request', () => {
+    const child = new FakePty();
+    const manager = new BuilderTerminalManager((() => child) as unknown as PtyFactory);
+    const targetRoot = resolveProductChatWorkingDirectory('builder-explicit-target-test');
+    const acquired = manager.acquire({ ...identity, targetRoot });
+    if (!acquired.ok) throw new Error(acquired.error);
+    acquired.session.start(launch());
+    expect(acquired.session.info.targetRoot).toBe(realpathSync(targetRoot));
+    expect(manager.acquire(identity)).toEqual({ ok: false,
+      error: 'builder_terminal_saved_binding_changed', missing: [] });
+    const otherTask = manager.acquire({ ...identity, conversationId: 'next-task' });
+    expect(otherTask.ok && otherTask.session.info.targetRoot).not.toBe(targetRoot);
+    acquired.session.stop();
+    child.emitExit(0);
+    const neutral = manager.acquire(identity);
+    expect(neutral.ok && neutral.session.info.targetRoot).toBe(otherTask.ok && otherTask.session.info.targetRoot);
+    expect(neutral.ok && neutral.session.info.targetRoot).not.toBe(targetRoot);
+  });
+
+  it('rejects relative targets rather than resolving them inside the backend checkout', () => {
+    expect(new BuilderTerminalManager().acquire({ ...identity, targetRoot: '.' })).toEqual({
+      ok: false, error: 'builder_terminal_target_root_must_be_absolute', missing: [],
     });
   });
 

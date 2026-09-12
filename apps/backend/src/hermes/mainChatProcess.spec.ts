@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { MainChatProcess } from './mainChatProcess';
 import { BuilderTerminalManager } from './builderTerminal';
+import { resolveProductChatWorkingDirectory } from '../services/workspaceRoot';
 
 function nativeChild() {
   let exit: (event: { exitCode: number; signal?: number }) => void = () => undefined;
@@ -22,18 +23,41 @@ describe('Main Chat native process ownership', () => {
     expect(chat.ensureStarted()).toMatchObject({ profile: 'liquidaity-main', pid: 73, state: 'running' });
     chat.ensureStarted();
     expect(spawn).toHaveBeenCalledOnce();
-    expect(spawn.mock.calls[0]).toEqual([
-      expect.stringMatching(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/),
-      ['-p', 'liquidaity-main', 'chat', '--cli', '--in', process.cwd()],
-      expect.objectContaining({ cwd: process.cwd(), useConpty: true,
-        env: expect.objectContaining({ LIQUIDAITY_MAIN_BRIDGE_URL: expect.stringContaining('/api/internal/main-cli') }) }),
-    ]);
+    const [file, args, options] = spawn.mock.calls[0] as unknown as [string, string[], {
+      cwd: string; useConpty: boolean; env: Record<string, string>;
+    }];
+    expect(file).toMatch(/Hermes[\\/]venv[\\/]Scripts[\\/]hermes\.exe$/);
+    expect(args).toEqual(['-p', 'liquidaity-main', 'chat', '--cli', '--in', resolveProductChatWorkingDirectory()]);
+    expect(options.cwd).toBe(resolveProductChatWorkingDirectory());
+    expect(options.useConpty).toBe(true);
+    expect(options.env.LIQUIDAITY_MAIN_BRIDGE_URL).toContain('/api/internal/main-cli');
     expect(terminals.list()).toEqual(before);
     expect(chat.ensureStarted()).not.toHaveProperty('ownerCardId');
     expect(chat.ensureStarted()).not.toHaveProperty('transportMode');
     expect(chat).not.toHaveProperty('resize');
     expect(chat).not.toHaveProperty('subscribeOutput');
     chat.stop();
+  });
+
+  it('keeps inherited development context out of Main without disabling native memory or rules', () => {
+    vi.stubEnv('TERMINAL_CWD', process.cwd());
+    try {
+      const spawn = vi.fn(() => nativeChild());
+      const chat = new MainChatProcess(spawn);
+      chat.ensureStarted();
+      const [, args, options] = spawn.mock.calls[0] as unknown as [string, string[], { cwd: string; env: Record<string, string> }];
+      expect(options.cwd).toBe(resolveProductChatWorkingDirectory());
+      expect(options.cwd).not.toBe(process.cwd());
+      expect(options.env.TERMINAL_CWD).toBe(options.cwd);
+      expect(options.env.HERMES_HOME).toMatch(/Hermes[\\/]\.hermes$/);
+      expect(args).not.toContain('--ignore-rules');
+      expect(args).not.toContain('--ignore-user-config');
+      expect(args).not.toContain('--resume');
+      expect(args).not.toContain('--continue');
+      chat.stop();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('interrupts only its own chat child and rejects input after shutdown', () => {

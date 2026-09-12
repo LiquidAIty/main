@@ -515,11 +515,13 @@ export class AcpProcess {
       this.resolveExit = resolve;
     });
     const childEnv = withoutInternalMcpSecret(process.env);
+    const cwd = resolveProductChatWorkingDirectory(profile || undefined);
     this.child = spawn(this.executable, install.args, {
-      cwd: install.root,
+      cwd,
       env: {
         ...childEnv,
         HERMES_HOME: this.hermesHome,
+        TERMINAL_CWD: cwd,
       },
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -862,10 +864,7 @@ export class AcpProcess {
       mkdirSync(requested, { recursive: true });
       return requested;
     }
-    const digest = createHash('sha256').update(sessionKey).digest('hex').slice(0, 24);
-    const cwd = path.join(resolveProductChatWorkingDirectory(), digest);
-    mkdirSync(cwd, { recursive: true });
-    return cwd;
+    return resolveProductChatWorkingDirectory(sessionKey);
   }
 
   private async resolveSession(
