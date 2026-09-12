@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 
 type StringMap = Record<string, string>;
 

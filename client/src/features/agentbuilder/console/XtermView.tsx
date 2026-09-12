@@ -185,7 +185,7 @@ export default function XtermView({
     {launchError ? <div role="alert" style={{ padding: '2px 8px', fontSize: 12 }}>Terminal connection failed.</div> : null}
     <div
       ref={containerRef}
-      data-testid="coder-terminal-xterm"
+      data-testid="builder-terminal-xterm"
       style={{ flex: 1, minHeight: 0, padding: '6px 8px' }}
     />
     </>

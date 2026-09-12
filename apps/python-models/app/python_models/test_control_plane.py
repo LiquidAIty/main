@@ -121,11 +121,11 @@ def test_canvas_reports_removed_grant_unavailable_and_never_allocates_it(fake_ba
 @pytest.mark.parametrize(
     ("target_id", "runtime"),
     [
-        ("coder", {"kind": "hermes", "mode": "delegate", "profile": "coder"}),
+        ("delegate", {"kind": "hermes", "mode": "delegate", "profile": "delegate"}),
         ("mag-one", {"kind": "autogen", "mode": "magentic_one"}),
     ],
 )
-def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
+def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
     monkeypatch, target_id, runtime,
 ) -> None:
     import copy
@@ -133,8 +133,8 @@ def test_one_grounded_staging_path_loads_coder_or_mag_one_without_running(
     deck = copy.deepcopy(DECK)
     deck["nodes"].extend([
         {
-            "id": "coder", "title": "Coder",
-            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+            "id": "delegate", "title": "Delegate",
+            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "delegate"},
             "runtimeOptions": {"tools": []},
         },
         {

@@ -166,7 +166,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
     const onRun = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'CLI', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      agentType: 'agent_builder', activeTab: 'Results', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave, onRunCard: onRun,
       showTaskComposer: true, promptTestInput: 'Read the project',
     }));
@@ -508,8 +508,8 @@ describe('AgentManager active builder config', () => {
     });
     expect(assistant.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
 
-    const coder = buildActiveAgentManagerLocalConfig({
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+    const delegate = buildActiveAgentManagerLocalConfig({
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
       provider: 'openai',
       accessMode: 'chatgpt-account',
       modelKey: 'gpt-test',
@@ -523,10 +523,10 @@ describe('AgentManager active builder config', () => {
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
     });
-    expect(coder.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'coder' });
-    expect(coder.access_mode).toBe('chatgpt-account');
-    expect(coder.tools).toEqual(['card.update_configuration']);
-    expect(coder.toolsets).toEqual(['file', 'terminal']);
+    expect(delegate.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'delegate' });
+    expect(delegate.access_mode).toBe('chatgpt-account');
+    expect(delegate.tools).toEqual(['card.update_configuration']);
+    expect(delegate.toolsets).toEqual(['file', 'terminal']);
   });
 
   it('keeps Card Save separate from one-operation native Apply', () => {
@@ -567,10 +567,10 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;",
+      "const BUILDER_NODE_TABS = ['Results', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;",
     );
     expect(pageSource).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
-    expect(source).toContain("activeTab === 'CLI' && showTaskComposer");
+    expect(source).toContain("activeTab === 'Results' && showTaskComposer");
     expect(source).toContain('agent-manager-prompt-surface');
     expect(source).toContain('agent-manager-knowledge-surface');
     expect(source).not.toContain("activeTab === 'Task'");

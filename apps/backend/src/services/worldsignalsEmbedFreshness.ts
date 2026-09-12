@@ -1,6 +1,6 @@
 import { existsSync, statSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 
 /**
  * WS-7: the WorldSignals embed bundle (client/public/worldsignals/embed.js) is a

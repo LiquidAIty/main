@@ -19,8 +19,8 @@ const deck: DeckDocument = {
   promptTemplates: [],
   nodes: [
     {
-      id: 'card_local_coder', templateId: 'template_local_coder', title: 'Coder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' }, position: { x: 0, y: 0 },
+      id: 'card_test_delegate', templateId: 'template_assist', title: 'Delegate',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' }, position: { x: 0, y: 0 },
     },
     {
       id: 'card_hermes_steward', templateId: 'template_hermes_steward', title: 'Graph Agent',
@@ -65,11 +65,11 @@ describe('useCardActiveAgentCounts', () => {
     }));
 
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
-      card_local_coder: 1,
+      card_test_delegate: 1,
       card_hermes_steward: 3,
     }));
     expect(new Set(result.current.activeCardIds)).toEqual(new Set([
-      'card_local_coder', 'card_hermes_steward',
+      'card_test_delegate', 'card_hermes_steward',
     ]));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const call of fetchMock.mock.calls) {

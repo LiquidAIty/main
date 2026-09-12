@@ -353,11 +353,11 @@ describe('Hermes ACP transport identity', () => {
     });
     try {
       await expect(processOwner.requestExtension('_native/call', {
-        method: 'profiles.describe', params: { name: 'coder' },
+        method: 'profiles.describe', params: { name: 'delegate' },
       })).resolves.toEqual({ method: '_native/call' });
       await expect(processOwner.requestExtension('_native/apply', {}))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
-      await expect(processOwner.requestExtension('_profile/apply', { name: 'coder' }))
+      await expect(processOwner.requestExtension('_profile/apply', { name: 'delegate' }))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
       await expect(processOwner.requestExtension('_secrets/read', {}))
         .rejects.toThrow('hermes_acp_extension_method_invalid');
@@ -450,21 +450,21 @@ describe('Hermes ACP transport identity', () => {
   it('uses the same profile home and memory DB for direct/team runs while isolating other Cards', async () => {
     const fakeRoot = path.join(tmpdir(), `liquidaity-acp-profile-home-${randomUUID()}`);
     const hermesHome = path.join(fakeRoot, '.hermes');
-    mkdirSync(path.join(hermesHome, 'profiles', 'coder'), { recursive: true });
+    mkdirSync(path.join(hermesHome, 'profiles', 'delegate'), { recursive: true });
     mkdirSync(path.join(hermesHome, 'profiles', 'research'), { recursive: true });
     const install = {
       root: fakeRoot,
       executable: process.execPath,
       args: ['-e', fakeAcpScript(false)],
     };
-    const directOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'coder' });
-    const teamOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'coder' });
+    const directOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'delegate' });
+    const teamOwner = new AcpProcess(() => undefined, { install, hermesHome, profile: 'delegate' });
     const otherCardOwner = new AcpProcess(() => undefined, {
       install, hermesHome, profile: 'research',
     });
     const owners = [directOwner, teamOwner, otherCardOwner];
     try {
-      expect(directOwner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'coder'));
+      expect(directOwner.hermesHome).toBe(path.join(hermesHome, 'profiles', 'delegate'));
       expect(teamOwner.hermesHome).toBe(directOwner.hermesHome);
       expect(path.join(teamOwner.hermesHome, 'memory_store.db')).toBe(
         path.join(directOwner.hermesHome, 'memory_store.db'),
@@ -474,10 +474,10 @@ describe('Hermes ACP transport identity', () => {
         path.join(directOwner.hermesHome, 'memory_store.db'),
       );
       await expect(directOwner.requestExtension('_native/call', {
-        method: 'profiles.describe', params: { name: 'coder' },
+        method: 'profiles.describe', params: { name: 'delegate' },
       })).resolves.toEqual({ method: '_native/call' });
       await expect(teamOwner.requestExtension('_native/call', {
-        method: 'profiles.describe', params: { name: 'coder' },
+        method: 'profiles.describe', params: { name: 'delegate' },
       })).resolves.toEqual({ method: '_native/call' });
       await expect(otherCardOwner.requestExtension('_native/call', {
         method: 'profiles.describe', params: { name: 'research' },
@@ -953,18 +953,18 @@ describe('Hermes ACP transport identity', () => {
     }));
   });
 
-  it('preserves explicitly selected native profile capabilities for Coder', () => {
+  it('preserves explicitly selected native profile capabilities for Delegate', () => {
     const projection = buildHermesHostSessionProjection({
       delegationRole: 'team',
-      sessionKey: 'coder-session-1',
+      sessionKey: 'delegate-session-1',
       projectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-1',
-      parentRunId: 'coder-run-1',
-      cardId: 'card_local_coder',
-      title: 'Coder',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
-      prompt: 'Saved Coder prompt',
+      parentRunId: 'delegate-run-1',
+      cardId: 'card_test_delegate',
+      title: 'Delegate',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
+      prompt: 'Saved Delegate prompt',
       provider: 'openai',
       modelKey: 'gpt-5.6-luna',
       providerModelId: 'gpt-5.6-luna',
@@ -977,7 +977,7 @@ describe('Hermes ACP transport identity', () => {
     }, {
       LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
       LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
-    }, 'coder-context');
+    }, 'delegate-context');
 
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
     expect(sessionConfig.enabledToolsets).toEqual([
@@ -987,7 +987,7 @@ describe('Hermes ACP transport identity', () => {
     expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.delegationRoles).toEqual(['team']);
     expect(sessionConfig.team).toBeUndefined();
-    expect(sessionConfig.executionContextId).toBe('coder-context');
+    expect(sessionConfig.executionContextId).toBe('delegate-context');
   });
 
   it.each(['off', 'leaf', 'orchestrator', 'team'] as const)('projects Delegate task %s without adding a Card policy or profile target', (delegationRole) => {

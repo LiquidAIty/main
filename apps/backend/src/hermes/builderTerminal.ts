@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn as spawnPty, type IPty, type IWindowsPtyForkOptions } from 'node-pty';
 
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
-import { MainCliBridge, mainCliBridgeToken } from './mainCliBridge';
+import { MainCliBridge } from './mainCliBridge';
 import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { pool } from '../db/pool';
 
@@ -45,7 +45,7 @@ type StartConsoleSessionRequest = {
   profile: string;
 };
 
-export type HermesCoderPtyLaunch = {
+export type BuilderPtyLaunch = {
   executable: string;
   args: string[];
   env: NodeJS.ProcessEnv;
@@ -80,11 +80,11 @@ function terminalIdentity(request: StartConsoleSessionRequest): string {
 }
 
 /**
- * One literal Hermes CLI pseudoterminal. The bytes published here come only
+ * Builder's literal Hermes CLI pseudoterminal. The bytes published here come only
  * from node-pty; ACP events, synthetic prompts, and local line editing do not
  * enter this surface.
  */
-export class HermesCoderTerminalSession {
+export class BuilderTerminalSession {
   /** Builder owns a separate instance of the existing native CLI delivery bridge. */
   readonly delivery: { bridge: MainCliBridge; token: string } | null;
   private readonly emitter = new EventEmitter();
@@ -101,8 +101,8 @@ export class HermesCoderTerminalSession {
     this.emitter.setMaxListeners(64);
   }
 
-  start(launch: HermesCoderPtyLaunch): void {
-    if (this.process && this.isLive()) throw new Error('hermes_coder_terminal_already_running');
+  start(launch: BuilderPtyLaunch): void {
+    if (this.process && this.isLive()) throw new Error('hermes_builder_terminal_already_running');
     this.stopRequested = false;
     this.info.state = 'starting';
     this.info.profile = launch.profile;
@@ -204,27 +204,30 @@ export class HermesCoderTerminalSession {
   }
 }
 
-export class HermesCoderTerminalManager {
-  private readonly sessionsById = new Map<string, HermesCoderTerminalSession>();
-  private readonly sessionsByIdentity = new Map<string, HermesCoderTerminalSession>();
+export class BuilderTerminalManager {
+  private readonly sessionsById = new Map<string, BuilderTerminalSession>();
+  private readonly sessionsByIdentity = new Map<string, BuilderTerminalSession>();
   private counter = 0;
 
   constructor(private readonly ptyFactory: PtyFactory = spawnPty) {}
 
   acquire(request: StartConsoleSessionRequest):
-    | { ok: true; session: HermesCoderTerminalSession; created: boolean }
+    | { ok: true; session: BuilderTerminalSession; created: boolean }
     | { ok: false; error: string; missing: string[] } {
     const projectId = String(request.projectId || '').trim();
     const deckId = String(request.deckId || '').trim();
     const conversationId = String(request.conversationId || '').trim();
     if (!projectId || !deckId || !conversationId || !request.ownerCardId?.trim() || !request.profile?.trim()) {
-      return { ok: false, error: 'hermes_coder_terminal_identity_required', missing: [] };
+      return { ok: false, error: 'hermes_builder_terminal_identity_required', missing: [] };
+    }
+    if (request.profile !== 'builder' || request.ownerCardId === 'card_main_chat') {
+      return { ok: false, error: 'builder_terminal_saved_profile_required', missing: [] };
     }
     const targetRoot = path.resolve(request.targetRoot || resolveRepoRoot());
     if (!existsSync(targetRoot)) {
       return {
         ok: false,
-        error: `hermes_coder_terminal_target_root_missing:${targetRoot}`,
+        error: `hermes_builder_terminal_target_root_missing:${targetRoot}`,
         missing: [],
       };
     }
@@ -235,7 +238,7 @@ export class HermesCoderTerminalManager {
 
     const now = new Date().toISOString();
     const info: ConsoleSessionInfo = {
-      id: `coder_terminal_${Date.now()}_${++this.counter}`,
+      id: `builder_terminal_${Date.now()}_${++this.counter}`,
       ownerCardId: request.ownerCardId,
       projectId,
       deckId,
@@ -256,13 +259,13 @@ export class HermesCoderTerminalManager {
       warnings: [],
       error: null,
     };
-    const session = new HermesCoderTerminalSession(info, this.ptyFactory);
+    const session = new BuilderTerminalSession(info, this.ptyFactory);
     this.sessionsById.set(info.id, session);
     this.sessionsByIdentity.set(identity, session);
     return { ok: true, session, created: true };
   }
 
-  get(id: string): HermesCoderTerminalSession | undefined {
+  get(id: string): BuilderTerminalSession | undefined {
     return this.sessionsById.get(id);
   }
 
@@ -275,9 +278,9 @@ export class HermesCoderTerminalManager {
   }
 }
 
-export const coderTerminalSessionManager = new HermesCoderTerminalManager();
+export const builderTerminalSessionManager = new BuilderTerminalManager();
 
-function startCoderTerminalSession(session: HermesCoderTerminalSession): void {
+function startBuilderTerminalSession(session: BuilderTerminalSession): void {
   const install = resolveHermesCliInstall();
   const hermesHome = path.join(install.root, '.hermes');
   const profile = session.info.profile;
@@ -316,9 +319,9 @@ export async function ensurePersistentBuilderTerminal(): Promise<ConsoleSessionI
 
 export async function ensureSavedBuilderTerminal(
   identity: { projectId: string; deckId: string; cardId: string },
-  manager: HermesCoderTerminalManager = coderTerminalSessionManager,
+  manager: BuilderTerminalManager = builderTerminalSessionManager,
   readDeck: typeof getDeckDocument = getDeckDocument,
-  launch: (session: HermesCoderTerminalSession) => void = startCoderTerminalSession,
+  launch: (session: BuilderTerminalSession) => void = startBuilderTerminalSession,
 ): Promise<ConsoleSessionInfo> {
   const projectId = String(identity.projectId || '').trim();
   const deckId = String(identity.deckId || '').trim();
@@ -358,52 +361,4 @@ export async function ensureSavedBuilderTerminal(
   }
   if (!session.isLive()) throw new Error(session.info.error || 'builder_terminal_unavailable');
   return session.info;
-}
-
-function startMainTerminalSession(session: HermesCoderTerminalSession): void {
-  const install = resolveHermesCliInstall();
-  const hermesHome = path.join(install.root, '.hermes');
-  const profile = session.info.profile || 'liquidaity-main';
-  const backendPort = String(process.env.PORT || '4000').trim();
-  session.start({
-    executable: install.executable,
-    args: ['-p', profile, 'chat', '--cli', '--in', session.info.targetRoot],
-    env: {
-      ...withoutInternalMcpSecret(process.env),
-      HERMES_HOME: hermesHome,
-      LIQUIDAITY_MAIN_BRIDGE_URL: `http://127.0.0.1:${backendPort}/api/internal/main-cli`,
-      LIQUIDAITY_MAIN_BRIDGE_TOKEN: mainCliBridgeToken,
-    },
-    profile,
-    hermesHome,
-  });
-}
-
-const PERSISTENT_MAIN_TERMINAL_IDENTITY = {
-  projectId: 'liquidaity',
-  deckId: 'deck_builder',
-  conversationId: 'main',
-  ownerCardId: 'card_main_chat',
-  profile: 'liquidaity-main',
-} as const;
-
-export function ensurePersistentMainTerminal(
-  manager: HermesCoderTerminalManager = coderTerminalSessionManager,
-  launch: (session: HermesCoderTerminalSession) => void = startMainTerminalSession,
-): ConsoleSessionInfo {
-  const acquired = manager.acquire(PERSISTENT_MAIN_TERMINAL_IDENTITY);
-  if (!acquired.ok) throw new Error(acquired.error);
-  if (acquired.created) {
-    try {
-      launch(acquired.session);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'hermes_main_terminal_prepare_failed';
-      acquired.session.markFailed(reason);
-      throw new Error(reason);
-    }
-  }
-  if (!acquired.session.isLive()) {
-    throw new Error(acquired.session.info.error || 'hermes_main_terminal_startup_failed');
-  }
-  return acquired.session.info;
 }

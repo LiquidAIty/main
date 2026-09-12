@@ -1,19 +1,13 @@
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  coderTerminalClient,
+  builderTerminalClient,
   type ConsoleSessionInfo,
-  type CoderTerminalClient,
-} from './coderTerminalClient';
+  type BuilderTerminalClient,
+} from './builderTerminalClient';
 import XtermView from './XtermView';
-import AdaptiveCardTerminal, {
-  RuntimeEventList,
-  type CardTerminalEvent,
-  type TerminalRun,
-} from './AdaptiveCardTerminal';
+/** The saved Builder Agent's genuine CLI pseudoterminal. */
 
-/** A saved Hermes Card's genuine CLI pseudoterminal. */
-
-type CoderTerminalPanelProps = {
+type BuilderTerminalPanelProps = {
   open: boolean;
   title?: string;
   placement?: 'overlay' | 'docked';
@@ -22,47 +16,26 @@ type CoderTerminalPanelProps = {
   savedCard?: { projectId: string; deckId: string; cardId: string; profile: string };
   onClose?: () => void;
   /** Injectable for tests. Defaults to the real backend client. */
-  client?: CoderTerminalClient;
+  client?: BuilderTerminalClient;
   /** Test seam: a session already known to the host. */
   initialSession?: ConsoleSessionInfo | null;
-  cardRun?: TerminalRun | null;
-  cardRunBusy?: boolean;
-  cardIdentity?: { projectId: string; deckId: string; cardId: string; profile: string };
-  onStopCardRun?: () => void;
-  onRejoinCardRun?: () => void;
   /** Keep the actual PTY attached while preventing this projection from becoming another composer. */
   readOnly?: boolean;
-  activityState?: 'idle' | 'connecting' | 'running';
-  /** Main-only semantic execution projection from this same native session. */
-  semanticEvents?: CardTerminalEvent[];
-  semanticError?: string | null;
+
 };
 
-function CoderTerminalPanelInner({
+function BuilderTerminalPanelInner({
   open,
   title = 'Builder',
   placement = 'overlay',
-  testIdPrefix = 'coder-terminal',
+  testIdPrefix = 'builder-terminal',
   ownerCardId = 'builder',
   savedCard,
   onClose,
-  client = coderTerminalClient,
+  client = builderTerminalClient,
   initialSession = null,
-  cardRun = null,
-  cardRunBusy = false,
-  cardIdentity,
-  onStopCardRun,
-  onRejoinCardRun,
   readOnly = false,
-  activityState,
-  semanticEvents,
-  semanticError = null,
-}: CoderTerminalPanelProps) {
-  const [projection, setProjection] = useState<'cli' | 'run'>('cli');
-  useEffect(() => {
-    if (cardIdentity && (cardRun?.runId || cardRunBusy)) setProjection('run');
-  }, [cardIdentity?.cardId, cardRun?.runId, cardRunBusy]);
-  const showingRun = Boolean(cardIdentity && projection === 'run');
+}: BuilderTerminalPanelProps) {
   const [session, setSession] = useState<ConsoleSessionInfo | null>(initialSession);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const inputQueueRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -70,7 +43,6 @@ function CoderTerminalPanelInner({
   const lastResizeRef = useRef('');
 
   const status = session?.state ?? 'idle';
-  const showingSemanticProjection = readOnly && semanticEvents !== undefined;
   sessionRef.current = session;
   useEffect(() => {
     if (!session && terminalError) console.error('[Terminal connection]', terminalError);
@@ -243,46 +215,8 @@ function CoderTerminalPanelInner({
         </button>
       ) : null}
 
-      {cardIdentity ? <div style={{ display: 'flex', gap: 8, padding: 6 }}>
-        <button type="button" aria-pressed={showingRun} onClick={() => setProjection('run')}>Card Run</button>
-        <button type="button" aria-pressed={!showingRun} onClick={() => setProjection('cli')}>Native CLI</button>
-      </div> : null}
-      {readOnly && !savedCard ? (
-        <div
-          data-testid={`${testIdPrefix}-connection-status`}
-          role="status"
-          style={{ padding: '5px 8px', color: '#8fa6bc', borderBottom: '1px solid #1c2733' }}
-        >
-          {session
-            ? activityState === 'running'
-              ? 'Working'
-              : activityState === 'connecting'
-                ? 'Starting turn'
-                : 'Ready · idle'
-            : `${title} connecting`}
-        </div>
-      ) : null}
-      {showingRun && cardIdentity ? <div data-testid="coder-console-card-run" style={{ overflow: 'auto', minHeight: 0 }}>
-        <AdaptiveCardTerminal enabled projectId={cardIdentity.projectId} deckId={cardIdentity.deckId}
-          cardId={cardIdentity.cardId} runtime={{ kind: 'hermes', mode: 'delegate', profile: cardIdentity.profile }}
-          run={cardRun} busy={cardRunBusy} onStop={onStopCardRun} onRejoin={onRejoinCardRun}>
-          <div>Supply the mission from this Card's CLI tab.</div>
-        </AdaptiveCardTerminal>
-      </div> : null}
-      <div style={{ display: showingRun ? 'none' : 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       {session ? (
-        showingSemanticProjection ? (
-          <div
-            data-testid={`${testIdPrefix}-semantic-output`}
-            data-session-id={session.id}
-            role="log"
-            aria-live="polite"
-            style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 8 }}
-          >
-            <RuntimeEventList main events={semanticEvents} />
-            {semanticError ? <div role="alert">{semanticError}</div> : null}
-          </div>
-        ) : (
           <XtermView
             key={session.id}
             interactive={!readOnly && (status === 'starting' || status === 'running')}
@@ -296,7 +230,6 @@ function CoderTerminalPanelInner({
             }}
             launchError={session.error || terminalError}
           />
-        )
       ) : null}
 
       {!session ? (
@@ -319,21 +252,21 @@ class ConsolePanelErrorBoundary extends Component<{ children: ReactNode }, { fai
     return { failed: true };
   }
   componentDidCatch(error: unknown) {
-    console.error('[CoderTerminalPanel] isolated render error:', error);
+    console.error('[BuilderTerminalPanel] isolated render error:', error);
   }
   render() {
     return this.state.failed ? (
-      <div data-testid="coder-terminal-unavailable" role="alert" style={{ padding: 8 }}>
-        coder_terminal_surface_unavailable
+      <div data-testid="builder-terminal-unavailable" role="alert" style={{ padding: 8 }}>
+        builder_terminal_surface_unavailable
       </div>
     ) : this.props.children;
   }
 }
 
-export default function CoderTerminalPanel(props: CoderTerminalPanelProps) {
+export default function BuilderTerminalPanel(props: BuilderTerminalPanelProps) {
   return (
     <ConsolePanelErrorBoundary>
-      <CoderTerminalPanelInner {...props} />
+      <BuilderTerminalPanelInner {...props} />
     </ConsolePanelErrorBoundary>
   );
 }

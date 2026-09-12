@@ -39,7 +39,7 @@ describe('orange controller connection validation', () => {
     const deck = structuredClone(INITIAL_DECK);
     for (const [cardId, busHandle, edgeType] of [
       ['card_main_chat', 'task-bus-top', 'magentic_control'],
-      ['card_local_coder', 'bus-in-1', 'magentic_option'],
+      ['card_test_delegate', 'bus-in-1', 'magentic_option'],
     ] as const) {
       const forward = { source: cardId, target: 'card_magentic', sourceHandle: null, targetHandle: busHandle };
       const reverse = { source: forward.target, target: forward.source, sourceHandle: busHandle, targetHandle: null };
@@ -77,7 +77,7 @@ describe('orange controller connection validation', () => {
     expect(allowed()).toBe(false);
     expect(allowed(connect, 'reconnected-edge')).toBe(false);
     expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'task-bus-top' as any })).toBe(true);
-    expect(allowed({ ...connect, source: 'card_local_coder', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
+    expect(allowed({ ...connect, source: 'card_test_delegate', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
     main.runtimeOptions!.delegationRole = 'profile';
     deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
     expect(allowed()).toBe(false);

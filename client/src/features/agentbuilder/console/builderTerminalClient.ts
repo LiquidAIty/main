@@ -1,4 +1,4 @@
-/** Thin client for the saved Coder Card's Hermes terminal face. */
+/** Thin client for the saved Builder Agent's Hermes terminal face. */
 
 type ConsoleSessionState =
   | 'starting'
@@ -41,7 +41,7 @@ async function postJson(base: string, path: string, body: unknown): Promise<Resp
   });
 }
 
-export type CoderTerminalClient = {
+export type BuilderTerminalClient = {
   listSessions(): Promise<ConsoleSessionInfo[]>;
   ensureSession?(identity: { projectId: string; deckId: string; cardId: string }): Promise<ConsoleSessionInfo>;
   getSession(id: string): Promise<ConsoleSessionInfo | null>;
@@ -54,7 +54,7 @@ export type CoderTerminalClient = {
   resize(id: string, cols: number, rows: number): Promise<boolean>;
 };
 
-function createTerminalClient(base: string): CoderTerminalClient {
+function createTerminalClient(base: string): BuilderTerminalClient {
   return {
     async ensureSession(identity) {
       const response = await postJson(base, '/sessions', identity);
@@ -89,9 +89,9 @@ function createTerminalClient(base: string): CoderTerminalClient {
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(String(payload?.error || `coder_terminal_stream_failed_${response.status}`));
+        throw new Error(String(payload?.error || `builder_terminal_stream_failed_${response.status}`));
       }
-      if (!response.body) throw new Error('coder_terminal_stream_body_missing');
+      if (!response.body) throw new Error('builder_terminal_stream_body_missing');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       while (true) {
@@ -107,7 +107,7 @@ function createTerminalClient(base: string): CoderTerminalClient {
       const response = await postJson(base, `/sessions/${encodeURIComponent(id)}/input`, { data });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.delivered) {
-        throw new Error(String(payload?.error || `coder_terminal_input_failed_${response.status}`));
+        throw new Error(String(payload?.error || `builder_terminal_input_failed_${response.status}`));
       }
       return Boolean(payload?.delivered);
     },
@@ -118,11 +118,11 @@ function createTerminalClient(base: string): CoderTerminalClient {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.resized) {
-        throw new Error(String(payload?.error || `coder_terminal_resize_failed_${response.status}`));
+        throw new Error(String(payload?.error || `builder_terminal_resize_failed_${response.status}`));
       }
       return Boolean(payload?.resized);
     },
   };
 }
 
-export const coderTerminalClient = createTerminalClient('/api/hermes/terminal');
+export const builderTerminalClient = createTerminalClient('/api/hermes/terminal');

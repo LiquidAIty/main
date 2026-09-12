@@ -57,7 +57,7 @@ def _idf(*, graph_context: str = "", secret: bool = False):
             "cardRevisionId": "revision-one",
             "instructions": "Use the saved Card contract.",
             "outputContract": "Return one bounded result.",
-            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "coder"},
+            "runtime": {"kind": "hermes", "mode": "delegate", "profile": "helper"},
             "runtimeOptions": {"reasoningEffort": "high", "maxTokens": 1200},
             "provider": {
                 "provider": "openai",

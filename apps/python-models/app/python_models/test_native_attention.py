@@ -67,8 +67,8 @@ def test_current_cbm_tabular_results_emit_exact_symbol_and_file_references() -> 
             "projectId": "project-one",
             "deckId": "deck-one",
             "conversationId": "conversation-one",
-            "parentRunId": "coder-run-one",
-            "mainCardId": "card_local_coder",
+            "parentRunId": "helper-run-one",
+            "mainCardId": "card_delegate",
         },
     )
 
@@ -77,8 +77,8 @@ def test_current_cbm_tabular_results_emit_exact_symbol_and_file_references() -> 
         "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
         "apps/python-models/app/python_models/idf.py",
     ]
-    assert event["runId"] == "coder-run-one"
-    assert event["cardId"] == "card_local_coder"
+    assert event["runId"] == "helper-run-one"
+    assert event["cardId"] == "card_delegate"
     assert result.model_dump() == before
 
 

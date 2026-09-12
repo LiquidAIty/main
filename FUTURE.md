@@ -72,7 +72,7 @@ Engraphis work. A separate owner decision would be required to reconsider any su
 ## UI after runtime proof
 
 - Refine Chat/Graphs as the primary modality and Agent Canvas as the build/test modality.
-- Preserve the existing Builder terminal beneath Chat. A downloadable Coder remains deferred.
+- Preserve the existing Builder terminal beneath Chat.
 - Explore distinct visual treatment for internal Hermes Cards versus AutoGen/Mag One Cards without
   creating new runtime types.
 - Preserve the current bus layout for now: protected System 3 Cards above it, ordinary information/source/

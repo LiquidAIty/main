@@ -14,7 +14,7 @@ from app.python_models.test_autogen_adapter import _context
 
 ROLES = [
     ("WorldSignals Agent", "Live-world intelligence briefings"),
-    ("Local Coder", "Controlled code patch/test execution"),
+    ("Delegate Agent", "Controlled delegated work execution"),
     ("Trading Agent", "Paper-trading decisions and deterministic Trade Jobs"),
     ("WorldView", "Signal discovery and globe presentation"),
     ("Signal Analyst", "Sourced evidence assessment"),

@@ -27,12 +27,13 @@ import type {
   GraphProjectionNode,
   GraphProjectionV1,
 } from '../components/knowledge/NativeAuthorityGraphSurface';
-import CoderTerminalPanel from '../features/agentbuilder/console/CoderTerminalPanel';
+import BuilderTerminalPanel from '../features/agentbuilder/console/BuilderTerminalPanel';
+import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
-import AdaptiveCardTerminal, {
+import CardRunResults, {
   reconcileCardTerminal,
-} from '../features/agentbuilder/console/AdaptiveCardTerminal';
+} from '../features/agentbuilder/console/CardRunResults';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
   LoadedCardGraphReference,
@@ -210,7 +211,7 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['CLI', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;
+const BUILDER_NODE_TABS = ['Results', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
@@ -584,7 +585,7 @@ export default function AgentBuilder(): React.ReactElement {
       cardId: target.id,
     });
     setSelectedCardId(target.id);
-    setTab('CLI');
+    setTab('Results');
     setDeckStatusMessage(`${target.title} mission and exact graph references are ready for review. Nothing ran.`);
   }, [canvasProjectId, deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
 
@@ -1451,8 +1452,13 @@ export default function AgentBuilder(): React.ReactElement {
 
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
-      ...BUILDER_NODE_TABS.filter((entry) => entry !== 'CLI'
+      ...BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'
         || (selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id)),
+      ...(selectedCard.runtime.kind === 'hermes'
+        && selectedCard.id !== mainCardId
+        && !['main', 'liquidaity-main', 'builder', 'default'].includes(selectedCard.runtime.profile)
+        ? ['CLI']
+        : []),
       ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
         .filter((attachment) => attachment.cardTab.enabled)
         .map((attachment) => attachment.label),
@@ -1551,7 +1557,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('CLI');
+      setTab('Results');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -1593,7 +1599,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'CLI');
+        setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'Results');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1661,6 +1667,21 @@ export default function AgentBuilder(): React.ReactElement {
               : null}
           />;
         }
+        if (
+          tab === 'CLI'
+          && selectedCard.runtime.kind === 'hermes'
+          && selectedCard.id !== mainCardId
+          && !['main', 'liquidaity-main', 'builder', 'default'].includes(selectedCard.runtime.profile)
+        ) {
+          return <AgentTerminalPanel
+            key={`${canvasProjectId}:${BUILDER_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
+            identity={{
+              projectId: canvasProjectId,
+              deckId: BUILDER_DECK_ID,
+              cardId: selectedCard.id,
+            }}
+          />;
+        }
         if (BUILDER_NODE_TABS.some((entry) => entry === tab)) {
           return (
             <>
@@ -1695,7 +1716,7 @@ export default function AgentBuilder(): React.ReactElement {
                         ? <div data-testid="builder-card-terminal">
                              {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
                              <div style={{ height: 360, minHeight: 240 }}>
-                               <CoderTerminalPanel
+                               <BuilderTerminalPanel
                                  open
                                  placement="docked"
                                  title="Builder CLI"
@@ -1703,12 +1724,7 @@ export default function AgentBuilder(): React.ReactElement {
                                  ownerCardId={selectedCard.id}
                                  savedCard={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
                                    cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
-                                 cardIdentity={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
-                                   cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
-                                 cardRun={standaloneTestResult}
-                                 cardRunBusy={standaloneTestBusy}
-                                 onStopCardRun={stopStandaloneCardTest}
-                                 onRejoinCardRun={rejoinStandaloneCardRun}
+
                                />
                              </div>
                            </div> : undefined}
@@ -1723,9 +1739,6 @@ export default function AgentBuilder(): React.ReactElement {
                     }}
                     onClearInvocation={() => {
                       clearTransientCardInvocation(selectedCard.id);
-                    }}
-                    onOpenCoderTerminal={() => {
-                      setTab('CLI');
                     }}
                     onRemoveGraphReference={(authority, nativeId) => {
                       removeTransientGraphReference(selectedCard.id, authority, nativeId);
@@ -1910,7 +1923,7 @@ export default function AgentBuilder(): React.ReactElement {
     const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
       agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
-          <CoderTerminalPanel
+          <BuilderTerminalPanel
             key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
             open
             title="Builder"

@@ -1,5 +1,5 @@
 # Input Data Dictionary: composable Agent Builder data, not runtime authority.
-# Main obtains user agreement; Coder under Chat builds Cards in Agent Builder mode.
+# Main obtains user agreement; Builder under Chat builds Cards in Agent Builder mode.
 # Native owners supply their current catalogs. Saved Cards retain selected instances.
 # Catalogs and executable validation are referenced rather than copied.
 
@@ -212,9 +212,6 @@ objects = ["mission", "agent", "instructions", "context", "files", "images", "ou
 label = "Main Chat"
 runtime = { kind = "hermes", mode = "main" }
 extends = "template_assist"
-[templates.template_local_coder]
-label = "Coder"
-extends = "template_assist"
 [templates.template_hermes_steward]
 label = "Hermes helper"
 extends = "template_assist"
@@ -230,7 +227,7 @@ label = "Trading"
 extends = "template_assist"
 
 [cardEditor]
-tabs = ["CLI", "Prompt", "Runtime", "Memory", "Tools"]
+tabs = ["Results", "Prompt", "Runtime", "Memory", "Tools"]
 fields = [
   { name = "provider", label = "Provider", section = "Runtime", path = "runtimeOptions.provider", source = "CardConfiguration.provider", catalog = "configured-models", catalogProperty = "provider" },
   { name = "delegationRole", label = "Delegate task", section = "Runtime", path = "runtimeOptions.delegationRole", source = "CardConfiguration.delegationRole", allowUnset = false },

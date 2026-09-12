@@ -27,8 +27,8 @@ MODEL = "gpt-5.6"
 def _context() -> RuntimeRequest:
     participants = [
         RuntimeParticipant(
-            cardId="coder", title="Coder",
-            runtime={"kind": "hermes", "mode": "delegate", "profile": "coder"},
+            cardId="helper", title="Helper",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
         ),
         RuntimeParticipant(
             cardId="trading", title="Trading",
@@ -99,7 +99,7 @@ def test_invalid_saved_max_tokens_fails_instead_of_provider_default(max_tokens):
 
 
 def test_connected_agents_are_saved_display_names():
-    assert mac.connected_agent_names(_context()) == ["Coder", "Trading"]
+    assert mac.connected_agent_names(_context()) == ["Helper", "Trading"]
 
 
 def test_mag_one_chatgpt_account_selects_only_the_app_server_client(monkeypatch):
@@ -191,7 +191,7 @@ def test_native_mag_one_consumes_canonical_card_input_and_returns_native_ids(mon
     context = _context()
     monkeypatch.setattr(mac, "_build_model_client", lambda _config, **_kwargs: Client())
     monkeypatch.setattr(mac, "_build_participants", lambda *_args, **_kwargs: [
-        SimpleNamespace(name="Coder", description="Coder"),
+        SimpleNamespace(name="Helper", description="Helper"),
         SimpleNamespace(name="Trading", description="Trading"),
     ])
     monkeypatch.setattr(mac, "MagenticOneGroupChat", Team)

@@ -26,10 +26,8 @@ describe('requested initial Card topology', () => {
     }
     const profiles = INITIAL_DECK.nodes.flatMap(card => card.runtime.kind === 'hermes' ? [card.runtime.profile] : []);
     expect(new Set(profiles).size).toBe(profiles.length);
-    expect(profiles).not.toContain('coder');
     expect(profiles).not.toContain('liquidaity-agent-builder');
     expect(INITIAL_DECK.nodes.find(card => card.id === 'builder')).toMatchObject({ title: 'Builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' } });
-    expect(INITIAL_DECK.nodes.some(card => card.id === 'card_local_coder')).toBe(false);
     for (const edge of INITIAL_DECK.edges) {
       expect(INITIAL_DECK.nodes.some(card => card.id === edge.source)).toBe(true);
       expect(INITIAL_DECK.nodes.some(card => card.id === edge.target)).toBe(true);

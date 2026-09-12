@@ -10,10 +10,12 @@ import { closeHermesRuntimes } from "./hermes/mainAdapter";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import { runPythonOwnedStartupTasks } from "./startup/pythonOwnedStartup";
 import {
-  coderTerminalSessionManager,
-  ensurePersistentMainTerminal,
+  builderTerminalSessionManager,
   ensurePersistentBuilderTerminal,
-} from "./hermes/coderTerminal";
+} from "./hermes/builderTerminal";
+
+import { mainChatProcess } from "./hermes/mainChatProcess";
+import { agentTerminalManager } from "./hermes/agentTerminal";
 
 const app = express();
 app.set('etag', false);
@@ -163,11 +165,13 @@ function installShutdownHooks() {
   const shutdown = async () => {
     const activeServer = globalThis.__liquidaityBackendServer__;
     try {
+      agentTerminalManager.stopAll();
       if (activeServer) {
         await closeServer(activeServer);
       }
       closeHermesRuntimes();
-      coderTerminalSessionManager.stopAll();
+      builderTerminalSessionManager.stopAll();
+      mainChatProcess.stop();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -223,10 +227,10 @@ async function startServer() {
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
   try {
-    const mainTerminal = ensurePersistentMainTerminal();
-    console.log(`[BOOT] Main CLI ready profile=${mainTerminal.profile} pid=${mainTerminal.pid}`);
+    const mainProcess = mainChatProcess.ensureStarted();
+    console.log(`[BOOT] Main Chat ready profile=${mainProcess.profile} pid=${mainProcess.pid}`);
   } catch (error) {
-    console.error(`[BOOT] Main CLI failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[BOOT] Main Chat failed: ${error instanceof Error ? error.message : String(error)}`);
     await closeServer(server).catch(() => undefined);
     process.exitCode = 1;
     return;

@@ -1052,6 +1052,8 @@ def register(ctx) -> None:
         description=_HOST_SCRIPT_SCHEMA["description"],
         emoji="🐍",
     )
+    from .agent_terminal import register_agent_terminal
+    register_agent_terminal(ctx)
     endpoint = os.environ.get("LIQUIDAITY_MAIN_BRIDGE_URL", "").strip()
     token = os.environ.get("LIQUIDAITY_MAIN_BRIDGE_TOKEN", "").strip()
     if endpoint and token:

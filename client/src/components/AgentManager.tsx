@@ -18,10 +18,10 @@ import {
   testNativeHermesMcp,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
-import AdaptiveCardTerminal, {
-  usesAdaptiveCardTerminal,
+import CardRunResults, {
+  usesCardRunResults,
   type CardTerminalObservation,
-} from '../features/agentbuilder/console/AdaptiveCardTerminal';
+} from '../features/agentbuilder/console/CardRunResults';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
@@ -236,7 +236,6 @@ interface AgentManagerProps {
   onStopCard?: () => void;
   onRejoinCard?: () => void;
   onClearInvocation?: () => void;
-  onOpenCoderTerminal?: () => void;
   terminalContent?: React.ReactNode;
   onRemoveGraphReference?: (authority: string, nativeId: string) => void;
   onMoveGraphReference?: (
@@ -533,7 +532,6 @@ export function AgentManager({
   onStopCard,
   onRejoinCard,
   onClearInvocation,
-  onOpenCoderTerminal,
   onRemoveGraphReference,
   onMoveGraphReference,
   runBusy = false,
@@ -551,7 +549,7 @@ export function AgentManager({
   onSaveLocalConfig,
   registerCardLeave,
 }: AgentManagerProps) {
-  const adaptiveTerminal = usesAdaptiveCardTerminal(cardKind, localConfig?.runtime);
+  const showRunResults = usesCardRunResults(cardKind, localConfig?.runtime);
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
@@ -1294,8 +1292,8 @@ export function AgentManager({
   ]);
 
   const renderSectionBody = (sectionTab: string) => {
-    if (sectionTab === 'Terminal') {
-      // The Terminal composer is rendered below the shared Card controls. Keep a
+    if (sectionTab === 'Results') {
+      // Run input and results are rendered below the shared Card controls. Keep a
       // concrete section body here so non-Main Cards do not hit the legacy
       // empty-section guard before their real Run controls are mounted.
       return <>{terminalContent || null}</>;
@@ -2283,8 +2281,8 @@ export function AgentManager({
     return null;
   };
 
-  const sectionBody = activeTab === 'CLI'
-    ? renderSectionBody('Terminal')
+  const sectionBody = activeTab === 'Results'
+    ? renderSectionBody('Results')
     : activeTab === 'Prompt'
       ? (
           <div data-testid="agent-manager-prompt-surface" style={{ display: 'grid', gap: 16 }}>
@@ -2439,7 +2437,7 @@ export function AgentManager({
 
       <div
         style={{
-          display: activeTab === 'CLI' || saveCardStatus === 'failed' ? 'flex' : 'none',
+          display: activeTab === 'Results' || saveCardStatus === 'failed' ? 'flex' : 'none',
           flexDirection: 'column',
           gap: 10,
           padding: '10px 12px',
@@ -2454,8 +2452,8 @@ export function AgentManager({
             </span>
           ) : null}
 
-        {activeTab === 'CLI' && showTaskComposer ? <AdaptiveCardTerminal
-          enabled={adaptiveTerminal} projectId={projectId} deckId={deckId} cardId={cardId}
+        {activeTab === 'Results' && showTaskComposer ? <CardRunResults
+          enabled={showRunResults} projectId={projectId} deckId={deckId} cardId={cardId}
           runtime={localConfig.runtime} run={runResult} busy={runBusy}
           onStop={onStopCard} onRejoin={onRejoinCard}
         ><div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2524,17 +2522,17 @@ export function AgentManager({
                 Stop
               </button>
             ) : null}
-            {!adaptiveTerminal && !runBusy && runResult?.runId && onRejoinCard ? (
+            {!showRunResults && !runBusy && runResult?.runId && onRejoinCard ? (
               <button type="button" onClick={onRejoinCard} data-testid="agent-manager-rejoin">
                 Rejoin
               </button>
             ) : null}
           </div>
-        </div></AdaptiveCardTerminal> : null}
+        </div></CardRunResults> : null}
 
 
 
-        {activeTab === 'CLI' && runResult && !adaptiveTerminal && cardKind !== 'agent' ? (
+        {activeTab === 'Results' && runResult && !showRunResults && cardKind !== 'agent' ? (
           <div
             data-testid="agent-manager-run-result"
             style={{ display: 'grid', gap: 6, fontSize: 11.5 }}
@@ -2593,7 +2591,7 @@ export function AgentManager({
             ) : null}
           </div>
         ) : null}
-        {activeTab === 'CLI' && runResult?.nativeEvents?.length ? (
+        {activeTab === 'Results' && runResult?.nativeEvents?.length ? (
           <details data-testid="card-native-telemetry" style={{ color: '#B8C8CD', fontSize: 11 }}>
             <summary style={{ cursor: 'pointer' }}>
               Native tool and Script telemetry ({runResult.nativeEvents.length})

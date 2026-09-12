@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import AdaptiveCardTerminal, { reconcileTerminalEvents, reconcileCardTerminal, requestCardTranscript, usesAdaptiveCardTerminal, RuntimeEventList,
-  type CardTerminalObservation, type CardTerminalEvent } from './AdaptiveCardTerminal';
+import CardRunResults, { reconcileTerminalEvents, reconcileCardTerminal, requestCardTranscript, usesCardRunResults, RuntimeEventList,
+  type CardTerminalObservation, type CardTerminalEvent } from './CardRunResults';
 import type { CardRuntime } from '../../../types/agentgraph';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -67,26 +67,26 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('uses runtime kind and mode without interpreting a delegate profile name', () => {
-    for (const profile of ['research', 'builder', 'coder']) {
-      expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'delegate', profile })).toBe(true);
+    for (const profile of ['research', 'builder', 'delegate']) {
+      expect(usesCardRunResults('agent', { kind: 'hermes', mode: 'delegate', profile })).toBe(true);
     }
-    expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'main', profile: 'main' })).toBe(false);
-    expect(usesAdaptiveCardTerminal('agent', { kind: 'hermes', mode: 'kanban', profile: 'anything' })).toBe(true);
+    expect(usesCardRunResults('agent', { kind: 'hermes', mode: 'main', profile: 'main' })).toBe(false);
+    expect(usesCardRunResults('agent', { kind: 'hermes', mode: 'kanban', profile: 'anything' })).toBe(true);
     for (const mode of ['assistant', 'magentic_one'] as const) {
-      expect(usesAdaptiveCardTerminal('agent', { kind: 'autogen', mode })).toBe(true);
+      expect(usesCardRunResults('agent', { kind: 'autogen', mode })).toBe(true);
     }
-    expect(usesAdaptiveCardTerminal('graph', runtime)).toBe(false);
-    expect(usesAdaptiveCardTerminal(undefined, runtime)).toBe(false);
-    render(<AdaptiveCardTerminal {...props} enabled={false} run={running} />);
-    expect(screen.queryByTestId('adaptive-card-terminal')).toBeNull();
+    expect(usesCardRunResults('graph', runtime)).toBe(false);
+    expect(usesCardRunResults(undefined, runtime)).toBe(false);
+    render(<CardRunResults {...props} enabled={false} run={running} />);
+    expect(screen.queryByTestId('card-run-results')).toBeNull();
     expect(screen.getByLabelText('Dynamic context / input')).toBeTruthy();
   });
 
   it('keeps the existing dormant input and submission control unchanged', () => {
     const submit = vi.fn();
-    render(<AdaptiveCardTerminal {...props} run={null}>
+    render(<CardRunResults {...props} run={null}>
       <button onClick={submit}>Run existing input</button>
-    </AdaptiveCardTerminal>);
+    </CardRunResults>);
     fireEvent.click(screen.getByText('Run existing input'));
     expect(submit).toHaveBeenCalledOnce();
     expect(screen.queryByRole('log')).toBeNull();
@@ -94,24 +94,24 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('keeps a staged mission editable when no canonical Run exists yet', () => {
-    render(<AdaptiveCardTerminal {...props} run={{
+    render(<CardRunResults {...props} run={{
       status: 'ready', state: 'ready', output: '', error: null, cardId: 'c', runId: null,
     }} />);
     expect(screen.getByLabelText('Dynamic context / input')).toBeTruthy();
-    expect(screen.queryByTestId('adaptive-card-terminal')).toBeNull();
+    expect(screen.queryByTestId('card-run-results')).toBeNull();
   });
 
   it('shows starting without inventing authorization or model activity', () => {
-    render(<AdaptiveCardTerminal {...props} busy run={null} />);
-    expect(screen.getByTestId('adaptive-card-terminal').getAttribute('data-state')).toBe('starting');
+    render(<CardRunResults {...props} busy run={null} />);
+    expect(screen.getByTestId('card-run-results').getAttribute('data-state')).toBe('starting');
     expect(screen.queryByLabelText('Dynamic context / input')).toBeNull();
     expect(screen.queryByTestId('terminal-active-agents')).toBeNull();
   });
 
   it('updates model text in place, deduplicates IDs and excludes reasoning', () => {
-    const view = render(<AdaptiveCardTerminal {...props} run={running} />);
+    const view = render(<CardRunResults {...props} run={running} />);
     const updated = { ...model, text: 'Model text appended' };
-    view.rerender(<AdaptiveCardTerminal {...props} run={{ ...running,
+    view.rerender(<CardRunResults {...props} run={{ ...running,
       terminal: { ...observation, events: [model, updated, { ...model, id: 'thought', kind: 'reasoning', text: 'private thought' } as unknown as CardTerminalEvent] },
     }} />);
     expect(screen.getAllByText('Model text appended')).toHaveLength(1);
@@ -121,11 +121,11 @@ describe('ordinary saved Card adaptive terminal', () => {
 
   it('honors manual scrolling and offers return to live without another request', () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
-    const view = render(<AdaptiveCardTerminal {...props} run={running} />);
+    const view = render(<CardRunResults {...props} run={running} />);
     const output = screen.getByTestId('card-terminal-output');
     Object.defineProperties(output, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 100 } });
     output.scrollTop = 100; fireEvent.scroll(output);
-    view.rerender(<AdaptiveCardTerminal {...props} run={{ ...running,
+    view.rerender(<CardRunResults {...props} run={{ ...running,
       terminal: { ...observation, events: [{ ...model, text: 'More text' }] },
     }} />);
     expect(output.scrollTop).toBe(100);
@@ -135,7 +135,7 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('renders real tool/child failures and only the provided executing count', () => {
-    render(<AdaptiveCardTerminal {...props} run={{ ...running, terminal: { ...observation, activeAgentCount: 3,
+    render(<CardRunResults {...props} run={{ ...running, terminal: { ...observation, activeAgentCount: 3,
       events: [model, { ...model, id: 'tool', kind: 'tool_error', toolName: 'lookup', status: 'failed', detail: 'not_indexed' },
         { ...model, id: 'child', kind: 'child_finished', runId: 'child-run', parentRunId: 'r', nativeChildId: 'native-child', status: 'failed' }],
     } }} />);
@@ -153,7 +153,7 @@ describe('ordinary saved Card adaptive terminal', () => {
         ...(request.action === 'transcript' ? { events: [model] } : { deleted: true }) } }) };
     });
     vi.stubGlobal('fetch', fetch);
-    render(<AdaptiveCardTerminal {...props} run={{ ...running, state: 'completed', status: 'complete',
+    render(<CardRunResults {...props} run={{ ...running, state: 'completed', status: 'complete',
       output: 'Accepted final', terminal: { ...observation, finalText: 'Accepted final', activeAgentCount: 0, observation: 'finished' },
     }} />);
     expect(screen.queryByTestId('terminal-active-agents')).toBeNull();
@@ -177,7 +177,7 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('does not replace the Mag One adapter or expose a fabricated stop command', () => {
-    render(<AdaptiveCardTerminal {...props} runtime={{ kind: 'autogen', mode: 'magentic_one' }} onStop={vi.fn()}
+    render(<CardRunResults {...props} runtime={{ kind: 'autogen', mode: 'magentic_one' }} onStop={vi.fn()}
       run={{ ...running, terminal: { ...observation, events: [], observation: 'unavailable', unavailableReason: 'autogen_adapter_completion_only' } }} />);
     expect(screen.getByText(/reports output at completion/)).toBeTruthy();
     expect(screen.queryByText('Stop')).toBeNull();
@@ -185,7 +185,7 @@ describe('ordinary saved Card adaptive terminal', () => {
   });
 
   it('reports structured fatal failure and refuses mismatched transcript responses', async () => {
-    render(<AdaptiveCardTerminal {...props} run={{ ...running, state: 'failed', status: 'failed',
+    render(<CardRunResults {...props} run={{ ...running, state: 'failed', status: 'failed',
       terminal: { ...observation, finalText: '', errorCode: 'native_failed', errorSummary: 'Native failure', activeAgentCount: 0 },
     }} />);
     expect(screen.getByRole('alert').textContent).toBe('native_failed: Native failure');

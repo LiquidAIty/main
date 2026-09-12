@@ -54,6 +54,71 @@ describe('internal MCP Card authentication', () => {
     }, env, 100)).toThrow('internal_mcp_presentation_exceeds_grant');
   });
 
+  it('signs an independent non-Main Card terminal without inventing a Run or conversation', () => {
+    const token = createInternalMcpBearer({
+      kind: 'agent-terminal',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      callerCardId: 'card_hermes_steward',
+      terminalSessionId: 'a4d8e59a-5ac4-4f4d-a7df-a5c87e53d7eb',
+      profile: 'liquidaity-hermes-steward',
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate',
+      grantedTools: ['canvas.inspect', 'canvas.inspect'],
+    }, env, 1000);
+    const principal = verifyInternalMcpBearerForTest(token, env).principal as Record<string, unknown>;
+    expect(principal).toEqual({
+      kind: 'agent-terminal',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      callerCardId: 'card_hermes_steward',
+      terminalSessionId: 'a4d8e59a-5ac4-4f4d-a7df-a5c87e53d7eb',
+      profile: 'liquidaity-hermes-steward',
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate',
+      grantedTools: ['canvas.inspect'],
+      presentedTools: ['canvas.inspect'],
+    });
+    expect(principal).not.toHaveProperty('conversationId');
+    expect(principal).not.toHaveProperty('parentRunId');
+  });
+
+  it('does not normalize forged runtime or extra Run fields into a terminal claim', () => {
+    const base = {
+      kind: 'agent-terminal', projectId: 'project-1', deckId: 'deck_builder',
+      callerCardId: 'card_hermes_steward', terminalSessionId: 'terminal-1',
+      profile: 'liquidaity-hermes-steward', callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate', grantedTools: ['canvas.inspect'],
+    } as const;
+    expect(() => createInternalMcpBearer({ ...base, callerRuntimeKind: 'autogen' } as any, env, 100))
+      .toThrow('internal_mcp_agent_terminal_principal_invalid');
+    const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer({
+      ...base, conversationId: 'forged-conversation', parentRunId: 'forged-run',
+      requiresExecutionContext: true,
+    } as any, env, 100), env).principal as Record<string, unknown>;
+    expect(principal).not.toHaveProperty('conversationId');
+    expect(principal).not.toHaveProperty('parentRunId');
+    expect(principal).not.toHaveProperty('requiresExecutionContext');
+  });
+
+  it.each([
+    { callerCardId: 'card_main_chat' },
+    { callerCardId: 'builder' },
+    { terminalSessionId: '' },
+    { profile: 'main' },
+    { profile: 'default' },
+    { profile: 'builder' },
+    { profile: 'liquidaity-main' },
+  ])('rejects a forbidden or incomplete agent terminal principal', (override) => {
+    expect(() => createInternalMcpBearer({
+      kind: 'agent-terminal',
+      projectId: 'project-1', deckId: 'deck_builder', callerCardId: 'card_hermes_steward',
+      terminalSessionId: 'terminal-1', profile: 'liquidaity-hermes-steward',
+      callerRuntimeKind: 'hermes', callerRuntimeMode: 'delegate', grantedTools: ['canvas.inspect'],
+      ...override,
+    }, env, 100)).toThrow('internal_mcp_agent_terminal_principal_invalid');
+  });
+
   it('keeps the signing secret out of model runtime environments', () => {
     const child = withoutInternalMcpSecret({ ...env, SAFE: 'yes' });
     expect(child.LIQUIDAITY_INTERNAL_MCP_SECRET).toBeUndefined();

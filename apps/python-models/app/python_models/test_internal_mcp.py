@@ -70,7 +70,7 @@ def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch
     token = internal_mcp.create_materializer_read_token(
         project_id="project-1",
         deck_id="deck_builder",
-        card_id="card-coder",
+        card_id="card-helper",
     )
     claims = jwt.decode(
         token,
@@ -83,7 +83,7 @@ def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch
         "kind": "materializer-read",
         "projectId": "project-1",
         "deckId": "deck_builder",
-        "callerCardId": "card-coder",
+        "callerCardId": "card-helper",
     }
     assert claims["exp"] - claims["iat"] == 60
     assert "runId" not in claims["principal"]
@@ -148,7 +148,7 @@ def test_saved_card_call_uses_official_http_mcp_with_server_owned_identity(monke
         caller_card_id="card-mag-one",
         caller_runtime_kind="autogen",
         caller_runtime_mode="magentic_one",
-        target_card_id="card-coder",
+        target_card_id="card-helper",
         input_text="bounded task",
     ))
 
@@ -158,7 +158,7 @@ def test_saved_card_call_uses_official_http_mcp_with_server_owned_identity(monke
     assert observed["initialized"] is True
     assert observed["call"] == (
         "card.run_assistant_agent",
-        {"cardId": "card-coder", "input": "bounded task"},
+        {"cardId": "card-helper", "input": "bounded task"},
     )
 
 
@@ -216,7 +216,7 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
     results = internal_mcp.call_read_tools_via_mcp(
         project_id="project-1",
         deck_id="deck_builder",
-        card_id="card-coder",
+        card_id="card-helper",
         calls=[
             ("cbm.index_status", {"project": "core"}),
             ("cbm.get_code_snippet", {"project": "core", "qualified_name": "symbol"}),
@@ -231,7 +231,7 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         internal_mcp.call_read_tools_via_mcp(
             project_id="project-1",
             deck_id="deck_builder",
-            card_id="card-coder",
+            card_id="card-helper",
             calls=[("cbm.index_repository", {"repo_path": "x"})],
         )
     except RuntimeError as error:

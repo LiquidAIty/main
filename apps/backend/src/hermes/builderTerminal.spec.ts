@@ -2,16 +2,15 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 import {
-  HermesCoderTerminalManager,
-  HermesCoderTerminalSession,
-  ensurePersistentMainTerminal,
+  BuilderTerminalManager,
+  BuilderTerminalSession,
   ensureSavedBuilderTerminal,
   type ConsoleSessionInfo,
-  type HermesCoderPtyLaunch,
+  type BuilderPtyLaunch,
   type PtyFactory,
-} from './coderTerminal';
+} from './builderTerminal';
 
 class FakePty {
   readonly pid = 42;
@@ -42,7 +41,7 @@ class FakePty {
 
 function sessionInfo(): ConsoleSessionInfo {
   return {
-    id: 'coder_terminal_test',
+    id: 'builder_terminal_test',
     ownerCardId: 'builder',
     projectId: 'project-1',
     deckId: 'deck_builder',
@@ -65,7 +64,7 @@ function sessionInfo(): ConsoleSessionInfo {
   };
 }
 
-function launch(onExit?: HermesCoderPtyLaunch['onExit']): HermesCoderPtyLaunch {
+function launch(onExit?: BuilderPtyLaunch['onExit']): BuilderPtyLaunch {
   return {
     executable: 'C:/repo/Hermes/venv/Scripts/hermes.exe',
     args: ['-p', 'builder', 'chat', '--cli', '--in', 'C:/repo'],
@@ -84,7 +83,7 @@ const identity = {
   profile: 'builder',
 };
 
-describe('Hermes Coder real PTY boundary', () => {
+describe('Builder real PTY boundary', () => {
   it('keeps normal workspace terminals separate from the Hermes runtime', () => {
     const settings = JSON.parse(
       readFileSync(path.join(resolveRepoRoot(), '.vscode', 'settings.json'), 'utf8'),
@@ -100,36 +99,17 @@ describe('Hermes Coder real PTY boundary', () => {
     expect(String(settings['python.defaultInterpreterPath'])).not.toMatch(/Hermes[\\/]/i);
   });
 
-  it('keeps the persistent Main CLI distinct from a saved Builder CLI', async () => {
-    const children = [new FakePty(), new FakePty()];
-    const manager = new HermesCoderTerminalManager(vi.fn(() => children.shift()!) as unknown as PtyFactory);
-    const readDeck = vi.fn(async () => ({ deck: { workspaceRoot: process.cwd(), nodes: [{
-      id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
-    }] } as any, meta: { deckRevision: 'r', deckSavedAt: null } }));
-    const launchBuilder = vi.fn((session: HermesCoderTerminalSession) => session.start(launch()));
-    const builder = await ensureSavedBuilderTerminal({ projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
-      manager, readDeck, launchBuilder);
-    const launchMain = vi.fn((session: HermesCoderTerminalSession) => session.start({ ...launch(), profile: 'liquidaity-main' }));
-    const main = ensurePersistentMainTerminal(manager, launchMain);
-    expect(ensurePersistentMainTerminal(manager, launchMain).id).toBe(main.id);
-    expect(main.id).not.toBe(builder.id);
-    expect(main).toMatchObject({ ownerCardId: 'card_main_chat', profile: 'liquidaity-main' });
-    expect(builder).toMatchObject({ ownerCardId: 'builder', profile: 'builder' });
-    expect(launchMain).toHaveBeenCalledOnce();
-    expect(launchBuilder).toHaveBeenCalledOnce();
-  });
-
   it('reuses one saved Builder CLI across attachments without changing saved authority', async () => {
     const child = new FakePty();
     const factory = vi.fn(() => child) as unknown as PtyFactory;
-    const manager = new HermesCoderTerminalManager(factory);
+    const manager = new BuilderTerminalManager(factory);
     const deck = { workspaceRoot: process.cwd(), nodes: [{
       id: 'saved-builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
       runtimeOptions: { tools: ['canvas.inspect'], modelKey: 'saved-model' }, prompt: 'Saved prompt',
     }] } as any;
     const before = JSON.stringify(deck);
     const readDeck = vi.fn(async () => ({ deck, meta: { deckRevision: 'revision', deckSavedAt: null } }));
-    const launchBuilder = vi.fn((target: HermesCoderTerminalSession) => target.start({
+    const launchBuilder = vi.fn((target: BuilderTerminalSession) => target.start({
       ...launch(), profile: target.info.profile,
       args: ['-p', target.info.profile, 'chat', '--cli', '--in', target.info.targetRoot],
     }));
@@ -155,7 +135,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
   it('rejects missing, foreign, and shared Builder profiles before acquiring a process', async () => {
     const launchBuilder = vi.fn();
-    const manager = new HermesCoderTerminalManager();
+    const manager = new BuilderTerminalManager();
     for (const nodes of [[],
       [{ id: 'builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'foreign' } }],
       ['builder', 'other'].map((id) => ({ id, runtime: {
@@ -172,7 +152,7 @@ describe('Hermes Coder real PTY boundary', () => {
   });
 
   it('requires server-owned project, deck, and conversation identity', () => {
-    const result = new HermesCoderTerminalManager().acquire({
+    const result = new BuilderTerminalManager().acquire({
       projectId: '',
       deckId: '',
       conversationId: '',
@@ -180,17 +160,17 @@ describe('Hermes Coder real PTY boundary', () => {
     });
     expect(result).toEqual({
       ok: false,
-      error: 'hermes_coder_terminal_identity_required',
+      error: 'hermes_builder_terminal_identity_required',
       missing: [],
     });
   });
 
   it('fails honestly when the requested workspace root is missing', () => {
-    const missing = path.join(process.cwd(), '__missing_coder_terminal_root__');
-    const result = new HermesCoderTerminalManager().acquire({ ...identity, targetRoot: missing });
+    const missing = path.join(process.cwd(), '__missing_builder_terminal_root__');
+    const result = new BuilderTerminalManager().acquire({ ...identity, targetRoot: missing });
     expect(result).toEqual({
       ok: false,
-      error: `hermes_coder_terminal_target_root_missing:${missing}`,
+      error: `hermes_builder_terminal_target_root_missing:${missing}`,
       missing: [],
     });
   });
@@ -198,7 +178,7 @@ describe('Hermes Coder real PTY boundary', () => {
   it('spawns Hermes in ConPTY with the exact executable, arguments, cwd, and environment', () => {
     const child = new FakePty();
     const factory = vi.fn(() => child) as unknown as PtyFactory;
-    const session = new HermesCoderTerminalSession(sessionInfo(), factory);
+    const session = new BuilderTerminalSession(sessionInfo(), factory);
     session.start(launch());
 
     expect(factory).toHaveBeenCalledWith(
@@ -222,7 +202,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
   it('forwards PTY input and output byte-for-byte exactly once', () => {
     const child = new FakePty();
-    const session = new HermesCoderTerminalSession(
+    const session = new BuilderTerminalSession(
       sessionInfo(),
       (() => child) as unknown as PtyFactory,
     );
@@ -242,7 +222,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
   it('resizes and stops the real child process', () => {
     const child = new FakePty();
-    const session = new HermesCoderTerminalSession(
+    const session = new BuilderTerminalSession(
       sessionInfo(),
       (() => child) as unknown as PtyFactory,
     );
@@ -262,7 +242,7 @@ describe('Hermes Coder real PTY boundary', () => {
 
   it('rejects invalid dimensions before they reach ConPTY', () => {
     const child = new FakePty();
-    const session = new HermesCoderTerminalSession(
+    const session = new BuilderTerminalSession(
       sessionInfo(),
       (() => child) as unknown as PtyFactory,
     );
@@ -281,7 +261,7 @@ describe('Hermes Coder real PTY boundary', () => {
       children.push(child);
       return child;
     }) as unknown as PtyFactory;
-    const manager = new HermesCoderTerminalManager(factory);
+    const manager = new BuilderTerminalManager(factory);
     const first = manager.acquire(identity);
     expect(first.ok).toBe(true);
     if (!first.ok) return;
@@ -305,7 +285,7 @@ describe('Hermes Coder real PTY boundary', () => {
   it('publishes the native exit result once and preserves truthful failure state', () => {
     const child = new FakePty();
     const onExit = vi.fn();
-    const session = new HermesCoderTerminalSession(
+    const session = new BuilderTerminalSession(
       sessionInfo(),
       (() => child) as unknown as PtyFactory,
     );

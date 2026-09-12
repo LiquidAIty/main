@@ -56,15 +56,14 @@ uses an explicitly selected coding subagent, actual tools and separate diagnosti
 the saved Card's job. It is a testing procedure, not another product runtime; native Hermes parity
 and performance improvement require actual evidence.
 
-`builder` is the saved replacement Card/profile; `Agent Builder` names the workspace for building
-Cards, their UI and selected run context. The two obsolete Cards, their exact old profiles and
-exclusively owned blockers are deleted; PLAN records preservation proof. The lower terminal belongs to Builder. Route names describe responsibilities,
-not identities inferred from historical filenames. The former 2,014-line `coder.routes.ts` mixed
+`builder` is the saved Card/profile; `Agent Builder` names the workspace for building Cards, their UI and
+selected run context. The lower terminal belongs to Builder. Route names describe responsibilities, not
+identities inferred from historical filenames. The former 2,014-line route module mixed
 editor, graph, Main and execution transport. Editor/IDD and CodeGraph read now have separate modules;
 `cardRuntime.routes.ts` retains shared execution/session transport without changed handler bodies.
 `routes/index.ts` now mounts `/api/main`, `/api/cards`, `/api/hermes`, `/api/idd` and `/api/codegraph`,
 each behind the same `authMiddleware`. Current client and Python MCP/control-plane callers were
-migrated together; the old global `/api/coder` mount is absent, with a 404 regression check.
+migrated together; the legacy global card-specific mount is absent.
 These are transport addresses, not five runtimes or a semantic agent router. No Card identity,
 saved profile, tool name, handler schema or session history changes as a result of this migration.
 Historical domain-route acceptance is recorded in the September 10 PLAN checkpoint. It does not
@@ -84,7 +83,7 @@ module extraction was justified solely by line count; loaded behavior still need
 | `POST /api/main/context`, `POST /api/main/chat` | MCP's authenticated Main context and external Main conversation transport |
 | `/api/main/session/*` | Existing browser Main chat, history, driver, attention and exact-Run Stop routes |
 | `POST /api/hermes/execution-context` | Existing internal native execution-context lookup with its existing checks |
-| `/api/hermes/terminal/sessions/*` | Existing persistent Hermes terminal transport |
+| `/api/hermes/terminal/sessions/*` | Builder's persistent Hermes terminal transport |
 | `GET /api/idd/card-editor`, `/api/idd/tools`, `/api/idd/script-tools` | IDD-backed editor and tool projections |
 | `POST /api/codegraph/read` | Existing saved-workspace CodeGraph read |
 
@@ -223,8 +222,6 @@ boundary at a time. Optional Question/evidence support is not a required convers
 Background profile handoffs carry source identity in authenticated system context, never public MCP
 arguments. Python binds that identity before the existing Card runner validates the directed handoff.
 
-The obsolete Local Coder Card and profile were deleted under exact owner authorization. Future downloadable Local Coder is
-deferred; no active fallback or seed restores the removed standalone runtime.
 `031_graph_agent_continuity.sql` gives an existing `card_hermes_steward` one new current revision named
 Graph Agent with Hermes `delegate` mode. It copies the prior revision's prompt, profile, provider/model,
 grants, runtime extensions, and presentation state, then advances only the current-revision/deck pointers.
@@ -245,7 +242,8 @@ start runtimes.
 ## Hermes ownership
 
 `apps/backend/src/hermes/mainAdapter.ts` owns persistent Hermes ACP construction and sessions.
-`apps/backend/src/hermes/coderTerminal.ts` owns the persistent Hermes terminal lifecycle, including Builder. The ACP adapter reuses
+`apps/backend/src/hermes/builderTerminal.ts` owns Builder's persistent native CLI. `apps/backend/src/hermes/mainChatProcess.ts`
+owns Main Chat's native delivery process independently; it has no terminal API or registry entry. The ACP adapter reuses
 one process owner per normalized native profile. Named profiles select
 `Hermes/.hermes/profiles/<profile>` as `HERMES_HOME`; the unprofiled extension owner uses the root home.
 Main, Builder, ThinkGraph and Graph Agent retain separate profile homes, native memory, sessions,
@@ -321,7 +319,7 @@ skill state.
 
 The host derives one opaque key from Project, conversation, and Card identity. Hermes stores that key
 in its existing native `sessions.session_key` field so an ACP restart recovers the exact session even
-when Main and Coder share the repository working directory. The key is routing identity only; it is
+when Main and Builder share the repository working directory. The key is routing identity only; it is
 not a Card definition, credential, prompt, or second persistence authority.
 
 The backend injects server-owned Card, conversation, Run, and correlation identity. Hermes receives one
@@ -513,7 +511,7 @@ behavior, fresh connector schema or native team execution.
 The official Python MCP host reaches server-owned Card, conversation, Run and persistence operations
 through the domain routes documented above. It remains one MCP server. The September 10 source
 migration moved Python and browser callers together and retained authentication, schemas and timeouts.
-No external persisted consumer of the retired global Coder HTTP prefix was identified in the historical
+No external persisted consumer of the retired global card-specific HTTP prefix was identified in the historical
 migration audit. Current loaded route/catalog, fresh-connector and agent execution proof remain separate.
 
 Unknown tools, missing grants, unsupported runtimes, provider failures, and missing relationships fail
@@ -548,10 +546,10 @@ compiles into one typed optimized model tool that may call only Card-authorized 
 Card configuration has no added Team policy controls or status panel. Historical overlay values remain
 readable saved data, but are neither validated as runtime policy nor sent to execution.
 Main still uses chat for input and responses.
-The obsolete Local Coder Card is retired. Builder owns the lower native terminal; a future downloadable
-Coder is deferred and has no current executable Card contract. There is no global Kanban workspace, manual task movement, or Card `kanban` execution doorway.
-Native Team workers remain execution processes observed through the existing Card Run and telemetry paths.
-Ordinary agent Cards use the shared adaptive terminal, while Mag One remains an orchestrator.
+Builder owns the lower native terminal. Main uses chat for its native delivery process, and other Cards
+have no proven independent native CLI. There is no global Kanban workspace, manual task movement, or Card
+`kanban` execution doorway. Native Team workers remain execution processes observed through the existing Card
+Run and telemetry paths. Mag One remains an orchestrator.
 
 `apps/backend/src/contracts/runtimeEvents.d.ts` is the shared public presentation contract.
 `hermes/cardTerminal.ts` projects existing ACP turns, native transcript replay, native Team task/attempt records,
@@ -1081,7 +1079,7 @@ contained model-origin patch tags only native model chunks and returns the exact
 assistant text through ACP `_meta`; the backend ignores untagged prose for transcript authoring and
 the browser reconciles the completed streamed bubble to those exact native bytes. Provider-exposed
 reasoning and tool events may appear only as transient UI activity outside the transcript.
-Actual Main/Coder/helper execution continues through standard session creation/load followed by the
+Actual Main/Builder/helper execution continues through standard session creation/load followed by the
 trusted `_session/configure_host` boundary with a real per-Run execution context. The exact patch,
 test, upstream-contribution, and rollback records live in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
 
@@ -1140,7 +1138,7 @@ expiring Card bearer, and adds `LIQUIDAITY_CARD_BEARER` plus a non-secret `HERME
 canonical startup and every
 backend-launched Hermes boundary remove the host-only signing secret first. Hermes' normal MCP
 `${ENV_VAR}` header interpolation can consume the bearer when a native worker MCP connection is
-configured. Main/Coder do not depend on a static profile entry for their application MCP connection:
+configured. Main/Builder do not depend on a static profile entry for their application MCP connection:
 `buildHermesOfficialMcpServer` and `buildHermesHostSessionProjection` supply authenticated `mcpServers`
 through `AcpProcess.configureHostSession` to native `_session/configure_host`. Native registration is
 process-local. The separate Kanban path persists task identity through the LiquidAIty ACP bridge;
@@ -1238,7 +1236,6 @@ All 692 saved fields and nine profile configuration hashes remained unchanged. T
 accepted the tool list and the recorded graph-reference schema matches the catalog; the native
 diagnostic hook depth-limits five other schema copies, so those copies are not full-schema evidence.
 
-OpenClaude/LocalCoder is not a vendor boundary, package root, fallback, or supported runtime in Core v0.
 WorldSignals and other imported roots remain isolated owners and are not ordinary cleanup targets.
 
 God's Eye View is a controlled presentation-subsystem fork of
@@ -1262,9 +1259,8 @@ attribution requirements.
 
 ## Known limitations
 
-- Direct saved Main has historical live execution proof. The removed Local Coder also had historical
-  proof; it is not a current executable Card. Builder acceptance is recorded in PLAN. Main-to-Builder,
-  ordinary-Card headless Team and native Magentic-One team execution remain separate proofs.
+- Direct saved Main has historical live execution proof. Builder acceptance is recorded in PLAN.
+  Main-to-Builder, ordinary-Card headless Team and native Magentic-One team execution remain separate proofs.
 - Native asynchronous background review has parent/root Run attribution. The saved-Card selector to
   native-profile to actual-child receipt chain requires one loaded-runtime account-Luna proof after the
   current migration is applied; broader child/reference/artifact attribution remains separate.

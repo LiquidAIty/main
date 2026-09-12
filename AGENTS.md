@@ -39,14 +39,11 @@ restore removed tools, impose retired gates, or override the owner's latest inst
 
 Never collapse CURRENT and TARGET into one claim.
 
-September 10 owner update is implemented: saved Card/profile `builder` replaces the old Agent Builder.
-Exactly `card_local_coder` and `card_61d994e5044b4e44`, their old profiles and exclusively owned blocking
-Runs/receipts were removed under the owner's explicit exception. Unrelated Cards, Runs and shared
-state remain preserved. This exception supersedes older retention language for those two Cards only.
-Builder makes prompts, agents, apps, UI pages and webpages; create/edit are optional tools, not a
-mandatory semantic router. The lower terminal is Builder's. Do not restore OpenClaude or its standalone
-runtime. A future downloadable Coder will be a separate new Card. Graph-Card consolidation remains an
-unaccepted option; do not merge ThinkGraph/KnowGraph owners or silently change their write policy.
+The saved Card/profile `builder` replaces the old Agent Builder. Existing saved Cards, Runs, and shared
+state remain preserved; do not add a general history lifecycle. Builder makes prompts, agents, apps, UI
+pages and webpages; create/edit are optional tools, not a mandatory semantic router. The lower terminal is
+Builder's. Graph-Card consolidation remains an unaccepted option; do not merge ThinkGraph/KnowGraph owners
+or silently change their write policy.
 
 ### CURRENT
 
@@ -55,10 +52,8 @@ unaccepted option; do not merge ThinkGraph/KnowGraph owners or silently change t
 - Builder is Card `builder`, display `Builder`, profile `builder`. Main reaches it through a
   direct saved flow; the Agent Builder application's lower terminal presents that same Card.
   It builds prompts, Cards, agent apps, UI pages and supporting code using explicit tools.
-- The owner authorized exact removal of `card_local_coder` and `card_61d994e5044b4e44`, their
-  old profiles and exclusively owned blocking records. This exception never authorizes deletion
-  of another Card or Run. Do not add a general history lifecycle for this one-time removal.
-- OpenClaude, the standalone LocalCoder runtime and Bun are outside the supported graph.
+- Do not delete saved Cards, Runs, profiles, or shared state without an explicit owner-authorized exact target.
+- Bun is outside the supported graph.
 - AutoGen 0.7.5 remains checked in at `autogen-main`; its upstream base is frozen.
 - Engraphis owns ThinkGraph, Graphiti owns KnowGraph, native CBM owns CodeGraph and AGE owns
   Card topology/Run observations. Preserve the accepted graph surfaces and data.
@@ -184,7 +179,7 @@ daemon/frontend, change global Codex configuration, or bypass LiquidAIty's appli
 
 Treat `Hermes/`, `worldsignal/`, `Kronos-main/`, and other explicitly
 vendored or imported runtimes as controlled upstream forks, not ordinary LiquidAIty cleanup targets.
-Before a nontrivial vendor edit, the active CoderPacket must record:
+Before a nontrivial vendor edit, the active ImplementationPacket must record:
 
 ```text
 VENDORED PROJECT
@@ -292,7 +287,7 @@ data, card topology, UI controls, tool grants, authentication, session behavior,
 - a test is deleted, weakened, skipped, or redefined to match a bug;
 - unrelated saved Cards are damaged while Builder changes;
 - a graph animation claims an operation that did not happen;
-- code scope expands opportunistically beyond the active CoderPacket.
+- code scope expands opportunistically beyond the active ImplementationPacket.
 
 Regression Ratio:
 
@@ -310,7 +305,7 @@ Required value: **0.000**.
 ### User interface
 
 React/TypeScript renders Main Chat, Agent Canvas, knowledge graphs, inspector, Kanban/profile surfaces,
-and Coder terminal. It may validate typed transport fields and render activity states. It may not
+and Builder terminal. It may validate typed transport fields and render activity states. It may not
 interpret task meaning, plan, classify intent, rank agents, merge graphs, or infer knowledge access.
 
 ### Backend
@@ -371,7 +366,6 @@ missions and chooses granted tools for files, terminal, research, prompts, Card 
 and application/UI construction. Card creation and configuration use explicit tool arguments,
 exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
 Saving a Card and invoking a Card remain separate actions. Builder has no Magentic-One edge.
-The future downloadable Local Coder is deferred; do not restore its retired Card or runtime.
 
 ### Magentic-One
 
@@ -579,10 +573,10 @@ validate structure and safety; it may not pretend to understand meaning.
 
 ## Active execution contract
 
-The active CoderPacket prompt is the complete current task and spec. Do not persist it as another task
+The active ImplementationPacket prompt is the complete current task and spec. Do not persist it as another task
 file.
 
-A CoderPacket contains:
+An ImplementationPacket contains:
 
 ```text
 requested outcome
@@ -594,7 +588,7 @@ Preservation Set
 proof commands
 stop conditions
 forbidden work
-expected CoderReport shape
+expected ImplementationReport shape
 ```
 
 Execution order:
@@ -612,7 +606,7 @@ Execution order:
 11. Report exact completion, gaps, and Regression Ratio.
 12. Stop; do not start the next job without instruction.
 
-### CoderReport
+### ImplementationReport
 
 Every meaningful implementation returns:
 
@@ -663,7 +657,7 @@ generators, or restrictions. No feature-manifest or automatic LLM wiki system is
 not inject every skill into every prompt. Do not create a skill merely because a task completed.
 
 A skill is promoted only when a lesson is reusable and proven through real work. Skills are not task
-nodes, raw history, CoderReports, or specs.
+nodes, raw history, ImplementationReports, or specs.
 
 ---
 

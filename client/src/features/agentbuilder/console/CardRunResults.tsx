@@ -9,7 +9,7 @@ export type TerminalRun = {
   error: string | null; terminal?: CardTerminalObservation | null; observationError?: string | null;
 };
 
-export function usesAdaptiveCardTerminal(kind: string | undefined, runtime: CardRuntime | undefined): boolean {
+export function usesCardRunResults(kind: string | undefined, runtime: CardRuntime | undefined): boolean {
   if (kind !== 'agent' || !runtime) return false;
   if (runtime.kind === 'autogen') return runtime.mode === 'assistant' || runtime.mode === 'magentic_one';
   return runtime.kind === 'hermes' && runtime.mode !== 'main';
@@ -131,7 +131,7 @@ export function RuntimeEventList({ events, taskId = null, main = false }: {
   </div>;
 }
 
-export default function AdaptiveCardTerminal(props: {
+export default function CardRunResults(props: {
   enabled: boolean; projectId: string; deckId: string; cardId: string; runtime: CardRuntime;
   run: TerminalRun | null; busy: boolean; onStop?: () => void; onRejoin?: () => void;
   children: ReactNode;
@@ -205,7 +205,7 @@ export default function AdaptiveCardTerminal(props: {
       if (selectionRef.current === selection) setHistoryError(error instanceof Error ? error.message : 'card_transcript_delete_failed');
     } finally { if (selectionRef.current === selection) setHistoryBusy(false); }
   };
-  return <section data-testid="adaptive-card-terminal" data-state={starting ? 'starting' : state}
+  return <section data-testid="card-run-results" data-state={starting ? 'starting' : state}
     data-run-id={runId} data-card-id={props.cardId}
     style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8,
       background: '#171C1D', color: '#D9E4E8', fontSize: 12 }}>
@@ -223,7 +223,7 @@ export default function AdaptiveCardTerminal(props: {
       ? 'This AutoGen adapter reports output at completion; live output is unavailable.'
       : terminal.unavailableReason}</div> : null}
     {active || showTranscript ? <>
-      {terminal?.nativeTasks ? <label>Task <select aria-label="Terminal task filter" value={selectedTaskId || ''}
+      {terminal?.nativeTasks ? <label>Task <select aria-label="Run task filter" value={selectedTaskId || ''}
         onChange={(event) => setSelectedTaskId(event.target.value || null)}>
         <option value="">All tasks</option>
         {terminal.nativeTasks.map((task) => <option key={String(task.id)} value={String(task.id)}>{String(task.title || task.id)}</option>)}

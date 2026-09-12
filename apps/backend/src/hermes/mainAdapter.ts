@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import {
   resolvePythonAgentMcpServerSpec,
 } from '../services/mcp/pythonAgentMcpClient';

@@ -32,7 +32,7 @@ export function resolveRepoRoot(): string {
  * into a PRODUCT conversation that never needed them. Main and Hermes drive the
  * project through MCP tools (Engraphis/Graphiti/CBM/canvas), not the
  * filesystem, so a neutral out-of-repo directory removes the memory walk with
- * zero capability loss. The Coder keeps its real repo root through
+ * zero capability loss. Builder uses its saved workspace and resolves the installation root through
  * resolveRepoRoot().
  *
  * Deliberately outside the repo tree (and stable) so no repo instruction file sits

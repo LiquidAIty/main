@@ -36,7 +36,7 @@ describe('Hermes child execution attribution', () => {
   it('creates concurrent native children on one Card without crossing Run identity', async () => {
     const parent = root();
     const request = vi.fn(persistRequestedRun);
-    const [coder, kanban] = await Promise.all([
+    const [delegate, kanban] = await Promise.all([
       createHermesChildExecutionContext({
         sessionId: 'acp-session-1',
         parentExecutionContextId: parent.contextId,
@@ -53,17 +53,17 @@ describe('Hermes child execution attribution', () => {
       }),
     ]);
 
-    expect(coder.runId).not.toBe(kanban.runId);
-    expect(coder.cardId).toBe('card_main_chat');
+    expect(delegate.runId).not.toBe(kanban.runId);
+    expect(delegate.cardId).toBe('card_main_chat');
     expect(kanban.cardId).toBe('card_main_chat');
-    expect(coder.grantedTools).toEqual(['canvas.inspect']);
+    expect(delegate.grantedTools).toEqual(['canvas.inspect']);
     expect(kanban.grantedTools).toEqual(['canvas.inspect']);
-    expect(coder.parentRunId).toBe('main-run');
+    expect(delegate.parentRunId).toBe('main-run');
     expect(kanban.parentRunId).toBe('main-run');
-    expect(executionToolCallMeta(coder.contextId)).toEqual({
-      'liquidaity/execution': coder.contextId,
+    expect(executionToolCallMeta(delegate.contextId)).toEqual({
+      'liquidaity/execution': delegate.contextId,
     });
-    expect(JSON.stringify(executionToolCallMeta(coder.contextId))).not.toMatch(/token|secret|credential/i);
+    expect(JSON.stringify(executionToolCallMeta(delegate.contextId))).not.toMatch(/token|secret|credential/i);
     expect(request).toHaveBeenCalledTimes(2);
     expect(JSON.parse(String(request.mock.calls[0][1]?.body))).toMatchObject({
       nativeChildId: 'sa-one',
@@ -72,24 +72,24 @@ describe('Hermes child execution attribution', () => {
     });
   });
 
-  it('keeps concurrent saved Coder root Runs isolated before their first MCP call', () => {
+  it('keeps concurrent saved Delegate root Runs isolated before their first MCP call', () => {
     const first = registerHermesRootExecutionContext({
-      sessionId: 'coder-session-one',
-      runId: 'coder-run-one',
+      sessionId: 'delegate-session-one',
+      runId: 'delegate-run-one',
       projectId: 'project-1',
       deckId: 'deck_builder',
-      conversationId: 'coder-conversation-one',
-      cardId: 'card_local_coder',
+      conversationId: 'delegate-conversation-one',
+      cardId: 'card_test_delegate',
       runtimeMode: 'delegate',
       grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
     });
     const second = registerHermesRootExecutionContext({
-      sessionId: 'coder-session-two',
-      runId: 'coder-run-two',
+      sessionId: 'delegate-session-two',
+      runId: 'delegate-run-two',
       projectId: 'project-1',
       deckId: 'deck_builder',
-      conversationId: 'coder-conversation-two',
-      cardId: 'card_local_coder',
+      conversationId: 'delegate-conversation-two',
+      cardId: 'card_test_delegate',
       runtimeMode: 'delegate',
       grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
     });
@@ -100,7 +100,7 @@ describe('Hermes child execution attribution', () => {
       deckId: 'deck_builder',
       conversationId,
       parentRunId: runId,
-      callerCardId: 'card_local_coder',
+      callerCardId: 'card_test_delegate',
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'delegate',
       grantedTools: ['cbm.get_code_snippet', 'cbm.search_graph'],
@@ -108,23 +108,23 @@ describe('Hermes child execution attribution', () => {
 
     expect(resolveHermesExecutionContext({
       contextId: first.contextId,
-      principal: principal('coder-run-one', 'coder-conversation-one'),
+      principal: principal('delegate-run-one', 'delegate-conversation-one'),
     })).toMatchObject({
-      runId: 'coder-run-one',
-      conversationId: 'coder-conversation-one',
-      cardId: 'card_local_coder',
+      runId: 'delegate-run-one',
+      conversationId: 'delegate-conversation-one',
+      cardId: 'card_test_delegate',
     });
     expect(resolveHermesExecutionContext({
       contextId: second.contextId,
-      principal: principal('coder-run-two', 'coder-conversation-two'),
+      principal: principal('delegate-run-two', 'delegate-conversation-two'),
     })).toMatchObject({
-      runId: 'coder-run-two',
-      conversationId: 'coder-conversation-two',
-      cardId: 'card_local_coder',
+      runId: 'delegate-run-two',
+      conversationId: 'delegate-conversation-two',
+      cardId: 'card_test_delegate',
     });
     expect(() => resolveHermesExecutionContext({
       contextId: first.contextId,
-      principal: principal('coder-run-two', 'coder-conversation-two'),
+      principal: principal('delegate-run-two', 'delegate-conversation-two'),
     })).toThrow('hermes_execution_context_principal_mismatch');
   });
 
@@ -166,10 +166,10 @@ describe('Hermes child execution attribution', () => {
   it('fails closed for forged principals and grant widening', async () => {
     const parent = root();
     const request = vi.fn(persistRequestedRun);
-    const coder = await createHermesChildExecutionContext({
+    const delegate = await createHermesChildExecutionContext({
       sessionId: 'acp-session-1',
       parentExecutionContextId: parent.contextId,
-      nativeChildId: 'sa-coder',
+      nativeChildId: 'sa-delegate',
       request,
     });
     const principal = {
@@ -184,21 +184,21 @@ describe('Hermes child execution attribution', () => {
       callerRuntimeMode: 'main',
       grantedTools: ['canvas.inspect'],
     };
-    expect(resolveHermesExecutionContext({ contextId: coder.contextId, principal }).runId)
-      .toBe(coder.runId);
+    expect(resolveHermesExecutionContext({ contextId: delegate.contextId, principal }).runId)
+      .toBe(delegate.runId);
     expect(() => resolveHermesExecutionContext({
-      contextId: coder.contextId,
+      contextId: delegate.contextId,
       principal: { ...principal, callerCardId: 'card_forged' },
     })).toThrow('hermes_execution_context_principal_mismatch');
     expect(() => resolveHermesExecutionContext({
-      contextId: coder.contextId,
+      contextId: delegate.contextId,
       principal: { ...principal, grantedTools: ['cbm.index_repository'] },
     })).toThrow('hermes_execution_context_principal_mismatch');
     expect(() => resolveHermesExecutionContext({
       contextId: 'unknown-context', principal,
     })).toThrow('hermes_execution_context_unknown');
     expect(() => resolveHermesExecutionContext({
-      contextId: coder.contextId, principal, now: coder.expiresAt + 1,
+      contextId: delegate.contextId, principal, now: delegate.expiresAt + 1,
     })).toThrow('hermes_execution_context_expired');
   });
 

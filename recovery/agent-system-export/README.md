@@ -36,7 +36,7 @@ a Git dependency, not an exported agent record.
 | --- | --- |
 | cards.json | Exact ten agent_cards rows, their current agent_card_revisions, deck_card_memberships and current card_capability_grants |
 | edges.json | Exact saved FLOW, MAGENTIC_OPTION and MAGENTIC_CONTROL edge properties and stable endpoint Card IDs |
-| project.json | Required project identity, exact deck row and seven saved prompt templates |
+| project.json | Required project identity, exact deck row and six saved prompt templates |
 | profiles/ | Nine profiles' reusable configuration, SOUL, existing profile metadata, selected local skills, Main Honcho config and Builder's existing no-bundled-skills marker |
 | manifest.json | Selection, source owners, per-profile source/export hashes, counts, exclusions, restore order and validation |
 | SHA256SUMS.txt | SHA-256 of every package file except the checksum list itself |

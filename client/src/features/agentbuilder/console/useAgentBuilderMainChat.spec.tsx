@@ -116,8 +116,8 @@ describe('Main chat live observation callbacks', () => {
       ready: true,
       persisted: false,
       started: false,
-      targetCardId: 'card_local_coder',
-      targetCardTitle: 'Coder',
+      targetCardId: 'card_test_delegate',
+      targetCardTitle: 'Delegate',
       sourceCardId: 'card_hermes_steward',
       mission: 'Review this mission.',
       dataAnchors: [],
@@ -133,7 +133,7 @@ describe('Main chat live observation callbacks', () => {
         },
       },
     })).toMatchObject({
-      targetCardId: 'card_local_coder',
+      targetCardId: 'card_test_delegate',
       dataAnchors: [],
       reviewContext: { resolvedNativeReads: [] },
     });
@@ -184,8 +184,8 @@ describe('Main chat live observation callbacks', () => {
     await act(async () => {
       resolveHistory({
         messages: [
-          { role: 'user', text: 'Run Coder.' },
-          { role: 'assistant', text: 'Coder completed.' },
+          { role: 'user', text: 'Run Delegate.' },
+          { role: 'assistant', text: 'Delegate completed.' },
         ],
         terminalEvents: [{
           projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', cardName: 'Main',
@@ -199,8 +199,8 @@ describe('Main chat live observation callbacks', () => {
 
     expect(result.current.sessionHistoryLoading).toBe(false);
     expect(result.current.messages).toEqual([
-      { role: 'user', text: 'Run Coder.' },
-      { role: 'assistant', text: 'Coder completed.' },
+      { role: 'user', text: 'Run Delegate.' },
+      { role: 'assistant', text: 'Delegate completed.' },
     ]);
     expect(result.current.technicalEvents).toEqual([
       expect.objectContaining({ id: 'run-history:tool:1', category: 'execution.tool' }),
@@ -307,7 +307,7 @@ describe('Main chat live observation callbacks', () => {
     ]);
   });
 
-  it('loads one staged Coder mission and exact model-bound graph projection', async () => {
+  it('loads one staged Delegate mission and exact model-bound graph projection', async () => {
     const onCardReviewStaged = vi.fn();
     const onCardGraphReferenceLoaded = vi.fn();
     mocks.streamSession.mockImplementation(async (args) => {
@@ -327,8 +327,8 @@ describe('Main chat live observation callbacks', () => {
                   text: JSON.stringify({
               ok: true,
               ready: true,
-              targetCardId: 'card_local_coder',
-              targetCardTitle: 'Coder',
+              targetCardId: 'card_test_delegate',
+              targetCardTitle: 'Delegate',
               sourceCardId: 'card_hermes_steward',
               mission: '  exact mission\nwith formatting  ',
               dataAnchors: [{
@@ -336,11 +336,11 @@ describe('Main chat live observation callbacks', () => {
                 priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
               }],
               reviewContext: {
-                cardRevisionId: 'revision-coder',
+                cardRevisionId: 'revision-delegate',
                 cardRevision: 1,
-                cardRevisionSha256: 'sha-coder',
+                cardRevisionSha256: 'sha-delegate',
                 runtimeOwner: 'hermes',
-                cardIdentity: { cardId: 'card_local_coder', title: 'Coder' },
+                cardIdentity: { cardId: 'card_test_delegate', title: 'Delegate' },
                 resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
                 resolvedGraphProjection: {
                   schemaVersion: 'native-card-context.v1', authority: 'codegraph',
@@ -406,7 +406,7 @@ describe('Main chat live observation callbacks', () => {
 
     expect(onCardReviewStaged).toHaveBeenCalledOnce();
     expect(onCardReviewStaged).toHaveBeenCalledWith(expect.objectContaining({
-      targetCardId: 'card_local_coder',
+      targetCardId: 'card_test_delegate',
       sourceCardId: 'card_hermes_steward',
       mission: '  exact mission\nwith formatting  ',
       dataAnchors: [expect.objectContaining({ nativeId: 'symbol:one', required: true })],

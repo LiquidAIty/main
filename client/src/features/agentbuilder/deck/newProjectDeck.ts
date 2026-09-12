@@ -90,7 +90,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'A normal handoff executes immediately through the receiving Card run path. When the user asks to review first, use the existing Card CLI input and Context editors, then submit the same Card run path once after approval.',
       'Use the helper first when a Builder assignment needs research or graph grounding, then either let it run the grounded Builder handoff or ask it to stage one exact mission and graph selection for review.',
       'Use the same rule for Mag One: automatic handoff normally executes; optional review remains in the existing Mag One Card editor before one explicit run.',
-      'Invoke Builder for bounded code work as needed and require a real CoderReport.',
+      'Invoke Builder for bounded code work as needed and require an implementation report.',
       'The runtime supplies trusted saved-card and run identity. Never invent a card result, graph write, source, code change, or tool execution.',
       '',
       'Start Magentic-One only when the current user-directed mission calls for it. Normal handoff executes immediately; use the existing Card editor first only when the user requests review. The saved bus topology supplies workers; never invent a roster.',

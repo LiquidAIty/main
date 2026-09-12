@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 import {
   requestHermesExtension,
 } from '../hermes/mainAdapter';

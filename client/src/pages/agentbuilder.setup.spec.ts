@@ -41,10 +41,10 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 }
 
 describe('agentbuilder authoring flow', () => {
-  it('does not manufacture Coder authority from a Card id or template', () => {
+  it('does not manufacture Delegate authority from a Card id or template', () => {
     const deck = createDeck([
-      createCard('card_local_coder', { kind: 'autogen', mode: 'assistant' }, {
-        templateId: 'template_local_coder',
+      createCard('card_test_delegate', { kind: 'autogen', mode: 'assistant' }, {
+        templateId: 'template_assist',
         runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
       }),
     ]);
@@ -83,7 +83,6 @@ describe('agentbuilder authoring flow', () => {
         'cbm.search_code', 'cbm.query_graph'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
-    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_local_coder')).toBe(false);
     expect(INITIAL_DECK.nodes.some(node => node.id === 'card_agent_builder')).toBe(false);
   });
 

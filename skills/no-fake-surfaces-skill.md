@@ -3,7 +3,7 @@
 @skill id=no-fake-surfaces
 @type Skill
 @status active
-@related_to coder-report-protocol
+@related_to implementation-report-protocol
 
 Use when changing a visible graph, inspector, execution state, or testing a claimed result.
 Recovered from `2ddadeeb^` and refreshed September 9, 2026.

@@ -9,7 +9,7 @@ import {
   startHermesHostTeamMonitor,
 } from '../hermes/hostExecutionLifecycle';
 import { runHermesProfileDelegation } from '../hermes/profileDelegation';
-import { coderTerminalSessionManager } from '../hermes/coderTerminal';
+import { builderTerminalSessionManager } from '../hermes/builderTerminal';
 import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { cancelHermesRun } from '../hermes/mainAdapter';
 
@@ -139,9 +139,9 @@ router.post('/profile-run', async (req, res) => {
     }
     if (action === 'stop' && ['pending', 'running'].includes(child.state)) {
       if (child.runtimeKind !== 'hermes') throw new Error('profile_run_runtime_unsupported');
-      const terminal = coderTerminalSessionManager.list()
+      const terminal = builderTerminalSessionManager.list()
         .find((item) => item.ownerCardId === child.cardId && item.projectId === projectId && item.deckId === deckId);
-      const session = terminal ? coderTerminalSessionManager.get(terminal.id) : null;
+      const session = terminal ? builderTerminalSessionManager.get(terminal.id) : null;
       if (session && session.delivery && session.delivery.bridge.status().runId === runId) {
         session.delivery.bridge.requestCancel(runId);
         session.write('\x03');
@@ -185,7 +185,7 @@ return router;
 }
 
 export const builderCliRoutes = nativeCliRoutes((req) => {
-  const session = coderTerminalSessionManager.get(String(req.params.sessionId || ''));
+  const session = builderTerminalSessionManager.get(String(req.params.sessionId || ''));
   return session?.isLive() && session.delivery ? { ...session.delivery, ownerCardId: session.info.ownerCardId } : null;
 });
 

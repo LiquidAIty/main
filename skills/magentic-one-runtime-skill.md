@@ -12,7 +12,7 @@ Use this procedure only for the real Python-rails `MagenticOneGroupChat` boundar
 6. Task and Progress Ledgers remain private AutoGen state.
 7. No TypeScript participant classifier, hidden provider substitution, copied ledger, or fallback team.
 8. A Hermes-backed Card is a Mag One worker only when its current saved `magentic_option` edge makes it
-   eligible. Read the current saved roster; the retired Local Coder is not a current worker requirement.
+   eligible. Read the current saved roster; no retired Card is a current worker requirement.
    No title, profile, or prompt implies membership.
 9. Supply all eligible connected Cards. Do not add per-Run worker subsets, Main-selected speakers,
    candidate intersections, or manual worker sequences. An unused participant is not a failed member.

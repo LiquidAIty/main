@@ -53,12 +53,6 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names).not.toContain('knowgraph.ingest');
     expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('codegraph.status');
-    expect(names).not.toContain('coder.inspect');
-    expect(names).not.toContain('coder.effective_tools');
-    expect(names).not.toContain('coder.account');
-    expect(names).not.toContain('coder.stop');
-    expect(names).not.toContain('coder.steer');
-    expect(names).not.toContain('coder.status');
   // A cold host initializes two native catalogs; slower backup/development
   // machines can cross 30s even when the real catalog completes successfully.
   }, 60_000);

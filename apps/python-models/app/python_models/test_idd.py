@@ -16,7 +16,15 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert {"types", "objects", "templates", "relationships", "operations"}.issubset(dictionary)
     assert {"records", "catalogs", "models", "editorFields", "islands", "toolGroups"}.isdisjoint(dictionary)
     assert dictionary["types"]["GraphReference"]["source"].endswith(".NativeReference")
-    assert template_objects(dictionary, "template_local_coder") == template_objects(dictionary, "template_assist")
+    assert dictionary["cardEditor"]["tabs"] == ["Results", "Prompt", "Runtime", "Memory", "Tools"]
+    assert set(dictionary["templates"]) == {
+        "template_assist",
+        "template_main_chat",
+        "template_hermes_steward",
+        "template_magentic",
+        "template_worldsignals_agent",
+        "template_trading_workbench",
+    }
 
 
 def test_markdown_and_sql_are_data_not_a_second_island_language() -> None:
@@ -46,7 +54,7 @@ def test_unknown_future_objects_remain_absent_until_declared() -> None:
 def test_runtime_errors_remain_at_the_executable_contract() -> None:
     secret = "sk-secret-that-must-never-appear"
     with pytest.raises(ValidationError):
-        HermesRuntime.model_validate({"kind": "hermes", "mode": secret, "profile": "coder"})
+        HermesRuntime.model_validate({"kind": "hermes", "mode": secret, "profile": "helper"})
     with pytest.raises(IddValidationError) as error:
         saved_script({"enabled": secret, "source": secret})
     assert str(error.value) == "card_script_configuration_invalid"

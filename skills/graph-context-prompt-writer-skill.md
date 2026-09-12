@@ -16,7 +16,7 @@ from `2ddadeeb^` and refreshed September 9, 2026.
 3. Carry native IDs, necessary bounded content, provenance, uncertainty and retrieval capability.
    Preserve the distinction between task data and stable receiving-Card instructions.
 4. For coding, include requirements, affected scope, source anchors, proof and stop conditions
-   in the active CoderPacket. Existing authorization governs execution; no new review gate.
+   in the active ImplementationPacket. Existing authorization governs execution; no new review gate.
 5. The receiving Card owns its saved prompt, model and grants. Python
    `apps/python-models/app/python_models/idf.py::materialize_idf` owns the one runtime input.
 

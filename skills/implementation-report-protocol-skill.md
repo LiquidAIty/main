@@ -1,6 +1,6 @@
-# CoderReport Protocol
+# ImplementationReport Protocol
 
-@skill id=coder-report-protocol
+@skill id=implementation-report-protocol
 @type Skill
 @status active
 

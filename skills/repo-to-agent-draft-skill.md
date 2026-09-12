@@ -84,7 +84,7 @@ Before changing product or vendor source:
 
 ## Intake Record
 
-Keep this evidence in the active CoderReport. Create a persistent `repo-intake/*.md` record only when the
+Keep this evidence in the active ImplementationReport. Create a persistent `repo-intake/*.md` record only when the
 user explicitly requires one.
 
 ```text
@@ -239,7 +239,7 @@ Stop and return a decision request or honest blocker when:
 
 ## Required Report Additions
 
-Add these fields to the normal CoderReport:
+Add these fields to the normal ImplementationReport:
 
 ```text
 intake verdict: extract | attach | controlled fork | saved Card | reject
@@ -266,7 +266,7 @@ Keep this skill `draft` until one real repository intake uses it end to end and 
 - one useful retained capability;
 - rejected source and paths removed;
 - direct proof plus the applicable Card, Mag One, graph, and rejoin proofs;
-- a reviewed CoderReport showing Regression Ratio `0.000`.
+- a reviewed ImplementationReport showing Regression Ratio `0.000`.
 
 Promote only the lessons supported by that run. Do not turn one project's incidental quirks into global
 rules.

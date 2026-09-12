@@ -282,7 +282,7 @@ The connected application MCP keeps one native frontend warm; the upstream host 
 watcher and embedded UI. Neither lifecycle depends on Hermes.
 
 Use one doorway per run: LiquidAIty's application-published `cbm.*` federation. It mechanically preserves
-native schemas and uses one persistent native child. A Coder never substitutes a direct native connection,
+native schemas and uses one persistent native child. An implementation worker never substitutes a direct native connection,
 host CLI, or alternate facade. If the application doorway is unavailable, record the boundary as unproven and
 use verified direct-source fallback.
 
@@ -316,9 +316,9 @@ The model still chooses semantically within that corridor.
 
 | Role or owner | Exposed by default | Introduced only by a named recipe | Application or administrative boundary |
 |---|---|---|---|
-| Main / GPT planner | `search_graph`, `get_architecture`, `trace_path` | An explicit architecture/Cypher recipe may add `get_graph_schema` and bounded `query_graph`; source-level reading remains a Coder responsibility | Ordinary lifecycle and project-state tools stay absent |
-| Coder | `search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`, `detect_changes` | `search_code` for literals/config/JSX/coverage gaps; `query_graph` for a bounded multi-hop question; `get_architecture` for orientation; `get_graph_schema` before custom Cypher | The upstream watcher owns normal refresh; the active Coder does not index |
-| Explicit diagnostics / administration | None | `list_projects`, `index_status`, and read-safe `manage_adr(get|sections)` only in a named diagnostic or architecture recipe | `manage_adr(update)` requires an explicit durable architecture decision; these tools do not occupy normal Main/Coder context |
+| Main / GPT planner | `search_graph`, `get_architecture`, `trace_path` | An explicit architecture/Cypher recipe may add `get_graph_schema` and bounded `query_graph`; source-level reading remains an implementation-worker responsibility | Ordinary lifecycle and project-state tools stay absent |
+| Implementation worker | `search_graph`, `trace_path`, `get_code_snippet`, `check_index_coverage`, `detect_changes` | `search_code` for literals/config/JSX/coverage gaps; `query_graph` for a bounded multi-hop question; `get_architecture` for orientation; `get_graph_schema` before custom Cypher | The upstream watcher owns normal refresh; the active implementation worker does not index |
+| Explicit diagnostics / administration | None | `list_projects`, `index_status`, and read-safe `manage_adr(get|sections)` only in a named diagnostic or architecture recipe | `manage_adr(update)` requires an explicit durable architecture decision; these tools do not occupy normal Main/implementation-worker context |
 | Runtime observation / maintenance | None | None | `ingest_traces` requires real approved runtime trace evidence; initial `index_repository` is an explicit application-MCP administrative action; both are unavailable to ordinary discovery models |
 | Destructive recovery | None | None | `delete_project` is destructive and unavailable without explicit owner authorization for an exact verified maintenance target |
 
@@ -342,7 +342,7 @@ wrapper name when an authority's live schema differs.
 ### CodeGraph — Main / GPT planner
 
 - **Graph authority:** native Codebase Memory MCP; the CBM indexer is the sole writer.
-- **Role:** establish repository direction and send Coder exact qualified names, paths, relationships, project
+- **Role:** establish repository direction and send an implementation worker exact qualified names, paths, relationships, project
   identity, revision/freshness context, and provenance.
 - **Trigger:** the request concerns code ownership, architecture, dependencies, impact, or a bounded coding
   handoff.
@@ -359,7 +359,7 @@ wrapper name when an authority's live schema differs.
 - **Forbidden mutation:** no lifecycle tools, trace ingestion, project deletion, fabricated symbol, copied
   subgraph, source-level wandering, or claim that graph orientation is runtime proof.
 
-### CodeGraph — Coder
+### CodeGraph — Implementation worker
 
 - **Graph authority:** native Codebase Memory MCP; current source and tests remain authoritative when they
   disagree with the derived projection.
@@ -444,7 +444,7 @@ search_graph(user outcome, supplied graph anchors, and likely subsystem)
 Proof: current implementation owner, callers/consumers when material, and affected tests are identified.
 ```
 
-### Main or IDF actual graph data to Coder validation
+### Main or IDF actual graph data to implementation validation
 
 ```text
 retain supplied native IDs, qualified symbols, paths, project/revision, and provenance
@@ -689,4 +689,4 @@ After edit:
 ## Query Records
 
 @query id=codebasedmemory.current-code "search_graph, useful trace_path, returned-name get_code_snippet, bounded optional graph tools, complete source, and focused residue proof"
-@query id=codebasedmemory.skill-match "retrieve skills using user intent, active CoderPacket, fresh CBM files and symbols, subsystem boundaries, and required proof"
+@query id=codebasedmemory.skill-match "retrieve skills using user intent, active ImplementationPacket, fresh CBM files and symbols, subsystem boundaries, and required proof"

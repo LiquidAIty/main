@@ -1,9 +1,10 @@
 import { Router, type Request, type Response } from 'express';
+import { mainChatProcess } from '../hermes/mainChatProcess';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import {
-  coderTerminalSessionManager,
+  builderTerminalSessionManager,
   ensureSavedBuilderTerminal,
-} from '../hermes/coderTerminal';
+} from '../hermes/builderTerminal';
 import {
   contextAuthorityModeForDriver,
   mainCliBridge,
@@ -29,7 +30,7 @@ import {
 import { readSavedSubagentModel } from '../hermes/subagentModel';
 import { buildCardTerminal, projectKanbanTerminal, terminalHistoryEvents, terminalIdentity, terminalText } from '../hermes/cardTerminal';
 import { projectMainRuntimeEvent } from '../hermes/mainProjection';
-import { resolveRepoRoot } from '../coder/workspaceRoot';
+import { resolveRepoRoot } from '../services/workspaceRoot';
 import { listConversations } from '../conversations/store';
 import { getProjectCard } from '../services/agentBuilderStore';
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
@@ -1032,7 +1033,7 @@ router.post('/run', async (req, res) => {
       if (prepared.runtimeOwner === 'hermes'
         && prepared.hermesTransport?.request?.runtime?.profile === BUILDER_PROFILE) {
         const info = await ensureSavedBuilderTerminal({ projectId, deckId, cardId });
-        const session = coderTerminalSessionManager.get(info.id);
+        const session = builderTerminalSessionManager.get(info.id);
         if (!session?.delivery) throw new Error('builder_cli_delivery_unavailable');
         const readyDeadline = Date.now() + 15_000;
         while (!session.delivery.bridge.ready() && session.isLive() && Date.now() < readyDeadline) {
@@ -1212,7 +1213,7 @@ router.post('/run', async (req, res) => {
 
 // ── Persistent repo-owned Hermes Main bridge (BuilderChat -> ACP) ───────────
 // One stable native Hermes conversation per saved Main card and product
-// conversation. The saved Coder Card remains a separate Hermes profile.
+// conversation. The saved Builder Agent remains a separate Hermes profile.
 
 type NativeAttentionEvent = {
   eventId: string;
@@ -1560,13 +1561,7 @@ mainRoutes.post('/session/stop', async (req, res) => {
   if (!mainCliBridge.requestCancel(expectedRunId)) {
     return res.status(404).json({ ok: false, error: 'no_active_turn' });
   }
-  const mainTerminal = coderTerminalSessionManager.list().find((session) => (
-    session.ownerCardId === 'card_main_chat'
-    && session.runtimeSource === 'repository_hermes_cli'
-    && ['starting', 'running'].includes(session.state)
-  ));
-  const session = mainTerminal ? coderTerminalSessionManager.get(mainTerminal.id) : undefined;
-  if (!session?.write('\x03')) {
+  if (!mainChatProcess.interrupt()) {
     return res.status(503).json({ ok: false, error: 'main_cli_stop_unavailable' });
   }
   return res.status(202).json({ ok: true, runId: expectedRunId, state: 'stopping' });
@@ -1641,11 +1636,11 @@ mainRoutes.get('/session/conversations', async (req, res) => {
 });
 
 // ── Repository Hermes control center ───────────────────────────────────────
-// xterm forwards bytes to and from the startup-owned Hermes Coder ConPTY.
+// xterm forwards bytes to and from the startup-owned Builder Hermes ConPTY.
 // Opening or closing the dock never owns this process lifecycle.
 function mountConsoleSessionRoutes(
   prefix: string,
-  manager: typeof coderTerminalSessionManager,
+  manager: typeof builderTerminalSessionManager,
 ): void {
   hermesRoutes.get(`${prefix}/sessions`, (_req, res) => {
     return res.json({ ok: true, sessions: manager.list() });
@@ -1661,7 +1656,7 @@ function mountConsoleSessionRoutes(
     const session = manager.get(req.params.id);
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     if (!session.isLive()) {
-      return res.status(409).json({ ok: false, error: 'hermes_coder_terminal_not_running' });
+      return res.status(409).json({ ok: false, error: 'hermes_builder_terminal_not_running' });
     }
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
@@ -1696,13 +1691,13 @@ function mountConsoleSessionRoutes(
     if (!session) return res.status(404).json({ ok: false, error: 'console_session_not_found' });
     const data = typeof req.body?.data === 'string' ? req.body.data : '';
     if (!data || data.length > 65_536) {
-      return res.status(400).json({ ok: false, error: 'coder_terminal_data_required' });
+      return res.status(400).json({ ok: false, error: 'builder_terminal_data_required' });
     }
     const delivered = session.write(data);
     return res.status(delivered ? 200 : 409).json({
       ok: delivered,
       delivered,
-      ...(delivered ? {} : { error: 'hermes_coder_terminal_not_running' }),
+      ...(delivered ? {} : { error: 'hermes_builder_terminal_not_running' }),
     });
   });
 
@@ -1713,13 +1708,13 @@ function mountConsoleSessionRoutes(
     return res.status(resized ? 200 : 409).json({
       ok: resized,
       resized,
-      ...(resized ? {} : { error: 'hermes_coder_terminal_resize_rejected' }),
+      ...(resized ? {} : { error: 'hermes_builder_terminal_resize_rejected' }),
     });
   });
 
 }
 
-mountConsoleSessionRoutes('/terminal', coderTerminalSessionManager);
+mountConsoleSessionRoutes('/terminal', builderTerminalSessionManager);
 
 hermesRoutes.post('/terminal/sessions', async (req, res) => {
   try {

@@ -77,7 +77,7 @@ describe('AgentCardNode shared Card geometry', () => {
       <AgentCardNode
         data={{
           ...baseCard,
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
           activeAgentCount: 1,
           isRuntimeActive: true,
         }}
@@ -92,7 +92,7 @@ describe('AgentCardNode shared Card geometry', () => {
       <AgentCardNode
         data={{
           ...baseCard,
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
           activeAgentCount: 0,
           isRuntimeActive: false,
         }}
@@ -107,7 +107,7 @@ describe('AgentCardNode shared Card geometry', () => {
       <AgentCardNode
         data={{
           ...baseCard,
-          runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
         }}
       />,
     );

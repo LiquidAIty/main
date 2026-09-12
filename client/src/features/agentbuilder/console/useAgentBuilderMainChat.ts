@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { reconcileTerminalEvents, type CardTerminalEvent } from './AdaptiveCardTerminal';
+import { reconcileTerminalEvents, type CardTerminalEvent } from './CardRunResults';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';

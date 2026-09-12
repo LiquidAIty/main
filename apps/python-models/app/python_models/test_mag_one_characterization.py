@@ -86,11 +86,11 @@ class _RecordingAgent(BaseChatAgent):
 
 async def _case_initial_task_ledger_progress_selection_completion_and_state_roundtrip() -> None:
     researcher = _RecordingAgent("researcher")
-    coder = _RecordingAgent("coder")
+    helper = _RecordingAgent("helper")
     client = ReplayChatCompletionClient(
         chat_completions=[
             "GIVEN FACTS\nASSUMPTIONS: network is unavailable",
-            "PLAN: researcher inspects, coder remains idle",
+            "PLAN: researcher inspects, helper remains idle",
             _progress(
                 satisfied=False,
                 progress=True,
@@ -108,7 +108,7 @@ async def _case_initial_task_ledger_progress_selection_completion_and_state_roun
             "final characterized answer",
         ]
     )
-    team = MagenticOneGroupChat([researcher, coder], model_client=client)
+    team = MagenticOneGroupChat([researcher, helper], model_client=client)
 
     result = await team.run(task="characterize the ledger")
     state = await team.save_state()
@@ -122,14 +122,14 @@ async def _case_initial_task_ledger_progress_selection_completion_and_state_roun
     assert len(ledger_messages) == 1
     assert "GIVEN FACTS" in ledger_messages[0]
     assert "ASSUMPTIONS: network is unavailable" in ledger_messages[0]
-    assert "PLAN: researcher inspects, coder remains idle" in ledger_messages[0]
+    assert "PLAN: researcher inspects, helper remains idle" in ledger_messages[0]
     assert researcher.calls == ["Inspect the bounded evidence"]
-    assert coder.calls == []
+    assert helper.calls == []
     assert result.stop_reason == "characterized"
     assert result.messages[-1].to_text() == "final characterized answer"
 
     restored = MagenticOneGroupChat(
-        [_RecordingAgent("researcher"), _RecordingAgent("coder")],
+        [_RecordingAgent("researcher"), _RecordingAgent("helper")],
         model_client=ReplayChatCompletionClient(chat_completions=[]),
     )
     await restored.load_state(state)

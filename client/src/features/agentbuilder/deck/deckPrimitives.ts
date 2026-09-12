@@ -39,7 +39,7 @@ export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions[
 // Shared non-administrative CodeGraph corridor for repository-owning Cards.
 // Indexing, trace ingestion, ADR mutation, and project deletion stay outside
 // ordinary Card grants.
-export const CODEBASE_MEMORY_CODER_TOOLS = [
+export const CODEBASE_MEMORY_TOOLS = [
   'cbm.search_graph',
   'cbm.trace_path',
   'cbm.get_code_snippet',
@@ -51,7 +51,7 @@ export const AGENT_BUILDER_CONTROLLER_TOOLS = [
   'canvas.inspect',
   'card.create',
   'card.update_configuration',
-  ...CODEBASE_MEMORY_CODER_TOOLS,
+  ...CODEBASE_MEMORY_TOOLS,
   'cbm.search_code',
   'cbm.query_graph',
 ] as const;

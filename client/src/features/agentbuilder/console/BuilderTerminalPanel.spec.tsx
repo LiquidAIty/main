@@ -4,12 +4,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import CoderTerminalPanel from './CoderTerminalPanel';
+import BuilderTerminalPanel from './BuilderTerminalPanel';
 import HarnessChatPanel from './HarnessChatPanel';
 import type {
-  CoderTerminalClient,
+  BuilderTerminalClient,
   ConsoleSessionInfo,
-} from './coderTerminalClient';
+} from './builderTerminalClient';
 
 const xtermProps = vi.hoisted(() => ({
   current: null as Record<string, any> | null,
@@ -24,7 +24,7 @@ vi.mock('./XtermView', async () => {
       xtermProps.current = props;
       return react.createElement(
         'div',
-        { 'data-testid': 'coder-terminal-xterm' },
+        { 'data-testid': 'builder-terminal-xterm' },
         props.launchError || '',
       );
     },
@@ -35,7 +35,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function session(state: ConsoleSessionInfo['state'] = 'running'): ConsoleSessionInfo {
   return {
-    id: 'coder-terminal-1',
+    id: 'builder-terminal-1',
     ownerCardId: 'builder',
     projectId: 'project-1',
     deckId: 'deck_builder',
@@ -58,7 +58,7 @@ function session(state: ConsoleSessionInfo['state'] = 'running'): ConsoleSession
   };
 }
 
-function client(overrides: Partial<CoderTerminalClient> = {}): CoderTerminalClient {
+function client(overrides: Partial<BuilderTerminalClient> = {}): BuilderTerminalClient {
   return {
     listSessions: vi.fn(async () => []),
     getSession: vi.fn(async () => null),
@@ -88,7 +88,7 @@ async function render(element: React.ReactNode) {
   await act(async () => root?.render(element));
 }
 
-describe('CoderTerminalPanel', () => {
+describe('BuilderTerminalPanel', () => {
   it('reattaches a stopped pane only to an already-running session with the same saved identity', async () => {
     const stopped = { ...session(), state: 'stopped' as const, pid: null };
     const replacement = { ...session(), id: 'replacement-session' };
@@ -102,8 +102,8 @@ describe('CoderTerminalPanel', () => {
       ]),
       ensureSession: vi.fn(),
     });
-    await render(<CoderTerminalPanel open client={terminalClient} initialSession={stopped} />);
-    expect(host!.querySelector('[data-testid="coder-terminal-panel"]')?.getAttribute('data-session-id'))
+    await render(<BuilderTerminalPanel open client={terminalClient} initialSession={stopped} />);
+    expect(host!.querySelector('[data-testid="builder-terminal-panel"]')?.getAttribute('data-session-id'))
       .toBe(replacement.id);
     expect(xtermProps.current?.interactive).toBe(true);
     await act(async () => { await xtermProps.current?.onData('input'); });
@@ -117,14 +117,14 @@ describe('CoderTerminalPanel', () => {
     const nativeSession = { ...session(), ownerCardId: savedCard.cardId, profile: savedCard.profile };
     const terminalClient = client({ ensureSession: vi.fn(async () => nativeSession) });
     await render(<HarnessChatPanel chat={<div data-testid="main-input">Main</div>}
-      terminal={({ directInput }) => <CoderTerminalPanel open ownerCardId={savedCard.cardId}
+      terminal={({ directInput }) => <BuilderTerminalPanel open ownerCardId={savedCard.cardId}
         savedCard={savedCard} client={terminalClient} readOnly={!directInput} />} />);
     expect(terminalClient.ensureSession).toHaveBeenCalledOnce();
     expect(terminalClient.listSessions).not.toHaveBeenCalled();
     expect(xtermProps.current?.interactive).toBe(false);
     await act(async () => { await xtermProps.current?.onData('blocked'); });
     expect(terminalClient.sendInput).not.toHaveBeenCalled();
-    const panel = host!.querySelector('[data-testid="coder-terminal-panel"]');
+    const panel = host!.querySelector('[data-testid="builder-terminal-panel"]');
     expect(panel?.getAttribute('data-session-id')).toBe(nativeSession.id);
     const divider = host!.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     const surface = host!.querySelector('[data-testid="main-work-surface"]') as HTMLDivElement;
@@ -136,7 +136,7 @@ describe('CoderTerminalPanel', () => {
     expect(terminalClient.sendInput).toHaveBeenCalledExactlyOnceWith(nativeSession.id, 'native input');
     await act(async () => divider.click());
     expect(host!.querySelector('[data-testid="main-input"]')).not.toBeNull();
-    expect(host!.querySelector('[data-testid="coder-terminal-panel"]')).toBe(panel);
+    expect(host!.querySelector('[data-testid="builder-terminal-panel"]')).toBe(panel);
     expect(xtermProps.current?.interactive).toBe(false);
     expect(terminalClient.ensureSession).toHaveBeenCalledOnce();
   });
@@ -144,7 +144,7 @@ describe('CoderTerminalPanel', () => {
   it('shows an error when the acquired terminal belongs to another profile', async () => {
     const savedCard = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'saved-builder',
       profile: 'builder' };
-    await render(<CoderTerminalPanel open ownerCardId={savedCard.cardId} savedCard={savedCard}
+    await render(<BuilderTerminalPanel open ownerCardId={savedCard.cardId} savedCard={savedCard}
       client={client({ ensureSession: vi.fn(async () => ({ ...session(), ownerCardId: savedCard.cardId, profile: 'foreign' })) })} />);
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
     expect(xtermProps.current).toBeNull();
@@ -153,193 +153,124 @@ describe('CoderTerminalPanel', () => {
   it('attaches only to the startup-owned terminal without lifecycle controls', async () => {
     const terminalClient = client({ listSessions: vi.fn(async () => [session()]) });
     await render(
-      <CoderTerminalPanel
+      <BuilderTerminalPanel
         open
         client={terminalClient}
       />,
     );
     await act(async () => Promise.resolve());
     expect(terminalClient.listSessions).toHaveBeenCalledOnce();
-    expect(host?.querySelector('[data-testid="coder-terminal-status"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).not.toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
-  });
-
-  it('keeps Main attached and idle without exposing another PTY composer', async () => {
-    const terminalClient = client({ listSessions: vi.fn(async () => [
-      { ...session(), ownerCardId: 'card_main_chat', profile: 'liquidaity-main' },
-    ]) });
-    await render(
-      <CoderTerminalPanel
-        open
-        client={terminalClient}
-        ownerCardId="card_main_chat"
-        testIdPrefix="main-cli"
-        title="Main CLI Terminal"
-        readOnly
-        activityState="idle"
-      />,
-    );
-    await act(async () => Promise.resolve());
-
-    expect(terminalClient.listSessions).toHaveBeenCalledOnce();
-    expect(host?.querySelector('[data-testid="main-cli-connection-status"]')?.textContent).toBe('Ready · idle');
-    expect(xtermProps.current?.interactive).toBe(false);
-    expect(xtermProps.current?.connectOutput).toBeTypeOf('function');
-  });
-
-  it('renders only Main execution projections and never subscribes to raw PTY output', async () => {
-    const live = { ...session(), ownerCardId: 'card_main_chat', profile: 'liquidaity-main' };
-    const terminalClient = client({ listSessions: vi.fn(async () => [live]) });
-    const base = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
-      cardName: 'Main Chat', runId: 'run-1', parentRunId: null, nativeChildId: null,
-      schemaVersion: 'liquidaity.main.projection.v1' as const, nativeTurnId: 'turn-1' };
-    await render(<CoderTerminalPanel open client={terminalClient} ownerCardId="card_main_chat"
-      testIdPrefix="main-cli" title="Main CLI Terminal" readOnly activityState="running"
-      semanticEvents={[
-        { ...base, id: 'answer-1', category: 'conversation.answer', kind: 'model',
-          sequence: 1, timestamp: null, text: 'Do not render this final answer.' },
-        { ...base, id: 'tool-1', category: 'execution.tool', kind: 'tool_call',
-          sequence: 2, timestamp: null, toolName: 'main.context', status: 'started', detail: 'read-only context' },
-        { ...base, id: 'progress-1', category: 'execution.progress', kind: 'task',
-          sequence: 3, timestamp: null, text: 'Visible execution progress' },
-      ]} />);
-    await act(async () => Promise.resolve());
-
-    expect(host?.querySelector('[data-testid="main-cli-semantic-output"]')?.getAttribute('data-session-id'))
-      .toBe(live.id);
-    expect(host?.textContent).toContain('main.context');
-    expect(host?.textContent).toContain('Visible execution progress');
-    expect(host?.textContent).not.toContain('Do not render this final answer.');
-    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')).toBeNull();
-    expect(terminalClient.streamOutput).not.toHaveBeenCalled();
-    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-testid="builder-terminal-status"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-xterm"]')).not.toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
   });
 
   it('reports a missing startup-owned terminal without trying to create one from the UI', async () => {
     const terminalClient = client();
-    await render(<CoderTerminalPanel open client={terminalClient} />);
+    await render(<BuilderTerminalPanel open client={terminalClient} />);
     await act(async () => Promise.resolve());
     expect(terminalClient.listSessions).toHaveBeenCalledOnce();
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe('Terminal connection failed.');
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
   });
 
   it('reattaches to the same already-live repository Hermes process without replay', async () => {
     const live = session();
     const terminalClient = client({ listSessions: vi.fn(async () => [live]) });
     await render(
-      <CoderTerminalPanel
+      <BuilderTerminalPanel
         open
         client={terminalClient}
       />,
     );
     await act(async () => Promise.resolve());
     expect(terminalClient.listSessions).toHaveBeenCalledOnce();
-    expect(host?.querySelector('[data-testid="coder-terminal-process"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-process"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
   });
 
   it('does not expose the removed shell, root, transport, or transcript controls', async () => {
     await render(
-      <CoderTerminalPanel
+      <BuilderTerminalPanel
         open
         client={client()}
         initialSession={session()}
       />,
     );
-    expect(host?.textContent).not.toContain('Coder');
     expect(host?.textContent).not.toContain('Ready');
     expect(host?.textContent).not.toContain('Local process');
     expect(host?.textContent).not.toContain('transport:');
     expect(host?.textContent).not.toContain('root:');
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-transcript"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-input"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-transcript"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-input"]')).toBeNull();
     expect(host?.textContent).not.toContain('Hermes/venv/Scripts/hermes.exe');
     expect(host?.textContent).not.toContain('PID 42');
   });
 
   it('never exposes Start or Stop while the real Hermes process is active', async () => {
     await render(
-      <CoderTerminalPanel open client={client()} initialSession={session('running')} />,
+      <BuilderTerminalPanel open client={client()} initialSession={session('running')} />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
   });
 
   it('coalesces valid live resizes and never resizes a stopped session', async () => {
     const resize = vi.fn(async () => true);
     const terminalClient = client({ resize });
     await render(
-      <CoderTerminalPanel open client={terminalClient} initialSession={session('running')} />,
+      <BuilderTerminalPanel open client={terminalClient} initialSession={session('running')} />,
     );
     await act(async () => {
       await xtermProps.current?.onResize?.(120, 30);
       await xtermProps.current?.onResize?.(120, 30);
     });
     expect(resize).toHaveBeenCalledOnce();
-    expect(resize).toHaveBeenCalledWith('coder-terminal-1', 120, 30);
+    expect(resize).toHaveBeenCalledWith('builder-terminal-1', 120, 30);
 
     await act(async () => root?.render(
-      <CoderTerminalPanel key="stopped" open client={terminalClient} initialSession={session('stopped')} />,
+      <BuilderTerminalPanel key="stopped" open client={terminalClient} initialSession={session('stopped')} />,
     ));
     expect(xtermProps.current?.onResize).toBeUndefined();
   });
 
   it('does not turn a stopped or failed native session into a user lifecycle control', async () => {
     await render(
-      <CoderTerminalPanel open client={client()} initialSession={session('stopped')} />,
+      <BuilderTerminalPanel open client={client()} initialSession={session('stopped')} />,
     );
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
-  });
-
-  it('shows the same ACP Card Run in the existing external console without sending it to the CLI', async () => {
-    const terminalClient = client();
-    const identity = { projectId: 'p', deckId: 'd', cardId: 'builder', cardName: 'Coder',
-      runId: 'coder-run', parentRunId: 'main-run', nativeChildId: null };
-    await render(<CoderTerminalPanel open client={terminalClient} initialSession={session()}
-      cardIdentity={{ projectId: 'p', deckId: 'd', cardId: 'builder', profile: 'builder' }}
-      cardRun={{ runId: 'coder-run', cardId: 'builder', state: 'running', status: 'running', output: '', error: null,
-        terminal: { ...identity, observation: 'live', activeAgentCount: 1, unavailableReason: null,
-          finalText: '', errorCode: null, errorSummary: '', transcript: { sessionId: 'acp-native', unavailableReason: null },
-          events: [{ ...identity, id: 'coder-run:text:1', kind: 'model', sequence: 1, timestamp: null, text: 'Actual ACP output' }],
-        } }} />);
-    expect(host?.querySelector('[data-testid="adaptive-card-terminal"]')?.getAttribute('data-run-id')).toBe('coder-run');
-    expect(host?.querySelector('[data-testid="coder-console-card-run"]')?.textContent).toContain('Actual ACP output');
-    expect(host?.querySelectorAll('[data-testid="coder-terminal-xterm"]')).toHaveLength(1);
-    expect(terminalClient.sendInput).not.toHaveBeenCalled();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
   });
 
   it('renders the exact native failure in xterm without lifecycle controls', async () => {
     const failed = session('failed');
     failed.error = 'hermes_acp_rpc_error:native_startup_failed';
     await render(
-      <CoderTerminalPanel
+      <BuilderTerminalPanel
         open
         client={client()}
         initialSession={failed}
       />,
     );
     await act(async () => Promise.resolve());
-    expect(host?.querySelector('[data-testid="coder-terminal-xterm"]')?.textContent).toBe(
+    expect(host?.querySelector('[data-testid="builder-terminal-xterm"]')?.textContent).toBe(
       'hermes_acp_rpc_error:native_startup_failed',
     );
     expect(host?.textContent).not.toContain('console_start_failed_502');
-    expect(host?.querySelector('[data-testid="coder-terminal-error"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-start"]')).toBeNull();
-    expect(host?.querySelector('[data-testid="coder-terminal-stop"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-error"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-start"]')).toBeNull();
+    expect(host?.querySelector('[data-testid="builder-terminal-stop"]')).toBeNull();
   });
 
   it('shows a truthful unavailable state when the terminal surface itself fails', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     xtermProps.fail = true;
-    await render(<CoderTerminalPanel open client={client()} initialSession={session()} />);
-    expect(host?.querySelector('[data-testid="coder-terminal-unavailable"]')?.textContent).toBe(
-      'coder_terminal_surface_unavailable',
+    await render(<BuilderTerminalPanel open client={client()} initialSession={session()} />);
+    expect(host?.querySelector('[data-testid="builder-terminal-unavailable"]')?.textContent).toBe(
+      'builder_terminal_surface_unavailable',
     );
     consoleError.mockRestore();
   });

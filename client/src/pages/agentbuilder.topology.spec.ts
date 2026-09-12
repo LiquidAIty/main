@@ -22,19 +22,19 @@ describe('Main / Hermes / graph authority topology', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     expect(source).not.toContain('main-card-cli-location');
     expect(source).not.toContain('onOpenMainChat');
-    expect(source).toContain("BUILDER_NODE_TABS.filter((entry) => entry !== 'CLI'");
+    expect(source).toContain("BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'");
     expect(source).toContain('selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id');
-    expect(source).toContain("setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'CLI')");
+    expect(source).toContain("setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'Results')");
     expect(source).toContain('data-testid="under-chat-agent-builder"');
     const underChat = source.slice(source.indexOf('const agentBuilderTerminal ='), source.indexOf('terminal={agentBuilderTerminal}'));
-    expect(underChat).toContain('<CoderTerminalPanel');
+    expect(underChat).toContain('<BuilderTerminalPanel');
     expect(underChat).toContain('ownerCardId={agentBuilderCard.id}');
     expect(underChat).toContain('profile: agentBuilderCard.runtime.profile');
     expect(underChat).not.toContain('workspaceView');
     expect(underChat).not.toContain('data-testid="agent-builder-output"');
     expect(underChat).not.toContain('builderResult');
     expect(underChat).toContain('readOnly={!directInput}');
-    expect(underChat).not.toContain('<AdaptiveCardTerminal');
+    expect(underChat).not.toContain('<CardRunResults');
     expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');
   });
@@ -91,7 +91,6 @@ describe('Main / Hermes / graph authority topology', () => {
         edgeType: 'magentic_option',
       }));
     }
-    expect(INITIAL_DECK.nodes.some(node => node.id === 'card_local_coder')).toBe(false);
   });
 
   it('connects Main only to Builder, Graph Agent, and Mag One, with other workers on the bus', () => {
@@ -107,12 +106,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(workerEdges.map((edge) => edge.source === 'card_magentic' ? edge.target : edge.source).sort())
       .toEqual(['card_trading_workbench', 'card_worldsignals_agent']);
     expect(workerEdges.every((edge) => edge.source === 'card_magentic' || edge.target === 'card_magentic')).toBe(true);
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_local_coder', edgeType: 'flow',
-    }));
-    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
-      source: 'card_main_chat', target: 'card_local_coder', edgeType: 'flow',
-    }));
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'builder', target: 'card_magentic', edgeType: 'magentic_option',
     }));

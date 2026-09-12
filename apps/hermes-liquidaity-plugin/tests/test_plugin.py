@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import liquidaity_hermes_plugin as plugin
+from liquidaity_hermes_plugin import agent_terminal
 
 
 def test_pre_model_receipt_uses_actual_request_tools():
@@ -32,8 +33,8 @@ def _context():
         task_id="t_root",
         run_id="17",
         board="Triage",
-        assignee="coder",
-        profile="coder",
+        assignee="helper",
+        profile="helper",
         workspace="C:/workspace",
         claim_lock="claim-token",
     )
@@ -90,8 +91,8 @@ def test_correlated_worker_receives_ephemeral_bearer_and_native_mcp_template(mon
         "taskId": "t_root",
         "nativeRunId": "17",
         "board": "Triage",
-        "assignee": "coder",
-        "profile": "coder",
+        "assignee": "helper",
+        "profile": "helper",
         "workspace": "C:/workspace",
         "claimLock": "claim-token",
     }
@@ -191,6 +192,75 @@ def test_register_uses_stock_plugin_api():
     assert len(tools) == 1
     assert tools[0]["name"] == "execute_host_script"
     assert tools[0]["handler"] is plugin._handle_execute_host_script
+
+
+def test_agent_terminal_registers_only_the_exact_process_scoped_selection(monkeypatch):
+    created = []
+    monkeypatch.setenv("HERMES_HOME", "C:/profiles/research")
+    monkeypatch.setenv("HERMES_AGENT_TERMINAL_CONFIG", json.dumps({
+        "cardId": "card_research", "profile": "research",
+        "profileHome": "C:/profiles/research", "toolsets": ["file"],
+        "nativeTools": ["terminal"],
+        "mcpTools": ["mcp__liquidaity_card__search_graph"],
+    }))
+    import sys
+    monkeypatch.setitem(sys.modules, "tools.registry", SimpleNamespace(
+        registry=SimpleNamespace(get_all_tool_names=lambda: ["terminal", "read_file"]),
+    ))
+    monkeypatch.setitem(sys.modules, "toolsets", SimpleNamespace(
+        validate_toolset=lambda name: name == "file",
+        create_custom_toolset=lambda *args, **kwargs: created.append((args, kwargs)),
+    ))
+
+    agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research"))
+
+    assert created == [(('agent-terminal', 'Process-scoped exact saved Card tool selection.'), {
+        "tools": ["terminal", "mcp__liquidaity_card__search_graph"], "includes": ["file"],
+    })]
+
+
+@pytest.mark.parametrize("payload, error", [
+    ({"cardId": "card", "profile": profile, "profileHome": f"C:/profiles/{profile}", "toolsets": [], "nativeTools": [], "mcpTools": []}, "profile_forbidden")
+    for profile in ["main", "liquidaity-main", "builder", "default"]
+] + [
+    ({"cardId": card_id, "profile": "research", "profileHome": "C:/profiles/research", "toolsets": [], "nativeTools": [], "mcpTools": []}, "card_forbidden")
+    for card_id in ["card_main_chat", "builder"]
+] + [
+    ({"cardId": "card", "profile": "research", "profileHome": "C:/profiles/research", "toolsets": [], "nativeTools": ["missing"], "mcpTools": []}, "native_tool_not_registered"),
+    ({"cardId": "card", "profile": "research", "profileHome": "C:/profiles/research", "toolsets": [], "nativeTools": [], "mcpTools": ["not-an-mcp-tool"]}, "mcp_tools_invalid"),
+])
+def test_agent_terminal_rejects_forbidden_or_unregistered_selection(monkeypatch, payload, error):
+    monkeypatch.setenv("HERMES_HOME", "C:/profiles/research")
+    monkeypatch.setenv("HERMES_AGENT_TERMINAL_CONFIG", json.dumps(payload))
+    import sys
+    monkeypatch.setitem(sys.modules, "tools.registry", SimpleNamespace(
+        registry=SimpleNamespace(get_all_tool_names=lambda: []),
+    ))
+    monkeypatch.setitem(sys.modules, "toolsets", SimpleNamespace(
+        validate_toolset=lambda _name: True,
+        create_custom_toolset=lambda **_kwargs: pytest.fail("must not create a toolset"),
+    ))
+
+    with pytest.raises(ValueError, match=error):
+        agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research"))
+
+
+def test_agent_terminal_isolated_per_process_config_and_never_reads_main_builder_bridge(monkeypatch):
+    monkeypatch.delenv("HERMES_AGENT_TERMINAL_CONFIG", raising=False)
+    assert agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research")) is None
+    assert "MainCliBridge" not in agent_terminal.__dict__
+
+
+def test_agent_terminal_rejects_a_config_for_another_profile_process(monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", "C:/profiles/research")
+    monkeypatch.setenv("HERMES_AGENT_TERMINAL_CONFIG", json.dumps({
+        "cardId": "card_other", "profile": "other",
+        "profileHome": "C:/profiles/other", "toolsets": [],
+        "nativeTools": [], "mcpTools": [],
+    }))
+
+    with pytest.raises(ValueError, match="profile_mismatch"):
+        agent_terminal.register_agent_terminal(SimpleNamespace(profile_name="research"))
 
 
 def test_registers_existing_native_hooks_for_main_semantic_projection(

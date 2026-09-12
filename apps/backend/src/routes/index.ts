@@ -16,11 +16,14 @@ import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
 import worldviewRoutes from './worldview.routes';
+import agentTerminalRoutes from './agentTerminal.routes';
 
 const router = Router();
 
 // Mount auth routes (no middleware needed for auth itself)
 router.use('/auth', auth);
+// Native Card terminals require an existing authenticated session; never create guests.
+router.use('/agent-terminals', agentTerminalRoutes);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);

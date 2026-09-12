@@ -587,6 +587,113 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     assert event["nativeRunId"] == "native-attempt-one"
 
 
+def test_agent_terminal_token_binds_saved_card_tools_without_a_run_or_conversation(monkeypatch):
+    import asyncio
+    import jwt
+    import mcp_host
+
+    secret = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    principal = {
+        "kind": "agent-terminal",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "callerCardId": "card_hermes_steward",
+        "terminalSessionId": "terminal-session-1",
+        "profile": "liquidaity-hermes-steward",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "presentedTools": ["canvas.inspect"],
+    }
+    token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "agent-terminal:card_hermes_steward:terminal-session-1",
+        "iat": now,
+        "exp": now + 60,
+        "principal": principal,
+    }, secret, algorithm="HS256")
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(
+        mcp_host.OAuthConfig(
+            resource_url="https://example.ngrok.dev/mcp", issuer_url="https://auth.example/",
+            audience="https://example.ngrok.dev/mcp", client_id="chatgpt-client",
+            required_scope="liquidaity.main",
+        ), jwk_client=SimpleNamespace(),
+    )
+    verified = verifier._verify_sync(token)
+    assert verified is not None
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: verified)
+    assert mcp_host._authenticated_main_context() == {
+        "projectId": "project-1", "deckId": "deck_builder",
+        "mainCardId": "card_hermes_steward", "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate", "callerProfile": "liquidaity-hermes-steward",
+        "terminalSessionId": "terminal-session-1", "principalKind": "agent-terminal",
+        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+    }
+    assert mcp_host._request_tool_is_allowed("canvas.inspect") is True
+    assert mcp_host._request_tool_is_allowed("run_mag_one") is False
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-1", "deckId": "deck_builder", "mainCardId": "card_hermes_steward",
+        "principalKind": "agent-terminal",
+    })
+    rejected = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {}))
+    assert json.loads(rejected[0].text)["error"] == "agent_terminal_run_context_unavailable"
+
+
+def test_agent_terminal_verifier_rejects_main_builder_and_incomplete_terminal_identity(monkeypatch):
+    import jwt
+    import mcp_host
+
+    secret = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    base = {
+        "kind": "agent-terminal", "projectId": "project-1", "deckId": "deck_builder",
+        "callerCardId": "card_hermes_steward", "terminalSessionId": "terminal-session-1",
+        "profile": "liquidaity-hermes-steward", "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate", "grantedTools": ["canvas.inspect"],
+        "presentedTools": ["canvas.inspect"],
+    }
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(
+        mcp_host.OAuthConfig(
+            resource_url="https://example.ngrok.dev/mcp", issuer_url="https://auth.example/",
+            audience="https://example.ngrok.dev/mcp", client_id="chatgpt-client",
+            required_scope="liquidaity.main",
+        ), jwk_client=SimpleNamespace(),
+    )
+    for override in ({"callerCardId": "card_main_chat"}, {"callerCardId": "builder"},
+                     {"terminalSessionId": ""}, {"profile": "default"},
+                     {"profile": "main"},
+                     {"conversationId": "forged-conversation"},
+                     {"parentRunId": "forged-run"},
+                     {"requiresExecutionContext": True},
+                     {"callerRuntimeKind": "autogen"}):
+        token = jwt.encode({
+            "iss": "liquidaity-runtime", "aud": "liquidaity-internal-mcp",
+            "sub": "agent-terminal:invalid", "iat": now, "exp": now + 60,
+            "principal": {**base, **override},
+        }, secret, algorithm="HS256")
+        assert verifier._verify_sync(token) is None
+
+
+def test_agent_terminal_tool_success_skips_run_scoped_attention(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {"kind": "agent-terminal"})
+    monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
+    monkeypatch.setattr(mcp_host, "_dispatch_tool", lambda *_: asyncio.sleep(
+        0, result=mcp_host.CallToolResult(content=[mcp_host.TextContent(type="text", text='{"ok":true}')])
+    ))
+    monkeypatch.setattr(mcp_host, "_persist_native_attention", lambda *_: (_ for _ in ()).throw(
+        AssertionError("terminal must not create Run-scoped attention")
+    ))
+    result = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
+    assert result.isError is not True
+
+
 def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
     import asyncio
     import jwt
@@ -598,12 +705,12 @@ def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
         "kind": "materializer-read",
         "projectId": "project-1",
         "deckId": "deck_builder",
-        "callerCardId": "card-coder",
+        "callerCardId": "card-helper",
     }
     token = jwt.encode({
         "iss": "liquidaity-runtime",
         "aud": "liquidaity-internal-mcp",
-        "sub": "materializer-read:card-coder",
+        "sub": "materializer-read:card-helper",
         "iat": now,
         "exp": now + 60,
         "principal": principal,
@@ -677,7 +784,7 @@ def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(m
         "deckId": "deck_builder",
         "conversationId": "conversation-1",
         "parentRunId": "main-run",
-        "callerCardId": "card_coder",
+        "callerCardId": "card_helper",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "delegate",
         "grantedTools": ["cbm.search_graph"],
@@ -701,9 +808,9 @@ def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(m
                 "conversationId": "conversation-1",
                 "runId": "child-run",
                 "rootRunId": "main-run",
-                "cardId": "card_coder",
+                "cardId": "card_helper",
                 "runtimeMode": "delegate",
-                "nativeChildId": "sa-coder",
+                "nativeChildId": "sa-helper",
                 "grantedTools": ["cbm.search_graph"],
             },
         })
@@ -711,8 +818,8 @@ def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(m
     monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
     context = mcp_host._request_execution_context()
     assert context["parentRunId"] == "child-run"
-    assert context["mainCardId"] == "card_coder"
-    assert context["nativeChildId"] == "sa-coder"
+    assert context["mainCardId"] == "card_helper"
+    assert context["nativeChildId"] == "sa-helper"
     assert bridge_calls == [(
         "internal_execution_context",
         {"contextId": "context-1", "principal": principal},
@@ -879,11 +986,11 @@ def test_card_invocation_injects_caller_identity_and_main_uses_the_external_cli_
     monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
     result = asyncio.run(mcp_host._dispatch_tool(
         "card.run_assistant_agent",
-        {"cardId": "card-coder", "input": "bounded task"},
+        {"cardId": "card-helper", "input": "bounded task"},
     ))
     assert json.loads(result[0].text)["ok"] is True
     assert calls[-1] == {
-        "cardId": "card-coder",
+        "cardId": "card-helper",
         "input": "bounded task",
         "projectId": "project-1",
         "deckId": "deck_builder",
@@ -1150,8 +1257,8 @@ def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card
         "conversationId": "conversation-one",
         "parentRunId": "child-run-one",
         "rootRunId": "main-run-one",
-        "mainCardId": "card_coder",
-        "nativeChildId": "sa-coder",
+        "mainCardId": "card_helper",
+        "nativeChildId": "sa-helper",
         "grantedTools": ["cbm.search_graph"],
     }
     native_text = json.dumps({
@@ -1190,11 +1297,11 @@ def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card
     assert attention["nativeEdgeIds"] == []
     assert attention["projectId"] == "project-one"
     assert attention["runId"] == "child-run-one"
-    assert attention["cardId"] == "card_coder"
+    assert attention["cardId"] == "card_helper"
     assert observed == [attention]
 
 
-def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_exact_refs(
+def test_helper_root_context_is_active_before_native_cbm_dispatch_and_persists_exact_refs(
     monkeypatch,
 ):
     import asyncio
@@ -1205,10 +1312,10 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
     context = {
         "projectId": "project-one",
         "deckId": "deck-one",
-        "conversationId": "coder-conversation-one",
-        "parentRunId": "coder-run-one",
-        "rootRunId": "coder-run-one",
-        "mainCardId": "card_local_coder",
+        "conversationId": "helper-conversation-one",
+        "parentRunId": "helper-run-one",
+        "rootRunId": "helper-run-one",
+        "mainCardId": "card_delegate",
         "nativeChildId": "",
         "grantedTools": ["cbm.search_code"],
     }
@@ -1250,8 +1357,8 @@ def test_coder_root_context_is_active_before_native_cbm_dispatch_and_persists_ex
     assert result.content[0].text == "current native CBM result"
     assert result.meta is not None
     attention = result.meta["nativeAttention"]
-    assert attention["runId"] == "coder-run-one"
-    assert attention["cardId"] == "card_local_coder"
+    assert attention["runId"] == "helper-run-one"
+    assert attention["cardId"] == "card_delegate"
     assert attention["toolName"] == "cbm.search_code"
     assert attention["nativeNodeIds"] == [
         "C-Projects-LiquidAIty-main.apps.python-models.app.python_models.idf.materialize_idf",
@@ -1327,7 +1434,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
             "projectId": args["projectId"],
             "deckId": args["deckId"],
             "targetCardId": args["targetCardId"],
-            "targetCardTitle": "Coder",
+            "targetCardTitle": "Helper",
             "mission": str(args["mission"]).strip(),
             "dataAnchors": [{**anchor, "required": True} for anchor in args["dataAnchors"]],
             "reviewContext": {
@@ -1395,7 +1502,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
         mcp_host._dispatch_tool(
             "write_mag_one_instructions",
             {
-                "targetCardId": "card_local_coder",
+                "targetCardId": "card_delegate",
                 "mission": "  exact proposed mission\nwith formatting  ",
                 "dataAnchors": [{
                     "authority": "CodeGraph", "nativeId": "symbol-one",
@@ -1407,7 +1514,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     )
     proposal_payload = json.loads(proposed[0].text)
     assert proposal_payload["mission"] == "exact proposed mission\nwith formatting"
-    assert proposal_payload["targetCardId"] == "card_local_coder"
+    assert proposal_payload["targetCardId"] == "card_delegate"
     assert proposal_payload["ready"] is True
     assert proposal_payload["persisted"] is False
     assert proposal_payload["started"] is False
@@ -1854,7 +1961,6 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert "card.load_graph_references" in by_name
         assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
         assert not any(name.startswith("engraphis.") for name in by_name)
-        assert "coder.status" not in by_name
         assert all(
             tool.inputSchema.get("additionalProperties") is False
             for name, tool in by_name.items()
@@ -2993,7 +3099,6 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 "mag_one.describe_connected_agents",
                 "write_mag_one_instructions",
             }.issubset(first_catalog)
-            assert "coder.status" not in first_catalog
             assert not any(name.startswith("liquidaity.") for name in first_catalog)
             assert not any(name.startswith("liquidaity_liquidaity_") for name in first_catalog)
             assert not any(name.startswith("mcp__") for name in first_catalog)
@@ -3181,26 +3286,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "write_mag_one_instructions" in by_name
-    assert "coder.status" not in by_name
     assert "card.run_assistant_agent" in by_name
-    assert "run_coder_subagent" not in by_name
     assert not any(name.startswith("mcp__") for name in by_name)
-    assert {
-        "coder.inspect",
-        "coder.effective_tools",
-        "coder.account",
-        "coder.stop",
-        "coder.steer",
-    }.isdisjoint(by_name)
-    removed_public_wrappers = {
-        "coder.inspect",
-        "coder.effective_tools",
-        "coder.account",
-        "coder.stop",
-        "coder.steer",
-    }
-    assert removed_public_wrappers.isdisjoint(mcp_host._ALLOWED_KEYS)
-    assert removed_public_wrappers.isdisjoint(mcp_host._BRIDGE_PATHS)
     native_names = {
         f"cbm.{tool.name}" for tool in native_cbm_tools
     } | {
@@ -3364,7 +3451,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
 
     denied = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "projectId": "spoofed",
-        "cardId": "coder-card",
+        "cardId": "helper-card",
         "input": "Approved exact task.",
     }))
     assert denied.isError is True
@@ -3400,7 +3487,6 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
     assert canonical
-    assert "run_coder_subagent" not in canonical_names
     assert "card.run_assistant_agent" in canonical_names
     assert not any(name.startswith("mcp__") for name in canonical_names)
 

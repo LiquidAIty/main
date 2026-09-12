@@ -384,7 +384,7 @@ def test_codegraph_exact_read_uses_official_mcp_calls_and_qualified_symbol() -> 
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
-        "card_coder",
+        "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
         mcp_reader=reader,
@@ -426,7 +426,7 @@ def test_codegraph_exact_read_normalizes_native_grouped_trace_json() -> None:
     record = read_codegraph_exact(
         "project-1",
         "deck_builder",
-        "card_coder",
+        "card_helper",
         "project.module.materialize_idf",
         bounded_expansion=1,
         mcp_reader=reader,

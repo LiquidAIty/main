@@ -24,12 +24,12 @@ const deck: DeckDocument = {
       position: { x: 0, y: 0 },
     },
     {
-      id: 'card_coder',
-      templateId: 'coder',
-      title: 'Local Coder',
-      role: 'Coder role',
-      prompt: 'Coder contract',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'coder' },
+      id: 'card_delegate',
+      templateId: 'delegate',
+      title: 'Delegate',
+      role: 'Delegate role',
+      prompt: 'Delegate contract',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
       runtimeOptions: { tools: [] },
       position: { x: 1, y: 1 },
     },
@@ -234,7 +234,7 @@ describe('Hermes profile Card routes', () => {
 
   it('rejects Honcho configuration for another Hermes Card', async () => {
     const { base, requestNative } = await start();
-    const response = await fetch(`${base}/cards/card_coder/native`, {
+    const response = await fetch(`${base}/cards/card_delegate/native`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

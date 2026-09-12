@@ -2183,7 +2183,7 @@ def _prepare_invocation(
     if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:
-            raise CardDomainError("coder_write_mode_invalid")
+            raise CardDomainError("card_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
     direct_card_targets = _direct_card_targets(card_id, cards, loaded["deck"]["edges"])
     deck_revision = str((loaded.get("meta") or {}).get("deckRevision") or "")
