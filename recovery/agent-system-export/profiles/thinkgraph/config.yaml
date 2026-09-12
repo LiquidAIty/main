@@ -1,0 +1,11 @@
+model:
+  openai_runtime: codex_app_server
+  provider: openai-codex
+  default: gpt-5.6-luna
+  permissions: :read-only
+delegation:
+  model: gpt-5.6-luna
+  provider: openai-codex
+plugins:
+  enabled: []
+_config_version: 39

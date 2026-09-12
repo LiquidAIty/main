@@ -1,0 +1,97 @@
+model:
+  provider: openai-codex
+  default: gpt-5.6-luna
+auxiliary:
+  background_review:
+    provider: openai-codex
+    model: gpt-5.6-luna
+    max_input_tokens: 120000
+delegation:
+  model: gpt-5.6-luna
+  provider: openai-codex
+skills:
+  disabled:
+    - airtable
+    - apple-notes
+    - apple-reminders
+    - architecture-diagram
+    - arxiv
+    - ascii-art
+    - ascii-video
+    - baoyu-infographic
+    - blocked-page-recovery
+    - blogwatcher
+    - box
+    - claude-code
+    - claude-design
+    - codebase-inspection
+    - codex
+    - comfyui
+    - competitor-news-monitor
+    - computer-use
+    - design-md
+    - document-to-action-items
+    - docx
+    - dogfood
+    - email-inbox-triage
+    - evaluating-llms-harness
+    - excalidraw
+    - findmy
+    - gif-search
+    - github-auth
+    - github-code-review
+    - github-issue-to-pr
+    - github-issues
+    - github-pr-workflow
+    - github-repo-management
+    - google-workspace
+    - hermes-agent-skill-authoring
+    - himalaya
+    - huggingface-hub
+    - humanizer
+    - imessage
+    - inspecting-hermes-desktop-dom
+    - llama-cpp
+    - llm-wiki
+    - manim-video
+    - maps
+    - meeting-action-items
+    - merge-reconciler
+    - nano-pdf
+    - node-inspect-debugger
+    - notion
+    - obsidian
+    - ocr-and-documents
+    - opencode
+    - openhue
+    - p5js
+    - pdf
+    - plan
+    - popular-web-designs
+    - powerpoint
+    - pretext
+    - product-price-monitor
+    - python-debugpy
+    - requesting-code-review
+    - research-paper-writing
+    - sdlc-review
+    - serving-llms-vllm
+    - session-librarian
+    - simplify-code
+    - sketch
+    - songsee
+    - songwriting-and-ai-music
+    - spike
+    - systematic-debugging
+    - teams-meeting-pipeline
+    - test-driven-development
+    - touchdesigner-mcp
+    - weekly-review-planning
+    - weights-and-biases
+    - xlsx
+    - xurl
+    - youtube-content
+_config_version: 38
+onboarding:
+  seen:
+    tool_progress_prompt: true

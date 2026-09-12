@@ -1,0 +1,24 @@
+model:
+  openai_runtime: auto
+  provider: openai-codex
+  default: gpt-5.6-sol
+  permissions: :workspace
+delegation:
+  model: gpt-5.6-luna
+  provider: openai-codex
+plugins:
+  enabled:
+    - liquidaity-card-mcp
+  disabled: []
+  entries:
+    liquidaity-card-mcp:
+      allow_tool_override: false
+_config_version: 39
+platform_toolsets:
+  cli:
+    - web
+    - terminal
+    - file
+    - browser
+    - vision
+    - code_execution

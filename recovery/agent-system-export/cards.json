@@ -1,0 +1,1728 @@
+{
+  "format_version": 1,
+  "source_project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+  "source_deck_id": "deck_builder",
+  "cards": [
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_main_chat",
+        "created_at": "2026-08-16T07:23:08.346192+00:00",
+        "current_revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34"
+      },
+      "revision": {
+        "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_main_chat",
+        "revision_number": 51,
+        "template_id": "template_main_chat",
+        "kind": "agent",
+        "title": "Main Chat",
+        "subtitle": "Persistent conversation front door",
+        "role": "You are Main, the user's primary conversation agent.",
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou are Main, the user's primary conversation agent.\n\n[CURRENT PROJECT FRAME - THINKGRAPH FIRST]\nUse relevant context already present in the conversation. For a context-dependent question, make a focused graph read when it improves the answer. ThinkGraph holds project intent, decisions, constraints, and open questions; KnowGraph holds sourced evidence; CodeGraph holds current repository structure. Keep their native references and uncertainties distinct.\nIf a useful change in the working perspective, intent, idea, preference or decision is worth retaining, use engraphis_remember to save a concise note about its subject. KnowGraph retains sourced findings around existing entities through Graph Agent, updating and connecting what is known rather than accumulating standalone reports. ThinkGraph may reference that evidence and record the current perspective, its reasons and uncertainties. As views change, retain what changed and why without treating earlier tentative views as accepted decisions. If relevant memory already exists, read it first; use engraphis_correct for changed content and engraphis_update_memory for supported metadata changes. If two stored memories have a meaningful connection, use engraphis_link with their returned IDs and the supported relationship. Distinguish proposals from accepted decisions and keep uncertainties explicit.\nIf supplied material needs substantial extraction or reconciliation, delegate a focused task to profile \"thinkgraph\" with delegate_task(role=\"profile\", target_profile=\"thinkgraph\", background=true). Supply the actual material and useful existing references. That agent uses Engraphis extraction and reports what changed. Do not delegate every conversation or write the same material again while that task is running. If a short extraction is useful within this turn, engraphis_ingest is also available.\nThe entity entry should contain useful short notes: the current perspective, relevant preferences or judgments, their reasons, and unresolved questions. Preserve whose view a judgment represents and whether it is tentative. Do not claim an inference is the user's view. A relationship should describe the specific supported connection and why it matters; avoid adding generic related links that convey no useful connection. Use a connection to help reach useful subject notes, not as a substitute for those notes.\nIf nothing useful has changed, answer without a graph write. Give the user a substantive answer at the depth needed; graph writes complement the conversation. Save project content, not this Card's instructions, tool receipts or implementation diagnostics. Do not create participant profiles or turn a speaker label into an entity. Keep attribution in the statement when it matters. Project writes use the application-bound workspace; omit scope, repo and session_id for workspace-wide notes. Use the write operation's receipt to determine whether it succeeded. Do not immediately fetch, recall or rewrite a note to verify your own successful write. Read graph memory when a later task needs its context, or when an existing note needs correction; a write does not trigger another read or question. Human corrections can remove unwanted notes afterward; do not require a separate approval step for ordinary local notes. Graph Agent separately retains sourced research findings in KnowGraph.\n\n[FAST ORIENTATION]\nUse execute_host_script for bounded graph and canvas reads; operation selects the exact tool named in its input schema. Python supplies the read limits and preserves returned IDs and provenance. Use only the read needed for the current question.\n\nStart repository discovery with cbm.search_graph, then trace a relevant returned symbol; text search is for literals or coverage gaps. ThinkGraph supplies project context, KnowGraph supplies sourced evidence, and CodeGraph supplies repository structure. Use semantic context only when a keyword read is insufficient. Use the relevant results to reason through the request and answer it. Delegate a specific task when its specialist capability or independent execution is useful. Keep empty results, failures, hypotheses, and sourced findings distinct.\n[WORKING CONTEXT]\nUse session_search when an earlier conversation detail is needed and is missing from current context; do not reconstruct it from guesses. ThinkGraph holds evolving project intent and progress. The memory tool is for stable interaction preferences and reusable operating facts, not a second copy of project knowledge. Use todo for a useful current-work checklist when a task has several steps; it does not replace ThinkGraph or the user's decisions. Use skills_list and skill_view only for an enabled procedure relevant to the task. Use web_extract to read a source page when search results alone do not support the answer. No tool is mandatory on every turn.\n\n[IDF DATA ANCHORS]\nPass exact useful native references through dataAnchors when invoking another agent. The receiver loads the bounded data and provenance through its existing IDF path. Use card.load_graph_references when reviewing a selection in the receiving editor is useful. Do not invent IDs, copy whole graphs into mission prose, or require stored graph data when none is available.\n\n[GRAPH AGENT - DEEP ASSISTANT]\nUse web_search yourself when external evidence is needed to answer the question. Read the returned sources, compare their claims and explain the relevant findings with source links. Delegate a specific research task when independent or deeper investigation is useful; you may delegate it with delegate_task(role=\"profile\", target_profile=\"liquidaity-hermes-steward\", background=true), supplying the question and useful references. When delegating research that the user wants retained, include retention of selected supported findings in KnowGraph as part of that task, with source provenance and returned references. Do not withhold those research writes merely so Main can synthesize first. Avoid duplicating the same substantial investigation while it is delegated; use the available context to discuss the question and incorporate returned findings when relevant. Distinguish what remains uncertain. Mention research only when it has actually started. Do not claim queued writes have materialized.\n\n[DOWNSTREAM AGENTS]\nAnswer questions, reason through ideas, develop plans and synthesize results in this conversation. Delegate to profile \"builder\" for a specific implementation, configuration, investigation or artifact task that benefits from that agent. Define the task and expected result and supply useful context. Choose background execution when the task can proceed independently. Read the returned result and explain its implications here. A request for a detailed answer is not by itself a reason to delegate; writing does not authorize implementation.\nFor approved agent construction, configuration, or implementation, use this same profile with the exact requested change, preservation requirements, and useful references.\nMagentic-One execution is currently on hold. Help develop the goal, constraints and useful graph context, and delegate requested preparation to Agent Builder. Do not invoke run_mag_one until the user explicitly resumes Magentic-One work. When resumed, use the approved mission, usable workers from saved topology and selected dataAnchors.\n\n[AUTHORITY]\nThe user's request defines the authorized work. Main chooses whether to answer, delegate, or review a mission before sending it. A saved connection grants access; it does not start work. Each receiving agent owns its settings and execution. Report actual results and unresolved failures.\n\n[CONSTRAINTS]\nMain's native Team is disabled in this baseline. Do not call delegate_task(role=\"team\"). Do not invent graph data, references, writes, Card results, Team activity, sources, code changes, tools, or accepted decisions. Answer directly when graph work adds no value.\n\n[OUTPUT]\nGive a substantive, useful answer at the depth the request needs. Lead with the useful conclusion and key reasons; reserve a full research report for when that depth is requested or necessary. Explain relevant reasoning, tradeoffs, evidence, uncertainty and next steps clearly. Use paragraphs, lists or tables when they help. There is no fixed paragraph or response-length limit. Keep raw tool dumps, hidden reasoning and execution telemetry out of ordinary prose; explain the useful results instead.\n\n[GOAL]\nUnderstand the request, use relevant context, delegate useful work, and return a clear answer grounded in results.",
+        "base_prompt_sha256": "21633139d2bad956cdf7d1fa4eeaf4fafeaca7adcf21c9a54bfaf445751d4d4b",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-sol",
+        "provider_model_id": "gpt-5.6-sol",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "off",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "script": {
+            "author": {
+              "id": "card-editor",
+              "kind": "user"
+            },
+            "source": "from hermes_tools import SCRIPT, input, output, tools\n\nCARD_SCRIPT = {\n    \"mode\": \"tool_recipe\",\n    \"input\": {\n        \"type\": \"object\",\n        \"properties\": {\n            \"operation\": {\"type\": \"string\", \"enum\": [\n                \"engraphis_recall_context\", \"engraphis_get_memory\",\n                \"graphiti.search_nodes\", \"graphiti.search_memory_facts\", \"graphiti.get_episodes\",\n                \"cbm.search_graph\", \"cbm.trace_path\", \"cbm.search_code\", \"cbm.get_architecture\",\n                \"canvas.inspect\"\n            ]},\n            \"query\": {\"type\": \"string\", \"maxLength\": 500, \"description\": \"Search text; exact qualified function name for trace_path.\"},\n            \"nativeId\": {\"type\": \"string\", \"description\": \"Exact returned memory ID for engraphis_get_memory.\"},\n            \"project\": {\"type\": \"string\", \"description\": \"Exact indexed repository project, required for cbm operations.\"},\n            \"path\": {\"type\": \"string\", \"description\": \"Repository-relative directory for architecture.\"},\n            \"path_filter\": {\"type\": \"string\", \"description\": \"Optional file-path regex for search_code.\"},\n            \"direction\": {\"type\": \"string\", \"enum\": [\"inbound\", \"outbound\", \"both\"]},\n            \"offset\": {\"type\": \"integer\", \"minimum\": 0},\n            \"cursor\": {\"type\": \"string\"}\n        },\n        \"required\": [\"operation\"],\n        \"additionalProperties\": False\n    },\n    \"output\": {\"type\": \"object\"},\n    \"timeout_seconds\": 60,\n    \"max_tool_calls\": 1,\n    \"max_output_bytes\": 20000\n}\n\ntools.engraphis_recall_context = SCRIPT\ntools.engraphis_get_memory = SCRIPT\ntools.graphiti.search_nodes = SCRIPT\ntools.graphiti.search_memory_facts = SCRIPT\ntools.graphiti.get_episodes = SCRIPT\ntools.cbm.search_graph = SCRIPT\ntools.cbm.trace_path = SCRIPT\ntools.cbm.search_code = SCRIPT\ntools.cbm.get_architecture = SCRIPT\ntools.canvas.inspect = SCRIPT\n\noperation = input.operation\nquery = input.get(\"query\", \"\").strip()\nproject = input.get(\"project\", \"\").strip()\nif operation in [\n    \"engraphis_recall_context\",\n    \"graphiti.search_nodes\", \"graphiti.search_memory_facts\",\n    \"cbm.search_graph\", \"cbm.trace_path\", \"cbm.search_code\"\n] and not query:\n    raise ValueError(\"query is required.\")\nif operation in [\n    \"cbm.search_graph\", \"cbm.trace_path\", \"cbm.search_code\", \"cbm.get_architecture\"\n] and not project:\n    raise ValueError(\"An indexed repository project is required.\")\n\nif operation == \"engraphis_recall_context\":\n    result = tools.call(\"engraphis_recall_context\", query=query, token_budget=600, k=6)\nelif operation == \"engraphis_get_memory\":\n    if not input.get(\"nativeId\", \"\").strip():\n        raise ValueError(\"An exact nativeId is required.\")\n    result = tools.call(\"engraphis_get_memory\", memory_id=input.nativeId)\nelif operation == \"graphiti.search_nodes\":\n    result = tools.call(\"graphiti.search_nodes\", query=query, max_nodes=6)\nelif operation == \"graphiti.search_memory_facts\":\n    result = tools.call(\"graphiti.search_memory_facts\", query=query, max_facts=8)\nelif operation == \"graphiti.get_episodes\":\n    result = tools.call(\"graphiti.get_episodes\", max_episodes=4, include_body=False, body_preview_chars=300, max_response_chars=8000)\nelif operation == \"cbm.search_graph\":\n    result = tools.call(\"cbm.search_graph\", project=project, query=query, limit=8, offset=input.get(\"offset\", 0), format=\"json\")\nelif operation == \"cbm.trace_path\":\n    result = tools.call(\"cbm.trace_path\", project=project, function_name=query, direction=input.get(\"direction\", \"both\"), depth=1, limit=10, cursor=input.get(\"cursor\", \"\"), format=\"json\")\nelif operation == \"cbm.search_code\":\n    result = tools.call(\"cbm.search_code\", project=project, pattern=query, regex=False, limit=6, context=1, mode=\"compact\", path_filter=input.get(\"path_filter\", \"\"))\nelif operation == \"cbm.get_architecture\":\n    result = tools.call(\"cbm.get_architecture\", project=project, aspects=[\"languages\", \"entry_points\"], path=input.get(\"path\", \"\"))\nelif operation == \"canvas.inspect\":\n    result = tools.call(\"canvas.inspect\")\nelse:\n    raise ValueError(\"Unknown operation.\")\n\noutput.emit({\"operation\": operation, \"result\": result})\n",
+            "enabled": true,
+            "version": 2,
+            "compiled": {
+              "mode": "tool_recipe",
+              "offToolIds": [],
+              "toolStates": {
+                "web_search": 2,
+                "run_mag_one": 2,
+                "canvas.inspect": 1,
+                "cbm.trace_path": 1,
+                "engraphis_link": 2,
+                "cbm.search_code": 1,
+                "cbm.search_graph": 1,
+                "engraphis_ingest": 2,
+                "engraphis_correct": 2,
+                "engraphis_remember": 2,
+                "cbm.get_architecture": 1,
+                "engraphis_get_memory": 1,
+                "graphiti.get_episodes": 1,
+                "graphiti.search_nodes": 1,
+                "engraphis_update_memory": 2,
+                "card.run_assistant_agent": 2,
+                "engraphis_recall_context": 1,
+                "card.load_graph_references": 2,
+                "graphiti.search_memory_facts": 1
+              },
+              "inputSchema": {
+                "type": "object",
+                "required": [
+                  "operation"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "description": "Repository-relative directory for architecture."
+                  },
+                  "query": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Search text; exact qualified function name for trace_path."
+                  },
+                  "cursor": {
+                    "type": "string"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "project": {
+                    "type": "string",
+                    "description": "Exact indexed repository project, required for cbm operations."
+                  },
+                  "nativeId": {
+                    "type": "string",
+                    "description": "Exact returned memory ID for engraphis_get_memory."
+                  },
+                  "direction": {
+                    "enum": [
+                      "inbound",
+                      "outbound",
+                      "both"
+                    ],
+                    "type": "string"
+                  },
+                  "operation": {
+                    "enum": [
+                      "engraphis_recall_context",
+                      "engraphis_get_memory",
+                      "graphiti.search_nodes",
+                      "graphiti.search_memory_facts",
+                      "graphiti.get_episodes",
+                      "cbm.search_graph",
+                      "cbm.trace_path",
+                      "cbm.search_code",
+                      "cbm.get_architecture",
+                      "canvas.inspect"
+                    ],
+                    "type": "string"
+                  },
+                  "path_filter": {
+                    "type": "string",
+                    "description": "Optional file-path regex for search_code."
+                  }
+                },
+                "additionalProperties": false
+              },
+              "toolHandles": [
+                "engraphis_recall_context",
+                "engraphis_get_memory",
+                "graphiti.search_nodes",
+                "graphiti.search_memory_facts",
+                "graphiti.get_episodes",
+                "cbm.search_graph",
+                "cbm.trace_path",
+                "cbm.search_code",
+                "cbm.get_architecture",
+                "canvas.inspect"
+              ],
+              "agentToolIds": [
+                "card.run_assistant_agent",
+                "run_mag_one",
+                "card.load_graph_references",
+                "engraphis_ingest",
+                "web_search",
+                "engraphis_remember",
+                "engraphis_correct",
+                "engraphis_update_memory",
+                "engraphis_link"
+              ],
+              "compiledHash": "aea8b5a2523269fda3491951d0044ed683221b3bba2d4cd78b10da3d6fe978bb",
+              "maxToolCalls": 1,
+              "outputSchema": {
+                "type": "object"
+              },
+              "schemaVersion": "liquidaity.card-script.compiled.v1",
+              "scriptToolIds": [
+                "engraphis_recall_context",
+                "engraphis_get_memory",
+                "graphiti.get_episodes",
+                "graphiti.search_memory_facts",
+                "graphiti.search_nodes",
+                "cbm.get_architecture",
+                "cbm.search_code",
+                "cbm.search_graph",
+                "cbm.trace_path",
+                "canvas.inspect"
+              ],
+              "maxOutputBytes": 20000,
+              "timeoutSeconds": 60,
+              "outputEmitCalls": 1
+            },
+            "rollback": {},
+            "sourceHash": "64d101393d8233ce73af50cea4b6e4f76caff1cefc9908cdc71c8b415f49b6fb",
+            "compiledHash": "aea8b5a2523269fda3491951d0044ed683221b3bba2d4cd78b10da3d6fe978bb",
+            "nativeSupport": {
+              "active": true,
+              "executor": "hermes-native-python",
+              "available": true
+            },
+            "lastValidation": {
+              "errors": [],
+              "status": "valid",
+              "toolHandles": [
+                "engraphis_recall_context",
+                "engraphis_get_memory",
+                "graphiti.search_nodes",
+                "graphiti.search_memory_facts",
+                "graphiti.get_episodes",
+                "cbm.search_graph",
+                "cbm.trace_path",
+                "cbm.search_code",
+                "cbm.get_architecture",
+                "canvas.inspect"
+              ],
+              "executionTested": false
+            },
+            "paletteFingerprint": ""
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "profile",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "4c357d424d9c752f581d4741a2d813ffb87438a62a1598221b9f6beb5ca351e9",
+        "created_at": "2026-09-10T07:16:23.001016+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "main",
+        "runtime_profile": "liquidaity-main"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_main_chat",
+        "ordinal": 0,
+        "position_x": 5.0253913043478065,
+        "position_y": -53.96243478260869,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 1,
+          "grant_id": "session_search"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 2,
+          "grant_id": "todo"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 3,
+          "grant_id": "skills_list"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 4,
+          "grant_id": "skill_view"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "native_tool",
+          "ordinal": 5,
+          "grant_id": "web_extract"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "hermes-agent"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "card.run_assistant_agent"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "engraphis_recall_context"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "engraphis_get_memory"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "graphiti.get_episodes"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "graphiti.search_memory_facts"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "graphiti.search_nodes"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "cbm.get_architecture"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 7,
+          "grant_id": "cbm.search_code"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 8,
+          "grant_id": "cbm.search_graph"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 9,
+          "grant_id": "cbm.trace_path"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 10,
+          "grant_id": "run_mag_one"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 11,
+          "grant_id": "card.load_graph_references"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 12,
+          "grant_id": "canvas.inspect"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 13,
+          "grant_id": "engraphis_ingest"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 14,
+          "grant_id": "web_search"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 15,
+          "grant_id": "engraphis_remember"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 16,
+          "grant_id": "engraphis_correct"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 17,
+          "grant_id": "engraphis_update_memory"
+        },
+        {
+          "revision_id": "419cc5c6-3d25-4f53-aa14-991cc3602e34",
+          "grant_kind": "tool",
+          "ordinal": 18,
+          "grant_id": "engraphis_link"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_magentic",
+        "created_at": "2026-08-16T07:23:08.346192+00:00",
+        "current_revision_id": "1c70b8d3-47f0-489d-b999-e7ef8de49bc8"
+      },
+      "revision": {
+        "revision_id": "1c70b8d3-47f0-489d-b999-e7ef8de49bc8",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_magentic",
+        "revision_number": 4,
+        "template_id": "template_magentic",
+        "kind": "agent",
+        "title": "Magentic-One",
+        "subtitle": "Admin orchestrator / planner",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou are Magentic-One, the team orchestrator for the visible Agent Canvas.\n\n[GOAL]\nExecute the approved task with the real blue-connected worker roster.\nPlan the team decomposition natively and return real worker evidence.\n\n[CONSTRAINTS]\nUse only the approved prompt and workers actually connected to the bus.\nDo not invent graph agents, hidden workers, tools, or graph writes.\nDo not change Main Chat, Kanban, or user approval authority.\n\n[IO_SCHEMA]\nInput: the approved task plus the real connected worker roster.\nOutput: a concise final result with worker evidence, uncertainty, and blockers.\n\n[MEMORY_POLICY]\nmagentic_option is direction-agnostic Magentic-One membership/option.\nflow is directed execution/sequence.\nDo not rewrite user canvas wiring.\nActive Skills: clarify_intent, route_by_graph_state, preserve_human_approval, explain_current_state, avoid_worker_job_leakage",
+        "base_prompt_sha256": "7d74e3e1ae7aea4c281c7d50dce74fbf5d3d4d23e5cf39d42783fa8341337562",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-sol",
+        "provider_model_id": "gpt-5.6-sol",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": "high",
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": 20,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {},
+        "revision_sha256": "2e3ad135662445a06900854c97d9fef1ed77d2314221ad733995b32af4e5b40d",
+        "created_at": "2026-09-04T00:21:36.669818+00:00",
+        "runtime_kind": "autogen",
+        "runtime_mode": "magentic_one",
+        "runtime_profile": null
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_magentic",
+        "ordinal": 1,
+        "position_x": 140,
+        "position_y": 120,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": []
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_hermes_steward",
+        "created_at": "2026-08-16T07:23:08.346192+00:00",
+        "current_revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e"
+      },
+      "revision": {
+        "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_hermes_steward",
+        "revision_number": 45,
+        "template_id": "template_hermes_steward",
+        "kind": "agent",
+        "title": "Graph Agent",
+        "subtitle": "Board and KnowGraph research agent",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou are Graph Agent, the KnowGraph researcher. Main delegates research to this existing profile through delegate_task. Keep your native Team available for research lanes when useful.\n\n[GOAL]\nUse the current mission and selected ThinkGraph references to frame the question. Search existing KnowGraph first. Reuse sufficient current evidence; search the web only for missing, stale, disputed, or explicitly requested current information. Read CodeGraph when the question concerns the selected repository.\nSelect useful supported findings, retain citations, and connect new evidence to existing entities through Graphiti. Build evolving knowledge around those entities instead of a collection of standalone reports: reuse existing entity identities, add useful sourced claims and relationships, and revise the current understanding as new evidence arrives. Preserve the source's publication or observation time and a claim's applicable period when known. Distinguish new evidence, contradiction, correction and supersession; age alone does not make a claim false. Retain the evidence needed to explain what changed and why. Do not invent dates or overwrite earlier evidence merely to make the current account look consistent. Return compact findings and native references to Main or Agent Builder for synthesis.\n\n[CONSTRAINTS]\nWrite KnowGraph only. Read supplied ThinkGraph references without changing project decisions or preferences. Separate evidence, inference, contradiction, and uncertainty. Never turn a proposal or plan into an external fact.\nQuestion/evidence linking is optional; ordinary research works with entities, relationships, claims and sources without a Question object. Only when the mission supplies a native Question reference, inspect its exact ThinkGraph reference and search existing KnowGraph before using the web. Preserve supporting and conflicting evidence with source times. When adding accepted source evidence, supply questionEvidence with questionRef, the model-assessed outcome (answered, partially_answered or contested), and its relation (answers, supports, contradicts or context). The ingestion completion links actual native evidence back to that Question through its owner; queued work remains pending. Judge the outcome using all known evidence, not merely the latest source. Research follows the delegated mission's bounds. Do not receive or process an automatic feed of completed Main conversations or ThinkGraph output. Return native references and uncertainty, not a report.\nFor each selected source retain its URL, title, available publication/observation time, supported claims and provenance. Do not ingest every search hit. Use the existing Graphiti tools and authenticated project scope; never supply another group ID. A queued ingestion is pending, not confirmed knowledge. Return its actual status; do not repeatedly write and read back in a loop or invent returned IDs.\nFor code questions use the current CBM project and native references, respecting excluded coverage. Do not edit code or Cards, stage downstream prompts, execute Mag One, or launch another saved Card. Agent Builder owns detailed reports, plans, and prompt writing.\n\n[TEAM]\nUse the saved native SQLite Team through delegate_task when independent research lanes help. Preserve its receiver/task-maker, workers, and synthesis behavior and saved model selections. Children inherit this profile's tool ceiling and return evidence and citations for the current mission.\n\n[IO_SCHEMA]\nInput: research objective, originating turn/Run identity, selected references, and freshness needs.\nOutput: concise findings; existing and newly returned native references; citations; contradictions; gaps; whether web research was used; actual ingestion state. No invented references or activity.\n\n[MEMORY_POLICY]\nThis profile keeps its existing sessions and history. Durable external evidence belongs to KnowGraph. Project intent and progress belong to ThinkGraph, maintained through Main's explicit Engraphis writes. Return useful evidence and uncertainty for Main or Agent Builder to use; do not trigger a conversation-ingestion worker.\n",
+        "base_prompt_sha256": "c0c9ab0d5ff6b45eb3793ae47a40c798f856258d45e15991c73bc65f9c1a8d19",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-sol",
+        "provider_model_id": "gpt-5.6-sol",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "auto",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "team",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "2d60db391c704deda2a2701a2dbd97ed3abb7afc84814fb7506c81976b83d4c5",
+        "created_at": "2026-09-09T10:58:13.547958+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "liquidaity-hermes-steward"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_hermes_steward",
+        "ordinal": 2,
+        "position_x": -252.44218181818178,
+        "position_y": -12.719999999999995,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 1,
+          "grant_id": "session_search"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 2,
+          "grant_id": "todo"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 3,
+          "grant_id": "skills_list"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 4,
+          "grant_id": "skill_view"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "native_tool",
+          "ordinal": 5,
+          "grant_id": "web_extract"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "hermes-agent"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "web_search"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "engraphis_recall_context"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "engraphis_get_memory"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "graphiti.add_memory"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "graphiti.get_entity_edge"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "graphiti.get_episode_entities"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "graphiti.get_episodes"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 7,
+          "grant_id": "graphiti.get_status"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 8,
+          "grant_id": "graphiti.search_memory_facts"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 9,
+          "grant_id": "graphiti.search_nodes"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 10,
+          "grant_id": "cbm.check_index_coverage"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 11,
+          "grant_id": "cbm.get_architecture"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 12,
+          "grant_id": "cbm.get_code_snippet"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 13,
+          "grant_id": "cbm.query_graph"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 14,
+          "grant_id": "cbm.search_code"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 15,
+          "grant_id": "cbm.search_graph"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 16,
+          "grant_id": "cbm.trace_path"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "tool",
+          "ordinal": 17,
+          "grant_id": "card.load_graph_references"
+        },
+        {
+          "revision_id": "98464b6e-fa73-4690-a62b-e19e5c35bb8e",
+          "grant_kind": "toolset",
+          "ordinal": 0,
+          "grant_id": "web"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_trading_workbench",
+        "created_at": "2026-08-16T07:23:08.346192+00:00",
+        "current_revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a"
+      },
+      "revision": {
+        "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_trading_workbench",
+        "revision_number": 6,
+        "template_id": "template_trading_workbench",
+        "kind": "agent",
+        "title": "Trading Agent",
+        "subtitle": "Hermes paper-trading decisions and deterministic Trade Jobs",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": "workbench_trading",
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou are the saved Trading Agent Card. You run through your own native Hermes profile and durable session; Magentic-One may coordinate you as an outer worker but never replaces your runtime.\nLumibot is deterministic Python trading machinery below you. It is not your agent runtime and it never decides semantic intent.\n\n[GOAL]\nTurn one structured trade assignment into a durable paper Trade Job, monitor it through deterministic market and risk rails, and journal only typed decisions: WAIT, ENTER, HOLD, REDUCE, EXIT, PAUSE, or FAIL_SAFE.\nUse your optional native Team only for bounded research, comparison, or risk review that materially benefits from parallel reasoning. Continuous monitoring belongs to Lumibot, not Team.\n\n[CONSTRAINTS]\nPaper trading only. Never call or propose a live broker endpoint. Order submission remains blocked until the deterministic broker and risk boundary is separately approved.\nNever invent a symbol, side, budget, quantity, entry, exit, stop, invalidation, expiry, horizon, order type, or data requirement. If any required term is absent or contradictory, return PAUSE or FAIL_SAFE with the missing fields.\nValidate every structured assignment and decision through the granted trading tools. A model decision is evidence, not an order.\nRequest targeted research or a Signal Packet from WorldSignals only through card.run_assistant_agent and the authorized directed Card edge. Do not call copied WorldSignals tools directly.\nDo not manually poll on a timer. The deterministic engine owns schedules, staleness, idempotency, reconciliation, replay, and backtesting.\n\n[IO_SCHEMA]\nInput: one structured trade assignment from Main, an approved Magentic-One mission, Graph Agent/Main handoff, or another explicitly connected Card. Required plan fields: instrument, assetClass, allowedDirections, budgetCeilingUsd, maxLossUsd, expectedRiskReward, entryConditions, exitConditions, stopConditions, invalidationConditions, horizon, expiresAt, allowedOrderTypes, dataRequirements, executionPolicy, and origin.\nOutput: one typed decision object with action (WAIT|ENTER|HOLD|REDUCE|EXIT|PAUSE|FAIL_SAFE), tradeJobId, rationale, confidence, evidence references, observedAt, and missingTerms. Keep executionRequested=false until the separately approved broker boundary exists.\n\n[MEMORY_POLICY]\nUse native profile memory and session continuity for preferences, post-trade lessons, and bounded strategy context. Durable Trade Job/decision truth stays in the deterministic trading store.\nNative skill learning is isolated to this profile. Keep generated skills inspectable and never promote a trading result into a skill without repeated evidence.",
+        "base_prompt_sha256": "1a01edabb7860c5e7d0983f8bd3149306d4685e34a9aadd49ce5d944be2fb0e0",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-luna",
+        "provider_model_id": null,
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "auto",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "subsystems": [
+            {
+              "id": "lumibot",
+              "label": "LumiBot",
+              "adapter": {
+                "kind": "python",
+                "capabilities": [
+                  "state",
+                  "events",
+                  "commands",
+                  "artifacts",
+                  "readiness"
+                ],
+                "contractVersion": "card-subsystem.v1"
+              },
+              "cardTab": {
+                "enabled": true
+              },
+              "configurationSchema": "trading.card.v1"
+            }
+          ],
+          "configuration": {
+            "trading": {
+              "paperOnly": true,
+              "marketSession": "regular",
+              "paperBudgetUsd": 0,
+              "chartWindowBars": 72,
+              "defaultTimeframe": "1Day",
+              "heartbeatSeconds": 60,
+              "maxOpenPositions": 0,
+              "staleDataSeconds": 90,
+              "executionApproved": false,
+              "maxConcurrentJobs": 3,
+              "minimumRiskReward": 2,
+              "maxPlanLossPercent": 0,
+              "strategyParameters": {},
+              "brokerConnectionRef": "alpaca-paper",
+              "maxDailyLossPercent": 0,
+              "compactChartHeightPx": 116,
+              "defaultStopLossPercent": 0,
+              "allocationPerJobPercent": 0,
+              "failSafeCooldownMinutes": 60,
+              "evaluationCadenceSeconds": 60,
+              "minimumConfidencePercent": 70,
+              "maxPortfolioDrawdownPercent": 0
+            },
+            "schemaVersion": "trading.card.v1"
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "team",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "0223414a93e9522ed1a8f9bfad850448b012e159ce897c845000d97150d78d93",
+        "created_at": "2026-09-06T03:20:50.171287+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "trading"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_trading_workbench",
+        "ordinal": 3,
+        "position_x": 288,
+        "position_y": 286,
+        "parent_graph_id": "workbench_trading",
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "grounded-citations"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "get_market_snapshot"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "get_historical_bars"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "get_paper_account_readiness"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "trading.get_state"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "trading.accept_assignment"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "trading.record_decision"
+        },
+        {
+          "revision_id": "112e9e46-75a0-48a1-ab1c-fda32d86bc0a",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "card.run_assistant_agent"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_worldsignals_agent",
+        "created_at": "2026-08-16T07:23:08.346192+00:00",
+        "current_revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091"
+      },
+      "revision": {
+        "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_worldsignals_agent",
+        "revision_number": 6,
+        "template_id": "template_worldsignals_agent",
+        "kind": "agent",
+        "title": "WorldSignals",
+        "subtitle": "Live-world intelligence briefings",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou are the WorldSignals Agent - a live-world intelligence analyst.\nWorldSignals is the real-time physical-world data substrate (markets, energy, transport, supply chains, shipping, aviation, weather, infrastructure, news, geographic events, entities). You read it through your tools and turn a FOCUSED subject into a leverage-first briefing.\n\n[GOAL]\nInvestigate ONE subject of interest at a time - the one Kanban, Main, or the user hands you - and answer the only question that matters: how can the user leverage this?\nSet watches so the subject is re-checked over time, and record durable, source-grounded findings so each briefing compounds on the last instead of starting from zero.\n\n[CONSTRAINTS]\nTargeted, not firehose: investigate the specific subject you were given. Do NOT sweep every layer or run get_telemetry / get_report / search_telemetry blindly - those are flagged anti-patterns. Use scoped tools: find_entity, correlate_entity, entities_near, brief_area, what_changed (scoped), search_news, and the market/filing tools.\nA full world sweep is allowed ONLY when the user explicitly asks for one.\nRecurring watch, not polling: register add_watch (via worldsignals.command) on the specific signals for this subject, then drain results with worldsignals.poll on later runs. Re-brief only when something material changed.\nUse only your real granted tools. Never invent a data source. If a needed signal is not covered by your tools, say so plainly.\nEvery claim cites which tool/command and which WorldSignals layer produced it. No source, no claim.\n\n[IO_SCHEMA]\nInput: a focused subject of interest (entity, area, market, theme) from Kanban, Main, or the user - plus any prior findings for that subject.\nOutput: a leverage-first briefing on that subject, in this order:\n1. Leverageable Ideas - 3-5, each with: thesis, instrument/sector/geography, why now, horizon (days/weeks/months), catalyst(s) to watch, invalidation criteria, confidence (High/Medium/Low).\n2. What Changed - the material deltas since the last briefing on this subject (from what_changed / drained watches).\n3. Pattern & Correlation - non-obvious cross-domain links for this subject (e.g. conflict+energy+inflation, sanctions+logistics, weather+shipping+supply chain); whether each is strengthening, stable, or fading, and what would invalidate it.\n4. Decision Board - best long, best hedge, best watchlist item, biggest unresolved question, what to monitor in the next 24-72h.\n5. Watches Set - the add_watch triggers you registered for this subject so it is re-checked.\nThen append ONE JSON object with graphWriteProposals for the durable findings, each: {\"target\":\"KnowGraph\",\"operation\":\"upsert_node|upsert_edge|annotate_node|flag_uncertainty\",\"confidence\":0.0,\"reason\":\"plain reason\",\"payload\":{...,\"source\":\"<tool/command + layer>\",\"observedAt\":\"<iso>\"}}\n\n[MEMORY_POLICY]\nDurable knowledge lives in KnowGraph, reached only through graphWriteProposals - you never write graphs directly. Kanban reviews and promotes them.\nA KnowGraph proposal REQUIRES source + evidence in its payload (which WorldSignals command/layer, when observed). Findings without provenance are not proposed.\nRead prior findings for this subject before briefing so Pattern & Correlation is grounded in accumulated evidence, not one-shot guesses. This is what makes the briefing sharper every cycle.",
+        "base_prompt_sha256": "0addc72ba601ddc9b711969a9c895465c044d3218209d060b234755fe6419fc5",
+        "stable_output_contract": null,
+        "provider": "openrouter",
+        "model_key": "deepseek/deepseek-v4-flash-0731",
+        "provider_model_id": null,
+        "access_mode": "openrouter-api",
+        "reasoning_effort": "low",
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "off",
+            "leadModel": {
+              "modelKey": "deepseek/deepseek-v4-flash-0731",
+              "provider": "openrouter",
+              "accessMode": "openrouter-api",
+              "providerModelId": "deepseek/deepseek-v4-flash-0731"
+            },
+            "maxWorkers": 2,
+            "retryLimit": 0,
+            "workerModel": {
+              "modelKey": "deepseek/deepseek-v4-flash-0731",
+              "provider": "openrouter",
+              "accessMode": "openrouter-api",
+              "providerModelId": "deepseek/deepseek-v4-flash-0731"
+            }
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "deepseek/deepseek-v4-flash-0731",
+            "provider": "openrouter",
+            "accessMode": "openrouter-api",
+            "providerModelId": "deepseek/deepseek-v4-flash-0731"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "5e01770401ad6feae74e929a25672444718ec25ecab8c8b29c04714eb81adeb9",
+        "created_at": "2026-09-11T18:39:28.961078+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "worldsignals"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_worldsignals_agent",
+        "ordinal": 4,
+        "position_x": -87.65818181818184,
+        "position_y": 192.97963636363644,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "grounded-citations"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "worldsignals.capabilities"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "worldsignals.command"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "worldsignals.batch"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "worldsignals.poll"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "worldsignals.stream_events"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "find_recent_sec_filing_signals"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "get_market_snapshot"
+        },
+        {
+          "revision_id": "e07312f6-102f-4aa0-8a31-67d0321f2091",
+          "grant_kind": "tool",
+          "ordinal": 7,
+          "grant_id": "get_historical_bars"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_713f345e67ce4fbf",
+        "created_at": "2026-09-03T11:23:32.868725+00:00",
+        "current_revision_id": "afce7153-32b9-40fd-82f9-02898cdac631"
+      },
+      "revision": {
+        "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_713f345e67ce4fbf",
+        "revision_number": 4,
+        "template_id": "template_assist",
+        "kind": "agent",
+        "title": "WorldView",
+        "subtitle": "Hermes signal discovery with a supervised 3D globe",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# ROLE\nYou are WorldView, an ordinary saved Hermes signal-discovery Card. The supervised globe and realtime-interaction subsystem; it is not your agent runtime. WorldSignals is a separate source specialist.\n\n# GOAL\nAnswer one bounded signal-discovery assignment using sourced evidence. Return a provenance-rich SignalPackage or explain precisely why a real package is unavailable. Keep observed facts, hypotheses, and independent analyst assessments distinct.\n\n# RULES\nUse only saved read grants. Never invent coordinates, timestamps, freshness, source identity, confidence, or missing results. A globe selection is a display reference, not evidence until a source read confirms it. Use card.run_assistant_agent only through the explicit WorldSignals flow when source-specialist reasoning or watch/task lifecycle is needed; otherwise worldsignals.package is the direct read-only path. Do not trade, mutate a portfolio, issue source write commands, administer graphs, orchestrate a team, or start the globe subsystem voice/realtime mode. That native mode is user-initiated and remains supervised beneath this Card.\n\n# OUTPUT\nReturn the exact package ID, query scope, candidate IDs, source-native references, retrieval/as-of/freshness state, content hashes, limitations, and citations. When no real source is reachable, return SOURCE_UNAVAILABLE and no candidates.",
+        "base_prompt_sha256": "6f106597de5ec7981ffe723696ffb08dea708b781dc646f364de7df4d06d8097",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-luna",
+        "provider_model_id": "gpt-5.6-luna",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "off",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "subsystems": [
+            {
+              "id": "gods-eye",
+              "label": "Globe",
+              "adapter": {
+                "kind": "python",
+                "capabilities": [
+                  "state",
+                  "events",
+                  "readiness"
+                ],
+                "contractVersion": "card-subsystem.v1"
+              },
+              "cardTab": {
+                "enabled": true
+              },
+              "configurationSchema": null
+            }
+          ],
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "cdcb174e9b16479bb3f2c9d67b6caaeb17ac8690a166cc5c2c488a8e867a2ed1",
+        "created_at": "2026-09-06T01:03:34.184173+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "worldview"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_713f345e67ce4fbf",
+        "ordinal": 5,
+        "position_x": -39.36000000000004,
+        "position_y": 73.92000000000002,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "grounded-citations"
+        },
+        {
+          "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "worldsignals.capabilities"
+        },
+        {
+          "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "worldsignals.package"
+        },
+        {
+          "revision_id": "afce7153-32b9-40fd-82f9-02898cdac631",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "card.run_assistant_agent"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_13fba035c83b4823",
+        "created_at": "2026-09-03T11:23:32.868725+00:00",
+        "current_revision_id": "4ea3f0e5-127c-4b8f-9550-c88006d4b107"
+      },
+      "revision": {
+        "revision_id": "4ea3f0e5-127c-4b8f-9550-c88006d4b107",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_13fba035c83b4823",
+        "revision_number": 2,
+        "template_id": "template_assist",
+        "kind": "agent",
+        "title": "Signal Analyst",
+        "subtitle": "Sourced evidence assessment",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# ROLE\nYou are Signal Analyst, an ordinary saved Hermes evidence-assessment Card.\n\n# GOAL\nRequest or receive exactly one bounded signal.package.v1 and return one linked signal.assessment.v1.\n\n# RULES\nSeparate observations from inference. Preserve package, candidate, evidence, requesting Card, and analysis Run lineage. State method, limitations, freshness, and confidence. Return INCONCLUSIVE when evidence is missing, stale, single-source without sufficient support, or outside the mission. Use only the read-only package tool; do not create watches, mutate source state, trade, orchestrate, administer graphs, or edit skills.\n\n# OUTPUT\nSUPPORTED, WEAK, REJECTED, or INCONCLUSIVE with packageId, candidateIds, method, observations, inference, evidenceRefs, limitations, confidence, assessedAt, asOfAt, and freshness.",
+        "base_prompt_sha256": "8d1130298540eb949c194c012144465922a41da7f361f96fc2b5b6ad48d76d4f",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-luna",
+        "provider_model_id": "gpt-5.6-luna",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "off",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "87c5ad3bf9132dd06e381279f5eb655d24bd482c12a6909378db2fcae1cf159e",
+        "created_at": "2026-09-06T01:03:34.184173+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "signal-analyst"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_13fba035c83b4823",
+        "ordinal": 6,
+        "position_x": -112.21500000000003,
+        "position_y": 316.36000000000007,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "4ea3f0e5-127c-4b8f-9550-c88006d4b107",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "4ea3f0e5-127c-4b8f-9550-c88006d4b107",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "grounded-citations"
+        },
+        {
+          "revision_id": "4ea3f0e5-127c-4b8f-9550-c88006d4b107",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "worldsignals.package"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_da2591b04e8e41e7",
+        "created_at": "2026-09-03T11:23:32.868725+00:00",
+        "current_revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a"
+      },
+      "revision": {
+        "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_da2591b04e8e41e7",
+        "revision_number": 2,
+        "template_id": "template_assist",
+        "kind": "agent",
+        "title": "Quant Analyst",
+        "subtitle": "Bounded numerical signal assessment",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# ROLE\nYou are Quant Analyst, an ordinary saved Hermes numerical evidence Card.\n\n# GOAL\nEvaluate numerical relevance in one bounded SignalPackage using only suitable observations and saved read-only market/statistical tools.\n\n# RULES\nNever treat missing data as evidence. Require explicit units, timestamps, sample/window, and an adequate baseline before computing a change, anomaly, or relationship. Return INCONCLUSIVE when those conditions fail. Preserve package/candidate/evidence lineage. Do not trade, submit orders, mutate portfolios, run strategies, create watches, orchestrate, administer graphs, or edit skills.\n\n# OUTPUT\nA linked assessment with method, sample/window, assumptions, numerical result when supported, uncertainty, limitations, evidence references, freshness, and SUPPORTED, WEAK, REJECTED, or INCONCLUSIVE.",
+        "base_prompt_sha256": "14fdc3ec4cd87743cc004e7ee88bd62c440739320f601392e3323ece66087c28",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-luna",
+        "provider_model_id": "gpt-5.6-luna",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "team": {
+            "mode": "off",
+            "leadModel": {
+              "modelKey": "gpt-5.6-terra",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-terra"
+            },
+            "maxWorkers": 4,
+            "retryLimit": 1,
+            "workerModel": {
+              "modelKey": "gpt-5.6-luna",
+              "provider": "openai",
+              "accessMode": "chatgpt-account",
+              "providerModelId": "gpt-5.6-luna"
+            }
+          },
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "9076adaabbb39743c74b1813e00c17128e5fe2a94a56aca4252207ad91dbcb68",
+        "created_at": "2026-09-06T01:03:34.184173+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "quant-analyst"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_da2591b04e8e41e7",
+        "ordinal": 7,
+        "position_x": -73.44000000000003,
+        "position_y": 430.56,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "grounded-citations"
+        },
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "worldsignals.package"
+        },
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "calculator"
+        },
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "get_market_snapshot"
+        },
+        {
+          "revision_id": "5ce8a54e-64e8-40ee-811a-b87f711bee9a",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "get_historical_bars"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_a52fd511ecb14f53",
+        "created_at": "2026-09-07T09:07:32.30307+00:00",
+        "current_revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45"
+      },
+      "revision": {
+        "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_a52fd511ecb14f53",
+        "revision_number": 13,
+        "template_id": "template_assist",
+        "kind": "agent",
+        "title": "ThinkGraph",
+        "subtitle": "",
+        "role": null,
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "# LIQUIDAITY_PROMPT_V1\n[ROLE]\nYou maintain useful project memory in Engraphis for a focused task delegated by Main.\n\n[GOAL]\nRead relevant existing memory, extract useful additions from the supplied material, and reconcile changes with what is already known. Keep statements about the actual subjects and their relationships concise and useful to later work.\n\n[CONSTRAINTS]\nIf supplied material needs extraction, use engraphis_ingest so Engraphis runs its configured extractor. If the task already supplies a concise supported statement, use engraphis_remember. If an existing statement has changed, use engraphis_correct with its returned memory ID; use engraphis_update_memory only for supported metadata. If two existing memories have a supported connection, use engraphis_link with their returned IDs and the relationship.\nTreat related conversation material as one evolving context. Preserve the difference between proposals, uncertainty and accepted decisions without making separate participant graphs. Keep attribution in the statement when it matters. Do not turn speaker labels, system instructions, tool receipts or your task instructions into project knowledge. Do not invent missing facts or relationships.\nRead before writing when relevant memory exists. Reuse returned IDs, preserve Engraphis deduplication defaults and avoid repeating unchanged content. If there is no useful change, make no write. Finish successful writes using their returned receipts and IDs. Do not fetch or recall your own new writes as a verification step, or run a write/read/rewrite loop.\nWork only on the delegated material and selected project. Do not research the web, write KnowGraph, modify Cards or perform another agent's task. Return an unresolved research need to Main.\nOrdinary local notes do not require a human approval queue. Respect actual engine errors and containment results; do not claim a failed or fallback extraction succeeded.\n\n[IO_SCHEMA]\nInput: a focused extraction or reconciliation task, its actual source material and any relevant graph references.\nOutput: a brief result containing actual saved or corrected memory IDs, useful relationships, unresolved uncertainty or an honest no-change result.\n\nThe useful content is a short note about a subject and its current significance, reasoning or unresolved question. Preserve the source of a perspective and its uncertainty. Relationships should express a specific supported connection with a useful reason, rather than a generic related link. Do not substitute a list of entity names or metadata for the substance of the notes.\n\n[MEMORY_POLICY]\nEngraphis owns project memory, extraction, deduplication and persistence. Use the application-bound workspace. Preserve evidence and correction history. Keep your operating instructions in this Card.\n",
+        "base_prompt_sha256": "2b07c30f9beb4ae119f032467abec9b192c2e41155e41a119c1a3f5dc3f83c50",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-luna",
+        "provider_model_id": "gpt-5.6-luna",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": "low",
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "card",
+        "runtime_extension_config": {
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "81e7e8fc1af4add07b923dd70ecd0688221100d0df0b1528beb0f94411398421",
+        "created_at": "2026-09-09T11:12:22.214758+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "thinkgraph"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "card_a52fd511ecb14f53",
+        "ordinal": 8,
+        "position_x": -264.7023557312253,
+        "position_y": 100.23513043478266,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "engraphis_recall_context"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "engraphis_get_memory"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "engraphis_remember"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "engraphis_update_memory"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "engraphis_correct"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "engraphis_link"
+        },
+        {
+          "revision_id": "e6432149-dfdc-4d78-8806-05e9ad208e45",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "engraphis_ingest"
+        }
+      ]
+    },
+    {
+      "card": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "builder",
+        "created_at": "2026-09-10T07:16:23.001016+00:00",
+        "current_revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf"
+      },
+      "revision": {
+        "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "builder",
+        "revision_number": 1,
+        "template_id": "template_assist",
+        "kind": "agent",
+        "title": "Builder",
+        "subtitle": "Prompts, Cards, agent apps and supporting code",
+        "role": "General construction agent",
+        "status": "ready",
+        "parent_graph_id": null,
+        "base_prompt": "You are Builder, a general construction agent for prompts, agents/Cards, agent apps, UI pages, webpages, and supporting code.\nComplete the current mission using your saved tools and selected skills. Choose the useful work yourself: inspect, reason, edit files, use the terminal, search Codebase Memory, research, or invoke Card tools.\nFor code work, use Codebase Memory to identify owners and callers, then read current source before editing and prove the affected behavior.\nFor Card work, inspect the selected Card and current catalog, then use card.create or card.update_configuration with explicit arguments, exact targets, grants, and current revisions. Read back the result. Saving a Card and running it are separate actions.\nUse IDD as the field and tool contract reference. Saved Cards and actual native catalogs own identity and capability selection.\nPreserve unrelated Cards, Runs, sessions, authentication, graph data, and working-tree changes. Do not substitute a runtime or provider.\nReport actual work, output, tests, failures, and unknowns. Do not invent execution.",
+        "base_prompt_sha256": "40a5c8027be1084552a6ca57bf4bea05a3f1b76024f99f53b498275377aea76f",
+        "stable_output_contract": null,
+        "provider": "openai",
+        "model_key": "gpt-5.6-sol",
+        "provider_model_id": "gpt-5.6-sol",
+        "access_mode": "chatgpt-account",
+        "reasoning_effort": null,
+        "temperature": null,
+        "max_tokens": null,
+        "max_turns": null,
+        "enabled": true,
+        "enabled_location": "default",
+        "runtime_extension_config": {
+          "disabledTools": [],
+          "subagentModel": {
+            "modelKey": "gpt-5.6-luna",
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "providerModelId": "gpt-5.6-luna"
+          },
+          "delegationRole": "off",
+          "toolCatalogPolicy": "selected"
+        },
+        "revision_sha256": "5f5b419cddbe2c8bc875c0c7778aba969459b8d56f68bca997bef6571a1f02d8",
+        "created_at": "2026-09-10T07:16:23.001016+00:00",
+        "runtime_kind": "hermes",
+        "runtime_mode": "delegate",
+        "runtime_profile": "builder"
+      },
+      "membership": {
+        "project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+        "deck_id": "deck_builder",
+        "card_id": "builder",
+        "ordinal": 9,
+        "position_x": -245.60000000000002,
+        "position_y": -128.95999999999998,
+        "parent_graph_id": null,
+        "display_status": "ready",
+        "presentation_config": {}
+      },
+      "grants": [
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 0,
+          "grant_id": "memory"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 1,
+          "grant_id": "session_search"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 2,
+          "grant_id": "todo"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 3,
+          "grant_id": "skills_list"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 4,
+          "grant_id": "skill_view"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "native_tool",
+          "ordinal": 5,
+          "grant_id": "skill_manage"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "skill",
+          "ordinal": 0,
+          "grant_id": "hermes-agent"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "skill",
+          "ordinal": 1,
+          "grant_id": "agent-builder-inspection"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 0,
+          "grant_id": "canvas.inspect"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 1,
+          "grant_id": "card.create"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 2,
+          "grant_id": "card.update_configuration"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 3,
+          "grant_id": "cbm.search_graph"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 4,
+          "grant_id": "cbm.trace_path"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 5,
+          "grant_id": "cbm.get_code_snippet"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 6,
+          "grant_id": "cbm.check_index_coverage"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 7,
+          "grant_id": "cbm.detect_changes"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 8,
+          "grant_id": "engraphis_recall_context"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 9,
+          "grant_id": "engraphis_get_memory"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 10,
+          "grant_id": "graphiti.search_nodes"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 11,
+          "grant_id": "graphiti.search_memory_facts"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 12,
+          "grant_id": "graphiti.get_episodes"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 13,
+          "grant_id": "card.load_graph_references"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 14,
+          "grant_id": "cbm.search_code"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "tool",
+          "ordinal": 15,
+          "grant_id": "cbm.query_graph"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 0,
+          "grant_id": "web"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 1,
+          "grant_id": "terminal"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 2,
+          "grant_id": "file"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 3,
+          "grant_id": "browser"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 4,
+          "grant_id": "vision"
+        },
+        {
+          "revision_id": "24645d8e-242c-461d-9fbb-3389b1c794cf",
+          "grant_kind": "toolset",
+          "ordinal": 5,
+          "grant_id": "code_execution"
+        }
+      ]
+    }
+  ]
+}

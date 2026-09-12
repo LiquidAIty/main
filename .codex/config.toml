@@ -1,0 +1,8 @@
+# Portable preferences copied from Jeremiah's old-computer Codex configuration.
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+personality = "pragmatic"
+
+[features]
+memories = true
+js_repl = false

@@ -1,0 +1,126 @@
+{
+  "format_version": 1,
+  "source_project_id": "1b1a6958-0658-4b1a-bf13-e2066582adb4",
+  "source_deck_id": "deck_builder",
+  "edges": [
+    {
+      "label": "MAGENTIC_CONTROL",
+      "source": "card_main_chat",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_main_chat_magentic_control",
+        "ordinal": 0,
+        "edgeType": "magentic_control",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "task-bus-top"
+      }
+    },
+    {
+      "label": "MAGENTIC_OPTION",
+      "source": "card_trading_workbench",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_i6zwu7qk",
+        "ordinal": 1,
+        "edgeType": "magentic_option",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "bus-out-2"
+      }
+    },
+    {
+      "label": "MAGENTIC_OPTION",
+      "source": "card_713f345e67ce4fbf",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_pzp1oqrl",
+        "ordinal": 2,
+        "edgeType": "magentic_option",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "bus-in-1"
+      }
+    },
+    {
+      "label": "MAGENTIC_OPTION",
+      "source": "card_worldsignals_agent",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_8xaabxhl",
+        "ordinal": 3,
+        "edgeType": "magentic_option",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "bus-in-2"
+      }
+    },
+    {
+      "label": "MAGENTIC_OPTION",
+      "source": "card_13fba035c83b4823",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_rpzexzcl",
+        "ordinal": 4,
+        "edgeType": "magentic_option",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "bus-in-3"
+      }
+    },
+    {
+      "label": "MAGENTIC_OPTION",
+      "source": "card_da2591b04e8e41e7",
+      "target": "card_magentic",
+      "properties": {
+        "edgeId": "edge_0zq2go9c",
+        "ordinal": 5,
+        "edgeType": "magentic_option",
+        "direction": "source-to-target",
+        "presentation": {},
+        "targetHandle": "bus-in-4"
+      }
+    },
+    {
+      "label": "FLOW",
+      "source": "card_main_chat",
+      "target": "card_hermes_steward",
+      "properties": {
+        "edgeId": "edge_xyjwwxc4",
+        "ordinal": 6,
+        "edgeType": "flow",
+        "direction": "source-to-target",
+        "presentation": {},
+        "sourceHandle": "card-control"
+      }
+    },
+    {
+      "label": "FLOW",
+      "source": "card_main_chat",
+      "target": "builder",
+      "properties": {
+        "edgeId": "edge_smupx9gv",
+        "ordinal": 7,
+        "edgeType": "flow",
+        "direction": "source-to-target",
+        "presentation": {},
+        "sourceHandle": "card-control"
+      }
+    },
+    {
+      "label": "FLOW",
+      "source": "card_main_chat",
+      "target": "card_a52fd511ecb14f53",
+      "properties": {
+        "edgeId": "edge_dc7d538ab679",
+        "ordinal": 8,
+        "edgeType": "flow",
+        "direction": "source-to-target",
+        "presentation": {
+          "enabled": true
+        },
+        "sourceHandle": "card-control"
+      }
+    }
+  ]
+}
