@@ -14,7 +14,6 @@ _APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _APP_DIR not in sys.path:
     sys.path.insert(0, _APP_DIR)
 
-
 def test_public_mcp_identity_is_liquidaity():
     import mcp_host
 
@@ -30,22 +29,23 @@ def test_public_mcp_identity_is_liquidaity():
     )
 
 
-def test_gpt_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeypatch):
+def test_canonical_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeypatch):
     import asyncio
     import jsonschema
     import mcp_host
     from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
 
     names = READ_TOOLS | WRITE_TOOLS
-    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: names)
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", True)
-    tools = mcp_host._gpt_public_catalog(
-        asyncio.run(mcp_host._materialize_complete_catalog()))
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", lambda: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
+    catalog = asyncio.run(mcp_host._materialize_complete_catalog())
+    tools = [tool for tool in catalog if tool.name.startswith("engraphis_")]
     assert {tool.name for tool in tools} == names
+    assert "main.context" in {tool.name for tool in catalog}
+    assert "card.run_assistant_agent" in {tool.name for tool in catalog}
     assert len(tools) == len(names)
-    assert not any(name.startswith("constellation.")
-                   for name in mcp_host.external_mcp_tool_ids())
+    assert not any(tool.name.startswith("constellation.") for tool in catalog)
     for tool in tools:
         schema = tool.inputSchema
         jsonschema.Draft202012Validator.check_schema(schema)
@@ -167,9 +167,11 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_native_discovery
     monkeypatch.setattr(mcp_host, '_configured_tool_allowlist', lambda: {'canvas.upsert_wire'})
     monkeypatch.setattr(mcp_host, '_authenticated_main_context', lambda: None)
     monkeypatch.setattr(mcp_host, 'OAUTH_ENFORCED', False)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", lambda: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
-    assert [tool.name for tool in tools] == ['canvas.upsert_wire']
-    schema = tools[0].inputSchema
+    schema = next(tool.inputSchema for tool in tools if tool.name == 'canvas.upsert_wire')
+    assert 'main.context' in {tool.name for tool in tools}
     for edge_type in ('flow', 'magentic_option', 'magentic_control'):
         jsonschema.validate({'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': {
             'id': 'wire', 'source': 'a', 'target': 'b', 'edgeType': edge_type,
@@ -757,12 +759,12 @@ def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", (
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", (
         mcp_host.Tool(name="cbm.get_code_snippet", description="read", inputSchema={"type": "object"}),
         mcp_host.Tool(name="cbm.index_repository", description="write", inputSchema={"type": "object"}),
     ))
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
-        "cbm.get_code_snippet",
+        "cbm.get_code_snippet", "cbm.index_repository",
     ]
 
 
@@ -923,7 +925,7 @@ def test_signed_and_per_call_execution_context_ids_must_match(monkeypatch):
         mcp_host._request_execution_context()
 
 
-def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monkeypatch):
+def test_canonical_catalog_is_identical_for_every_mcp_principal(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -934,7 +936,7 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
     )
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tools)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tools)
     principal = {
         "kind": "card-runtime",
         "projectId": "project-1",
@@ -955,7 +957,7 @@ def test_internal_mcp_catalog_is_filtered_but_public_catalog_stays_complete(monk
         claims={"internal": principal},
     )}
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: current["token"])
-    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == ["canvas.inspect"]
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == ["canvas.inspect", "run_mag_one"]
     current["token"] = AccessToken(
         token="catalog",
         client_id="liquidaity-internal-runtime",
@@ -1166,10 +1168,16 @@ def test_stdio_process_owned_context_and_tool_allowlist_are_fail_closed(monkeypa
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", forbidden_native_init)
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", forbidden_native_init)
 
+    monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(
+        mcp_host.Tool(name=name, inputSchema={"type": "object"})
+        for name in ("main.context", "canvas.inspect", "web_search")
+    ))
     assert mcp_host._authenticated_main_context() == context
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
         "main.context",
         "canvas.inspect",
+        "web_search",
     ]
 
     denied = asyncio.run(mcp_host.call_tool("web_search", {"query": "forbidden"}))
@@ -1815,11 +1823,11 @@ def test_ungranted_and_destructive_tools_are_not_callable(monkeypatch):
     assert mcp_host._request_tool_is_allowed("graphiti.clear_graph") is False
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(
         mcp_host.Tool(name=name, inputSchema={"type": "object"})
         for name in ["engraphis_remember", "cbm.search_graph", "graphiti.add_memory"]
     ))
-    assert {tool.name for tool in asyncio.run(mcp_host.list_tools())} == {"cbm.search_graph", "graphiti.add_memory"}
+    assert {tool.name for tool in asyncio.run(mcp_host.list_tools())} == {"engraphis_remember", "cbm.search_graph", "graphiti.add_memory"}
 
 
 def test_cbm_structured_default_uses_one_native_call_and_preserves_explicit_format(monkeypatch):
@@ -1886,24 +1894,24 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
     from app.python_models.idd import load_input_data_dictionary
 
     # This checks application schemas, not upstream process initialization.
-    # The separate GPT projection test supplies native catalog fixtures.
+    # The canonical catalog test supplies native catalog fixtures.
     application_ids = {
         item["id"] for item in load_input_data_dictionary()["operations"]
         if item["namespace"] in {"main", "engraphis"}
     }
 
-    async def unexpected_native_discovery():
-        pytest.fail("application schema test must not initialize a native MCP provider")
+    async def native_catalog_fixture():
+        return []
 
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "stdio")
     monkeypatch.setattr(mcp_host, "OAUTH_ENFORCED", False)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: application_ids)
-    monkeypatch.setattr(mcp_host, "_native_cbm_tools", unexpected_native_discovery)
-    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", unexpected_native_discovery)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", native_catalog_fixture)
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", native_catalog_fixture)
 
     async def check():
-        tools = await mcp_host.list_tools()
+        tools = await mcp_host._materialize_complete_catalog()
         by_name = {tool.name: tool for tool in tools}
         assert by_name["card.run_assistant_agent"].inputSchema["anyOf"] == [
             {"required": ["cardId", "input"]},
@@ -1987,32 +1995,33 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             for name, tool in by_name.items()
             if not name.startswith(("cbm.", "graphiti."))
         )
-        assert not any(name.startswith("worldsignals.") for name in by_name)
+        assert "worldsignals.package" in by_name
         assert by_name
         assert len(tools) == len(by_name)
-        assert set(by_name) == application_ids
+        from app.python_models.tool_registry import tool_manifest
+        assert set(by_name) == application_ids | {item["name"] for item in tool_manifest()}
         return {name: tool.model_dump() for name, tool in by_name.items()}
 
     catalog = asyncio.run(check())
     assert len(catalog) == len(set(catalog))
 
 
-def test_private_runtime_registry_tools_are_projected_only_for_internal_card_runs():
+def test_registered_runtime_mcp_tools_are_in_the_same_catalog(monkeypatch):
+    import asyncio
     import mcp_host
-    from app.python_models.tool_registry import tool_publication
+    from app.python_models.tool_registry import tool_manifest
 
-    tools = mcp_host._private_runtime_catalog([])
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", lambda: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(mcp_host, "_native_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
+    tools = asyncio.run(mcp_host._materialize_complete_catalog())
     names = {tool.name for tool in tools}
-    assert {
-        "trading.get_state",
-        "trading.accept_assignment",
-        "trading.record_decision",
-    }.issubset(names)
-    assert all(tool_publication(name) == "private-runtime" for name in names)
-    assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+    assert {item["name"] for item in tool_manifest()}.issubset(names)
+    assert "card.run_assistant_agent" in names
+    assert "delegate_task" not in names
+    assert len(tools) == len(names)
 
 
-def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadata(
+def test_all_clients_receive_the_same_canonical_catalog_without_rewriting_metadata(
     monkeypatch,
 ):
     import asyncio
@@ -2030,12 +2039,14 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
     from app.python_models.tool_registry import tool_access
 
     declarations = load_input_data_dictionary()["operations"]
-    external_ids = {
-        item["id"] for item in declarations if item["publication"] == "external-mcp"
-    }
-    private_ids = {
-        item["id"] for item in declarations if item["publication"] == "private-runtime"
-    }
+    from app.python_models.tool_registry import tool_manifest
+    from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
+    expected_names = {
+        "main.context", "agentgraph.inspect", "mag_one.describe_connected_agents",
+        "run_mag_one", "write_mag_one_instructions", "card.load_graph_references",
+        "canvas.inspect", "card.create", "card.update_configuration",
+        "canvas.upsert_wire", "web_search", "card.run_assistant_agent",
+    } | READ_TOOLS | WRITE_TOOLS | {item["name"] for item in tool_manifest()}
 
     def native_tool(canonical_name, native_name):
         read_only = tool_access(canonical_name) == "read"
@@ -2070,10 +2081,11 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
     }
     for declaration in declarations:
         namespace = declaration["namespace"]
-        if declaration["publication"] == "private-runtime" or namespace not in by_namespace:
+        if namespace not in by_namespace:
             continue
         canonical_name = declaration["id"]
         native_name = canonical_name.split(".", 1)[1]
+        expected_names.add(canonical_name)
         by_namespace[namespace].append(native_tool(canonical_name, native_name))
 
     async def cbm_tools():
@@ -2092,32 +2104,25 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
 
     canonical = asyncio.run(mcp_host._materialize_complete_catalog())
     canonical_by_name = {tool.name: tool for tool in canonical}
-    # Canonical construction retains the private saved-Card doorway. Only
-    # HTTP publication projects it away; exposing it to GPT is a regression.
-    assert set(canonical_by_name) == external_ids | {"card.run_assistant_agent"}
+    assert set(canonical_by_name) == expected_names
     assert len(canonical) == len(canonical_by_name)
-
-    private_only = private_ids - external_ids
-    private_tools = [
-        mcp_host._bind_authenticated_catalog([
-            mcp_host._bind_idd_access(
-                native_tool(name, name)
-            )
-        ])[0]
-        for name in sorted(private_only - canonical_by_name.keys())
-    ]
-    complete_internal = [*canonical, *private_tools]
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tuple(complete_internal))
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tuple(canonical))
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
-
-    published = asyncio.run(mcp_host.list_tools())
-    published_names = [tool.name for tool in published]
-    assert set(published_names) == external_ids
-    assert len(published_names) == len(set(published_names))
-    assert private_only.isdisjoint(published_names)
-    assert len(mcp_host._http_catalog_or_error()) == len(complete_internal)
-    assert all(canonical_by_name[tool.name] is tool for tool in published)
-    for tool in published:
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: pytest.fail("catalog consulted an allowlist"))
+    identities = set()
+    for transport in ("streamable-http", "stdio"):
+        monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", transport)
+        for principal in (None, {"kind": "catalog-reader"}, {"kind": "system-root"},
+                          {"kind": "materializer-read"},
+                          {"kind": "card-runtime", "grantedTools": [], "presentedTools": []}):
+            monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
+            listed = asyncio.run(mcp_host.list_tools())
+            assert all(a is b for a, b in zip(canonical, listed))
+            assert len(listed) == len(canonical)
+            assert {tool.name for tool in listed} == expected_names
+            identities.add(mcp_host._catalog_identity(listed))
+    assert identities == {mcp_host._catalog_identity(canonical)}
+    for tool in listed:
         payload = tool.model_dump(by_alias=True, exclude_none=True)
         assert payload["securitySchemes"] == [{
             "type": "oauth2", "scopes": [mcp_host.AUTH0_REQUIRED_SCOPE],
@@ -2143,7 +2148,7 @@ def test_gpt_tools_list_projects_the_canonical_catalog_without_rewriting_metadat
         "engraphis_get_memory",
         "engraphis_remember",
         "graphiti.clear_graph",
-    }.issubset(published_names)
+    }.issubset({tool.name for tool in listed})
 
 
 def test_catalog_identity_covers_the_complete_frozen_tool_descriptor():
@@ -2234,7 +2239,7 @@ def test_http_tools_list_never_exposes_initializing_or_failed_catalog(monkeypatc
     monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", "streamable-http")
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
     with pytest.raises(RuntimeError, match="mcp_catalog_initializing"):
         asyncio.run(mcp_host.list_tools())
 
@@ -2244,31 +2249,31 @@ def test_http_tools_list_never_exposes_initializing_or_failed_catalog(monkeypatc
         asyncio.run(mcp_host.list_tools())
 
     catalog_size = 7
-    published_names = sorted(mcp_host.external_mcp_tool_ids())[:catalog_size]
+    catalog_names = [f"tool-{index}" for index in range(catalog_size)]
     tools = tuple(
         Tool(
             name=name,
             description="ready",
             inputSchema={"type": "object", "properties": {}},
         )
-        for name in published_names
+        for name in catalog_names
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "ready")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", tools)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", tools)
     ready = asyncio.run(mcp_host.list_tools())
     assert len(ready) == len({tool.name for tool in ready}) == catalog_size
 
 
-def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
+def test_catalog_initialization_is_process_wide_once(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.types import Tool
 
     calls = 0
 
-    published_names = sorted(mcp_host.external_mcp_tool_ids())[:5]
-    catalog_size = len(published_names)
+    catalog_names = [f"tool-{index}" for index in range(5)]
+    catalog_size = len(catalog_names)
 
     async def complete_catalog():
         nonlocal calls
@@ -2280,28 +2285,28 @@ def test_http_catalog_initialization_is_process_wide_once(monkeypatch):
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for name in published_names
+            for name in catalog_names
         ]
 
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", complete_catalog)
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
-        first = mcp_host._start_http_catalog_initialization()
-        second = mcp_host._start_http_catalog_initialization()
+        first = mcp_host._start_catalog_initialization()
+        second = mcp_host._start_catalog_initialization()
         assert first is second
         await asyncio.gather(first, second)
 
     asyncio.run(check())
     assert calls == 1
     assert mcp_host._CATALOG_STATE == "ready"
-    assert len(mcp_host._HTTP_CATALOG_TOOLS or ()) == catalog_size
+    assert len(mcp_host._CATALOG_TOOLS or ()) == catalog_size
 
 
-def test_http_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
+def test_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
     import asyncio
     import mcp_host
 
@@ -2309,31 +2314,31 @@ def test_http_catalog_task_cannot_end_in_false_initializing_state(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        mcp_host, "_initialize_http_catalog_once", incomplete_initializer
+        mcp_host, "_initialize_catalog_once", incomplete_initializer
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE_CODE", None)
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE_SUMMARY", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
-        await mcp_host._start_http_catalog_initialization()
+        await mcp_host._start_catalog_initialization()
         await asyncio.sleep(0)
 
     asyncio.run(check())
     diagnostics = mcp_host._catalog_diagnostics()
     assert diagnostics["catalogState"] == "failed"
     assert diagnostics["failureCode"] == "catalog_initializer_ended_without_state"
-    assert mcp_host._HTTP_CATALOG_TOOLS is None
+    assert mcp_host._CATALOG_TOOLS is None
 
 
-def test_http_catalog_initialization_has_no_arbitrary_30_second_deadline():
+def test_catalog_initialization_has_no_arbitrary_30_second_deadline():
     import inspect
     import mcp_host
 
-    source = inspect.getsource(mcp_host._initialize_http_catalog_once)
+    source = inspect.getsource(mcp_host._initialize_catalog_once)
     assert "wait_for" not in source
     assert "30" not in source
 
@@ -2393,7 +2398,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     calls = 0
 
     catalog_size = 6
-    published_names = sorted(mcp_host.external_mcp_tool_ids())[:catalog_size]
+    catalog_names = [f"tool-{index}" for index in range(catalog_size)]
 
     async def slow_complete_catalog():
         nonlocal calls
@@ -2406,7 +2411,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 description="ready",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for name in published_names
+            for name in catalog_names
         ]
 
     async def closed_graphiti():
@@ -2425,8 +2430,8 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())
@@ -2454,7 +2459,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                     if readiness.status_code == 200:
                         break
                     await asyncio.sleep(0.1)
-                assert readiness.json()["publicToolCount"] == catalog_size
+                assert readiness.json()["toolCount"] == catalog_size
 
             async with streamable_http_client(f"{base_url}/mcp") as streams:
                 async with ClientSession(streams[0], streams[1]) as session:
@@ -2470,7 +2475,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     assert calls == 1
 
 
-def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch, capsys):
+def test_catalog_failure_is_truthful_and_unavailable(monkeypatch, capsys):
     import asyncio
     import mcp_host
 
@@ -2480,9 +2485,9 @@ def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch, capsys):
     monkeypatch.setattr(mcp_host, "_materialize_complete_catalog", failed_catalog)
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
 
-    asyncio.run(mcp_host._initialize_http_catalog_once())
+    asyncio.run(mcp_host._initialize_catalog_once())
 
     diagnostics = mcp_host._catalog_diagnostics()
     assert diagnostics["catalogState"] == "failed"
@@ -2495,9 +2500,9 @@ def test_http_catalog_failure_is_truthful_and_unpublished(monkeypatch, capsys):
     assert diagnostics["failureSummary"] == diagnostics["catalogFailure"]
     assert diagnostics["completedCatalogFamilies"] == []
     assert diagnostics["initializingCatalogFamily"] == "liquidaity"
-    assert "publicToolCount" not in diagnostics
+    assert "toolCount" not in diagnostics
     assert "catalogHash" not in diagnostics
-    assert mcp_host._HTTP_CATALOG_TOOLS is None
+    assert mcp_host._CATALOG_TOOLS is None
     stderr = capsys.readouterr().err
     assert "full local traceback follows" in stderr
     assert "Traceback (most recent call last)" in stderr
@@ -3018,8 +3023,8 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_TOOLS", None)
-    monkeypatch.setattr(mcp_host, "_HTTP_CATALOG_INITIALIZATION_TASK", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_TOOLS", None)
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZATION_TASK", None)
 
     async def check():
         server_task = asyncio.create_task(mcp_host.main())
@@ -3125,8 +3130,8 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert not any(name.startswith("mcp__") for name in first_catalog)
             assert first_context == second_context == context
             assert first_identity == second_identity
-            assert readiness.json()["publicToolCount"] == first_identity[0]
-            assert readiness.json()["publicToolUniqueCount"] == first_identity[0]
+            assert readiness.json()["toolCount"] == first_identity[0]
+            assert readiness.json()["uniqueToolCount"] == first_identity[0]
             assert readiness.json()["catalogHash"] == first_identity[1]
         finally:
             server_task.cancel()
@@ -3188,10 +3193,22 @@ def test_auth0_token_verifier_checks_jwt_contract_and_establishes_server_owned_p
     assert verified.subject == "auth0|jeremiah"
     assert verified.claims["main"]["projectId"] == "project-1"
     assert verified.claims["main"]["mainCardId"] == "card_main_chat"
+    within_clock_skew = verifier._verify_sync(encoded({**base, "iat": now + 2}))
+    assert within_clock_skew is not None
+    monkeypatch.setattr(
+        mcp_host,
+        "_resolve_external_main_context_sync",
+        lambda _issuer, _subject: None,
+    )
+    verified_without_project = verifier._verify_sync(encoded(base))
+    assert verified_without_project is not None
+    assert verified_without_project.subject == "auth0|jeremiah"
+    assert "main" not in verified_without_project.claims
     invalid_claims = [
         {**base, "iss": "https://wrong.auth0.com/"},
         {**base, "aud": "https://wrong.example/mcp"},
-        {**base, "exp": now - 1},
+        {**base, "exp": now - mcp_host.AUTH0_CLOCK_SKEW_SECONDS - 1},
+        {**base, "iat": now + mcp_host.AUTH0_CLOCK_SKEW_SECONDS + 1},
         {**base, "nbf": now + 300},
         {**base, "azp": "wrong-client"},
         {**base, "scope": "openid profile"},
@@ -3289,12 +3306,11 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "_native_graphiti_tools",
         lambda: asyncio.sleep(0, result=native_graphiti_tools),
     )
+    asyncio.run(mcp_host._initialize_catalog_once())
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
-    assert "card.run_assistant_agent" not in {
-        tool.name for tool in mcp_host._gpt_public_catalog(tools)
-    }
+    assert "card.run_assistant_agent" in by_name
     for tool in tools:
         assert "liquidaitySource" in tool.meta
         assert "runtimeExecution" not in tool.meta
@@ -3319,7 +3335,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         for name, tool in by_name.items()
         if name not in native_names
     )
-    assert not any(name.startswith("worldsignals.") for name in by_name)
+    assert "worldsignals.package" in by_name
     assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
     assert "projectId" not in by_name["engraphis_recall_context"].inputSchema["properties"]
     assert "projectId" not in by_name["engraphis_remember"].inputSchema["properties"]
@@ -3336,7 +3352,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
     assert "run_mag_one" in by_name
     card_tool = by_name["card.run_assistant_agent"]
     assert set(card_tool.inputSchema["properties"]) == {
-        "action", "cardId", "cardRevisionId", "runId", "nativeRootId", "input", "dataAnchors",
+        "action", "background", "cardId", "cardRevisionId", "runId", "nativeRootId", "input",
+        "dataAnchors",
     }
     assert card_tool.inputSchema["anyOf"] == [
         {"required": ["cardId", "input"]},
@@ -3463,12 +3480,12 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "mainCardId": "card_main_chat",
     }
 
-    retired_card_tool = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
+    card_tool_result = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "cardId": "card_agent",
         "input": "Use the assigned context.",
     }))
-    assert retired_card_tool.isError is True
-    assert '"error": "tool_not_granted"' in retired_card_tool.content[0].text
+    assert json.loads(card_tool_result[0].text)["ok"] is True
+    assert calls[-1][0] == "card_run_assistant_agent"
 
     denied = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
         "projectId": "spoofed",
@@ -3476,10 +3493,10 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         "input": "Approved exact task.",
     }))
     assert denied.isError is True
-    assert '"error": "tool_not_granted"' in denied.content[0].text
+    assert '"error": "caller_identity_rejected: projectId"' in denied.content[0].text
 
 
-def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(monkeypatch):
+def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(monkeypatch):
     import asyncio
     import mcp_host
     from mcp.server.auth.provider import AccessToken
@@ -3529,13 +3546,15 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_public_registry(
             "graphiti",
         ],
         "initializingCatalogFamily": None,
-        "publicToolCount": expected_count,
-        "publicToolUniqueCount": len({tool.name for tool in authenticated}),
+        "toolCount": expected_count,
+        "uniqueToolCount": len({tool.name for tool in authenticated}),
         "catalogHash": expected_hash,
         "processId": mcp_host._STARTUP_PROCESS_ID,
         "startupId": mcp_host._STARTUP_ID,
         "sourceRevision": mcp_host._STARTUP_SOURCE_REVISION,
         "sourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
+        "currentSourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
+        "sourceCurrent": True,
     }
 
 
@@ -3580,7 +3599,7 @@ def test_oauth_catalog_declares_security_before_main_context_resolution(monkeypa
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", empty_catalog)
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", empty_catalog)
 
-    tools = asyncio.run(mcp_host.list_tools())
+    tools = asyncio.run(mcp_host._materialize_complete_catalog())
     assert tools
     assert all(
         tool.model_dump(exclude_none=True)["securitySchemes"]

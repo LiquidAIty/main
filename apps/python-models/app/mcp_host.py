@@ -90,10 +90,7 @@ from app.control_plane import card_tool_schema
 from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
-    external_mcp_tool_ids,
-    readable_tool_ids,
     tool_manifest,
-    tool_publication,
     tool_access,
 )
 from mcp.server import Server
@@ -129,6 +126,7 @@ AUTH0_CLIENT_ID = os.environ.get("MCP_AUTH0_CLIENT_ID", "").strip()
 AUTH0_REQUIRED_SCOPE = os.environ.get(
     "MCP_AUTH0_REQUIRED_SCOPE", "liquidaity.main"
 ).strip()
+AUTH0_CLOCK_SKEW_SECONDS = 30
 INTERNAL_MCP_SECRET = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
 INTERNAL_MCP_ISSUER = "liquidaity-runtime"
 INTERNAL_MCP_AUDIENCE = "liquidaity-internal-mcp"
@@ -154,8 +152,8 @@ _CATALOG_FAILURE_CODE: str | None = None
 _CATALOG_FAILURE_SUMMARY: str | None = None
 _CATALOG_COMPLETED_FAMILIES: tuple[str, ...] = ()
 _CATALOG_INITIALIZING_FAMILY: str | None = "liquidaity"
-_HTTP_CATALOG_TOOLS: tuple[Tool, ...] | None = None
-_HTTP_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
+_CATALOG_TOOLS: tuple[Tool, ...] | None = None
+_CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
 _NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
@@ -196,7 +194,7 @@ _AUTHENTICATED_OPTIONAL_CONTEXT_FIELDS = frozenset(
 
 
 def _configured_tool_allowlist() -> frozenset[str] | None:
-    """Return the exact process-owned publication grant, when configured.
+    """Return the exact process-owned invocation grant, when configured.
 
     The allowlist is a per-Hermes-session capability boundary, not a global
     stdio-host setting. Require the matching trusted Main context so stale or
@@ -211,8 +209,6 @@ def _configured_tool_allowlist() -> frozenset[str] | None:
 
 
 def _tool_is_allowed(name: str) -> bool:
-    if tool_publication(name) == "private-admin":
-        return False
     allowlist = _configured_tool_allowlist()
     return allowlist is None or name in allowlist
 
@@ -800,7 +796,7 @@ def _request_tool_is_allowed(name: str) -> bool:
     if access is None:
         return principal is None
     if principal is None:
-        return tool_publication(name) == "external-mcp"
+        return True
     kind = str(principal.get("kind") or "")
     if kind == "catalog-reader":
         return False
@@ -946,12 +942,6 @@ def _bind_idd_access(tool: Tool) -> Tool:
     meta["liquidaityAccess"] = access
     payload["_meta"] = meta
     return Tool.model_validate(payload)
-
-
-def _gpt_public_catalog(tools: list[Tool]) -> list[Tool]:
-    """Project the canonical catalog through the IDD external-MCP policy."""
-    published = external_mcp_tool_ids()
-    return [tool for tool in tools if tool.name in published]
 
 
 @server.list_resources()
@@ -2132,7 +2122,7 @@ def _resolve_external_main_context_sync(issuer: str, subject: str) -> dict[str, 
 
 
 class Auth0TokenVerifier:
-    """Verify Auth0 JWTs and bind the principal to one owned Main project."""
+    """Verify Auth0 JWTs and attach an authorized Main context when one exists."""
 
     def __init__(self, config: OAuthConfig, jwk_client: Any | None = None):
         from jwt import PyJWKClient
@@ -2212,6 +2202,7 @@ class Auth0TokenVerifier:
                 audience=self.config.audience,
                 issuer=self.config.issuer_url,
                 options={"require": ["exp", "iat", "sub"]},
+                leeway=AUTH0_CLOCK_SKEW_SECONDS,
             )
             client_id = str(claims.get("azp") or claims.get("client_id") or "").strip()
             raw_scope = claims.get("scope") or ""
@@ -2224,8 +2215,6 @@ class Auth0TokenVerifier:
             if not subject:
                 return None
             context = self._principal_context(subject)
-            if context is None:
-                return None
             access_token = AccessToken(
                 token=token,
                 client_id=client_id,
@@ -2234,7 +2223,10 @@ class Auth0TokenVerifier:
                 resource=self.config.resource_url,
             )
             object.__setattr__(access_token, "subject", subject)
-            object.__setattr__(access_token, "claims", {**claims, "main": context})
+            verified_claims = dict(claims)
+            if context is not None:
+                verified_claims["main"] = context
+            object.__setattr__(access_token, "claims", verified_claims)
             return access_token
         except Exception:
             return None
@@ -2593,6 +2585,19 @@ async def _materialize_complete_catalog() -> list[Tool]:
             },
         ),
     ]
+    # These registrations already dispatch through this MCP server. Explicit
+    # host declarations retain their contract when a handler is also registered
+    # in the Python tool registry (web_search has one canonical identity).
+    registered = {
+        descriptor["name"]: Tool(
+            name=descriptor["name"],
+            description=descriptor["description"],
+            inputSchema=copy.deepcopy(descriptor["inputSchema"]),
+        )
+        for descriptor in tool_manifest()
+    }
+    registered.update({tool.name: tool for tool in tools})
+    tools = list(registered.values())
     from app.python_models.engraphis import native_tools
     for item in await native_tools():
         tool = Tool.model_validate(item)
@@ -2601,19 +2606,14 @@ async def _materialize_complete_catalog() -> list[Tool]:
     tools = [_bind_repo_tool_source(tool) for tool in tools]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
-    allowlist = _configured_tool_allowlist()
-    if allowlist is not None:
-        tools = [tool for tool in tools if tool.name in allowlist]
     _complete_catalog_family("liquidaity")
     native_catalogs: dict[str, list[Tool]] = {}
-    if allowlist is None or any(name.startswith("cbm.") for name in allowlist):
-        _set_catalog_initializing_family("cbm")
-        native_catalogs["cbm"] = await _native_cbm_tools()
-        _complete_catalog_family("cbm")
-    if allowlist is None or any(name.startswith("graphiti.") for name in allowlist):
-        _set_catalog_initializing_family("graphiti")
-        native_catalogs["graphiti"] = await _native_graphiti_tools()
-        _complete_catalog_family("graphiti")
+    _set_catalog_initializing_family("cbm")
+    native_catalogs["cbm"] = await _native_cbm_tools()
+    _complete_catalog_family("cbm")
+    _set_catalog_initializing_family("graphiti")
+    native_catalogs["graphiti"] = await _native_graphiti_tools()
+    _complete_catalog_family("graphiti")
     for provider, native_tools in native_catalogs.items():
         tools.extend(_namespace_native_tools(provider, native_tools))
     from app.python_models.question_evidence import QuestionEvidence
@@ -2625,29 +2625,24 @@ async def _materialize_complete_catalog() -> list[Tool]:
         if tool.name == "graphiti.add_memory":
             tool.inputSchema.setdefault("$defs", {}).update(question_schema.get("$defs", {}))
             tool.inputSchema["properties"]["questionEvidence"] = {key: value for key, value in question_schema.items() if key != "$defs"}
-    tools = [_bind_idd_access(tool) for tool in tools
-             if tool_publication(tool.name) != "private-admin"]
-    if allowlist is not None:
-        tools = [tool for tool in tools if tool.name in allowlist]
+    tools = [_bind_idd_access(tool) for tool in tools]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
         raise RuntimeError("federated_duplicate_tool_name:" + ",".join(duplicates))
     context = _authenticated_main_context()
-    # The public catalog is an OAuth-protected resource contract, independent
-    # of whether this particular principal has resolved a Main project yet.
-    # ChatGPT discovers securitySchemes from tools/list; omitting them until
-    # after application-context resolution makes the live metadata circular.
-    published = (
+    # OAuth security metadata belongs to the canonical catalog even when this
+    # request has not resolved application-level Main project authorization.
+    catalog = (
         _bind_authenticated_catalog(tools)
         if OAUTH_ENFORCED or context is not None
         else tools
     )
-    catalog_count, catalog_hash = _catalog_identity(published)
+    catalog_count, catalog_hash = _catalog_identity(catalog)
     with _CATALOG_DIAGNOSTIC_LOCK:
         _LATEST_CATALOG_DIAGNOSTIC = {
-            "publicToolCount": catalog_count,
-            "publicToolUniqueCount": len({tool.name for tool in published}),
+            "toolCount": catalog_count,
+            "uniqueToolCount": len({tool.name for tool in catalog}),
             "catalogHash": catalog_hash,
         }
     _trace(
@@ -2661,14 +2656,14 @@ async def _materialize_complete_catalog() -> list[Tool]:
         completed=True,
         **_oauth_trace_fields(),
     )
-    return published
+    return catalog
 
 
-async def _initialize_http_catalog_once() -> None:
-    """Freeze the complete public HTTP catalog once without delaying the bind."""
+async def _initialize_catalog_once() -> None:
+    """Freeze the one canonical MCP catalog for all clients."""
     global _CATALOG_COMPLETED_FAMILIES, _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
     global _CATALOG_FAILURE_SUMMARY, _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
-    global _HTTP_CATALOG_TOOLS
+    global _CATALOG_TOOLS
     global _LATEST_CATALOG_DIAGNOSTIC
     with _CATALOG_DIAGNOSTIC_LOCK:
         _CATALOG_STATE = "initializing"
@@ -2677,26 +2672,18 @@ async def _initialize_http_catalog_once() -> None:
         _CATALOG_FAILURE_SUMMARY = None
         _CATALOG_COMPLETED_FAMILIES = ()
         _CATALOG_INITIALIZING_FAMILY = "liquidaity"
-        _HTTP_CATALOG_TOOLS = None
+        _CATALOG_TOOLS = None
         _LATEST_CATALOG_DIAGNOSTIC = None
     try:
         tools = tuple(await _materialize_complete_catalog())
         canonical_names = [tool.name for tool in tools]
         if not tools or len(set(canonical_names)) != len(canonical_names):
             raise RuntimeError(
-                "public_catalog_invalid: "
+                "canonical_catalog_invalid: "
                 f"actual={len(tools)} "
                 f"unique={len(set(canonical_names))}"
             )
-        public_tools = _gpt_public_catalog(list(tools))
-        public_names = [tool.name for tool in public_tools]
-        if not public_tools or len(set(public_names)) != len(public_names):
-            raise RuntimeError(
-                "public_connector_catalog_invalid: "
-                f"actual={len(public_tools)} "
-                f"unique={len(set(public_names))}"
-            )
-        catalog_count, catalog_hash = _catalog_identity(public_tools)
+        catalog_count, catalog_hash = _catalog_identity(list(tools))
     except asyncio.CancelledError:
         with _CATALOG_DIAGNOSTIC_LOCK:
             if _CATALOG_STATE == "initializing":
@@ -2704,7 +2691,7 @@ async def _initialize_http_catalog_once() -> None:
                 _CATALOG_FAILURE = "CancelledError: catalog initialization cancelled"
                 _CATALOG_FAILURE_CODE = "catalog_initialization_cancelled"
                 _CATALOG_FAILURE_SUMMARY = _CATALOG_FAILURE
-                _HTTP_CATALOG_TOOLS = None
+                _CATALOG_TOOLS = None
                 _LATEST_CATALOG_DIAGNOSTIC = None
         raise
     except Exception as error:
@@ -2723,7 +2710,7 @@ async def _initialize_http_catalog_once() -> None:
             _CATALOG_FAILURE = failure
             _CATALOG_FAILURE_CODE = failure_code
             _CATALOG_FAILURE_SUMMARY = failure
-            _HTTP_CATALOG_TOOLS = None
+            _CATALOG_TOOLS = None
             _LATEST_CATALOG_DIAGNOSTIC = None
         _trace(
             "catalog_initialization_failed",
@@ -2734,10 +2721,10 @@ async def _initialize_http_catalog_once() -> None:
         )
         return
     with _CATALOG_DIAGNOSTIC_LOCK:
-        _HTTP_CATALOG_TOOLS = tools
+        _CATALOG_TOOLS = tools
         _LATEST_CATALOG_DIAGNOSTIC = {
-            "publicToolCount": catalog_count,
-            "publicToolUniqueCount": len(set(public_names)),
+            "toolCount": catalog_count,
+            "uniqueToolCount": len(set(canonical_names)),
             "catalogHash": catalog_hash,
         }
         _CATALOG_FAILURE = None
@@ -2747,10 +2734,10 @@ async def _initialize_http_catalog_once() -> None:
         _CATALOG_STATE = "ready"
 
 
-def _observe_http_catalog_initialization(task: asyncio.Task[None]) -> None:
+def _observe_catalog_initialization(task: asyncio.Task[None]) -> None:
     """Fail closed if the one initializer ends without publishing a terminal state."""
     global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE, _CATALOG_FAILURE_SUMMARY
-    global _CATALOG_STATE, _HTTP_CATALOG_TOOLS, _LATEST_CATALOG_DIAGNOSTIC
+    global _CATALOG_STATE, _CATALOG_TOOLS, _LATEST_CATALOG_DIAGNOSTIC
     with _CATALOG_DIAGNOSTIC_LOCK:
         if _CATALOG_STATE != "initializing":
             return
@@ -2775,7 +2762,7 @@ def _observe_http_catalog_initialization(task: asyncio.Task[None]) -> None:
         _CATALOG_FAILURE = failure
         _CATALOG_FAILURE_CODE = failure_code
         _CATALOG_FAILURE_SUMMARY = failure
-        _HTTP_CATALOG_TOOLS = None
+        _CATALOG_TOOLS = None
         _LATEST_CATALOG_DIAGNOSTIC = None
     if error is not None:
         with _TRACE_LOCK:
@@ -2796,25 +2783,25 @@ def _observe_http_catalog_initialization(task: asyncio.Task[None]) -> None:
     )
 
 
-def _start_http_catalog_initialization() -> asyncio.Task[None]:
-    """Return the one process-wide HTTP catalog initialization task."""
-    global _HTTP_CATALOG_INITIALIZATION_TASK
-    task = _HTTP_CATALOG_INITIALIZATION_TASK
+def _start_catalog_initialization() -> asyncio.Task[None]:
+    """Return the one process-wide canonical catalog initialization task."""
+    global _CATALOG_INITIALIZATION_TASK
+    task = _CATALOG_INITIALIZATION_TASK
     if task is None:
         task = asyncio.create_task(
-            _initialize_http_catalog_once(),
+            _initialize_catalog_once(),
             name="liquidaity-mcp-catalog-initialization",
         )
-        task.add_done_callback(_observe_http_catalog_initialization)
-        _HTTP_CATALOG_INITIALIZATION_TASK = task
+        task.add_done_callback(_observe_catalog_initialization)
+        _CATALOG_INITIALIZATION_TASK = task
     return task
 
 
-def _http_catalog_or_error() -> list[Tool]:
+def _catalog_or_error() -> list[Tool]:
     with _CATALOG_DIAGNOSTIC_LOCK:
         state = _CATALOG_STATE
         failure = _CATALOG_FAILURE
-        tools = _HTTP_CATALOG_TOOLS
+        tools = _CATALOG_TOOLS
     if state == "initializing":
         raise RuntimeError("mcp_catalog_initializing")
     if state == "failed":
@@ -2826,73 +2813,10 @@ def _http_catalog_or_error() -> list[Tool]:
     return list(tools)
 
 
-def _private_runtime_catalog(public_tools: list[Tool]) -> list[Tool]:
-    """Project registry-owned tools only for authenticated internal Card runs."""
-
-    existing_names = {tool.name for tool in public_tools}
-    tools: list[Tool] = []
-    for descriptor in tool_manifest():
-        name = str(descriptor.get("name") or "").strip()
-        if (
-            not name
-            or name in existing_names
-            or tool_publication(name) != "private-runtime"
-        ):
-            continue
-        tool = Tool(
-            name=name,
-            description=str(descriptor.get("description") or name),
-            inputSchema=copy.deepcopy(descriptor.get("inputSchema") or {
-                "type": "object", "properties": {}, "required": [],
-            }),
-        )
-        tool.inputSchema.setdefault("additionalProperties", False)
-        tools.append(_bind_idd_access(_bind_repo_tool_source(tool)))
-        existing_names.add(name)
-    return tools
-
-
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    """Return no HTTP catalog until the one complete frozen catalog is ready."""
-    global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE, _CATALOG_FAILURE_SUMMARY
-    global _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
-    if MCP_TRANSPORT == "streamable-http":
-        tools = _http_catalog_or_error()
-        principal = _internal_mcp_principal()
-        if principal is None or principal.get("kind") == "catalog-reader":
-            return _gpt_public_catalog(tools)
-        if principal.get("kind") == "materializer-read":
-            readable = readable_tool_ids()
-            return [tool for tool in tools if tool.name in readable]
-        if principal.get("kind") == "system-root":
-            return [tool for tool in tools if tool.name == "card.run_assistant_agent"]
-        tools = [*tools, *_private_runtime_catalog(tools)]
-        grants = principal.get("presentedTools")
-        if not isinstance(grants, list):
-            grants = principal.get("grantedTools")
-        allowed = {
-            str(value).strip() for value in grants or [] if str(value).strip()
-        } if isinstance(grants, list) else set()
-        return [tool for tool in tools if tool_publication(tool.name) != "private-admin"
-                and tool.name in allowed]
-    try:
-        tools = await _materialize_complete_catalog()
-    except Exception as error:
-        failure_code, failure = _catalog_failure_details(error)
-        with _CATALOG_DIAGNOSTIC_LOCK:
-            _CATALOG_STATE = "failed"
-            _CATALOG_FAILURE = failure
-            _CATALOG_FAILURE_CODE = failure_code
-            _CATALOG_FAILURE_SUMMARY = failure
-        raise
-    with _CATALOG_DIAGNOSTIC_LOCK:
-        _CATALOG_STATE = "ready"
-        _CATALOG_FAILURE = None
-        _CATALOG_FAILURE_CODE = None
-        _CATALOG_FAILURE_SUMMARY = None
-        _CATALOG_INITIALIZING_FAMILY = None
-    return tools
+    """Return the one frozen catalog unchanged for every MCP client."""
+    return _catalog_or_error()
 
 
 _SERVER_OWNED_ARGUMENTS = {
@@ -3666,7 +3590,8 @@ async def _run_stdio() -> None:
         # accepting the outer stdio session; the native CBM frontend remains
         # process-owned and indexing is still an explicit cbm.index_repository
         # tool call.
-        await _materialize_complete_catalog()
+        await _initialize_catalog_once()
+        _catalog_or_error()
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, server.create_initialization_options())
     finally:
@@ -3778,7 +3703,7 @@ async def _run_streamable_http() -> None:
         await session_manager.handle_request(scope, receive, send)
 
     async def lifespan(_app: Starlette):
-        catalog_task = _start_http_catalog_initialization()
+        catalog_task = _start_catalog_initialization()
         try:
             async with session_manager.run():
                 yield
@@ -3799,7 +3724,6 @@ async def _run_streamable_http() -> None:
             {
                 "ok": diagnostics["catalogState"] != "failed",
                 **diagnostics,
-                "publicCatalogReady": diagnostics["catalogReady"],
                 **codegraph,
             },
             status_code=200,
@@ -3810,16 +3734,15 @@ async def _run_streamable_http() -> None:
         codegraph = await asyncio.to_thread(_codegraph_diagnostics)
         ready = bool(
             diagnostics["catalogReady"]
-            and int(diagnostics.get("publicToolCount") or 0) > 0
-            and diagnostics.get("publicToolCount")
-            == diagnostics.get("publicToolUniqueCount")
+            and int(diagnostics.get("toolCount") or 0) > 0
+            and diagnostics.get("toolCount")
+            == diagnostics.get("uniqueToolCount")
             and codegraph["codeGraphReady"]
         )
         return JSONResponse(
             {
                 "ok": ready,
                 **diagnostics,
-                "publicCatalogReady": diagnostics["catalogReady"],
                 **codegraph,
             },
             status_code=200 if ready else 503,
