@@ -3,6 +3,9 @@ model = "gpt-6-astra"
 model_reasoning_effort = "high"
 personality = "pragmatic"
 
+web_search = "live"
+model_verbosity = "high"
+model_reasoning_summary = "detailed"
 [features]
 memories = true
 js_repl = false
