@@ -156,92 +156,6 @@ class TestHermesToolsGeneration(unittest.TestCase):
         self.assertIn("_seq_lock = threading.Lock()", src)
         self.assertIn("with _seq_lock:", src)
 
-    def test_host_script_module_exposes_only_compact_composition_objects(self):
-        src = generate_hermes_tools_module(
-            ["mcp__liquidaity-card__think_context"],
-            tool_aliases={
-                "think.context": "mcp__liquidaity-card__think_context",
-            },
-            script_input={"focus": "launch"},
-        )
-        self.assertIn("class _Tools:", src)
-        self.assertIn("class _Output:", src)
-        self.assertIn('"focus":"launch"', src)
-        self.assertNotIn("mcp__liquidaity-card__think_context", src)
-
-
-class TestTrustedHostScriptExecution(unittest.TestCase):
-    def test_real_child_process_dispatches_canonical_alias_and_emits_output(self):
-        code = '''from hermes_tools import input, output, tools
-result = tools.call("think.context", focus=input.focus)
-output.emit({"context": result})
-'''
-
-        def dispatch(function_name, function_args, task_id=None, **_kwargs):
-            self.assertEqual(function_name, "mcp__liquidaity-card__think_context")
-            self.assertEqual(function_args, {"focus": "launch"})
-            self.assertEqual(task_id, "card-session")
-            return json.dumps({"nativeId": "think-node-1"})
-
-        with patch(
-            "tools.approval.check_execute_code_guard",
-            return_value={"approved": True},
-        ), patch("model_tools.handle_function_call", side_effect=dispatch):
-            result = json.loads(execute_code(
-                code,
-                task_id="card-session",
-                enabled_tools=["mcp__liquidaity-card__think_context"],
-                host_script={
-                    "toolAliases": {
-                        "think.context": "mcp__liquidaity-card__think_context",
-                    },
-                    "toolStates": {"think.context": 1},
-                    "input": {"focus": "launch"},
-                    "timeoutSeconds": 10,
-                    "maxToolCalls": 2,
-                },
-            ))
-
-        self.assertEqual(result["status"], "success")
-        emitted = next(
-            line for line in result["output"].splitlines()
-            if line.startswith("HERMES_CARD_SCRIPT_OUTPUT:")
-        )
-        self.assertEqual(
-            json.loads(emitted.split(":", 1)[1]),
-            {"context": {"nativeId": "think-node-1"}},
-        )
-        self.assertEqual(result["tool_calls_made"], 1)
-        self.assertEqual(result["tool_calls"], [{
-            "canonicalId": "think.context",
-            "nativeTool": "mcp__liquidaity-card__think_context",
-            "durationSeconds": result["tool_calls"][0]["durationSeconds"],
-        }])
-
-
-    def test_host_scripts_keep_fresh_input_and_interpreter_per_invocation(self):
-        code = """from hermes_tools import input, output
-output.emit({"value": input.value, "previous": globals().get("previous")})
-previous = input.value
-"""
-        with patch("tools.approval.check_execute_code_guard", return_value={"approved": True}), patch(
-            "tools.code_kernel.execute_in_session_kernel"
-        ) as persistent_kernel:
-            for value in ("first", "second"):
-                result = json.loads(execute_code(
-                    code, task_id="same-host-session", enabled_tools=[],
-                    host_script={
-                        "toolAliases": {}, "toolStates": {}, "input": {"value": value},
-                        "timeoutSeconds": 10, "maxToolCalls": 2,
-                    },
-                ))
-                self.assertEqual(result["status"], "success", result)
-                emitted = next(line for line in result["output"].splitlines()
-                               if line.startswith("HERMES_CARD_SCRIPT_OUTPUT:"))
-                self.assertEqual(json.loads(emitted.split(":", 1)[1]),
-                                 {"value": value, "previous": None})
-            persistent_kernel.assert_not_called()
-
 
 class TestExecuteCodeRemoteTempDir(unittest.TestCase):
     def test_execute_remote_uses_backend_temp_dir_for_sandbox(self):
@@ -926,7 +840,7 @@ class TestRpcTokenAuthorization(unittest.TestCase):
 
         # socketpair gives us a connected client end and a "server" end we
         # can hand to accept() by wrapping it in a tiny listener shim.
-        srv, cli = socket.socketpair()
+        srv, cli = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
 
         class _OneShotListener:
             """Minimal object exposing the .accept()/.settimeout() the loop uses."""

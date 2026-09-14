@@ -357,55 +357,6 @@ class TestLifecycleConfig:
 # ---------------------------------------------------------------------------
 
 class TestSchemaConversion:
-    @pytest.mark.parametrize("nested", [False, True])
-    def test_real_graph_reference_schema_survives_conversion_and_refresh(self, monkeypatch, nested):
-        import ast
-        import copy
-        import json
-        from pathlib import Path
-        from types import SimpleNamespace
-        from jsonschema import Draft202012Validator
-        from tools import mcp_tool as mcp
-        from tools.registry import registry
-        from acp_adapter.host_profiles import apply_host_session_config
-
-        # Read the authoritative literal without starting the MCP host or its services.
-        source = Path(__file__).resolve().parents[3] / "apps/python-models/app/mcp_host.py"
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        declaration = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
-            and any(k.arg == "name" and isinstance(k.value, ast.Constant)
-                    and k.value.value == "card.load_graph_references" for k in node.keywords))
-        original = ast.literal_eval(next(k.value for k in declaration.keywords if k.arg == "inputSchema"))
-        expected = ({"type": "object", "properties": {"payload": original},
-                     "required": ["payload"], "additionalProperties": False} if nested else original)
-        before = json.dumps(expected, sort_keys=True)
-        Draft202012Validator.check_schema(expected)
-        converted = mcp._convert_mcp_schema("main-runtime", _make_mcp_tool(
-            name="nested" if nested else "card.load_graph_references", input_schema=expected))
-        Draft202012Validator.check_schema(converted["parameters"])
-        assert json.dumps(converted["parameters"], sort_keys=True) == before
-        assert json.dumps(expected, sort_keys=True) == before
-        monkeypatch.setattr(registry, "_tools", dict(registry._tools))
-        registry.register(name=converted["name"], toolset="schema-test", schema=converted,
-                          handler=lambda **_: None, override=True)
-        agent = SimpleNamespace(tools=[], valid_tool_names=set(), toolsets=[],
-                                disabled_toolsets=[], quiet_mode=True)
-        apply_host_session_config(agent, {"enabledToolsets": [], "enabledTools": [converted["name"]]})
-        mcp.refresh_agent_mcp_tools(agent)
-        final = json.loads(json.dumps(agent.tools))[0]["function"]
-        assert final["name"] == converted["name"]
-        assert json.dumps(final["parameters"], sort_keys=True) == before
-        actual = final["parameters"]["properties"]["payload"] if nested else final["parameters"]
-        assert actual["additionalProperties"] is False
-        assert actual["properties"]["required"] == {"type": "boolean"}
-        assert actual["required"] == original["required"]
-        Draft202012Validator.check_schema(final["parameters"])
-        invalid = copy.deepcopy(expected)
-        invalid["additionalProperties"] = "object"
-        with pytest.raises(Exception, match="not of type"):
-            Draft202012Validator.check_schema(mcp._convert_mcp_schema(
-                "main-runtime", _make_mcp_tool(input_schema=invalid))["parameters"])
-
     def test_converts_mcp_tool_to_hermes_schema(self):
         from tools.mcp_tool import _convert_mcp_schema
 
@@ -622,42 +573,6 @@ class TestToolHandler:
                 result = json.loads(handler({"name": "world"}))
             assert result["result"] == "hello world"
             mock_session.call_tool.assert_called_once_with("greet", arguments={"name": "world"})
-        finally:
-            _servers.pop("test_srv", None)
-
-    def test_trusted_host_execution_meta_is_forwarded_per_call(self):
-        import contextvars
-
-        from acp_adapter.host_profiles import host_execution_scope
-        from tools.mcp_tool import _make_tool_handler, _servers
-
-        mock_session = MagicMock()
-        mock_session.call_tool = AsyncMock(
-            return_value=_make_call_result("hello child", is_error=False)
-        )
-        server = _make_mock_server("test_srv", session=mock_session)
-        _servers["test_srv"] = server
-        child = SimpleNamespace(
-            _host_tool_call_meta={"host/execution-context": "context-child-1"}
-        )
-
-        def run_without_caller_context(coro_or_factory, timeout=30):
-            coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
-            return contextvars.Context().run(asyncio.run, coro)
-
-        try:
-            handler = _make_tool_handler("test_srv", "greet", 120)
-            with host_execution_scope(child), patch(
-                "tools.mcp_tool._run_on_mcp_loop",
-                side_effect=run_without_caller_context,
-            ):
-                result = json.loads(handler({"name": "world"}))
-            assert result["result"] == "hello child"
-            mock_session.call_tool.assert_called_once_with(
-                "greet",
-                arguments={"name": "world"},
-                meta={"host/execution-context": "context-child-1"},
-            )
         finally:
             _servers.pop("test_srv", None)
 
@@ -2781,53 +2696,6 @@ class TestRegisterMcpServers:
 
         assert "mcp__my_server__tool1" in result
         _servers.pop("my_server", None)
-
-    def test_trusted_host_can_replace_one_named_server_when_headers_rotate(self):
-        from tools.mcp_tool import register_mcp_servers, _servers
-
-        old_config = {
-            "url": "http://127.0.0.1:8765/mcp",
-            "headers": {"Authorization": "Bearer old"},
-        }
-        new_config = {
-            "url": "http://127.0.0.1:8765/mcp",
-            "headers": {"Authorization": "Bearer new"},
-        }
-        prior = SimpleNamespace(
-            name="rotating",
-            _config=old_config,
-            shutdown=AsyncMock(),
-            _registered_tool_names=["mcp__rotating__tool1"],
-        )
-        _servers["rotating"] = prior
-
-        async def fake_register(name, cfg):
-            assert name == "rotating"
-            assert cfg == new_config
-            replacement = _make_mock_server(name)
-            replacement._config = cfg
-            replacement._registered_tool_names = ["mcp__rotating__tool1"]
-            _servers[name] = replacement
-            return replacement._registered_tool_names
-
-        def run_direct(coro_or_factory, timeout=30):
-            coro = coro_or_factory() if callable(coro_or_factory) else coro_or_factory
-            return asyncio.run(coro)
-
-        try:
-            with patch("tools.mcp_tool._MCP_AVAILABLE", True), \
-                 patch("tools.mcp_tool._run_on_mcp_loop", side_effect=run_direct), \
-                 patch("tools.mcp_tool._discover_and_register_server", side_effect=fake_register), \
-                 patch("tools.mcp_tool._connect_cooldown_active", return_value=False):
-                result = register_mcp_servers(
-                    {"rotating": new_config},
-                    replace_changed=True,
-                )
-            prior.shutdown.assert_awaited_once()
-            assert result == ["mcp__rotating__tool1"]
-            assert _servers["rotating"] is not prior
-        finally:
-            _servers.pop("rotating", None)
 
     def test_skips_servers_already_connecting(self):
         """Servers in _server_connecting must not be spawned again (#58862)."""

@@ -298,15 +298,11 @@ class TestSearchHandler:
 
     @patch("tools.file_tools._get_file_ops")
     def test_search_exception_returns_error(self, mock_get):
-        mock_get.side_effect = RuntimeError(
-            "Git Bash external-program probe did not complete within 15s"
-        )
+        mock_get.side_effect = RuntimeError("no terminal")
 
         from tools.file_tools import search_tool
         result = json.loads(search_tool(pattern="x"))
-        assert result["error"] == (
-            "Git Bash external-program probe did not complete within 15s"
-        )
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------

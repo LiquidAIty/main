@@ -4,6 +4,11 @@ import type { AgentCard } from '../types/agentBuilder';
 
 export type ProjectCard = AgentCard & {
   isInternal: boolean;
+  ownerUserId: string;
+};
+
+export type OwnedAgentProject = AgentCard & {
+  ownerUserId: string;
 };
 
 // Projects table lives in ag_catalog schema in your DB
@@ -86,6 +91,25 @@ export async function listAgentCards(userId?: string | null, projectType?: 'assi
   }));
 }
 
+/** Startup-only saved Project ownership needed to bind Card runtimes. */
+export async function listOwnedAgentProjects(): Promise<OwnedAgentProject[]> {
+  const { rows } = await pool.query(
+    `SELECT id, name, code, status, project_type, owner_user_id
+     FROM ${PROJECTS_TABLE}
+     WHERE owner_user_id IS NOT NULL
+       AND COALESCE(status, 'active') = 'active'
+     ORDER BY updated_at DESC`,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    code: row.code ?? null,
+    status: row.status ?? null,
+    project_type: row.project_type,
+    ownerUserId: String(row.owner_user_id),
+  }));
+}
+
 function isInternalProjectValue(...values: unknown[]): boolean {
   return values.some((value) => normalizeProjectKey(value) === 'admin');
 }
@@ -99,7 +123,7 @@ export async function getProjectCard(projectId: string, ownerUserId?: string): P
   const { clause, params } = projectLookup(trimmed);
   if (owner) params.push(owner);
   const { rows } = await pool.query(
-    `SELECT id, name, code, status, project_type FROM ${PROJECTS_TABLE} WHERE ${clause}${owner ? ' AND owner_user_id = $2' : ''} LIMIT 1`,
+    `SELECT id, name, code, status, project_type, owner_user_id FROM ${PROJECTS_TABLE} WHERE ${clause}${owner ? ' AND owner_user_id = $2' : ''} LIMIT 1`,
     params,
   );
   if (!rows.length) return null;
@@ -112,5 +136,6 @@ export async function getProjectCard(projectId: string, ownerUserId?: string): P
     status: row.status ?? null,
     project_type: row.project_type,
     isInternal: isInternalProjectValue(trimmed, row.id, row.code, row.name),
+    ownerUserId: String(row.owner_user_id || ''),
   };
 }

@@ -38,7 +38,15 @@ if ($WaitForMcpReadiness) {
 
   Write-Host 'MCP ready; starting the public tunnel.'
   & npm.cmd run dev:tunnel
-  exit $LASTEXITCODE
+  $tunnelExitCode = $LASTEXITCODE
+  if ($tunnelExitCode -ne 0) {
+    Write-Warning "Optional public MCP tunnel stopped with exit code $tunnelExitCode; the local MCP host and internal clients remain running."
+  } else {
+    Write-Host 'Optional public MCP tunnel stopped; the local MCP host and internal clients remain running.'
+  }
+  # This command is one optional sibling under concurrently. Its failure must
+  # not terminate the canonical MCP host, native CBM, or application services.
+  exit 0
 }
 
 $backendHealthUrl = 'http://127.0.0.1:4000/api/health'

@@ -2046,7 +2046,11 @@ _BACKEND_ROUTES = {
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path in {"external_main_context", "external_main_chat"} and INTERNAL_MCP_SECRET:
+    if path == "run_configured_card" and len(INTERNAL_MCP_SECRET) < 32:
+        raise RuntimeError("internal_mcp_secret_missing")
+    if path in {
+        "external_main_context", "external_main_chat", "run_configured_card"
+    } and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
     request = Request(
         f"{BACKEND}{_BACKEND_ROUTES[path]}",
@@ -2167,12 +2171,10 @@ class Auth0TokenVerifier:
                     if terminal is not None:
                         if (principal.get("kind") != "card-runtime"
                                 or principal.get("requiresExecutionContext") is not True
-                                or not isinstance(terminal, dict)
-                                or set(terminal) != {"userId", "terminalSessionId", "profile", "cardRevisionId"}
-                                or any(not isinstance(v, str) or not v.strip() for v in terminal.values())
-                                or terminal["profile"] in {"main", "liquidaity-main", "builder", "default"}
-                                or principal.get("callerCardId") in {"card_main_chat", "builder"}
-                                or principal.get("callerRuntimeKind") != "hermes"):
+                                 or not isinstance(terminal, dict)
+                                 or set(terminal) != {"userId", "terminalSessionId", "profile", "cardRevisionId"}
+                                 or any(not isinstance(v, str) or not v.strip() for v in terminal.values())
+                                 or principal.get("callerRuntimeKind") != "hermes"):
                             return None
                         required = tuple(field for field in required if field != "conversationId")
                     if any(not str(principal.get(field) or "").strip() for field in required):

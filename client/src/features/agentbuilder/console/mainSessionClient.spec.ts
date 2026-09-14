@@ -45,11 +45,11 @@ describe('loadMainDriverStatus', () => {
       }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(loadMainDriverStatus()).resolves.toEqual({
+    await expect(loadMainDriverStatus('project-one')).resolves.toEqual({
       ready: true,
       activeDriver: 'external_plugin',
     });
-    await expect(loadMainDriverStatus()).resolves.toEqual({
+    await expect(loadMainDriverStatus('project-one')).resolves.toEqual({
       ready: true,
       activeDriver: null,
     });
@@ -57,7 +57,7 @@ describe('loadMainDriverStatus', () => {
 
   it('fails closed when Main driver status is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
-    await expect(loadMainDriverStatus()).rejects.toThrow('main_driver_status_unavailable');
+    await expect(loadMainDriverStatus('project-one')).rejects.toThrow('main_driver_status_unavailable');
   });
 });
 

@@ -10,7 +10,6 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
-import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import {
   applyNativeHermesOperation,
   loadNativeHermesCard,
@@ -25,31 +24,12 @@ import CardRunResults, {
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
-type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
   accessMode: 'chatgpt-account',
   modelKey: 'gpt-5.6-luna',
   providerModelId: 'gpt-5.6-luna',
 };
-
-function blankCardScript(): SavedCardScript {
-  return {
-    enabled: false,
-    source: '',
-    version: 1,
-    author: {},
-    sourceHash: '',
-    compiledHash: '',
-    paletteFingerprint: '',
-    compiled: {},
-    lastValidation: {
-      status: 'blank', executionTested: false, errors: [], toolHandles: [],
-    },
-    nativeSupport: { available: false, active: false, executor: null },
-    rollback: {},
-  };
-}
 
 function subagentAccessMode(provider: string): SavedSubagentModel['accessMode'] {
   return provider === 'openrouter' ? 'openrouter-api'
@@ -576,9 +556,6 @@ export function AgentManager({
   const [memoryProviderDraft, setMemoryProviderDraft] = useState<'builtin' | 'honcho' | null>(null);
   const [automaticLearningDraft, setAutomaticLearningDraft] = useState<boolean | null>(null);
   const learningEditsRef = useRef(new Map<string, string>());
-  const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
-  const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
-  const dirtyScriptCardsRef = useRef<Set<string>>(new Set());
   const [reasoningEffort, setReasoningEffort] = useState<
     'low' | 'medium' | 'high' | 'xhigh' | ''
   >('');
@@ -773,25 +750,6 @@ export function AgentManager({
         ? savedSubagentModel
         : DEFAULT_SUBAGENT_MODEL,
     );
-    const savedScript = localConfig.runtime_options?.script
-      ? structuredClone(localConfig.runtime_options.script)
-      : blankCardScript();
-    const cachedScript = scriptDraftCacheRef.current.get(cardId);
-    const preserveUnsavedScript = Boolean(
-      cachedScript
-      && dirtyScriptCardsRef.current.has(cardId)
-      && (
-        cachedScript.source !== savedScript.source
-        || cachedScript.enabled !== savedScript.enabled
-      ),
-    );
-    if (preserveUnsavedScript && cachedScript) {
-      setScriptDraft(structuredClone(cachedScript));
-    } else {
-      scriptDraftCacheRef.current.set(cardId, structuredClone(savedScript));
-      dirtyScriptCardsRef.current.delete(cardId);
-      setScriptDraft(savedScript);
-    }
     setReasoningEffort(localConfig.reasoning_effort || '');
     setTemperature(typeof localConfig.temperature === 'number' ? localConfig.temperature : '');
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
@@ -918,29 +876,6 @@ export function AgentManager({
     setDraftRevision((revision) => revision + 1);
   };
 
-  const updateScriptDraft = (next: SavedCardScript) => {
-    const saved = localConfig?.runtime_options?.script || null;
-    const changed = !saved
-      ? Boolean(next.source.trim() || next.enabled)
-      : next.source !== saved.source || next.enabled !== saved.enabled;
-    const nextDraft = {
-      ...next,
-      version: changed ? Number(saved?.version || 0) + 1 : Number(saved?.version || next.version || 1),
-      author: changed ? { kind: 'user', id: 'card-editor' } : (next.author || {}),
-      rollback: changed && saved ? {
-        version: saved.version,
-        sourceHash: saved.sourceHash || '',
-        compiledHash: saved.compiledHash || '',
-        enabled: saved.enabled,
-      } : (next.rollback || {}),
-    };
-    scriptDraftCacheRef.current.set(cardId, structuredClone(nextDraft));
-    if (changed) dirtyScriptCardsRef.current.add(cardId);
-    else dirtyScriptCardsRef.current.delete(cardId);
-    setScriptDraft(nextDraft);
-    markDraftDirty();
-  };
-
   const buildCurrentLocalPayload = useCallback((): AgentManagerLocalConfig => {
     if (!localConfig) throw new Error('card_config_missing');
     const editedConfig = buildActiveAgentManagerLocalConfig({
@@ -973,11 +908,6 @@ export function AgentManager({
           : [],
         ...(subagentTouched ? { subagentModel } : {}),
         ...(delegationTouched ? { delegationRole } : {}),
-        ...(
-          localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
-            ? { script: scriptDraft }
-            : {}
-        ),
       },
       role: promptParts.role !== (parsePromptTemplate(localConfig.prompt_template || '').role || String(localConfig.role || ''))
         ? promptParts.role : localConfig.role,
@@ -996,7 +926,6 @@ export function AgentManager({
     subagentTouched,
     delegationRole,
     delegationTouched,
-    scriptDraft,
     reasoningEffort,
     temperature,
     maxTokens,
@@ -1492,22 +1421,6 @@ export function AgentManager({
         </div>
       );
     }
-    if (sectionTab === 'Script' && localConfig) {
-      return (
-        <CardScriptEditor
-          cardId={cardId}
-          runtimeKind={localConfig.runtime.kind}
-          script={scriptDraft}
-          toolCatalogPolicy={runtimeKind === 'hermes'
-            ? (localConfig?.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected')
-            : 'selected'}
-          selectedTools={savedToolNames}
-          disabledTools={disabledToolNames}
-          onChange={updateScriptDraft}
-        />
-      );
-    }
-
     if (sectionTab === 'Skills') {
       return (
         <section
@@ -2402,12 +2315,7 @@ export function AgentManager({
               </div>
             )
           : activeTab === 'Tools'
-            ? (
-                <div data-testid="agent-manager-tools-surface" style={{ display: 'grid', gap: 16 }}>
-                  {renderSectionBody('Tools')}
-                  {renderSectionBody('Script')}
-                </div>
-              )
+            ? renderSectionBody('Tools')
             : null;
 
   if (!isLocalConfigMode || !localConfig || !onSaveLocalConfig) {
@@ -2594,7 +2502,7 @@ export function AgentManager({
         {activeTab === 'Results' && runResult?.nativeEvents?.length ? (
           <details data-testid="card-native-telemetry" style={{ color: '#B8C8CD', fontSize: 11 }}>
             <summary style={{ cursor: 'pointer' }}>
-              Native tool and Script telemetry ({runResult.nativeEvents.length})
+              Native tool telemetry ({runResult.nativeEvents.length})
             </summary>
             <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
               {JSON.stringify(runResult.nativeEvents, null, 2)}

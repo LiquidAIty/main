@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createInternalMcpBearer,
+  internalMcpBridgeSecretAuthorized,
   resolveInternalMcpUrl,
   verifyInternalMcpBearerForTest,
   withoutInternalMcpSecret,
@@ -71,9 +72,20 @@ describe('internal MCP Card authentication', () => {
     expect(principal).toMatchObject(terminalRun);
   });
   it.each([
-    { callerCardId: 'card_main_chat' }, { callerCardId: 'builder' },
+    ['card_main_chat', 'liquidaity-main', 'main'],
+    ['builder', 'builder', 'delegate'],
+  ] as const)('accepts valid terminal attribution for %s', (callerCardId, profile, callerRuntimeMode) => {
+    const value = {
+      ...terminalRun,
+      callerCardId,
+      callerRuntimeMode,
+      terminalOwner: { ...terminalRun.terminalOwner, profile },
+    };
+    const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(value, env), env).principal;
+    expect(principal).toMatchObject(value);
+  });
+  it.each([
     { callerRuntimeKind: 'autogen' }, { requiresExecutionContext: false },
-    ...['main', 'default', 'builder', 'liquidaity-main'].map((profile) => ({ terminalOwner: { ...terminalRun.terminalOwner, profile } })),
     ...['userId', 'terminalSessionId', 'profile', 'cardRevisionId'].map((field) => ({ terminalOwner: { ...terminalRun.terminalOwner, [field]: '' } })),
   ])('rejects incomplete or foreign terminal Run identity: %j', (override) => {
     expect(() => createInternalMcpBearer({ ...terminalRun, ...override } as any, env))
@@ -96,5 +108,14 @@ describe('internal MCP Card authentication', () => {
     expect(resolveInternalMcpUrl(env)).toBe('http://127.0.0.1:8765/mcp');
     expect(() => resolveInternalMcpUrl({ ...env, LIQUIDAITY_INTERNAL_MCP_URL: 'https://example.com/mcp' }))
       .toThrow('internal_mcp_url_must_be_loopback_http');
+  });
+
+  it('authenticates the existing process bridge secret without accepting short or foreign values', () => {
+    expect(internalMcpBridgeSecretAuthorized(env.LIQUIDAITY_INTERNAL_MCP_SECRET, env)).toBe(true);
+    expect(internalMcpBridgeSecretAuthorized('wrong', env)).toBe(false);
+    expect(internalMcpBridgeSecretAuthorized('', env)).toBe(false);
+    expect(internalMcpBridgeSecretAuthorized('short', {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: 'short',
+    })).toBe(false);
   });
 });

@@ -63,7 +63,7 @@ describe('agentbuilder authoring flow', () => {
       ['card_worldsignals_agent', 'WorldSignals Agent', { kind: 'autogen', mode: 'assistant' }],
     ]);
     expect(INITIAL_DECK.nodes.map(node => node.templateId)).toEqual([
-      'template_main_chat', 'template_agent_builder', 'template_magentic',
+      'template_main_chat', 'template_assist', 'template_magentic',
       'template_hermes_steward', 'template_trading_workbench', 'template_worldsignals_agent',
     ]);
     expect(INITIAL_DECK.edges.map(({ source, target, edgeType }) => ({ source, target, edgeType }))).toEqual([

@@ -2,7 +2,12 @@ import { Router, type Response } from 'express';
 import { getUserBySessionId } from '../auth/sessionStore';
 import { getProjectCard } from '../services/agentBuilderStore';
 import { getDeckDocument } from '../decks/store';
-import { agentTerminalManager, requireAgentTerminalCard, type AgentTerminalOwner } from '../hermes/agentTerminal';
+import {
+  agentTerminalManager,
+  agentTerminalPresentationOptions,
+  requireAgentTerminalCard,
+  type AgentTerminalOwner,
+} from '../hermes/agentTerminal';
 import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
 
 function dimensions(value: unknown): { cols: number; rows: number } {
@@ -29,7 +34,11 @@ export function createAgentTerminalRouter(deps = {
         return;
       }
       if (req.params.operation === 'host') {
-        res.json(await deps.execution.host(req.params.sessionId, req.body));
+        res.json(await deps.execution.host(
+          req.params.sessionId,
+          req.body,
+          (delivery) => deps.manager.appendNativeTeamResult(owner, req.params.sessionId, delivery),
+        ));
         return;
       }
       if (req.params.operation !== 'begin') throw new Error('agent_terminal_operation_invalid');
@@ -47,25 +56,38 @@ export function createAgentTerminalRouter(deps = {
       const user = typeof sid === 'string' && sid ? await deps.getUser(sid) : null;
       if (!user) { res.status(401).json({ error: 'agent_terminal_existing_session_required' }); return; }
       const { projectId, deckId, cardId } = req.params;
-      if (!await deps.getProject(projectId, user.id)) {
-        res.status(403).json({ error: `agent_terminal_project_access_denied: local account ${user.id}` }); return;
+      const project = await deps.getProject(projectId);
+      const savedOwnerUserId = String(project?.ownerUserId || '').trim();
+      if (!project || !savedOwnerUserId) {
+        res.status(403).json({ error: 'agent_terminal_project_access_denied' }); return;
       }
       const { deck } = await deps.getDeck(projectId, deckId);
       const card = deck?.nodes.find((entry) => entry.id === cardId);
       if (!deck || !card) { res.status(404).json({ error: 'agent_terminal_card_not_found' }); return; }
       requireAgentTerminalCard(card, deck);
       res.locals.agentTerminal = {
-        owner: { userId: user.id, projectId, deckId, cardId } satisfies AgentTerminalOwner, card, deck,
+        owner: {
+          userId: savedOwnerUserId, projectId, deckId, cardId,
+        } satisfies AgentTerminalOwner,
+        card,
+        deck,
       };
       next();
     } catch (error) { fail(res, error); }
   });
   const base = '/:projectId/:deckId/:cardId';
-  router.post(`${base}/open`, (req, res) => {
+  router.post(`${base}/open`, async (req, res) => {
     try {
       const { owner, card, deck } = res.locals.agentTerminal;
       const { cols, rows } = dimensions(req.body);
-      res.json(deps.manager.open(owner, card, deck, cols, rows));
+      res.json(await deps.manager.open(
+        owner,
+        card,
+        deck,
+        cols,
+        rows,
+        agentTerminalPresentationOptions(card, true),
+      ));
     } catch (error) { fail(res, error); }
   });
   router.get(`${base}/:sessionId/events`, (req, res) => {
@@ -113,8 +135,7 @@ export function createAgentTerminalRouter(deps = {
   });
   router.post(`${base}/:sessionId/stop`, (req, res) => {
     try {
-      deps.manager.stop(res.locals.agentTerminal.owner, req.params.sessionId);
-      res.json({ ok: true });
+      res.json(deps.manager.detachTui(res.locals.agentTerminal.owner, req.params.sessionId));
     } catch (error) { fail(res, error); }
   });
   return router;

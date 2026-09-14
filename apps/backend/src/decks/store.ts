@@ -6,6 +6,8 @@ import type { DeckDocument, V3ProjectBlob } from '../types';
 
 /** The deck currently opened by the Agent Builder view. Projects may own more. */
 export const BUILDER_DECK_ID = 'deck_builder';
+/** Stable saved identity of the surviving Builder Card. */
+export const BUILDER_CARD_ID = 'builder';
 
 type DeckResponse = {
   ok?: boolean;

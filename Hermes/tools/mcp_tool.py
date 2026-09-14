@@ -5646,7 +5646,7 @@ def _interrupted_call_result() -> str:
 # Config loading
 # ---------------------------------------------------------------------------
 
-def _interpolate_env_vars(value, *, environ=None, required=False):
+def _interpolate_env_vars(value):
     """Recursively resolve ``${VAR}`` placeholders.
 
     Both ``${VAR}`` and Cursor-style ``${env:VAR}`` are accepted — the
@@ -5669,51 +5669,13 @@ def _interpolate_env_vars(value, *, environ=None, required=False):
             if ctx is not None:
                 return ctx
             name = _env_ref_name(m.group(1))
-            # LIQUIDAITY VENDOR PATCH: a host-supplied process configuration
-            # resolves only its child's environment, never another profile's
-            # secret scope. Ordinary native configuration retains its behavior.
-            if environ is not None:
-                resolved = environ.get(name)
-                if required and (not isinstance(resolved, str) or not resolved.strip()):
-                    raise ValueError(f"MCP environment value missing: {name}")
-                return resolved or m.group(0)
             return _get_secret(name, m.group(0)) or m.group(0)
         return _ENV_VAR_PATTERN.sub(_replace, value)
     if isinstance(value, dict):
-        return {k: _interpolate_env_vars(v, environ=environ, required=required) for k, v in value.items()}
+        return {k: _interpolate_env_vars(v) for k, v in value.items()}
     if isinstance(value, list):
-        return [_interpolate_env_vars(v, environ=environ, required=required) for v in value]
+        return [_interpolate_env_vars(v) for v in value]
     return value
-
-
-def process_mcp_servers(environ=None) -> Dict[str, dict]:
-    """Resolve optional, non-persistent host MCP configuration for this process."""
-    # LIQUIDAITY VENDOR PATCH: generic complement to the pre-spawn environment
-    # provider. No Card identity, bearer issuer, file write, or connection here.
-    environment = os.environ if environ is None else environ
-    raw = environment.get("HERMES_MCP_SERVERS")
-    if raw is None:
-        return {}
-    try:
-        if not isinstance(raw, str) or len(raw.encode("utf-8")) > 65536:
-            raise ValueError()
-        servers = json.loads(raw)
-        if not isinstance(servers, dict) or not 1 <= len(servers) <= 16:
-            raise ValueError()
-        for name, config in servers.items():
-            if (
-                not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name)
-                or not isinstance(config, dict)
-                or not isinstance(config.get("url") or config.get("command"), str)
-                or config.get("enabled") is False
-            ):
-                raise ValueError()
-    except (ValueError, TypeError):
-        raise ValueError("process_mcp_configuration_invalid") from None
-    resolved = _interpolate_env_vars(servers, environ=environment, required=True)
-    if set(_filter_suspicious_mcp_servers(resolved)) != set(resolved):
-        raise ValueError("process_mcp_configuration_rejected")
-    return resolved
 
 
 # (server_name, dotted key path) pairs already warned about — see
@@ -5805,16 +5767,11 @@ def _load_mcp_config() -> Dict[str, dict]:
     ``${ENV_VAR}`` placeholders in string values are resolved from
     ``os.environ`` (which includes ``~/.hermes/.env`` loaded at startup).
     """
-    # Validate before the stock fail-soft path. A required host configuration
-    # must not silently become an unconfigured worker or leak its raw JSON.
-    process_servers = process_mcp_servers()
     try:
         from hermes_cli.config import load_config
         from utils import env_var_enabled as _env_enabled
 
         if _env_enabled("HERMES_SAFE_MODE"):
-            if process_servers:
-                raise ValueError("process_mcp_unavailable_in_safe_mode")
             return {}
         config = load_config()
         servers = config.get("mcp_servers")
@@ -5847,19 +5804,8 @@ def _load_mcp_config() -> Dict[str, dict]:
                 safe_servers[name] = dict(cfg)
         except Exception:
             logger.debug("Failed to load portable MCP servers", exc_info=True)
-        for name, cfg in process_servers.items():
-            if name in safe_servers and safe_servers[name] != cfg:
-                raise ValueError("process_mcp_configuration_conflict")
-            if cfg.get("url") and any(
-                other != name and existing.get("url") == cfg["url"]
-                for other, existing in safe_servers.items()
-            ):
-                raise ValueError("process_mcp_duplicate_connection")
-            safe_servers[name] = cfg
         return safe_servers
     except Exception as exc:
-        if process_servers:
-            raise ValueError("process_mcp_configuration_unavailable") from None
         logger.debug("Failed to load MCP config: %s", exc)
         return {}
 
@@ -6196,16 +6142,6 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                     )
                 return tool_error(f"MCP server '{server_name}' is not connected")
 
-        # LIQUIDAITY VENDOR PATCH: snapshot trusted host metadata before the
-        # sync handler crosses onto Hermes' dedicated MCP event-loop thread.
-        # ContextVars do not automatically propagate across that boundary;
-        # reading inside ``_call`` silently loses the root/child execution
-        # context. The snapshot is per invocation and remains opaque to
-        # model-authored arguments.
-        from acp_adapter.host_profiles import current_host_tool_call_meta
-
-        execution_meta = current_host_tool_call_meta()
-
         async def _call():
             _mark_server_call_started(server)
             async with server._rpc_lock, _track_inflight_rpc(
@@ -6246,18 +6182,7 @@ def _make_tool_handler(server_name: str, tool_name: str, tool_timeout: float):
                             f"exited; failing the call fast instead of "
                             f"waiting {float(tool_timeout):.0f}s"
                         )
-                    # LIQUIDAITY VENDOR PATCH: MCP 2.0 carries trusted host
-                    # execution identity as per-call metadata. It never enters
-                    # model-authored tool arguments or shared mutable headers.
-                    _call_coro = (
-                        server.session.call_tool(
-                            tool_name,
-                            arguments=args,
-                            meta=execution_meta,
-                        )
-                        if execution_meta
-                        else server.session.call_tool(tool_name, arguments=args)
-                    )
+                    _call_coro = server.session.call_tool(tool_name, arguments=args)
                     _watch_children = getattr(server, "_watch_stdio_children", None)
                     _watch_ok = (
                         _watch_children is not None
@@ -6868,13 +6793,7 @@ def _normalize_mcp_input_schema(schema: dict | None) -> dict:
         if not isinstance(node, dict):
             return node
 
-        repaired = {
-            k: {name: _repair_object_shape(subschema) for name, subschema in v.items()}
-            if k in ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas")
-            and isinstance(v, dict)
-            else _repair_object_shape(v)
-            for k, v in node.items()
-        }
+        repaired = {k: _repair_object_shape(v) for k, v in node.items()}
 
         # Coerce missing / null type when the shape is clearly an object
         # (has properties or required but no type).
@@ -7717,45 +7636,7 @@ async def _discover_and_register_server(name: str, config: dict) -> List[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-def _replace_changed_mcp_servers(servers: Dict[str, dict]) -> None:
-    """Replace connected servers whose trusted transport config changed.
-
-    LIQUIDAITY VENDOR PATCH: generic ACP hosts can rotate authentication for a
-    persistent native session without importing product identity into Hermes.
-
-    Normal config discovery remains idempotent by server name. ACP hosts need a
-    narrower contract: a persistent native session may reuse the same server
-    name while rotating an Authorization header for each execution Run. Keeping
-    the old connection in that case sends stale credentials with fresh per-call
-    metadata. Replace only the changed named connection, after its prior tools
-    and transport have shut down cleanly.
-    """
-
-    changed: list[tuple[str, MCPServerTask]] = []
-    with _lock:
-        for name, config in servers.items():
-            current = _servers.get(name)
-            if current is None or getattr(current, "_config", None) == config:
-                continue
-            _servers.pop(name, None)
-            _server_connecting.discard(name)
-            changed.append((name, current))
-
-    for name, current in changed:
-        _run_on_mcp_loop(lambda current=current: current.shutdown(), timeout=15)
-        with _lock:
-            _server_connect_errors.pop(name, None)
-            _server_connect_retry_after.pop(name, None)
-            _server_connect_failures.pop(name, None)
-            _server_error_counts.pop(name, None)
-            _server_breaker_opened_at.pop(name, None)
-
-
-def register_mcp_servers(
-    servers: Dict[str, dict],
-    *,
-    replace_changed: bool = False,
-) -> List[str]:
+def register_mcp_servers(servers: Dict[str, dict]) -> List[str]:
     """Connect to explicit MCP servers and register their tools.
 
     Idempotent for already-connected server names. Servers with
@@ -7763,10 +7644,6 @@ def register_mcp_servers(
 
     Args:
         servers: Mapping of ``{server_name: server_config}``.
-        replace_changed: Replace an existing named connection when its exact
-            transport configuration changed. Intended for trusted persistent
-            ACP host sessions with rotating authentication; ordinary discovery
-            remains idempotent by default.
 
     Returns:
         List of all currently registered MCP tool names.
@@ -7779,8 +7656,6 @@ def register_mcp_servers(
     if not servers:
         logger.debug("No explicit MCP servers provided")
         return []
-    if replace_changed:
-        _replace_changed_mcp_servers(servers)
 
     # Only attempt servers that aren't already connected (or currently
     # connecting) and are enabled.  Checking ``_server_connecting`` prevents
@@ -8332,20 +8207,14 @@ def refresh_agent_mcp_tools(
     # Computed OUTSIDE the lock (get_tool_definitions can be slow); the diff and
     # publish below happen together in ONE critical section so two concurrent
     # callers can't torn-publish or compute overlapping ``added`` sets.
-    host_config = getattr(agent, "_host_session_config", None)
-    if isinstance(host_config, dict):
-        from acp_adapter.host_profiles import host_session_tool_definitions
-
-        new_defs = host_session_tool_definitions(agent, host_config)
-    else:
-        new_defs = list(
-            get_tool_definitions(
-                enabled_toolsets=enabled,
-                disabled_toolsets=disabled,
-                quiet_mode=quiet_mode,
-            )
-            or []
+    new_defs = list(
+        get_tool_definitions(
+            enabled_toolsets=enabled,
+            disabled_toolsets=disabled,
+            quiet_mode=quiet_mode,
         )
+        or []
+    )
     new_names = {t["function"]["name"] for t in new_defs}
 
     # Re-append the post-build injected families that get_tool_definitions does
@@ -8383,7 +8252,7 @@ def refresh_agent_mcp_tools(
             # delegate_task limits, execute_code stubs) change CONTENT
             # under stable names when config changes between compactions.
             content_changed = False
-            if content_aware or isinstance(host_config, dict):
+            if content_aware:
                 try:
                     _stable = json.dumps(
                         (getattr(agent, "tools", None) or []),

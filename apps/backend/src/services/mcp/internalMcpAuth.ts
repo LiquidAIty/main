@@ -29,8 +29,6 @@ export type InternalMcpPrincipal =
       terminalOwner?: { userId: string; terminalSessionId: string; profile: string; cardRevisionId: string };
     };
 
-const TERMINAL_EXCLUDED_CARD_IDS = new Set(['builder', 'card_main_chat']);
-const TERMINAL_EXCLUDED_PROFILES = new Set(['default', 'main', 'builder', 'liquidaity-main']);
 const TERMINAL_PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
@@ -98,8 +96,6 @@ export function createInternalMcpBearer(
     const terminal = normalized.terminalOwner;
     if (terminal && (normalized.kind !== 'card-runtime' || !normalized.requiresExecutionContext
       || normalized.callerRuntimeKind !== 'hermes'
-      || TERMINAL_EXCLUDED_CARD_IDS.has(normalized.callerCardId)
-      || TERMINAL_EXCLUDED_PROFILES.has(terminal.profile)
       || !TERMINAL_PROFILE_PATTERN.test(terminal.profile)
       || Object.values(terminal).some((value) => typeof value !== 'string' || !value.trim())
       || Object.keys(terminal).sort().join(',') !== 'cardRevisionId,profile,terminalSessionId,userId')) {
@@ -134,6 +130,17 @@ export function internalMcpAuthorization(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return `Bearer ${createInternalMcpBearer(principal, env)}`;
+}
+
+export function internalMcpBridgeSecretAuthorized(
+  value: unknown,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const expected = Buffer.from(String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim(), 'utf8');
+  const supplied = Buffer.from(String(value || '').trim(), 'utf8');
+  return expected.length >= 32
+    && supplied.length === expected.length
+    && timingSafeEqual(supplied, expected);
 }
 
 export function verifyInternalMcpBearerForTest(

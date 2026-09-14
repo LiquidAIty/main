@@ -14,7 +14,6 @@ loaded) so this module never imports ``cli`` at import time -> no import cycle.
 
 from __future__ import annotations
 
-import os
 import sys
 
 from rich.markup import escape as _escape
@@ -78,11 +77,7 @@ class CLIAgentSetupMixin:
             _primary_exc = exc
 
         # Primary provider auth failed — try fallback providers before giving up.
-        if (
-            runtime is None
-            and _primary_exc is not None
-            and not os.environ.get("HERMES_REQUIRE_CLI_HOST")
-        ):
+        if runtime is None and _primary_exc is not None:
             from hermes_cli.auth import AuthError
             if isinstance(_primary_exc, AuthError):
                 _fb_chain = self._fallback_model if isinstance(self._fallback_model, list) else []
@@ -369,31 +364,6 @@ class CLIAgentSetupMixin:
         route["request_overrides"] = overrides
         return route
 
-    def _reject_cli_host_execution(
-        self,
-        reason: str,
-        *,
-        binding_already_cleared: bool = False,
-    ) -> bool:
-        """Fail one accepted plugin-driven turn before provider inference."""
-
-        try:
-            from hermes_cli.plugins import get_plugin_manager
-
-            manager = get_plugin_manager()
-            affected = binding_already_cleared or manager.reject_cli_host_execution(self)
-            if affected:
-                manager.invoke_hook(
-                    "on_stream_end",
-                    session_id=str(getattr(self, "session_id", "") or ""),
-                    turn_id="",
-                    finished=False,
-                    error=str(reason or "cli_host_execution_rejected"),
-                )
-            return affected
-        except Exception:
-            return False
-
     def _init_agent(self, *, model_override: str = None, runtime_override: dict = None, request_overrides: dict | None = None) -> bool:
         """
         Initialize the agent on first use.
@@ -416,19 +386,14 @@ class CLIAgentSetupMixin:
         self._ensure_tirith_security()
 
         if not self._ensure_runtime_credentials():
-            self._reject_cli_host_execution("cli_agent_credentials_unavailable")
             return False
 
         from hermes_cli.mcp_startup import ensure_mcp_discovery_before_agent_build
 
-        try:
-            ensure_mcp_discovery_before_agent_build(
-                logger=logger,
-                single_query=getattr(self, "_single_query_mode", False),
-            )
-        except Exception:
-            self._reject_cli_host_execution("cli_agent_initialization_failed")
-            raise
+        ensure_mcp_discovery_before_agent_build(
+            logger=logger,
+            single_query=getattr(self, "_single_query_mode", False),
+        )
 
         # Initialize SQLite session store for CLI sessions (if not already done in __init__)
         if self._session_db is None:
@@ -460,7 +425,6 @@ class CLIAgentSetupMixin:
                 else:
                     _cprint(f"\033[1;31mSession not found: {self.session_id}{_RST}")
                     _cprint(f"{_DIM}Use a session ID from a previous CLI run (hermes sessions list).{_RST}")
-                self._reject_cli_host_execution("cli_resume_session_not_found")
                 return False
             # If the requested session is the (empty) head of a compression
             # chain, walk to the descendant that actually holds the messages.
@@ -481,7 +445,6 @@ class CLIAgentSetupMixin:
                     session_meta = resolved_meta
             prior_resume_error = getattr(self, "_resume_history_error", None)
             if prior_resume_error:
-                self._reject_cli_host_execution("cli_resume_history_unavailable")
                 return False
             # This path loads only the TIP session's rows (no ancestors),
             # so guard with a tip-only count — the full-lineage count would
@@ -495,7 +458,6 @@ class CLIAgentSetupMixin:
                     ChatConsole().print(
                         f"[bold red]Cannot resume session:[/] {_escape(resume_limit_error)}"
                     )
-                self._reject_cli_host_execution("cli_resume_history_too_large")
                 return False
             restored = self._session_db.get_messages_as_conversation(
                 self.session_id, repair_alternation=True
@@ -598,11 +560,7 @@ class CLIAgentSetupMixin:
                 ),
                 reasoning_callback=self._current_reasoning_callback(),
 
-                fallback_model=(
-                    None
-                    if os.environ.get("HERMES_REQUIRE_CLI_HOST")
-                    else self._fallback_model
-                ),
+                fallback_model=self._fallback_model,
                 thinking_callback=self._on_thinking,
                 checkpoints_enabled=self.checkpoints_enabled,
                 checkpoint_max_snapshots=self.checkpoint_max_snapshots,
@@ -620,23 +578,6 @@ class CLIAgentSetupMixin:
                 notice_clear_callback=self._on_notice_clear,
                 reaction_callback=self._on_reaction,
             )
-            # LIQUIDAITY VENDOR PATCH: a trusted plugin may have staged one
-            # immutable host lifecycle before this lazily-created agent
-            # existed. Consume it now, before any provider call or tool use.
-            from hermes_cli.plugins import get_plugin_manager
-
-            materialized = get_plugin_manager().materialize_cli_host_execution(
-                self,
-                self.agent,
-                session_id=self.session_id,
-            )
-            if materialized is False:
-                self.agent = None
-                self._reject_cli_host_execution(
-                    "cli_host_execution_identity_changed",
-                    binding_already_cleared=True,
-                )
-                return False
             # Store reference for atexit memory provider shutdown.
             # NOTE: this MUST write to the ``cli`` module's global, not a
             # local module global. ``_run_cleanup`` (in cli.py) reads
@@ -685,7 +626,6 @@ class CLIAgentSetupMixin:
                     # Keep _pending_title so it can be retried after row creation succeeds
             return True
         except Exception as e:
-            self._reject_cli_host_execution("cli_agent_initialization_failed")
             console = ChatConsole()
             console.print(f"[bold red]Failed to initialize agent: {e}[/]")
             from hermes_constants import partial_update_hint

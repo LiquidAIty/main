@@ -15,6 +15,7 @@ const REQUIRED_MIGRATIONS = [
   '032_paper_trade_jobs.sql',
   '033_trading_lifecycle_runs.sql',
   '034_hermes_native_session_authority.sql',
+  '035_remove_provider_api_mode_constraint.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

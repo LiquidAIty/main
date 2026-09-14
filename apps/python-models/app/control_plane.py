@@ -208,10 +208,16 @@ def _validate_card_runtime_authority(
 
 
 def _backend_json(method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
+    headers = {"Content-Type": "application/json"}
+    if method == "POST" and path == "/api/cards/run":
+        secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "").strip()
+        if len(secret) < 32:
+            raise ControlPlaneError("internal_mcp_secret_missing")
+        headers["X-LiquidAIty-Internal-MCP-Secret"] = secret
     request = Request(
         f"{_BACKEND}{path}",
         data=json.dumps(payload).encode("utf-8") if payload is not None else None,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method=method,
     )
     try:
@@ -751,18 +757,6 @@ async def card_update_configuration(
             }
         except ValueError as error:
             raise ControlPlaneError(str(error)) from error
-    if "script" in updates:
-        from app.python_models.card_script import saved_script
-        from app.python_models.idd import IddValidationError
-        if not isinstance(updates["script"], dict):
-            raise ControlPlaneError("card_script_configuration_invalid")
-        try:
-            updates = {**updates, "script": saved_script({
-                **updates["script"],
-                "author": {"kind": "user" if authenticated_user_edit else "agent-builder", "id": caller_card_id},
-            })}
-        except IddValidationError as error:
-            raise ControlPlaneError(str(error)) from error
     if (
         "reasoningEffort" in updates
         and updates["reasoningEffort"] is not None
@@ -822,12 +816,21 @@ async def card_update_configuration(
         current_options = card.get("runtimeOptions")
         if not isinstance(current_options, dict):
             current_options = {}
-        _validate_card_runtime_authority(
-            provider=updates.get("provider", current_options.get("provider") or card.get("provider")),
-            access_mode=updates.get("accessMode", current_options.get("accessMode")),
-            openai_runtime=updates.get("openaiRuntime", current_options.get("openaiRuntime")),
-            hermes=(card.get("runtime") or {}).get("kind") == "hermes",
-        )
+        # Existing legacy or partially restored Cards remain editable without a
+        # migration. Validate provider/transport authority only when this edit
+        # changes that authority; unrelated prompt, tool, skill, and presentation
+        # changes preserve the saved values verbatim.
+        if {"provider", "accessMode", "openaiRuntime"}.intersection(updates):
+            _validate_card_runtime_authority(
+                provider=updates.get(
+                    "provider", current_options.get("provider") or card.get("provider")
+                ),
+                access_mode=updates.get("accessMode", current_options.get("accessMode")),
+                openai_runtime=updates.get(
+                    "openaiRuntime", current_options.get("openaiRuntime")
+                ),
+                hermes=(card.get("runtime") or {}).get("kind") == "hermes",
+            )
         for key in _UPDATABLE_TOP_FIELDS:
             if key in updates:
                 card[key] = str(updates[key])

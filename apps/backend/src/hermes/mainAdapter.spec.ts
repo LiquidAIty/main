@@ -866,9 +866,17 @@ describe('Hermes ACP transport identity', () => {
     });
     expect(server).not.toHaveProperty('command');
     expect(JSON.stringify(server)).not.toContain('0123456789abcdef0123456789abcdef');
+    const bearer = String((server as any).headers[0].value).replace(/^Bearer /, '');
+    const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.principal.grantedTools).toEqual([
+      'canvas.inspect', 'card.run_assistant_agent', 'cbm.search_graph', 'web_search',
+    ]);
+    expect(claims.principal.presentedTools).toEqual([
+      'canvas.inspect', 'card.run_assistant_agent', 'web_search',
+    ]);
   });
 
-  it('preserves the native Hermes catalog when no LiquidAIty MCP tools are granted', () => {
+  it('adds no official MCP server when the saved Card selects no canonical tools', () => {
     expect(buildHermesOfficialMcpServer({
       sessionKey: 'session-1',
       projectId: 'project-1',
@@ -877,7 +885,7 @@ describe('Hermes ACP transport identity', () => {
       parentRunId: 'main-run-1',
       cardId: 'card_main_chat',
       runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
-      tools: ['web_search'],
+      tools: [],
     }, {})).toBeNull();
   });
 
@@ -1127,7 +1135,7 @@ describe('Hermes ACP transport identity', () => {
     expect(claims.principal.presentedTools).toEqual(['engraphis_recall_context', 'graphiti.get_status']);
   });
 
-  it('keeps native web_search outside the host Script MCP alias and state scope', () => {
+  it('keeps web_search in the exact saved grant and host Script state', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: ['graphiti.get_status'],
@@ -1156,17 +1164,18 @@ describe('Hermes ACP transport identity', () => {
 
     const serverName = String((projection.mcpServers[0] as any).name);
     const config = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(config.hostScript.toolStates).toEqual({ 'graphiti.get_status': 2 });
+    expect(config.hostScript.toolStates).toEqual({ 'graphiti.get_status': 2, web_search: 0 });
     expect(config.hostScript.fallbackToolAliases).toEqual({
       'graphiti.get_status': `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__graphiti_get_status`,
+      web_search: `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__web_search`,
     });
     expect(config.enabledTools).toEqual([
       `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__graphiti_get_status`,
     ]);
   });
 
-  it('rejects native web_search takeover by a host Script explicitly', () => {
-    expect(() => buildHermesHostSessionProjection({
+  it('allows a saved host Script to use the granted canonical web_search tool', () => {
+    const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(0),
       tools: [],
       grantedTools: ['web_search'],
@@ -1187,9 +1196,20 @@ describe('Hermes ACP transport identity', () => {
         maxToolCalls: 3,
         maxOutputBytes: 4096,
       },
-    }, {}, 'native-script-context')).toThrow(
-      'hermes_host_script_native_tool_takeover_unsupported:web_search',
-    );
+    }, {
+      LIQUIDAITY_INTERNAL_MCP_SECRET: '0123456789abcdef0123456789abcdef',
+      LIQUIDAITY_INTERNAL_MCP_URL: 'http://127.0.0.1:8765/mcp',
+    }, 'native-script-context');
+    const serverName = String((projection.mcpServers[0] as any).name);
+    const config = (projection.sessionMeta.hermes as any).sessionConfig;
+    expect(config.hostScript.toolAliases).toEqual({
+      web_search: `mcp__${serverName.replace(/[^A-Za-z0-9_]/g, '_')}__web_search`,
+    });
+    expect(config.hostScript.toolStates).toEqual({ web_search: 1 });
+    const bearer = String((projection.mcpServers[0] as any).headers[0].value).replace(/^Bearer /, '');
+    const claims = JSON.parse(Buffer.from(bearer.split('.')[1], 'base64url').toString('utf8'));
+    expect(claims.principal.grantedTools).toEqual(['web_search']);
+    expect(claims.principal.presentedTools).toEqual(['web_search']);
   });
 
   it('keeps an empty native and Card selection empty', () => {

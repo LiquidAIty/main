@@ -18,6 +18,9 @@ import {
   MAGENTIC_ONE_DEFAULT_PROVIDER,
 } from './deckPrimitives';
 
+/** Stable saved identity of the surviving Builder Card. */
+export const BUILDER_CARD_ID = 'builder';
+
 const DEFAULT_HERMES_SUBAGENT_MODEL = {
   provider: 'openai',
   accessMode: 'chatgpt-account' as const,
@@ -270,16 +273,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
     tools: [],
   },
   {
-    id: 'template_agent_builder',
-    name: 'Builder',
-    promptTemplate: 'prompt_builder',
-    model: AGENT_BUILDER_MODEL_KEY,
-    provider: DEFAULT_CARD_PROVIDER,
-    temperature: 0.2,
-    maxTokens: 1400,
-    tools: [...AGENT_BUILDER_CONTROLLER_TOOLS],
-  },
-  {
     id: 'template_hermes_steward',
     name: 'Graph Agent',
     promptTemplate: 'prompt_hermes_steward',
@@ -360,9 +353,9 @@ export const INITIAL_DECK: DeckDocument = {
       status: 'ready',
     },
     {
-      id: 'builder',
+      id: BUILDER_CARD_ID,
       kind: 'agent',
-      templateId: 'template_agent_builder',
+      templateId: 'template_assist',
       prompt:
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_builder',

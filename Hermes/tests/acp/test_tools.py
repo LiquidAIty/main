@@ -206,14 +206,6 @@ class TestBuildToolComplete:
         result = build_tool_complete("tc-fail", "execute_code", '{"output": "bad", "returncode": 2}')
         assert result.status == "failed"
 
-    def test_build_tool_complete_preserves_generic_mcp_tool_error_status(self):
-        result = build_tool_complete(
-            "tc-mcp-fail",
-            "constellation.remember",
-            '{"error":"local_embedding_model_unavailable"}',
-        )
-        assert result.status == "failed"
-
 
 
 

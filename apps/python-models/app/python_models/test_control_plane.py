@@ -10,6 +10,70 @@ import pytest
 
 from app import control_plane as cp
 
+
+def test_backend_transport_uses_existing_internal_process_secret(monkeypatch) -> None:
+    secret = "internal-process-bridge-secret-0123456789abcdef"
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"ok": true}'
+
+    def open_request(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", secret)
+    monkeypatch.setattr(cp, "urlopen", open_request)
+
+    assert cp._backend_json("POST", "/api/cards/run", {"action": "status"}) == {"ok": True}
+    assert captured["timeout"] == 300
+    assert captured["request"].get_header("X-liquidaity-internal-mcp-secret") == secret
+
+
+def test_backend_transport_fails_closed_without_internal_process_secret(monkeypatch) -> None:
+    monkeypatch.delenv("LIQUIDAITY_INTERNAL_MCP_SECRET", raising=False)
+    with pytest.raises(cp.ControlPlaneError, match="internal_mcp_secret_missing"):
+        cp._backend_json("POST", "/api/cards/run", {"action": "status"})
+
+
+def test_backend_transport_does_not_broaden_process_secret_to_other_routes(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        @staticmethod
+        def read():
+            return b'{"ok": true}'
+
+    def open_request(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setenv(
+        "LIQUIDAITY_INTERNAL_MCP_SECRET",
+        "internal-process-bridge-secret-0123456789abcdef",
+    )
+    monkeypatch.setattr(cp, "urlopen", open_request)
+
+    assert cp._backend_json("GET", "/api/projects/project/decks/deck") == {"ok": True}
+    assert captured["timeout"] == 300
+    assert captured["request"].get_header("X-liquidaity-internal-mcp-secret") is None
+
 DECK = {
     "id": "deck_builder",
     "name": "Builder",
@@ -363,6 +427,36 @@ class TestCardUpdateConfiguration:
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["prompt"] == "new prompt"
         assert card["runtimeOptions"]["tools"] == ["web_search"]
+
+    def test_unrelated_edit_preserves_incomplete_legacy_provider_authority(self, fake_backend):
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+            "updates": {"prompt": "repair the prompt only"},
+        }, caller_card_id="builder-card"))
+
+        assert result["ok"] is True
+        saved = next(item for item in fake_backend["deck"]["nodes"] if item["id"] == "signals-card")
+        assert saved["prompt"] == "repair the prompt only"
+        assert "provider" not in saved["runtimeOptions"]
+        assert "accessMode" not in saved["runtimeOptions"]
+
+    def test_provider_authority_is_validated_when_the_edit_changes_it(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_provider_selection_incomplete"):
+            asyncio.run(cp.card_update_configuration({
+                "projectId": "p", "deckId": "d", "cardId": "signals-card",
+                "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+                "updates": {"provider": "openrouter"},
+            }, caller_card_id="builder-card"))
+
+        result = asyncio.run(cp.card_update_configuration({
+            "projectId": "p", "deckId": "d", "cardId": "signals-card",
+            "expectedRevision": "rev1", "expectedCardRevisionId": "revision:signals-card",
+            "updates": {"provider": "openrouter", "accessMode": "openrouter-api"},
+        }, caller_card_id="builder-card"))
+        assert result["ok"] is True
+        assert result["card"]["runtimeOptions"]["provider"] == "openrouter"
+        assert result["card"]["runtimeOptions"]["accessMode"] == "openrouter-api"
 
     def test_structured_card_configuration_persists_with_revision(self, fake_backend):
         configuration = {"schemaVersion": "trading.card.v1", "trading": {"paperOnly": True}}

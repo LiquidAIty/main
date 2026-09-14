@@ -162,23 +162,6 @@ def submit_team(
         if task is None:
             raise RuntimeError(f"Team root {task_id} was committed but cannot be read back.")
 
-    # LIQUIDAITY VENDOR PATCH: this generic host callback carries only opaque
-    # native/session ids and model receipts.  Standalone Hermes has no host and
-    # continues with the same native root.
-    from acp_adapter.host_profiles import allocate_host_native_execution
-
-    try:
-        host_context = allocate_host_native_execution(
-            parent_agent,
-            native_child_id=task_id,
-            provider=policy["root_provider"],
-            model=policy["root_model"],
-        )
-    except Exception as exc:
-        raise RuntimeError(
-            f"Team root {task_id} is durable but host correlation failed: {exc}"
-        ) from exc
-
     with kb.connect_closing() as conn:
         current = kb.get_task(conn, task_id)
         if current is None:
@@ -205,7 +188,6 @@ def submit_team(
         "status": active.status if active else "unknown",
         "durable": True,
         "subscribed": subscribed,
-        "host_correlated": host_context is not None,
         "profile": profile,
         "policy": {
             "decomposition_provider": policy["root_provider"],

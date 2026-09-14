@@ -5,6 +5,13 @@ import {
   recoverActiveKanbanRunMonitors,
   startHermesTeamRunMonitor,
 } from './kanbanRunRecovery';
+import type { HermesKanbanProgress } from '../routes/hermesKanban.routes';
+
+function kanbanProgress(
+  value: Omit<HermesKanbanProgress, 'teamReceipt'>,
+): HermesKanbanProgress {
+  return { ...value, teamReceipt: null };
+}
 
 describe('durable Kanban Run recovery', () => {
   beforeEach(() => clearKanbanRunMonitorsForTest());
@@ -17,11 +24,11 @@ describe('durable Kanban Run recovery', () => {
       finalText: 'One native Team synthesis.',
       nativeRunId: 21,
       sessionId: 'acp-session-1',
-      progress: {
+      progress: kanbanProgress({
         nativeRootId: 't_team_root', nativeRunId: 21, phase: 'complete' as const,
         tasksCompleted: 3, tasksTotal: 3, activeWorkers: 0,
         workerSessionIds: ['luna-1', 'luna-2', 'terra-1'],
-      },
+      }),
     }));
     const request = vi.fn(async () => ({ ok: true }));
     const context = {
@@ -59,11 +66,11 @@ describe('durable Kanban Run recovery', () => {
       finalText: 'One native Team synthesis.',
       nativeRunId: 22,
       sessionId: 'acp-session-busy',
-      progress: {
+      progress: kanbanProgress({
         nativeRootId: 't_team_busy', nativeRunId: 22, phase: 'complete' as const,
         tasksCompleted: 3, tasksTotal: 3, activeWorkers: 0,
         workerSessionIds: ['luna-1', 'luna-2', 'terra-1'],
-      },
+      }),
     }));
     const context = {
       contextId: 'ctx-team-busy', sessionId: 'acp-session-busy', runId: 'child-run-team-busy',
@@ -106,11 +113,11 @@ describe('durable Kanban Run recovery', () => {
       rejoin: vi.fn(async () => ({
         finalText: 'Completed native synthesis.', nativeRunId: 23,
         sessionId: 'acp-session-busy',
-        progress: {
+        progress: kanbanProgress({
           nativeRootId: 't_team_deferred', nativeRunId: 23,
           phase: 'complete' as const, tasksCompleted: 3, tasksTotal: 3,
           activeWorkers: 0, workerSessionIds: [],
-        },
+        }),
       })),
       finishContext,
       appendRetryAttempts: 2,
@@ -137,10 +144,10 @@ describe('durable Kanban Run recovery', () => {
     const rejoin = vi.fn(async () => ({
       finalText: 'Recovered Team synthesis.', nativeRunId: 31,
       sessionId: 'acp-session-recovered',
-      progress: {
+      progress: kanbanProgress({
         nativeRootId: 't_team_restart', nativeRunId: 31, phase: 'complete' as const,
         tasksCompleted: 2, tasksTotal: 2, activeWorkers: 0, workerSessionIds: [],
-      },
+      }),
     }));
     const appendTeamResult = vi.fn(async () => undefined);
 
@@ -151,6 +158,7 @@ describe('durable Kanban Run recovery', () => {
       expectedCardId: 'delegate_task:team', taskId: 't_team_restart',
     }));
     expect(appendTeamResult).toHaveBeenCalledWith({
+      projectId: 'project-1', deckId: 'deck-1', cardId: 'card-main',
       profile: 'liquidaity-main', sessionId: 'acp-session-recovered',
       taskId: 't_team_restart', result: 'Recovered Team synthesis.', state: 'completed',
     });
@@ -182,11 +190,11 @@ describe('durable Kanban Run recovery', () => {
       rejoin: vi.fn(async () => ({
         finalText: 'Recovered native synthesis.', nativeRunId: 32,
         sessionId: 'session-busy',
-        progress: {
+        progress: kanbanProgress({
           nativeRootId: 't_team_busy_recovery', nativeRunId: 32,
           phase: 'complete' as const, tasksCompleted: 3, tasksTotal: 3,
           activeWorkers: 0, workerSessionIds: [],
-        },
+        }),
       })),
       appendTeamResult,
       appendRetryAttempts: 2,
@@ -220,7 +228,7 @@ describe('durable Kanban Run recovery', () => {
       return { ok: true, updated: true };
     });
     const rejoin = vi.fn(async (args: any) => {
-      await args.onProgress({
+      await args.onProgress(kanbanProgress({
         nativeRootId: 't_existing_root',
         nativeRunId: 9,
         phase: 'working',
@@ -228,9 +236,9 @@ describe('durable Kanban Run recovery', () => {
         tasksTotal: 4,
         activeWorkers: 1,
         workerSessionIds: ['worker-luna-1'],
-      });
+      }));
       await nativeAdvancedOffline;
-      await args.onProgress({
+      await args.onProgress(kanbanProgress({
         nativeRootId: 't_existing_root',
         nativeRunId: 10,
         phase: 'complete',
@@ -238,16 +246,16 @@ describe('durable Kanban Run recovery', () => {
         tasksTotal: 4,
         activeWorkers: 0,
         workerSessionIds: ['worker-luna-1', 'root-terra-1'],
-      });
+      }));
       return {
         finalText: 'Stored native root synthesis.',
         nativeRunId: 10,
         sessionId: 'kanban-session-1',
-        progress: {
+        progress: kanbanProgress({
           nativeRootId: 't_existing_root', nativeRunId: 10, phase: 'complete' as const,
           tasksCompleted: 4, tasksTotal: 4, activeWorkers: 0,
           workerSessionIds: ['worker-luna-1', 'root-terra-1'],
-        },
+        }),
       };
     });
     const readUsage = vi.fn(async () => ({
@@ -326,11 +334,11 @@ describe('durable Kanban Run recovery', () => {
         finalText: 'Exact stored native result.',
         nativeRunId: 18,
         sessionId: 'kanban-session-2',
-        progress: {
+        progress: kanbanProgress({
           nativeRootId: 't_retained_root', nativeRunId: 18, phase: 'complete' as const,
           tasksCompleted: 5, tasksTotal: 5, activeWorkers: 0,
           workerSessionIds: [],
-        },
+        }),
       };
     });
     const run = {

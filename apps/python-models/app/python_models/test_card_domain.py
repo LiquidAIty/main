@@ -561,19 +561,6 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
         "toolCatalogPolicy": "all_healthy",
         "disabledTools": ["graphiti.search_nodes"],
         "tools": ["engraphis_remember"],
-        "script": {
-            "enabled": True,
-            "source": '''CARD_SCRIPT = {
-    "mode": "tool_recipe",
-    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
-    "output": {"type": "object", "properties": {"agent": {"type": "object", "properties": {"run": {"type": "boolean"}}, "required": ["run"]}}, "required": ["agent"]},
-}
-from hermes_tools import SCRIPT, output, tools
-tools.cbm.search_graph = SCRIPT
-tools.call("cbm.search_graph")
-output.emit({"agent": {"run": False}})
-''',
-        },
     }
     monkeypatch.setattr(
         card_domain,
@@ -622,14 +609,6 @@ output.emit({"agent": {"run": False}})
         "engraphis_remember",
     ]
     assert "cbm.index_repository" not in grants["enabledTools"]
-    script = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
-    assert grants["scriptPresentation"]["mode"] == "script"
-    assert script["nativeSupport"]["active"] is True
-    assert script["compiled"]["toolStates"] == {
-        "cbm.search_graph": 1,
-        "engraphis_remember": 2,
-        "web_search": 0,
-    }
 
 
 def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
@@ -1323,7 +1302,10 @@ def test_finish_run_reconciles_only_a_matching_terminal_native_kanban_root(
         "reconcileNativeTerminal": True,
     })
 
-    update_query, update_params = statements[0]
+    update_query, update_params = next(
+        statement for statement in statements
+        if "UPDATE ag_catalog.agent_runs" in statement[0]
+    )
     assert "state IN ('failed','cancelled')" in update_query
     assert "runtime_kind='hermes'" in update_query
     assert "runtime_mode='kanban'" in update_query
@@ -1403,7 +1385,10 @@ def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_receip
         "reconcilePersistedResult": True,
     })
 
-    update_query, update_params = statements[0]
+    update_query, update_params = next(
+        statement for statement in statements
+        if "UPDATE ag_catalog.agent_runs SET final_result" in statement[0]
+    )
     assert "SET final_result=%s" in update_query
     assert "state='completed' AND final_result IS NULL" in update_query
     assert "finished_at" not in update_query
@@ -1789,44 +1774,6 @@ def _destination_payload(card_id: str) -> dict:
         "senderCardId": "sender",
         "assignment": "Use every supplied declaration.",
     }
-
-
-def test_invalid_enabled_script_falls_back_to_exact_saved_tool_schema(monkeypatch):
-    loaded = _destination_fixture(monkeypatch)
-    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
-    card["runtimeOptions"]["script"] = {"enabled": True, "source": "return InvocationPreparation()"}
-    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
-    grants = invocation["idf"]["selectedToolsAndGrants"]
-    script = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
-    assert grants["presentedTools"] == ["calculator"]
-    assert grants["scriptPresentation"] == {
-        "mode": "selected-mcp", "fallbackReason": "card_script_validation_failed",
-    }
-    assert script["lastValidation"]["status"] == "invalid"
-
-
-def test_disabled_script_preserves_model_input_and_remains_visible_saved_configuration(monkeypatch):
-    loaded = _destination_fixture(monkeypatch)
-    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
-    before = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
-    card["runtimeOptions"]["script"] = {"enabled": False, "source": "not executable"}
-    after = card_domain.materialize_invocation(_destination_payload("hermes"))["idf"]
-    assert before["actualGraphData"] == after["actualGraphData"]
-    assert before["dynamicContext"] == after["dynamicContext"]
-    assert before["selectedToolsAndGrants"] == after["selectedToolsAndGrants"]
-    before_stable = dict(before["stableSavedCardContext"])
-    after_stable = dict(after["stableSavedCardContext"])
-    before_options = dict(before_stable.pop("runtimeOptions"))
-    after_options = dict(after_stable.pop("runtimeOptions"))
-    assert before_stable == after_stable
-    assert before_options == {
-        key: value for key, value in after_options.items() if key != "script"
-    }
-    stable = card_domain._stable_card(card)
-    assert stable["runtimeExtensions"]["script"]["enabled"] is False
-    assert stable["runtimeExtensions"]["script"]["source"] == "not executable"
-    assert stable["runtimeExtensions"]["script"]["nativeSupport"]["available"] is True
-    assert stable["grants"]["tools"] == ["calculator"]
 
 
 @pytest.mark.parametrize("model_key", ["gpt-5.6-sol", "catalog-choice"])

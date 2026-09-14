@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { applyBackendMigrations, listenAfterRequiredMigrations } from './migrations';
+
+function migrationPath(filename: string): string {
+  return resolve(__dirname, '../../migrations', filename);
+}
 
 const migration = `
 -- Existing numbered migrations may document their purpose before the
@@ -40,6 +45,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '032_paper_trade_jobs.sql', applied: true }),
       expect.objectContaining({ filename: '033_trading_lifecycle_runs.sql', applied: true }),
       expect.objectContaining({ filename: '034_hermes_native_session_authority.sql', applied: true }),
+      expect.objectContaining({ filename: '035_remove_provider_api_mode_constraint.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -53,7 +59,7 @@ describe('canonical backend migrations', () => {
 
   it('migrates Graph Agent through a new current revision without rewriting history', async () => {
     const source = await readFile(
-      new URL('../../migrations/031_graph_agent_continuity.sql', import.meta.url),
+      migrationPath('031_graph_agent_continuity.sql'),
       'utf8',
     );
 
@@ -70,7 +76,7 @@ describe('canonical backend migrations', () => {
 
   it('keeps the paper Trade Job schema structurally unable to request orders', async () => {
     const source = await readFile(
-      resolve(process.cwd(), 'apps/backend/migrations/032_paper_trade_jobs.sql'),
+      migrationPath('032_paper_trade_jobs.sql'),
       'utf8',
     );
 
@@ -84,7 +90,7 @@ describe('canonical backend migrations', () => {
 
   it('keeps bounded lifecycle proof structurally local, paper-only, and provider-free', async () => {
     const source = await readFile(
-      resolve(process.cwd(), 'apps/backend/migrations/033_trading_lifecycle_runs.sql'),
+      migrationPath('033_trading_lifecycle_runs.sql'),
       'utf8',
     );
 
@@ -97,20 +103,35 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/CREATE TABLE(?: IF NOT EXISTS)?\s+\S*orders\b/i);
   });
 
-  it('adds separate Hermes and native provider identity columns without guessing historical ownership', async () => {
+  it('preserves the exact applied Hermes native-session authority migration', async () => {
     const source = await readFile(
-      resolve(process.cwd(), 'apps/backend/migrations/034_hermes_native_session_authority.sql'),
+      migrationPath('034_hermes_native_session_authority.sql'),
       'utf8',
     );
 
+    expect(createHash('sha256').update(source, 'utf8').digest('hex')).toBe(
+      'df92116d36942d1afdaee8dcdac96924fcb131b8ba342f71eb7cee420f7bd680',
+    );
     expect(source).toContain('ADD COLUMN IF NOT EXISTS hermes_session_ref TEXT');
     expect(source).toContain('ADD COLUMN IF NOT EXISTS effective_provider TEXT');
     expect(source).toContain('ADD COLUMN IF NOT EXISTS provider_api_mode TEXT');
     expect(source).toContain('Identifier shape cannot prove');
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
-    expect(source).not.toContain('agent_runs_provider_api_mode_check');
+    expect(source).toContain('ADD CONSTRAINT agent_runs_provider_api_mode_check');
+    expect(source).toContain("provider_api_mode = 'codex_app_server'");
     expect(source).not.toContain('SET hermes_session_ref = provider_thread_ref');
     expect(source).not.toContain('provider_turn_ref = NULL');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('removes the obsolete provider API mode constraint in the next migration', async () => {
+    const source = await readFile(
+      migrationPath('035_remove_provider_api_mode_constraint.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_provider_api_mode_check');
+    expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 

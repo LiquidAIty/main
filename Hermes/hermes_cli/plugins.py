@@ -1209,31 +1209,9 @@ class _QueuedPluginEvent:
     generation: int
 
 
-# LIQUIDAITY VENDOR PATCH: one immutable pre-agent host lifecycle binding.
-@dataclass(frozen=True)
-class _PendingCliHostExecution:
-    """Minimal identity needed to bind one accepted remote CLI turn."""
-
-    execution_context_id: str
-    request_id: str
-    session_id: str
-    profile_key: str
-    cli_identity: int
-    requester: Callable[[str, dict[str, Any]], dict[str, Any]]
-    external_memory_mode: str
-    profile_targets: tuple[dict[str, str], ...]
-    session_config: dict[str, Any] | None
-
-
-# LIQUIDAITY VENDOR PATCH: generic registered pre-spawn child environment seam.
 @dataclass(frozen=True)
 class KanbanWorkerEnvironmentContext:
-    """Bounded native identity exposed to pre-spawn environment providers.
-
-    Providers receive no task body, prompt, result, process environment, or
-    mutable task object.  Their only authority is to return additional string
-    environment values for the one child process about to be spawned.
-    """
+    """Bounded native identity exposed to pre-spawn environment providers."""
 
     task_id: str
     run_id: str
@@ -2084,23 +2062,11 @@ class PluginContext:
         role: str = "user",
         *,
         session_key: str | None = None,
-        # LIQUIDAITY VENDOR PATCH: generic, optional idle-only injection for
-        # external human input drivers; the upstream interrupting default stays unchanged.
-        interrupt_running: bool = True,
-        # LIQUIDAITY VENDOR PATCH: one-turn external-memory policy selected by
-        # a trusted input-driver plugin before the message is accepted.
-        external_memory_mode: str = "normal",
-        # LIQUIDAITY VENDOR PATCH: when present, the queued input must match
-        # the exact host lifecycle already bound or staged for this CLI.
-        host_execution_request_id: str | None = None,
     ) -> bool:
         """Inject a message into a CLI or gateway conversation.
 
         If the agent is idle (waiting for user input), this starts a new turn.
-        If the agent is running, this interrupts and injects the message unless
-        ``interrupt_running`` is false. The fail-closed form is intended for
-        alternate human input drivers that must never steer or queue behind an
-        already accepted turn.
+        If the agent is running, this interrupts and injects the message.
 
         This enables plugins (e.g. remote control viewers, messaging bridges)
         to send messages into the conversation from external sources.
@@ -2114,35 +2080,12 @@ class PluginContext:
         """
         cli = self._manager._cli_ref
         msg = content if role == "user" else f"[{role}] {content}"
-        if external_memory_mode not in {"normal", "bypass_automatic"}:
-            raise ValueError("inject_message: invalid external_memory_mode")
 
         if cli is not None:
             if getattr(cli, "_agent_running", False):
-                if not interrupt_running:
-                    return False
                 # Agent is mid-turn - interrupt with the message
                 cli._interrupt_queue.put(msg)
             else:
-                if not interrupt_running and not cli._pending_input.empty():
-                    return False
-                agent = getattr(cli, "agent", None)
-                if host_execution_request_id and not self._manager.cli_host_execution_matches(
-                    cli,
-                    request_id=host_execution_request_id,
-                    external_memory_mode=external_memory_mode,
-                ):
-                    return False
-                if (
-                    external_memory_mode != "normal"
-                    and agent is None
-                    and not host_execution_request_id
-                ):
-                    # A bypass request must never fall through to a freshly
-                    # initialized agent whose policy could not be staged.
-                    return False
-                if agent is not None:
-                    agent._next_turn_external_memory_mode = external_memory_mode
                 # Agent is idle - queue as next input
                 cli._pending_input.put(msg)
             return True
@@ -2182,193 +2125,6 @@ class PluginContext:
                 exc_info=True,
             )
             return False
-
-    def cli_conversation_snapshot(self) -> dict | None:
-        """Return an immutable idle snapshot of the live interactive CLI conversation."""
-        # LIQUIDAITY VENDOR PATCH: generic, read-only live-CLI observation for
-        # alternate human surfaces. Gateway/non-CLI and active-turn callers fail closed.
-        cli = self._manager._cli_ref
-        if cli is None or getattr(cli, "_agent_running", False):
-            return None
-        history = getattr(cli, "conversation_history", None)
-        if not isinstance(history, list):
-            return None
-        try:
-            session_id = str(getattr(cli, "session_id", "") or "")
-            session_db = getattr(cli, "_session_db", None)
-            session = session_db.get_session(session_id) if session_db is not None else None
-            return {
-                "session_id": session_id,
-                "session_key": (session or {}).get("session_key"),
-                "messages": copy.deepcopy(history),
-            }
-        except Exception:
-            return None
-
-    def bind_cli_host_execution(
-        self,
-        execution_context_id: str,
-        requester: Callable[[str, dict[str, Any]], dict[str, Any]],
-        session_id: str,
-        *,
-        request_id: str = "",
-        external_memory_mode: str = "normal",
-        profile_targets: list[dict[str, str]] | None = None,
-        session_config: dict[str, Any] | None = None,
-    ) -> bool:
-        """Bind the active CLI agent to a generic host child lifecycle.
-
-        LIQUIDAITY VENDOR PATCH: permit a trusted alternate CLI input driver to
-        reuse the same opaque host lifecycle already used by ACP.
-        The exact live CLI agent may be bound while idle, before an alternate
-        input driver injects its accepted turn.  During a turn, Hermes' active
-        parent binding must resolve to that same object. The operation changes
-        no persistent prompt, Script, profile, credential, or persistence
-        config. A trusted host may supply the same validated session surface
-        used by ACP; it is restored exactly when the accepted turn clears.
-        """
-
-        cli = self._manager._cli_ref
-        context_id = str(execution_context_id or "").strip()
-        resolved_session_id = str(session_id or "").strip()
-        resolved_request_id = str(request_id or "").strip()
-        if (
-            cli is None
-            or not context_id
-            or not resolved_session_id
-            or not callable(requester)
-            or external_memory_mode not in {"normal", "bypass_automatic"}
-        ):
-            return False
-        return self._manager.bind_cli_host_execution(
-            cli,
-            _PendingCliHostExecution(
-                execution_context_id=context_id,
-                request_id=resolved_request_id,
-                session_id=resolved_session_id,
-                profile_key=hermes_home_key(),
-                cli_identity=id(cli),
-                requester=requester,
-                external_memory_mode=external_memory_mode,
-                profile_targets=tuple(copy.deepcopy(profile_targets or [])),
-                session_config=copy.deepcopy(session_config),
-            ),
-        )
-
-    def clear_cli_host_execution(self, execution_context_id: str) -> bool:
-        """Remove one matching alternate-driver lifecycle from the CLI agent."""
-
-        cli = self._manager._cli_ref
-        expected = str(execution_context_id or "").strip()
-        if cli is None or not expected:
-            return False
-        return self._manager.clear_cli_host_execution(
-            cli,
-            execution_context_id=expected,
-        )
-
-    def register_cli_turn_lifecycle(self, prepare: Callable, finish: Callable) -> PluginRegistration:
-        """Bind native CLI turns to one trusted host, with fail-closed preparation.
-
-        Unlike observer hooks, preparation errors must prevent inference. The
-        host returns the existing sessionConfig contract; Hermes still owns
-        input, execution, streaming, history, and tools. No gateway is affected.
-        """
-        if not callable(prepare) or not callable(finish):
-            raise TypeError("cli_turn_lifecycle_callbacks_required")
-        required = os.environ.get("HERMES_REQUIRE_CLI_HOST", "").strip()
-        if required and required not in {self.manifest.key, self.manifest.name}:
-            raise PermissionError("cli_turn_lifecycle_owner_mismatch")
-        if self._manager._cli_turn_lifecycle is not None:
-            raise RuntimeError("cli_turn_lifecycle_already_registered")
-        binding = (prepare, finish)
-        self._manager._cli_turn_lifecycle = binding
-
-        def dispose():
-            if self._manager._cli_turn_lifecycle is binding:
-                self._manager._cli_turn_lifecycle = None
-
-        return self._track("cli_turn_lifecycle", self.manifest.name, dispose)
-
-    def append_cli_native_team_result(
-        self,
-        session_id: str,
-        *,
-        task_id: str,
-        result: str,
-        terminal_state: str,
-    ) -> bool:
-        """Persist one Team result through the idle interactive CLI owner.
-
-        LIQUIDAITY VENDOR PATCH: share only validation/message construction with
-        ACP while this live CLI remains the sole persistence owner.
-        The requested session may resolve to the CLI's current compression
-        descendant.  Busy, queued, foreign, and unavailable sessions fail
-        closed so the host can retry without racing a user turn.
-        """
-
-        cli = self._manager._cli_ref
-        if cli is None:
-            raise RuntimeError("hermes_team_session_not_found")
-        if (
-            getattr(cli, "_agent_running", False)
-            or not getattr(cli, "_pending_input", queue.Queue()).empty()
-            or not getattr(cli, "_interrupt_queue", queue.Queue()).empty()
-        ):
-            raise RuntimeError("hermes_team_session_turn_in_progress")
-        agent = getattr(cli, "agent", None)
-        history = getattr(cli, "conversation_history", None)
-        session_db = getattr(cli, "_session_db", None)
-        current_session_id = str(getattr(cli, "session_id", "") or "").strip()
-        requested_session_id = str(session_id or "").strip()
-        if (
-            agent is None
-            or not isinstance(history, list)
-            or session_db is None
-            or not current_session_id
-            or not requested_session_id
-        ):
-            raise RuntimeError("hermes_team_session_store_unavailable")
-        try:
-            resolved_session_id = str(
-                session_db.resolve_resume_session_id(requested_session_id)
-                or requested_session_id
-            )
-        except Exception as exc:
-            raise RuntimeError("hermes_team_session_lineage_unavailable") from exc
-        if resolved_session_id != current_session_id:
-            raise RuntimeError("hermes_team_session_identity_mismatch")
-
-        from agent.message_metadata import append_message
-        from agent.native_team_result import prepare_native_team_result
-
-        persist_lock = getattr(agent, "_session_persist_lock", None)
-
-        def _append_and_persist() -> bool:
-            if getattr(cli, "_agent_running", False):
-                raise RuntimeError("hermes_team_session_turn_in_progress")
-            message = prepare_native_team_result(
-                history,
-                task_id=task_id,
-                result=result,
-                terminal_state=terminal_state,
-            )
-            if message is None:
-                return False
-            prior_history = list(history)
-            append_message(history, message)
-            try:
-                agent._persist_session(history, prior_history)
-            except Exception:
-                if history and history[-1] is message:
-                    history.pop()
-                raise
-            return True
-
-        if persist_lock is None:
-            return _append_and_persist()
-        with persist_lock:
-            return _append_and_persist()
 
     def _gateway_injection_allowed(self) -> bool:
         """Return whether this plugin may trigger gateway session turns."""
@@ -3670,30 +3426,18 @@ class PluginContext:
         self,
         callback: Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None],
     ) -> PluginRegistration:
-        """Register a synchronous additive environment provider for Kanban workers.
-
-        This is deliberately separate from lifecycle hooks: claim/spawn hooks
-        are observers, while this narrow provider runs immediately before the
-        default profile worker is launched.  Returned values may only add new
-        child-process variables; the launcher rejects attempts to replace its
-        inherited or stock ``HERMES_KANBAN_*`` environment.
-        """
+        """Register a synchronous additive environment provider for Kanban workers."""
 
         if not callable(callback):
             raise TypeError("Kanban worker environment provider must be callable")
         owner = self.manifest.key or self.manifest.name
         entry = (owner, callback)
         self._manager._kanban_worker_environment_providers.append(entry)
-        handle = self._track(
+        return self._track(
             "kanban_worker_environment_provider",
             owner,
             lambda: self._manager._remove_kanban_worker_environment_provider(entry),
         )
-        logger.debug(
-            "Plugin %s registered a Kanban worker environment provider",
-            self.manifest.name,
-        )
-        return handle
 
     def register_system_prompt_section(
         self,
@@ -4045,11 +3789,6 @@ class PluginManager:
         self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
         self._discovered: bool = False
         self._cli_ref = None  # Set by CLI after plugin discovery
-        self._cli_turn_lifecycle = None
-        # LIQUIDAITY VENDOR PATCH: the native plugin manager owns at most one
-        # pre-agent host binding for its exact interactive CLI/profile.
-        self._cli_host_execution_lock = threading.RLock()
-        self._pending_cli_host_execution: _PendingCliHostExecution | None = None
         self._gateway_message_injector: tuple[object, Callable] | None = None
         # Plugin skill registry: qualified name → metadata dict.
         self._plugin_skills: Dict[str, Dict[str, Any]] = {}
@@ -4219,6 +3958,15 @@ class PluginManager:
                 return True
         return False
 
+    def _remove_kanban_worker_environment_provider(
+        self,
+        entry: tuple[
+            str,
+            Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None],
+        ],
+    ) -> None:
+        self._remove_identity(self._kanban_worker_environment_providers, entry)
+
     def _remove_callback(
         self,
         mapping: Dict[str, List[Callable]],
@@ -4231,15 +3979,6 @@ class PluginManager:
         self._remove_identity(callbacks, callback)
         if not callbacks:
             mapping.pop(key, None)
-
-    def _remove_kanban_worker_environment_provider(
-        self,
-        entry: tuple[
-            str,
-            Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None],
-        ],
-    ) -> None:
-        self._remove_identity(self._kanban_worker_environment_providers, entry)
 
     def _restore_mapping(
         self,
@@ -4406,11 +4145,6 @@ class PluginManager:
         self._forget_registrations(registrations)
 
         if unload_all:
-            # A force reload or CLI teardown must not leave an accepted remote
-            # turn's transient host identity available to a later local turn.
-            cli = self._cli_ref
-            if cli is not None:
-                self.clear_cli_host_execution(cli)
             # The handles are authoritative for global registries, while the
             # manager-local containers are also reset to clear legacy/manual
             # state that predates the ledger.
@@ -4504,280 +4238,6 @@ class PluginManager:
     # -----------------------------------------------------------------------
     # Public
     # -----------------------------------------------------------------------
-
-    @staticmethod
-    def _clear_cli_agent_host_execution(agent: Any) -> None:
-        from acp_adapter.host_profiles import (
-            clear_cli_host_session_config,
-            clear_host_profile_targets,
-        )
-
-        if not clear_cli_host_session_config(agent):
-            clear_host_profile_targets(agent)
-        setattr(agent, "_host_execution_context_id", "")
-        setattr(agent, "_host_execution_requester", None)
-        setattr(agent, "_host_execution_session_id", "")
-        setattr(agent, "_host_execution_request_id", "")
-        setattr(agent, "_host_execution_profile_key", "")
-
-    def run_cli_host_turn(self, cli: Any, agent: Any, message: Any, execute: Callable) -> dict:
-        """Execute one native turn under its optional trusted host lifecycle.
-
-        LIQUIDAITY VENDOR PATCH: local input needs the same pre-inference
-        session binding as externally supplied ACP input. This does not use
-        fail-open observer/middleware dispatch or replace the native loop.
-        """
-        from acp_adapter.host_profiles import host_execution_scope
-
-        lifecycle = self._cli_turn_lifecycle
-        if lifecycle is None:
-            if os.environ.get("HERMES_REQUIRE_CLI_HOST"):
-                raise RuntimeError("cli_turn_lifecycle_required")
-            with host_execution_scope(agent):
-                return execute(message)
-        if self._cli_ref is not cli or getattr(cli, "agent", None) is not agent:
-            raise RuntimeError("cli_turn_lifecycle_identity_mismatch")
-        prepare, finish = lifecycle
-        prepared = prepare(message=message, session_id=cli.session_id,
-                           model=str(agent.model), provider=str(agent.provider))
-        context_id = str(prepared.get("executionContextId") or "")
-        result = None
-        error = None
-        try:
-            binding = _PendingCliHostExecution(
-                execution_context_id=context_id, request_id=context_id,
-                session_id=cli.session_id, profile_key=hermes_home_key(),
-                cli_identity=id(cli), requester=prepared["requester"],
-                external_memory_mode="normal", profile_targets=(),
-                session_config=prepared["sessionConfig"],
-            )
-            if not context_id or not self._attach_cli_host_execution(
-                cli, agent, binding, allow_pre_run_active=True,
-            ):
-                raise RuntimeError("cli_turn_lifecycle_binding_failed")
-            with host_execution_scope(agent):
-                result = execute(prepared["message"])
-            return result
-        except Exception as exc:
-            error = str(exc)
-            raise
-        finally:
-            try:
-                finish(prepared=prepared, result=result, error=error)
-            finally:
-                self.clear_cli_host_execution(cli, execution_context_id=context_id)
-
-    def _attach_cli_host_execution(
-        self,
-        cli: Any,
-        agent: Any,
-        binding: _PendingCliHostExecution,
-        *,
-        allow_pre_run_active: bool = False,
-    ) -> bool:
-        from agent.subagent_lifecycle import get_active_subagent_parent
-        from acp_adapter.host_profiles import (
-            apply_cli_host_session_config,
-            apply_host_profile_targets,
-            attach_host_execution_context,
-            attach_host_execution_requester,
-            parse_host_session_config,
-        )
-
-        parent = get_active_subagent_parent()
-        current_context = str(
-            getattr(agent, "_host_execution_context_id", "") or ""
-        ).strip()
-        if (
-            self._cli_ref is not cli
-            or id(cli) != binding.cli_identity
-            or getattr(cli, "agent", None) is not agent
-            or str(getattr(cli, "session_id", "") or "").strip()
-            != binding.session_id
-            or binding.profile_key != self.scope_key
-            or binding.profile_key != hermes_home_key()
-            or (current_context and current_context != binding.execution_context_id)
-            or (
-                getattr(cli, "_agent_running", False)
-                and parent is not agent
-                and not (allow_pre_run_active and parent is None)
-            )
-            or (parent is not None and parent is not agent)
-        ):
-            return False
-        if binding.session_config is not None:
-            parsed = parse_host_session_config({
-                "hermes": {"sessionConfig": binding.session_config}
-            })
-            if parsed is None:
-                return False
-            apply_cli_host_session_config(agent, parsed)
-        else:
-            attach_host_execution_context(agent, binding.execution_context_id)
-            apply_host_profile_targets(agent, list(binding.profile_targets))
-        attach_host_execution_requester(
-            agent,
-            binding.requester,
-            binding.session_id,
-        )
-        setattr(agent, "_host_execution_request_id", binding.request_id)
-        setattr(agent, "_host_execution_profile_key", binding.profile_key)
-        return True
-
-    def bind_cli_host_execution(
-        self,
-        cli: Any,
-        binding: _PendingCliHostExecution,
-    ) -> bool:
-        """Attach now, or stage one immutable binding for a fresh idle CLI."""
-
-        with self._cli_host_execution_lock:
-            if (
-                self._cli_ref is not cli
-                or id(cli) != binding.cli_identity
-                or binding.profile_key != self.scope_key
-                or binding.profile_key != hermes_home_key()
-                or str(getattr(cli, "session_id", "") or "").strip()
-                != binding.session_id
-            ):
-                return False
-            # LIQUIDAITY VENDOR PATCH: native routing identity also protects
-            # alternate human surfaces. Never claim an old transcript by
-            # merely assigning the next caller's conversation to it.
-            host_key = (binding.session_config or {}).get("hostSessionKey")
-            if host_key:
-                if not isinstance(host_key, str) or len(host_key) > 512:
-                    return False
-                session_db = getattr(cli, "_session_db", None)
-                if session_db is None or getattr(cli, "_agent_running", False):
-                    return False
-                # The native thread owner binds this key atomically with its
-                # marker and authority fingerprint when the exact agent is
-                # attached. Do not pre-bind a routing identity here.
-            agent = getattr(cli, "agent", None)
-            if agent is not None:
-                try:
-                    return self._attach_cli_host_execution(cli, agent, binding)
-                except Exception:
-                    logger.debug("CLI host execution attach failed", exc_info=True)
-                    return False
-            if (
-                getattr(cli, "_agent_running", False)
-                or not binding.request_id
-                or not getattr(cli, "_pending_input", queue.Queue()).empty()
-            ):
-                return False
-            pending = self._pending_cli_host_execution
-            if pending is not None:
-                return pending == binding
-            self._pending_cli_host_execution = binding
-            return True
-
-    def cli_host_execution_matches(
-        self,
-        cli: Any,
-        *,
-        request_id: str,
-        external_memory_mode: str,
-    ) -> bool:
-        """Verify that one injected message owns the current bound identity."""
-
-        expected_request = str(request_id or "").strip()
-        with self._cli_host_execution_lock:
-            if self._cli_ref is not cli or not expected_request:
-                return False
-            agent = getattr(cli, "agent", None)
-            if agent is not None:
-                return (
-                    str(getattr(agent, "_host_execution_request_id", "") or "")
-                    == expected_request
-                    and str(getattr(agent, "_host_execution_profile_key", "") or "")
-                    == hermes_home_key()
-                )
-            pending = self._pending_cli_host_execution
-            return bool(
-                pending is not None
-                and pending.cli_identity == id(cli)
-                and pending.request_id == expected_request
-                and pending.session_id
-                == str(getattr(cli, "session_id", "") or "").strip()
-                and pending.profile_key == hermes_home_key()
-                and pending.external_memory_mode == external_memory_mode
-            )
-
-    def materialize_cli_host_execution(
-        self,
-        cli: Any,
-        agent: Any,
-        *,
-        session_id: str,
-    ) -> bool | None:
-        """Atomically consume the pending binding onto the exact new agent."""
-
-        with self._cli_host_execution_lock:
-            pending = self._pending_cli_host_execution
-            if pending is None:
-                return None
-            valid = (
-                self._cli_ref is cli
-                and pending.cli_identity == id(cli)
-                and pending.session_id == str(session_id or "").strip()
-                and pending.profile_key == self.scope_key
-                and pending.profile_key == hermes_home_key()
-            )
-            try:
-                attached = valid and self._attach_cli_host_execution(
-                    cli,
-                    agent,
-                    pending,
-                    allow_pre_run_active=True,
-                )
-            except Exception:
-                logger.debug("pending CLI host execution attach failed", exc_info=True)
-                attached = False
-            if not attached:
-                self._pending_cli_host_execution = None
-                return False
-            setattr(
-                agent,
-                "_next_turn_external_memory_mode",
-                pending.external_memory_mode,
-            )
-            self._pending_cli_host_execution = None
-            return True
-
-    def clear_cli_host_execution(
-        self,
-        cli: Any,
-        *,
-        execution_context_id: str = "",
-    ) -> bool:
-        """Clear only the matching pending or attached CLI host lifecycle."""
-
-        expected = str(execution_context_id or "").strip()
-        cleared = False
-        with self._cli_host_execution_lock:
-            if self._cli_ref is not cli:
-                return False
-            pending = self._pending_cli_host_execution
-            if pending is not None and (
-                not expected or pending.execution_context_id == expected
-            ):
-                self._pending_cli_host_execution = None
-                cleared = True
-            agent = getattr(cli, "agent", None)
-            attached = str(
-                getattr(agent, "_host_execution_context_id", "") or ""
-            ).strip() if agent is not None else ""
-            if agent is not None and attached and (not expected or attached == expected):
-                self._clear_cli_agent_host_execution(agent)
-                cleared = True
-        return cleared
-
-    def reject_cli_host_execution(self, cli: Any) -> bool:
-        """Drop one pending/attached binding before an uncorrelated turn."""
-
-        return self.clear_cli_host_execution(cli)
 
     @property
     def has_gateway_message_injector(self) -> bool:
@@ -4939,13 +4399,6 @@ class PluginManager:
         # don't collide even when both manifests say ``name: openai``.
         disabled = _get_disabled_plugins()
         enabled = _get_enabled_plugins()  # None = opt-in default (nothing enabled)
-        # A trusted native CLI host explicitly selects its installed adapter
-        # for this process. Preserve the profile and its explicit deny-list.
-        host_plugin = os.environ.get("HERMES_REQUIRE_CLI_HOST", "").strip()
-        if host_plugin:
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", host_plugin):
-                raise ValueError("cli_host_plugin_name_invalid")
-            enabled = set(enabled or ()) | {host_plugin}
         stale_relay_keys = legacy_relay_plugin_keys(enabled)
         if stale_relay_keys:
             logger.warning(
@@ -6287,47 +5740,6 @@ class PluginManager:
                 )
         return results
 
-    def resolve_kanban_worker_environment(
-        self,
-        context: KanbanWorkerEnvironmentContext,
-    ) -> Dict[str, str]:
-        """Resolve additive child environment values from registered providers.
-
-        Provider failures are intentionally not swallowed: this call happens
-        before ``Popen`` and must follow the dispatcher's existing visible spawn
-        failure/retry path instead of launching a partially authorized worker.
-        """
-
-        resolved: Dict[str, str] = {}
-        for owner, callback in tuple(self._kanban_worker_environment_providers):
-            values = callback(context)
-            if inspect.isawaitable(values):
-                raise TypeError(
-                    f"Kanban worker environment provider {owner!r} must be synchronous"
-                )
-            if values is None:
-                continue
-            if not isinstance(values, Mapping):
-                raise TypeError(
-                    f"Kanban worker environment provider {owner!r} must return a mapping"
-                )
-            for raw_key, raw_value in values.items():
-                key = str(raw_key or "").strip()
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} returned an invalid key"
-                    )
-                if key.startswith("HERMES_KANBAN_") or key in resolved:
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} cannot replace {key!r}"
-                    )
-                if not isinstance(raw_value, str) or not raw_value:
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} returned an invalid value for {key!r}"
-                    )
-                resolved[key] = raw_value
-        return resolved
-
     def _subscribe_event(
         self,
         owner: str,
@@ -6532,6 +5944,42 @@ class PluginManager:
     def iter_hook_callbacks(self, hook_name: str) -> tuple[Callable, ...]:
         """Return a stable snapshot of callbacks registered for a hook."""
         return tuple(self._hooks.get(hook_name, ()))
+
+    def resolve_kanban_worker_environment(
+        self,
+        context: KanbanWorkerEnvironmentContext,
+    ) -> Dict[str, str]:
+        """Resolve additive child environment values from registered providers."""
+
+        resolved: Dict[str, str] = {}
+        for owner, callback in tuple(self._kanban_worker_environment_providers):
+            values = callback(context)
+            if inspect.isawaitable(values):
+                raise TypeError(
+                    f"Kanban worker environment provider {owner!r} must be synchronous"
+                )
+            if values is None:
+                continue
+            if not isinstance(values, Mapping):
+                raise TypeError(
+                    f"Kanban worker environment provider {owner!r} must return a mapping"
+                )
+            for raw_key, raw_value in values.items():
+                key = str(raw_key or "").strip()
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                    raise ValueError(
+                        f"Kanban worker environment provider {owner!r} returned an invalid key"
+                    )
+                if key.startswith("HERMES_KANBAN_") or key in resolved:
+                    raise ValueError(
+                        f"Kanban worker environment provider {owner!r} cannot replace {key!r}"
+                    )
+                if not isinstance(raw_value, str) or not raw_value:
+                    raise ValueError(
+                        f"Kanban worker environment provider {owner!r} returned an invalid value for {key!r}"
+                    )
+                resolved[key] = raw_value
+        return resolved
 
     def render_system_prompt_sections(
         self, session_info: Mapping[str, Any]
@@ -7105,12 +6553,7 @@ def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
 def resolve_kanban_worker_environment(
     context: KanbanWorkerEnvironmentContext,
 ) -> Dict[str, str]:
-    """Resolve additive environment for one default-lane Kanban child.
-
-    The gateway completes normal plugin discovery before dispatch.  Do not
-    trigger discovery here: direct library callers and stock test fixtures
-    that did not register a provider must retain the original spawn path.
-    """
+    """Resolve additive environment for one default-lane Kanban child."""
 
     return get_plugin_manager().resolve_kanban_worker_environment(context)
 

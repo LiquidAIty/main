@@ -13,6 +13,7 @@ import {
 type AgentTerminalPanelProps = {
   identity: AgentTerminalIdentity;
   client?: AgentTerminalClient;
+  readOnly?: boolean;
 };
 
 const DEFAULT_SIZE = { cols: 80, rows: 24 };
@@ -26,9 +27,14 @@ function isRunning(session: AgentTerminalSession | null): session is AgentTermin
   return session?.status === 'running';
 }
 
+function isAttached(session: AgentTerminalSession | null): session is AgentTerminalSession {
+  return isRunning(session) && Boolean(session.ptyId);
+}
+
 export default function AgentTerminalPanel({
   identity,
   client = agentTerminalClient,
+  readOnly = false,
 }: AgentTerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -109,8 +115,9 @@ export default function AgentTerminalPanel({
     terminal.open(container);
     terminalRef.current = terminal;
     const input = terminal.onData((data) => {
+      if (readOnly) return;
       const active = sessionRef.current;
-      if (!isRunning(active)) return;
+      if (!isAttached(active)) return;
       const inputIdentityKey = identityKey;
       const inputSessionId = active.sessionId;
       inputQueueRef.current = inputQueueRef.current
@@ -137,16 +144,16 @@ export default function AgentTerminalPanel({
       terminalRef.current = null;
       setTerminalReady(false);
     };
-  }, [client, identityKey]);
+  }, [client, identityKey, readOnly]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
-    const interactive = isRunning(session);
+    const interactive = isAttached(session) && !readOnly;
     terminal.options.disableStdin = !interactive;
     terminal.options.cursorBlink = interactive;
     if (interactive) terminal.focus();
-  }, [session?.status]);
+  }, [readOnly, session?.status]);
 
   useEffect(() => {
     if (!terminalReady || session || error || stopping) return;
@@ -211,7 +218,7 @@ export default function AgentTerminalPanel({
 
   const stop = useCallback(async () => {
     const active = sessionRef.current;
-    if (!isRunning(active)) return;
+    if (!isAttached(active)) return;
     const stopIdentityKey = identityKey;
     const stopSessionId = active.sessionId;
     setStopping(true);
@@ -245,10 +252,12 @@ export default function AgentTerminalPanel({
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', fontSize: 12 }}>
         <span role="status">{status}</span>
         {transportInterrupted ? <span role="status">Reconnecting…</span> : null}
-        {isRunning(session) ? <button type="button" data-testid="agent-terminal-stop" onClick={() => { void stop(); }} disabled={stopping}>
-          {stopping ? 'Stopping…' : 'Stop'}
+        {!readOnly && isAttached(session) ? <button type="button" data-testid="agent-terminal-stop" onClick={() => { void stop(); }} disabled={stopping}>
+          {stopping ? 'Detaching…' : 'Detach'}
         </button> : null}
-        {(session && !isRunning(session)) || error ? <button type="button" data-testid="agent-terminal-start" onClick={start}>Start</button> : null}
+        {!readOnly && ((isRunning(session) && !isAttached(session)) || (session && !isRunning(session)) || error)
+          ? <button type="button" data-testid="agent-terminal-start" onClick={start}>Attach</button>
+          : null}
       </div>
       {error ? <div role="alert" style={{ padding: '0 8px 6px', fontSize: 12 }}>{error}</div> : null}
       <div ref={containerRef} data-testid="agent-terminal-xterm" style={{ flex: 1, minHeight: 0, padding: '6px 8px' }} />

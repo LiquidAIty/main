@@ -15,7 +15,6 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
-import internalMainCliRoutes, { builderCliRoutes } from './internalMainCli.routes';
 import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
@@ -35,8 +34,6 @@ router.use('/health', health);
 // It is intentionally outside user/Auth0 middleware and never mounted by the
 // public MCP/ngrok service.
 router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
-router.use('/internal/main-cli', internalMainCliRoutes);
-router.use('/internal/builder-cli/:sessionId', builderCliRoutes);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into an anonymous user.
 router.use('/main', internalMainMcpRoutes);

@@ -296,42 +296,6 @@ class TestDelegateTask(unittest.TestCase):
             self.assertEqual(kwargs["provider"], parent.provider)
             self.assertEqual(kwargs["api_mode"], parent.api_mode)
 
-    def test_native_child_gets_host_execution_context_before_running(self):
-        """LIQUIDAITY VENDOR PATCH: attribution exists before the child turn."""
-        parent = _make_mock_parent(depth=0)
-        parent._host_execution_context_id = "root-context"
-        parent._host_execution_session_id = "acp-session"
-        calls = []
-
-        def requester(method, params):
-            calls.append((method, params))
-            if method == "session/create_execution_context":
-                return {
-                    "executionContextId": "child-context",
-                    "runId": "child-run",
-                    "toolCallMeta": {"example.host/execution": "child-context"},
-                }
-            return {"closed": True}
-
-        parent._host_execution_requester = requester
-        with patch("run_agent.AIAgent") as MockAgent:
-            child = MagicMock()
-            child.session_id = "child-session"
-            child.run_conversation.return_value = {
-                "final_response": "ok",
-                "completed": True,
-                "api_calls": 0,
-            }
-            MockAgent.return_value = child
-            result = json.loads(delegate_task(goal="Inspect safely", parent_agent=parent))
-
-        self.assertNotIn("error", result)
-        self.assertEqual(calls[0][0], "session/create_execution_context")
-        self.assertEqual(calls[0][1]["parentExecutionContextId"], "root-context")
-        self.assertTrue(calls[0][1]["nativeChildId"].startswith("sa-0-"))
-        self.assertEqual(calls[-1][0], "session/finish_execution_context")
-        self.assertEqual(calls[-1][1]["executionContextId"], "child-context")
-
     def test_child_gets_dedicated_session_db_not_parents_handle(self):
         """#81267: children must not share the parent's SessionDB object.
 
@@ -1838,14 +1802,12 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
     @patch("tools.delegate_tool._resolve_delegation_credentials")
     @patch("tools.delegate_tool._load_config",
            return_value={"max_spawn_depth": 2})
-    def _run_with_mock_child(self, role_arg, mock_cfg, mock_creds, *, host=False):
+    def _run_with_mock_child(self, role_arg, mock_cfg, mock_creds):
         mock_creds.return_value = {
             "provider": None, "base_url": None,
             "api_key": None, "api_mode": None, "model": None,
         }
         parent = _make_mock_parent(depth=0)
-        if host:
-            parent._host_session_config = {}
         with patch("run_agent.AIAgent") as MockAgent:
             mock_child = MagicMock()
             mock_child.run_conversation.return_value = {
@@ -1872,12 +1834,6 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         self.assertEqual(child._delegate_role, "orchestrator")
         # Legacy explicit role='leaf' does not override the depth derivation.
         child = self._run_with_mock_child("leaf")
-        self.assertEqual(child._delegate_role, "orchestrator")
-
-    def test_host_leaf_selection_cannot_gain_recursive_delegation(self):
-        child = self._run_with_mock_child("leaf", host=True)
-        self.assertEqual(child._delegate_role, "leaf")
-        child = self._run_with_mock_child("orchestrator", host=True)
         self.assertEqual(child._delegate_role, "orchestrator")
 
     def test_profile_background_choice_survives_native_dispatch(self):

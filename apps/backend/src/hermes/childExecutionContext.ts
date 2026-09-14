@@ -65,9 +65,7 @@ export function registerHermesRootExecutionContext(args: {
     args.conversationId, args.cardId,
   ].map((value) => String(value || '').trim());
   const terminal = args.terminalOwner;
-  if (terminal && (Object.values(terminal).some((value) => !value)
-    || ['builder', 'card_main_chat'].includes(args.cardId)
-    || ['main', 'liquidaity-main', 'builder', 'default'].includes(terminal.profile))) {
+  if (terminal && Object.values(terminal).some((value) => !value)) {
     throw new Error('hermes_terminal_execution_identity_invalid');
   }
   if (required.some((value, index) => !value && !(index === 4 && terminal))) {

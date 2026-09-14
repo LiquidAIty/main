@@ -1,9 +1,8 @@
 import { Router } from 'express';
-import { createHash } from 'crypto';
 import { getDeckDocument } from '../decks/store';
 import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { indexToolCatalogReferences, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
+import { indexToolCatalogReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
 import { requestHermesNative } from '../hermes/mainAdapter';
@@ -165,90 +164,6 @@ iddRoutes.get('/tools', async (req, res) => {
       offset: 0,
       limit: 0,
       hasMore: false,
-    });
-  }
-});
-
-iddRoutes.get('/script-tools', async (req, res) => {
-  try {
-    const catalog = await loadInputDictionaryToolCatalog();
-    const references = resolveScriptToolReferences(catalog, {
-      policy: req.query.policy === 'all_healthy' ? 'all_healthy' : 'selected',
-      selectedIds: commaSeparatedIds(req.query.selectedIds),
-      disabledIds: commaSeparatedIds(req.query.disabledIds),
-    });
-    const referenceIds = new Set(references.map((reference) => reference.canonicalId));
-    const defaultAgentTools = commaSeparatedIds(req.query.selectedIds)
-      .filter((canonicalId) => referenceIds.has(canonicalId));
-    const fingerprint = createHash('sha256').update(JSON.stringify(
-      references.map((reference) => ({
-        canonicalId: reference.canonicalId,
-        access: reference.access,
-        availability: reference.availability,
-        contracts: reference.contracts,
-      })),
-    )).digest('hex');
-    const header = await requestPythonRailsJson('/card-script/header', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        catalogTools: catalog.references,
-        selectedTools: references.map((reference) => reference.canonicalId),
-        defaultAgentTools,
-        cardId: typeof req.query.cardId === 'string' ? req.query.cardId : '',
-      }),
-    });
-    return res.json({ ok: true, references, paletteFingerprint: fingerprint, header });
-  } catch (error) {
-    return res.status(503).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'card_script_tools_unavailable',
-      references: [],
-      paletteFingerprint: '',
-      header: null,
-    });
-  }
-});
-
-router.post('/script/validate', async (req, res) => {
-  try {
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const selectedToolIds: string[] = Array.isArray(body.selectedTools)
-      ? body.selectedTools.map((value: unknown) => String(value))
-      : [];
-    const catalog = await loadInputDictionaryToolCatalog();
-    const references = resolveScriptToolReferences(catalog, {
-      policy: body.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
-      selectedIds: selectedToolIds,
-      disabledIds: Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : [],
-    });
-    const referenceIds = new Set(references.map((reference) => reference.canonicalId));
-    const defaultAgentTools = selectedToolIds
-      .filter((canonicalId) => referenceIds.has(canonicalId));
-    const paletteFingerprint = createHash('sha256').update(JSON.stringify(
-      references.map((reference) => ({
-        canonicalId: reference.canonicalId,
-        access: reference.access,
-        availability: reference.availability,
-        contracts: reference.contracts,
-      })),
-    )).digest('hex');
-    const script = await requestPythonRailsJson('/card-script/validate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        script: body.script,
-        selectedTools: references.map((reference) => reference.canonicalId),
-        defaultAgentTools,
-        paletteFingerprint,
-        nativeAvailable: body.runtimeKind === 'hermes',
-      }),
-    });
-    return res.json({ ok: true, script, references, paletteFingerprint });
-  } catch (error) {
-    return res.status(400).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'card_script_validation_failed',
     });
   }
 });

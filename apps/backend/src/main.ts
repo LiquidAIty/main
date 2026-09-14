@@ -8,13 +8,10 @@ import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/req
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
 import { closeHermesRuntimes } from "./hermes/mainAdapter";
 import { listenAfterRequiredMigrations } from "./db/migrations";
-import { runPythonOwnedStartupTasks } from "./startup/pythonOwnedStartup";
 import {
-  builderTerminalSessionManager,
-  ensurePersistentBuilderTerminal,
-} from "./hermes/builderTerminal";
-
-import { mainChatProcess } from "./hermes/mainChatProcess";
+  requestConnectedAgentTerminalReconcile,
+  runPythonOwnedStartupTasks,
+} from "./startup/pythonOwnedStartup";
 import { agentTerminalManager } from "./hermes/agentTerminal";
 
 const app = express();
@@ -170,8 +167,6 @@ function installShutdownHooks() {
         await closeServer(activeServer);
       }
       closeHermesRuntimes();
-      builderTerminalSessionManager.stopAll();
-      mainChatProcess.stop();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -194,6 +189,7 @@ async function startServer() {
   const existingServer = globalThis.__liquidaityBackendServer__;
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
+    agentTerminalManager.stopAll();
     closeHermesRuntimes();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
@@ -226,20 +222,13 @@ async function startServer() {
   });
   globalThis.__liquidaityBackendServer__ = server;
   installShutdownHooks();
-  try {
-    const mainProcess = mainChatProcess.ensureStarted();
-    console.log(`[BOOT] Main Chat ready profile=${mainProcess.profile} pid=${mainProcess.pid}`);
-  } catch (error) {
-    console.error(`[BOOT] Main Chat failed: ${error instanceof Error ? error.message : String(error)}`);
-    await closeServer(server).catch(() => undefined);
-    process.exitCode = 1;
-    return;
-  }
   void runPythonOwnedStartupTasks({
     isActive: () => globalThis.__liquidaityBackendServer__ === server,
-    startBuilder: async () => {
-      const terminal = await ensurePersistentBuilderTerminal();
-      console.log(`[BOOT] Builder CLI ready profile=${terminal.profile} pid=${terminal.pid}`);
+    startCardRuntimes: async () => {
+      const terminals = await requestConnectedAgentTerminalReconcile();
+      for (const terminal of terminals) {
+        console.log(`[BOOT] Hermes Card ready card=${terminal.cardId} profile=${terminal.profile} gatewayPid=${terminal.gatewayPid}`);
+      }
     },
   })
     .then(({ discovered, started }) => {

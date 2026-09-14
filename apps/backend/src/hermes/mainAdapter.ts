@@ -91,23 +91,6 @@ export type HermesRuntimeConfig = {
   /** Explicit non-empty saved Card skill grant to materialize into the native profile. */
   skills?: string[];
   toolsets?: string[];
-  script?: {
-    version: number;
-    source: string;
-    sourceHash: string;
-    compiledHash: string;
-    mode: 'tool_recipe';
-    inputSchema: Record<string, unknown>;
-    outputSchema: Record<string, unknown>;
-    toolHandles: string[];
-    toolStates: Record<string, number>;
-    offToolIds: string[];
-    scriptToolIds: string[];
-    agentToolIds: string[];
-    timeoutSeconds: number;
-    maxToolCalls: number;
-    maxOutputBytes: number;
-  };
   profileTargets?: HermesProfileTarget[];
 };
 
@@ -343,9 +326,8 @@ export function buildHermesOfficialMcpServer(
   env: NodeJS.ProcessEnv = process.env,
   executionContextId = '',
 ): Record<string, unknown> | null {
-  const granted = (args.grantedTools ?? args.tools).filter((name) => name !== 'web_search');
-  const presented = uniqueStrings(args.script ? granted : args.tools)
-    .filter((name) => name !== 'web_search');
+  const granted = uniqueStrings(args.grantedTools ?? args.tools);
+  const presented = uniqueStrings(args.script ? granted : args.tools);
   if (presented.length === 0) return null;
   const shared = resolvePythonAgentMcpServerSpec({
     kind: 'card-runtime',
@@ -398,45 +380,8 @@ export function buildHermesHostSessionProjection(
     ? [rootOfficial, ...rootSaved]
     : rootSaved;
   const officialServerName = String(rootOfficial?.name || '');
-  if (args.script?.scriptToolIds.includes('web_search')) {
-    throw new Error('hermes_host_script_native_tool_takeover_unsupported:web_search');
-  }
-  const mcpScriptToolStates = args.script
-    ? Object.fromEntries(
-        Object.entries(args.script.toolStates).filter(([canonicalId]) => canonicalId !== 'web_search'),
-      )
-    : {};
-  const hostScript = args.script && (rootOfficial || args.script.toolHandles.length === 0) ? {
-    version: args.script.version,
-    source: args.script.source,
-    sourceHash: args.script.sourceHash,
-    compiledHash: args.script.compiledHash,
-    mode: args.script.mode,
-    inputSchema: args.script.inputSchema,
-    outputSchema: args.script.outputSchema,
-    toolAliases: Object.fromEntries(args.script.scriptToolIds.map((canonicalId) => [
-      canonicalId,
-      hermesMcpToolName(officialServerName, canonicalId),
-    ])),
-    fallbackToolAliases: Object.fromEntries(
-      (args.grantedTools ?? args.tools)
-        .filter((canonicalId) => canonicalId !== 'web_search')
-        .map((canonicalId) => [
-          canonicalId,
-          hermesMcpToolName(officialServerName, canonicalId),
-        ]),
-    ),
-    // web_search is a native Hermes tool, not an alias on LiquidAIty's MCP
-    // server. Keep it outside the host Script alias/state scope just as the
-    // granted and presented MCP projections already do.
-    toolStates: mcpScriptToolStates,
-    timeoutSeconds: args.script.timeoutSeconds,
-    maxToolCalls: args.script.maxToolCalls,
-    maxOutputBytes: args.script.maxOutputBytes,
-  } : null;
   const rawOfficialTools = rootOfficial
     ? args.tools
-        .filter((name) => name !== 'web_search')
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
     : [];
   const role = args.delegationRole || 'off';
@@ -454,12 +399,10 @@ export function buildHermesHostSessionProjection(
             // all_healthy policy applies to the exact LiquidAIty MCP catalog,
             // whose read/write effects are gated during IDF materialization.
             ...(args.toolsets || []),
-            ...(!hostScript ? mcpToolsetNames(rootSaved) : []),
+            ...mcpToolsetNames(rootSaved),
           ]),
           enabledTools: uniqueStrings([
             ...(args.nativeTools || []),
-            // Existing saved web_search selection uses Hermes' native tool.
-            ...args.tools.filter((name) => name === 'web_search'),
             ...rawOfficialTools,
           ]),
           // This narrows only the trusted LiquidAIty session projection. The
@@ -486,7 +429,6 @@ export function buildHermesHostSessionProjection(
           providerApiMode: args.apiMode,
           openaiRuntime: args.openaiRuntime,
           workingDirectory: args.workingDirectory,
-          ...(hostScript ? { hostScript } : {}),
           ...(executionContextId ? {
             executionContextId,
             toolCallMeta: executionToolCallMeta(executionContextId),
@@ -556,9 +498,6 @@ export function resolveHermesTurnArgs(
   ) {
     throw new Error('prepared_hermes_execution_authority_invalid');
   }
-  const scriptState = input.runtimeOptions?.script;
-  const scriptCompiled = scriptState?.compiled;
-  const scriptPresentation = input.scriptPresentation;
   const profileTargets = Array.isArray(transport?.delegationTargets)
     ? transport.delegationTargets.map((target: any) => ({
         cardId: String(target?.cardId || ''),
@@ -571,34 +510,6 @@ export function resolveHermesTurnArgs(
         && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(target.profile)
       ))
     : [];
-  const script = scriptPresentation?.mode === 'script'
-    && scriptState?.nativeSupport?.active === true
-    && typeof scriptState?.source === 'string'
-    && typeof scriptState?.sourceHash === 'string'
-    && typeof scriptState?.compiledHash === 'string'
-    && Number.isInteger(scriptState?.version)
-    && Number(scriptState.version) >= 1
-    && scriptCompiled && typeof scriptCompiled === 'object'
-    && scriptCompiled.mode === 'tool_recipe'
-    ? {
-        version: Number(scriptState.version),
-        source: scriptState.source,
-        sourceHash: scriptState.sourceHash,
-        compiledHash: scriptState.compiledHash,
-        mode: scriptCompiled.mode,
-        inputSchema: scriptCompiled.inputSchema,
-        outputSchema: scriptCompiled.outputSchema,
-        toolHandles: Array.isArray(scriptCompiled.toolHandles) ? scriptCompiled.toolHandles : [],
-        toolStates: scriptCompiled.toolStates && typeof scriptCompiled.toolStates === 'object'
-          ? scriptCompiled.toolStates : {},
-        offToolIds: Array.isArray(scriptCompiled.offToolIds) ? scriptCompiled.offToolIds : [],
-        scriptToolIds: Array.isArray(scriptCompiled.scriptToolIds) ? scriptCompiled.scriptToolIds : [],
-        agentToolIds: Array.isArray(scriptCompiled.agentToolIds) ? scriptCompiled.agentToolIds : [],
-        timeoutSeconds: Number(scriptCompiled.timeoutSeconds),
-        maxToolCalls: Number(scriptCompiled.maxToolCalls),
-        maxOutputBytes: Number(scriptCompiled.maxOutputBytes),
-      }
-    : undefined;
   return {
     cardId,
     cardRevisionId,
@@ -628,7 +539,6 @@ export function resolveHermesTurnArgs(
     nativeTools: Array.isArray(input.nativeTools) ? input.nativeTools : [],
     ...(Array.isArray(input.skills) && input.skills.length ? { skills: input.skills } : {}),
     toolsets: Array.isArray(input.toolsets) ? input.toolsets : [],
-    ...(script ? { script } : {}),
     ...(profileTargets.length ? { profileTargets } : {}),
     sessionKey: deriveHermesSessionKey(
       args.projectId,
@@ -1304,7 +1214,7 @@ export class AcpProcess {
       conversationId: args.conversationId,
       cardId: args.cardId,
       runtimeMode: args.runtime.mode,
-      grantedTools: (args.grantedTools ?? args.tools).filter((name) => name !== 'web_search'),
+      grantedTools: args.grantedTools ?? args.tools,
     });
     let sessionId: string;
     let active: ActiveTurn;

@@ -27,9 +27,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(source).toContain("setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'Results')");
     expect(source).toContain('data-testid="under-chat-agent-builder"');
     const underChat = source.slice(source.indexOf('const agentBuilderTerminal ='), source.indexOf('terminal={agentBuilderTerminal}'));
-    expect(underChat).toContain('<BuilderTerminalPanel');
-    expect(underChat).toContain('ownerCardId={agentBuilderCard.id}');
-    expect(underChat).toContain('profile: agentBuilderCard.runtime.profile');
+    expect(underChat).toContain('<AgentTerminalPanel');
+    expect(underChat).toContain('cardId: agentBuilderCard.id');
     expect(underChat).not.toContain('workspaceView');
     expect(underChat).not.toContain('data-testid="agent-builder-output"');
     expect(underChat).not.toContain('builderResult');
@@ -37,6 +36,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(underChat).not.toContain('<CardRunResults');
     expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');
+    expect(source).not.toContain('data-testid="builder-card-terminal"');
   });
   it('preserves the stable steward identity as the temporary Graph Agent', () => {
     const serialized = JSON.stringify(INITIAL_DECK);

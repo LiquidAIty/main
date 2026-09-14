@@ -6,6 +6,7 @@ import {
   saveDeckDocument,
 } from '../decks/store';
 import type { DeckDocument } from '../types';
+import { requestConnectedAgentTerminalReconcile } from '../startup/pythonOwnedStartup';
 
 const router = Router();
 
@@ -41,6 +42,7 @@ router.post('/:projectId/decks', async (req, res) => {
       document as DeckDocument,
       { expectedRevision: typeof req.body?.expectedRevision === 'string' ? req.body.expectedRevision : null },
     );
+    await requestConnectedAgentTerminalReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const status =
@@ -78,6 +80,7 @@ router.put('/:projectId/decks/:deckId', async (req, res) => {
         expectedRevision: typeof expectedRevision === 'string' ? expectedRevision : null,
       },
     );
+    await requestConnectedAgentTerminalReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const status =
@@ -109,6 +112,7 @@ router.delete('/:projectId/decks/:deckId/cards/:cardId', async (req, res) => {
       req.params.cardId,
       { expectedDeckRevision, expectedCardRevisionId, deletionIntent },
     );
+    await requestConnectedAgentTerminalReconcile();
     return res.json({ ok: true, deck: result.deck, meta: result.meta });
   } catch (err: any) {
     const message = String(err?.message || 'card_delete_failed');

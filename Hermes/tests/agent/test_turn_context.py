@@ -17,23 +17,10 @@ import pytest
 from agent.context_compressor import ContextCompressor
 from agent.turn_context import (
     PreflightCompressionTimedOut,
-    consume_external_memory_mode,
     TurnContext,
     build_turn_context,
 )
 from hermes_state import SessionDB
-
-
-def test_external_memory_mode_is_single_use_and_fails_open():
-    agent = types.SimpleNamespace(
-        _next_turn_external_memory_mode="bypass_automatic"
-    )
-    assert consume_external_memory_mode(agent) == "bypass_automatic"
-    assert agent._current_turn_external_memory_mode == "bypass_automatic"
-    assert consume_external_memory_mode(agent) == "normal"
-
-    agent._next_turn_external_memory_mode = "unknown"
-    assert consume_external_memory_mode(agent) == "normal"
 
 
 class _FakeTodoStore:

@@ -5,8 +5,22 @@ import {
   setSessionCookie,
 } from '../auth/sessionStore';
 import { isLocalDevLoopbackRequest } from '../security/requestAccess';
+import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const requestPath = String(req.originalUrl || '').split('?', 1)[0];
+  const cardRunAction = String(req.body?.action || '').trim();
+  if (
+    req.method === 'POST'
+    && requestPath === '/api/cards/run'
+    && (cardRunAction === 'execute' || cardRunAction === 'status')
+    && isLocalDevLoopbackRequest(req)
+    && internalMcpBridgeSecretAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])
+  ) {
+    (req as any).internalMcpBridgeAuthenticated = true;
+    next();
+    return;
+  }
   const sessionId = req.cookies.sid;
   if (sessionId) {
     try {

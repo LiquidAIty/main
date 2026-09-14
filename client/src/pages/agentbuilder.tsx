@@ -27,7 +27,6 @@ import type {
   GraphProjectionNode,
   GraphProjectionV1,
 } from '../components/knowledge/NativeAuthorityGraphSurface';
-import BuilderTerminalPanel from '../features/agentbuilder/console/BuilderTerminalPanel';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
@@ -69,6 +68,7 @@ import {
   safeText,
 } from '../features/agentbuilder/deck/deckPrimitives';
 import {
+  BUILDER_CARD_ID,
   BUILDER_DECK_ID,
   INITIAL_DECK,
 } from '../features/agentbuilder/deck/newProjectDeck';
@@ -356,8 +356,7 @@ export default function AgentBuilder(): React.ReactElement {
   const agentBuilderCard = useMemo(
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes'
-      && card.runtime.mode === 'delegate'
-      && card.runtime.profile === 'builder'
+      && card.id === BUILDER_CARD_ID
     )) || null,
     [deck.nodes],
   );
@@ -1246,7 +1245,7 @@ export default function AgentBuilder(): React.ReactElement {
             return next;
           });
           if (card.runtime.kind === 'hermes'
-            && card.runtime.profile === 'builder') {
+            && card.id === BUILDER_CARD_ID) {
             setDeckReloadToken((current) => current + 1);
           }
         }
@@ -1456,7 +1455,7 @@ export default function AgentBuilder(): React.ReactElement {
         || (selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id)),
       ...(selectedCard.runtime.kind === 'hermes'
         && selectedCard.id !== mainCardId
-        && !['main', 'liquidaity-main', 'builder', 'default'].includes(selectedCard.runtime.profile)
+        && selectedCard.id !== agentBuilderCard?.id
         ? ['CLI']
         : []),
       ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
@@ -1671,7 +1670,7 @@ export default function AgentBuilder(): React.ReactElement {
           tab === 'CLI'
           && selectedCard.runtime.kind === 'hermes'
           && selectedCard.id !== mainCardId
-          && !['main', 'liquidaity-main', 'builder', 'default'].includes(selectedCard.runtime.profile)
+          && selectedCard.id !== agentBuilderCard?.id
         ) {
           return <AgentTerminalPanel
             key={`${canvasProjectId}:${BUILDER_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
@@ -1712,22 +1711,6 @@ export default function AgentBuilder(): React.ReactElement {
                     registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
-                    terminalContent={selectedCard.runtime.kind === 'hermes' && selectedCard.runtime.profile === 'builder'
-                        ? <div data-testid="builder-card-terminal">
-                             {standaloneTestResult?.runId ? <div>Card Run {standaloneTestResult.runId} · {standaloneTestResult.state || standaloneTestResult.status}</div> : null}
-                             <div style={{ height: 360, minHeight: 240 }}>
-                               <BuilderTerminalPanel
-                                 open
-                                 placement="docked"
-                                 title="Builder CLI"
-                                 testIdPrefix="builder-cli"
-                                 ownerCardId={selectedCard.id}
-                                 savedCard={{ projectId: canvasProjectId, deckId: BUILDER_DECK_ID,
-                                   cardId: selectedCard.id, profile: selectedCard.runtime.profile }}
-
-                               />
-                             </div>
-                           </div> : undefined}
                     cardSubtext={selectedCard.subtitle || ''}
                     onChangeCardName={handleRenameSelectedCard}
                     onChangeCardSubtext={handleUpdateSelectedCardSubtext}
@@ -1923,18 +1906,12 @@ export default function AgentBuilder(): React.ReactElement {
     const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
       agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
-          <BuilderTerminalPanel
+          <AgentTerminalPanel
             key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
-            open
-            title="Builder"
-            placement="docked"
-            testIdPrefix="agent-builder-terminal"
-            ownerCardId={agentBuilderCard.id}
-            savedCard={{
+            identity={{
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
               cardId: agentBuilderCard.id,
-              profile: agentBuilderCard.runtime.profile,
             }}
             readOnly={!directInput}
           />

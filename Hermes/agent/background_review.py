@@ -44,7 +44,6 @@ class _BackgroundReviewRun:
         self._review_agent = None
         self._request_finished = False
         self._cancel_dispatched = False
-        self._host_execution_finished = False
 
     def begin_request(self, review_agent: Any) -> bool:
         """Atomically admit the first provider-capable review phase."""
@@ -70,14 +69,6 @@ class _BackgroundReviewRun:
                 return False
             self._request_finished = True
             self._review_agent = None
-            return True
-
-    def claim_host_execution_finish(self) -> bool:
-        """Return True once for the optional host child execution context."""
-        with self._lock:
-            if self._host_execution_finished:
-                return False
-            self._host_execution_finished = True
             return True
 
 
@@ -119,45 +110,6 @@ def finish_background_review_run(
     elif getattr(agent, "_background_review_run", None) is run:
         agent._background_review_run = None
     run.request_done.set()
-
-
-def finish_background_review_host_execution(
-    run: Optional[_BackgroundReviewRun],
-    state: str,
-    *,
-    error_summary: str | None = None,
-    usage: Optional[Dict[str, Any]] = None,
-) -> None:
-    """Close the generic host child context once, if the ACP host supplied one."""
-    if run is None or not run.claim_host_execution_finish():
-        return
-    try:
-        from acp_adapter.host_profiles import finish_host_child_execution
-
-        source = usage or {}
-        if source.get("provider"):
-            run.provider = source.get("provider")
-        if source.get("model"):
-            run.model = source.get("model")
-        run._host_model_fallback_occurred = bool(
-            source.get("fallback_occurred")
-        )
-        run._host_model_fallback_reason = source.get("fallback_reason")
-        finish_host_child_execution(
-            run,
-            state,
-            error_summary,
-            {
-                "providerInputTokens": int(source.get("input_tokens") or 0),
-                "providerOutputTokens": int(source.get("output_tokens") or 0),
-                "totalCostUsd": source.get("estimated_cost_usd"),
-            },
-        )
-    except Exception:
-        logger.warning(
-            "Background review host execution closure failed",
-            exc_info=True,
-        )
 
 
 def _interrupt_background_review(review_agent: Any) -> None:
@@ -394,8 +346,6 @@ def _resolve_review_runtime(
         "command": getattr(agent, "acp_command", None),
         "args": list(getattr(agent, "acp_args", []) or []),
         "routed": False,
-        "fallback_occurred": False,
-        "fallback_reason": None,
     }
     task = _background_review_task_config(task_cfg)
     task_provider = (str(task.get("provider", "")).strip() or None)
@@ -426,16 +376,10 @@ def _resolve_review_runtime(
             "command": rp.get("command"),
             "args": list(rp.get("args") or []),
             "routed": True,
-            "fallback_occurred": False,
-            "fallback_reason": None,
         }
     except Exception as e:
         logger.debug("background-review aux routing failed (%s); using main model", e)
-        return {
-            **parent,
-            "fallback_occurred": True,
-            "fallback_reason": f"background_review_route_failed:{type(e).__name__}",
-        }
+        return parent
 
 
 def _parent_can_emit_tool_calls(agent: Any) -> bool:
@@ -530,13 +474,10 @@ _MEMORY_REVIEW_PROMPT = (
 )
 
 _SKILL_REVIEW_PROMPT = (
-    # LIQUIDAITY VENDOR PATCH: automatic review must prefer durable,
-    # evidenced reuse over activity for its own sake. The native model still
-    # makes the semantic decision and the native skill manager still owns
-    # every write.
-    "Review the conversation above and update the skill library only when "
-    "there is a durable, reusable, evidenced improvement. A clean no-op is "
-    "correct when no such improvement exists; never create filler skills.\n\n"
+    "Review the conversation above and update the skill library. Be "
+    "ACTIVE — most sessions produce at least one skill update, even if "
+    "small. A pass that does nothing is a missed learning opportunity, "
+    "not a neutral outcome.\n\n"
     "Target shape of the library: CLASS-LEVEL skills, each with a rich "
     "SKILL.md and a `references/` directory for session-specific detail. "
     "Not a long flat list of narrow one-session-one-skill entries. This "
@@ -677,9 +618,9 @@ _COMBINED_REVIEW_PROMPT = (
     "desires, preferences, personal details, or expectations about "
     "how you should behave? Save facts about the user and durable "
     "preferences with the memory tool.\n\n"
-    "**Skills**: how to do this class of task. Update only when the "
-    "conversation proves a durable, reusable improvement. A clean no-op "
-    "is correct when it does not; never create filler skills.\n\n"
+    "**Skills**: how to do this class of task. Be ACTIVE — most "
+    "sessions produce at least one skill update. A pass that does "
+    "nothing is a missed learning opportunity, not a neutral outcome.\n\n"
     "Target shape of the skill library: CLASS-LEVEL skills with a rich "
     "SKILL.md and a `references/` directory for session-specific detail. "
     "Not a long flat list of narrow one-session-one-skill entries.\n\n"
@@ -1048,10 +989,6 @@ def _snapshot_review_usage(review_agent: Any) -> Dict[str, Any]:
         ),
         "api_calls": int(getattr(review_agent, "session_api_calls", 0) or 0),
         "estimated_cost_usd": getattr(review_agent, "session_estimated_cost_usd", None),
-        "fallback_occurred": bool(
-            getattr(review_agent, "_host_model_fallback_occurred", False)
-        ),
-        "fallback_reason": getattr(review_agent, "_host_model_fallback_reason", None),
     }
 
 
@@ -1474,7 +1411,6 @@ def _run_review_in_thread(
     the review aborts without entering ``run_conversation()`` (#84423).
     """
     if review_run is not None and review_run.cancel_requested.is_set():
-        finish_background_review_host_execution(review_run, "cancelled")
         finish_background_review_run(agent, review_run)
         return
 
@@ -1524,8 +1460,6 @@ def _run_review_in_thread(
     review_agent = None
     review_messages: List[Dict] = []
     review_usage: Dict[str, Any] = {}
-    review_host_state = "failed"
-    review_host_error: str | None = None
 
     def _unregister_review_agent(agent_ref) -> None:
         """Idempotent: clears the review fork from both tracking slots.
@@ -1569,8 +1503,6 @@ def _run_review_in_thread(
             review_agent, _rt, _routed = build_cache_parity_fork(
                 agent, task_cfg, max_iterations=_REVIEW_MAX_ITERATIONS
             )
-            review_agent._host_model_fallback_occurred = bool(_rt.get("fallback_occurred"))
-            review_agent._host_model_fallback_reason = _rt.get("fallback_reason")
 
             # Register this fork on the PARENT's _active_children (the same
             # list interrupt() fans out to for subagent delegation) and
@@ -1709,13 +1641,6 @@ def _run_review_in_thread(
                         ),
                         conversation_history=_review_history,
                     )
-                    review_host_state = (
-                        "cancelled"
-                        if review_run is not None and review_run.cancel_requested.is_set()
-                        else "completed"
-                    )
-                else:
-                    review_host_state = "cancelled"
             finally:
                 clear_thread_tool_whitelist()
                 # Attribute the review fork's usage to the PARENT session.
@@ -1798,23 +1723,11 @@ def _run_review_in_thread(
                     pass
 
     except Exception as e:
-        review_host_state = "failed"
-        review_host_error = str(e)
         logger.warning("Background memory/skill review failed: %s", e)
         if review_usage:
             _log_review_completion(review_usage, "error")
         agent._emit_auxiliary_failure("background review", e)
     finally:
-        # LIQUIDAITY VENDOR PATCH: the existing generic ACP child lifecycle
-        # records this native asynchronous review as a real host child Run.
-        # Allocation occurs before Thread.start(); closure and usage happen
-        # here without delaying the parent response on the model call.
-        finish_background_review_host_execution(
-            review_run,
-            review_host_state,
-            error_summary=review_host_error,
-            usage=review_usage,
-        )
         # Safety-net cleanup for the exception path.  Normal completion already
         # shut down inside the thread-scoped silence above.  Re-enter the
         # thread-scoped silence here so teardown output (Honcho flush, Hindsight
@@ -1910,7 +1823,6 @@ __all__ = [
     "_COMBINED_REVIEW_PROMPT",
     "is_background_review_enabled",
     "load_background_review_settings",
-    "finish_background_review_host_execution",
     "spawn_background_review_thread",
     "summarize_background_review_actions",
     "build_memory_write_metadata",

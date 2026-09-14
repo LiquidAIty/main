@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 const mcpMocks = vi.hoisted(() => ({
-  callTool: vi.fn(async () => ({
+  callTool: vi.fn(async (): Promise<CallToolResult> => ({
     content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
   })),
   close: vi.fn(async () => undefined),

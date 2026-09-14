@@ -1945,7 +1945,6 @@ class AIAgent:
             if not enabled:
                 return
         from agent.background_review import (
-            finish_background_review_host_execution,
             finish_background_review_run,
             prepare_background_review_run,
             spawn_background_review_thread,
@@ -1956,22 +1955,6 @@ class AIAgent:
         if review_run is None:
             return
         try:
-            # LIQUIDAITY VENDOR PATCH: allocate the existing generic ACP child
-            # context before the native asynchronous review starts. Ordinary
-            # CLI/gateway sessions have no host requester and remain unchanged.
-            review_run._subagent_id = "background-review"
-            configured_review_provider = str(
-                (task_cfg or {}).get("provider") or self.provider or ""
-            ).strip()
-            configured_review_model = str(
-                (task_cfg or {}).get("model") or self.model or ""
-            ).strip()
-            if configured_review_provider == "auto":
-                configured_review_provider = str(self.provider or "").strip()
-            review_run.provider = configured_review_provider
-            review_run.model = configured_review_model
-            from acp_adapter.host_profiles import allocate_host_child_execution
-            allocate_host_child_execution(self, review_run)
             target, _prompt = spawn_background_review_thread(
                 self,
                 messages_snapshot,
@@ -1989,12 +1972,7 @@ class AIAgent:
                 name="bg-review",
             )
             t.start()
-        except Exception as exc:
-            finish_background_review_host_execution(
-                review_run,
-                "failed",
-                error_summary=str(exc),
-            )
+        except Exception:
             finish_background_review_run(self, review_run)
             raise
 
@@ -4562,8 +4540,6 @@ class AIAgent:
         """
         if interrupted:
             return
-        if getattr(self, "_current_turn_external_memory_mode", "normal") == "bypass_automatic":
-            return
         if not (self._memory_manager and final_response and original_user_message):
             return
         # Multimodal turns carry content as a list of typed parts; providers
@@ -6989,14 +6965,7 @@ class AIAgent:
         except Exception:
             logger.debug("on_stream_start plugin hook enqueue failed", exc_info=True)
 
-    def _emit_stream_end(
-        self,
-        *,
-        final_text: str,
-        finished: bool,
-        error: str | None,
-        **runtime_metadata: Any,
-    ) -> None:
+    def _emit_stream_end(self, *, final_text: str, finished: bool, error: str | None) -> None:
         try:
             from agent.plugin_stream_hooks import enqueue_plugin_stream_hook
 
@@ -7006,7 +6975,6 @@ class AIAgent:
                 final_text=final_text,
                 finished=finished,
                 error=error,
-                **runtime_metadata,
             )
         except Exception:
             logger.debug("on_stream_end plugin hook enqueue failed", exc_info=True)
@@ -8601,8 +8569,8 @@ class AIAgent:
         invocation paths (concurrent, sequential, inline).
         """
         from tools.delegate_tool import (
-            _strip_model_hidden_task_fields,
             _model_background_value,
+            _strip_model_hidden_task_fields,
             delegate_task as _delegate_task,
         )
         # Delegations from the top-level MODEL always run in the background —
@@ -8616,8 +8584,7 @@ class AIAgent:
         #     its own turn to compose a summary, and a subagent doesn't own the
         #     gateway session the async result would route back to.
         # The schema-level `background` param is intentionally ignored here.
-        # Profile calls retain the existing host runner contract.
-        _background = _model_background_value(function_args, self)
+        background = _model_background_value(function_args, self)
         return _delegate_task(
             goal=function_args.get("goal"),
             context=function_args.get("context"),
@@ -8626,7 +8593,7 @@ class AIAgent:
             role=function_args.get("role"),
             target_profile=function_args.get("target_profile"),
             data_anchors=function_args.get("dataAnchors"),
-            background=_background,
+            background=background,
             output_schema=function_args.get("output_schema"),
             action=function_args.get("action"),
             subagent_id=function_args.get("subagent_id"),
@@ -9226,11 +9193,10 @@ class AIAgent:
         messages: List[Dict[str, Any]],
         effective_task_id: str,
         should_review_memory: bool = False,
-        active_system_prompt: str | None = None,
     ) -> Dict[str, Any]:
         """Forwarder — see ``agent.codex_runtime.run_codex_app_server_turn``."""
         from agent.codex_runtime import run_codex_app_server_turn
-        return run_codex_app_server_turn(self, user_message=user_message, original_user_message=original_user_message, messages=messages, effective_task_id=effective_task_id, should_review_memory=should_review_memory, active_system_prompt=active_system_prompt)
+        return run_codex_app_server_turn(self, user_message=user_message, original_user_message=original_user_message, messages=messages, effective_task_id=effective_task_id, should_review_memory=should_review_memory)
 
 def main(
     query: str = None,

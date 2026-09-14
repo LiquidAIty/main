@@ -611,8 +611,12 @@ def test_terminal_run_token_requires_complete_owner_identity_and_active_context(
             "sub": "card-runtime:signal", "iat": now, "exp": now + 60, "principal": value}, secret, algorithm="HS256"))
     token = verify(principal)
     assert token is not None
+    for card_id, profile in (("card_main_chat", "liquidaity-main"), ("builder", "builder")):
+        accepted = {**principal, "callerCardId": card_id,
+                    "terminalOwner": {**principal["terminalOwner"], "profile": profile}}
+        assert verify(accepted) is not None
     for invalid in ({"terminalOwner": None}, {"requiresExecutionContext": False},
-                    {"callerCardId": "builder"}, {"callerRuntimeKind": "autogen"},
+                    {"callerRuntimeKind": "autogen"},
                     *({"terminalOwner": {**principal["terminalOwner"], key: ""}}
                       for key in principal["terminalOwner"])):
         assert verify({**principal, **invalid}) is None
@@ -1704,10 +1708,10 @@ def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
 
 @pytest.mark.parametrize("operation,route,has_secret", [
     ("external_main_chat", "/api/main/chat", True),
-    ("external_main_context", "/api/main/context", False),
+    ("external_main_context", "/api/main/context", True),
     ("describe_connected_agents", "/api/cards/connected", False),
     ("internal_execution_context", "/api/hermes/execution-context", False),
-    ("run_configured_card", "/api/cards/run", False),
+    ("run_configured_card", "/api/cards/run", True),
 ])
 def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
     monkeypatch, operation, route, has_secret,
@@ -1749,6 +1753,20 @@ def test_backend_domain_routes_preserve_payload_and_process_owned_secret(
         if operation in {"external_main_chat", "run_configured_card"}
         else mcp_host._MCP_CALL_TIMEOUT_SECONDS
     )
+
+
+def test_configured_card_bridge_fails_closed_without_the_process_secret(monkeypatch):
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", "short")
+    monkeypatch.setattr(
+        mcp_host,
+        "urlopen",
+        lambda *_args, **_kwargs: pytest.fail("backend request must not be sent"),
+    )
+
+    with pytest.raises(RuntimeError, match="internal_mcp_secret_missing"):
+        mcp_host._bridge_sync("run_configured_card", {"action": "execute"})
 
 
 
@@ -1948,7 +1966,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert set(by_name["card.create"].inputSchema["properties"]) == {
             "projectId", "deckId", "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools", "nativeTools", "skills",
-            "toolsets", "mcpConnectionIds", "subagentModel", "position",
+            "toolsets", "mcpConnectionIds", "subagentModel", "openaiRuntime", "position",
         }
         runtime_schema = by_name["card.create"].inputSchema["properties"]["runtime"]
         assert runtime_schema == {
@@ -1976,7 +1994,8 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert set(update_properties) == {
             "configuration", "prompt", "title", "script", "subsystems", "tools",
             "nativeTools", "skills", "toolsets", "mcpConnectionIds", "modelKey", "provider",
-            "providerModelId", "accessMode", "subagentModel", "reasoningEffort", "temperature", "maxTokens",
+            "providerModelId", "accessMode", "subagentModel", "openaiRuntime",
+            "reasoningEffort", "temperature", "maxTokens",
         }
         assert by_name["card.update_configuration"].inputSchema["required"] == [
             "projectId", "deckId", "cardId", "expectedRevision", "expectedCardRevisionId", "updates",
@@ -2990,9 +3009,43 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
         "mainCardId": "card_main_chat",
     }
 
+    internal_principals = {
+        "internal-card-one": {
+            "kind": "card-runtime",
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "card-session-one",
+            "parentRunId": "card-run-one",
+            "callerCardId": "card-one",
+            "callerRuntimeKind": "hermes",
+            "callerRuntimeMode": "delegate",
+            "grantedTools": ["cbm.search_graph"],
+        },
+        "internal-card-two": {
+            "kind": "card-runtime",
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "conversationId": "card-session-two",
+            "parentRunId": "card-run-two",
+            "callerCardId": "card-two",
+            "callerRuntimeKind": "hermes",
+            "callerRuntimeMode": "delegate",
+            "grantedTools": ["cbm.search_graph"],
+        },
+    }
+
     class VerifiedToken:
         async def verify_token(self, token):
-            if token != "request-scoped-test-token":
+            if token in internal_principals:
+                return AccessToken(
+                    token=token,
+                    client_id="liquidaity-internal-runtime",
+                    scopes=["liquidaity.main"],
+                    expires_at=4102444800,
+                    subject=f"card-runtime:{internal_principals[token]['callerCardId']}",
+                    claims={"internal": internal_principals[token]},
+                )
+            if token != "external-gpt-token":
                 return None
             return AccessToken(
                 token=token,
@@ -3055,7 +3108,7 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                     raise RuntimeError("http_mcp_catalog_not_ready")
 
             async with httpx.AsyncClient(
-                headers={"Authorization": "Bearer request-scoped-test-token"},
+                headers={"Authorization": "Bearer external-gpt-token"},
                 timeout=2,
             ) as security_client:
                 invalid_host = await security_client.post(
@@ -3074,14 +3127,14 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                 assert invalid_origin.status_code == 403
                 assert invalid_origin.text == "Invalid Origin header"
 
-            async def fresh_client():
+            async def fresh_client(token, *, inspect_main=False):
                 response_session_ids = []
 
                 async def observe(response):
                     response_session_ids.append(response.headers.get("mcp-session-id"))
 
                 async with httpx.AsyncClient(
-                    headers={"Authorization": "Bearer request-scoped-test-token"},
+                    headers={"Authorization": f"Bearer {token}"},
                     event_hooks={"response": [observe]}
                 ) as http_client:
                     async with streamable_http_client(
@@ -3093,26 +3146,46 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
                             listed_tools = (await session.list_tools()).tools
                             actual = sorted(tool.name for tool in listed_tools)
                             catalog_identity = mcp_host._catalog_identity(listed_tools)
-                            result = await session.call_tool("main.context", {})
-                            visible_context = json.loads(result.content[0].text)["context"]
-                            receipt = json.loads(result.content[-1].text)["executionReceipt"]
-                            invalid = await session.call_tool("not_a_real_tool", {})
-                            invalid_receipt = json.loads(
-                                invalid.content[-1].text
-                            )["executionReceipt"]
+                            cbm_result = await session.call_tool("cbm.search_graph", {
+                                "project": mcp_host._NATIVE_CBM_PROJECT,
+                                "query": "MCP session lifecycle",
+                                "limit": 1,
+                            })
+                            assert cbm_result.isError is not True
+                            cbm_payload = json.loads(cbm_result.content[0].text)
+                            visible_context = None
+                            if inspect_main:
+                                result = await session.call_tool("main.context", {})
+                                visible_context = json.loads(result.content[0].text)["context"]
+                                receipt = json.loads(result.content[-1].text)["executionReceipt"]
+                                invalid = await session.call_tool("not_a_real_tool", {})
+                                invalid_receipt = json.loads(
+                                    invalid.content[-1].text
+                                )["executionReceipt"]
                 assert response_session_ids
                 assert all(value is None for value in response_session_ids)
-                assert receipt["tool"] == "main.context"
-                assert receipt["state"] == "completed"
-                assert invalid.isError is True
-                assert invalid_receipt["tool"] == "not_a_real_tool"
-                assert invalid_receipt["state"] == "failed"
-                assert invalid_receipt["failureCode"]
-                return actual, visible_context, catalog_identity
+                assert isinstance(cbm_payload, dict)
+                if inspect_main:
+                    assert receipt["tool"] == "main.context"
+                    assert receipt["state"] == "completed"
+                    assert invalid.isError is True
+                    assert invalid_receipt["tool"] == "not_a_real_tool"
+                    assert invalid_receipt["state"] == "failed"
+                    assert invalid_receipt["failureCode"]
+                native_process = mcp_host._NATIVE_CBM_CLIENT._process
+                assert native_process.poll() is None
+                return actual, visible_context, catalog_identity, native_process.pid
 
-            first_catalog, first_context, first_identity = await fresh_client()
-            second_catalog, second_context, second_identity = await fresh_client()
-            assert first_catalog == second_catalog
+            # Close and recreate the optional external client around two distinct
+            # internal Card clients. All four requests remain stateless at the
+            # outer HTTP boundary and use the same host-owned native CBM child.
+            first = await fresh_client("external-gpt-token", inspect_main=True)
+            card_one = await fresh_client("internal-card-one")
+            card_two = await fresh_client("internal-card-two")
+            second = await fresh_client("external-gpt-token", inspect_main=True)
+            first_catalog, first_context, first_identity, first_cbm_pid = first
+            second_catalog, second_context, second_identity, second_cbm_pid = second
+            assert first_catalog == card_one[0] == card_two[0] == second_catalog
             assert first_catalog
             assert len(first_catalog) == len(set(first_catalog))
             assert {
@@ -3129,7 +3202,8 @@ def test_authenticated_streamable_http_is_stateless_across_fresh_official_sdk_cl
             assert not any(name.startswith("liquidaity_liquidaity_") for name in first_catalog)
             assert not any(name.startswith("mcp__") for name in first_catalog)
             assert first_context == second_context == context
-            assert first_identity == second_identity
+            assert first_identity == card_one[2] == card_two[2] == second_identity
+            assert first_cbm_pid == card_one[3] == card_two[3] == second_cbm_pid
             assert readiness.json()["toolCount"] == first_identity[0]
             assert readiness.json()["uniqueToolCount"] == first_identity[0]
             assert readiness.json()["catalogHash"] == first_identity[1]
@@ -3522,6 +3596,9 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(monkeyp
         )
 
     monkeypatch.setattr(mcp_host, "get_access_token", access_token)
+    # list_tools intentionally serves only the process-frozen catalog. Exercise
+    # the canonical host-owned initializer instead of relying on test order.
+    asyncio.run(mcp_host._initialize_catalog_once())
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
     assert canonical
@@ -3583,7 +3660,7 @@ def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
 
     dependent_services = package["scripts"]["dev:dependent-services"]
     assert dependent_services.count("npm run dev:mcp") == 1
-    assert "--kill-others --success all" in dependent_services
+    assert "--kill-others-on-fail --success all" in dependent_services
     assert (
         "powershell -NoProfile -ExecutionPolicy Bypass -File "
         "scripts/start-dependent-services.ps1 -WaitForMcpReadiness"
@@ -3595,6 +3672,9 @@ def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
     assert "http://127.0.0.1:8765/health/ready" in gate_source
     assert "if ($WaitForMcpReadiness)" in gate_source
     assert "& npm.cmd run dev:tunnel" in gate_source
+    assert "$tunnelExitCode = $LASTEXITCODE" in gate_source
+    assert "the local MCP host and internal clients remain running" in gate_source
+    assert "exit 0" in gate_source
     assert gate_source.index("Invoke-WebRequest") < gate_source.index("& npm.cmd run dev:tunnel")
     assert "Start-Process" not in gate_source
     assert "npm.cmd run dev:mcp" not in gate_source

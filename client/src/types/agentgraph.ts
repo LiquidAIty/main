@@ -49,34 +49,6 @@ export type AgentCardRuntimeOptions = {
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;
   subsystems?: CardSubsystemAttachment[] | null;
-  script?: {
-    enabled: boolean;
-    source: string;
-    version: number;
-    author?: Record<string, string>;
-    sourceHash?: string;
-    compiledHash?: string;
-    paletteFingerprint?: string;
-    compiled?: {
-      schemaVersion?: string;
-      mode?: 'tool_recipe';
-      inputSchema?: Record<string, unknown>;
-      outputSchema?: Record<string, unknown>;
-      toolHandles?: string[];
-      toolStates?: Record<string, number>;
-      offToolIds?: string[];
-      scriptToolIds?: string[];
-      agentToolIds?: string[];
-      timeoutSeconds?: number;
-      maxToolCalls?: number;
-      maxOutputBytes?: number;
-      outputEmitCalls?: number;
-      compiledHash?: string;
-    };
-    lastValidation?: Record<string, unknown>;
-    nativeSupport?: Record<string, unknown>;
-    rollback?: Record<string, unknown>;
-  } | null;
   // 'local_openai_compatible' = a local SLM served over an OpenAI-compatible endpoint.
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;

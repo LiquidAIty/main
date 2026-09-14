@@ -343,7 +343,7 @@ export default function useAgentBuilderMainChat({
     }
     const controller = new AbortController();
     const refresh = () => {
-      void loadMainDriverStatus(controller.signal)
+      void loadMainDriverStatus(canvasProjectId, controller.signal)
         .then((status) => setMainDriverSource(status.activeDriver))
         .catch(() => undefined);
     };

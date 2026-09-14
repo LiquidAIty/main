@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import type { RequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,7 +22,7 @@ afterEach(() => { vi.resetAllMocks(); });
 
 async function bootstrap(cookie?: string) {
   const app = express();
-  app.use(cookieParser());
+  app.use(cookieParser() as unknown as RequestHandler);
   app.use('/api/auth', router);
   const server = await new Promise<Server>((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));

@@ -5480,11 +5480,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             self.run_budget_seconds = CLI_CONFIG["agent"].get("run_budget_seconds")
 
         # Parse and validate toolsets
-        if os.environ.get("HERMES_REQUIRE_CLI_HOST"):
-            # A required host may register the process's explicit toolset.
-            # Resolve that registration before validating its CLI selector.
-            from hermes_cli.plugins import discover_plugins
-            discover_plugins()
         self.enabled_toolsets = toolsets
         from agent.skill_utils import parse_config_string_list
 
@@ -5707,6 +5702,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         self._slash_confirm_state = None
         self._slash_confirm_deadline = 0
         self._model_picker_state = None
+        # Rotating task-oriented composer placeholder (C-09), chosen once per
+        # session so it stays stable while the empty input box is on screen.
+        try:
+            from hermes_cli.tips import get_random_composer_placeholder
+            self._composer_placeholder = get_random_composer_placeholder()
+        except Exception:
+            self._composer_placeholder = ""
         self._command_palette_state = None
         # Armed when a bare `/resume` prints the recent-sessions list so the
         # very next bare numeric input (e.g. `3`) resolves to that session.
@@ -16829,15 +16831,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         # Refresh provider credentials if needed (handles key rotation transparently)
         if not self._ensure_runtime_credentials():
-            self._reject_cli_host_execution("cli_agent_credentials_unavailable")
             return None
 
         turn_route = self._resolve_turn_agent_config(message)
         if turn_route["signature"] != self._active_agent_route_signature:
-            if self.agent is not None and self._reject_cli_host_execution(
-                "cli_host_execution_route_changed"
-            ):
-                return None
             self.agent = None
 
         # Initialize agent if needed
@@ -17156,20 +17153,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 )
                 self._pending_one_turn_model_restore = None
                 try:
-                    # The optional trusted host binds the native CLI turn
-                    # before inference; ordinary standalone behavior is unchanged.
-                    from hermes_cli.plugins import get_plugin_manager
-                    def execute_native_turn(prepared_message):
-                        return self.agent.run_conversation(
-                            user_message=prepared_message,
-                            conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
-                            stream_callback=stream_callback,
-                            task_id=self.session_id,
-                            persist_user_message=_persist_clean_user_message,
-                            moa_config=_moa_cfg,
-                        )
-                    result = get_plugin_manager().run_cli_host_turn(
-                        self, self.agent, agent_message, execute_native_turn,
+                    result = self.agent.run_conversation(
+                        user_message=agent_message,
+                        conversation_history=self.conversation_history[:-1],  # Exclude the message we just added
+                        stream_callback=stream_callback,
+                        task_id=self.session_id,
+                        persist_user_message=_persist_clean_user_message,
+                        moa_config=_moa_cfg,
                     )
                     if getattr(self, "_pending_moa_disable_after_turn", False):
                         _restore = getattr(self, "_pending_moa_restore_model", None) or {}
@@ -17868,7 +17858,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         ``state_suffix`` is what special states (sudo/secret/approval/agent)
         should render after their leading icon.
 
-        The prompt shows the skin symbol without exposing the internal profile name.
+        When a profile is active (not "default"), the profile name is
+        prepended to the prompt symbol: ``coder ❯`` instead of ``❯``.
         """
         try:
             from hermes_cli.skin_engine import get_active_prompt_symbol
@@ -17878,6 +17869,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         symbol = (symbol or "❯ ").rstrip() + " "
 
+        # Prepend profile name when not default
+        try:
+            from hermes_cli.profiles import get_active_profile_name
+            profile = get_active_profile_name()
+            if profile not in {"default", "custom"}:
+                symbol = f"{profile} {symbol}"
+        except Exception:
+            pass
         stripped = symbol.rstrip()
         if not stripped:
             return "❯ ", "❯ "
@@ -19872,8 +19871,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 _stash_hint = ""
             if _stash_hint:
                 return _stash_hint
-            # Keep the idle composer blank; retain the actionable state hints above.
-            return ""
+            # Idle + empty composer: show a rotating task-oriented example to
+            # nudge the user toward a high-value first action (C-09). Chosen
+            # once per session (self._composer_placeholder) so it stays stable
+            # while being read, not flickering every render.
+            return getattr(cli_ref, "_composer_placeholder", "") or ""
 
         input_area.control.input_processors.append(_PlaceholderProcessor(_get_placeholder))
 

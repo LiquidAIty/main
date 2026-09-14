@@ -31,6 +31,7 @@ vi.mock('@xterm/xterm', () => ({
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 
 import AgentTerminalPanel from './AgentTerminalPanel';
+import HarnessChatPanel from './HarnessChatPanel';
 import type {
   AgentTerminalClient,
   AgentTerminalSession,
@@ -78,6 +79,55 @@ function deferred<T>() {
 }
 
 describe('AgentTerminalPanel', () => {
+  it('attaches the dedicated under-chat Builder presentation to Builder\'s native Gateway stream', async () => {
+    const builderIdentity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
+    let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
+    const client: AgentTerminalClient = {
+      open: vi.fn(async () => ({
+        ...session(), cardId: 'builder', profile: 'builder', pid: 4242, ptyId: 'builder-native-pty',
+      })),
+      stream: vi.fn((_identity, _sessionId, _after, candidate) => {
+        handlers = candidate;
+        return { close: vi.fn() };
+      }),
+      input: vi.fn(async () => undefined),
+      resize: vi.fn(async () => undefined),
+      stop: vi.fn(async () => ({})),
+    };
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root?.render(
+        <HarnessChatPanel
+          chat={<div data-testid="main-chat">Main Chat</div>}
+          terminal={({ directInput }) => (
+            <div data-testid="under-chat-agent-builder">
+              <AgentTerminalPanel
+                identity={builderIdentity}
+                client={client}
+                readOnly={!directInput}
+              />
+            </div>
+          )}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(client.open).toHaveBeenCalledOnce();
+    expect(client.open).toHaveBeenCalledWith(builderIdentity, { cols: 80, rows: 24 });
+    const panel = host.querySelector('[data-testid="agent-terminal-panel"]');
+    expect(panel?.getAttribute('data-card-id')).toBe('builder');
+    expect(panel?.getAttribute('data-profile')).toBe('builder');
+    await act(async () => {
+      handlers?.onOutput({ sequence: 1, data: '\u001b[36mbuilder native tui\u001b[0m\r\n' });
+      await Promise.resolve();
+    });
+    expect(terminal.writes).toEqual(['\u001b[36mbuilder native tui\u001b[0m\r\n']);
+    expect(host.querySelector('[data-testid="under-chat-agent-builder"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
+  });
+
   it('opens one saved-card session, writes only raw PTY output, and sends native input bytes', async () => {
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const client: AgentTerminalClient = {

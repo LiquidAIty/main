@@ -163,24 +163,6 @@ def compose_user_api_content(
     return content + "\n\n" + "\n\n".join(injections)
 
 
-def consume_external_memory_mode(agent: Any) -> str:
-    """Consume one trusted input-driver external-memory policy.
-
-    The staged value is single-use so a contextualized connector turn cannot
-    suppress Honcho for the next direct Main turn. Unknown values fail open to
-    normal native memory behavior; only the exact trusted bypass value skips
-    automatic provider lifecycle hooks for this turn.
-    """
-    mode = str(
-        getattr(agent, "_next_turn_external_memory_mode", "normal") or "normal"
-    )
-    agent._next_turn_external_memory_mode = "normal"
-    if mode not in {"normal", "bypass_automatic"}:
-        mode = "normal"
-    agent._current_turn_external_memory_mode = mode
-    return mode
-
-
 def substitute_api_content(api_msg: Dict[str, Any]) -> Optional[str]:
     """Pop the ``api_content`` sidecar and substitute it into ``content``.
 
@@ -593,8 +575,6 @@ def build_turn_context(
     """
     # Guard stdio against OSError from broken pipes (systemd/headless/daemon).
     install_safe_stdio()
-    external_memory_mode = consume_external_memory_mode(agent)
-    automatic_external_memory = external_memory_mode != "bypass_automatic"
 
     # Recover a session rotated by another path before binding log/turn ids or
     # copying client-supplied history. Everything in this turn must consistently
@@ -1497,7 +1477,7 @@ def build_turn_context(
         agent._interrupt_thread_signal_pending = False
 
     # Notify memory providers of the new turn (BEFORE prefetch_all).
-    if automatic_external_memory and agent._memory_manager:
+    if agent._memory_manager:
         try:
             _turn_msg = original_user_message if isinstance(original_user_message, str) else ""
             agent._memory_manager.on_turn_start(agent._user_turn_count, _turn_msg)
@@ -1509,7 +1489,7 @@ def build_turn_context(
     # Skip prefetch on trivial prompts (greetings, acknowledgements) to
     # prevent memory-context injection on turns that carry no semantic signal.
     ext_prefetch_cache = ""
-    if automatic_external_memory and agent._memory_manager:
+    if agent._memory_manager:
         try:
             _query = original_user_message if isinstance(original_user_message, str) else ""
             if not is_trivial_prompt(_query):

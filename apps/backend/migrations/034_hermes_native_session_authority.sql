@@ -20,6 +20,11 @@ ALTER TABLE ag_catalog.agent_runs
     CHECK (
       saved_openai_runtime IS NULL
       OR saved_openai_runtime = 'codex_app_server'
+    ),
+  ADD CONSTRAINT agent_runs_provider_api_mode_check
+    CHECK (
+      provider_api_mode IS NULL
+      OR provider_api_mode = 'codex_app_server'
     );
 
 -- Historical provider_thread_ref values are intentionally left untouched.

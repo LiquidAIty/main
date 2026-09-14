@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentTerminalExecution } from './agentTerminalExecution';
 import { clearHermesExecutionContextsForTest, resolveHermesExecutionContext } from './childExecutionContext';
 import { verifyInternalMcpBearerForTest } from '../services/mcp/internalMcpAuth';
+import { startHermesHostTeamMonitor } from './hostExecutionLifecycle';
 
 const owner = { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'signal' };
 const input = { message: 'Real user task', nativeSessionId: 'native-signal', model: 'saved-model', provider: 'openai-codex' };
@@ -13,26 +14,138 @@ afterEach(() => { if (secretBefore === undefined) delete process.env.LIQUIDAITY_
   else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secretBefore; });
 
 function fixture() {
+  const preparedRun = (runId: string, cardId = owner.cardId) => ({
+    runId,
+    cardRevisionId: 'saved-revision',
+    cardRevisionSha256,
+    executionAuthorityFingerprint: authorityFingerprint,
+    runtimeOwner: 'hermes',
+    deckRevision: 'saved-deck-revision',
+    hermesTransport: {
+      cardIdentity: { cardId, title: cardId },
+      delegationTargets: [{
+        cardId: 'target-card',
+        cardRevisionId: 'target-revision',
+        title: 'Target Card',
+        profile: 'target-profile',
+        description: 'Authorized saved target',
+      }],
+      request: {
+        runtime: { kind: 'hermes', mode: 'delegate', profile: cardId },
+        provider: {
+          provider: 'openai',
+          accessMode: 'chatgpt-account',
+          modelKey: 'saved-model',
+          providerModelId: 'saved-model',
+        },
+        systemPrompt: 'Saved instructions',
+        message: 'Reloaded canonical IDF request',
+        enabledTools: ['worldsignals.package', 'web_search'],
+        presentedTools: ['worldsignals.package', 'web_search'],
+        nativeTools: ['memory'],
+        skills: ['saved-skill'],
+        mcpConnectionIds: [],
+        runtimeOptions: {
+          executionAuthorityFingerprint: authorityFingerprint,
+          delegationRole: 'profile',
+        },
+      },
+    },
+  });
   const request = vi.fn(async (route: string, init?: RequestInit): Promise<any> => {
     const body = JSON.parse(String(init?.body));
     if (route.endsWith('/finish')) return { ok: true };
-    return { runId: body.runId, cardRevisionId: 'saved-revision', cardRevisionSha256,
-      executionAuthorityFingerprint: authorityFingerprint, runtimeOwner: 'hermes',
-      deckRevision: 'saved-deck-revision', hermesTransport: {
-        cardIdentity: { cardId: body.cardId, title: body.cardId },
-        request: { runtime: { kind: 'hermes', mode: 'delegate', profile: body.cardId },
-          provider: { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'saved-model', providerModelId: 'saved-model' },
-          systemPrompt: 'Saved instructions', message: 'Reloaded canonical IDF request',
-          enabledTools: ['worldsignals.package'], presentedTools: ['worldsignals.package'],
-          nativeTools: ['memory'], mcpConnectionIds: [],
-          runtimeOptions: { executionAuthorityFingerprint: authorityFingerprint } },
-      } };
+    return preparedRun(body.runId, body.cardId);
   });
   const catalog = vi.fn(async () => []);
-  return { request, catalog, lifecycle: new AgentTerminalExecution(request, catalog) };
+  const delegateProfile = vi.fn(async () => ({
+    nativeChildId: 'profile-012345abcdef',
+    targetProfile: 'target-profile',
+    runId: 'child-run',
+    result: 'child result',
+    nativeEvents: [],
+  }));
+  const handleHostExecution = vi.fn();
+  const startTeamMonitor = vi.fn(
+    (_args: Parameters<typeof startHermesHostTeamMonitor>[0]) => true,
+  );
+  return { request, catalog, preparedRun, delegateProfile, handleHostExecution, startTeamMonitor,
+    lifecycle: new AgentTerminalExecution(
+      request,
+      catalog,
+      delegateProfile,
+      handleHostExecution as never,
+      startTeamMonitor as never,
+    ) };
 }
 
 describe('native Agent CLI canonical Run binding', () => {
+  it('consumes one already-materialized Run without beginning or finishing a second Run', async () => {
+    const f = fixture();
+    const preparedRun = f.preparedRun('prepared-run');
+    const staged = f.lifecycle.stage(owner, 'terminal-signal', 'signal', preparedRun, 'conversation-1');
+    expect(staged).toEqual({ runId: 'prepared-run', message: 'Reloaded canonical IDF request' });
+    expect(f.request).not.toHaveBeenCalled();
+    expect(f.catalog).not.toHaveBeenCalled();
+
+    const prepared = await f.lifecycle.begin(owner, 'terminal-signal', 'signal', {
+      ...input, message: staged.message,
+    });
+    expect(prepared.runId).toBe('prepared-run');
+    expect(f.request).not.toHaveBeenCalledWith('/domain/runs/begin', expect.anything());
+    expect(f.catalog).not.toHaveBeenCalled();
+    const server = prepared.mcpServers[0] as any;
+    const bearer = server.headers.find((header: any) => header.name === 'Authorization').value.slice(7);
+    const principal = verifyInternalMcpBearerForTest(bearer, process.env).principal as any;
+    expect(principal).toMatchObject({ parentRunId: 'prepared-run', conversationId: 'conversation-1' });
+
+    await f.lifecycle.finish('terminal-signal', {
+      executionContextId: prepared.executionContextId,
+      result: {
+        completed: true,
+        final_response: 'Actual staged result',
+      },
+    });
+    const finishCalls = f.request.mock.calls.filter(([route]) => route === '/domain/runs/finish');
+    expect(finishCalls).toHaveLength(1);
+    expect(JSON.parse(String(finishCalls[0][1]?.body))).toMatchObject({
+      runId: 'prepared-run', state: 'completed', finalResult: 'Actual staged result',
+    });
+    expect(JSON.parse(String(finishCalls[0][1]?.body))).not.toHaveProperty('errorSummary');
+  });
+
+  it('fails the staged Run on identity or exact-message mismatch and permits an intentional retry', async () => {
+    const f = fixture();
+    const preparedRun = f.preparedRun('prepared-run');
+    expect(() => f.lifecycle.stage({ ...owner, cardId: 'other' }, 'terminal-signal', 'signal', preparedRun))
+      .toThrow('identity_mismatch');
+
+    f.lifecycle.stage(owner, 'terminal-signal', 'signal', preparedRun);
+    await expect(f.lifecycle.begin(owner, 'terminal-signal', 'signal', {
+      ...input, message: 'Different message',
+    })).rejects.toThrow('identity_mismatch');
+    expect(JSON.parse(String(f.request.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
+      runId: 'prepared-run', state: 'failed', errorSummary: expect.stringContaining('identity_mismatch'),
+    });
+
+    const retry = f.preparedRun('retry-run');
+    const retryStaged = f.lifecycle.stage(owner, 'terminal-signal', 'signal', retry);
+    expect((await f.lifecycle.begin(owner, 'terminal-signal', 'signal', {
+      ...input, message: retryStaged.message,
+    })).runId).toBe('retry-run');
+  });
+
+  it('cancels an unconsumed staged Run once and leaves no hidden staged owner', async () => {
+    const f = fixture();
+    f.lifecycle.stage(owner, 'terminal-signal', 'signal', f.preparedRun('prepared-run'));
+    await expect(f.lifecycle.cancelStaged('terminal-signal', 'gateway_submit_failed')).resolves.toBe(true);
+    await expect(f.lifecycle.cancelStaged('terminal-signal', 'duplicate')).resolves.toBe(false);
+    expect(JSON.parse(String(f.request.mock.calls[0][1]?.body))).toEqual({
+      runId: 'prepared-run', state: 'failed', errorSummary: 'gateway_submit_failed',
+    });
+    expect((await f.lifecycle.begin(owner, 'terminal-signal', 'signal', input)).runId).toBeTruthy();
+  });
+
   it('creates no Run before model input and forwards the canonical IDF projection without a conversation', async () => {
     const f = fixture();
     expect(f.request).not.toHaveBeenCalled();
@@ -45,12 +158,13 @@ describe('native Agent CLI canonical Run binding', () => {
     expect(prepared.sessionConfig.systemPrompt).toBe('Saved instructions');
     expect(prepared.sessionConfig.enabledToolsets).toEqual([]);
     expect(prepared.sessionConfig.enabledTools).toEqual(['memory',
-      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]+__worldsignals_package$/)]);
+      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]+__worldsignals_package$/),
+      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]+__web_search$/)]);
     const server = prepared.mcpServers[0] as any;
     const bearer = server.headers.find((h: any) => h.name === 'Authorization').value.slice(7);
     const principal = verifyInternalMcpBearerForTest(bearer, process.env).principal as any;
     expect(principal).toMatchObject({ kind: 'card-runtime', parentRunId: prepared.runId,
-      conversationId: '', grantedTools: ['worldsignals.package'],
+      conversationId: '', grantedTools: ['web_search', 'worldsignals.package'],
       terminalOwner: { userId: 'owner', terminalSessionId: 'terminal-signal', profile: 'signal', cardRevisionId: 'saved-revision' } });
     expect(resolveHermesExecutionContext({ contextId: prepared.executionContextId, principal }).sessionId).toBe('native-signal');
     for (const change of [{ projectId: 'other' }, { deckId: 'other' }, { callerCardId: 'other' },
@@ -66,6 +180,118 @@ describe('native Agent CLI canonical Run binding', () => {
       hermesSessionRef: 'native-signal', effectiveProvider: 'openai-codex',
       providerApiMode: 'codex_responses' });
     expect(() => resolveHermesExecutionContext({ contextId: prepared.executionContextId, principal })).toThrow('closed');
+  });
+
+  it('keeps a genuine Hermes failure failed without inventing a successful result', async () => {
+    const f = fixture();
+    const prepared = await f.lifecycle.begin(owner, 'terminal-signal', 'signal', input);
+
+    await f.lifecycle.finish('terminal-signal', {
+      executionContextId: prepared.executionContextId,
+      result: {
+        completed: false,
+        failed: true,
+        error: 'provider request failed',
+        final_response: '',
+      },
+    });
+
+    expect(JSON.parse(String(f.request.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
+      runId: prepared.runId,
+      state: 'failed',
+      errorSummary: 'provider request failed',
+      finalResult: '',
+    });
+  });
+
+  it('binds profile delegation to the exact initiating Gateway turn and saved deck authority', async () => {
+    const f = fixture();
+    const prepared = await f.lifecycle.begin(owner, 'terminal-signal', 'signal', input);
+    const params = {
+      sessionId: input.nativeSessionId,
+      parentExecutionContextId: prepared.executionContextId,
+      nativeChildId: 'profile-012345abcdef',
+      targetProfile: 'target-profile',
+      goal: 'Inspect the bounded evidence',
+      context: 'Parent-authored context',
+      background: true,
+    };
+
+    await expect(f.lifecycle.host('terminal-signal', {
+      method: 'session/delegate_profile',
+      params,
+    })).resolves.toMatchObject({
+      nativeChildId: 'profile-012345abcdef',
+      targetProfile: 'target-profile',
+      runId: 'child-run',
+    });
+    expect(f.delegateProfile).toHaveBeenCalledExactlyOnceWith({
+      projectId: owner.projectId,
+      deckId: owner.deckId,
+      deckRevision: 'saved-deck-revision',
+      conversationId: '',
+      parentRunId: prepared.runId,
+      sourceCardId: owner.cardId,
+      sourceRuntimeMode: 'delegate',
+      parentExecutionContextId: prepared.executionContextId,
+      profileTargets: [{
+        cardId: 'target-card',
+        cardRevisionId: 'target-revision',
+        title: 'Target Card',
+        profile: 'target-profile',
+        description: 'Authorized saved target',
+      }],
+    }, params);
+    expect(f.request.mock.calls.filter(([route]) => route === '/domain/runs/begin')).toHaveLength(1);
+  });
+
+  it('observes native Team completion through the initiating Card Gateway session', async () => {
+    const f = fixture();
+    const prepared = await f.lifecycle.begin(owner, 'terminal-signal', 'signal', input);
+    const nativeContext = {
+      contextId: 'native-child-context',
+      sessionId: input.nativeSessionId,
+      runId: 'native-child-run',
+    };
+    f.handleHostExecution.mockResolvedValue({
+      result: { executionContextId: nativeContext.contextId, runId: nativeContext.runId },
+      nativeContext,
+    });
+    const appendTeamResult = vi.fn(async () => undefined);
+    const params = {
+      sessionId: input.nativeSessionId,
+      parentExecutionContextId: prepared.executionContextId,
+      nativeChildId: 'native-team-child',
+      provider: 'openai-codex',
+      model: 'saved-model',
+    };
+
+    await expect(f.lifecycle.host(
+      'terminal-signal',
+      { method: 'session/create_execution_context', params },
+      appendTeamResult,
+    )).resolves.toEqual({
+      executionContextId: 'native-child-context',
+      runId: 'native-child-run',
+    });
+    expect(f.handleHostExecution).toHaveBeenCalledExactlyOnceWith({
+      method: 'session/create_execution_context', params,
+    });
+    expect(f.startTeamMonitor).toHaveBeenCalledExactlyOnceWith({
+      context: nativeContext,
+      appendRetryAttempts: 900,
+      appendTeamResult,
+    });
+    const delivery = {
+      sessionId: input.nativeSessionId,
+      taskId: 'native-team-task',
+      result: 'Measured Team result',
+      state: 'completed' as const,
+    };
+    const monitorArgs = f.startTeamMonitor.mock.calls[0]![0];
+    await monitorArgs.appendTeamResult(delivery);
+    expect(appendTeamResult).toHaveBeenCalledExactlyOnceWith(delivery);
+    expect(f.request.mock.calls.filter(([route]) => route === '/domain/runs/begin')).toHaveLength(1);
   });
 
   it('isolates two native terminals and refuses concurrency, cross-session finish, and model switches', async () => {

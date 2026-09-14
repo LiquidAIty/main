@@ -1,6 +1,6 @@
 /**
- * Frontend client for the persistent repo-owned Hermes Main session bridge.
- * The browser consumes backend SSE; the backend owns the ACP process.
+ * Frontend client for the saved Main Card's persistent Hermes Gateway session.
+ * The browser consumes backend SSE; the Card-owned Gateway owns the AIAgent.
  *
  * `streamSession` forwards backend-projected native events to `onEvent` and
  * resolves with the native completion text. Stable event IDs are delivered
@@ -22,11 +22,12 @@ const BASE = '/api/main/session';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
-export async function loadMainDriverStatus(signal?: AbortSignal): Promise<{
+export async function loadMainDriverStatus(projectId: string, signal?: AbortSignal): Promise<{
   ready: boolean;
   activeDriver: MainDriverSource | null;
 }> {
-  const res = await fetch(`${BASE}/driver`, { credentials: 'include', signal });
+  const params = new URLSearchParams({ projectId });
+  const res = await fetch(`${BASE}/driver?${params.toString()}`, { credentials: 'include', signal });
   const payload = await res.json().catch(() => null) as {
     ready?: unknown;
     activeDriver?: unknown;
