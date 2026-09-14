@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { mainChatProcess } from '../hermes/mainChatProcess';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import {
@@ -7,6 +7,7 @@ import {
 } from '../hermes/builderTerminal';
 import {
   contextAuthorityModeForDriver,
+  MainCliBridgeFailure,
   mainCliBridge,
   type MainCliBridgeEvent,
   type MainDriverSource,
@@ -60,6 +61,7 @@ import {
 
 const router = Router();
 export const mainRoutes = Router();
+export const internalMainMcpRoutes = Router();
 export const hermesRoutes = Router();
 
 const BUILDER_PROFILE = 'builder';
@@ -164,7 +166,6 @@ async function executePreparedMainCliRun(
       onEvent: () => undefined,
     }, run.prepared.hermesTransport);
     run.profileMaterialization = await materializeHermesProfileSelections(turnArgs);
-    const native = run.profileMaterialization.native;
     const projectedTurnArgs: HermesTurnArgs = {
       ...turnArgs,
       ...(run.profileMaterialization.effectiveSubagentModel
@@ -173,18 +174,6 @@ async function executePreparedMainCliRun(
       // The persistent native Main CLI reuses one MCP client identity while
       // each accepted Run still receives a newly signed Card-scoped bearer.
       sessionKey: `hermes-${delivery.bridge === mainCliBridge ? 'main' : 'builder'}-cli:${run.projectId}:${run.cardId}:${turnArgs.runtime.profile}`,
-      nativeProfileToolsets: Array.isArray(native?.toolsets)
-        ? native.toolsets
-          .filter((item: any) => item?.enabled === true)
-          .map((item: any) => String(item.name || '').trim())
-          .filter(Boolean)
-        : [],
-      nativeProfileMcpServerNames: Array.isArray(native?.mcp_servers)
-        ? native.mcp_servers
-          .filter((item: any) => item?.enabled === true)
-          .map((item: any) => String(item.name || '').trim())
-          .filter(Boolean)
-        : [],
     };
     const rootContext = registerHermesRootExecutionContext({
       sessionId: `${delivery.bridge === mainCliBridge ? 'main' : 'builder'}:${run.runId}`,
@@ -239,6 +228,16 @@ async function executePreparedMainCliRun(
       },
       onEvent,
     });
+    if (
+      !result.nativeSessionId
+      || result.effectiveProvider !== turnArgs.nativeProvider
+      || !result.providerApiMode
+      || (turnArgs.apiMode !== null && result.providerApiMode !== turnArgs.apiMode)
+      || (turnArgs.openaiRuntime === 'codex_app_server'
+        && (!result.codexThreadId || !result.codexTurnId))
+    ) {
+      throw new Error('main_cli_native_transport_evidence_invalid');
+    }
     await finishHermesExecutionContext({
       contextId: rootContext.contextId,
       state: 'completed',
@@ -250,6 +249,7 @@ async function executePreparedMainCliRun(
         state: 'failed',
       }).catch(() => undefined);
     }
+    const bridgeEvent = error instanceof MainCliBridgeFailure ? error.event : null;
     const rawReason = error instanceof Error ? error.message : 'main_cli_turn_failed';
     const reason = rawReason.includes('cancel')
       ? 'main_cli_turn_cancelled'
@@ -262,6 +262,11 @@ async function executePreparedMainCliRun(
       body: JSON.stringify({
         runId: run.runId,
         state: reason === 'main_cli_turn_cancelled' ? 'cancelled' : 'failed',
+        hermesSessionRef: bridgeEvent?.nativeSessionId || null,
+        providerThreadRef: bridgeEvent?.codexThreadId || null,
+        providerTurnRef: bridgeEvent?.codexTurnId || null,
+        effectiveProvider: bridgeEvent?.effectiveProvider || null,
+        providerApiMode: bridgeEvent?.providerApiMode || null,
         errorSummary: reason,
       }),
     }).catch(() => undefined);
@@ -275,8 +280,11 @@ async function executePreparedMainCliRun(
       body: JSON.stringify({
         runId: run.runId,
         state: 'completed',
-        providerThreadRef: result.nativeSessionId || null,
-        providerTurnRef: result.nativeTurnId || null,
+        hermesSessionRef: result.nativeSessionId,
+        providerThreadRef: result.codexThreadId,
+        providerTurnRef: result.codexTurnId,
+        effectiveProvider: result.effectiveProvider,
+        providerApiMode: result.providerApiMode,
         finalResult: result.finalText,
         ...(result.usage ? {
           providerInputTokens: result.usage.providerInputTokens,
@@ -308,7 +316,17 @@ async function executePreparedMainCliRun(
 // MCP SDK, so they are safe in the Nx serve graph. The separate MCP host
 // process bridges MCP tool/resource calls to these endpoints without owning
 // another domain store.
-mainRoutes.post('/context', async (req, res) => {
+function authorizeInternalMainMcp(req: Request, res: Response, next: NextFunction) {
+  if (!internalMcpBridgeAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
+    return res.status(401).json({
+      ok: false,
+      error: 'internal_mcp_bridge_authorization_required',
+    });
+  }
+  return next();
+}
+
+internalMainMcpRoutes.post('/context', authorizeInternalMainMcp, async (req, res) => {
   const issuer = String(req.body?.issuer || '').trim();
   const subject = String(req.body?.subject || '').trim();
   if (!issuer || !subject) {
@@ -343,10 +361,7 @@ mainRoutes.post('/context', async (req, res) => {
   }
 });
 
-mainRoutes.post('/chat', async (req, res) => {
-  if (!internalMcpBridgeAuthorized(req.headers['x-liquidaity-internal-mcp-secret'])) {
-    return res.status(401).json({ ok: false, error: 'internal_mcp_bridge_authorization_required' });
-  }
+internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || '').trim();
   const conversationId = String(req.body?.conversationId || '').trim();
@@ -932,8 +947,15 @@ router.post('/run', async (req, res) => {
         }, { bridge: session.delivery.bridge, finishRun: false });
         output = response.finalText;
         nativeCliUsage = response.usage;
-        transport = { threadId: response.nativeSessionId, turnId: response.nativeTurnId,
-          terminalSessionId: info.id, runtimeSource: 'repository_hermes_cli' };
+        transport = {
+          threadId: response.codexThreadId,
+          turnId: response.codexTurnId,
+          hermesSessionId: response.nativeSessionId,
+          effectiveProvider: response.effectiveProvider,
+          providerApiMode: response.providerApiMode,
+          terminalSessionId: info.id,
+          runtimeSource: 'repository_hermes_cli',
+        };
       } else if (prepared.runtimeOwner === 'hermes') {
         hermesHandle = await startPreparedHermesTransport({
           prepared,
@@ -971,8 +993,13 @@ router.post('/run', async (req, res) => {
       }
       const scriptToolExecution = readCardScriptToolExecution(nativeEvents);
       const finished = await finishRun('completed', {
-        providerThreadRef: hermesHandle?.runtime?.sessionId || transport?.threadId || null,
+        hermesSessionRef: hermesHandle?.runtime?.sessionId
+          || transport?.hermesSessionId
+          || null,
+        providerThreadRef: transport?.threadId || null,
         providerTurnRef: transport?.turnId || null,
+        effectiveProvider: transport?.effectiveProvider || null,
+        providerApiMode: transport?.providerApiMode || null,
         providerInputTokens,
         providerOutputTokens,
         totalCostUsd,
@@ -1052,7 +1079,7 @@ router.post('/run', async (req, res) => {
       const scriptToolExecution = readCardScriptToolExecution(nativeEvents);
       const scriptConfigured = prepared.hermesTransport?.request?.scriptPresentation?.mode === 'script';
       await finishRun(cancelled ? 'cancelled' : 'failed', {
-        providerThreadRef: hermesHandle?.runtime?.sessionId || null,
+        hermesSessionRef: hermesHandle?.runtime?.sessionId || null,
         nativePhase: nativeFailure?.runtimeEvidence?.stage || (cancelled ? 'cancelled' : 'failed'),
         errorCode: nativeFailure?.runtimeEvidence?.failure?.failure_code || (cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed'),
         errorSummary: message,

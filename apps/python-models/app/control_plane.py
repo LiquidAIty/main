@@ -45,6 +45,7 @@ _CARD_CREATE_KEYS = {
     "prompt",
     "runtime",
     "model",
+    "openaiRuntime",
     "subagentModel",
     "tools",
     "nativeTools",
@@ -70,6 +71,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "modelKey",
     "provider",
     "providerModelId",
+    "openaiRuntime",
     "subagentModel",
     "reasoningEffort",
     "temperature",
@@ -125,6 +127,7 @@ def card_tool_schema(name: str) -> dict[str, Any]:
                         "properties": {key: text for key in sorted(_CARD_CREATE_RUNTIME_KEYS)},
                         "required": ["kind", "mode"]},
             "model": model, "subagentModel": subagent,
+            "openaiRuntime": {"type": ["string", "null"], "enum": [None, "codex_app_server"]},
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
             "position": {"type": "object", "additionalProperties": False,
                          "properties": {key: {"type": "number"} for key in ("x", "y")}},
@@ -136,6 +139,7 @@ def card_tool_schema(name: str) -> dict[str, Any]:
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
             **{key: text for key in ("accessMode", "modelKey", "provider", "providerModelId")},
             "subagentModel": subagent,
+            "openaiRuntime": {"type": ["string", "null"], "enum": [None, "codex_app_server"]},
             "reasoningEffort": {"type": ["string", "null"], "enum": [None, *sorted(_REASONING_EFFORTS)]},
             "temperature": {"type": ["number", "null"]},
             "maxTokens": {"type": ["integer", "null"], "minimum": 1},
@@ -147,7 +151,8 @@ def card_tool_schema(name: str) -> dict[str, Any]:
         required = ["projectId", "deckId", "cardId", "expectedRevision", "expectedCardRevisionId", "updates"]
     else:
         raise ControlPlaneError("card_tool_unknown")
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+    schema = {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+    return schema
 
 
 def _subagent_model_selection(value: Any) -> dict[str, str]:
@@ -161,7 +166,45 @@ def _subagent_model_selection(value: Any) -> dict[str, str]:
         raise ControlPlaneError("card_subagent_model_invalid")
     if normalized["accessMode"] not in _ACCESS_MODES:
         raise ControlPlaneError("card_subagent_model_access_mode_invalid")
+    _validate_card_provider_selection(
+        normalized["provider"], normalized["accessMode"]
+    )
     return normalized
+
+
+def _validate_card_provider_selection(
+    provider: Any,
+    access_mode: Any,
+) -> tuple[str, str]:
+    from app.python_models.card_domain import CardDomainError, validate_saved_provider_selection
+
+    try:
+        return validate_saved_provider_selection(provider, access_mode)
+    except CardDomainError as error:
+        raise ControlPlaneError(str(error)) from error
+
+
+def _validate_card_runtime_authority(
+    *,
+    provider: Any,
+    access_mode: Any,
+    openai_runtime: Any,
+    hermes: bool,
+) -> dict[str, Any]:
+    from app.python_models.card_domain import (
+        CardDomainError,
+        validate_saved_hermes_runtime_authority,
+    )
+
+    try:
+        return validate_saved_hermes_runtime_authority(
+            provider,
+            access_mode,
+            openai_runtime,
+            hermes=hermes,
+        )
+    except CardDomainError as error:
+        raise ControlPlaneError(str(error)) from error
 
 
 def _backend_json(method: str, path: str, payload: dict | None = None) -> dict[str, Any]:
@@ -506,9 +549,18 @@ async def card_create(
         )
     provider = str(model.get("provider") or "").strip()
     model_key = str(model.get("modelKey") or "").strip()
+    provider_model_id = str(model.get("providerModelId") or model_key).strip()
     access_mode = str(model.get("accessMode") or "").strip()
     if not provider or not model_key or not access_mode:
         raise ControlPlaneError("card_create_model_configuration_required")
+    authority = _validate_card_runtime_authority(
+        provider=provider,
+        access_mode=access_mode,
+        openai_runtime=args.get("openaiRuntime"),
+        hermes=runtime_kind == "hermes",
+    )
+    provider = authority["provider"]
+    access_mode = authority["accessMode"]
     reasoning_effort = model.get("reasoningEffort")
     if reasoning_effort is not None and reasoning_effort not in _REASONING_EFFORTS:
         raise ControlPlaneError("card_create_reasoning_effort_invalid")
@@ -597,6 +649,9 @@ async def card_create(
             "accessMode": access_mode,
             **normalized_selections,
         }
+        if runtime_kind == "hermes":
+            if authority.get("openaiRuntime") is not None:
+                runtime_options["openaiRuntime"] = authority["openaiRuntime"]
         if subagent_model is not None:
             runtime_options["subagentModel"] = subagent_model
         for key in ("providerModelId", "reasoningEffort"):
@@ -764,6 +819,15 @@ async def card_update_configuration(
             raise ControlPlaneError("card_revision_conflict")
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")
+        current_options = card.get("runtimeOptions")
+        if not isinstance(current_options, dict):
+            current_options = {}
+        _validate_card_runtime_authority(
+            provider=updates.get("provider", current_options.get("provider") or card.get("provider")),
+            access_mode=updates.get("accessMode", current_options.get("accessMode")),
+            openai_runtime=updates.get("openaiRuntime", current_options.get("openaiRuntime")),
+            hermes=(card.get("runtime") or {}).get("kind") == "hermes",
+        )
         for key in _UPDATABLE_TOP_FIELDS:
             if key in updates:
                 card[key] = str(updates[key])

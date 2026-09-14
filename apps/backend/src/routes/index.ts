@@ -2,7 +2,11 @@ import { Router } from 'express';
 import health from './health.routes';
 import auth from './auth.routes';
 import { authMiddleware } from '../middleware/auth';
-import cardRuntime, { mainRoutes, hermesRoutes } from './cardRuntime.routes';
+import cardRuntime, {
+  hermesRoutes,
+  internalMainMcpRoutes,
+  mainRoutes,
+} from './cardRuntime.routes';
 import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
 import knowgraphRoutes from './knowgraph.routes';
@@ -33,6 +37,9 @@ router.use('/health', health);
 router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
 router.use('/internal/main-cli', internalMainCliRoutes);
 router.use('/internal/builder-cli/:sessionId', builderCliRoutes);
+// The official Python MCP host calls these process-secret endpoints. Mount the
+// bridge before browser auth so it cannot be converted into an anonymous user.
+router.use('/main', internalMainMcpRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor, cardRuntime);
 router.use('/main', authMiddleware, mainRoutes);

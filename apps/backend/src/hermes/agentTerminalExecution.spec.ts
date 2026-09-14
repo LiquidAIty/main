@@ -5,6 +5,8 @@ import { verifyInternalMcpBearerForTest } from '../services/mcp/internalMcpAuth'
 
 const owner = { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'signal' };
 const input = { message: 'Real user task', nativeSessionId: 'native-signal', model: 'saved-model', provider: 'openai-codex' };
+const authorityFingerprint = 'a'.repeat(64);
+const cardRevisionSha256 = 'b'.repeat(64);
 const secretBefore = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
 beforeEach(() => { process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'a'.repeat(64); clearHermesExecutionContextsForTest(); });
 afterEach(() => { if (secretBefore === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
@@ -14,14 +16,16 @@ function fixture() {
   const request = vi.fn(async (route: string, init?: RequestInit): Promise<any> => {
     const body = JSON.parse(String(init?.body));
     if (route.endsWith('/finish')) return { ok: true };
-    return { runId: body.runId, cardRevisionId: 'saved-revision', runtimeOwner: 'hermes',
+    return { runId: body.runId, cardRevisionId: 'saved-revision', cardRevisionSha256,
+      executionAuthorityFingerprint: authorityFingerprint, runtimeOwner: 'hermes',
       deckRevision: 'saved-deck-revision', hermesTransport: {
         cardIdentity: { cardId: body.cardId, title: body.cardId },
         request: { runtime: { kind: 'hermes', mode: 'delegate', profile: body.cardId },
           provider: { provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'saved-model', providerModelId: 'saved-model' },
           systemPrompt: 'Saved instructions', message: 'Reloaded canonical IDF request',
           enabledTools: ['worldsignals.package'], presentedTools: ['worldsignals.package'],
-          nativeTools: ['memory'], mcpConnectionIds: [], runtimeOptions: {} },
+          nativeTools: ['memory'], mcpConnectionIds: [],
+          runtimeOptions: { executionAuthorityFingerprint: authorityFingerprint } },
       } };
   });
   const catalog = vi.fn(async () => []);
@@ -55,9 +59,12 @@ describe('native Agent CLI canonical Run binding', () => {
       expect(() => resolveHermesExecutionContext({ contextId: prepared.executionContextId, principal: { ...principal, ...change } })).toThrow('principal_mismatch');
     }
     await f.lifecycle.finish('terminal-signal', { executionContextId: prepared.executionContextId,
-      result: { completed: true, final_response: 'Actual native response' } });
+      result: { completed: true, final_response: 'Actual native response',
+        effective_provider: 'openai-codex', provider_api_mode: 'codex_responses' } });
     expect(JSON.parse(String(f.request.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
-      runId: sent.runId, state: 'completed', finalResult: 'Actual native response', providerThreadRef: 'native-signal' });
+      runId: sent.runId, state: 'completed', finalResult: 'Actual native response',
+      hermesSessionRef: 'native-signal', effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_responses' });
     expect(() => resolveHermesExecutionContext({ contextId: prepared.executionContextId, principal })).toThrow('closed');
   });
 
@@ -100,12 +107,14 @@ describe('native Agent CLI canonical Run binding', () => {
       .rejects.toThrow('host_request_invalid');
   });
 
-  it('revokes a finished turn even if persisting its receipt fails', async () => {
+  it('revokes a finished turn even if persisting its Run result fails', async () => {
     const f = fixture();
     const prepared = await f.lifecycle.begin(owner, 'terminal-a', 'signal', input);
     f.request.mockRejectedValueOnce(new Error('receipt_store_unavailable'));
     await expect(f.lifecycle.finish('terminal-a', { executionContextId: prepared.executionContextId,
-      result: { completed: true, final_response: 'native result' } })).rejects.toThrow('receipt_store_unavailable');
+      result: { completed: true, final_response: 'native result',
+        effective_provider: 'openai-codex', provider_api_mode: 'codex_responses' } }))
+      .rejects.toThrow('receipt_store_unavailable');
     await expect(f.lifecycle.host('terminal-a', { method: 'session/create_execution_context', params: {} }))
       .rejects.toThrow('host_request_invalid');
     const next = await f.lifecycle.begin(owner, 'terminal-a', 'signal', input);

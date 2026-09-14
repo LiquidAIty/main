@@ -5,6 +5,7 @@ import { spawn as spawnPty, type IPty } from 'node-pty';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { agentTerminalExecution } from './agentTerminalExecution';
+import { resolveSavedHermesProvider } from './providerSelection';
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
 export type AgentTerminalState = {
@@ -61,16 +62,17 @@ export function prepareAgentTerminal(
   if (!existsSync(file)) throw new Error('agent_terminal_native_executable_missing');
   const profileHome = path.join(root, 'Hermes', '.hermes', 'profiles', profile);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) throw new Error('agent_terminal_profile_missing');
+  const options = card.runtimeOptions as Record<string, unknown> | undefined;
+  const selection = resolveSavedHermesProvider({
+    provider: options?.provider,
+    accessMode: options?.accessMode,
+    modelKey: options?.modelKey,
+    providerModelId: options?.providerModelId,
+    openaiRuntime: options?.openaiRuntime,
+  });
   const cwd = resolveProductChatWorkingDirectory(JSON.stringify([
     owner.projectId, owner.deckId, card.id, profile,
   ]));
-  const options = card.runtimeOptions as Record<string, unknown> | undefined;
-  const model = options?.providerModelId || options?.modelKey;
-  const provider = options?.provider === 'openai' && options?.accessMode === 'chatgpt-account'
-    ? 'openai-codex' : options?.provider;
-  if (typeof model !== 'string' || !model || typeof provider !== 'string' || !provider) {
-    throw new Error('agent_terminal_saved_model_missing');
-  }
   if (typeof card.prompt !== 'string' || !card.prompt.trim()) throw new Error('agent_terminal_saved_prompt_missing');
   // OS/process plumbing is inherited; another runtime's selectors and bearer are not.
   const env: Record<string, string> = {};
@@ -88,8 +90,8 @@ export function prepareAgentTerminal(
       cardId: card.id, profile, profileHome, toolsets: [], nativeTools: [], mcpTools: [],
     }),
   });
-  const args = ['-p', profile, 'chat', '--cli', '--in', cwd, '--model', model,
-    '--provider', provider, '--toolsets', 'agent-terminal'];
+  const args = ['-p', profile, 'chat', '--cli', '--in', cwd, '--model', selection.model,
+    '--provider', selection.provider, '--toolsets', 'agent-terminal'];
   if (options?.reasoningEffort) args.push('--reasoning', String(options.reasoningEffort));
   if (options?.maxTurns != null) args.push('--max-turns', String(options.maxTurns));
   const skills = list(options?.skills);

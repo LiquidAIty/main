@@ -173,16 +173,27 @@ def register_agent_terminal(ctx) -> None:
 
     def finish(*, prepared, result, error):
         # The native result owns completion/failure. Do not synthesize output.
-        reports = list(observation.get("usage", {}).values())
-        complete = bool(reports) and all(report is not None for report in reports)
-        usage = {target: sum(report[source] for report in reports) if complete else None
-                 for target, source in (("providerInputTokens", "input_tokens"),
-                     ("providerOutputTokens", "output_tokens"), ("providerCachedTokens", "cache_read_tokens"),
-                     ("providerReasoningTokens", "reasoning_tokens"))}
+        usage_fields = (("providerInputTokens", "input_tokens"),
+            ("providerOutputTokens", "output_tokens"),
+            ("providerCachedTokens", "cache_read_tokens"),
+            ("providerReasoningTokens", "reasoning_tokens"))
+        if isinstance(result, dict) and result.get("provider_api_mode") == "codex_app_server":
+            usage = {target: result[source]
+                     if type(result.get(source)) is int and result[source] >= 0 else None
+                     for target, source in usage_fields}
+        else:
+            reports = list(observation.get("usage", {}).values())
+            complete = bool(reports) and all(report is not None for report in reports)
+            usage = {target: sum(report[source] for report in reports) if complete else None
+                     for target, source in usage_fields}
         try:
             request("finish", {"executionContextId": prepared["executionContextId"],
-                "result": {key: result[key] for key in ("final_response", "completed", "failed", "error")
-                           if key in result} if isinstance(result, dict) else None,
+                "result": {key: result[key] for key in (
+                    "final_response", "completed", "failed", "error",
+                    "codex_thread_id", "codex_turn_id", "effective_provider",
+                    "provider_api_mode",
+                )
+                            if key in result} if isinstance(result, dict) else None,
                 "usage": usage, "scriptExecution": observation.get("script"), "error": error})
         finally:
             observation.clear()

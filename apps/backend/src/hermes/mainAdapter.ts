@@ -29,6 +29,9 @@ import {
   runHermesProfileDelegation,
   type HermesProfileTarget,
 } from './profileDelegation';
+import {
+  resolveSavedHermesProvider,
+} from './providerSelection';
 
 // Hermes itself makes this operating-manual skill non-disableable. It is a
 // native runtime prerequisite, not an additional saved Card capability.
@@ -55,6 +58,9 @@ export type HermesSessionEvent =
 
 export type HermesRuntimeConfig = {
   cardId: string;
+  cardRevisionId: string;
+  cardRevisionSha256: string;
+  executionAuthorityFingerprint: string;
   title: string;
   runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban'; profile: string };
   prompt: string;
@@ -71,6 +77,9 @@ export type HermesRuntimeConfig = {
     fallbackReason: string | null;
   };
   accessMode: CardAccessMode;
+  nativeProvider: string;
+  apiMode: 'codex_app_server' | null;
+  openaiRuntime: 'codex_app_server' | null;
   /** Model-visible tools for this turn. */
   tools: string[];
   /** Complete saved authorization ceiling; never inferred from presentation. */
@@ -82,8 +91,6 @@ export type HermesRuntimeConfig = {
   /** Explicit non-empty saved Card skill grant to materialize into the native profile. */
   skills?: string[];
   toolsets?: string[];
-  nativeProfileToolsets?: string[];
-  nativeProfileMcpServerNames?: string[];
   script?: {
     version: number;
     source: string;
@@ -140,7 +147,7 @@ export type HermesTurnArgs = HermesRuntimeConfig & {
   parentRunId: string;
   deckRevision?: string;
   message: string;
-  workingDirectory?: string;
+  workingDirectory: string;
   terminalOwner?: import('./childExecutionContext').HermesExecutionContext['terminalOwner'];
 };
 
@@ -203,6 +210,8 @@ export type HermesTurnHandle = {
       turnId: string | null;
       authMode: string | null;
       planType: string | null;
+      effectiveProvider?: string | null;
+      providerApiMode?: string | null;
       nativeTaskId?: string;
       nativeRunId?: string | number | null;
       nativeStatus?: string;
@@ -425,7 +434,7 @@ export function buildHermesHostSessionProjection(
     maxToolCalls: args.script.maxToolCalls,
     maxOutputBytes: args.script.maxOutputBytes,
   } : null;
-  const rawOfficialTools = (hostScript || args.terminalOwner) && rootOfficial
+  const rawOfficialTools = rootOfficial
     ? args.tools
         .filter((name) => name !== 'web_search')
         .map((canonicalId) => hermesMcpToolName(officialServerName, canonicalId))
@@ -445,9 +454,7 @@ export function buildHermesHostSessionProjection(
             // all_healthy policy applies to the exact LiquidAIty MCP catalog,
             // whose read/write effects are gated during IDF materialization.
             ...(args.toolsets || []),
-            ...(args.nativeProfileToolsets || []),
-            ...(args.nativeProfileMcpServerNames || []).map((name) => `mcp-${name}`),
-            ...(!hostScript ? mcpToolsetNames(args.terminalOwner ? rootSaved : rootServers) : []),
+            ...(!hostScript ? mcpToolsetNames(rootSaved) : []),
           ]),
           enabledTools: uniqueStrings([
             ...(args.nativeTools || []),
@@ -465,6 +472,20 @@ export function buildHermesHostSessionProjection(
           } : {}),
           hostSessionKey: args.sessionKey,
           systemPrompt: args.prompt,
+          projectId: args.projectId,
+          deckId: args.deckId,
+          cardId: args.cardId,
+          cardRevisionId: args.cardRevisionId,
+          cardRevisionSha256: args.cardRevisionSha256,
+          runtimeProfile: args.runtime.profile,
+          executionAuthorityFingerprint: args.executionAuthorityFingerprint,
+          savedProvider: args.provider,
+          accessMode: args.accessMode,
+          effectiveProvider: args.nativeProvider,
+          model: args.providerModelId,
+          providerApiMode: args.apiMode,
+          openaiRuntime: args.openaiRuntime,
+          workingDirectory: args.workingDirectory,
           ...(hostScript ? { hostScript } : {}),
           ...(executionContextId ? {
             executionContextId,
@@ -512,6 +533,29 @@ export function resolveHermesTurnArgs(
     throw new Error(`prepared_hermes_fields_retired:${retiredFields.join(',')}`);
   }
   const savedSubagentModel = readSavedSubagentModel(input.runtimeOptions?.subagentModel);
+  const providerSelection = resolveSavedHermesProvider({
+    provider: provider?.provider,
+    accessMode: provider?.accessMode,
+    modelKey: provider?.modelKey,
+    providerModelId: provider?.providerModelId,
+    openaiRuntime: input.runtimeOptions?.openaiRuntime,
+  });
+  const cardId = String(identity.cardId || '').trim();
+  const cardRevisionId = String(args.prepared?.cardRevisionId || '').trim();
+  const cardRevisionSha256 = String(args.prepared?.cardRevisionSha256 || '').trim();
+  const executionAuthorityFingerprint = String(
+    args.prepared?.executionAuthorityFingerprint || '',
+  ).trim();
+  if (
+    !cardId
+    || !cardRevisionId
+    || !/^[a-f0-9]{64}$/.test(cardRevisionSha256)
+    || !/^[a-f0-9]{64}$/.test(executionAuthorityFingerprint)
+    || String(input.runtimeOptions?.executionAuthorityFingerprint || '')
+      !== executionAuthorityFingerprint
+  ) {
+    throw new Error('prepared_hermes_execution_authority_invalid');
+  }
   const scriptState = input.runtimeOptions?.script;
   const scriptCompiled = scriptState?.compiled;
   const scriptPresentation = input.scriptPresentation;
@@ -556,18 +600,24 @@ export function resolveHermesTurnArgs(
       }
     : undefined;
   return {
-    cardId: String(identity.cardId || ''),
+    cardId,
+    cardRevisionId,
+    cardRevisionSha256,
+    executionAuthorityFingerprint,
     title: String(identity.title || ''),
     runtime,
     prompt: String(input.systemPrompt || ''),
-    provider: String(provider?.provider || ''),
+    provider: providerSelection.savedProvider,
     modelKey: String(provider?.modelKey || ''),
-    providerModelId: String(provider?.providerModelId || ''),
+    providerModelId: providerSelection.model,
     ...(savedSubagentModel
       ? { subagentModel: savedSubagentModel }
       : {}),
     delegationRole: input.runtimeOptions?.delegationRole || 'off',
-    accessMode: provider?.accessMode,
+    accessMode: providerSelection.accessMode,
+    nativeProvider: providerSelection.provider,
+    apiMode: providerSelection.apiMode,
+    openaiRuntime: providerSelection.openaiRuntime,
     tools: Array.isArray(input.presentedTools)
       ? input.presentedTools
       : Array.isArray(input.enabledTools) ? input.enabledTools : [],
@@ -592,7 +642,7 @@ export function resolveHermesTurnArgs(
     deckRevision: String(args.prepared?.deckRevision || ''),
     message: String(input.message || ''),
     workingDirectory: args.workingDirectory || resolveProductChatWorkingDirectory(JSON.stringify([
-      args.projectId, args.deckId, String(identity.cardId || ''), runtime.profile,
+      args.projectId, args.deckId, cardId, runtime.profile,
     ])),
   };
 }
@@ -607,6 +657,10 @@ export class AcpProcess {
   private readonly turns = new Map<string, ActiveTurn>();
   private readonly configuringSessions = new Set<string>();
   private readonly sessionByKey = new Map<string, string>();
+  private readonly sessionResolutionByKey = new Map<
+    string,
+    Promise<{ sessionId: string; reused: boolean }>
+  >();
   private readonly historyCollectors = new Map<string, {
     messages: HermesHistoryMessage[];
     events?: HermesSessionEvent[];
@@ -998,17 +1052,49 @@ export class AcpProcess {
     executionContextId: string,
   ): Promise<{ sessionId: string; reused: boolean }> {
     const existing = this.sessionByKey.get(args.sessionKey);
+    if (existing) return { sessionId: existing, reused: true };
+    const resolving = this.sessionResolutionByKey.get(args.sessionKey);
+    if (resolving) return resolving;
+    const resolution = this.resolveSessionOnce(args, executionContextId);
+    this.sessionResolutionByKey.set(args.sessionKey, resolution);
+    try {
+      return await resolution;
+    } finally {
+      if (this.sessionResolutionByKey.get(args.sessionKey) === resolution) {
+        this.sessionResolutionByKey.delete(args.sessionKey);
+      }
+    }
+  }
+
+  private async resolveSessionOnce(
+    args: HermesTurnArgs,
+    executionContextId: string,
+  ): Promise<{ sessionId: string; reused: boolean }> {
+    const existing = this.sessionByKey.get(args.sessionKey);
     const cwd = this.sessionCwd(args.sessionKey, args.workingDirectory);
     const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
       args,
       process.env,
       executionContextId,
     );
-    if (existing) {
-      return { sessionId: existing, reused: true };
+    if (existing) return { sessionId: existing, reused: true };
+    // Discover the durable owner by its stable Card session key. Filtering by
+    // the requested cwd here would hide a mismatched saved owner and turn
+    // corruption into a false "no session" followed by session/new. The full
+    // authority and cwd are validated by session/load before any resume.
+    const listed = await this.request('session/list', {
+      _meta: { hermes: { sessionConfig: { hostSessionKey: args.sessionKey } } },
+    });
+    if (!listed || typeof listed !== 'object' || !Array.isArray(listed.sessions)) {
+      throw new Error('hermes_acp_session_enumeration_invalid');
     }
-    const listed = await this.request('session/list', { cwd, _meta: sessionMeta });
-    const persisted = Array.isArray(listed?.sessions) ? listed.sessions[0]?.sessionId : null;
+    if (listed.sessions.length > 1) throw new Error('hermes_acp_session_ambiguous');
+    const persisted = listed.sessions.length === 1
+      ? String(listed.sessions[0]?.sessionId || '').trim()
+      : '';
+    if (listed.sessions.length === 1 && !persisted) {
+      throw new Error('hermes_acp_session_enumeration_invalid');
+    }
     if (persisted) {
       await this.request('session/load', {
         cwd,
@@ -1048,6 +1134,8 @@ export class AcpProcess {
       const selected = toNativeParentModel(args);
       await this.request('session/set_model', {
         sessionId, modelId: `${selected.provider}:${selected.model}`,
+        ...(selected.apiMode ? { apiMode: selected.apiMode } : {}),
+        openaiRuntime: selected.openaiRuntime,
       });
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
@@ -1235,6 +1323,8 @@ export class AcpProcess {
       const selected = toNativeParentModel(args);
       await this.request('session/set_model', {
         sessionId, modelId: `${selected.provider}:${selected.model}`,
+        ...(selected.apiMode ? { apiMode: selected.apiMode } : {}),
+        openaiRuntime: selected.openaiRuntime,
       });
       const { mcpServers, sessionMeta } = buildHermesHostSessionProjection(
         args,
@@ -1302,16 +1392,34 @@ export class AcpProcess {
       const finalText = requireHermesCompletionText(
         result?._meta?.hermes?.finalAssistantText,
       );
+      const codexThreadId = String(result?._meta?.hermes?.codexThreadId || '').trim();
+      const codexTurnId = String(result?._meta?.hermes?.codexTurnId || '').trim();
+      const effectiveProvider = String(
+        result?._meta?.hermes?.effectiveProvider || '',
+      ).trim();
+      const providerApiMode = String(
+        result?._meta?.hermes?.providerApiMode || '',
+      ).trim();
+      if (
+        effectiveProvider !== args.nativeProvider
+        || !providerApiMode
+        || (args.apiMode !== null && providerApiMode !== args.apiMode)
+        || (args.openaiRuntime === 'codex_app_server' && (!codexThreadId || !codexTurnId))
+      ) {
+        throw new Error('hermes_native_transport_evidence_invalid');
+      }
       rootTerminalState = 'completed';
       onEvent({ kind: 'done', fullText: finalText, usage });
       return {
         finalText,
         usage,
         transport: {
-          threadId: null,
-          turnId: null,
-          authMode: null,
+          threadId: codexThreadId,
+          turnId: codexTurnId,
+          authMode: args.accessMode,
           planType: null,
+          effectiveProvider,
+          providerApiMode,
         },
       };
     }).catch((error) => {
@@ -1401,31 +1509,42 @@ export type HermesProfileMaterialization = {
 type NativeParentModel = {
   provider: string;
   model: string;
+  apiMode: 'codex_app_server' | null;
+  openaiRuntime: 'codex_app_server' | 'auto';
 };
 
-type CreateNativeProfile = (
-  profile: string,
-  selection: NativeParentModel,
-) => Promise<any>;
+export type HermesProfileSelection = Pick<
+  HermesRuntimeConfig,
+  'runtime' | 'provider' | 'accessMode' | 'modelKey' | 'providerModelId'
+  | 'openaiRuntime' | 'skills' | 'subagentModel' | 'effectiveSubagentModel'
+>;
 
 type ConfigureNativeSkills = (
   profile: string,
   disabledSkills: string[],
 ) => Promise<any>;
 
-function toNativeParentModel(args: HermesRuntimeConfig): NativeParentModel {
+function toNativeParentModel(args: HermesProfileSelection): NativeParentModel {
+  const resolved = resolveSavedHermesProvider({
+    provider: args.provider,
+    accessMode: args.accessMode,
+    modelKey: args.modelKey,
+    providerModelId: args.providerModelId,
+    openaiRuntime: args.openaiRuntime,
+  });
   return {
-    provider: args.provider === 'openai' && args.accessMode === 'chatgpt-account'
-      ? 'openai-codex'
-      : args.provider,
-    model: args.providerModelId,
+    provider: resolved.provider,
+    model: resolved.model,
+    apiMode: resolved.apiMode,
+    openaiRuntime: resolved.profileOpenaiRuntime,
   };
 }
 
 function sameNativeParentModel(value: unknown, expected: NativeParentModel): boolean {
   const model = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return String(model.provider || '').trim() === expected.provider
-    && String(model.default || '').trim() === expected.model;
+    && String(model.default || '').trim() === expected.model
+    && String(model.openaiRuntime || '').trim() === expected.openaiRuntime;
 }
 
 function missingNativeProfile(error: unknown, profile: string): boolean {
@@ -1434,7 +1553,7 @@ function missingNativeProfile(error: unknown, profile: string): boolean {
 }
 
 export async function materializeHermesProfileSelections(
-  args: HermesRuntimeConfig,
+  args: HermesProfileSelection,
   readNativeProfile: (profile: string) => Promise<any> = (profile) => (
     requestHermesNative('profiles.describe', { name: profile })
   ),
@@ -1452,18 +1571,8 @@ export async function materializeHermesProfileSelections(
     name: profile,
     provider: selection.provider,
     model: selection.model,
+    openai_runtime: selection.openaiRuntime,
   }),
-  createNativeProfile: CreateNativeProfile = (profile, selection) => requestHermesNative(
-    'profiles.create',
-    {
-      name: profile,
-      description: 'Saved Card runtime profile',
-      provider: selection.provider,
-      model: selection.model,
-      mirror_credentials: true,
-      share_auth: true,
-    },
-  ),
   configureNativeSkills: ConfigureNativeSkills = (profile, disabledSkills) => requestHermesNative(
     'profiles.configure',
     { name: profile, disabled_skills: disabledSkills },
@@ -1476,11 +1585,7 @@ export async function materializeHermesProfileSelections(
     native = await readNativeProfile(profile);
   } catch (error) {
     if (!missingNativeProfile(error, profile)) throw error;
-    const created = await createNativeProfile(profile, expectedParent);
-    if (created?.ok !== true || String(created?.name || '').trim() !== profile) {
-      throw new Error(`hermes_native_profile_create_failed:${profile}`);
-    }
-    native = await readNativeProfile(profile);
+    throw new Error(`hermes_native_profile_missing:${profile}`);
   }
   if (!native || String(native.name || '').trim().toLowerCase() !== profile.toLowerCase()) {
     throw new Error(`hermes_native_profile_readback_mismatch:${profile}`);
@@ -1501,7 +1606,7 @@ export async function materializeHermesProfileSelections(
   const selectedSkills = Array.isArray(args.skills)
     ? [...new Set(args.skills.map((name) => String(name || '').trim()).filter(Boolean))]
     : [];
-  if (selectedSkills.length > 0) {
+  {
     const installedSkills = Array.isArray(native.skills)
       ? native.skills
         .map((skill: any) => String(skill?.name || '').trim())
@@ -1523,7 +1628,9 @@ export async function materializeHermesProfileSelections(
         .map((skill: any) => String(skill?.name || '').trim().toLowerCase())
         .filter(Boolean),
     );
-    const disabledSkills = installedSkills.filter((name: string) => !selectedKeys.has(name.toLowerCase()));
+    const disabledSkills = installedSkills.filter(
+      (name: string) => !expectedEnabledKeys.has(name.toLowerCase()),
+    );
     const selectionMatches = enabledKeys.size === expectedEnabledKeys.size
       && [...expectedEnabledKeys].every((name) => enabledKeys.has(name));
     if (!selectionMatches) {
@@ -1600,18 +1707,8 @@ export async function startHermesTurnWithOnePrePromptRecovery(
     name: profile,
     provider: selection.provider,
     model: selection.model,
+    openai_runtime: selection.openaiRuntime,
   }),
-  createNativeProfile: CreateNativeProfile = (profile, selection) => requestHermesNative(
-    'profiles.create',
-    {
-      name: profile,
-      description: 'Saved Card runtime profile',
-      provider: selection.provider,
-      model: selection.model,
-      mirror_credentials: true,
-      share_auth: true,
-    },
-  ),
   configureNativeSkills: ConfigureNativeSkills = (profile, disabledSkills) => requestHermesNative(
     'profiles.configure',
     { name: profile, disabled_skills: disabledSkills },
@@ -1623,25 +1720,12 @@ export async function startHermesTurnWithOnePrePromptRecovery(
     readNativeProfile,
     configureNativeSubagentModel,
     configureNativeParentModel,
-    createNativeProfile,
     configureNativeSkills,
   );
-  const { native, effectiveSubagentModel } = materialized;
+  const { effectiveSubagentModel } = materialized;
   const nativeArgs: HermesTurnArgs = {
     ...args,
     ...(effectiveSubagentModel ? { effectiveSubagentModel } : {}),
-    nativeProfileToolsets: Array.isArray(native.toolsets)
-      ? native.toolsets
-        .filter((item: any) => item?.enabled === true)
-        .map((item: any) => String(item.name || '').trim())
-        .filter(Boolean)
-      : [],
-    nativeProfileMcpServerNames: Array.isArray(native.mcp_servers)
-      ? native.mcp_servers
-        .filter((item: any) => item?.enabled === true)
-        .map((item: any) => String(item.name || '').trim())
-        .filter(Boolean)
-      : [],
   };
   try {
     return await acquireProcess(profile).startTurn(nativeArgs, onEvent);

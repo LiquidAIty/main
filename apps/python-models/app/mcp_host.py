@@ -2046,7 +2046,7 @@ _BACKEND_ROUTES = {
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path == "external_main_chat" and INTERNAL_MCP_SECRET:
+    if path in {"external_main_context", "external_main_chat"} and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
     request = Request(
         f"{BACKEND}{_BACKEND_ROUTES[path]}",
@@ -2214,7 +2214,14 @@ class Auth0TokenVerifier:
             subject = str(claims.get("sub") or "").strip()
             if not subject:
                 return None
-            context = self._principal_context(subject)
+            # Project context is optional enrichment after the OAuth/JWT
+            # contract has already been verified. A transient backend lookup
+            # failure must not turn a valid access token into an invalid one;
+            # context-dependent tools fail closed when no binding is present.
+            try:
+                context = self._principal_context(subject)
+            except Exception:
+                context = None
             access_token = AccessToken(
                 token=token,
                 client_id=client_id,

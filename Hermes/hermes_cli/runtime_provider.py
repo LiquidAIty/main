@@ -1751,7 +1751,12 @@ def _resolve_explicit_runtime(
         base_url = explicit_base_url or DEFAULT_CODEX_BASE_URL
         api_key = explicit_api_key
         last_refresh = None
-        if not api_key:
+        api_mode = _maybe_apply_codex_app_server_runtime(
+            provider="openai-codex",
+            api_mode="codex_responses",
+            model_cfg=model_cfg,
+        )
+        if not api_key and api_mode != "codex_app_server":
             creds = resolve_codex_runtime_credentials()
             api_key = creds.get("api_key", "")
             last_refresh = creds.get("last_refresh")
@@ -1759,7 +1764,7 @@ def _resolve_explicit_runtime(
                 base_url = creds.get("base_url", "").rstrip("/") or base_url
         return {
             "provider": "openai-codex",
-            "api_mode": "codex_responses",
+            "api_mode": api_mode,
             "base_url": base_url,
             "api_key": api_key,
             "source": "explicit",
@@ -1866,6 +1871,12 @@ def _resolve_explicit_runtime(
 
         if provider == "actual" and not api_key and is_actual_local_base_url(base_url):
             api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
+
+        api_mode = _maybe_apply_codex_app_server_runtime(
+            provider=provider,
+            api_mode=api_mode,
+            model_cfg=model_cfg,
+        )
 
         return {
             "provider": provider,
@@ -2195,11 +2206,25 @@ def resolve_runtime_provider(
                         "falling through to next provider.")
 
     if provider == "openai-codex":
+        api_mode = _maybe_apply_codex_app_server_runtime(
+            provider="openai-codex",
+            api_mode="codex_responses",
+            model_cfg=model_cfg,
+        )
+        if api_mode == "codex_app_server":
+            return {
+                "provider": "openai-codex",
+                "api_mode": api_mode,
+                "base_url": "",
+                "api_key": "",
+                "source": "codex-app-server-profile",
+                "requested_provider": requested_provider,
+            }
         try:
             creds = resolve_codex_runtime_credentials()
             return {
                 "provider": "openai-codex",
-                "api_mode": "codex_responses",
+                "api_mode": api_mode,
                 "base_url": creds.get("base_url", "").rstrip("/"),
                 "api_key": creds.get("api_key", ""),
                 "source": creds.get("source", "hermes-auth-store"),
@@ -2536,6 +2561,11 @@ def resolve_runtime_provider(
         api_key = creds.get("api_key", "")
         if provider == "actual" and not api_key and is_actual_local_base_url(base_url):
             api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
+        api_mode = _maybe_apply_codex_app_server_runtime(
+            provider=provider,
+            api_mode=api_mode,
+            model_cfg=model_cfg,
+        )
         return {
             "provider": provider,
             "api_mode": api_mode,

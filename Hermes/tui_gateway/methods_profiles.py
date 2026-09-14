@@ -464,6 +464,16 @@ def _(rid, params: dict) -> dict:
 
     model = str(params.get("model") or "").strip()
     provider = str(params.get("provider") or "").strip()
+    raw_openai_runtime = params.get("openai_runtime")
+    openai_runtime = (
+        str(raw_openai_runtime).strip().lower()
+        if raw_openai_runtime is not None
+        else None
+    )
+    if openai_runtime not in {None, "auto", "codex_app_server"}:
+        return _err(rid, 4062, "profile_openai_runtime_invalid")
+    if openai_runtime is not None and not (model and provider):
+        return _err(rid, 4062, "profile_openai_runtime_requires_model")
     model_set = False
 
     def _mirror_voice_sections() -> bool:
@@ -525,7 +535,12 @@ def _(rid, params: dict) -> dict:
         try:
             from hermes_cli.web_routers.profiles import _write_profile_model
 
-            _write_profile_model(path, provider, model)
+            _write_profile_model(
+                path,
+                provider,
+                model,
+                openai_runtime=openai_runtime,
+            )
             model_set = True
         except Exception:
             pass
@@ -1000,6 +1015,7 @@ def _(rid, params: dict) -> dict:
                     "model": {
                         "provider": str(model_cfg.get("provider") or ""),
                         "default": str(model_cfg.get("default") or ""),
+                        "openaiRuntime": str(model_cfg.get("openai_runtime") or ""),
                     },
                     # LIQUIDAITY VENDOR PATCH: expose only the native,
                     # secret-free auxiliary review selector so a profile UI
@@ -1174,6 +1190,16 @@ def _(rid, params: dict) -> dict:
 
         model = str(params.get("model") or "").strip()
         provider = str(params.get("provider") or "").strip()
+        raw_openai_runtime = params.get("openai_runtime")
+        openai_runtime = (
+            str(raw_openai_runtime).strip().lower()
+            if raw_openai_runtime is not None
+            else None
+        )
+        if openai_runtime not in {None, "auto", "codex_app_server"}:
+            return _err(rid, 4064, "profile_openai_runtime_invalid")
+        if openai_runtime is not None and not (model and provider):
+            return _err(rid, 4064, "profile_openai_runtime_requires_model")
         confirm_message = None
         if model and provider:
             # #95293 remainder: this is the Bots editor's model-switch path,
@@ -1198,7 +1224,12 @@ def _(rid, params: dict) -> dict:
                 try:
                     from hermes_cli.web_routers.profiles import _write_profile_model
 
-                    _write_profile_model(profile_dir, provider, model)
+                    _write_profile_model(
+                        profile_dir,
+                        provider,
+                        model,
+                        openai_runtime=openai_runtime,
+                    )
                     applied["model"] = True
                 except Exception:
                     applied["model"] = False

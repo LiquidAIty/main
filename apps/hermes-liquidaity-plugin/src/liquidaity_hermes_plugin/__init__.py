@@ -662,6 +662,12 @@ class _MainCliBridge:
             self._event(
                 "failed",
                 error=str(error or "main_cli_turn_cancelled"),
+                nativeSessionId=str(payload.get("session_id") or ""),
+                nativeTurnId=str(payload.get("turn_id") or ""),
+                codexThreadId=str(payload.get("codex_thread_id") or ""),
+                codexTurnId=str(payload.get("codex_turn_id") or ""),
+                effectiveProvider=str(payload.get("effective_provider") or ""),
+                providerApiMode=str(payload.get("provider_api_mode") or ""),
             )
             self._clear()
 
@@ -669,6 +675,10 @@ class _MainCliBridge:
         response = payload.get("assistant_response")
         session_id = str(payload.get("session_id") or "")
         turn_id = str(payload.get("turn_id") or "")
+        codex_thread_id = str(payload.get("codex_thread_id") or "")
+        codex_turn_id = str(payload.get("codex_turn_id") or "")
+        effective_provider = str(payload.get("effective_provider") or "")
+        provider_api_mode = str(payload.get("provider_api_mode") or "")
         self._projection(
             "conversation.answer",
             event_id=f"{turn_id or 'turn'}:conversation.answer:completed",
@@ -686,6 +696,10 @@ class _MainCliBridge:
         )
         self._event("completed", finalText=str(response or ""),
                     nativeSessionId=session_id, nativeTurnId=turn_id,
+                    codexThreadId=codex_thread_id,
+                    codexTurnId=codex_turn_id,
+                    effectiveProvider=effective_provider,
+                    providerApiMode=provider_api_mode,
                     usage=self._turn_usage())
         self._clear()
 

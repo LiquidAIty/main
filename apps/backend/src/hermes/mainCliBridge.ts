@@ -56,9 +56,23 @@ export type MainCliBridgeEvent = {
   error?: string;
   nativeSessionId?: string;
   nativeTurnId?: string;
+  codexThreadId?: string;
+  codexTurnId?: string;
+  effectiveProvider?: string;
+  providerApiMode?: string;
   contextAuthorityMode?: MainContextAuthorityMode;
   projection?: MainCliProjection;
 };
+
+export class MainCliBridgeFailure extends Error {
+  readonly event: MainCliBridgeEvent;
+
+  constructor(event: MainCliBridgeEvent) {
+    super(event.error || `main_cli_turn_${event.kind}`);
+    this.name = 'MainCliBridgeFailure';
+    this.event = event;
+  }
+}
 
 export type MainCliHistoryMessage = {
   role: 'user' | 'assistant';
@@ -86,7 +100,9 @@ type MainCliTurn = {
   profileAuthority: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
   projectionIdentity: MainCliHistoryProjection['identity'];
   onEvent: (event: MainCliBridgeEvent) => void;
-  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string; usage?: MainCliUsage;
+  resolve: (value: { finalText: string; nativeSessionId: string; nativeTurnId: string;
+    codexThreadId: string; codexTurnId: string; effectiveProvider: string; providerApiMode: string;
+    usage?: MainCliUsage;
     contextAuthorityMode: MainContextAuthorityMode }) => void;
   reject: (error: Error) => void;
 };
@@ -110,6 +126,7 @@ type PendingTeamDelivery = MainCliTeamDelivery & {
 export class MainCliBridge {
   private active: MainCliTurn | null = null;
   private lastPollAt = 0;
+  private closedReason: string | null = null;
   private historySnapshot: { sessionId: string | null; sessionKey: string | null;
     messages: MainCliHistoryMessage[] } | null = null;
   /** Bounded replay projection of the bridge's existing native event stream. */
@@ -117,11 +134,33 @@ export class MainCliBridge {
   private teamDeliveries = new Map<string, PendingTeamDelivery>();
 
   notePoll(): void {
+    if (this.closedReason) return;
     this.lastPollAt = Date.now();
   }
 
   ready(): boolean {
-    return Date.now() - this.lastPollAt < 5_000;
+    return !this.closedReason && Date.now() - this.lastPollAt < 5_000;
+  }
+
+  sessionIdentity(): { sessionId: string; sessionKey: string | null } | null {
+    const sessionId = String(this.historySnapshot?.sessionId || '').trim();
+    return this.ready() && sessionId
+      ? { sessionId, sessionKey: this.historySnapshot?.sessionKey || null }
+      : null;
+  }
+
+  disconnect(reason = 'main_cli_bridge_disconnected'): void {
+    if (this.closedReason) return;
+    this.closedReason = String(reason || 'main_cli_bridge_disconnected');
+    this.lastPollAt = 0;
+    const active = this.active;
+    this.active = null;
+    if (active) active.reject(new Error(this.closedReason));
+    for (const delivery of this.teamDeliveries.values()) {
+      clearTimeout(delivery.timeout);
+      delivery.reject(new Error(this.closedReason));
+    }
+    this.teamDeliveries.clear();
   }
 
   status(): { ready: boolean; activeDriver: MainDriverSource | null;
@@ -145,9 +184,11 @@ export class MainCliBridge {
     profileAuthority?: Omit<HermesProfileDelegationAuthority, 'profileTargets'>;
     projectionIdentity?: MainCliHistoryProjection['identity'];
     onEvent: (event: MainCliBridgeEvent) => void;
-  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string; usage?: MainCliUsage;
+  }): Promise<{ finalText: string; nativeSessionId: string; nativeTurnId: string;
+    codexThreadId: string; codexTurnId: string; effectiveProvider: string; providerApiMode: string;
+    usage?: MainCliUsage;
     contextAuthorityMode: MainContextAuthorityMode }> {
-    if (!this.ready()) throw new Error('main_cli_bridge_unavailable');
+    if (!this.ready()) throw new Error(this.closedReason || 'main_cli_bridge_unavailable');
     if (this.active) throw new Error('main_driver_turn_already_running');
     const executionContextId = String(args.executionContextId || '').trim();
     if (!executionContextId) throw new Error('main_cli_execution_context_required');
@@ -349,12 +390,16 @@ export class MainCliBridge {
         finalText: String(event.finalText || ''),
         nativeSessionId: String(event.nativeSessionId || ''),
         nativeTurnId: String(event.nativeTurnId || ''),
+        codexThreadId: String(event.codexThreadId || ''),
+        codexTurnId: String(event.codexTurnId || ''),
+        effectiveProvider: String(event.effectiveProvider || ''),
+        providerApiMode: String(event.providerApiMode || ''),
         contextAuthorityMode: active.contextAuthorityMode,
         ...(event.usage ? { usage: event.usage } : {}),
       });
     } else if (event.kind === 'failed' || event.kind === 'rejected') {
       this.active = null;
-      active.reject(new Error(event.error || `main_cli_turn_${event.kind}`));
+      active.reject(new MainCliBridgeFailure(event));
     }
   }
 

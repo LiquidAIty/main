@@ -25,7 +25,11 @@ from app.python_models.tool_registry import (
     tool_access,
 )
 from pydantic import TypeAdapter, ValidationError
-from app.python_models.orchestration_contracts import CardDelegationRole, DataAnchorReference, GraphHook
+from app.python_models.orchestration_contracts import (
+    CardDelegationRole,
+    DataAnchorReference,
+    GraphHook,
+)
 from app.python_models.card_script import saved_script, script_presentation
 from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.idd import (
@@ -72,6 +76,12 @@ SUBAGENT_MODEL_FIELDS = {
 }
 SUBAGENT_ACCESS_MODES = {
     "chatgpt-account", "openai-api", "openrouter-api",
+}
+SAVED_PROVIDER_ACCESS_PAIRS = {
+    ("openai", "chatgpt-account"),
+    ("openai", "openai-api"),
+    ("openrouter", "openrouter-api"),
+    ("local_openai_compatible", "openai-api"),
 }
 KNOWN_CARD_FIELDS = {
     "id", "kind", "templateId", "title", "subtitle", "role", "status",
@@ -448,22 +458,91 @@ def _load_age_edges(cursor: Any, project_id: str, deck_id: str) -> list[dict[str
     return [value for _, value in sorted(edges, key=lambda item: (item[0], item[1]["id"]))]
 
 
+def validate_saved_provider_selection(
+    provider: Any,
+    access_mode: Any,
+) -> tuple[str, str]:
+    """Validate saved provider authority without resolving availability or credentials."""
+
+    normalized_provider = str(provider or "").strip().lower()
+    normalized_access_mode = str(access_mode or "").strip().lower()
+    if not normalized_provider or not normalized_access_mode:
+        raise CardDomainError("card_provider_selection_incomplete")
+    pair = (normalized_provider, normalized_access_mode)
+    if pair not in SAVED_PROVIDER_ACCESS_PAIRS:
+        raise CardDomainError(
+            f"card_provider_access_mode_mismatch:{normalized_provider}:{normalized_access_mode}"
+        )
+    return pair
+
+
+def _saved_openai_runtime(value: Any, *, required: bool) -> str | None:
+    if value is None and not required:
+        return None
+    normalized = str(value or "").strip().lower()
+    if normalized != "codex_app_server":
+        raise CardDomainError("hermes_saved_openai_runtime_invalid")
+    return normalized
+
+
+def validate_saved_hermes_runtime_authority(
+    provider: Any,
+    access_mode: Any,
+    openai_runtime: Any,
+    *,
+    hermes: bool,
+) -> dict[str, Any]:
+    normalized_provider, normalized_access_mode = validate_saved_provider_selection(
+        provider, access_mode
+    )
+    if not hermes:
+        if openai_runtime is not None:
+            raise CardDomainError("card_hermes_execution_authority_unsupported")
+        return {
+            "provider": normalized_provider,
+            "accessMode": normalized_access_mode,
+        }
+    normalized_runtime = _saved_openai_runtime(openai_runtime, required=False)
+    if (
+        normalized_runtime == "codex_app_server"
+        and (normalized_provider, normalized_access_mode)
+        != ("openai", "chatgpt-account")
+    ):
+        raise CardDomainError(
+            "hermes_saved_provider_transport_unsupported:"
+            f"{normalized_provider}:{normalized_access_mode}:{normalized_runtime}"
+        )
+    return {
+        "provider": normalized_provider,
+        "accessMode": normalized_access_mode,
+        "openaiRuntime": normalized_runtime,
+    }
+
+
 def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
     options = _json_object(card.get("runtimeOptions"), "runtime_options")
     runtime = _card_runtime(card)
+    # Saved misconfigurations must remain readable through the canonical API so
+    # an authenticated update can repair them. Invocation validates the strict
+    # Hermes transport/policy and fails closed before starting a Run.
+    provider = str(options.get("provider") or card.get("provider") or "").strip().lower()
+    access_mode = str(options.get("accessMode") or "").strip().lower()
     grants = {
         field: _string_list(options.get(field, card.get(field)), field)
         for field in GRANT_FIELDS.values()
     }
     extensions = {key: value for key, value in options.items() if key not in KNOWN_RUNTIME_OPTION_FIELDS}
+    # Preserve legacy or partially restored authority fields verbatim here.
+    # The authenticated Card API must be able to read and repair them. The
+    # invocation boundary below validates the exact current Hermes contract.
     if "delegationRole" in extensions:
         try:
             extensions["delegationRole"] = TypeAdapter(CardDelegationRole).validate_python(extensions["delegationRole"])
         except ValidationError as error:
             raise CardDomainError("card_delegation_role_invalid") from error
     if "subagentModel" in extensions:
-        extensions["subagentModel"] = _subagent_model_selection(
-            extensions["subagentModel"]
+        extensions["subagentModel"] = _json_object(
+            extensions["subagentModel"], "card_subagent_model"
         )
     if "script" in extensions:
         try:
@@ -491,10 +570,10 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         "basePrompt": str(card.get("prompt") or ""),
         "stableOutputContract": card.get("outputContract"),
         "runtime": runtime,
-        "provider": options.get("provider") or card.get("provider"),
+        "provider": provider,
         "modelKey": options.get("modelKey"),
         "providerModelId": options.get("providerModelId") or card.get("providerModelId"),
-        "accessMode": options.get("accessMode"),
+        "accessMode": access_mode,
         "reasoningEffort": options.get("reasoningEffort"),
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),
@@ -531,7 +610,35 @@ def _subagent_model_selection(value: Any) -> dict[str, str] | None:
         raise CardDomainError("card_subagent_model_invalid")
     if normalized["accessMode"] not in SUBAGENT_ACCESS_MODES:
         raise CardDomainError("card_subagent_model_access_mode_invalid")
+    validate_saved_provider_selection(
+        normalized["provider"], normalized["accessMode"]
+    )
     return normalized
+
+
+def _validate_new_card_revision(card: dict[str, Any]) -> None:
+    """Validate a proposed revision while leaving old bad revisions readable."""
+
+    options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    runtime = _card_runtime(card)
+    is_hermes = runtime["kind"] == "hermes"
+    validate_saved_hermes_runtime_authority(
+        options.get("provider") or card.get("provider"),
+        options.get("accessMode"),
+        options.get("openaiRuntime"),
+        hermes=is_hermes,
+    )
+    model_key = str(options.get("modelKey") or "").strip()
+    provider_model_id = str(
+        options.get("providerModelId") or card.get("providerModelId") or model_key
+    ).strip()
+    if not model_key or not provider_model_id:
+        raise CardDomainError("card_model_selection_incomplete")
+    subagent = options.get("subagentModel")
+    if subagent is not None:
+        if not is_hermes:
+            raise CardDomainError("card_subagent_model_requires_hermes")
+        _subagent_model_selection(subagent)
 
 
 def _insert_revision(
@@ -541,6 +648,7 @@ def _insert_revision(
     card: dict[str, Any],
     revision_number: int,
 ) -> str:
+    _validate_new_card_revision(card)
     stable = _stable_card(card)
     revision_id = str(uuid4())
     revision_sha = _sha(_canonical_json(stable))
@@ -2160,7 +2268,14 @@ def _prepare_invocation(
     owner = _runtime_owner(card)
     common_prompt = str(card.get("prompt") or "")
     system_text = common_prompt
-    provider = str(options.get("provider") or "")
+    provider, access_mode = validate_saved_provider_selection(
+        options.get("provider"),
+        options.get("accessMode"),
+    )
+    openai_runtime = _saved_openai_runtime(
+        options.get("openaiRuntime"),
+        required=False,
+    )
     model_key = str(options.get("modelKey") or "")
     provider_model_id = str(options.get("providerModelId") or model_key)
     if not provider or not model_key or not provider_model_id:
@@ -2172,6 +2287,8 @@ def _prepare_invocation(
         "maxTokens": options.get("maxTokens"),
         "maxTurns": options.get("maxTurns"),
     }
+    if openai_runtime is not None:
+        runtime_options["openaiRuntime"] = openai_runtime
     configuration = options.get("configuration")
     if configuration is not None:
         if not isinstance(configuration, dict):
@@ -2180,6 +2297,9 @@ def _prepare_invocation(
     subagent_model = _subagent_model_selection(options.get("subagentModel"))
     if subagent_model is not None:
         runtime_options["subagentModel"] = subagent_model
+    # Preserve the pre-existing optional Card value for callers that already
+    # saved it. It remains Card data passed to Hermes; it is not required and
+    # does not become a second approval, sandbox, network, or workspace owner.
     if options.get("writeMode") is not None:
         write_mode = str(options.get("writeMode") or "read-only")
         if write_mode not in {"read-only", "edit"}:
@@ -2192,7 +2312,7 @@ def _prepare_invocation(
         "systemPrompt": common_prompt,
         "runtime": runtime,
         "provider": {
-            "accessMode": str(options.get("accessMode") or ""),
+            "accessMode": access_mode,
             "provider": provider,
             "modelKey": model_key,
             "providerModelId": provider_model_id,
@@ -2284,6 +2404,24 @@ def _prepare_invocation(
     }
     call_config["presentedTools"] = script_plan["presentedTools"]
     tool_definitions = [by_id[name] for name in call_config["presentedTools"]]
+    # Native thread ownership binds only stable saved-Card/runtime identity.
+    # Live catalog schemas and availability can change after a plugin reconnect;
+    # those remain per-turn tool evidence and must not invalidate the Card's
+    # already-established native thread. The saved revision hash already covers
+    # the Card's prompt, grants, tools, skills, and other saved configuration.
+    execution_authority = {
+        "schemaVersion": "liquidaity.card-execution-authority.v1",
+        "projectId": loaded["projectId"],
+        "deckId": deck_id,
+        "cardId": card_id,
+        "cardRevisionId": card["_cardRevisionId"],
+        "cardRevisionSha256": card["_cardRevisionSha256"],
+        "runtime": runtime,
+        "provider": call_config["provider"],
+        "openaiRuntime": runtime_options.get("openaiRuntime"),
+    }
+    execution_authority_sha256 = _sha(_canonical_json(execution_authority))
+    runtime_options["executionAuthorityFingerprint"] = execution_authority_sha256
     return {
         "ok": True,
         "ephemeral": True,
@@ -2294,6 +2432,7 @@ def _prepare_invocation(
         "cardRevision": card["_cardRevision"],
         "cardRevisionSha256": card["_cardRevisionSha256"],
         "runtimeOwner": owner,
+        "executionAuthorityFingerprint": execution_authority_sha256,
         "_outputRequirements": str(card.get("outputContract") or ""),
         "assignment": assignment,
         "cardIdentity": card_identity,
@@ -2642,6 +2781,10 @@ def _insert_run(
     idf = prepared["idf"]
     runtime = idf["stableSavedCardContext"]["runtime"]
     provider = idf["stableSavedCardContext"]["provider"]
+    runtime_options = idf["stableSavedCardContext"].get("runtimeOptions") or {}
+    saved_openai_runtime: str | None = None
+    if runtime_options.get("openaiRuntime") == "codex_app_server":
+        saved_openai_runtime = "codex_app_server"
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
@@ -2649,8 +2792,9 @@ def _insert_run(
               run_id, project_id, deck_id, target_card_revision_id,
               runtime_kind, runtime_mode,
               provider, model_key, provider_model_id, access_mode, correlation_id,
-              request_fingerprint, state, started_at
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
+              request_fingerprint, execution_authority_sha256,
+              saved_openai_runtime, state, started_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',NOW())
             ON CONFLICT DO NOTHING
             """,
             (
@@ -2659,6 +2803,8 @@ def _insert_run(
                 runtime["mode"], provider.get("provider"),
                 provider.get("modelKey"), provider.get("providerModelId"),
                 provider.get("accessMode"), correlation_id, request_fingerprint,
+                prepared.get("executionAuthorityFingerprint"),
+                saved_openai_runtime,
             ),
         )
         if cursor.rowcount == 1:
@@ -3011,10 +3157,15 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "provider": str(row.get("provider") or "") or None,
         "model": str(row.get("provider_model_id") or row.get("model_key") or "") or None,
         "accessMode": str(row.get("access_mode") or "") or None,
+        "openaiRuntime": str(row.get("saved_openai_runtime") or "") or None,
+        "effectiveProvider": str(row.get("effective_provider") or "") or None,
+        "providerApiMode": str(row.get("provider_api_mode") or "") or None,
+        "executionAuthorityFingerprint": str(row.get("execution_authority_sha256") or "") or None,
         "state": str(row.get("state") or ""),
         "nativePhase": str(row.get("native_phase") or "") or None,
         "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
         "nativeRunId": str(row.get("provider_turn_ref") or "") or None,
+        "hermesSessionId": str(row.get("hermes_session_ref") or "") or None,
         "tasksCompleted": row.get("native_task_completed_count"),
         "tasksTotal": row.get("native_task_total_count"),
         "activeWorkers": row.get("native_active_worker_count"),
@@ -3173,7 +3324,7 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
                 "parentRunId": str(item["parent_id"]),
                 "nativeChildId": item.get("native_id"),
             })
-    session_id = str(row.get("provider_thread_ref") or "")
+    session_id = str(row.get("hermes_session_ref") or row.get("provider_thread_ref") or "")
     transcript_reason = "native_session_identity_unavailable"
     if row.get("runtime_kind") != "hermes" or row.get("runtime_mode") == "kanban":
         transcript_reason = "runtime_transcript_not_available_on_this_surface"
@@ -3187,8 +3338,8 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
             JOIN ag_catalog.agent_card_revisions AS revision
               ON revision.revision_id=other.target_card_revision_id
             WHERE other.runtime_kind='hermes' AND revision.runtime_profile=%s
-              AND (other.provider_thread_ref=%s OR
-                   (other.provider_thread_ref IS NULL AND other.project_id=%s
+              AND (COALESCE(other.hermes_session_ref, other.provider_thread_ref)=%s OR
+                   (COALESCE(other.hermes_session_ref, other.provider_thread_ref) IS NULL AND other.project_id=%s
                     AND other.deck_id=%s AND revision.card_id=%s))
             """,
             (row.get("runtime_profile"), session_id, row["project_id"], row["deck_id"], row["card_id"]),
@@ -3785,6 +3936,78 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         else "state IN ('pending','running')"
     )
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT runtime_kind, provider, access_mode, saved_openai_runtime,
+                   effective_provider, provider_api_mode,
+                   hermes_session_ref, provider_thread_ref, provider_turn_ref
+            FROM ag_catalog.agent_runs WHERE run_id=%s
+            FOR UPDATE
+            """,
+            (run_id,),
+        )
+        authority_row = cursor.fetchone()
+        if authority_row is None:
+            raise CardDomainError("run_not_found")
+        saved_openai_runtime = str(
+            authority_row.get("saved_openai_runtime") or ""
+        ).strip()
+        provider_pair = (
+            str(authority_row.get("provider") or "").strip(),
+            str(authority_row.get("access_mode") or "").strip(),
+        )
+        expected_effective_provider = (
+            {
+                ("openai", "chatgpt-account"): "openai-codex",
+                ("openai", "openai-api"): "openai",
+                ("openrouter", "openrouter-api"): "openrouter",
+                ("local_openai_compatible", "openai-api"): "local_openai_compatible",
+            }.get(provider_pair, "")
+            if authority_row.get("runtime_kind") == "hermes"
+            else ""
+        )
+        expected_provider_api_mode = (
+            "codex_app_server"
+            if saved_openai_runtime == "codex_app_server"
+            else ""
+        )
+        supplied_effective_provider = str(
+            payload.get("effectiveProvider") or ""
+        ).strip()
+        supplied_provider_api_mode = str(
+            payload.get("providerApiMode") or ""
+        ).strip()
+        if (
+            supplied_effective_provider
+            and expected_effective_provider
+            and supplied_effective_provider != expected_effective_provider
+        ):
+            raise CardDomainError("run_effective_provider_mismatch")
+        if (
+            supplied_provider_api_mode
+            and expected_provider_api_mode
+            and supplied_provider_api_mode != expected_provider_api_mode
+        ):
+            raise CardDomainError("run_provider_api_mode_mismatch")
+        if (
+            state == "completed"
+            and not reconcile_persisted_result
+            and not reconcile_native_terminal
+            and authority_row.get("runtime_kind") == "hermes"
+            and (
+                not supplied_effective_provider
+                or not supplied_provider_api_mode
+                or (
+                    expected_provider_api_mode == "codex_app_server"
+                    and (
+                        not str(payload.get("hermesSessionRef") or "").strip()
+                        or not str(payload.get("providerThreadRef") or "").strip()
+                        or not str(payload.get("providerTurnRef") or "").strip()
+                    )
+                )
+            )
+        ):
+            raise CardDomainError("run_native_transport_evidence_incomplete")
         if reconcile_persisted_result:
             cursor.execute(
                 """
@@ -3802,6 +4025,9 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                   provider_model_id=COALESCE(%s, provider_model_id),
                   model_fallback_occurred=%s,
                   model_fallback_reason=%s,
+                  effective_provider=COALESCE(effective_provider, %s),
+                  provider_api_mode=COALESCE(provider_api_mode, %s),
+                  hermes_session_ref=COALESCE(hermes_session_ref, %s),
                   provider_thread_ref=%s, provider_turn_ref=%s::text,
                   error_code=%s, error_summary=%s,
                   provider_input_tokens=%s, provider_output_tokens=%s,
@@ -3818,6 +4044,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                 (
                     state, child_provider or None, child_model or None, child_model or None,
                     fallback_occurred, fallback_reason or None,
+                    payload.get("effectiveProvider"), payload.get("providerApiMode"),
+                    payload.get("hermesSessionRef"),
                     payload.get("providerThreadRef"), payload.get("providerTurnRef"),
                     payload.get("errorCode"), payload.get("errorSummary"),
                     payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
@@ -3836,7 +4064,9 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             """
             SELECT run_id, project_id, deck_id, target_card_revision_id,
                    runtime_kind, runtime_mode, provider, model_key, provider_model_id,
-                   access_mode, correlation_id, provider_thread_ref,
+                   access_mode, correlation_id, saved_openai_runtime,
+                   effective_provider, provider_api_mode,
+                   execution_authority_sha256, hermes_session_ref, provider_thread_ref,
                    provider_turn_ref, state, started_at, finished_at,
                    error_code, error_summary, provider_input_tokens,
                    provider_output_tokens, provider_cached_tokens,

@@ -82,6 +82,7 @@ export type AgentCardRuntimeOptions = {
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
+  openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded native Hermes delegated children and
    * background skill review. Native profile/readback remains effective truth. */
   subagentModel?: {

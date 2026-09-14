@@ -50,6 +50,10 @@ describe('MainCliBridge', () => {
       finalText: 'answer',
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
+      codexThreadId: 'thread-1',
+      codexTurnId: 'codex-turn-1',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_app_server',
       usage,
       contextAuthorityMode: 'main_native_honcho',
     });
@@ -59,6 +63,10 @@ describe('MainCliBridge', () => {
       usage,
       nativeSessionId: 'session-1',
       nativeTurnId: 'turn-1',
+      codexThreadId: 'thread-1',
+      codexTurnId: 'codex-turn-1',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_app_server',
       contextAuthorityMode: 'main_native_honcho',
     });
     expect(onEvent).toHaveBeenCalledTimes(2);

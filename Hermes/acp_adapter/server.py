@@ -78,7 +78,7 @@ from acp_adapter.session import SessionManager, SessionState, _expand_acp_enable
 from acp_adapter.tools import build_tool_complete, build_tool_start
 # LIQUIDAITY VENDOR PATCH: consume only the generic namespaced ACP extension
 # documented in ../LIQUIDAITY_VENDOR_PATCHES.md.
-from acp_adapter.host_profiles import parse_host_session_config
+from acp_adapter.host_profiles import card_runtime_authority, parse_host_session_config
 from agent.context_compressor import (
     COMPRESSED_SUMMARY_METADATA_KEY,
     ContextCompressor,
@@ -1793,8 +1793,14 @@ class HermesACPAgent(acp.Agent):
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         host_config = parse_host_session_config(kwargs)
-        state = self.session_manager.update_cwd(session_id, cwd)
+        state = self.session_manager.update_cwd(
+            session_id,
+            cwd,
+            host_config=host_config,
+        )
         if state is None:
+            if card_runtime_authority(host_config) is not None:
+                raise ValueError("hermes_host_session_load_not_found")
             logger.warning("load_session: session %s not found", session_id)
             return None
         await self._register_session_mcp_servers(state, mcp_servers)
@@ -1843,8 +1849,14 @@ class HermesACPAgent(acp.Agent):
         **kwargs: Any,
     ) -> ResumeSessionResponse:
         host_config = parse_host_session_config(kwargs)
-        state = self.session_manager.update_cwd(session_id, cwd)
+        state = self.session_manager.update_cwd(
+            session_id,
+            cwd,
+            host_config=host_config,
+        )
         if state is None:
+            if card_runtime_authority(host_config) is not None:
+                raise ValueError("hermes_host_session_resume_not_found")
             logger.warning("resume_session: session %s not found, creating new", session_id)
             state = self.session_manager.create_session(
                 cwd=cwd,
@@ -2325,12 +2337,29 @@ class HermesACPAgent(acp.Agent):
             with state.runtime_lock:
                 state.is_running = False
                 state.current_prompt_text = ""
+            if card_runtime_authority(state.host_config) is not None:
+                raise
             return PromptResponse(stop_reason="end_turn")
 
         if result.get("messages"):
             state.history = result["messages"]
-            # Persist updated history so sessions survive process restarts.
+        if result.get("messages") or getattr(state.agent, "api_mode", None) == "codex_app_server":
+            # Persist updated history and App Server native-thread authority so
+            # sessions survive process restarts even when a terminal result has
+            # no projected assistant messages.
             self.session_manager.save_session(session_id)
+
+        cancelled = bool(state.cancel_event and state.cancel_event.is_set())
+        interrupted = bool(result.get("interrupted")) or cancelled
+        if (
+            card_runtime_authority(state.host_config) is not None
+            and not interrupted
+            and (result.get("completed") is not True or result.get("error"))
+        ):
+            with state.runtime_lock:
+                state.is_running = False
+                state.current_prompt_text = ""
+            raise RuntimeError("hermes_host_codex_app_server_turn_failed")
 
         # Detect a compression-driven internal session rotation. If the agent's
         # DB head moved during the turn, emit a session_info_update carrying
@@ -2357,8 +2386,6 @@ class HermesACPAgent(acp.Agent):
                 )
 
         final_response = result.get("final_response", "")
-        cancelled = bool(state.cancel_event and state.cancel_event.is_set())
-        interrupted = bool(result.get("interrupted")) or cancelled
         # Hermes' local "waiting for model response" interrupt status is metadata,
         # not assistant prose — clients get cancellation from stop_reason instead.
         from agent.conversation_loop import INTERRUPT_WAITING_FOR_MODEL_PREFIX
@@ -2428,17 +2455,40 @@ class HermesACPAgent(acp.Agent):
             and not result.get("response_transformed")
             else ""
         )
+        codex_thread_id = str(
+            result.get("codex_thread_id")
+            or getattr(state.agent, "_codex_thread_id", "")
+            or ""
+        ).strip()
+        codex_turn_id = str(result.get("codex_turn_id") or "").strip()
+        effective_provider = str(
+            result.get("effective_provider")
+            or getattr(state.agent, "provider", "")
+            or ""
+        ).strip()
+        provider_api_mode = str(
+            result.get("provider_api_mode")
+            or getattr(state.agent, "api_mode", "")
+            or ""
+        ).strip()
+        hermes_meta: dict[str, Any] = {}
+        if final_model_text:
+            hermes_meta.update({
+                "messageSource": "model",
+                "finalAssistantText": final_model_text,
+            })
+        if codex_thread_id:
+            hermes_meta["codexThreadId"] = codex_thread_id
+        if codex_turn_id:
+            hermes_meta["codexTurnId"] = codex_turn_id
+        if effective_provider:
+            hermes_meta["effectiveProvider"] = effective_provider
+        if provider_api_mode:
+            hermes_meta["providerApiMode"] = provider_api_mode
         return PromptResponse(
             stop_reason=stop_reason,
             usage=usage,
-            field_meta={
-                "hermes": {
-                    "messageSource": "model",
-                    "finalAssistantText": final_model_text,
-                }
-            }
-            if final_model_text
-            else None,
+            field_meta={"hermes": hermes_meta} if hermes_meta else None,
         )
 
     # ---- Slash commands (headless) -------------------------------------------
@@ -2550,6 +2600,12 @@ class HermesACPAgent(acp.Agent):
             model = state.model or getattr(state.agent, "model", "unknown")
             provider = getattr(state.agent, "provider", None) or "auto"
             return f"Current model: {model}\nProvider: {provider}"
+
+        # A trusted saved Card owns its model/provider selection. Replacing the
+        # live agent here would also discard the callbacks that bind its native
+        # Codex thread to the existing Hermes session row.
+        if card_runtime_authority(state.host_config) is not None:
+            raise RuntimeError("hermes_host_saved_model_change_forbidden")
 
         current_provider = getattr(state.agent, "provider", None) or "openrouter"
         target_provider, new_model = self._resolve_model_selection(args, current_provider)
@@ -2826,6 +2882,38 @@ class HermesACPAgent(acp.Agent):
                 }:
                     raise ValueError("hermes_host_api_mode_invalid")
             openai_runtime = kwargs.get("openaiRuntime")
+            trusted_authority = card_runtime_authority(state.host_config)
+            if trusted_authority is not None:
+                expected_api_mode = trusted_authority["providerApiMode"] or None
+                if requested_api_mode != expected_api_mode:
+                    raise ValueError("hermes_host_api_mode_mismatch")
+                expected_openai_runtime = (
+                    "codex_app_server"
+                    if trusted_authority.get("openaiRuntime") == "codex_app_server"
+                    else "auto"
+                )
+                if str(openai_runtime or "").strip() != expected_openai_runtime:
+                    raise ValueError("hermes_host_openai_runtime_mismatch")
+                requested_provider, resolved_model = self._resolve_model_selection(
+                    model_id,
+                    str(getattr(state.agent, "provider", "") or ""),
+                )
+                if (
+                    requested_provider != trusted_authority["effectiveProvider"]
+                    or resolved_model != trusted_authority["model"]
+                    or str(getattr(state.agent, "provider", "") or "")
+                    != trusted_authority["effectiveProvider"]
+                    or str(getattr(state.agent, "model", "") or "")
+                    != trusted_authority["model"]
+                ):
+                    raise ValueError("hermes_host_model_selection_mismatch")
+                if (
+                    expected_api_mode
+                    and str(getattr(state.agent, "api_mode", "") or "")
+                    != expected_api_mode
+                ):
+                    raise ValueError("hermes_host_model_selection_mismatch")
+                return SetSessionModelResponse()
             if openai_runtime is not None and str(openai_runtime).strip() != "auto":
                 raise ValueError("hermes_host_openai_runtime_invalid")
             if (
@@ -2847,6 +2935,11 @@ class HermesACPAgent(acp.Agent):
                 else (
                     None
                     if provider_changed
+                    or (
+                        str(openai_runtime or "").strip() == "auto"
+                        and getattr(state.agent, "api_mode", None)
+                        == "codex_app_server"
+                    )
                     else getattr(state.agent, "api_mode", None)
                 )
             )

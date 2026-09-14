@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -38,6 +39,37 @@ _SESSION_FIELDS = {
     "hostScript",
     "delegationRoles",
     "profileTargets",
+    "projectId",
+    "deckId",
+    "cardId",
+    "cardRevisionId",
+    "cardRevisionSha256",
+    "runtimeProfile",
+    "executionAuthorityFingerprint",
+    "savedProvider",
+    "accessMode",
+    "effectiveProvider",
+    "model",
+    "providerApiMode",
+    "openaiRuntime",
+    "workingDirectory",
+}
+_CARD_RUNTIME_AUTHORITY_FIELDS = {
+    "hostSessionKey",
+    "projectId",
+    "deckId",
+    "cardId",
+    "cardRevisionId",
+    "cardRevisionSha256",
+    "runtimeProfile",
+    "executionAuthorityFingerprint",
+    "savedProvider",
+    "accessMode",
+    "effectiveProvider",
+    "model",
+    "providerApiMode",
+    "openaiRuntime",
+    "workingDirectory",
 }
 
 
@@ -83,6 +115,82 @@ def _bounded_string_list(value: Any, field: str) -> list[str]:
         if text not in seen:
             seen.add(text)
             result.append(text)
+    return result
+
+
+def _card_runtime_authority(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the all-or-none LiquidAIty saved-Card execution authority."""
+
+    present = _CARD_RUNTIME_AUTHORITY_FIELDS.intersection(raw)
+    if not present:
+        return {}
+    missing = sorted(_CARD_RUNTIME_AUTHORITY_FIELDS - set(raw))
+    if missing:
+        raise HostSessionConfigError(
+            f"hermes_host_config_runtime_authority_missing:{missing[0]}"
+        )
+
+    text_fields = {
+        "hostSessionKey": 512,
+        "projectId": 256,
+        "deckId": 256,
+        "cardId": 256,
+        "cardRevisionId": 256,
+        "runtimeProfile": 64,
+        "workingDirectory": 4096,
+        "model": 256,
+    }
+    result = {
+        field: _bounded_text(raw.get(field), field, limit=limit, required=True)
+        for field, limit in text_fields.items()
+    }
+    for field in ("cardRevisionSha256", "executionAuthorityFingerprint"):
+        value = _bounded_text(raw.get(field), field, limit=64, required=True)
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise HostSessionConfigError(f"hermes_host_config_{field}_invalid")
+        result[field] = value
+
+    saved_provider = _bounded_text(
+        raw.get("savedProvider"), "savedProvider", limit=64, required=True
+    ).lower()
+    access_mode = _bounded_text(
+        raw.get("accessMode"), "accessMode", limit=64, required=True
+    ).lower()
+    effective_provider = _bounded_text(
+        raw.get("effectiveProvider"), "effectiveProvider", limit=64, required=True
+    ).lower()
+    provider_api_mode = _bounded_text(
+        raw.get("providerApiMode"), "providerApiMode", limit=64
+    ).lower()
+    openai_runtime = _bounded_text(
+        raw.get("openaiRuntime"), "openaiRuntime", limit=64
+    ).lower()
+    provider_pairs = {
+        ("openai", "chatgpt-account"): "openai-codex",
+        ("openai", "openai-api"): "openai",
+        ("openrouter", "openrouter-api"): "openrouter",
+        ("local_openai_compatible", "openai-api"): "local_openai_compatible",
+    }
+    expected_provider = provider_pairs.get((saved_provider, access_mode))
+    if expected_provider is None:
+        raise HostSessionConfigError("hermes_host_config_provider_access_invalid")
+    if openai_runtime:
+        if (
+            openai_runtime != "codex_app_server"
+            or (saved_provider, access_mode) != ("openai", "chatgpt-account")
+            or effective_provider != "openai-codex"
+            or provider_api_mode != "codex_app_server"
+        ):
+            raise HostSessionConfigError("hermes_host_config_openaiRuntime_invalid")
+    elif effective_provider != expected_provider or provider_api_mode:
+        raise HostSessionConfigError("hermes_host_config_provider_transport_invalid")
+    result.update({
+        "savedProvider": saved_provider,
+        "accessMode": access_mode,
+        "effectiveProvider": effective_provider,
+        "providerApiMode": provider_api_mode,
+        "openaiRuntime": openai_runtime or None,
+    })
     return result
 
 
@@ -257,6 +365,7 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         normalized_tool_meta[key] = value
     if normalized_tool_meta and execution_context_id not in normalized_tool_meta.values():
         raise HostSessionConfigError("hermes_host_config_execution_context_mismatch")
+    runtime_authority = _card_runtime_authority(raw)
     return {
         "enabledToolsets": _bounded_string_list(raw.get("enabledToolsets"), "enabledToolsets"),
         "enabledTools": _bounded_string_list(raw.get("enabledTools"), "enabledTools"),
@@ -271,6 +380,7 @@ def parse_host_session_config(metadata_kwargs: Mapping[str, Any]) -> dict[str, A
         "hostScript": _host_script(raw.get("hostScript")),
         "delegationRoles": _delegation_roles(raw.get("delegationRoles")),
         "profileTargets": _profile_targets(raw.get("profileTargets")),
+        **runtime_authority,
     }
 
 
@@ -443,11 +553,314 @@ def _project_host_script_tool(
     raise HostSessionConfigError("hermes_host_script_tool_unavailable")
 
 
+def card_runtime_authority(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return the validated saved-Card authority used to own a native thread."""
+
+    if not isinstance(config, Mapping) or not config.get("executionAuthorityFingerprint"):
+        return None
+    return {
+        field: copy.deepcopy(config[field])
+        for field in sorted(_CARD_RUNTIME_AUTHORITY_FIELDS)
+    }
+
+
+def codex_thread_authority_fingerprint(
+    config: Mapping[str, Any] | None,
+) -> str | None:
+    """Return the saved execution fingerprint used only as a session binding."""
+
+    authority = card_runtime_authority(config)
+    if authority is None or authority.get("openaiRuntime") != "codex_app_server":
+        return None
+    return str(authority["executionAuthorityFingerprint"])
+
+
+def _session_model_config(row: Mapping[str, Any]) -> dict[str, Any]:
+    raw = row.get("model_config")
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return copy.deepcopy(raw)
+    if not isinstance(raw, str):
+        raise RuntimeError("hermes_host_session_metadata_invalid")
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise RuntimeError("hermes_host_session_metadata_invalid") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("hermes_host_session_metadata_invalid")
+    return parsed
+
+
+def _normalized_runtime_working_directory(value: Any) -> str:
+    """Normalize one saved/runtime cwd using Hermes' existing host mapping."""
+
+    from hermes_constants import translate_cwd_for_wsl_backend
+
+    translated = translate_cwd_for_wsl_backend(str(value or "").strip())
+    return os.path.normcase(os.path.realpath(os.path.expanduser(translated)))
+
+
+def codex_thread_session_state(
+    row: Mapping[str, Any],
+    config: Mapping[str, Any] | None,
+) -> tuple[str, str | None, str]:
+    """Read and validate the native Codex state owned by one Hermes session."""
+
+    authority_fingerprint = codex_thread_authority_fingerprint(config)
+    if authority_fingerprint is None:
+        raise RuntimeError("hermes_host_runtime_authority_required")
+    session_key = str((config or {}).get("hostSessionKey") or "").strip()
+    stored_key = str(row.get("session_key") or "").strip()
+    if not session_key or stored_key != session_key:
+        raise RuntimeError("hermes_host_session_key_mismatch")
+    meta = _session_model_config(row)
+    stored_cwd = str(meta.get("cwd") or "").strip()
+    requested_cwd = str((config or {}).get("workingDirectory") or "").strip()
+    if (
+        not stored_cwd
+        or not requested_cwd
+        or _normalized_runtime_working_directory(stored_cwd)
+        != _normalized_runtime_working_directory(requested_cwd)
+    ):
+        raise RuntimeError("hermes_host_working_directory_mismatch")
+    state = str(meta.get("codex_thread_state") or "").strip()
+    native_id = str(meta.get("codex_thread_id") or "").strip() or None
+    stored_authority = str(
+        meta.get("codex_thread_authority_fingerprint") or ""
+    ).strip()
+    if state not in {"never_started", "indeterminate", "established"}:
+        raise RuntimeError("hermes_host_codex_thread_state_missing")
+    if stored_authority != authority_fingerprint:
+        raise RuntimeError("hermes_host_codex_thread_authority_mismatch")
+    if state == "established":
+        if native_id is None or "codex_thread_id" not in meta:
+            raise RuntimeError("hermes_host_codex_thread_id_missing")
+    elif native_id is not None or "codex_thread_id" in meta:
+        raise RuntimeError("hermes_host_codex_thread_state_invalid")
+    return state, native_id, authority_fingerprint
+
+
+def bind_codex_thread_owner(
+    agent: Any,
+    *,
+    session_db: Any,
+    session_id: str,
+    config: Mapping[str, Any] | None,
+) -> tuple[str, str | None]:
+    """Bind native start/resume callbacks to the existing Hermes session row.
+
+    This adds no registry or lifecycle owner.  The callbacks perform atomic
+    compare-and-set transitions on the same SessionDB row that owns the Hermes
+    transcript and routing key.
+    """
+
+    if session_db is None:
+        raise RuntimeError("hermes_host_session_store_unavailable")
+    row = session_db.get_session(session_id)
+    if row is None:
+        raise RuntimeError("hermes_host_session_not_persisted")
+    session_source = str(row.get("source") or "").strip()
+    if session_source not in {"acp", "cli"}:
+        raise RuntimeError("hermes_host_session_source_invalid")
+    state, native_id, authority_fingerprint = codex_thread_session_state(row, config)
+    if state == "indeterminate":
+        raise RuntimeError("hermes_host_codex_thread_start_indeterminate")
+    session_key = str((config or {}).get("hostSessionKey") or "").strip()
+    working_directory = str((config or {}).get("workingDirectory") or "").strip()
+
+    current_id = str(getattr(agent, "_codex_thread_id", "") or "").strip() or None
+    current_authority = getattr(agent, "_codex_thread_authority", None)
+    if state == "established":
+        if current_id not in {None, native_id}:
+            raise RuntimeError("hermes_host_codex_thread_id_mismatch")
+        if current_authority is not None and current_authority != authority_fingerprint:
+            raise RuntimeError("hermes_host_codex_thread_authority_mismatch")
+        agent._codex_thread_id = native_id
+        agent._codex_thread_authority = authority_fingerprint
+    else:
+        if current_id is not None or current_authority is not None:
+            raise RuntimeError("hermes_host_codex_thread_state_invalid")
+
+    def claim_thread_start() -> None:
+        if str(getattr(agent, "_codex_thread_id", "") or "").strip():
+            raise RuntimeError("hermes_host_codex_thread_already_established")
+        try:
+            claimed = session_db.transition_codex_thread_state(
+                session_id,
+                session_key=session_key,
+                authority_fingerprint=authority_fingerprint,
+                expected_state="never_started",
+                expected_thread_id=None,
+                next_state="indeterminate",
+                thread_id=None,
+                expected_source=session_source,
+                working_directory=working_directory,
+            )
+        except Exception as exc:
+            raise RuntimeError("hermes_host_codex_thread_start_claim_failed") from exc
+        if claimed is not True:
+            raise RuntimeError("hermes_host_codex_thread_start_claim_rejected")
+
+    def persist_thread(thread_id: str) -> None:
+        observed_id = str(thread_id or "").strip()
+        if not observed_id:
+            raise RuntimeError("hermes_host_codex_thread_id_missing")
+        prior_id = str(getattr(agent, "_codex_thread_id", "") or "").strip() or None
+        prior_authority = getattr(agent, "_codex_thread_authority", None)
+        if prior_id is not None and (
+            prior_id != observed_id or prior_authority != authority_fingerprint
+        ):
+            raise RuntimeError("hermes_host_codex_thread_authority_mismatch")
+        try:
+            persisted = session_db.transition_codex_thread_state(
+                session_id,
+                session_key=session_key,
+                authority_fingerprint=authority_fingerprint,
+                expected_state=("established" if prior_id is not None else "indeterminate"),
+                expected_thread_id=prior_id,
+                next_state="established",
+                thread_id=observed_id,
+                expected_source=session_source,
+                working_directory=working_directory,
+            )
+        except Exception as exc:
+            raise RuntimeError("hermes_host_codex_thread_persistence_failed") from exc
+        if persisted is not True:
+            raise RuntimeError("hermes_host_codex_thread_persistence_rejected")
+        try:
+            confirmed = session_db.get_session(session_id)
+            confirmed_state, confirmed_id, _ = codex_thread_session_state(
+                confirmed or {}, config
+            )
+        except Exception as exc:
+            raise RuntimeError("hermes_host_codex_thread_persistence_unconfirmed") from exc
+        if confirmed_state != "established" or confirmed_id != observed_id:
+            raise RuntimeError("hermes_host_codex_thread_persistence_unconfirmed")
+        agent._codex_thread_id = observed_id
+        agent._codex_thread_authority = authority_fingerprint
+
+    agent._claim_codex_thread_start = claim_thread_start
+    agent._persist_codex_thread = persist_thread
+    return state, native_id
+
+
+def ensure_cli_codex_thread_owner(
+    agent: Any,
+    config: Mapping[str, Any] | None,
+) -> tuple[str, str | None]:
+    """Initialize and bind the existing persistent CLI session as owner.
+
+    A fresh CLI row has no native marker yet. It is safe to initialize only
+    while its durable transcript is empty; a legacy row with messages could
+    already have created a remote thread and therefore fails closed. The
+    SessionDB CAS binds the routing key, marker, and authority fingerprint in
+    one transaction.
+    """
+
+    authority_fingerprint = codex_thread_authority_fingerprint(config)
+    if authority_fingerprint is None:
+        raise RuntimeError("hermes_host_runtime_authority_required")
+    session_db = getattr(agent, "_session_db", None)
+    session_id = str(getattr(agent, "session_id", "") or "").strip()
+    if session_db is None:
+        raise RuntimeError("hermes_host_session_store_unavailable")
+    if not session_id:
+        raise RuntimeError("hermes_host_session_id_missing")
+    try:
+        row = session_db.get_session(session_id)
+        if row is None:
+            session_db.create_session(
+                session_id,
+                source="cli",
+                model=str((config or {}).get("model") or "").strip() or None,
+                model_config={
+                    "cwd": str((config or {}).get("workingDirectory") or "").strip()
+                },
+            )
+            row = session_db.get_session(session_id)
+        if row is None:
+            raise RuntimeError("hermes_host_session_not_persisted")
+        if row.get("source") != "cli":
+            raise RuntimeError("hermes_host_session_source_invalid")
+        requested_key = str((config or {}).get("hostSessionKey") or "").strip()
+        existing_key = str(row.get("session_key") or "").strip()
+        if existing_key and existing_key != requested_key:
+            raise RuntimeError("hermes_host_session_key_mismatch")
+        meta = _session_model_config(row)
+        has_native_state = any(
+            key in meta
+            for key in (
+                "codex_thread_state",
+                "codex_thread_id",
+                "codex_thread_authority_fingerprint",
+                "codex_thread_authority",
+            )
+        )
+        if not has_native_state:
+            if session_db.get_messages(session_id):
+                raise RuntimeError("hermes_host_codex_thread_legacy_state_ambiguous")
+            initialized = session_db.transition_codex_thread_state(
+                session_id,
+                session_key=requested_key,
+                authority_fingerprint=authority_fingerprint,
+                expected_state=None,
+                next_state="never_started",
+                require_empty_messages=True,
+                expected_source="cli",
+                working_directory=str(
+                    (config or {}).get("workingDirectory") or ""
+                ).strip(),
+            )
+            if not initialized:
+                row = session_db.get_session(session_id)
+                if row is None:
+                    raise RuntimeError("hermes_host_session_not_persisted")
+                refreshed_meta = _session_model_config(row)
+                if not any(
+                    key in refreshed_meta
+                    for key in (
+                        "codex_thread_state",
+                        "codex_thread_id",
+                        "codex_thread_authority_fingerprint",
+                        "codex_thread_authority",
+                    )
+                ):
+                    raise RuntimeError(
+                        "hermes_host_codex_thread_legacy_state_ambiguous"
+                    )
+        return bind_codex_thread_owner(
+            agent,
+            session_db=session_db,
+            session_id=session_id,
+            config=config,
+        )
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError("hermes_host_session_store_unavailable") from exc
+
+
 def attach_host_session_config(agent: Any, config: dict[str, Any] | None) -> None:
     """Attach validated host state without rebuilding the agent tool surface."""
 
     normalized = copy.deepcopy(config) if config is not None else None
+    authority = card_runtime_authority(normalized)
+    authority_fingerprint = codex_thread_authority_fingerprint(normalized)
+    agent_state = getattr(agent, "__dict__", {})
+    if not isinstance(agent_state, dict):
+        agent_state = {}
+    restored_thread_id = str(agent_state.get("_codex_thread_id") or "").strip()
+    restored_authority = agent_state.get("_codex_thread_authority")
+    if restored_thread_id or restored_authority is not None:
+        if not restored_thread_id:
+            raise HostSessionConfigError("hermes_host_codex_thread_id_missing")
+        if not isinstance(restored_authority, str) or not restored_authority:
+            raise HostSessionConfigError("hermes_host_codex_thread_authority_missing")
+        if authority is None or restored_authority != authority_fingerprint:
+            raise HostSessionConfigError("hermes_host_codex_thread_authority_mismatch")
     setattr(agent, "_host_session_config", normalized)
+    setattr(agent, "_host_card_runtime_authority", authority)
     setattr(agent, "_host_execution_context_id", (
         str(normalized.get("executionContextId") or "") if normalized else ""
     ))
@@ -877,6 +1290,8 @@ def apply_cli_host_session_config(agent: Any, config: dict[str, Any]) -> None:
         raise HostSessionConfigError("hermes_cli_host_session_already_active")
 
     names = (
+        "provider", "model", "api_mode", "session_cwd",
+        "_host_card_runtime_authority",
         "tools", "valid_tool_names", "enabled_toolsets",
         "ephemeral_system_prompt", "_host_session_config",
         "_host_execution_context_id", "_host_tool_call_meta",
@@ -888,6 +1303,20 @@ def apply_cli_host_session_config(agent: Any, config: dict[str, Any]) -> None:
     }
     setattr(agent, "_cli_host_session_original", original)
     try:
+        authority = card_runtime_authority(config)
+        if authority is not None:
+            if str(getattr(agent, "provider", "") or "").strip() != authority["effectiveProvider"]:
+                raise HostSessionConfigError("hermes_cli_host_provider_mismatch")
+            if str(getattr(agent, "model", "") or "").strip() != authority["model"]:
+                raise HostSessionConfigError("hermes_cli_host_model_mismatch")
+            if authority["providerApiMode"]:
+                agent.api_mode = authority["providerApiMode"]
+            agent.session_cwd = authority["workingDirectory"]
+            cache = getattr(agent, "_transport_cache", None)
+            if isinstance(cache, dict):
+                cache.clear()
+            if authority.get("openaiRuntime") == "codex_app_server":
+                ensure_cli_codex_thread_owner(agent, config)
         apply_host_session_config(agent, config)
     except Exception:
         clear_cli_host_session_config(agent)
@@ -910,4 +1339,7 @@ def clear_cli_host_session_config(agent: Any) -> bool:
     invalidate = getattr(agent, "_invalidate_system_prompt", None)
     if callable(invalidate):
         invalidate()
+    cache = getattr(agent, "_transport_cache", None)
+    if isinstance(cache, dict):
+        cache.clear()
     return True

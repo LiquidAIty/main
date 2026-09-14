@@ -3581,6 +3581,28 @@ def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
     assert "start-mcp-tunnel.ps1" not in tunnel_command
     assert not os.path.exists(os.path.join(repo_root, "scripts", "start-mcp-tunnel.ps1"))
 
+    dependent_services = package["scripts"]["dev:dependent-services"]
+    assert dependent_services.count("npm run dev:mcp") == 1
+    assert "--kill-others --success all" in dependent_services
+    assert (
+        "powershell -NoProfile -ExecutionPolicy Bypass -File "
+        "scripts/start-dependent-services.ps1 -WaitForMcpReadiness"
+    ) in dependent_services
+    assert dependent_services.count("npm run dev:tunnel") == 0
+    readiness_gate = os.path.join(repo_root, "scripts", "start-dependent-services.ps1")
+    with open(readiness_gate, encoding="utf-8-sig") as gate_file:
+        gate_source = gate_file.read()
+    assert "http://127.0.0.1:8765/health/ready" in gate_source
+    assert "if ($WaitForMcpReadiness)" in gate_source
+    assert "& npm.cmd run dev:tunnel" in gate_source
+    assert gate_source.index("Invoke-WebRequest") < gate_source.index("& npm.cmd run dev:tunnel")
+    assert "Start-Process" not in gate_source
+    assert "npm.cmd run dev:mcp" not in gate_source
+    assert "/api/coder/input-data-dictionary/tools" not in gate_source
+    assert "/.well-known/oauth-protected-resource" not in gate_source
+    assert "server/discover" not in gate_source
+    assert "tools/list" not in gate_source
+
     mcp_command = package["scripts"]["dev:mcp"]
     assert "MCP_PUBLIC_RESOURCE_URL=%npm_package_config_mcp_public_resource_url%" in mcp_command
     assert "MCP_AUTH0_AUDIENCE=%npm_package_config_mcp_public_resource_url%" in mcp_command

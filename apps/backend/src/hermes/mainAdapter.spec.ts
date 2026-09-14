@@ -21,8 +21,12 @@ import {
 } from './childExecutionContext';
 
 function providerFreeTurnArgs(toolCount = 57) {
+  const workingDirectory = process.cwd();
   return {
     cardId: 'card_main_chat',
+    cardRevisionId: 'revision-main-1',
+    cardRevisionSha256: 'a'.repeat(64),
+    executionAuthorityFingerprint: 'b'.repeat(64),
     title: 'Main Chat',
     runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' } as const,
     prompt: 'Saved Main prompt',
@@ -30,6 +34,9 @@ function providerFreeTurnArgs(toolCount = 57) {
     modelKey: 'gpt-5.6-sol',
     providerModelId: 'gpt-5.6-sol',
     accessMode: 'chatgpt-account' as const,
+    nativeProvider: 'openai-codex' as const,
+    apiMode: 'codex_app_server' as const,
+    openaiRuntime: 'codex_app_server' as const,
     tools: Array.from({ length: toolCount }, (_, index) => `test.tool_${index + 1}`),
     mcpConnectionIds: [],
     sessionKey: 'hermes:project-1:provider-free:card_main_chat',
@@ -38,6 +45,7 @@ function providerFreeTurnArgs(toolCount = 57) {
     conversationId: 'provider-free',
     parentRunId: 'provider-free-run',
     message: 'Return the bounded provider-free result.',
+    workingDirectory,
   };
 }
 
@@ -57,13 +65,26 @@ rl.on('line', (line) => {
   const message = JSON.parse(line);
   const method = message.method;
   if (method === 'initialize') return send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
-  if (method === 'session/list') return send({ jsonrpc: '2.0', id: message.id, result: { sessions: [] } });
+  if (method === 'session/list') {
+    if ('cwd' in (message.params || {})) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'trusted_list_cwd_forbidden' } });
+    }
+    const config = message.params?._meta?.hermes?.sessionConfig || {};
+    if (JSON.stringify(Object.keys(config).sort()) !== JSON.stringify(['hostSessionKey'])) {
+      return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'trusted_list_key_only_required' } });
+    }
+    return send({ jsonrpc: '2.0', id: message.id, result: { sessions: [] } });
+  }
   if (method === 'session/new') {
     process.stderr.write('MCP server provider-free (HTTP): registered 57 tool(s)\\n');
     ${exitAfterRegistration ? "return setImmediate(() => process.exit(0));" : "return send({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'provider-free-session' } });"}
   }
   if (method === 'session/set_model') {
-    if (message.params.modelId !== 'openai-codex:gpt-5.6-sol') {
+    if (
+      message.params.modelId !== 'openai-codex:gpt-5.6-sol'
+      || message.params.apiMode !== 'codex_app_server'
+      || message.params.openaiRuntime !== 'codex_app_server'
+    ) {
       return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'wrong_saved_model' } });
     }
     selectedModel = message.params.modelId;
@@ -90,7 +111,10 @@ rl.on('line', (line) => {
       heldConfigureId = undefined;
     }
     if (heldPromptId) {
-      send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn', _meta: { hermes: { finalAssistantText: 'provider-free terminal result' } } } });
+      send({ jsonrpc: '2.0', id: heldPromptId, result: { stopReason: 'end_turn', _meta: { hermes: {
+        finalAssistantText: 'provider-free terminal result', codexThreadId: 'thread-provider-free',
+        codexTurnId: 'turn-provider-free', effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server'
+      } } } });
       heldPromptId = undefined;
     }
     return send({ jsonrpc: '2.0', id: message.id, result: { method } });
@@ -104,7 +128,31 @@ rl.on('line', (line) => {
     heldPromptId = message.id;
     return;
     ` : ''}
-    return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 }, _meta: { hermes: { messageSource: 'model', finalAssistantText: 'provider-free terminal result' } } } });
+    return send({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn', usage: { inputTokens: 11, outputTokens: 4 }, _meta: { hermes: {
+      messageSource: 'model', finalAssistantText: 'provider-free terminal result',
+      codexThreadId: 'thread-provider-free', codexTurnId: 'turn-provider-free',
+      effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server'
+    } } } });
+  }
+});
+`;
+}
+
+function fakeSessionEnumerationAcpScript(listResultSource: string): string {
+  return `
+const readline = require('node:readline');
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+function send(value) { process.stdout.write(JSON.stringify(value) + '\\n'); }
+rl.on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    return send({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: 1 } });
+  }
+  if (message.method === 'session/list') {
+    return send({ jsonrpc: '2.0', id: message.id, result: ${listResultSource} });
+  }
+  if (message.method === 'session/new') {
+    return send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'unexpected_session_new' } });
   }
 });
 `;
@@ -157,6 +205,26 @@ rl.on('line', (line) => {
 }
 
 describe('Hermes ACP transport identity', () => {
+  it.each([
+    ['malformed response', '{}', 'hermes_acp_session_enumeration_invalid'],
+    ['missing session id', '{ sessions: [{}] }', 'hermes_acp_session_enumeration_invalid'],
+    ['multiple owners', "{ sessions: [{ sessionId: 'one' }, { sessionId: 'two' }] }", 'hermes_acp_session_ambiguous'],
+  ])('fails closed on %s without creating a replacement session', async (_label, resultSource, expected) => {
+    const root = path.join(tmpdir(), `liquidaity-acp-enumeration-${randomUUID()}`);
+    mkdirSync(root, { recursive: true });
+    const owner = new AcpProcess(() => undefined, {
+      install: { root, executable: process.execPath, args: ['-e', fakeSessionEnumerationAcpScript(resultSource)] },
+      hermesHome: root,
+    });
+    try {
+      await expect(owner.startTurn(providerFreeTurnArgs(0), () => undefined))
+        .rejects.toThrow(expected);
+    } finally {
+      owner.close();
+      await owner.closed;
+    }
+  });
+
   it('keeps the saved Script model-callable without pre-executing it before Hermes', async () => {
     const root = path.join(tmpdir(), `liquidaity-acp-script-tool-${randomUUID()}`);
     mkdirSync(root, { recursive: true });
@@ -418,7 +486,7 @@ describe('Hermes ACP transport identity', () => {
         },
         async () => ({
           name: 'liquidaity-main',
-          model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
+          model: { provider: 'openai-codex', default: 'gpt-5.6-sol', openaiRuntime: 'codex_app_server' },
           toolsets: [],
           mcp_servers: [],
         }),
@@ -502,7 +570,7 @@ describe('Hermes ACP transport identity', () => {
     const readNative = vi.fn()
       .mockResolvedValueOnce({
         name: 'liquidaity-main',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-sol', openaiRuntime: 'codex_app_server' },
         subagent_model: { provider: '', model: '' },
         background_review: { enabled: false, provider: 'auto', model: '' },
         toolsets: [],
@@ -510,7 +578,7 @@ describe('Hermes ACP transport identity', () => {
       })
       .mockResolvedValueOnce({
         name: 'liquidaity-main',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-sol', openaiRuntime: 'codex_app_server' },
         subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
         background_review: {
           enabled: false,
@@ -561,7 +629,7 @@ describe('Hermes ACP transport identity', () => {
     const review = { ...(enabled === undefined ? {} : { enabled }), provider: 'auto', model: '', max_input_tokens: 50000 };
     const profile = {
       name: 'liquidaity-main',
-      model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
+      model: { provider: 'openai-codex', default: 'gpt-5.6-sol', openaiRuntime: 'codex_app_server' },
       subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
       background_review: review,
     };
@@ -588,7 +656,7 @@ describe('Hermes ACP transport identity', () => {
       })
       .mockResolvedValueOnce({
         name: 'trading',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna', openaiRuntime: 'codex_app_server' },
         subagent_model: { provider: '', model: '' },
         background_review: { enabled: false, provider: 'auto', model: '' },
         toolsets: [],
@@ -616,33 +684,18 @@ describe('Hermes ACP transport identity', () => {
     expect(configureParent).toHaveBeenCalledWith('trading', {
       provider: 'openai-codex',
       model: 'gpt-5.6-luna',
+      apiMode: 'codex_app_server',
+      openaiRuntime: 'codex_app_server',
     });
     expect(configureSubagent).not.toHaveBeenCalled();
     expect(readNative).toHaveBeenCalledTimes(2);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
-  it('creates a missing saved-Card profile through the native manager before materialization', async () => {
-    const startTurn = vi.fn(async (args: any) => ({ args }));
-    const acquire = vi.fn(() => ({ startTurn }) as never);
+  it('fails before inference when the saved Card profile is missing', async () => {
+    const acquire = vi.fn();
     const readNative = vi.fn()
-      .mockRejectedValueOnce(new Error("hermes_native_manager_error:profile 'worldview' not found"))
-      .mockResolvedValueOnce({
-        name: 'worldview',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
-        subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
-        background_review: {
-          enabled: true,
-          provider: 'openai-codex',
-          model: 'gpt-5.6-luna',
-          max_input_tokens: 120_000,
-        },
-        toolsets: [],
-        mcp_servers: [],
-      });
-    const configureSubagent = vi.fn();
-    const configureParent = vi.fn();
-    const createProfile = vi.fn(async () => ({ ok: true, name: 'worldview' }));
+      .mockRejectedValueOnce(new Error("hermes_native_manager_error:profile 'worldview' not found"));
     const saved = {
       provider: 'openai',
       accessMode: 'chatgpt-account' as const,
@@ -650,7 +703,7 @@ describe('Hermes ACP transport identity', () => {
       providerModelId: 'gpt-5.6-luna',
     };
 
-    await startHermesTurnWithOnePrePromptRecovery(
+    await expect(startHermesTurnWithOnePrePromptRecovery(
       {
         ...providerFreeTurnArgs(0),
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldview' },
@@ -661,21 +714,12 @@ describe('Hermes ACP transport identity', () => {
         subagentModel: saved,
       },
       () => undefined,
-      acquire,
+      acquire as never,
       readNative,
-      configureSubagent,
-      configureParent,
-      createProfile,
-    );
+    )).rejects.toThrow('hermes_native_profile_missing:worldview');
 
-    expect(createProfile).toHaveBeenCalledExactlyOnceWith('worldview', {
-      provider: 'openai-codex',
-      model: 'gpt-5.6-luna',
-    });
-    expect(configureParent).not.toHaveBeenCalled();
-    expect(configureSubagent).not.toHaveBeenCalled();
-    expect(readNative).toHaveBeenCalledTimes(2);
-    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(readNative).toHaveBeenCalledTimes(1);
+    expect(acquire).not.toHaveBeenCalled();
   });
 
   it('materializes an explicit saved Card skill grant while preserving the native essential skill', async () => {
@@ -684,7 +728,7 @@ describe('Hermes ACP transport identity', () => {
     const readNative = vi.fn()
       .mockResolvedValueOnce({
         name: 'worldview',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna', openaiRuntime: 'codex_app_server' },
         skills: [
           { name: 'hermes-agent', enabled: true },
           { name: 'grounded-citations', enabled: true },
@@ -695,7 +739,7 @@ describe('Hermes ACP transport identity', () => {
       })
       .mockResolvedValueOnce({
         name: 'worldview',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna', openaiRuntime: 'codex_app_server' },
         skills: [
           { name: 'hermes-agent', enabled: true },
           { name: 'grounded-citations', enabled: true },
@@ -721,11 +765,10 @@ describe('Hermes ACP transport identity', () => {
       readNative,
       vi.fn(),
       vi.fn(),
-      vi.fn(),
       configureSkills,
     );
 
-    expect(configureSkills).toHaveBeenCalledExactlyOnceWith('worldview', ['hermes-agent', 'browser']);
+    expect(configureSkills).toHaveBeenCalledExactlyOnceWith('worldview', ['browser']);
     expect(readNative).toHaveBeenCalledTimes(2);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
@@ -734,7 +777,7 @@ describe('Hermes ACP transport identity', () => {
     const acquire = vi.fn();
     const readNative = vi.fn(async () => ({
       name: 'worldview',
-      model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+      model: { provider: 'openai-codex', default: 'gpt-5.6-luna', openaiRuntime: 'codex_app_server' },
       skills: [{ name: 'hermes-agent', enabled: true }],
       toolsets: [],
       mcp_servers: [],
@@ -904,12 +947,12 @@ describe('Hermes ACP transport identity', () => {
 
   it('adds one selected Card MCP surface without injecting native ACP defaults', () => {
     const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
       sessionKey: 'session-1',
       projectId: 'project-1',
       deckId: 'deck_builder',
       conversationId: 'conversation-1',
       parentRunId: 'main-run-1',
-      cardId: 'card_main_chat',
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
       prompt: 'Main prompt',
@@ -927,10 +970,10 @@ describe('Hermes ACP transport identity', () => {
 
     expect(projection.mcpServers).toHaveLength(1);
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(sessionConfig.enabledToolsets).toEqual([
-      expect.stringMatching(/^mcp-main-runtime-/),
+    expect(sessionConfig.enabledToolsets).toEqual([]);
+    expect(sessionConfig.enabledTools).toEqual([
+      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]{12}__canvas_inspect$/),
     ]);
-    expect(sessionConfig.enabledTools).toEqual([]);
     expect(sessionConfig.delegationRoles).toEqual([]);
     expect(sessionConfig).not.toHaveProperty('delegateProfiles');
     expect(sessionConfig.hostSessionKey).toBe('session-1');
@@ -953,8 +996,9 @@ describe('Hermes ACP transport identity', () => {
     }));
   });
 
-  it('preserves explicitly selected native profile capabilities for Delegate', () => {
+  it('preserves explicitly saved native toolsets for Delegate', () => {
     const projection = buildHermesHostSessionProjection({
+      ...providerFreeTurnArgs(0),
       delegationRole: 'team',
       sessionKey: 'delegate-session-1',
       projectId: 'project-1',
@@ -971,7 +1015,7 @@ describe('Hermes ACP transport identity', () => {
       accessMode: 'chatgpt-account',
       tools: ['cbm.search_graph', 'cbm.trace_path'],
       mcpConnectionIds: [],
-      nativeProfileToolsets: ['terminal', 'file'],
+      toolsets: ['terminal', 'file'],
       nativeTools: ['read_file'],
       message: 'Inspect one symbol.',
     }, {
@@ -980,11 +1024,12 @@ describe('Hermes ACP transport identity', () => {
     }, 'delegate-context');
 
     const sessionConfig = (projection.sessionMeta.hermes as any).sessionConfig;
-    expect(sessionConfig.enabledToolsets).toEqual([
-      'terminal', 'file',
-      expect.stringMatching(/^mcp-main-runtime-/),
+    expect(sessionConfig.enabledToolsets).toEqual(['terminal', 'file']);
+    expect(sessionConfig.enabledTools).toEqual([
+      'read_file',
+      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]{12}__cbm_search_graph$/),
+      expect.stringMatching(/^mcp__main_runtime_[a-f0-9]{12}__cbm_trace_path$/),
     ]);
-    expect(sessionConfig.enabledTools).toEqual(['read_file']);
     expect(sessionConfig.delegationRoles).toEqual(['team']);
     expect(sessionConfig.team).toBeUndefined();
     expect(sessionConfig.executionContextId).toBe('delegate-context');
@@ -1150,7 +1195,7 @@ describe('Hermes ACP transport identity', () => {
   it('keeps an empty native and Card selection empty', () => {
     const projection = buildHermesHostSessionProjection({
       ...providerFreeTurnArgs(), tools: [], mcpConnectionIds: [],
-      nativeTools: [], toolsets: [], nativeProfileToolsets: [], nativeProfileMcpServerNames: [],
+      nativeTools: [], toolsets: [],
     }, {});
     expect(projection.mcpServers).toEqual([]);
     expect((projection.sessionMeta.hermes as any).sessionConfig.enabledTools).toEqual([]);

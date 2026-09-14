@@ -78,6 +78,8 @@ export type AgentCardRuntimeOptions = {
   provider?: 'openai' | 'openrouter' | 'local_openai_compatible' | null;
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
+  providerModelId?: string | null;
+  openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded native Hermes delegated children and
    * background skill review. Native profile/readback remains effective truth. */
   subagentModel?: {
@@ -123,6 +125,10 @@ export type AgentTemplate = {
 
 export type AgentCardInstance = {
   id: string;
+  /** Current server-owned immutable revision identity returned with a loaded deck. */
+  _cardRevisionId?: string;
+  _cardRevision?: number;
+  _cardRevisionSha256?: string;
   kind?: DeckNodeKind;
   templateId: string;
   /** Stable LiquidAIty Card-to-Card capability description. */
@@ -148,6 +154,7 @@ export type DeckEdge = {
   target: string;
   targetHandle?: string | null;
   edgeType?: DeckEdgeType | null;
+  enabled?: boolean;
 };
 
 export type DeckDocument = {

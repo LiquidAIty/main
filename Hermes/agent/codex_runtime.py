@@ -681,8 +681,6 @@ def make_codex_app_server_event_bridge(agent) -> Callable[[dict], None]:
 
 def _codex_dynamic_tools(agent) -> list[dict]:
     """Expose the effective first-party Hermes registry through dynamicTools."""
-    from tools.registry import registry
-
     definitions = []
     seen = set()
     for tool in agent.tools or []:
@@ -693,12 +691,6 @@ def _codex_dynamic_tools(agent) -> list[dict]:
         if name in seen:
             raise ValueError(f"codex_duplicate_effective_tool: {name}")
         seen.add(name)
-        toolset = registry.get_toolset_for_tool(name)
-        if toolset and toolset.startswith("mcp-") and toolset != "mcp-liquidaity-card":
-            # External MCP remains owned by Codex's native MCP connections.
-            # Do not re-export it as a first-party tool or change native config.
-            logger.info("External MCP tool requires its native Codex connection: %s", name)
-            continue
         definitions.append({"type": "function", "name": name, "description": function.get("description", ""),
                             "inputSchema": function["parameters"]})
     return definitions
@@ -781,10 +773,17 @@ def run_codex_app_server_turn(
     # Lazy session: one CodexAppServerSession per AIAgent instance.
     # Spawned on first turn, reused across turns, closed at AIAgent
     # shutdown (see _cleanup hook).
+    trusted_authority = getattr(agent, "_host_card_runtime_authority", None)
+    has_host_authority = isinstance(trusted_authority, dict)
     if not hasattr(agent, "_codex_session") or agent._codex_session is None:
         from agent.runtime_cwd import resolve_agent_cwd
 
-        cwd = getattr(agent, "session_cwd", None) or str(resolve_agent_cwd())
+        if has_host_authority:
+            cwd = trusted_authority["workingDirectory"]
+            if str(getattr(agent, "session_cwd", "") or "") != cwd:
+                raise ValueError("codex_app_server_trusted_cwd_mismatch")
+        else:
+            cwd = getattr(agent, "session_cwd", None) or str(resolve_agent_cwd())
         # Approval callback: defer to Hermes' standard prompt flow if a
         # CLI thread has installed one. Gateway / cron contexts get the
         # codex-side fail-closed default.
@@ -835,6 +834,24 @@ def run_codex_app_server_turn(
             model=agent.model,
             instructions=active_system_prompt,
             effort=(getattr(agent, "reasoning_config", None) or {}).get("effort"),
+            trusted_host_authority=has_host_authority,
+            resume_thread_id=(
+                getattr(agent, "_codex_thread_id", None)
+                if has_host_authority
+                else None
+            ),
+            project_id=(trusted_authority.get("projectId") if has_host_authority else None),
+            model_provider=("openai" if has_host_authority else None),
+            on_thread_starting=(
+                getattr(agent, "_claim_codex_thread_start", None)
+                if has_host_authority
+                else None
+            ),
+            on_thread_ready=(
+                getattr(agent, "_persist_codex_thread", None)
+                if has_host_authority
+                else None
+            ),
         )
 
     # Refresh the task-scoped closure even when the native thread is reused.
@@ -844,14 +861,31 @@ def run_codex_app_server_turn(
     # standard run_conversation() flow (line ~11823) before the early
     # return reaches us. Do NOT append again — that would duplicate.
 
+    agent._emit_stream_start()
+    turn = None
     try:
         turn = agent._codex_session.run_turn(user_input=user_message)
+        if has_host_authority and turn.thread_id:
+            persisted_thread_id = str(
+                getattr(agent, "_codex_thread_id", "") or ""
+            ).strip()
+            persisted_authority = getattr(agent, "_codex_thread_authority", None)
+            if persisted_thread_id != turn.thread_id:
+                raise RuntimeError("codex_app_server_native_thread_mismatch")
+            if persisted_authority != trusted_authority["executionAuthorityFingerprint"]:
+                raise RuntimeError("codex_app_server_native_thread_authority_mismatch")
     except Exception as exc:
         logger.exception("codex app-server turn failed")
+        failed_session = agent._codex_session
+        observed_turn_id = str(
+            getattr(turn, "turn_id", "")
+            or getattr(failed_session, "_active_turn_id", "")
+            or ""
+        ).strip()
         # Crash → unconditionally drop the session so the next turn
         # respawns from scratch instead of reusing a dead client.
         try:
-            agent._codex_session.close()
+            failed_session.close()
         except Exception:
             pass
         agent._codex_session = None
@@ -865,11 +899,27 @@ def run_codex_app_server_turn(
         )
         if _user_interrupted:
             agent.clear_interrupt()
+        # Only the ID atomically persisted on the Hermes session is canonical.
+        # A remote ID observed before persistence failed remains diagnostic and
+        # must never become resumable Run/provider-thread authority.
+        codex_thread_id = str(
+            getattr(agent, "_codex_thread_id", "") or ""
+        ).strip()
+        codex_turn_id = observed_turn_id
+        agent._emit_stream_end(
+            final_text="",
+            finished=False,
+            error=str(exc),
+            codex_thread_id=codex_thread_id,
+            codex_turn_id=codex_turn_id,
+            effective_provider=getattr(agent, "provider", None),
+            provider_api_mode=getattr(agent, "api_mode", None),
+        )
+        failure_text = f"Codex app-server turn failed: {exc}."
+        if not has_host_authority:
+            failure_text += " Fall back to default runtime with `/codex-runtime auto`."
         return {
-            "final_response": (
-                f"Codex app-server turn failed: {exc}. "
-                f"Fall back to default runtime with `/codex-runtime auto`."
-            ),
+            "final_response": failure_text,
             "messages": messages,
             "api_calls": 0,
             "completed": False,
@@ -881,6 +931,10 @@ def run_codex_app_server_turn(
                 else {}
             ),
             "error": str(exc),
+            "codex_thread_id": codex_thread_id,
+            "codex_turn_id": codex_turn_id,
+            "effective_provider": getattr(agent, "provider", None),
+            "provider_api_mode": getattr(agent, "api_mode", None),
         }
 
     # This runtime bypasses the normal conversation-loop finalizer. Mirror its
@@ -894,6 +948,16 @@ def run_codex_app_server_turn(
     )
     if _user_interrupted:
         agent.clear_interrupt()
+
+    agent._emit_stream_end(
+        final_text=turn.final_text,
+        finished=not turn.interrupted and turn.error is None,
+        error=turn.error,
+        codex_thread_id=turn.thread_id,
+        codex_turn_id=turn.turn_id,
+        effective_provider=getattr(agent, "provider", None),
+        provider_api_mode=getattr(agent, "api_mode", None),
+    )
 
     # If the turn signalled the underlying client is wedged (deadline
     # blown, post-tool watchdog tripped, OAuth refresh died, subprocess
@@ -977,6 +1041,28 @@ def run_codex_app_server_turn(
     usage_result = _record_codex_app_server_usage(agent, turn)
     api_calls = 1
 
+    if turn.final_text and not turn.interrupted and turn.error is None:
+        try:
+            from hermes_cli.lifecycle import invoke_hook as _invoke_hook
+
+            _invoke_hook(
+                "post_llm_call",
+                session_id=agent.session_id,
+                task_id=effective_task_id,
+                turn_id=getattr(agent, "_current_turn_id", "") or "",
+                user_message=original_user_message,
+                assistant_response=turn.final_text,
+                conversation_history=list(messages),
+                model=agent.model,
+                platform=getattr(agent, "platform", None) or "",
+                codex_thread_id=turn.thread_id,
+                codex_turn_id=turn.turn_id,
+                effective_provider=getattr(agent, "provider", None),
+                provider_api_mode=getattr(agent, "api_mode", None),
+            )
+        except Exception:
+            logger.warning("post_llm_call hook failed", exc_info=True)
+
     # Now check the skill nudge AFTER iters were incremented — same
     # pattern the chat_completions path uses (line ~15432).
     should_review_skills = False
@@ -1045,6 +1131,8 @@ def run_codex_app_server_turn(
         "agent_persisted": True,
         "codex_thread_id": turn.thread_id,
         "codex_turn_id": turn.turn_id,
+        "effective_provider": getattr(agent, "provider", None),
+        "provider_api_mode": getattr(agent, "api_mode", None),
         **usage_result,
     }
 

@@ -1,4 +1,5 @@
 import type { AgentCardRuntimeOptions } from '../types';
+import { resolveSavedHermesSubagent } from './providerSelection';
 
 export type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
 
@@ -26,20 +27,21 @@ export function readSavedSubagentModel(value: unknown): SavedSubagentModel | nul
   ].includes(accessMode)) {
     throw new Error('card_subagent_model_invalid');
   }
-  return {
+  const saved = {
     provider,
     accessMode: accessMode as SavedSubagentModel['accessMode'],
     modelKey,
     providerModelId,
   };
+  resolveSavedHermesSubagent(saved);
+  return saved;
 }
 
 export function toNativeSubagentModel(saved: SavedSubagentModel): NativeSubagentModel {
+  const resolved = resolveSavedHermesSubagent(saved);
   return {
-    provider: saved.provider === 'openai' && saved.accessMode === 'chatgpt-account'
-      ? 'openai-codex'
-      : saved.provider,
-    model: saved.providerModelId,
+    provider: resolved.provider,
+    model: resolved.model,
   };
 }
 

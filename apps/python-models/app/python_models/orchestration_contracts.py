@@ -99,6 +99,7 @@ class CardConfiguration(BaseModel):
     provider: str = ""
     accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str = ""
+    openaiRuntime: Literal["codex_app_server"] | None = None
     reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
     temperature: float | None = Field(default=None, ge=0)
     maxTokens: int | None = Field(default=None, ge=1)

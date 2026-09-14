@@ -4651,16 +4651,9 @@ class PluginManager:
                 session_db = getattr(cli, "_session_db", None)
                 if session_db is None or getattr(cli, "_agent_running", False):
                     return False
-                session = session_db.get_session(binding.session_id) or {}
-                existing_key = session.get("session_key")
-                if existing_key != host_key:
-                    if existing_key or getattr(cli, "conversation_history", None):
-                        return False
-                    if session_db.get_messages(binding.session_id):
-                        return False
-                    session_db.create_session(binding.session_id, source="cli", session_key=host_key)
-                    if (session_db.get_session(binding.session_id) or {}).get("session_key") != host_key:
-                        return False
+                # The native thread owner binds this key atomically with its
+                # marker and authority fingerprint when the exact agent is
+                # attached. Do not pre-bind a routing identity here.
             agent = getattr(cli, "agent", None)
             if agent is not None:
                 try:

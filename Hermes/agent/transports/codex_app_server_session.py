@@ -74,6 +74,9 @@ class TurnResult:
     error: Optional[str] = None  # Set if turn ended in a non-recoverable error
     turn_id: Optional[str] = None
     thread_id: Optional[str] = None
+    # A thread/start response observed before local ownership persistence
+    # failed. Diagnostic only: callers must never resume from this value.
+    observed_thread_id: Optional[str] = None
     token_usage_last: Optional[dict[str, Any]] = None
     token_usage_total: Optional[dict[str, Any]] = None
     model_context_window: Optional[int] = None
@@ -230,7 +233,10 @@ _OAUTH_REFRESH_FAILURE_HINTS = (
 )
 
 
-def _classify_oauth_failure(*parts: str) -> Optional[str]:
+def _classify_oauth_failure(
+    *parts: str,
+    allow_runtime_fallback: bool = True,
+) -> Optional[str]:
     """Return a user-friendly re-auth hint if any of the provided strings
     look like a codex OAuth/token-refresh failure; otherwise None.
 
@@ -244,12 +250,16 @@ def _classify_oauth_failure(*parts: str) -> Optional[str]:
         return None
     for needle in _OAUTH_REFRESH_FAILURE_HINTS:
         if needle in haystack:
-            return (
+            message = (
                 "Codex authentication failed — your ChatGPT/Codex login "
-                "looks expired or invalid. Run `codex login` to refresh, "
-                "then retry. (Fall back to default runtime with "
-                "`/codex-runtime auto` if the issue persists.)"
+                "looks expired or invalid. Run `codex login` to refresh, then retry."
             )
+            if allow_runtime_fallback:
+                message += (
+                    " (Fall back to default runtime with `/codex-runtime auto` "
+                    "if the issue persists.)"
+                )
+            return message
     return None
 
 
@@ -289,7 +299,16 @@ class CodexAppServerSession:
         model: Optional[str] = None,
         instructions: Optional[str] = None,
         effort: Optional[str] = None,
+        trusted_host_authority: bool = False,
+        resume_thread_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        model_provider: Optional[str] = None,
+        on_thread_starting: Optional[Callable[[], None]] = None,
+        on_thread_ready: Optional[Callable[[str], None]] = None,
     ) -> None:
+        self._trusted_host_authority = bool(trusted_host_authority)
+        if self._trusted_host_authority and not cwd:
+            raise ValueError("codex_app_server_trusted_cwd_required")
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
         self._codex_home = codex_home
@@ -308,6 +327,26 @@ class CodexAppServerSession:
         self._model = model
         self._instructions = instructions
         self._effort = effort
+        self._resume_thread_id = str(resume_thread_id or "").strip() or None
+        self._project_id = str(project_id or "").strip() or None
+        self._model_provider = str(model_provider or "").strip() or None
+        self._on_thread_starting = on_thread_starting
+        self._on_thread_ready = on_thread_ready
+        if self._trusted_host_authority:
+            required = {
+                "model": self._model,
+                "project_id": self._project_id,
+                "model_provider": self._model_provider,
+            }
+            missing = next((name for name, value in required.items() if not value), None)
+            if missing:
+                raise ValueError(f"codex_app_server_trusted_{missing}_required")
+            if self._model_provider != "openai":
+                raise ValueError("codex_app_server_trusted_model_provider_invalid")
+            if not callable(self._on_thread_starting):
+                raise ValueError("codex_app_server_trusted_thread_starting_callback_required")
+            if not callable(self._on_thread_ready):
+                raise ValueError("codex_app_server_trusted_thread_ready_callback_required")
         self._dynamic_schemas: dict = {}
         self._dynamic_call_responses: dict = {}
         if dynamic_tools is not None:
@@ -325,6 +364,11 @@ class CodexAppServerSession:
 
         self._client: Optional[CodexAppServerClient] = None
         self._thread_id: Optional[str] = None
+        # A start response can reveal a remote id before the SessionDB commit
+        # succeeds. Keep that observation for failure evidence, but never treat
+        # it as resumable ownership until on_thread_ready commits it.
+        self._observed_thread_id: Optional[str] = None
+        self._thread_start_lock = threading.Lock()
         self._interrupt_event = threading.Event()
         self._active_turn_id: Optional[str] = None
         self._active_turn_lock = threading.Lock()
@@ -342,11 +386,17 @@ class CodexAppServerSession:
         """Spawn the subprocess, do the initialize handshake, and start a
         thread. Returns the codex thread id. Idempotent — repeated calls
         return the same thread id."""
+        with self._thread_start_lock:
+            return self._ensure_started_locked()
+
+    def _ensure_started_locked(self) -> str:
+        """Start or resume while holding the one-session lifecycle lock."""
         if self._thread_id is not None:
             return self._thread_id
         if self._client is None:
             self._client = self._client_factory(
-                codex_bin=self._codex_bin, codex_home=self._codex_home
+                codex_bin=self._codex_bin,
+                codex_home=self._codex_home,
             )
         self._client.initialize(
             client_name="hermes",
@@ -354,30 +404,35 @@ class CodexAppServerSession:
             client_version=_get_hermes_version(),
             **({"capabilities": {"experimentalApi": True}} if self._dynamic_tools is not None else {}),
         )
-        # Permission selection is intentionally NOT sent on thread/start.
-        # Two reasons (live-tested against codex 0.130.0):
-        #   1. `thread/start.permissions` is gated behind the experimentalApi
-        #      capability on this codex version — we'd have to opt in during
-        #      initialize and accept the unstable surface.
-        #   2. Even with experimentalApi declared and the correct shape
-        #      (`{"type": "profile", "id": "..."}`, not `{"profileId": ...}`),
-        #      codex requires a matching `[permissions]` table in
-        #      ~/.codex/config.toml or it fails the request with
-        #      'default_permissions requires a [permissions] table'.
-        # Letting codex pick its default (`:read-only` unless the user has
-        # configured otherwise in their codex config.toml) is the standard
-        # codex CLI workflow and avoids fighting codex's own validation.
-        # Users who want a write-capable profile configure it in their
-        # ~/.codex/config.toml the same way they would for any codex usage.
-        params: dict[str, Any] = {"cwd": self._cwd}
-        if self._dynamic_tools is not None:
-            params["dynamicTools"] = self._dynamic_tools
-        if self._model is not None:
-            params["model"] = self._model
-            params["allowProviderModelFallback"] = False
-        if self._instructions is not None:
-            params["baseInstructions"] = self._instructions
-        result = self._client.request("thread/start", params, timeout=15)
+        method = "thread/start"
+        if self._trusted_host_authority and self._resume_thread_id:
+            method = "thread/resume"
+            params: dict[str, Any] = {
+                "threadId": self._resume_thread_id,
+                "cwd": self._cwd,
+                "model": self._model,
+                "modelProvider": self._model_provider,
+            }
+        else:
+            params = {"cwd": self._cwd}
+            if self._dynamic_tools is not None:
+                params["dynamicTools"] = self._dynamic_tools
+            if self._model is not None:
+                params["model"] = self._model
+                params["allowProviderModelFallback"] = False
+            if self._instructions is not None:
+                params["baseInstructions"] = self._instructions
+            if self._trusted_host_authority:
+                params.update({
+                    "modelProvider": self._model_provider,
+                    "projectId": self._project_id,
+                })
+        if method == "thread/start" and self._on_thread_starting is not None:
+            # Persist the indeterminate claim immediately before the remote
+            # request. Once this returns successfully, no failure path may
+            # interpret the session as safe to start again.
+            self._on_thread_starting()
+        result = self._client.request(method, params, timeout=15)
         # Cross-fill thread.id/sessionId — different codex versions have
         # serialized this under either key. Mirrors openclaw beta.8's
         # tolerance fix so future codex drops/renames don't KeyError us
@@ -389,18 +444,31 @@ class CodexAppServerSession:
             or result.get("sessionId")
             or result.get("threadId")
         )
+        if method == "thread/resume" and thread_id and thread_id != self._resume_thread_id:
+            raise CodexAppServerError(
+                code=-32603,
+                message="codex thread/resume returned a different thread id",
+            )
+        if method == "thread/resume" and not thread_id:
+            thread_id = self._resume_thread_id
         if not thread_id:
             raise CodexAppServerError(
                 code=-32603,
                 message=(
-                    "codex thread/start returned no thread id "
+                    f"codex {method} returned no thread id "
                     f"(payload keys: {sorted(result.keys())})"
                 ),
             )
-        self._thread_id = thread_id
+        self._observed_thread_id = str(thread_id)
+        if self._on_thread_ready is not None:
+            # The native id becomes usable only after the existing Hermes
+            # session row atomically owns it with its authority fingerprint.
+            self._on_thread_ready(self._observed_thread_id)
+        self._thread_id = self._observed_thread_id
         logger.info(
-            "codex app-server thread started: id=%s profile=%s cwd=%s",
+            "codex app-server thread ready: id=%s method=%s profile=%s cwd=%s",
             self._thread_id[:8],
+            method,
             self._permission_profile,
             self._cwd,
         )
@@ -527,7 +595,8 @@ class CodexAppServerSession:
         result = TurnResult()
         try:
             self.ensure_started()
-        except (CodexAppServerError, TimeoutError) as exc:
+        except (CodexAppServerError, TimeoutError, RuntimeError) as exc:
+            result.observed_thread_id = self._observed_thread_id
             result.error = self._format_error_with_stderr(
                 "codex app-server startup failed", exc
             )
@@ -553,21 +622,26 @@ class CodexAppServerSession:
         # Send turn/start with the user input. Text-only for now (codex
         # supports rich content but Hermes' text path is the common case).
         try:
+            turn_params: dict[str, Any] = {
+                "threadId": self._thread_id,
+                "input": [{"type": "text", "text": user_input_text}],
+                **({"model": self._model} if self._model is not None else {}),
+                **({"effort": self._effort} if self._effort is not None else {}),
+            }
             ts = self._client.request(
                 "turn/start",
-                {
-                    "threadId": self._thread_id,
-                    "input": [{"type": "text", "text": user_input_text}],
-                    **({"model": self._model} if self._model is not None else {}),
-                    **({"effort": self._effort} if self._effort is not None else {}),
-                },
+                turn_params,
                 timeout=10,
             )
         except CodexAppServerError as exc:
             # Classify auth/refresh failures so the user gets a clear
             # `codex login` pointer instead of a raw RPC error string.
             stderr_blob = "\n".join(self._client.stderr_tail(40))
-            hint = _classify_oauth_failure(exc.message, stderr_blob)
+            hint = _classify_oauth_failure(
+                exc.message,
+                stderr_blob,
+                allow_runtime_fallback=not self._trusted_host_authority,
+            )
             if hint is not None:
                 result.error = hint
                 # Subprocess is fine on a JSON-RPC level here, but the
@@ -584,7 +658,10 @@ class CodexAppServerSession:
         except TimeoutError as exc:
             # turn/start hanging is a strong signal the subprocess is wedged.
             stderr_blob = "\n".join(self._client.stderr_tail(40))
-            hint = _classify_oauth_failure(stderr_blob)
+            hint = _classify_oauth_failure(
+                stderr_blob,
+                allow_runtime_fallback=not self._trusted_host_authority,
+            )
             result.error = hint or self._format_error_with_stderr(
                 "turn/start timed out", exc
             )
@@ -616,7 +693,10 @@ class CodexAppServerSession:
             # rather than waiting for the full turn deadline.
             if not self._client.is_alive():
                 stderr_blob = "\n".join(self._client.stderr_tail(60))
-                hint = _classify_oauth_failure(stderr_blob)
+                hint = _classify_oauth_failure(
+                    stderr_blob,
+                    allow_runtime_fallback=not self._trusted_host_authority,
+                )
                 if hint is not None:
                     result.error = hint
                 else:
@@ -785,7 +865,11 @@ class CodexAppServerSession:
                         stderr_blob = "\n".join(
                             self._client.stderr_tail(40)
                         )
-                        hint = _classify_oauth_failure(err_msg, stderr_blob)
+                        hint = _classify_oauth_failure(
+                            err_msg,
+                            stderr_blob,
+                            allow_runtime_fallback=not self._trusted_host_authority,
+                        )
                         if hint is not None:
                             result.error = hint
                             result.should_retire = True
@@ -799,6 +883,7 @@ class CodexAppServerSession:
             and not result.interrupted
             and result.final_text
             and result.error is None
+            and not self._trusted_host_authority
         ):
             logger.warning(
                 "codex app-server turn reached deadline after a completed "
@@ -841,7 +926,7 @@ class CodexAppServerSession:
         result = TurnResult()
         try:
             self.ensure_started()
-        except (CodexAppServerError, TimeoutError) as exc:
+        except (CodexAppServerError, TimeoutError, RuntimeError) as exc:
             result.error = self._format_error_with_stderr(
                 "codex app-server startup failed", exc
             )
@@ -861,7 +946,11 @@ class CodexAppServerSession:
             )
         except CodexAppServerError as exc:
             stderr_blob = "\n".join(self._client.stderr_tail(40))
-            hint = _classify_oauth_failure(exc.message, stderr_blob)
+            hint = _classify_oauth_failure(
+                exc.message,
+                stderr_blob,
+                allow_runtime_fallback=not self._trusted_host_authority,
+            )
             if hint is not None:
                 result.error = hint
                 result.should_retire = True
@@ -872,7 +961,10 @@ class CodexAppServerSession:
             return result
         except TimeoutError as exc:
             stderr_blob = "\n".join(self._client.stderr_tail(40))
-            hint = _classify_oauth_failure(stderr_blob)
+            hint = _classify_oauth_failure(
+                stderr_blob,
+                allow_runtime_fallback=not self._trusted_host_authority,
+            )
             result.error = hint or self._format_error_with_stderr(
                 "thread/compact/start timed out", exc
             )
@@ -890,7 +982,10 @@ class CodexAppServerSession:
 
             if not self._client.is_alive():
                 stderr_blob = "\n".join(self._client.stderr_tail(60))
-                hint = _classify_oauth_failure(stderr_blob)
+                hint = _classify_oauth_failure(
+                    stderr_blob,
+                    allow_runtime_fallback=not self._trusted_host_authority,
+                )
                 if hint is not None:
                     result.error = hint
                 else:
@@ -994,7 +1089,11 @@ class CodexAppServerSession:
                     err_obj = turn_obj.get("error")
                     err_msg = _format_responses_error(err_obj, str(turn_status))
                     stderr_blob = "\n".join(self._client.stderr_tail(40))
-                    hint = _classify_oauth_failure(err_msg, stderr_blob)
+                    hint = _classify_oauth_failure(
+                        err_msg,
+                        stderr_blob,
+                        allow_runtime_fallback=not self._trusted_host_authority,
+                    )
                     if hint is not None:
                         result.error = hint
                         result.should_retire = True

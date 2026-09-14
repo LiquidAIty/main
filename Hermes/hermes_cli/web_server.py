@@ -15032,7 +15032,13 @@ def _profile_setup_command(name: str) -> str:
     return "hermes setup" if name == "default" else f"{name} setup"
 
 
-def _write_profile_model(profile_dir: Path, provider: str, model: str) -> None:
+def _write_profile_model(
+    profile_dir: Path,
+    provider: str,
+    model: str,
+    *,
+    openai_runtime: str | None = None,
+) -> None:
     """Write the main model assignment into a specific profile's config.yaml.
 
     Scopes ``load_config``/``save_config`` to ``profile_dir`` via the
@@ -15047,7 +15053,13 @@ def _write_profile_model(profile_dir: Path, provider: str, model: str) -> None:
     try:
         provider, model = _normalize_main_model_assignment(provider, model)
         cfg = load_config()
-        cfg["model"] = _apply_main_model_assignment(cfg.get("model", {}), provider, model)
+        model_cfg = _apply_main_model_assignment(cfg.get("model", {}), provider, model)
+        if openai_runtime is not None:
+            normalized_runtime = str(openai_runtime).strip().lower()
+            if normalized_runtime not in {"auto", "codex_app_server"}:
+                raise ValueError("profile_openai_runtime_invalid")
+            model_cfg["openai_runtime"] = normalized_runtime
+        cfg["model"] = model_cfg
         save_config(cfg)
     finally:
         reset_hermes_home_override(token)

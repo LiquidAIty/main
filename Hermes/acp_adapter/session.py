@@ -28,6 +28,10 @@ from typing import Any, Dict, List, Optional
 from acp_adapter.host_profiles import (
     apply_host_session_config,
     attach_host_session_config,
+    bind_codex_thread_owner,
+    card_runtime_authority,
+    codex_thread_authority_fingerprint,
+    codex_thread_session_state,
     initial_toolsets,
 )
 
@@ -244,7 +248,12 @@ class SessionManager:
         with self._lock:
             self._sessions[session_id] = state
         _register_task_cwd(session_id, cwd)
-        self._persist(state)
+        self._persist(state, initialize_native_thread=True)
+        self._bind_trusted_codex_thread_owner(
+            state.agent,
+            session_id=state.session_id,
+            host_config=state.host_config,
+        )
         logger.info("Created ACP session %s (cwd=%s)", session_id, cwd)
         return state
 
@@ -257,11 +266,23 @@ class SessionManager:
 
         if state.is_running:
             raise RuntimeError("hermes_host_config_turn_in_progress")
+        current_authority = card_runtime_authority(state.host_config)
+        incoming_authority = card_runtime_authority(host_config)
+        if current_authority != incoming_authority:
+            raise RuntimeError("hermes_host_runtime_authority_mismatch")
+        current_key = str((state.host_config or {}).get("hostSessionKey") or "").strip()
+        incoming_key = str((host_config or {}).get("hostSessionKey") or "").strip()
+        if current_key and incoming_key != current_key:
+            raise RuntimeError("hermes_host_session_key_mismatch")
         state.host_config = copy.deepcopy(host_config)
         apply_host_session_config(state.agent, state.host_config)
         return state
 
-    def get_session(self, session_id: str) -> Optional[SessionState]:
+    def get_session(
+        self,
+        session_id: str,
+        host_config: Dict[str, Any] | None = None,
+    ) -> Optional[SessionState]:
         """Return the session for *session_id*, or ``None``.
 
         If the session is not in memory but exists in the database (e.g. after
@@ -270,9 +291,21 @@ class SessionManager:
         with self._lock:
             state = self._sessions.get(session_id)
         if state is not None:
+            incoming_authority = card_runtime_authority(host_config)
+            if incoming_authority is not None:
+                if card_runtime_authority(state.host_config) != incoming_authority:
+                    raise RuntimeError("hermes_host_runtime_authority_mismatch")
+                stored_key = str(
+                    (state.host_config or {}).get("hostSessionKey") or ""
+                ).strip()
+                incoming_key = str(
+                    (host_config or {}).get("hostSessionKey") or ""
+                ).strip()
+                if stored_key and incoming_key != stored_key:
+                    raise RuntimeError("hermes_host_session_key_mismatch")
             return state
         # Attempt to restore from database.
-        return self._restore(session_id)
+        return self._restore(session_id, host_config=host_config)
 
     def read_session_history(
         self,
@@ -354,7 +387,12 @@ class SessionManager:
         with self._lock:
             self._sessions[new_id] = state
         _register_task_cwd(new_id, cwd)
-        self._persist(state)
+        self._persist(state, initialize_native_thread=True)
+        self._bind_trusted_codex_thread_owner(
+            state.agent,
+            session_id=state.session_id,
+            host_config=state.host_config,
+        )
         logger.info("Forked ACP session %s -> %s", session_id, new_id)
         return state
 
@@ -369,6 +407,9 @@ class SessionManager:
         db = self._get_db()
         persisted_rows: dict[str, dict[str, Any]] = {}
 
+        if db is None and normalized_host_key:
+            raise RuntimeError("hermes_host_session_store_unavailable")
+
         if db is not None:
             try:
                 for row in db.list_sessions_rich(
@@ -378,15 +419,22 @@ class SessionManager:
                 ):
                     persisted_rows[str(row["id"])] = dict(row)
             except Exception:
+                if normalized_host_key:
+                    raise RuntimeError("hermes_host_session_store_unavailable")
                 logger.debug("Failed to load ACP sessions from DB", exc_info=True)
 
         # Collect in-memory sessions first.
         with self._lock:
-            seen_ids = set(self._sessions.keys())
+            seen_ids: set[str] = set()
             results = []
             for s in self._sessions.values():
                 history_len = len(s.history)
-                if history_len <= 0:
+                has_native_state = bool(
+                    getattr(s.agent, "_codex_thread_id", None)
+                    or getattr(s.agent, "_codex_thread_authority", None)
+                    or card_runtime_authority(s.host_config) is not None
+                )
+                if history_len <= 0 and not has_native_state and not normalized_host_key:
                     continue
                 state_host_key = str(
                     (s.host_config or {}).get("hostSessionKey") or ""
@@ -395,6 +443,7 @@ class SessionManager:
                     continue
                 if normalized_cwd and _normalize_cwd_for_compare(s.cwd) != normalized_cwd:
                     continue
+                seen_ids.add(s.session_id)
                 persisted = persisted_rows.get(s.session_id, {})
                 preview = next(
                     (
@@ -422,16 +471,26 @@ class SessionManager:
             if sid in seen_ids:
                 continue
             message_count = int(row.get("message_count") or 0)
-            if message_count <= 0:
-                continue
             # Extract cwd from model_config JSON.
             session_cwd = "."
             mc = row.get("model_config")
+            session_meta: dict[str, Any] = {}
             if mc:
                 try:
-                    session_cwd = json.loads(mc).get("cwd", ".")
+                    session_meta = mc if isinstance(mc, dict) else json.loads(mc)
+                    if not isinstance(session_meta, dict):
+                        session_meta = {}
+                    session_cwd = session_meta.get("cwd", ".")
                 except (json.JSONDecodeError, TypeError):
                     pass
+            has_native_state = bool(
+                session_meta.get("codex_thread_state")
+                or session_meta.get("codex_thread_id")
+                or session_meta.get("codex_thread_authority_fingerprint")
+                or session_meta.get("codex_thread_authority")
+            )
+            if message_count <= 0 and not has_native_state and not normalized_host_key:
+                continue
             if normalized_cwd and _normalize_cwd_for_compare(session_cwd) != normalized_cwd:
                 continue
             results.append({
@@ -446,12 +505,22 @@ class SessionManager:
         results.sort(key=lambda item: _updated_at_sort_key(item.get("updated_at")), reverse=True)
         return results
 
-    def update_cwd(self, session_id: str, cwd: str) -> Optional[SessionState]:
+    def update_cwd(
+        self,
+        session_id: str,
+        cwd: str,
+        host_config: Dict[str, Any] | None = None,
+    ) -> Optional[SessionState]:
         """Update the working directory for a session and its tool overrides."""
         cwd = _translate_acp_cwd(cwd)
-        state = self.get_session(session_id)  # checks DB too
+        state = self.get_session(session_id, host_config=host_config)  # checks DB too
         if state is None:
             return None
+        authority = card_runtime_authority(host_config)
+        if authority is not None:
+            if cwd != authority["workingDirectory"] or state.cwd != cwd:
+                raise RuntimeError("hermes_host_working_directory_mismatch")
+            return state
         state.cwd = cwd
         _register_task_cwd(session_id, cwd)
         self._persist(state)
@@ -559,14 +628,41 @@ class SessionManager:
             logger.debug("SessionDB unavailable for ACP persistence", exc_info=True)
             return None
 
-    def _persist(self, state: SessionState) -> None:
+    def _bind_trusted_codex_thread_owner(
+        self,
+        agent: Any,
+        *,
+        session_id: str,
+        host_config: Dict[str, Any] | None,
+    ) -> None:
+        """Attach the existing SessionDB as the native Codex thread owner."""
+
+        if codex_thread_authority_fingerprint(host_config) is None:
+            return
+        bind_codex_thread_owner(
+            agent,
+            session_db=self._get_db(),
+            session_id=session_id,
+            config=host_config,
+        )
+
+    def _persist(
+        self,
+        state: SessionState,
+        *,
+        initialize_native_thread: bool = False,
+    ) -> None:
         """Write session state to the database.
 
         Creates the session record if it doesn't exist, then replaces all
         stored messages with the current in-memory history.
         """
+        authority = card_runtime_authority(state.host_config)
+        thread_authority = codex_thread_authority_fingerprint(state.host_config)
         db = self._get_db()
         if db is None:
+            if authority is not None:
+                raise RuntimeError("hermes_host_session_store_unavailable")
             return
 
         # Ensure model is a plain string (not a MagicMock or other proxy).
@@ -589,14 +685,60 @@ class SessionManager:
             host_session_key = str(
                 (state.host_config or {}).get("hostSessionKey") or ""
             ).strip() or None
+            if authority is not None and not host_session_key:
+                raise RuntimeError("hermes_host_session_key_missing")
             if existing is None:
+                if thread_authority is not None and not initialize_native_thread:
+                    raise RuntimeError("hermes_host_session_not_persisted")
                 db.create_session(
                     session_id=state.session_id,
                     source="acp",
                     model=model_str,
-                    model_config={"cwd": state.cwd},
-                    session_key=host_session_key,
+                    model_config=session_meta,
+                    session_key=(None if thread_authority is not None else host_session_key),
                 )
+                existing = db.get_session(state.session_id)
+                if existing is None:
+                    raise RuntimeError("hermes_host_session_not_persisted")
+
+            if thread_authority is not None:
+                authority_fingerprint = thread_authority
+                if initialize_native_thread:
+                    db.transition_codex_thread_state(
+                        state.session_id,
+                        session_key=host_session_key,
+                        authority_fingerprint=authority_fingerprint,
+                        expected_state=None,
+                        next_state="never_started",
+                        expected_source="acp",
+                        working_directory=state.cwd,
+                    )
+                    # A concurrent creator may have won the initialization CAS.
+                    # Always read back durable state instead of validating the
+                    # stale pre-CAS row as though initialization failed.
+                    existing = db.get_session(state.session_id)
+                native_state, persisted_thread_id, _ = codex_thread_session_state(
+                    existing or {}, state.host_config
+                )
+                agent_thread_id = str(
+                    getattr(state.agent, "_codex_thread_id", "") or ""
+                ).strip() or None
+                agent_authority = getattr(
+                    state.agent, "_codex_thread_authority", None
+                )
+                if native_state == "established":
+                    if (
+                        agent_thread_id != persisted_thread_id
+                        or agent_authority != authority_fingerprint
+                    ):
+                        raise RuntimeError(
+                            "hermes_host_codex_thread_authority_mismatch"
+                        )
+                elif agent_thread_id is not None or agent_authority is not None:
+                    raise RuntimeError("hermes_host_codex_thread_state_invalid")
+                # Ordinary Hermes metadata may change independently, but the
+                # native marker/id/fingerprint are written only by the CAS above.
+                db.patch_session_model_config(state.session_id, session_meta)
             else:
                 if host_session_key:
                     # SessionDB's native upsert fills a missing session_key
@@ -606,6 +748,13 @@ class SessionManager:
                         source="acp",
                         session_key=host_session_key,
                     )
+                    rebound = db.get_session(state.session_id)
+                    if (
+                        authority is not None
+                        and str((rebound or {}).get("session_key") or "").strip()
+                        != host_session_key
+                    ):
+                        raise RuntimeError("hermes_host_session_key_mismatch")
                 # Update model_config (contains cwd) if changed.
                 try:
                     db.update_session_meta(state.session_id, cwd_json, model_str)
@@ -656,19 +805,31 @@ class SessionManager:
                 )
         except Exception:
             logger.warning("Failed to persist ACP session %s", state.session_id, exc_info=True)
+            if authority is not None:
+                raise
 
-    def _restore(self, session_id: str) -> Optional[SessionState]:
+    def _restore(
+        self,
+        session_id: str,
+        *,
+        host_config: Dict[str, Any] | None = None,
+    ) -> Optional[SessionState]:
         """Load a session from the database into memory, recreating the AIAgent."""
         import threading
 
+        incoming_authority = card_runtime_authority(host_config)
         db = self._get_db()
         if db is None:
+            if incoming_authority is not None:
+                raise RuntimeError("hermes_host_session_store_unavailable")
             return None
 
         try:
             row = db.get_session(session_id)
-        except Exception:
+        except Exception as exc:
             logger.debug("Failed to query DB for ACP session %s", session_id, exc_info=True)
+            if incoming_authority is not None:
+                raise RuntimeError("hermes_host_session_store_unavailable") from exc
             return None
 
         if row is None:
@@ -684,16 +845,45 @@ class SessionManager:
         restored_base_url = row.get("billing_base_url")
         restored_api_mode = None
         mc = row.get("model_config")
-        if mc:
+        meta: dict[str, Any] = {}
+        if isinstance(mc, dict):
+            meta = dict(mc)
+        elif mc:
             try:
-                meta = json.loads(mc)
-                if isinstance(meta, dict):
-                    cwd = meta.get("cwd", ".")
-                    requested_provider = meta.get("provider") or requested_provider
-                    restored_base_url = meta.get("base_url") or restored_base_url
-                    restored_api_mode = meta.get("api_mode") or restored_api_mode
+                parsed_meta = json.loads(mc)
+                if isinstance(parsed_meta, dict):
+                    meta = parsed_meta
             except (json.JSONDecodeError, TypeError):
                 pass
+        if meta:
+            cwd = meta.get("cwd", ".")
+            requested_provider = meta.get("provider") or requested_provider
+            restored_base_url = meta.get("base_url") or restored_base_url
+            restored_api_mode = meta.get("api_mode") or restored_api_mode
+
+        persisted_thread_id: str | None = None
+        persisted_authority_fingerprint: str | None = None
+        persisted_thread_state: str | None = None
+        has_persisted_trusted_state = any(
+            key in meta
+            for key in (
+                "codex_thread_state",
+                "codex_thread_id",
+                "codex_thread_authority_fingerprint",
+                "codex_thread_authority",
+            )
+        )
+        incoming_thread_authority = codex_thread_authority_fingerprint(host_config)
+        if incoming_thread_authority is not None or has_persisted_trusted_state:
+            if incoming_thread_authority is None:
+                raise RuntimeError("hermes_host_runtime_authority_required")
+            (
+                persisted_thread_state,
+                persisted_thread_id,
+                persisted_authority_fingerprint,
+            ) = codex_thread_session_state(row, host_config)
+            if persisted_thread_state == "indeterminate":
+                raise RuntimeError("hermes_host_codex_thread_start_indeterminate")
 
         model = row.get("model") or None
 
@@ -706,8 +896,10 @@ class SessionManager:
             history = db.get_messages_as_conversation(
                 session_id, repair_alternation=True
             )
-        except Exception:
+        except Exception as exc:
             logger.warning("Failed to load messages for ACP session %s", session_id, exc_info=True)
+            if incoming_authority is not None:
+                raise RuntimeError("hermes_host_session_store_unavailable") from exc
             history = []
 
         try:
@@ -718,10 +910,21 @@ class SessionManager:
                 requested_provider=requested_provider,
                 base_url=restored_base_url,
                 api_mode=restored_api_mode,
+                host_config=host_config,
+                codex_thread_id=persisted_thread_id,
+                codex_thread_authority=persisted_authority_fingerprint,
             )
         except Exception:
             logger.warning("Failed to recreate agent for ACP session %s", session_id, exc_info=True)
+            if incoming_authority is not None:
+                raise
             return None
+
+        self._bind_trusted_codex_thread_owner(
+            agent,
+            session_id=session_id,
+            host_config=host_config,
+        )
 
         state = SessionState(
             session_id=session_id,
@@ -730,6 +933,7 @@ class SessionManager:
             model=model or getattr(agent, "model", "") or "",
             history=history,
             cancel_event=threading.Event(),
+            host_config=copy.deepcopy(host_config),
         )
         with self._lock:
             self._sessions[session_id] = state
@@ -760,9 +964,15 @@ class SessionManager:
         base_url: str | None = None,
         api_mode: str | None = None,
         host_config: Dict[str, Any] | None = None,
+        codex_thread_id: str | None = None,
+        codex_thread_authority: str | None = None,
     ):
+        trusted_authority = card_runtime_authority(host_config)
         if self._agent_factory is not None:
             agent = self._agent_factory()
+            if codex_thread_id:
+                agent._codex_thread_id = codex_thread_id
+                agent._codex_thread_authority = codex_thread_authority
             attach_host_session_config(agent, host_config)
             return agent
 
@@ -799,22 +1009,56 @@ class SessionManager:
             "quiet_mode": True,
             "session_id": session_id,
             "session_db": self._get_db(),
-            "model": model or default_model,
+            "model": (
+                trusted_authority["model"]
+                if trusted_authority is not None
+                else model or default_model
+            ),
         }
 
         try:
-            runtime = resolve_runtime_provider(requested=requested_provider or config_provider)
+            if trusted_authority is not None:
+                if model and model != trusted_authority["model"]:
+                    raise RuntimeError("hermes_host_model_mismatch")
+                if requested_provider and requested_provider != trusted_authority["effectiveProvider"]:
+                    raise RuntimeError("hermes_host_provider_mismatch")
+                expected_api_mode = trusted_authority["providerApiMode"]
+                if expected_api_mode and api_mode and api_mode != expected_api_mode:
+                    raise RuntimeError("hermes_host_api_mode_mismatch")
+                runtime = resolve_runtime_provider(
+                    requested=trusted_authority["effectiveProvider"],
+                    target_model=trusted_authority["model"],
+                )
+                if runtime.get("provider") != trusted_authority["effectiveProvider"]:
+                    raise RuntimeError("hermes_host_runtime_resolution_mismatch")
+                if expected_api_mode and runtime.get("api_mode") != expected_api_mode:
+                    raise RuntimeError("hermes_host_runtime_resolution_mismatch")
+            else:
+                runtime = resolve_runtime_provider(
+                    requested=requested_provider or config_provider,
+                    target_model=model or default_model or None,
+                )
             kwargs.update(
                 {
                     "provider": runtime.get("provider"),
-                    "api_mode": api_mode or runtime.get("api_mode"),
-                    "base_url": base_url or runtime.get("base_url"),
+                    "api_mode": (
+                        runtime.get("api_mode")
+                        if trusted_authority is not None
+                        else api_mode or runtime.get("api_mode")
+                    ),
+                    "base_url": (
+                        runtime.get("base_url")
+                        if trusted_authority is not None
+                        else base_url or runtime.get("base_url")
+                    ),
                     "api_key": runtime.get("api_key"),
                     "command": runtime.get("command"),
                     "args": list(runtime.get("args") or []),
                 }
             )
         except Exception:
+            if trusted_authority is not None:
+                raise
             logger.debug("ACP session falling back to default provider resolution", exc_info=True)
 
         _register_task_cwd(session_id, cwd)
@@ -843,6 +1087,9 @@ class SessionManager:
             logger.debug("ACP: bounded MCP discovery wait failed", exc_info=True)
 
         agent = AIAgent(**kwargs)
+        if codex_thread_id:
+            agent._codex_thread_id = codex_thread_id
+            agent._codex_thread_authority = codex_thread_authority
         # Registration of ACP-supplied MCP servers happens after construction.
         # Attach profile identity now and publish the complete tool surface only
         # after the server hook has registered those toolsets.

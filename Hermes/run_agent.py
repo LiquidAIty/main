@@ -6989,7 +6989,14 @@ class AIAgent:
         except Exception:
             logger.debug("on_stream_start plugin hook enqueue failed", exc_info=True)
 
-    def _emit_stream_end(self, *, final_text: str, finished: bool, error: str | None) -> None:
+    def _emit_stream_end(
+        self,
+        *,
+        final_text: str,
+        finished: bool,
+        error: str | None,
+        **runtime_metadata: Any,
+    ) -> None:
         try:
             from agent.plugin_stream_hooks import enqueue_plugin_stream_hook
 
@@ -6999,6 +7006,7 @@ class AIAgent:
                 final_text=final_text,
                 finished=finished,
                 error=error,
+                **runtime_metadata,
             )
         except Exception:
             logger.debug("on_stream_end plugin hook enqueue failed", exc_info=True)

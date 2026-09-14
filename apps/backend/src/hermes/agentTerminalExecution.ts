@@ -9,7 +9,8 @@ import { handleHermesHostExecutionRequest, isHermesHostExecutionMethod } from '.
 /** Native CLI transport to the existing saved Card/IDF/Run authority. */
 export class AgentTerminalExecution {
   private readonly active = new Map<string, {
-    runId: string; contextId: string; nativeSessionId: string; started: number;
+    runId: string; contextId: string; hermesSessionId: string; started: number;
+    effectiveProvider: string; providerApiMode: string | null; requiresNativeThread: boolean;
     closing?: boolean;
     script?: HermesTurnArgs['script']; presentedTools: string[];
   }>();
@@ -47,14 +48,13 @@ export class AgentTerminalExecution {
       const args = resolveHermesTurnArgs({ prepared, projectId: owner.projectId,
         deckId: owner.deckId, conversationId: '', parentRunId: persistedRunId,
         onEvent: () => undefined }, prepared.hermesTransport);
-      const nativeProvider = args.provider === 'openai' && args.accessMode === 'chatgpt-account'
-        ? 'openai-codex' : args.provider;
       if (args.cardId !== owner.cardId || args.runtime.profile !== profile
-        || args.providerModelId !== model || nativeProvider !== provider) {
+        || args.providerModelId !== model || args.nativeProvider !== provider
+      ) {
         throw new Error('agent_terminal_native_configuration_mismatch');
       }
       args.sessionKey = JSON.stringify([owner.userId, owner.projectId, owner.deckId,
-        owner.cardId, profile, terminalSessionId, nativeSessionId]);
+        owner.cardId, profile, nativeSessionId]);
       args.terminalOwner = { userId: owner.userId, terminalSessionId, profile,
         cardRevisionId: String(prepared.cardRevisionId || '') };
       const context = registerHermesRootExecutionContext({
@@ -66,7 +66,10 @@ export class AgentTerminalExecution {
       contextId = context.contextId;
       const projection = buildHermesHostSessionProjection(args, process.env, contextId);
       this.active.set(terminalSessionId, { runId: persistedRunId, contextId,
-        nativeSessionId, started: Date.now(), script: args.script, presentedTools: args.tools });
+        hermesSessionId: nativeSessionId, started: Date.now(),
+        effectiveProvider: args.nativeProvider, providerApiMode: args.apiMode,
+        requiresNativeThread: args.openaiRuntime === 'codex_app_server',
+        script: args.script, presentedTools: args.tools });
       return { runId: persistedRunId, executionContextId: contextId,
         message: args.message, mcpServers: projection.mcpServers,
         sessionConfig: (projection.sessionMeta as any).hermes.sessionConfig };
@@ -88,6 +91,21 @@ export class AgentTerminalExecution {
     const result = payload.result as Record<string, unknown> | undefined;
     const error = String(payload.error || result?.error || '');
     const failed = !!error || !result || result.failed === true || result.completed !== true;
+    const providerThreadRef = typeof result?.codex_thread_id === 'string'
+      ? result.codex_thread_id.trim() : '';
+    const providerTurnRef = typeof result?.codex_turn_id === 'string'
+      ? result.codex_turn_id.trim() : '';
+    const effectiveProvider = typeof result?.effective_provider === 'string'
+      ? result.effective_provider.trim() : '';
+    const providerApiMode = typeof result?.provider_api_mode === 'string'
+      ? result.provider_api_mode.trim() : '';
+    const nativeEvidenceInvalid = !failed && (
+      effectiveProvider !== active.effectiveProvider
+      || !providerApiMode
+      || (active.providerApiMode !== null && providerApiMode !== active.providerApiMode)
+      || (active.requiresNativeThread && (!providerThreadRef || !providerTurnRef))
+    );
+    const terminalFailed = failed || nativeEvidenceInvalid;
     const nativeUsage = payload.usage as Record<string, unknown> | undefined;
     const usage = Object.fromEntries(['providerInputTokens', 'providerOutputTokens',
       'providerCachedTokens', 'providerReasoningTokens'].map((field) => [field,
@@ -99,17 +117,26 @@ export class AgentTerminalExecution {
       // Close authorization before awaiting persistence so a finishing turn
       // cannot dispatch another tool or attach another child.
       await finishHermesExecutionContext({ contextId: active.contextId,
-        state: failed ? 'failed' : 'completed' });
+        state: terminalFailed ? 'failed' : 'completed' });
       for (const contextId of this.children.get(terminalSessionId) || []) {
         await finishHermesExecutionContext({ contextId, state: 'cancelled',
           errorSummary: 'native_cli_parent_turn_finished', request: this.request });
       }
       await this.request('/domain/runs/finish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId: active.runId, state: failed ? 'failed' : 'completed',
-          errorSummary: failed ? error || 'native_cli_turn_incomplete' : undefined,
+        body: JSON.stringify({ runId: active.runId, state: terminalFailed ? 'failed' : 'completed',
+          errorSummary: terminalFailed
+            ? error || (nativeEvidenceInvalid
+              ? 'native_cli_transport_evidence_missing'
+              : 'native_cli_turn_incomplete')
+            : undefined,
           finalResult: typeof result?.final_response === 'string' ? result.final_response : '',
-          providerThreadRef: active.nativeSessionId, durationMs: Date.now() - active.started,
+          hermesSessionRef: active.hermesSessionId,
+          providerThreadRef: providerThreadRef || undefined,
+          providerTurnRef: providerTurnRef || undefined,
+          effectiveProvider: effectiveProvider || undefined,
+          providerApiMode: providerApiMode || undefined,
+          durationMs: Date.now() - active.started,
           ...usage, totalCostUsd: null,
           ...(active.script ? { cardScriptExecution: {
             schemaVersion: 'liquidaity.card-script.run-execution.v1', presentationMode: 'script',
@@ -138,7 +165,7 @@ export class AgentTerminalExecution {
     const children = this.children.get(terminalSessionId) || new Set<string>();
     this.children.set(terminalSessionId, children);
     if (payload.method === 'session/create_execution_context') {
-      if (params.sessionId !== active.nativeSessionId
+      if (params.sessionId !== active.hermesSessionId
         || (params.parentExecutionContextId !== active.contextId
           && !children.has(String(params.parentExecutionContextId)))) {
         throw new Error('agent_terminal_child_identity_mismatch');

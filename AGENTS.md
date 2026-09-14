@@ -106,9 +106,9 @@ If a new explicit decision replaces an older approach:
 ### Implementation workers
 
 Use subagents when bounded work can run independently. Choose the lowest-capability reliable
-worker: Luna for small bounded work, Terra for normal implementation, Sol for complex work,
-and Astra only when its reasoning is needed. Astra remains lead and final integrator. Product
-Card stand-ins instead match the actual saved Card exactly and report unsupported parity.
+worker: Luna for small bounded work, Terra for normal implementation, and Sol for code or
+important reasoning. Never use Astra for a subagent. The lead and final integrator uses Sol.
+Product Card stand-ins instead match the actual saved Card exactly and report unsupported parity.
 
 ### Existing branded technical identifiers
 
