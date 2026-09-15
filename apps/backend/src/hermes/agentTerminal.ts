@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -9,13 +9,11 @@ import { BUILDER_CARD_ID } from '../decks/store';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { agentTerminalExecution } from './agentTerminalExecution';
-import type { HermesTeamResultDelivery } from './hostExecutionLifecycle';
-import type { RecoveredHermesTeamResult } from './kanbanRunRecovery';
 import {
   configureHermesNativeSubagentModel,
   materializeHermesProfileSelections,
   type HermesProfileSelection,
-} from './mainAdapter';
+} from './profileMaterialization';
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
 
@@ -91,7 +89,6 @@ type Session = {
   owner: AgentTerminalOwner;
   fingerprint: string;
   state: AgentTerminalState;
-  bearer: string;
   gateway: ChildProcess;
   gatewayUrl: string;
   client: GatewayClient;
@@ -274,21 +271,11 @@ export function prepareAgentTerminal(
   Object.assign(env, {
     HERMES_HOME: hermesHome,
     TERMINAL_CWD: cwd,
-    HERMES_REQUIRE_CLI_HOST: 'liquidaity-card-mcp',
-    HERMES_TUI_TOOLSETS: 'agent-terminal',
     HERMES_TUI_DIR: path.join(hermesRoot, 'ui-tui'),
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     TERM: 'xterm-256color',
     HERMES_EPHEMERAL_SYSTEM_PROMPT: card.prompt,
-    HERMES_AGENT_TERMINAL_CONFIG: JSON.stringify({
-      cardId: card.id,
-      profile,
-      profileHome,
-      toolsets: [],
-      nativeTools: [],
-      mcpTools: [],
-    }),
   });
   const gatewayArgs = [
     '-p', profile, 'serve', '--host', '127.0.0.1', '--port', '0', '--isolated', '--skip-build',
@@ -297,7 +284,6 @@ export function prepareAgentTerminal(
     '-p', profile, '--tui', '--in', cwd,
     '--model', providerSelection.model,
     '--provider', providerSelection.provider,
-    '--toolsets', 'agent-terminal',
   ];
   if (options?.reasoningEffort) tuiArgs.push('--reasoning', String(options.reasoningEffort));
   if (options?.maxTurns != null) tuiArgs.push('--max-turns', String(options.maxTurns));
@@ -475,13 +461,10 @@ export class AgentTerminalManager {
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
-    const bearer = randomBytes(32).toString('hex');
     const gatewayToken = randomBytes(32).toString('hex');
     const gatewayEnv = {
       ...launch.env,
       HERMES_DASHBOARD_SESSION_TOKEN: gatewayToken,
-      HERMES_AGENT_TERMINAL_URL: `http://127.0.0.1:${process.env.PORT || '4000'}/api/agent-terminals/internal/${sessionId}`,
-      HERMES_AGENT_TERMINAL_TOKEN: bearer,
     };
     const gateway = this.spawnGateway(launch.file, launch.gatewayArgs, {
       cwd: launch.cwd,
@@ -556,7 +539,6 @@ export class AgentTerminalManager {
       const session: Session = {
         owner: { ...owner },
         fingerprint,
-        bearer,
         gateway,
         gatewayUrl,
         client,
@@ -696,17 +678,6 @@ export class AgentTerminalManager {
     for (const listener of session.listeners) listener('state', { ...session.state });
   }
 
-  authorizeNative(id: string, authorization: string): AgentTerminalOwner {
-    const session = this.sessions.get(id);
-    const supplied = Buffer.from(authorization.replace(/^Bearer /, ''));
-    const expected = Buffer.from(session?.bearer || '');
-    if (!session || session.state.status !== 'running' || !expected.length
-      || supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-      throw new Error('agent_terminal_native_unauthorized');
-    }
-    return { ...session.owner };
-  }
-
   private owned(owner: AgentTerminalOwner, id: string): Session {
     const session = this.sessions.get(id);
     if (!session || !sameOwner(session.owner, owner)) throw new Error('agent_terminal_session_not_found');
@@ -767,6 +738,33 @@ export class AgentTerminalManager {
       throw new Error('agent_terminal_history_invalid');
     }
     return { count: Number(history.count), messages: history.messages as Array<Record<string, unknown>> };
+  }
+
+  async requestProfile<T>(
+    profile: string,
+    method: string,
+    params: Record<string, unknown> = {},
+  ): Promise<T> {
+    const normalized = String(profile || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalized)) {
+      throw new Error('agent_terminal_profile_missing');
+    }
+    const matches = [...this.sessions.values()].filter((candidate) => (
+      candidate.state.status === 'running' && candidate.state.profile.toLowerCase() === normalized
+    ));
+    if (matches.length === 0) throw new Error('agent_terminal_profile_runtime_not_running');
+    if (matches.length > 1) throw new Error('agent_terminal_profile_runtime_ambiguous');
+    return matches[0].client.request<T>(method, { ...params, profile: normalized });
+  }
+
+  async dispatchLearn(profile: string, request: string): Promise<string> {
+    const result = await this.requestProfile<any>(profile, 'command.dispatch', {
+      name: 'learn',
+      arg: request,
+    });
+    const message = result?.type === 'send' ? String(result.message || '').trim() : '';
+    if (!message) throw new Error('hermes_learn_command_dispatch_failed');
+    return message;
   }
 
   verifyConfiguration(
@@ -831,37 +829,6 @@ export class AgentTerminalManager {
       session_id: session.state.nativeSessionId,
       profile: session.state.profile,
     });
-  }
-
-  async appendNativeTeamResult(
-    owner: AgentTerminalOwner,
-    id: string,
-    delivery: HermesTeamResultDelivery,
-  ): Promise<void> {
-    const session = this.running(owner, id);
-    const result = await session.client.request<{ appended?: unknown }>(
-      'session.append_native_team_result',
-      {
-        session_id: session.state.nativeSessionId,
-        stored_session_id: delivery.sessionId,
-        profile: session.state.profile,
-        task_id: delivery.taskId,
-        result: delivery.result,
-        terminal_state: delivery.state,
-      },
-    );
-    if (typeof result?.appended !== 'boolean') {
-      throw new Error('agent_terminal_team_result_response_invalid');
-    }
-  }
-
-  async appendRecoveredNativeTeamResult(delivery: RecoveredHermesTeamResult): Promise<void> {
-    const runtime = this.findCard(delivery.projectId, delivery.deckId, delivery.cardId);
-    if (!runtime) throw new Error('agent_terminal_card_runtime_not_running');
-    if (runtime.state.profile !== delivery.profile) {
-      throw new Error('agent_terminal_team_result_profile_mismatch');
-    }
-    await this.appendNativeTeamResult(runtime.owner, runtime.state.sessionId, delivery);
   }
 
   private stopSession(session: Session): void {

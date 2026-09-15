@@ -125,7 +125,6 @@ class FakeGatewayClient {
       return { status: 'streaming' } as T;
     }
     if (method === 'session.interrupt') return { ok: true } as T;
-    if (method === 'session.append_native_team_result') return { appended: true } as T;
     throw new Error(`unexpected fake gateway request:${method}`);
   }
 }
@@ -381,68 +380,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       { session_id: state.nativeSessionId, text: 'second', profile: state.profile },
     ]);
     expect(terminalEvents).not.toHaveBeenCalledWith('output', expect.anything());
-  });
-
-  it('appends a native Team completion through the exact Card Gateway session', async () => {
-    const f = fixture();
-    const state = await f.manager.open(
-      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
-    );
-
-    await f.manager.appendNativeTeamResult(f.owners[0], state.sessionId, {
-      sessionId: state.storedSessionId,
-      taskId: 'native-team-task',
-      result: 'Measured native Team result',
-      state: 'completed',
-    });
-
-    expect(f.clients[0].requests.at(-1)).toEqual({
-      method: 'session.append_native_team_result',
-      params: {
-        session_id: state.nativeSessionId,
-        stored_session_id: state.storedSessionId,
-        profile: state.profile,
-        task_id: 'native-team-task',
-        result: 'Measured native Team result',
-        terminal_state: 'completed',
-      },
-    });
-    expect(f.spawnGateway).toHaveBeenCalledOnce();
-    expect(f.spawnPty).not.toHaveBeenCalled();
-  });
-
-  it('resolves recovered Team completion by exact saved Card identity and profile', async () => {
-    const f = fixture();
-    const state = await f.manager.open(
-      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
-    );
-    const delivery = {
-      projectId: f.owners[0].projectId,
-      deckId: f.owners[0].deckId,
-      cardId: f.owners[0].cardId,
-      profile: state.profile,
-      sessionId: state.storedSessionId,
-      taskId: 'native-team-recovered',
-      result: 'Recovered native Team result',
-      state: 'completed' as const,
-    };
-
-    await f.manager.appendRecoveredNativeTeamResult(delivery);
-    expect(f.clients[0].requests.at(-1)).toMatchObject({
-      method: 'session.append_native_team_result',
-      params: {
-        session_id: state.nativeSessionId,
-        stored_session_id: state.storedSessionId,
-        profile: state.profile,
-        task_id: 'native-team-recovered',
-      },
-    });
-    await expect(f.manager.appendRecoveredNativeTeamResult({
-      ...delivery, profile: 'foreign-profile',
-    })).rejects.toThrow('agent_terminal_team_result_profile_mismatch');
-    await expect(f.manager.appendRecoveredNativeTeamResult({
-      ...delivery, cardId: 'missing-card',
-    })).rejects.toThrow('agent_terminal_card_runtime_not_running');
   });
 
   it('restarts the Gateway and TUI while resuming the exact durable Card session', async () => {

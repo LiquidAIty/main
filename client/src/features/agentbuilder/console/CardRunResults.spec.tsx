@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import CardRunResults, { reconcileTerminalEvents, reconcileCardTerminal, requestCardTranscript, usesCardRunResults, RuntimeEventList,
+import CardRunResults, { reconcileTerminalEvents, reconcileCardTerminal, usesCardRunResults, RuntimeEventList,
   type CardTerminalObservation, type CardTerminalEvent } from './CardRunResults';
 import type { CardRuntime } from '../../../types/agentgraph';
 
@@ -10,7 +10,7 @@ const runtime: CardRuntime = { kind: 'hermes', mode: 'delegate', profile: 'resea
 const identity = { projectId: 'p', deckId: 'd', cardId: 'c', cardName: 'Saved Card', runId: 'r', parentRunId: null, nativeChildId: null };
 const model: CardTerminalEvent = { ...identity, id: 'r:model', kind: 'model', sequence: 1, timestamp: null, text: 'Model text' };
 const observation: CardTerminalObservation = { ...identity, events: [model], activeAgentCount: 1, observation: 'live',
-  unavailableReason: null, transcript: { sessionId: 's', unavailableReason: null }, finalText: '', errorCode: null, errorSummary: '' };
+  unavailableReason: null, finalText: '', errorCode: null, errorSummary: '' };
 const props = { enabled: true, projectId: 'p', deckId: 'd', cardId: 'c', runtime, busy: false,
   children: <textarea aria-label="Dynamic context / input" defaultValue="Existing mission" /> };
 const running = { runId: 'r', state: 'running', status: 'working', output: '', error: null, terminal: observation };
@@ -146,29 +146,13 @@ describe('ordinary saved Card adaptive terminal', () => {
     expect(screen.queryByLabelText('Dynamic context / input')).toBeNull();
   });
 
-  it('keeps final result while reopening/deleting only the selected runtime transcript', async () => {
-    const fetch = vi.fn(async (_url: unknown, init: RequestInit) => {
-      const request = JSON.parse(String(init.body));
-      return { ok: true, json: async () => ({ ok: true, result: { ...identity,
-        ...(request.action === 'transcript' ? { events: [model] } : { deleted: true }) } }) };
-    });
-    vi.stubGlobal('fetch', fetch);
+  it('keeps the accepted result available while switching to new input', () => {
     render(<CardRunResults {...props} run={{ ...running, state: 'completed', status: 'complete',
       output: 'Accepted final', terminal: { ...observation, finalText: 'Accepted final', activeAgentCount: 0, observation: 'finished' },
     }} />);
     expect(screen.queryByTestId('terminal-active-agents')).toBeNull();
-    expect(screen.queryByText('Model text')).toBeNull();
-    fireEvent.click(screen.getByText('Show transcript'));
-    await screen.findByText('Model text');
-    fireEvent.click(screen.getByText('Delete transcript'));
-    expect(fetch).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByText('Confirm delete transcript'));
-    await waitFor(() => expect(document.body.textContent).toContain('Transcript deleted.'));
+    expect(screen.getByText('Model text')).toBeTruthy();
     expect(screen.getByTestId('card-terminal-final').textContent).toBe('Accepted final');
-    expect(fetch.mock.calls.map(([, init]) => JSON.parse(String(init.body)))).toEqual([
-      { action: 'transcript', projectId: 'p', deckId: 'd', cardId: 'c', runId: 'r' },
-      { action: 'delete_transcript', projectId: 'p', deckId: 'd', cardId: 'c', runId: 'r' },
-    ]);
     fireEvent.click(screen.getByText('New input'));
     expect(screen.queryByRole('log')).toBeNull();
     expect(screen.getByLabelText('Dynamic context / input')).toBeTruthy();
@@ -184,19 +168,10 @@ describe('ordinary saved Card adaptive terminal', () => {
     expect(screen.queryByText('Model text')).toBeNull();
   });
 
-  it('reports structured fatal failure and refuses mismatched transcript responses', async () => {
+  it('reports a structured fatal failure', () => {
     render(<CardRunResults {...props} run={{ ...running, state: 'failed', status: 'failed',
       terminal: { ...observation, finalText: '', errorCode: 'native_failed', errorSummary: 'Native failure', activeAgentCount: 0 },
     }} />);
     expect(screen.getByRole('alert').textContent).toBe('native_failed: Native failure');
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, result: { runId: 'other', events: [] } }) })));
-    await expect(requestCardTranscript({ action: 'transcript', projectId: 'p', deckId: 'd', cardId: 'c', runId: 'r' })).rejects.toThrow('identity_mismatch');
-  });
-
-  it.each(['projectId', 'deckId', 'cardId'])('rejects a transcript response with the wrong %s', async (field) => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ok: true,
-      result: { ...identity, [field]: 'other', events: [model] } }) })));
-    await expect(requestCardTranscript({ action: 'transcript', projectId: 'p', deckId: 'd', cardId: 'c', runId: 'r' }))
-      .rejects.toThrow('card_transcript_identity_mismatch');
   });
 });

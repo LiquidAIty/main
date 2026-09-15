@@ -731,60 +731,6 @@ def _internal_mcp_principal() -> dict[str, Any] | None:
     return dict(principal) if isinstance(principal, dict) else None
 
 
-def _request_execution_context() -> dict[str, Any] | None:
-    """Resolve trusted per-call MCP metadata through the active host registry."""
-
-    principal = _internal_mcp_principal()
-    if principal is None or principal.get("requiresExecutionContext") is not True:
-        return None
-    try:
-        meta = server.request_context.meta
-    except LookupError:
-        meta = None
-    if hasattr(meta, "model_dump"):
-        meta = meta.model_dump(exclude_none=True)
-    if not isinstance(meta, dict):
-        meta = {}
-    meta_context_id = str(meta.get("liquidaity/execution") or "").strip()
-    principal_context_id = str(principal.get("executionContextId") or "").strip()
-    if meta_context_id and principal_context_id and meta_context_id != principal_context_id:
-        raise PermissionError("mcp_execution_context_invalid")
-    context_id = meta_context_id or principal_context_id
-    if not context_id:
-        raise PermissionError("mcp_execution_context_missing")
-    try:
-        response = json.loads(_bridge_sync(
-            "internal_execution_context",
-            {"contextId": context_id, "principal": principal},
-        ))
-    except (TypeError, ValueError, json.JSONDecodeError) as error:
-        raise PermissionError("mcp_execution_context_invalid") from error
-    context = response.get("context") if isinstance(response, dict) and response.get("ok") is True else None
-    required = {
-        "projectId", "deckId", "conversationId", "runId", "cardId",
-        "grantedTools", "rootRunId",
-    }
-    if not isinstance(context, dict) or not required.issubset(context):
-        raise PermissionError("mcp_execution_context_rejected")
-    grants = context.get("grantedTools")
-    if not isinstance(grants, list):
-        raise PermissionError("mcp_execution_context_grants_invalid")
-    return {
-        "projectId": str(context["projectId"]),
-        "deckId": str(context["deckId"]),
-        "conversationId": str(context["conversationId"]),
-        "parentRunId": str(context["runId"]),
-        "rootRunId": str(context["rootRunId"]),
-        "mainCardId": str(context["cardId"]),
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": str(context.get("runtimeMode") or ""),
-        "principalKind": "card-runtime",
-        "nativeChildId": str(context.get("nativeChildId") or ""),
-
-        "grantedTools": sorted({str(item).strip() for item in grants if str(item).strip()}),
-    }
-
-
 def _request_tool_is_allowed(name: str) -> bool:
     if not _tool_is_allowed(name):
         return False
@@ -806,10 +752,6 @@ def _request_tool_is_allowed(name: str) -> bool:
         return name == "card.run_assistant_agent"
     if kind != "card-runtime":
         return False
-    active = _ACTIVE_AUTHENTICATED_CONTEXT.get()
-    if principal.get("requiresExecutionContext") is True:
-        grants = active.get("grantedTools") if isinstance(active, dict) else None
-        return isinstance(grants, list) and name in grants
     grants = principal.get("grantedTools")
     return isinstance(grants, list) and name in {
         str(value).strip() for value in grants if str(value).strip()
@@ -2039,7 +1981,6 @@ _BACKEND_ROUTES = {
     "external_main_context": "/api/main/context",
     "external_main_chat": "/api/main/chat",
     "describe_connected_agents": "/api/cards/connected",
-    "internal_execution_context": "/api/hermes/execution-context",
     "run_configured_card": "/api/cards/run",
 }
 
@@ -2167,16 +2108,6 @@ class Auth0TokenVerifier:
                         "projectId", "deckId", "conversationId", "parentRunId",
                         "callerCardId", "callerRuntimeKind", "callerRuntimeMode",
                     )
-                    terminal = principal.get("terminalOwner")
-                    if terminal is not None:
-                        if (principal.get("kind") != "card-runtime"
-                                or principal.get("requiresExecutionContext") is not True
-                                 or not isinstance(terminal, dict)
-                                 or set(terminal) != {"userId", "terminalSessionId", "profile", "cardRevisionId"}
-                                 or any(not isinstance(v, str) or not v.strip() for v in terminal.values())
-                                 or principal.get("callerRuntimeKind") != "hermes"):
-                            return None
-                        required = tuple(field for field in required if field != "conversationId")
                     if any(not str(principal.get(field) or "").strip() for field in required):
                         return None
                     grants = principal.get("grantedTools")
@@ -3502,9 +3433,6 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     }
     _trace("tool_call_started", **trace_fields)
     try:
-        resolved_context = _request_execution_context()
-        _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
-        context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(resolved_context)
         if not _request_tool_is_allowed(tool_name):
             raise PermissionError(f"tool_not_granted: {tool_name}")
         result = await asyncio.wait_for(

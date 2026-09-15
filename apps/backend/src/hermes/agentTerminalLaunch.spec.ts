@@ -9,22 +9,8 @@ const workspaceRoot = vi.hoisted(() => ({
   resolveRepoRoot: vi.fn(() => 'C:\\repo'),
   resolveProductChatWorkingDirectory: vi.fn((scope: string) => `C:\\neutral\\${JSON.parse(scope).join('-')}`),
 }));
-const mcp = vi.hoisted(() => ({
-  resolvePythonAgentMcpServerSpec: vi.fn(() => ({
-    url: 'http://127.0.0.1:8765/mcp', headers: { Authorization: 'Bearer exact-saved-grant' },
-  })),
-  resolveSavedMcpConnections: vi.fn(() => ([{
-    name: 'saved-remote', url: 'https://saved.example/mcp', headers: [{ name: 'X-Saved', value: 'connection' }],
-  }])),
-}));
-
 vi.mock('node:fs', () => nativeFs);
 vi.mock('../services/workspaceRoot', () => workspaceRoot);
-vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
-  listPythonAgentMcpCatalog: vi.fn(),
-  resolvePythonAgentMcpServerSpec: mcp.resolvePythonAgentMcpServerSpec,
-}));
-vi.mock('./mcpConnections', () => ({ resolveSavedMcpConnections: mcp.resolveSavedMcpConnections }));
 
 import { prepareAgentTerminal, type AgentTerminalOwner } from './agentTerminal';
 import type { AgentCardInstance, DeckDocument } from '../types';
@@ -68,8 +54,6 @@ beforeEach(() => {
   nativeFs.existsSync.mockImplementation(() => true);
   nativeFs.realpathSync.mockReturnValue('C:\\saved-workspace-real');
   nativeFs.statSync.mockReturnValue({ isDirectory: () => true });
-  mcp.resolvePythonAgentMcpServerSpec.mockClear();
-  mcp.resolveSavedMcpConnections.mockClear();
   for (const name of inheritedNames) {
     inheritedBefore.set(name, process.env[name]);
     process.env[name] = `must-not-inherit-${name}`;
@@ -99,7 +83,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       ],
       tuiArgs: [
         '-p', 'agent-cli-proof', '--tui', '--in', 'C:\\saved-workspace-real',
-        '--model', 'gpt-5.6-sol', '--provider', 'openai-codex', '--toolsets', 'agent-terminal',
+        '--model', 'gpt-5.6-sol', '--provider', 'openai-codex',
         '--reasoning', 'high', '--max-turns', '7', '--skills', 'saved-skill-a,saved-skill-b',
       ],
     });
@@ -108,16 +92,9 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     expect(launch.env.TERMINAL_CWD).toBe(launch.cwd);
     expect(workspaceRoot.resolveProductChatWorkingDirectory).not.toHaveBeenCalled();
     expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBe(card.prompt);
-    expect(JSON.parse(launch.env.HERMES_AGENT_TERMINAL_CONFIG)).toEqual({
-      cardId: card.id,
-      profile: 'agent-cli-proof',
-      profileHome: 'C:\\repo\\Hermes\\.hermes\\profiles\\agent-cli-proof',
-      toolsets: [], nativeTools: [], mcpTools: [],
-    });
-    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBe('liquidaity-card-mcp');
+    expect(launch.env.HERMES_AGENT_TERMINAL_CONFIG).toBeUndefined();
+    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBeUndefined();
     expect(launch.env.HERMES_MCP_SERVERS).toBeUndefined();
-    expect(mcp.resolvePythonAgentMcpServerSpec).not.toHaveBeenCalled();
-    expect(mcp.resolveSavedMcpConnections).not.toHaveBeenCalled();
     for (const name of inheritedNames) expect(launch.env[name]).toBe(`must-not-inherit-${name}`);
   });
 
@@ -172,8 +149,8 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       ...savedCard().runtimeOptions, ...options,
     } as AgentCardInstance['runtimeOptions'] });
     const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1');
-    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBe('liquidaity-card-mcp');
-    expect(JSON.parse(launch.env.HERMES_AGENT_TERMINAL_CONFIG).mcpTools).toEqual([]);
+    expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBeUndefined();
+    expect(launch.env.HERMES_AGENT_TERMINAL_CONFIG).toBeUndefined();
     expect(launch.env.HERMES_MCP_SERVERS).toBeUndefined();
   });
 });

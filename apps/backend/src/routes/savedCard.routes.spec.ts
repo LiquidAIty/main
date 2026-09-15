@@ -2,14 +2,13 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import cardRuntime, { internalMainMcpRoutes, mainRoutes, hermesRoutes } from './cardRuntime.routes';
+import cardRuntime, { internalMainMcpRoutes, mainRoutes } from './cardRuntime.routes';
 import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
 
 const router = express.Router()
   .use('/cards', cardEditor, cardRuntime)
   .use('/main', internalMainMcpRoutes, mainRoutes)
-  .use('/hermes', hermesRoutes)
   .use('/idd', iddRoutes)
   .use('/codegraph', codegraph);
 
@@ -49,7 +48,7 @@ const deckMocks = vi.hoisted(() => ({
             tools: ['card.create', 'card.update_configuration', 'canvas.upsert_wire'],
             nativeTools: ['memory'],
             skills: [],
-            toolsets: ['hermes-acp', 'computer_use'],
+            toolsets: ['computer_use'],
             mcpConnectionIds: [],
             provider: 'openai',
             modelKey: 'gpt-5.6-luna',
@@ -94,6 +93,25 @@ const agentTerminalMocks = vi.hoisted(() => {
     return { owner, state: stateFor(owner) };
   });
   const history = vi.fn(async () => ({ count: 0, messages: [] as Array<Record<string, unknown>> }));
+  const dispatchLearn = vi.fn(async (_profile: string, request: string) => (
+    `NATIVE LEARN PROMPT: ${request}`
+  ));
+  const requestProfile = vi.fn(async (profile: string, method: string) => {
+    if (method === 'profiles.describe') return {
+      name: profile,
+      description: 'Saved profile',
+      soul: 'Saved profile instructions.',
+      model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
+      skills: [],
+      toolsets: [],
+      mcp_servers: [],
+    };
+    if (method === 'mcp.servers.list') return { servers: [] };
+    if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
+    if (method === 'tools.show') return { sections: [] };
+    if (method === 'plugins.list') return { plugins: [] };
+    return {};
+  });
   const verifyConfiguration = vi.fn();
   const interrupt = vi.fn(async () => undefined);
   const complete = (
@@ -213,6 +231,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     staged, completed, cancelled, profileFor, stateFor, complete, finishSubmitted,
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
+      dispatchLearn, requestProfile,
     },
     execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
   };
@@ -227,54 +246,16 @@ const chatSessionMocks = vi.hoisted(() => {
     usageSource: 'unavailable',
     contextBreakdownJson: '',
   };
-  const mocks = {
+  return {
     getConversationMessages: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
-    lastCancel: vi.fn(),
-    cancelHermesRun: vi.fn(),
-    cancelHermesSession: vi.fn(),
-    answerHermesSession: vi.fn(),
-    dispatchHermesLearnCommand: vi.fn(async (_profile: string, request: string) => `NATIVE LEARN PROMPT: ${request}`),
-    deleteHermesHistory: vi.fn(async () => ({ sessionId: 'persisted-session', deleted: true })),
-    readHermesHistory: vi.fn(async (): Promise<any> => ({ sessionId: null, messages: [] })),
-    readHermesRunSnapshot: vi.fn((): any => null),
-    materializeHermesProfileSelections: vi.fn(async (_args: unknown) => ({
-      native: { name: 'default', toolsets: [], mcp_servers: [] },
-    })),
-    requestHermesNative: vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'profiles.describe') return {
-        name: String(params?.name || 'builder'),
-        description: 'Agent Builder',
-        soul: 'Build saved agents.',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
-        skills: [],
-        toolsets: [],
-        mcp_servers: [],
-      };
-      if (method === 'mcp.servers.list') return { servers: [] };
-      if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
-      if (method === 'tools.show') return { sections: [] };
-      if (method === 'plugins.list') return { plugins: [] };
-      return {};
-    }),
-    startHermesTurn: vi.fn(),
     usage,
   };
-  mocks.startHermesTurn.mockImplementation(async (_params: unknown, _onEvent: (event: any) => void) => ({
-    done: Promise.resolve({ finalText: 'Real assistant reply.', usage }),
-    cancel: mocks.lastCancel,
-    answer: vi.fn(),
-  }));
-  return mocks;
 });
 
 const kanbanMocks = vi.hoisted(() => ({
   readHermesKanbanCardSnapshots: vi.fn(async () => []),
 }));
-const kanbanRecoveryMocks = vi.hoisted(() => ({
-  reconcileTerminalKanbanRun: vi.fn(() => true),
-}));
-
 const mcpClientMocks = vi.hoisted(() => ({
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
   listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
@@ -637,39 +618,6 @@ vi.mock('../conversations/store', () => ({
   listConversations: chatSessionMocks.listConversations,
 }));
 
-vi.mock('../hermes/mainAdapter', () => ({
-  buildHermesHostSessionProjection: (args: any, _env: unknown, executionContextId: string) => ({
-    mcpServers: [{
-      name: 'main-runtime-test', url: 'http://127.0.0.1:4000/mcp', headers: [],
-    }],
-    sessionMeta: { hermes: { sessionConfig: {
-      enabledToolsets: ['mcp-main-runtime-test'],
-      enabledTools: [],
-      delegationRoles: [],
-      hostSessionKey: args.sessionKey,
-      systemPrompt: args.prompt,
-      executionContextId,
-      toolCallMeta: { 'host/execution-context': executionContextId },
-    } } },
-  }),
-  deriveHermesSessionKey: (projectId: string, conversationId: string, cardId: string) => `${projectId}:${conversationId}:${cardId}`,
-  providerForHermes: (provider: string, accessMode?: string) => (
-    provider === 'openai' && accessMode === 'chatgpt-account'
-      ? 'openai-codex'
-      : provider
-  ),
-  cancelHermesRun: chatSessionMocks.cancelHermesRun,
-  cancelHermesSession: chatSessionMocks.cancelHermesSession,
-  answerHermesSession: chatSessionMocks.answerHermesSession,
-  dispatchHermesLearnCommand: chatSessionMocks.dispatchHermesLearnCommand,
-  deleteHermesHistory: chatSessionMocks.deleteHermesHistory,
-  readHermesHistory: chatSessionMocks.readHermesHistory,
-  readHermesRunSnapshot: chatSessionMocks.readHermesRunSnapshot,
-  materializeHermesProfileSelections: chatSessionMocks.materializeHermesProfileSelections,
-  requestHermesNative: chatSessionMocks.requestHermesNative,
-  startHermesTurn: chatSessionMocks.startHermesTurn,
-}));
-
 vi.mock('../hermes/agentTerminal', () => ({
   agentTerminalManager: agentTerminalMocks.manager,
   agentTerminalPresentationOptions: (_card: any, attachTui: boolean) => ({ attachTui }),
@@ -688,8 +636,6 @@ vi.mock('../hermes/agentTerminalExecution', () => ({
 vi.mock('./hermesKanban.routes', () => ({
   readHermesKanbanCardSnapshots: kanbanMocks.readHermesKanbanCardSnapshots,
 }));
-
-vi.mock('../hermes/kanbanRunRecovery', () => kanbanRecoveryMocks);
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
@@ -782,16 +728,14 @@ describe('saved Card routes', () => {
   it('observes the same ordinary Card Run through status without executing or rejoining another root', async () => {
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     orchestratorMocks.runRecords.set('terminal-root', {
       runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', state: 'running',
       runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'research',
-      terminal: { cardName: 'Research', activeChildren: 1, children: [], parentRunIds: [],
-        transcript: { sessionId: null, unavailableReason: 'native_session_identity_unavailable' } },
-    });
-    chatSessionMocks.readHermesRunSnapshot.mockReturnValue({
-      runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', cardName: 'Research',
-      sessionId: 'native-exact', fullText: 'Actual model output', textSequence: 1, textTimestamp: null, tools: [],
+      startedAt: '2026-09-15T00:00:00Z',
+      terminal: { cardName: 'Research', activeChildren: 1, parentRunIds: [], children: [{
+        runId: 'child-run', cardId: 'research', cardName: 'Research', parentRunId: 'terminal-root',
+        nativeChildId: 'native-child', state: 'running', startedAt: '2026-09-15T00:00:01Z',
+      }] },
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -804,65 +748,15 @@ describe('saved Card routes', () => {
         const body = await response.json() as any;
         expect(response.status).toBe(200);
         expect(body.result.terminal).toMatchObject({ runId: 'terminal-root', activeAgentCount: 2,
-          events: [{ id: 'terminal-root:model', kind: 'model', text: 'Actual model output' }] });
+          events: [
+            { id: 'terminal-root:session', kind: 'session', status: 'running' },
+            { id: 'child-run:start', kind: 'child_started', nativeChildId: 'native-child' },
+          ] });
       }
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(orchestratorMocks.requestPythonRailsJson.mock.calls.every(([route]) =>
         route === '/domain/runs/read' || route === '/domain/agentgraph/inspect')).toBe(true);
-    } finally { chatSessionMocks.readHermesRunSnapshot.mockReturnValue(null); await closeServer(server); }
-  });
-
-  it.each(['research', 'delegate'])('reads/deletes only the stored exclusive %s transcript and never changes the accepted Run result', async (profile) => {
-    orchestratorMocks.runRecords.clear();
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    const run = { runId: 'terminal-root', projectId: 'p', deckId: 'd', cardId: 'research', state: 'completed',
-      finalResult: 'Accepted result', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: profile,
-      terminal: { cardName: 'Research', parentRunIds: [], transcript: { sessionId: 'stored-session', unavailableReason: null } } };
-    orchestratorMocks.runRecords.set(run.runId, run);
-    chatSessionMocks.readHermesHistory.mockResolvedValueOnce({ sessionId: 'stored-session', messages: [], events: [{ kind: 'text', text: 'Real history' }] });
-    chatSessionMocks.deleteHermesHistory.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      for (const action of ['transcript', 'delete_transcript']) {
-        const response = await fetch(`${baseUrl}/cards/run`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            action, projectId: 'p', deckId: 'd', cardId: 'research', runId: run.runId,
-            sessionId: 'browser-must-not-select-this', profile: 'wrong-profile',
-          }),
-        });
-        expect(response.status).toBe(200);
-      }
-      expect(chatSessionMocks.deleteHermesHistory).toHaveBeenCalledWith({
-        sessionKey: '', profile, sessionId: 'stored-session', terminal: true,
-      });
-      expect(orchestratorMocks.runRecords.get(run.runId)).toBe(run);
-      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.every(([route]) => route === '/domain/runs/read')).toBe(true);
     } finally { await closeServer(server); }
   });
-
-  it.each(['shared', 'active', 'wrong-card', 'wrong-project', 'wrong-deck', 'specialized'])(
-    'refuses %s transcript deletion before calling Hermes', async (reason) => {
-      chatSessionMocks.deleteHermesHistory.mockClear();
-      orchestratorMocks.runRecords.clear();
-      orchestratorMocks.runRecords.set('terminal-root', {
-        runId: 'terminal-root', projectId: reason === 'wrong-project' ? 'other' : 'p',
-        deckId: reason === 'wrong-deck' ? 'other' : 'd', cardId: reason === 'wrong-card' ? 'other' : 'research',
-        state: reason === 'active' ? 'running' : 'completed', runtimeKind: 'hermes', runtimeMode: reason === 'specialized' ? 'kanban' : 'delegate',
-        runtimeProfile: 'research',
-        terminal: { transcript: { sessionId: 's', unavailableReason: reason === 'shared' ? 'native_session_shared_or_unmapped_runs' : null } },
-      });
-      const { server, baseUrl } = await createApiServer();
-      try {
-        const response = await fetch(`${baseUrl}/cards/run`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            action: 'delete_transcript', projectId: 'p', deckId: 'd', cardId: 'research', runId: 'terminal-root',
-          }),
-        });
-        expect(response.status).toBe(409);
-        expect(chatSessionMocks.deleteHermesHistory).not.toHaveBeenCalled();
-      } finally { await closeServer(server); }
-    },
-  );
 
   it('passes factual live contracts to the one IDD and returns its current vocabulary', async () => {
     mcpClientMocks.listPythonAgentMcpCatalog.mockResolvedValueOnce([{
@@ -1079,7 +973,6 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     deckMocks.getDeckDocument.mockClear();
     mcpClientMocks.listPythonAgentMcpCatalog.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/options`);
@@ -1098,7 +991,6 @@ describe('saved Card routes', () => {
       expect(Object.keys(body)).toEqual(['models']);
       expect(deckMocks.getDeckDocument).not.toHaveBeenCalled();
       expect(mcpClientMocks.listPythonAgentMcpCatalog).not.toHaveBeenCalled();
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally { await closeServer(server); }
   });
 
@@ -1148,7 +1040,6 @@ describe('saved Card routes', () => {
       const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
       const body = JSON.parse(String(call?.[1]?.body));
       expect(body.selectedIds).toContain('profile:default');
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally { await closeServer(server); }
   });
 
@@ -1165,7 +1056,6 @@ describe('saved Card routes', () => {
       const body = JSON.parse(String(call?.[1]?.body));
       expect(body.selectedIds).toEqual(['template_assist', 'canvas.inspect']);
       expect(body.nativeOptions.some((option: any) => option.kind === 'profile')).toBe(false);
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally { await closeServer(server); }
   });
 
@@ -1201,7 +1091,6 @@ describe('saved Card routes', () => {
 
   it('returns an empty history only for a successful empty read', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    chatSessionMocks.readHermesHistory.mockClear();
     agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 0, messages: [] });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -1213,7 +1102,6 @@ describe('saved Card routes', () => {
         ok: true, sessionId: 'native:default', messages: [], terminalEvents: [],
       });
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
-      expect(chatSessionMocks.readHermesHistory).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -1238,7 +1126,6 @@ describe('saved Card routes', () => {
   });
 
   it('does not expose conversation deletion outside the native Main Chat', async () => {
-    chatSessionMocks.deleteHermesHistory.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
@@ -1250,7 +1137,6 @@ describe('saved Card routes', () => {
         ok: false,
         error: 'main_cli_history_is_native_owned',
       });
-      expect(chatSessionMocks.deleteHermesHistory).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -1293,7 +1179,6 @@ describe('saved Card routes', () => {
 
   it('executes the one Python materialization for the current Card input', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
@@ -1349,7 +1234,6 @@ describe('saved Card routes', () => {
 
   it('runs an ordinary Builder mission and forwards native usage once', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
     const { server, baseUrl } = await createApiServer();
@@ -1377,7 +1261,6 @@ describe('saved Card routes', () => {
         cardId: 'builder',
         assignment: 'Update the selected Card prompt and explicit tools.',
       });
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledOnce();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
         { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
@@ -1409,7 +1292,6 @@ describe('saved Card routes', () => {
 
   it('runs a Builder construction mission without prewritten values and preserves unknown usage', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
     agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, message, options) => (
@@ -1438,7 +1320,6 @@ describe('saved Card routes', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledOnce();
       expect(agentTerminalMocks.completed.get('corr-builder-create-1')).toMatchObject({
         providerInputTokens: null, providerOutputTokens: null, totalCostUsd: null,
@@ -1457,7 +1338,6 @@ describe('saved Card routes', () => {
     'effectTarget', 'effectTargetCardId', 'effectTargetCardRevisionId', 'effectTargetDeckRevision'])(
     'rejects retired %s arguments before preparing or starting a Run', async (field) => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
-      chatSessionMocks.startHermesTurn.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/cards/run`, {
@@ -1471,12 +1351,10 @@ describe('saved Card routes', () => {
         expect(await response.json()).toEqual({ ok: false,
           error: `card_run_fields_retired:${field}` });
         expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
-        expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally { await closeServer(server); }
     });
 
   it('rejects the retired Kanban Card mode without creating a native root', async () => {
-    chatSessionMocks.startHermesTurn.mockClear();
     deckMocks.getDeckDocument.mockResolvedValueOnce({
       deck: {
         workspaceRoot: process.cwd(),
@@ -1508,69 +1386,13 @@ describe('saved Card routes', () => {
         ok: false,
         error: 'hermes_kanban_card_mode_retired',
       });
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
   });
-  it('starts same-ID terminal reconciliation from status without creating another Run or root', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    orchestratorMocks.runRecords.clear();
-    orchestratorMocks.requestFingerprints.clear();
-    kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
-    orchestratorMocks.runRecords.set('run-failed-transport', {
-      runId: 'run-failed-transport',
-      correlationId: 'run-failed-transport',
-      projectId: 'project-rejoin',
-      deckId: 'deck_builder',
-      cardId: 'card_hermes_steward',
-      runtimeKind: 'hermes',
-      runtimeMode: 'kanban',
-      runtimeProfile: 'liquidaity-hermes-steward',
-      state: 'failed',
-      nativeRootId: 't_retained_root',
-      nativePhase: 'failed',
-      finalResult: null,
-      startedAt: new Date().toISOString(),
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/cards/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'status',
-          projectId: 'project-rejoin',
-          deckId: 'deck_builder',
-          runId: 'run-failed-transport',
-        }),
-      });
-      await expect(response.json()).resolves.toMatchObject({
-        result: {
-          runId: 'run-failed-transport',
-          nativeRootId: 't_retained_root',
-          state: 'failed',
-        },
-      });
-      expect(kanbanRecoveryMocks.reconcileTerminalKanbanRun).toHaveBeenCalledWith({
-        runId: 'run-failed-transport',
-        projectId: 'project-rejoin',
-        deckId: 'deck_builder',
-        cardId: 'card_hermes_steward',
-        nativeRootId: 't_retained_root',
-        runtimeProfile: 'liquidaity-hermes-steward',
-        runtimeMode: 'kanban',
-      }, { appendTeamResult: expect.any(Function) });
-      expect(orchestratorMocks.runRecords).toHaveLength(1);
-    } finally {
-      await closeServer(server);
-    }
-  });
-
   it('keeps passive Card-front status inspection read-only for a retained terminal root', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
-    kanbanRecoveryMocks.reconcileTerminalKanbanRun.mockClear();
     orchestratorMocks.runRecords.set('run-failed-transport', {
       runId: 'run-failed-transport',
       correlationId: 'run-failed-transport',
@@ -1606,7 +1428,6 @@ describe('saved Card routes', () => {
           state: 'failed',
         },
       });
-      expect(kanbanRecoveryMocks.reconcileTerminalKanbanRun).not.toHaveBeenCalled();
       expect(orchestratorMocks.runRecords).toHaveLength(1);
     } finally {
       await closeServer(server);
@@ -1689,8 +1510,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('does not fall back to ordinary ACP for the retired Kanban Card mode', async () => {
-    chatSessionMocks.startHermesTurn.mockClear();
+  it('does not fall back to an ordinary Gateway turn for the retired Kanban Card mode', async () => {
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
@@ -1707,13 +1527,11 @@ describe('saved Card routes', () => {
         }),
       });
       expect(response.status).toBe(502);
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
   });
   it('runs the saved delegate Agent through one Python materialization', async () => {
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
@@ -1736,7 +1554,6 @@ describe('saved Card routes', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
         { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate' },
         'terminal:card_test_delegate',
@@ -1752,7 +1569,6 @@ describe('saved Card routes', () => {
         skills: ['repository-delegate'],
       });
       expect(staged.hermesTransport.cardIdentity).toMatchObject({ cardId: 'card_test_delegate' });
-      expect(staged.hermesTransport.request.toolsets).not.toContain('hermes-acp');
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
       const payload = await response.json();
       expect(payload).toMatchObject({
@@ -1774,10 +1590,9 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('hydrates one stored Delegate result by Card identity without another Run or ACP turn', async () => {
+  it('hydrates one stored Delegate result by Card identity without another Run or Gateway turn', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
-    chatSessionMocks.startHermesTurn.mockClear();
     orchestratorMocks.runRecords.set('delegate-graph-smoke-20260823-0736', {
       runId: 'delegate-graph-smoke-20260823-0736',
       correlationId: 'delegate-graph-smoke-20260823-0736',
@@ -1816,7 +1631,6 @@ describe('saved Card routes', () => {
           output: 'Exact stored native Delegate result.',
         },
       });
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
         ([endpoint]) => endpoint === '/domain/runs/begin',
       )).toBe(false);
@@ -1830,8 +1644,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
-    chatSessionMocks.dispatchHermesLearnCommand.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
+    agentTerminalMocks.manager.dispatchLearn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
     const { server, baseUrl } = await createApiServer();
@@ -1851,12 +1664,11 @@ describe('saved Card routes', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(chatSessionMocks.dispatchHermesLearnCommand).toHaveBeenCalledTimes(1);
-      expect(chatSessionMocks.dispatchHermesLearnCommand).toHaveBeenCalledWith(
+      expect(agentTerminalMocks.manager.dispatchLearn).toHaveBeenCalledTimes(1);
+      expect(agentTerminalMocks.manager.dispatchLearn).toHaveBeenCalledWith(
         'delegate',
         'study the bounded repository context',
       );
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
         expect.objectContaining({ cardId: 'card_test_delegate' }),
         'terminal:card_test_delegate',
@@ -1881,7 +1693,6 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     let settle: (value: any) => void = () => undefined;
     let fail: (reason: Error) => void = () => undefined;
@@ -1895,7 +1706,11 @@ describe('saved Card routes', () => {
         agentTerminalMocks.complete(record.runId, owner, 'Native graph proposal');
         return { text: 'Native graph proposal', status: 'completed', event: {
           type: 'message.complete', session_id: sessionId,
-          payload: { status: 'completed', text: 'Native graph proposal' },
+          payload: {
+            status: 'completed', text: 'Native graph proposal', usage: {},
+            effectiveProvider: 'openai-codex', providerApiMode: null,
+            nativeRootId: null, nativeRunId: null,
+          },
         } };
       } catch (error) {
         agentTerminalMocks.completed.set(record.runId, {
@@ -1938,7 +1753,6 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.manager.interrupt.mockClear();
     let resolveTurn: (value: any) => void = () => undefined;
@@ -1954,7 +1768,11 @@ describe('saved Card routes', () => {
       return {
         text: 'late delegate completion', status: 'completed',
         event: { type: 'message.complete', session_id: sessionId,
-          payload: { status: 'completed', text: 'late delegate completion' } },
+          payload: {
+            status: 'completed', text: 'late delegate completion', usage: {},
+            effectiveProvider: 'openai-codex', providerApiMode: null,
+            nativeRootId: null, nativeRunId: null,
+          } },
       };
     });
     const controller = new AbortController();
@@ -1997,7 +1815,6 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestFingerprints.clear();
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.manager.interrupt.mockClear();
     agentTerminalMocks.execution.requestCancellation.mockClear();
@@ -2061,7 +1878,6 @@ describe('saved Card routes', () => {
   it('routes Builder through the common Card-owned Gateway without the retired Builder terminal owner', async () => {
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
-    chatSessionMocks.startHermesTurn.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
@@ -2087,14 +1903,12 @@ describe('saved Card routes', () => {
         expect.any(Object),
         'main',
       );
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
   });
 
   it('keeps programmatic Card turns on the structured Gateway entrance and out of raw PTY input', async () => {
-    chatSessionMocks.startHermesTurn.mockClear();
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
     ptyMocks.spawn.mockClear();
@@ -2125,7 +1939,6 @@ describe('saved Card routes', () => {
       );
       expect(agentTerminalMocks.execution.stage.mock.calls[0]?.[3].hermesTransport.cardIdentity)
         .toMatchObject({ cardId: 'card_test_delegate' });
-      expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       expect(ptyMocks.spawn).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
@@ -2405,7 +2218,6 @@ describe('saved Card routes', () => {
     });
 
     it('streams structured public text from Main\'s exact Gateway runtime with saved Card identity', async () => {
-      chatSessionMocks.startHermesTurn.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       const { server, baseUrl } = await createApiServer('rotated-local-user');
       try {
@@ -2437,7 +2249,6 @@ describe('saved Card routes', () => {
         expect(agentTerminalMocks.completed.get(session.runId)).toMatchObject({
           state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default',
         });
-        expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
@@ -2587,7 +2398,6 @@ describe('saved Card routes', () => {
 
     it('uses one Python materialization and keeps telemetry out of the model input', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
-      chatSessionMocks.startHermesTurn.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       mcpClientMocks.callPythonAgentMcpTool.mockClear();
       const { server, baseUrl } = await createApiServer();
@@ -2634,7 +2444,6 @@ describe('saved Card routes', () => {
           }],
         });
         expect(mcpClientMocks.callPythonAgentMcpTool).not.toHaveBeenCalled();
-        expect(chatSessionMocks.startHermesTurn).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
@@ -2685,7 +2494,11 @@ describe('saved Card routes', () => {
         return {
           text: 'Completed after disconnect.', status: 'completed',
           event: { type: 'message.complete', session_id: sessionId,
-            payload: { status: 'completed', text: 'Completed after disconnect.' } },
+            payload: {
+              status: 'completed', text: 'Completed after disconnect.', usage: {},
+              effectiveProvider: 'openai-codex', providerApiMode: null,
+              nativeRootId: null, nativeRunId: null,
+            } },
         };
       });
       const controller = new AbortController();

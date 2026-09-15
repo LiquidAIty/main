@@ -1,7 +1,4 @@
 import { Router } from 'express';
-import { timingSafeEqual } from 'node:crypto';
-import { requestHermesExtension } from '../hermes/mainAdapter';
-import { isLoopbackSocketRequest } from '../security/requestAccess';
 
 import {
   fetchThinkGraphNeighborhood,
@@ -10,21 +7,6 @@ import {
 } from '../services/autogen/pythonRailsClient';
 
 const router = Router();
-
-// Private process transport. Engraphis owns the prompt and output validation.
-router.post('/extraction-completion', async (req, res) => {
-  const expected = Buffer.from(process.env.LIQUIDAITY_INTERNAL_MCP_SECRET || '');
-  const supplied = Buffer.from(String(req.headers['x-internal-secret'] || ''));
-  if (!isLoopbackSocketRequest(req) || expected.length < 32
-      || expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
-    return res.status(403).json({ error: 'extraction_transport_forbidden' });
-  }
-  try {
-    return res.json(await requestHermesExtension('_model/complete', req.body));
-  } catch {
-    return res.status(502).json({ error: 'extraction_account_completion_failed' });
-  }
-});
 
 router.post('/retire', async (req, res) => {
   const { projectId, memoryId } = req.body || {};

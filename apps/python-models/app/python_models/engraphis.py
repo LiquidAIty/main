@@ -9,8 +9,6 @@ import atexit
 import asyncio
 import hashlib
 import json
-import os
-from contextvars import ContextVar
 from pathlib import Path
 import re
 import threading
@@ -23,62 +21,6 @@ READ_TOOLS = frozenset(['engraphis_code_impact', 'engraphis_code_path', 'engraph
 WRITE_TOOLS = frozenset(['engraphis_answer', 'engraphis_check_update', 'engraphis_consolidate', 'engraphis_correct', 'engraphis_end_session', 'engraphis_execute_action', 'engraphis_forget', 'engraphis_index_repo', 'engraphis_ingest', 'engraphis_ingest_postgres_schema', 'engraphis_link', 'engraphis_link_symbol', 'engraphis_pin', 'engraphis_proactive_context', 'engraphis_promote', 'engraphis_recall', 'engraphis_recall_grounded', 'engraphis_record_event', 'engraphis_remember', 'engraphis_remember_many', 'engraphis_retire', 'engraphis_secure_erase', 'engraphis_session', 'engraphis_start_session', 'engraphis_update_memory'])
 _service = None
 _lock = threading.RLock()
-_extraction_scope = ContextVar("thinkgraph_extraction_scope", default=None)
-
-
-class AccountExtractionClient:
-    """Engraphis LLM protocol using the saved ThinkGraph account selection."""
-    provider = "openai-codex"
-
-    @property
-    def model(self):
-        binding = _extraction_scope.get()
-        return binding.get("model", "") if binding else ""
-
-    def extract_json(self, prompt: str, schema: dict):
-        from engraphis.backends.extractor import StructuredLLMExtractor
-        return json.loads(self.chat(
-            [{"role": "user", "content": prompt}],
-            system=StructuredLLMExtractor._SYSTEM_PROMPT + "\nJSON schema:\n"
-            + json.dumps(schema, ensure_ascii=False),
-        ))
-
-    def chat(self, messages, system=""):
-        import httpx
-        from .card_domain import load_deck
-        binding = _extraction_scope.get()
-        if not binding:
-            raise ValueError("thinkgraph_extraction_scope_missing")
-        saved = load_deck(binding["projectId"], binding["deckId"])
-        cards = [card for card in saved["deck"]["nodes"] if card.get("runtime") == {
-            "kind": "hermes", "mode": "delegate", "profile": "thinkgraph"}]
-        if len(cards) != 1:
-            raise ValueError("thinkgraph_extraction_model_binding_missing")
-        options = cards[0].get("runtimeOptions", {})
-        if options.get("provider") != "openai" or options.get("accessMode") != "chatgpt-account":
-            raise ValueError("thinkgraph_extraction_account_selection_required")
-        model = options.get("providerModelId")
-        if not isinstance(model, str) or not model:
-            raise ValueError("thinkgraph_extraction_model_missing")
-        secret = os.environ.get("LIQUIDAITY_INTERNAL_MCP_SECRET", "")
-        if len(secret) < 32:
-            raise ValueError("thinkgraph_extraction_transport_unavailable")
-        binding["model"] = model
-        response = httpx.post(
-            os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
-            + "/api/thinkgraph/extraction-completion",
-            headers={"x-internal-secret": secret}, timeout=135,
-            json={"profile": "thinkgraph", "model": model,
-                  "reasoningEffort": options.get("reasoningEffort", "low"),
-                  "messages": [{"role": "system", "content": system}, *messages]},
-        )
-        response.raise_for_status()
-        result = response.json()
-        if result.get("provider") != self.provider or result.get("model") != model:
-            raise ValueError("thinkgraph_extraction_model_mismatch")
-        binding["completion"] = {key: result.get(key) for key in ("model", "provider", "responseModel", "usage")}
-        return result["content"]
-
 def project_id(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise ValueError("thinkgraph_project_id_invalid")
@@ -90,7 +32,6 @@ def get_service():
     with _lock:
         if _service is None:
             from engraphis.service import MemoryService
-            from engraphis.backends.extractor import StructuredLLMExtractor
             from engraphis.mcp_server import set_service
             DATABASE.parent.mkdir(parents=True, exist_ok=True)
             service = MemoryService.create(
@@ -99,7 +40,6 @@ def get_service():
                 extractor="none",
                 retention_supervisor="none", allow_automatic_critical_retention=False,
             )
-            service.engine.extractor = StructuredLLMExtractor(AccountExtractionClient())
             set_service(service)
             _service = service
         return _service
@@ -147,11 +87,7 @@ async def invoke_tool(project: str, name: str, arguments: dict) -> dict:
 
 def _invoke_tool_sync(project: str, name: str, arguments: dict) -> dict:
     with _lock:
-        token = _extraction_scope.set({"projectId": project_id(project), "deckId": "deck_builder"})
-        try:
-            return asyncio.run(_invoke_tool(project, name, arguments))
-        finally:
-            _extraction_scope.reset(token)
+        return asyncio.run(_invoke_tool(project, name, arguments))
 
 
 async def _invoke_tool(project: str, name: str, arguments: dict) -> dict:

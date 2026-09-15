@@ -3,7 +3,6 @@ import health from './health.routes';
 import auth from './auth.routes';
 import { authMiddleware } from '../middleware/auth';
 import cardRuntime, {
-  hermesRoutes,
   internalMainMcpRoutes,
   mainRoutes,
 } from './cardRuntime.routes';
@@ -15,7 +14,6 @@ import projectsRoutes from './projects.routes';
 import decksRoutes from './decks.routes';
 import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
-import internalHermesKanbanRoutes from './internalHermesKanban.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
 import worldviewRoutes from './worldview.routes';
@@ -30,17 +28,12 @@ router.use('/agent-terminals', agentTerminalRoutes);
 
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
-// Native Hermes workers call this strict socket-loopback seam before spawn.
-// It is intentionally outside user/Auth0 middleware and never mounted by the
-// public MCP/ngrok service.
-router.use('/internal/hermes-kanban', internalHermesKanbanRoutes);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into an anonymous user.
 router.use('/main', internalMainMcpRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor, cardRuntime);
 router.use('/main', authMiddleware, mainRoutes);
-router.use('/hermes', authMiddleware, hermesRoutes);
 router.use('/idd', authMiddleware, iddRoutes);
 router.use('/codegraph', authMiddleware, codegraph);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);

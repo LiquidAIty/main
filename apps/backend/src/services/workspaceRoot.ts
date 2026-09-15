@@ -25,7 +25,7 @@ export function resolveRepoRoot(): string {
 }
 
 /**
- * The working directory for a product Main/Hermes ACP session.
+ * The working directory for a product Main/Hermes Gateway session.
  *
  * It must NOT be the repo root: the engine walks up from its working directory
  * loading project-memory files such as AGENTS.md, and a

@@ -87,7 +87,7 @@ does not authorize a renderer replacement, and a rendering problem does not auth
 | A mocked PTY never emitted exit and remained stopping | Fix the fixture's lifecycle fidelity; preserve real session reuse and stop behavior. |
 | A catalog import started native discovery during unit tests | Guard non-subject CBM/Graphiti discovery; retain exact public/private schemas and authentication assertions. |
 | Pytest PYTHONPATH concealed a script-import failure | Test the existing executable bootstrap in isolation when imports change; do not add another bootstrap. |
-| A healthy PTY lacked its required app plugin and could not receive work | Prove delivery through the existing plugin; profile changes require current authorization. No copied old profile or second bridge. |
+| A healthy PTY or Gateway was mistaken for an executed Card turn | Prove real input, native Gateway delivery, rendered output, and completion of the same saved Run. Do not restore an app plugin, callback bridge, or copied profile. |
 | Duplicate skill IDs blocked native discovery | Compare exact identity/content through its owner. Do not weaken uniqueness or delete copies without scope authorization. |
 | Missing usage became zero during transport or numeric coercion | Preserve unknown versus measured zero and forward native usage through the existing finish owner. |
 | Shared or unmapped history was exposed to make a transcript readable | Prove native session/Run/conversation attribution; preserve rejection of foreign or unknown content. |

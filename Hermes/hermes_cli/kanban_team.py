@@ -1,9 +1,9 @@
 """Durable Auto-Kanban dispatch for ``delegate_task(role="team")``.
 
 This module is deliberately a thin adapter into the existing Kanban domain.
-It creates one paused native root, lets an optional ACP host correlate that
-identity, then activates Triage for the gateway-owned dispatcher.  It owns no
-task graph, scheduler, worker process, polling loop, or result synthesis.
+It creates one paused native root, validates the durable identity, then
+activates Triage for the gateway-owned dispatcher. It owns no task graph,
+scheduler, worker process, polling loop, or result synthesis.
 """
 
 from __future__ import annotations

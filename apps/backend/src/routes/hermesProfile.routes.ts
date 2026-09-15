@@ -5,13 +5,14 @@ import {
   hydrateHermesCardProfile,
   invokeHermesNativeOperation,
   type HermesNativeCardOperation,
+  type RequestHermesNative,
 } from '../hermes/cardProfileProjection';
-import { requestHermesNative } from '../hermes/mainAdapter';
+import { agentTerminalManager } from '../hermes/agentTerminal';
 import type { AgentCardInstance, DeckDocument } from '../types';
 
 type Dependencies = {
   getDeck: typeof getDeckDocument;
-  requestNative: typeof requestHermesNative;
+  requestNative: RequestHermesNative;
 };
 
 function requiredText(value: unknown, error: string): string {
@@ -241,7 +242,10 @@ function safeMcpTestResult(value: unknown): Record<string, unknown> {
 
 export function createHermesProfileRouter(deps: Dependencies = {
   getDeck: getDeckDocument,
-  requestNative: requestHermesNative,
+  requestNative: (method, params = {}, profile) => {
+    const selectedProfile = String(profile || params.profile || params.name || '').trim();
+    return agentTerminalManager.requestProfile(selectedProfile, method, params);
+  },
 }) {
   const router = Router();
 

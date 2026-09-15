@@ -741,8 +741,7 @@ describe('AgentManager active builder config', () => {
       'utf8',
     );
 
-    expect(chatSource).toContain("'nativeEvents'");
-    expect(source).toContain('card-native-telemetry');
+    expect(chatSource).not.toContain("'nativeEvents'");
     expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent', 'delegate_task']");
     expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent', 'delegate_task']");
     expect(chatSource).toContain('onCardReviewStaged');

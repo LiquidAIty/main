@@ -25,8 +25,8 @@ describe('internal MCP Card authentication', () => {
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'main',
       grantedTools: ['canvas.inspect', 'canvas.inspect', 'card.run_assistant_agent'],
-      requiresExecutionContext: true,
-      executionContextId: 'context-root-1',
+      nativeChildId: 'native-child-1',
+      nativeRunId: 'native-run-1',
     }, env, 1000);
     const claims = verifyInternalMcpBearerForTest(token, env);
     expect(claims).toMatchObject({
@@ -39,8 +39,8 @@ describe('internal MCP Card authentication', () => {
         callerRuntimeKind: 'hermes',
         callerRuntimeMode: 'main',
         grantedTools: ['canvas.inspect', 'card.run_assistant_agent'],
-        requiresExecutionContext: true,
-        executionContextId: 'context-root-1',
+        nativeChildId: 'native-child-1',
+        nativeRunId: 'native-run-1',
       },
     });
   });
@@ -62,34 +62,32 @@ describe('internal MCP Card authentication', () => {
 
   const terminalRun = {
     kind: 'card-runtime' as const, projectId: 'project', deckId: 'deck',
-    conversationId: '', parentRunId: 'persisted-run', callerCardId: 'saved-agent',
+    conversationId: 'conversation-1', parentRunId: 'persisted-run', callerCardId: 'saved-agent',
     callerRuntimeKind: 'hermes' as const, callerRuntimeMode: 'delegate' as const,
-    grantedTools: ['canvas.inspect'], requiresExecutionContext: true,
-    terminalOwner: { userId: 'owner', terminalSessionId: 'terminal', profile: 'saved-agent', cardRevisionId: 'revision' },
+    grantedTools: ['canvas.inspect'], nativeChildId: 'native-child', nativeRunId: 'native-run',
   };
-  it('signs a real Card Run with full terminal ownership and no invented conversation', () => {
+  it('signs a real Card Run with direct saved authority and native attribution', () => {
     const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(terminalRun, env), env).principal;
     expect(principal).toMatchObject(terminalRun);
   });
   it.each([
-    ['card_main_chat', 'liquidaity-main', 'main'],
-    ['builder', 'builder', 'delegate'],
-  ] as const)('accepts valid terminal attribution for %s', (callerCardId, profile, callerRuntimeMode) => {
+    ['card_main_chat', 'main'],
+    ['builder', 'delegate'],
+  ] as const)('accepts valid saved Card attribution for %s', (callerCardId, callerRuntimeMode) => {
     const value = {
       ...terminalRun,
       callerCardId,
       callerRuntimeMode,
-      terminalOwner: { ...terminalRun.terminalOwner, profile },
     };
     const principal = verifyInternalMcpBearerForTest(createInternalMcpBearer(value, env), env).principal;
     expect(principal).toMatchObject(value);
   });
   it.each([
-    { callerRuntimeKind: 'autogen' }, { requiresExecutionContext: false },
-    ...['userId', 'terminalSessionId', 'profile', 'cardRevisionId'].map((field) => ({ terminalOwner: { ...terminalRun.terminalOwner, [field]: '' } })),
-  ])('rejects incomplete or foreign terminal Run identity: %j', (override) => {
+    { projectId: '' }, { deckId: '' }, { conversationId: '' }, { parentRunId: '' },
+    { callerCardId: '' }, { callerRuntimeKind: '' }, { callerRuntimeMode: '' },
+  ])('rejects incomplete saved Run identity: %j', (override) => {
     expect(() => createInternalMcpBearer({ ...terminalRun, ...override } as any, env))
-      .toThrow('internal_mcp_terminal_run_identity_invalid');
+      .toThrow('internal_mcp_principal_incomplete');
   });
   it('requires a persisted Run and rejects a wider presented grant', () => {
     expect(() => createInternalMcpBearer({ ...terminalRun, parentRunId: '' }, env))

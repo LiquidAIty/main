@@ -41,23 +41,6 @@ export function reconcileCardTerminal(previous: CardTerminalObservation | null |
   return { ...next, events: reconcileTerminalEvents([...previous.events, ...next.events]) };
 }
 
-export async function requestCardTranscript(args: {
-  action: 'transcript' | 'delete_transcript'; projectId: string; deckId: string; cardId: string; runId: string;
-}): Promise<{ events?: CardTerminalEvent[]; deleted?: boolean }> {
-  const response = await fetch('/api/cards/run', {
-    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(args),
-  });
-  const body = await response.json();
-  if (!response.ok || body?.ok !== true) throw new Error(String(body?.detail || body?.error || 'card_transcript_failed'));
-  if (body.result?.runId !== args.runId || body.result?.projectId !== args.projectId
-    || body.result?.deckId !== args.deckId || body.result?.cardId !== args.cardId) {
-    throw new Error('card_transcript_identity_mismatch');
-  }
-  if (args.action === 'transcript' && !Array.isArray(body.result?.events)) throw new Error('card_transcript_response_invalid');
-  return body.result;
-}
-
 const preStyle = {
   margin: 0,
   whiteSpace: 'pre-wrap' as const,
@@ -142,30 +125,21 @@ export default function CardRunResults(props: {
       || props.run.terminal.projectId !== props.projectId || props.run.terminal.deckId !== props.deckId)) ? null : props.run;
   const runId = run?.runId || '';
   const [newInputFor, setNewInputFor] = useState<string | null>(null);
-  const [history, setHistory] = useState<CardTerminalEvent[] | null>(null);
-  const [showTranscript, setShowTranscript] = useState(false);
-  const [historyBusy, setHistoryBusy] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
-  const [deleted, setDeleted] = useState(false);
   const [following, setFollowing] = useState(true);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const selection = `${props.projectId}:${props.deckId}:${props.cardId}:${runId}`;
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
   useEffect(() => {
-    setNewInputFor(null); setHistory(null); setShowTranscript(false);
-    setHistoryBusy(false); setHistoryError(null); setDeleted(false); setDeleteConfirmed(false); setFollowing(true);
+    setNewInputFor(null); setFollowing(true);
     setSelectedTaskId(null);
   }, [selection]);
   const state = run?.state || run?.status || '';
   const active = run ? state === 'pending' || state === 'running' : busy;
   const dormant = !active && (!run || !runId || newInputFor === runId);
-  const events = reconcileTerminalEvents(history ?? run?.terminal?.events ?? []);
+  const events = reconcileTerminalEvents(run?.terminal?.events ?? []);
   useEffect(() => {
     if (following && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [run?.terminal?.events, history, following, showTranscript]);
+  }, [run?.terminal?.events, following]);
   if (!props.enabled) return <>{props.children}</>;
   if (dormant) return <div data-testid="adaptive-card-dormant">
     {props.children}
@@ -178,33 +152,6 @@ export default function CardRunResults(props: {
   const starting = active && (!run || state === 'pending');
   const finalText = terminal?.finalText || run?.output || '';
   const failure = terminal?.errorSummary || run?.error;
-  const transcriptAvailable = Boolean(terminal?.transcript.sessionId && terminal.transcript.unavailableReason === null);
-  const loadTranscript = async () => {
-    setShowTranscript(true); setHistoryError(null);
-    if (!transcriptAvailable || !runId || deleted) return;
-    setHistoryBusy(true);
-    try {
-      const result = await requestCardTranscript({ action: 'transcript', projectId: props.projectId,
-        deckId: props.deckId, cardId: props.cardId, runId });
-      if (selectionRef.current === selection) setHistory(result.events || []);
-    } catch (error) {
-      if (selectionRef.current === selection) setHistoryError(error instanceof Error ? error.message : 'card_transcript_failed');
-    } finally { if (selectionRef.current === selection) setHistoryBusy(false); }
-  };
-  const deleteTranscript = async () => {
-    if (!deleteConfirmed) { setDeleteConfirmed(true); return; }
-    setHistoryBusy(true); setHistoryError(null);
-    try {
-      const result = await requestCardTranscript({ action: 'delete_transcript', projectId: props.projectId,
-        deckId: props.deckId, cardId: props.cardId, runId });
-      if (selectionRef.current === selection) {
-        if (!result.deleted) throw new Error('native_transcript_not_deleted');
-        setHistory([]); setDeleted(true); setDeleteConfirmed(false);
-      }
-    } catch (error) {
-      if (selectionRef.current === selection) setHistoryError(error instanceof Error ? error.message : 'card_transcript_delete_failed');
-    } finally { if (selectionRef.current === selection) setHistoryBusy(false); }
-  };
   return <section data-testid="card-run-results" data-state={starting ? 'starting' : state}
     data-run-id={runId} data-card-id={props.cardId}
     style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8,
@@ -222,7 +169,7 @@ export default function CardRunResults(props: {
     {terminal?.unavailableReason ? <div role="status">{terminal.unavailableReason === 'autogen_adapter_completion_only'
       ? 'This AutoGen adapter reports output at completion; live output is unavailable.'
       : terminal.unavailableReason}</div> : null}
-    {active || showTranscript ? <>
+    {active || events.length > 0 ? <>
       {terminal?.nativeTasks ? <label>Task <select aria-label="Run task filter" value={selectedTaskId || ''}
         onChange={(event) => setSelectedTaskId(event.target.value || null)}>
         <option value="">All tasks</option>
@@ -239,17 +186,8 @@ export default function CardRunResults(props: {
     </> : null}
     {!active ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       <button type="button" onClick={() => setNewInputFor(runId)}>New input</button>
-      <button type="button" disabled={historyBusy} onClick={() => showTranscript ? setShowTranscript(false) : void loadTranscript()}>
-        {showTranscript ? 'Hide transcript' : 'Show transcript'}
-      </button>
-      {showTranscript && transcriptAvailable && !deleted ? <button type="button" disabled={historyBusy}
-        onClick={() => void deleteTranscript()}>{deleteConfirmed ? 'Confirm delete transcript' : 'Delete transcript'}</button> : null}
     </div> : null}
     {props.onRejoin && (run?.observationError || (active && terminal?.observation === 'unavailable' && runtime.kind === 'hermes'))
       ? <button type="button" onClick={props.onRejoin}>Reconnect to this Run</button> : null}
-    {showTranscript && !transcriptAvailable ? <div role="status">Native transcript unavailable: {terminal?.transcript.unavailableReason || 'native_session_identity_unavailable'}</div> : null}
-    {historyBusy ? <div role="status">Reading native transcript…</div> : null}
-    {deleted ? <div role="status">Transcript deleted. The saved Run and final result are unchanged.</div> : null}
-    {historyError ? <div role="alert">{historyError}</div> : null}
   </section>;
 }

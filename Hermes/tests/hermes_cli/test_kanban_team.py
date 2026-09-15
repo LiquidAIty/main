@@ -24,7 +24,7 @@ def team_board(tmp_path, monkeypatch):
     return db_path
 
 
-def _policy_config(max_workers=4):
+def _policy_config():
     return {
         "auxiliary": {
             "kanban_decomposer": {
@@ -36,7 +36,6 @@ def _policy_config(max_workers=4):
             "auto_decompose": True,
             "dispatch_in_gateway": True,
             "failure_limit": 2,
-            "team_max_workers": max_workers,
             "team_worker_provider": "openai-codex",
             "team_worker_model": "gpt-5.6-luna",
         },
@@ -74,10 +73,9 @@ kanban:
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
 
 
-def test_submit_team_commits_one_blocked_root_before_host_then_activates(
+def test_submit_team_commits_one_blocked_root_before_activation(
     team_board, monkeypatch,
 ):
-    from acp_adapter import host_profiles
     from hermes_cli import kanban, kanban_team
     from tools import kanban_tools
 
@@ -89,22 +87,19 @@ def test_submit_team_commits_one_blocked_root_before_host_then_activates(
 
     observed = {}
 
-    def allocate(_parent, *, native_child_id, provider, model):
-        with kb.connect_closing() as conn:
-            task = kb.get_task(conn, native_child_id)
+    activate = kb.activate_team_triage_task
+
+    def observe_activation(conn, task_id):
+        task = kb.get_task(conn, task_id)
         observed.update({
             "status": task.status,
             "step": task.current_step_key,
-            "provider": provider,
-            "model": model,
+            "provider": task.provider_override,
+            "model": task.model_override,
         })
-        return {
-            "executionContextId": "ctx-1",
-            "runId": "child-run-1",
-            "toolCallMeta": {"liquidaity/execution": "ctx-1"},
-        }
+        return activate(conn, task_id)
 
-    monkeypatch.setattr(host_profiles, "allocate_host_native_execution", allocate)
+    monkeypatch.setattr(kb, "activate_team_triage_task", observe_activation)
 
     result = kanban_team.submit_team(
         goal="Inspect the native execution path and synthesize one report.",
@@ -140,7 +135,7 @@ def test_submit_team_commits_one_blocked_root_before_host_then_activates(
     assert root.model_override == "gpt-5.6-terra"
 
 
-def test_team_decomposer_creates_two_to_four_luna_workers_and_terra_root(
+def test_team_decomposer_creates_luna_workers_and_terra_root(
     team_board, monkeypatch,
 ):
     from types import SimpleNamespace

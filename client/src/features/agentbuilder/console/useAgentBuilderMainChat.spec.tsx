@@ -141,18 +141,14 @@ describe('Main chat live observation callbacks', () => {
 
   it('stages exact unresolved references from a delegated native tool start', () => {
     expect(parseStagedCardReviewLoaded({
-      result: JSON.stringify({
-        nativeEvents: [{
-          kind: 'tool_start',
-          toolName: 'mcp__main_runtime_one__write_mag_one_instructions',
-          argsJson: JSON.stringify({
-            targetCardId: 'card_agent_builder',
-            mission: 'Exact unsent mission.',
-            dataAnchors: [{
-              authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
-              priority: 1, boundedExpansion: 0, resultLimit: 1,
-            }],
-          }),
+      kind: 'tool_start',
+      toolName: 'mcp__main_runtime_one__write_mag_one_instructions',
+      argsJson: JSON.stringify({
+        targetCardId: 'card_agent_builder',
+        mission: 'Exact unsent mission.',
+        dataAnchors: [{
+          authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
+          priority: 1, boundedExpansion: 0, resultLimit: 1,
         }],
       }),
     })).toEqual({
@@ -317,42 +313,35 @@ describe('Main chat live observation callbacks', () => {
         isError: false,
         output: {
           result: {
-            nativeEvents: [{
-              kind: 'tool_result',
-              toolName: 'write_mag_one_instructions',
-              isError: false,
-              output: JSON.stringify({
-                content: [{
-                  type: 'text',
-                  text: JSON.stringify({
-              ok: true,
-              ready: true,
-              targetCardId: 'card_test_delegate',
-              targetCardTitle: 'Delegate',
-              sourceCardId: 'card_hermes_steward',
-              mission: '  exact mission\nwith formatting  ',
-              dataAnchors: [{
-                authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
-                priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
-              }],
-              reviewContext: {
-                cardRevisionId: 'revision-delegate',
-                cardRevision: 1,
-                cardRevisionSha256: 'sha-delegate',
-                runtimeOwner: 'hermes',
-                cardIdentity: { cardId: 'card_test_delegate', title: 'Delegate' },
-                resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
-                resolvedGraphProjection: {
-                  schemaVersion: 'native-card-context.v1', authority: 'codegraph',
-                  projectId: 'project-1',
-                  nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
-                  edges: [], counts: { nodes: 1, edges: 0 },
-                },
-              },
-              persisted: false,
-              started: false,
-                  }),
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                ok: true,
+                ready: true,
+                targetCardId: 'card_test_delegate',
+                targetCardTitle: 'Delegate',
+                sourceCardId: 'card_hermes_steward',
+                mission: '  exact mission\nwith formatting  ',
+                dataAnchors: [{
+                  authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
+                  priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
                 }],
+                reviewContext: {
+                  cardRevisionId: 'revision-delegate',
+                  cardRevision: 1,
+                  cardRevisionSha256: 'sha-delegate',
+                  runtimeOwner: 'hermes',
+                  cardIdentity: { cardId: 'card_test_delegate', title: 'Delegate' },
+                  resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
+                  resolvedGraphProjection: {
+                    schemaVersion: 'native-card-context.v1', authority: 'codegraph',
+                    projectId: 'project-1',
+                    nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
+                    edges: [], counts: { nodes: 1, edges: 0 },
+                  },
+                },
+                persisted: false,
+                started: false,
               }),
             }],
           },

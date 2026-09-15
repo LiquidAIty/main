@@ -47,7 +47,7 @@ describe('backend authentication middleware', () => {
     },
   );
 
-  it.each(['inputs', 'stop', 'transcript', 'delete_transcript', ''])(
+  it.each(['inputs', 'stop', ''])(
     'does not broaden the process bridge credential to the %s Card action',
     async (action) => {
       const secret = 'internal-process-bridge-secret-0123456789abcdef';

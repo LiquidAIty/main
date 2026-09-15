@@ -81,7 +81,6 @@ def test_semantic_write_can_finish_after_the_ordinary_tool_deadline(monkeypatch,
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
-    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_MCP_CALL_TIMEOUT_SECONDS", 0.005)
 
@@ -110,7 +109,6 @@ def test_engraphis_rejection_reaches_agent_without_success_or_retry(monkeypatch)
 
     monkeypatch.setattr(mcp_host, "urlopen", reject)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
-    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: context)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda name: True)
     monkeypatch.setattr(mcp_host, "_enforce_tool_caller", lambda *args, **kwargs: None)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
@@ -589,7 +587,7 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
     assert event["nativeRunId"] == "native-attempt-one"
 
 
-def test_terminal_run_token_requires_complete_owner_identity_and_active_context(monkeypatch):
+def test_card_run_token_uses_direct_saved_authority_and_native_attribution(monkeypatch):
     import jwt
     import mcp_host
     secret = "0123456789abcdef0123456789abcdef"
@@ -599,39 +597,30 @@ def test_terminal_run_token_requires_complete_owner_identity_and_active_context(
         audience="https://example.ngrok.dev/mcp", client_id="chatgpt-client",
         required_scope="liquidaity.main"), jwk_client=SimpleNamespace())
     principal = {"kind": "card-runtime", "projectId": "project-1", "deckId": "deck-1",
-        "conversationId": "", "parentRunId": "persisted-run", "callerCardId": "signal",
+        "conversationId": "conversation-1", "parentRunId": "persisted-run", "callerCardId": "signal",
         "callerRuntimeKind": "hermes", "callerRuntimeMode": "delegate",
         "grantedTools": ["worldsignals.package"], "presentedTools": ["worldsignals.package"],
-        "requiresExecutionContext": True, "executionContextId": "context-1",
-        "terminalOwner": {"userId": "owner", "terminalSessionId": "terminal-1",
-                          "profile": "signal", "cardRevisionId": "revision-1"}}
+        "nativeChildId": "native-child-1", "nativeRunId": "native-run-1"}
     def verify(value):
         now = int(time.time())
         return verifier._verify_sync(jwt.encode({"iss": "liquidaity-runtime", "aud": "liquidaity-internal-mcp",
             "sub": "card-runtime:signal", "iat": now, "exp": now + 60, "principal": value}, secret, algorithm="HS256"))
     token = verify(principal)
     assert token is not None
-    for card_id, profile in (("card_main_chat", "liquidaity-main"), ("builder", "builder")):
-        accepted = {**principal, "callerCardId": card_id,
-                    "terminalOwner": {**principal["terminalOwner"], "profile": profile}}
+    for card_id in ("card_main_chat", "builder"):
+        accepted = {**principal, "callerCardId": card_id}
         assert verify(accepted) is not None
-    for invalid in ({"terminalOwner": None}, {"requiresExecutionContext": False},
-                    {"callerRuntimeKind": "autogen"},
-                    *({"terminalOwner": {**principal["terminalOwner"], key: ""}}
-                      for key in principal["terminalOwner"])):
+    for invalid in ({field: ""} for field in (
+        "projectId", "deckId", "conversationId", "parentRunId", "callerCardId",
+        "callerRuntimeKind", "callerRuntimeMode",
+    )):
         assert verify({**principal, **invalid}) is None
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: token)
-    observed = []
-    def bridge(name, args):
-        observed.append((name, args))
-        return json.dumps({"ok": True, "context": {"projectId": "project-1", "deckId": "deck-1",
-            "conversationId": "", "runId": "persisted-run", "rootRunId": "persisted-run",
-            "cardId": "signal", "runtimeMode": "delegate", "grantedTools": ["worldsignals.package"]}})
-    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
-    resolved = mcp_host._request_execution_context()
+    resolved = mcp_host._authenticated_main_context()
     assert resolved["parentRunId"] == "persisted-run"
-    assert resolved["conversationId"] == ""
-    assert observed[0][1]["principal"]["terminalOwner"] == principal["terminalOwner"]
+    assert resolved["conversationId"] == "conversation-1"
+    assert resolved["nativeChildId"] == "native-child-1"
+    assert resolved["nativeRunId"] == "native-run-1"
     assert mcp_host._request_tool_is_allowed("card.create") is False
 
 
@@ -671,54 +660,6 @@ def test_replaced_runless_agent_terminal_token_is_rejected(monkeypatch):
         ), jwk_client=SimpleNamespace(),
     )
     assert verifier._verify_sync(token) is None
-
-
-def test_agent_terminal_verifier_rejects_main_builder_and_incomplete_terminal_identity(monkeypatch):
-    import jwt
-    import mcp_host
-
-    secret = "0123456789abcdef0123456789abcdef"
-    now = int(time.time())
-    base = {
-        "kind": "agent-terminal", "projectId": "project-1", "deckId": "deck_builder",
-        "callerCardId": "card_hermes_steward", "terminalSessionId": "terminal-session-1",
-        "profile": "liquidaity-hermes-steward", "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "delegate", "grantedTools": ["canvas.inspect"],
-        "presentedTools": ["canvas.inspect"],
-    }
-    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
-    verifier = mcp_host.Auth0TokenVerifier(
-        mcp_host.OAuthConfig(
-            resource_url="https://example.ngrok.dev/mcp", issuer_url="https://auth.example/",
-            audience="https://example.ngrok.dev/mcp", client_id="chatgpt-client",
-            required_scope="liquidaity.main",
-        ), jwk_client=SimpleNamespace(),
-    )
-    for override in ({"callerCardId": "card_main_chat"}, {"callerCardId": "builder"},
-                     {"terminalSessionId": ""}, {"profile": "default"},
-                     {"profile": "main"},
-                     {"conversationId": "forged-conversation"},
-                     {"parentRunId": "forged-run"},
-                     {"requiresExecutionContext": True},
-                     {"callerRuntimeKind": "autogen"}):
-        token = jwt.encode({
-            "iss": "liquidaity-runtime", "aud": "liquidaity-internal-mcp",
-            "sub": "agent-terminal:invalid", "iat": now, "exp": now + 60,
-            "principal": {**base, **override},
-        }, secret, algorithm="HS256")
-        assert verifier._verify_sync(token) is None
-
-
-def test_runless_terminal_cannot_dispatch_even_a_read_tool(monkeypatch):
-    import asyncio
-    import mcp_host
-
-    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {"kind": "agent-terminal"})
-    monkeypatch.setattr(mcp_host, "_dispatch_tool", lambda *_: (_ for _ in ()).throw(
-        AssertionError("unsupported principal must not dispatch")
-    ))
-    result = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
-    assert result.isError is True
 
 
 def test_materializer_principal_can_only_use_idd_reads(monkeypatch):
@@ -800,133 +741,6 @@ def test_materializer_native_reads_keep_project_scope_without_a_fake_run(monkeyp
     assert calls[-1] == ("engraphis_recall_context", "project-1", {"query": "sources"})
     rejected = asyncio.run(mcp_host._dispatch_tool("engraphis_recall_context", {"query": "sources", "projectId": "foreign"}))
     assert "caller_identity_rejected" in rejected[0].text
-
-
-def test_mcp2_per_call_meta_resolves_child_run_and_card_without_model_identity(monkeypatch):
-    import mcp_host
-
-    principal = {
-        "kind": "card-runtime",
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "parentRunId": "main-run",
-        "callerCardId": "card_helper",
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "delegate",
-        "grantedTools": ["cbm.search_graph"],
-        "requiresExecutionContext": True,
-    }
-    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
-    monkeypatch.setattr(
-        type(mcp_host.server),
-        "request_context",
-        property(lambda _self: SimpleNamespace(meta={"liquidaity/execution": "context-1"})),
-    )
-    bridge_calls = []
-
-    def bridge(path, payload):
-        bridge_calls.append((path, payload))
-        return json.dumps({
-            "ok": True,
-            "context": {
-                "projectId": "project-1",
-                "deckId": "deck_builder",
-                "conversationId": "conversation-1",
-                "runId": "child-run",
-                "rootRunId": "main-run",
-                "cardId": "card_helper",
-                "runtimeMode": "delegate",
-                "nativeChildId": "sa-helper",
-                "grantedTools": ["cbm.search_graph"],
-            },
-        })
-
-    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
-    context = mcp_host._request_execution_context()
-    assert context["parentRunId"] == "child-run"
-    assert context["mainCardId"] == "card_helper"
-    assert context["nativeChildId"] == "sa-helper"
-    assert bridge_calls == [(
-        "internal_execution_context",
-        {"contextId": "context-1", "principal": principal},
-    )]
-
-
-def test_required_child_execution_meta_fails_closed_when_missing(monkeypatch):
-    import mcp_host
-
-    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {
-        "kind": "card-runtime", "requiresExecutionContext": True,
-    })
-    monkeypatch.setattr(
-        type(mcp_host.server),
-        "request_context",
-        property(lambda _self: SimpleNamespace(meta={})),
-    )
-    with pytest.raises(PermissionError, match="mcp_execution_context_missing"):
-        mcp_host._request_execution_context()
-
-
-def test_signed_execution_context_id_supports_native_team_worker(monkeypatch):
-    import mcp_host
-
-    principal = {
-        "kind": "card-runtime",
-        "requiresExecutionContext": True,
-        "executionContextId": "context-team-root",
-    }
-    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
-    monkeypatch.setattr(
-        type(mcp_host.server),
-        "request_context",
-        property(lambda _self: SimpleNamespace(meta={})),
-    )
-    bridge_calls = []
-
-    def bridge(path, payload):
-        bridge_calls.append((path, payload))
-        return json.dumps({
-            "ok": True,
-            "context": {
-                "projectId": "project-1",
-                "deckId": "deck_builder",
-                "conversationId": "conversation-1",
-                "runId": "saved-card-run",
-                "rootRunId": "saved-card-run",
-                "cardId": "card_hermes_steward",
-                "runtimeMode": "delegate",
-                "nativeChildId": None,
-                "grantedTools": ["graphiti.add_memory"],
-            },
-        })
-
-    monkeypatch.setattr(mcp_host, "_bridge_sync", bridge)
-    context = mcp_host._request_execution_context()
-    assert context["parentRunId"] == "saved-card-run"
-    assert context["rootRunId"] == "saved-card-run"
-    assert context["nativeChildId"] == ""
-    assert bridge_calls == [(
-        "internal_execution_context",
-        {"contextId": "context-team-root", "principal": principal},
-    )]
-
-
-def test_signed_and_per_call_execution_context_ids_must_match(monkeypatch):
-    import mcp_host
-
-    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: {
-        "kind": "card-runtime",
-        "requiresExecutionContext": True,
-        "executionContextId": "signed-context",
-    })
-    monkeypatch.setattr(
-        type(mcp_host.server),
-        "request_context",
-        property(lambda _self: SimpleNamespace(meta={"liquidaity/execution": "other-context"})),
-    )
-    with pytest.raises(PermissionError, match="mcp_execution_context_invalid"):
-        mcp_host._request_execution_context()
 
 
 def test_canonical_catalog_is_identical_for_every_mcp_principal(monkeypatch):
@@ -1308,7 +1122,7 @@ def test_child_scoped_dispatch_attaches_attention_to_the_real_child_run_and_card
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
-    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
     monkeypatch.setattr(
         card_domain,
         "observe_native_attention",
@@ -1373,7 +1187,7 @@ def test_helper_root_context_is_active_before_native_cbm_dispatch_and_persists_e
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_request_tool_is_allowed", lambda _name: True)
-    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: dict(context))
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
     monkeypatch.setattr(
         card_domain,
         "observe_native_attention",
@@ -1710,7 +1524,6 @@ def test_saved_card_backend_bridge_uses_the_long_running_timeout(monkeypatch):
     ("external_main_chat", "/api/main/chat", True),
     ("external_main_context", "/api/main/context", True),
     ("describe_connected_agents", "/api/cards/connected", False),
-    ("internal_execution_context", "/api/hermes/execution-context", False),
     ("run_configured_card", "/api/cards/run", True),
 ])
 def test_backend_domain_routes_preserve_payload_and_process_owned_secret(

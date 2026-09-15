@@ -20,16 +20,10 @@ export type InternalMcpPrincipal =
       callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
       grantedTools: string[];
       presentedTools?: string[];
-      requiresExecutionContext?: boolean;
-      executionContextId?: string;
-      // Signed native attribution only; these do not grant permissions or
-      // change token lifetime, revocation, or execution-context enforcement.
+      // Signed native attribution only; these do not grant permissions.
       nativeChildId?: string;
       nativeRunId?: string;
-      terminalOwner?: { userId: string; terminalSessionId: string; profile: string; cardRevisionId: string };
     };
-
-const TERMINAL_PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function requiredSecret(env: NodeJS.ProcessEnv): string {
   const secret = String(env.LIQUIDAITY_INTERNAL_MCP_SECRET || '').trim();
@@ -80,8 +74,6 @@ export function createInternalMcpBearer(
         callerRuntimeMode: String(principal.callerRuntimeMode || '').trim() as typeof principal.callerRuntimeMode,
         grantedTools: uniqueStrings(principal.grantedTools),
         presentedTools: uniqueStrings(principal.presentedTools ?? principal.grantedTools),
-        requiresExecutionContext: principal.requiresExecutionContext === true,
-        executionContextId: String(principal.executionContextId || '').trim() || undefined,
       };
   if (normalized.kind !== 'catalog-reader') {
     const required = [
@@ -93,15 +85,7 @@ export function createInternalMcpBearer(
       normalized.callerRuntimeKind,
       normalized.callerRuntimeMode,
     ];
-    const terminal = normalized.terminalOwner;
-    if (terminal && (normalized.kind !== 'card-runtime' || !normalized.requiresExecutionContext
-      || normalized.callerRuntimeKind !== 'hermes'
-      || !TERMINAL_PROFILE_PATTERN.test(terminal.profile)
-      || Object.values(terminal).some((value) => typeof value !== 'string' || !value.trim())
-      || Object.keys(terminal).sort().join(',') !== 'cardRevisionId,profile,terminalSessionId,userId')) {
-      throw new Error('internal_mcp_terminal_run_identity_invalid');
-    }
-    if (required.some((value, index) => !value && !(index === 2 && terminal))) {
+    if (required.some((value) => !value)) {
       throw new Error('internal_mcp_principal_incomplete');
     }
     if (normalized.presentedTools.some((name) => !normalized.grantedTools.includes(name))) {

@@ -1,7 +1,4 @@
-import {
-  recoverActiveKanbanRunMonitors,
-  type AppendRecoveredHermesTeamResult,
-} from '../hermes/kanbanRunRecovery';
+import { recoverActiveKanbanRunMonitors } from '../hermes/kanbanRunRecovery';
 import {
   agentTerminalManager,
   agentTerminalPresentationOptions,
@@ -21,7 +18,6 @@ type PythonOwnedStartupDependencies = {
   logModels?: () => Promise<unknown>;
   startCardRuntimes?: () => Promise<unknown>;
   recoverKanban?: typeof recoverActiveKanbanRunMonitors;
-  appendRecoveredTeamResult?: AppendRecoveredHermesTeamResult;
   isActive?: () => boolean;
   maxAttempts?: number;
   pollIntervalMs?: number;
@@ -173,8 +169,6 @@ export async function runPythonOwnedStartupTasks(
   const wait = dependencies.delay ?? delay;
   const logModels = dependencies.logModels ?? logModelConfiguration;
   const recoverKanban = dependencies.recoverKanban ?? recoverActiveKanbanRunMonitors;
-  const appendRecoveredTeamResult = dependencies.appendRecoveredTeamResult
-    ?? ((delivery) => agentTerminalManager.appendRecoveredNativeTeamResult(delivery));
   const isActive = dependencies.isActive ?? (() => true);
   const maxAttempts = Math.max(1, Math.trunc(dependencies.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
   const pollIntervalMs = Math.max(0, Math.trunc(
@@ -207,10 +201,10 @@ export async function runPythonOwnedStartupTasks(
   // Readiness is the only retried operation. Once the supervised Python rails
   // process is ready, each stateful startup task runs at most once for this
   // backend listener; failures remain visible instead of replaying Deck reads
-  // or native Team recovery inside the readiness loop.
+  // or retained standalone Kanban recovery inside the readiness loop.
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
   await (dependencies.startCardRuntimes ?? requestConnectedAgentTerminalReconcile)();
   await logModels();
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
-  return recoverKanban({ appendTeamResult: appendRecoveredTeamResult });
+  return recoverKanban();
 }

@@ -6,7 +6,6 @@ import routes from "./routes";
 import { getDevTestJsonBodyLimit } from "./services/devTest";
 import { getAllowedCorsOrigins, isLocalDevLoopbackRequest } from "./security/requestAccess";
 import { closePythonAgentMcpClient } from "./services/mcp/pythonAgentMcpClient";
-import { closeHermesRuntimes } from "./hermes/mainAdapter";
 import { listenAfterRequiredMigrations } from "./db/migrations";
 import {
   requestConnectedAgentTerminalReconcile,
@@ -166,7 +165,6 @@ function installShutdownHooks() {
       if (activeServer) {
         await closeServer(activeServer);
       }
-      closeHermesRuntimes();
       await closePythonAgentMcpClient();
     } catch {
       // ignore shutdown close errors
@@ -190,7 +188,6 @@ async function startServer() {
   if (existingServer) {
     await closeServer(existingServer).catch(() => undefined);
     agentTerminalManager.stopAll();
-    closeHermesRuntimes();
     await closePythonAgentMcpClient().catch(() => undefined);
     if (globalThis.__liquidaityBackendServer__ === existingServer) {
       globalThis.__liquidaityBackendServer__ = undefined;
@@ -232,7 +229,7 @@ async function startServer() {
     },
   })
     .then(({ discovered, started }) => {
-      console.log(`[BOOT] native Team Run recovery discovered=${discovered} started=${started}`);
+      console.log(`[BOOT] standalone Kanban Run recovery discovered=${discovered} started=${started}`);
     })
     .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);

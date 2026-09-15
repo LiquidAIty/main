@@ -1,11 +1,10 @@
-import type { HermesRunSnapshot, HermesSessionEvent } from './mainAdapter';
 import type { RuntimeIdentity, RuntimeEvent, RuntimeObservation } from '../contracts/runtimeEvents';
 import type { HermesKanbanTaskSnapshot } from '../routes/hermesKanban.routes';
 
 export type CardTerminalEvent = RuntimeEvent;
 
 // Presentation-only credential redaction. Never applied to a runtime request,
-// saved result, model prompt, or native transcript.
+// saved result, model prompt, or native session data.
 export function terminalText(value: unknown): string {
   const sensitive = new Set(['authorization', 'password', 'secret', 'token', 'access_token',
     'refresh_token', 'api_key', 'apikey', 'bearer', 'env', 'environment', 'headers', 'credentials']);
@@ -46,30 +45,11 @@ export function terminalIdentity(run: any): RuntimeIdentity {
   };
 }
 
-export function buildCardTerminal(run: any, snapshot: HermesRunSnapshot | null): RuntimeObservation {
+export function buildCardTerminal(run: any): RuntimeObservation {
   const identity = terminalIdentity(run);
-  if (snapshot && (snapshot.runId !== identity.runId || snapshot.cardId !== identity.cardId
-    || snapshot.projectId !== identity.projectId || snapshot.deckId !== identity.deckId)) {
-    throw new Error('card_terminal_snapshot_identity_mismatch');
-  }
   const events: CardTerminalEvent[] = [];
   if (run.startedAt) events.push({ ...identity, id: `${identity.runId}:session`, kind: 'session',
     sequence: 0, timestamp: run.startedAt, status: String(run.state) });
-  if (snapshot?.modelBlocks?.length) {
-    for (const block of snapshot.modelBlocks) events.push({ ...identity,
-      id: `${identity.runId}:model:${block.sequence}`, kind: 'model', sequence: block.sequence,
-      timestamp: block.timestamp, text: terminalText(block.text) });
-  } else if (snapshot?.fullText) events.push({ ...identity, id: `${identity.runId}:model`, kind: 'model',
-    sequence: snapshot.textSequence, timestamp: snapshot.textTimestamp, text: terminalText(snapshot.fullText) });
-  for (const tool of snapshot?.tools || []) {
-    events.push(projectHermesEvent(identity, { ...tool, kind: 'tool_start' }, tool.sequence, tool.timestamp)!);
-    if (tool.partialOutput) events.push(projectHermesEvent(identity,
-      { ...tool, kind: 'tool_progress', output: tool.partialOutput },
-      tool.partialSequence ?? tool.sequence, tool.partialTimestamp || null)!);
-    if (typeof tool.isError === 'boolean') events.push(projectHermesEvent(identity,
-      { ...tool, kind: 'tool_result', output: tool.output || '' },
-      tool.completedSequence ?? tool.sequence, tool.completedAt || null)!);
-  }
   for (const child of run.terminal?.children || []) {
     const childIdentity = { ...identity, runId: child.runId, cardId: child.cardId,
       cardName: child.cardName, parentRunId: child.parentRunId, nativeChildId: child.nativeChildId || null };
@@ -84,48 +64,22 @@ export function buildCardTerminal(run: any, snapshot: HermesRunSnapshot | null):
   const pending = run.state === 'pending';
   return {
     ...identity, events,
-    // One executing owner plus only observed executing child Runs, never capacity.
-    activeAgentCount: active ? (snapshot ? 1 + Number(run.terminal?.activeChildren || 0) : null) : 0,
-    observation: snapshot ? 'live' : active || pending ? 'unavailable' : 'finished',
-    unavailableReason: active && !snapshot ? (run.runtimeKind === 'autogen'
-      ? 'autogen_adapter_completion_only' : 'hermes_active_turn_unavailable') : null,
-    transcript: run.terminal?.transcript || { sessionId: null, unavailableReason: 'native_session_identity_unavailable' },
+    // The persisted root Run and persisted active child Runs are observable;
+    // native stream detail remains on the Gateway/TUI surface that owns it.
+    activeAgentCount: active ? 1 + Number(run.terminal?.activeChildren || 0) : 0,
+    observation: active || pending ? 'unavailable' : 'finished',
+    unavailableReason: active ? (run.runtimeKind === 'autogen'
+      ? 'autogen_adapter_completion_only' : 'hermes_gateway_stream_only') : null,
     finalText: terminalText(run.result || ''),
     errorCode: run.errorCode || null,
     errorSummary: terminalText(run.errorSummary || ''),
-    configuration: snapshot?.configuration || run.terminal?.configuration,
+    configuration: run.terminal?.configuration,
   };
-}
-
-/** One public adapter for native ACP live events and native transcript replay. */
-export function projectHermesEvent(identity: RuntimeIdentity, event: Record<string, any>,
-  sequence: number, timestamp: string | null, eventId = `${identity.runId}:event:${sequence}`): RuntimeEvent | null {
-  const toolPhase = event.kind === 'tool_start' ? 'start' : event.kind === 'tool_progress' ? 'partial'
-    : event.kind === 'tool_result' ? 'result' : null;
-  const id = toolPhase && event.toolUseId ? `${identity.runId}:tool:${event.toolUseId}:${toolPhase}` : eventId;
-  const base = { ...identity, id, sequence, timestamp };
-  if (event.kind === 'text') return { ...base, kind: 'model', text: terminalText(event.text) };
-  if (event.kind === 'tool_start') return { ...base, kind: 'tool_call', toolName: event.toolName,
-    toolUseId: event.toolUseId, detail: terminalText(event.argsJson) };
-  if (event.kind === 'tool_result') return { ...base, kind: event.isError ? 'tool_error' : 'tool_result',
-    toolName: event.toolName, toolUseId: event.toolUseId,
-    status: event.isError ? 'failed' : 'completed', detail: terminalText(event.output) };
-  if (event.kind === 'tool_progress') return { ...base, kind: 'tool_result', status: 'running',
-    toolName: event.toolName, toolUseId: event.toolUseId, detail: terminalText(event.output) };
-  if (event.kind === 'session') return { ...base, kind: 'session', status: 'running',
-    sessionId: typeof event.sessionId === 'string' ? event.sessionId : null,
-    detail: terminalText(event.configuration || {}) };
-  if (event.kind === 'done') return { ...base, kind: 'completion', status: 'completed', text: terminalText(event.fullText) };
-  if (event.kind === 'error') return { ...base, kind: 'error', status: 'failed',
-    text: terminalText(event.message), detail: terminalText({ code: event.code }) };
-  if (event.kind === 'permission') return { ...base, kind: 'permission', status: 'waiting', text: terminalText(event.question) };
-  // Thoughts, prompts, raw IDFs and unrecognized vendor notifications are not public output.
-  return null;
 }
 
 /** Native task events and attempt records, never inferred worker roles or prose. */
 export function projectKanbanTerminal(run: any, snapshots: HermesKanbanTaskSnapshot[]): RuntimeObservation {
-  const terminal = buildCardTerminal(run, null);
+  const terminal = buildCardTerminal(run);
   const identity = terminalIdentity(run);
   const events: RuntimeEvent[] = [...terminal.events];
   const timestamp = (value: unknown): string | null => typeof value === 'number' && Number.isFinite(value)
@@ -163,13 +117,4 @@ export function projectKanbanTerminal(run: any, snapshots: HermesKanbanTaskSnaps
     // Exact native structured task fields. Credential redaction does not rewrite task state.
     nativeTasks: snapshots.map(({ task }) => JSON.parse(terminalText(task))),
   };
-}
-
-/** Native #2 replay, including #5 tool status. No user/IDF or reasoning replay. */
-export function terminalHistoryEvents(run: any, native: HermesSessionEvent[]): CardTerminalEvent[] {
-  const identity = terminalIdentity(run);
-  return native.flatMap((event, index): CardTerminalEvent[] => {
-    const projected = projectHermesEvent(identity, event, index, null, `${identity.runId}:history:${index}`);
-    return projected ? [projected] : [];
-  });
 }

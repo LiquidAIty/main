@@ -2897,7 +2897,6 @@ DEFAULT_CONFIG = {
         # delegate_task(role="team") Auto-Kanban recipe.  Empty model fields
         # make Team fail before task creation; deployments opt into the exact
         # worker provider/model through ordinary Hermes config authority.
-        "team_max_workers": 4,
         "team_worker_provider": "",
         "team_worker_model": "",
         "team_worker_reasoning_effort": None,

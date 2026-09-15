@@ -291,19 +291,6 @@ export type StandaloneCardTestResult = {
   tasksCompleted?: number;
   tasksTotal?: number;
   activeWorkers?: number;
-  teamReceipt?: {
-    schemaVersion: string;
-    source: string;
-    mode: 'auto';
-    maxWorkers: number;
-    retryLimit: number;
-    maxRetries: number;
-    workerProvider: string;
-    workerModel: string;
-    leadProvider: string;
-    leadModel: string;
-    maxDepth: number;
-  } | null;
   resultReady?: boolean;
   inputTokens?: number;
   outputTokens?: number;
@@ -338,7 +325,6 @@ export type StandaloneCardTestResult = {
     cardIdentity: { cardId: string; title?: string };
   } | null;
   receipt?: Record<string, unknown> | null;
-  nativeEvents?: Array<Record<string, unknown>>;
 };
 
 export type RetainedRunInputs = {
@@ -2498,16 +2484,6 @@ export function AgentManager({
               </div>
             ) : null}
           </div>
-        ) : null}
-        {activeTab === 'Results' && runResult?.nativeEvents?.length ? (
-          <details data-testid="card-native-telemetry" style={{ color: '#B8C8CD', fontSize: 11 }}>
-            <summary style={{ cursor: 'pointer' }}>
-              Native tool telemetry ({runResult.nativeEvents.length})
-            </summary>
-            <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-              {JSON.stringify(runResult.nativeEvents, null, 2)}
-            </pre>
-          </details>
         ) : null}
       </div>
     </div>

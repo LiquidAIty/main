@@ -5,7 +5,7 @@ import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient'
 import { indexToolCatalogReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { hydrateHermesCardProfile } from '../hermes/cardProfileProjection';
-import { requestHermesNative } from '../hermes/mainAdapter';
+import { agentTerminalManager } from '../hermes/agentTerminal';
 
 const router = Router();
 export const iddRoutes = Router();
@@ -57,14 +57,18 @@ async function cardNativeOptions(projectId: string, deckId: string, cardId: stri
     schema: tool.inputSchema, available: tool.available !== false,
   }));
   if (card.runtime.kind !== 'hermes') return { nativeOptions: options, selectedIds };
-  const { native } = await hydrateHermesCardProfile(card, deck);
+  const cardProfile = card.runtime.profile;
+  const requestNative = (method: string, params: Record<string, unknown> = {}, profile?: string) => (
+    agentTerminalManager.requestProfile<any>(profile || cardProfile, method, params)
+  );
+  const { native } = await hydrateHermesCardProfile(card, deck, requestNative);
   const [tools, plugins] = await Promise.all([
-    requestHermesNative('tools.show', {}, card.runtime.profile),
-    requestHermesNative('plugins.list', {}, card.runtime.profile),
+    requestNative('tools.show', {}, cardProfile),
+    requestNative('plugins.list', {}, cardProfile),
   ]) as Array<Record<string, any>>;
   options.push({ id: 'profile:' + native.name, kind: 'profile', owner: 'Hermes',
     source: 'profiles.describe', schema: { name: native.name, model: native.model }, available: true });
-  selectedIds.push('profile:' + card.runtime.profile);
+  selectedIds.push('profile:' + cardProfile);
   for (const [kind, values] of [
     ['skill', native.skills], ['toolset', native.toolsets], ['mcp', native.mcpServers],
     ['plugin', Array.isArray(plugins.plugins) ? plugins.plugins : []],

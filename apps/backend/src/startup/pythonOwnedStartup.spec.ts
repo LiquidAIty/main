@@ -17,14 +17,12 @@ describe('Python-owned backend startup', () => {
     const logModels = vi.fn(async () => undefined);
     const recoverKanban = vi.fn(async () => ({ discovered: 2, started: 1 }));
     const startCardRuntimes = vi.fn(async () => undefined);
-    const appendRecoveredTeamResult = vi.fn(async () => undefined);
 
     await expect(runPythonOwnedStartupTasks({
       request,
       delay,
       logModels,
       recoverKanban,
-      appendRecoveredTeamResult,
       startCardRuntimes,
       maxAttempts: 3,
       pollIntervalMs: 0,
@@ -36,9 +34,7 @@ describe('Python-owned backend startup', () => {
     expect(logModels).toHaveBeenCalledOnce();
     expect(startCardRuntimes).toHaveBeenCalledOnce();
     expect(recoverKanban).toHaveBeenCalledOnce();
-    expect(recoverKanban).toHaveBeenCalledWith({
-      appendTeamResult: appendRecoveredTeamResult,
-    });
+    expect(recoverKanban).toHaveBeenCalledWith();
   });
 
   it('fails visibly without running dependent reads when Python rails never becomes ready', async () => {

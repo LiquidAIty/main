@@ -2,7 +2,7 @@
  * Concise backend dev-terminal trace for real model-runtime events.
  *
  * The only source is the events the runtime ACTUALLY emits through the existing
- * Main Hermes ACP and configured-card callbacks: text / tool_start /
+ * Main Hermes Gateway and configured-card events: text / tool_start /
  * tool_result / progress / permission / done / error. This never fabricates a lifecycle line
  * for something that did not happen, never prints raw prompts / full model output /
  * secrets, and never adds a second event bus or route — it only formats an event
@@ -29,7 +29,7 @@ function isCardDoorway(toolName: string): boolean {
 }
 
 /**
- * Format ONE real Hermes ACP chat event into a concise trace line, or null when it
+ * Format one real Hermes Gateway chat event into a concise trace line, or null when it
  * carries no lifecycle signal worth a line (streamed text chunks, the final `done`
  * text, the session id). Those are not fabricated away — they simply are not a
  * per-event lifecycle line; the request start/end are logged by the route itself.

@@ -4,10 +4,7 @@ import {
   deriveHermesKanbanProgress,
   readHermesKanbanSessionUsage,
   readHermesKanbanCardSnapshots,
-  reclaimNativeHermesKanbanTask,
   rejoinNativeHermesKanbanTask,
-  resolveHermesKanbanCardExecutionContext,
-  terminateNativeHermesKanbanRun,
   waitForHermesKanbanCardTask,
   type HermesKanbanTaskSnapshot,
 } from './hermesKanban.routes';
@@ -28,80 +25,39 @@ function snapshot(
   };
 }
 
-describe('internal native Team task projection and recovery', () => {
+describe('retained standalone Kanban task projection and recovery', () => {
   it('reads the exact root/child graph without dispatch or product routing', async () => {
     const root = snapshot('t_root', {
-      created_by: 'delegate_task:team',
-      project_id: 'project-1',
-      status: 'working',
+      created_by: 'card-one', project_id: 'project-1', status: 'running',
     }, ['t_child']);
     const child = snapshot('t_child', { status: 'done', result: 'worker result' });
     const show = vi.fn(async (id: string) => id === 't_root' ? root : child);
 
     await expect(readHermesKanbanCardSnapshots({
       nativeRootId: 't_root',
-      cardId: 'delegate_task:team',
+      cardId: 'card-one',
       projectId: 'project-1',
+      runtimeProfile: 'research',
     }, show)).resolves.toEqual([root, child]);
     expect(show.mock.calls.map(([id]) => id)).toEqual(['t_root', 't_child']);
   });
 
-  it('correlates a Team child to one SQL root/Card authority and sorts grants', async () => {
+  it('rejects a native root owned by another saved Card', async () => {
     const root = snapshot('t_root', {
-      created_by: 'delegate_task:team',
-      project_id: 'project-1',
-      status: 'working',
-    }, ['t_child']);
-    const child = snapshot('t_child', { status: 'working' }, [], ['t_root']);
-    const show = vi.fn(async (id: string) => id === 't_root' ? root : child);
-    const resolveRun = vi.fn(async () => ({
-      ok: true,
-      context: {
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        conversationId: 'conversation-1',
-        runId: 'child-run-1',
-        rootRunId: 'root-run-1',
-        cardId: 'card_graph_agent',
-        cardRevisionId: 'revision-1',
-        runtimeMode: 'delegate',
-        runtimeProfile: 'liquidaity-hermes-steward',
-        nativeRootId: 't_root',
-        grantedTools: ['graphiti.add_memory', 'cbm.search_graph'],
-      },
-    }));
-
-    await expect(resolveHermesKanbanCardExecutionContext({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      taskId: 't_child',
-      show,
-      resolveRun,
-    })).resolves.toEqual({
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      conversationId: 'conversation-1',
-      runId: 'child-run-1',
-      rootRunId: 'root-run-1',
-      cardId: 'card_graph_agent',
-      cardRevisionId: 'revision-1',
-      runtimeMode: 'delegate',
-      runtimeProfile: 'liquidaity-hermes-steward',
+      created_by: 'other-card', project_id: 'project-1', status: 'running',
+    });
+    await expect(readHermesKanbanCardSnapshots({
       nativeRootId: 't_root',
-      nativeChildId: 't_child',
-      grantedTools: ['cbm.search_graph', 'graphiti.add_memory'],
-    });
-    expect(resolveRun).toHaveBeenCalledWith({
+      cardId: 'card-one',
       projectId: 'project-1',
-      deckId: 'deck_builder',
-      nativeTaskIds: ['t_child', 't_root'],
-    });
+      runtimeProfile: 'research',
+    }, async () => root)).rejects.toThrow('hermes_kanban_terminal_identity_mismatch');
   });
 
   it('derives truthful active-worker progress from native task snapshots', () => {
-    const root = snapshot('t_root', { status: 'working' }, ['t_done', 't_working']);
+    const root = snapshot('t_root', { status: 'running' }, ['t_done', 't_working']);
     const done = snapshot('t_done', { status: 'done', result: 'done' });
-    const working = snapshot('t_working', { status: 'running', session_id: 'worker-session' });
+    const working = snapshot('t_working', { status: 'running' });
     working.runs = [{
       id: 7,
       status: 'running',
@@ -117,26 +73,6 @@ describe('internal native Team task projection and recovery', () => {
       tasksTotal: 3,
       activeWorkers: 1,
       workerSessionIds: ['worker-session'],
-      teamReceipt: null,
-    });
-  });
-
-  it('projects the applied native Team policy as telemetry, not another receipt authority', () => {
-    const root = snapshot('t_root', { status: 'triage' });
-    root.events = [{
-      kind: 'team_policy_applied',
-      payload: {
-        schema_version: 'hermes.team.policy.v1', source: 'host_session', mode: 'auto',
-        max_workers: 2, retry_limit: 0, max_retries: 1,
-        worker_provider: 'openai-codex', worker_model: 'gpt-5.6-luna',
-        lead_provider: 'openai-codex', lead_model: 'gpt-5.6-terra', max_depth: 1,
-      },
-    }];
-    expect(deriveHermesKanbanProgress('t_root', [root]).teamReceipt).toEqual({
-      schemaVersion: 'hermes.team.policy.v1', source: 'host_session', mode: 'auto',
-      maxWorkers: 2, retryLimit: 0, maxRetries: 1,
-      workerProvider: 'openai-codex', workerModel: 'gpt-5.6-luna',
-      leadProvider: 'openai-codex', leadModel: 'gpt-5.6-terra', maxDepth: 1,
     });
   });
 
@@ -160,7 +96,7 @@ describe('internal native Team task projection and recovery', () => {
     });
 
     await expect(readHermesKanbanSessionUsage(
-      'liquidaity-hermes-steward',
+      'research',
       ['worker-one', 'worker-two'],
       runner as never,
     )).resolves.toEqual({
@@ -173,34 +109,29 @@ describe('internal native Team task projection and recovery', () => {
     });
   });
 
-  it('waits through the Team correlation barrier and returns one synthesis', async () => {
+  it('waits through an active root and returns its one stored result', async () => {
     const show = vi.fn()
+      .mockResolvedValueOnce(snapshot('t_root', { status: 'running' }))
       .mockResolvedValueOnce(snapshot('t_root', {
-        status: 'blocked',
-        workflow_template_id: 'delegate-team-v1',
-        current_step_key: 'correlation',
-      }))
-      .mockResolvedValueOnce(snapshot('t_root', {
-        status: 'done',
-        result: 'Team synthesis',
+        status: 'done', result: 'Stored synthesis',
       }));
 
-    await expect(waitForHermesKanbanCardTask('default', 't_root', {
+    await expect(waitForHermesKanbanCardTask('research', 't_root', {
       show,
       pause: async () => undefined,
       timeoutMs: 1_000,
     })).resolves.toMatchObject({
       taskId: 't_root',
-      snapshot: { latest_summary: 'Team synthesis' },
+      snapshot: { latest_summary: 'Stored synthesis' },
     });
     expect(show).toHaveBeenCalledTimes(2);
   });
 
   it('bounds transient native read loss and fails visibly after the limit', async () => {
     const show = vi.fn(async () => {
-      throw new Error('bridge-unavailable');
+      throw new Error('native-read-unavailable');
     });
-    await expect(waitForHermesKanbanCardTask('default', 't_root', {
+    await expect(waitForHermesKanbanCardTask('research', 't_root', {
       show,
       pause: async () => undefined,
       maxConsecutiveShowFailures: 2,
@@ -208,23 +139,23 @@ describe('internal native Team task projection and recovery', () => {
     expect(show).toHaveBeenCalledTimes(2);
   });
 
-  it('rejoins one retained Team root and enforces Card/project identity', async () => {
+  it('rejoins one retained root and enforces Card/project identity', async () => {
     const done = snapshot('t_root', {
       status: 'done',
       result: 'Recovered synthesis',
-      created_by: 'delegate_task:team',
+      created_by: 'card-one',
       project_id: 'project-1',
       session_id: 'root-session',
     });
-    const requestExtension = vi.fn(async () => done);
+    const show = vi.fn(async () => done);
     const onProgress = vi.fn();
 
     await expect(rejoinNativeHermesKanbanTask({
-      profile: 'default',
+      profile: 'research',
       taskId: 't_root',
-      expectedCardId: 'delegate_task:team',
+      expectedCardId: 'card-one',
       expectedProjectId: 'project-1',
-      requestExtension: requestExtension as never,
+      show,
       onProgress,
     })).resolves.toMatchObject({
       finalText: 'Recovered synthesis',
@@ -232,28 +163,5 @@ describe('internal native Team task projection and recovery', () => {
       progress: { nativeRootId: 't_root', phase: 'complete' },
     });
     expect(onProgress).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps native reclaim/terminate controls internal and authoritative', async () => {
-    const requestExtension = vi.fn(async (method: string, params: Record<string, unknown>) =>
-      snapshot(String(params.taskId || 't_running'), {
-        status: 'todo',
-        result: method,
-      }));
-
-    await expect(reclaimNativeHermesKanbanTask(
-      't_running',
-      'recovery reclaim',
-      requestExtension as never,
-    )).resolves.toMatchObject({ task: { id: 't_running', status: 'todo' } });
-    await expect(terminateNativeHermesKanbanRun(
-      41,
-      'recovery terminate',
-      requestExtension as never,
-    )).resolves.toMatchObject({ task: { id: 't_running', status: 'todo' } });
-    expect(requestExtension.mock.calls.map(([method]) => method)).toEqual([
-      '_kanban/reclaim',
-      '_kanban/terminate',
-    ]);
   });
 });

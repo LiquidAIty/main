@@ -16,7 +16,6 @@ from app.python_models.card_domain import (
     CardDomainError,
     begin_main_chat_run,
     begin_run,
-    begin_native_hermes_child_run,
     describe_magentic_agents,
     delete_card,
     finish_run,
@@ -28,7 +27,6 @@ from app.python_models.card_domain import (
     read_run,
     read_run_input_files,
     record_explicit_artifact,
-    resolve_native_hermes_task_context,
     save_deck,
     update_run_progress,
 )
@@ -355,14 +353,6 @@ def domain_run_input_files(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/domain/runs/resolve-native-hermes-task-context")
-def domain_native_hermes_task_context(payload: dict[str, Any]):
-    try:
-        return resolve_native_hermes_task_context(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=403, detail=str(err)) from err
-
-
 @app.get("/domain/runs/active-kanban")
 def domain_active_kanban_runs():
     try:
@@ -375,14 +365,6 @@ def domain_active_kanban_runs():
 def domain_run_progress(payload: dict[str, Any]):
     try:
         return update_run_progress(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/domain/runs/begin-native-hermes-child")
-def domain_native_hermes_child_run_begin(payload: dict[str, Any]):
-    try:
-        return begin_native_hermes_child_run(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

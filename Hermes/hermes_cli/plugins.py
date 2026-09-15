@@ -1209,19 +1209,6 @@ class _QueuedPluginEvent:
     generation: int
 
 
-@dataclass(frozen=True)
-class KanbanWorkerEnvironmentContext:
-    """Bounded native identity exposed to pre-spawn environment providers."""
-
-    task_id: str
-    run_id: str
-    board: str
-    assignee: str
-    profile: str
-    workspace: str
-    claim_lock: str
-
-
 @dataclass
 class LoadedPlugin:
     """Runtime state for a single loaded plugin."""
@@ -3422,23 +3409,6 @@ class PluginContext:
         logger.debug("Plugin %s registered hook: %s", self.manifest.name, hook_name)
         return handle
 
-    def register_kanban_worker_environment_provider(
-        self,
-        callback: Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None],
-    ) -> PluginRegistration:
-        """Register a synchronous additive environment provider for Kanban workers."""
-
-        if not callable(callback):
-            raise TypeError("Kanban worker environment provider must be callable")
-        owner = self.manifest.key or self.manifest.name
-        entry = (owner, callback)
-        self._manager._kanban_worker_environment_providers.append(entry)
-        return self._track(
-            "kanban_worker_environment_provider",
-            owner,
-            lambda: self._manager._remove_kanban_worker_environment_provider(entry),
-        )
-
     def register_system_prompt_section(
         self,
         id: str,
@@ -3778,9 +3748,6 @@ class PluginManager:
         self._plugins: Dict[str, LoadedPlugin] = {}
         self._hooks: Dict[str, List[Callable]] = {}
         self._middleware: Dict[str, List[Callable]] = {}
-        self._kanban_worker_environment_providers: List[
-            tuple[str, Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None]]
-        ] = []
         self._plugin_tool_names: Set[str] = set()
         self._plugin_platform_names: Set[str] = set()
         self._cli_commands: Dict[str, dict] = {}
@@ -3957,15 +3924,6 @@ class PluginManager:
                 del values[index]
                 return True
         return False
-
-    def _remove_kanban_worker_environment_provider(
-        self,
-        entry: tuple[
-            str,
-            Callable[[KanbanWorkerEnvironmentContext], Mapping[str, str] | None],
-        ],
-    ) -> None:
-        self._remove_identity(self._kanban_worker_environment_providers, entry)
 
     def _remove_callback(
         self,
@@ -5945,42 +5903,6 @@ class PluginManager:
         """Return a stable snapshot of callbacks registered for a hook."""
         return tuple(self._hooks.get(hook_name, ()))
 
-    def resolve_kanban_worker_environment(
-        self,
-        context: KanbanWorkerEnvironmentContext,
-    ) -> Dict[str, str]:
-        """Resolve additive child environment values from registered providers."""
-
-        resolved: Dict[str, str] = {}
-        for owner, callback in tuple(self._kanban_worker_environment_providers):
-            values = callback(context)
-            if inspect.isawaitable(values):
-                raise TypeError(
-                    f"Kanban worker environment provider {owner!r} must be synchronous"
-                )
-            if values is None:
-                continue
-            if not isinstance(values, Mapping):
-                raise TypeError(
-                    f"Kanban worker environment provider {owner!r} must return a mapping"
-                )
-            for raw_key, raw_value in values.items():
-                key = str(raw_key or "").strip()
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} returned an invalid key"
-                    )
-                if key.startswith("HERMES_KANBAN_") or key in resolved:
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} cannot replace {key!r}"
-                    )
-                if not isinstance(raw_value, str) or not raw_value:
-                    raise ValueError(
-                        f"Kanban worker environment provider {owner!r} returned an invalid value for {key!r}"
-                    )
-                resolved[key] = raw_value
-        return resolved
-
     def render_system_prompt_sections(
         self, session_info: Mapping[str, Any]
     ) -> List[RenderedPluginSystemPromptSection]:
@@ -6548,14 +6470,6 @@ def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
     Returns a list of non-``None`` return values from plugin callbacks.
     """
     return _delivery_manager().invoke_hook(hook_name, **kwargs)
-
-
-def resolve_kanban_worker_environment(
-    context: KanbanWorkerEnvironmentContext,
-) -> Dict[str, str]:
-    """Resolve additive environment for one default-lane Kanban child."""
-
-    return get_plugin_manager().resolve_kanban_worker_environment(context)
 
 
 def render_system_prompt_sections(

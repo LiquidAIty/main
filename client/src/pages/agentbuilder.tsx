@@ -1004,9 +1004,6 @@ export default function AgentBuilder(): React.ReactElement {
     tasksCompleted: typeof result?.tasksCompleted === 'number' ? result.tasksCompleted : undefined,
     tasksTotal: typeof result?.tasksTotal === 'number' ? result.tasksTotal : undefined,
     activeWorkers: typeof result?.activeWorkers === 'number' ? result.activeWorkers : undefined,
-    teamReceipt: result?.teamReceipt && typeof result.teamReceipt === 'object'
-      ? result.teamReceipt
-      : null,
     resultReady: result?.resultReady === true,
     inputTokens: typeof result?.inputTokens === 'number' ? result.inputTokens : undefined,
     outputTokens: typeof result?.outputTokens === 'number' ? result.outputTokens : undefined,
@@ -1028,7 +1025,6 @@ export default function AgentBuilder(): React.ReactElement {
     runtimeLabel: `${card.runtime.kind}/${card.runtime.mode}`,
     invocation: result?.invocation || null,
     receipt: result?.receipt || null,
-    nativeEvents: Array.isArray(result?.nativeEvents) ? result.nativeEvents : [],
   }), []);
 
   const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string; conversationId?: string }) => {

@@ -156,7 +156,6 @@ def test_authenticated_external_mcp_read_uses_the_real_writer_once_and_reports_f
 
     monkeypatch.setattr(mcp_host, "_dispatch_tool", dispatch)
     monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
-    monkeypatch.setattr(mcp_host, "_request_execution_context", lambda: None)
     monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
     result = asyncio.run(mcp_host.call_tool("cbm.search_graph", {}))
     assert result.isError is not True

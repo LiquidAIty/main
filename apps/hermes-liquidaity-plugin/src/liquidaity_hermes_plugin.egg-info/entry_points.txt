@@ -1,2 +1,0 @@
-[hermes_agent.plugins]
-liquidaity-card-mcp = liquidaity_hermes_plugin

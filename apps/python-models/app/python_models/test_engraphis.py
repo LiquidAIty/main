@@ -1,6 +1,5 @@
 """Native mechanics in a disposable store; never product acceptance data."""
 import asyncio
-import json
 import time
 
 import pytest
@@ -24,12 +23,11 @@ def call(native, name, **arguments):
     return asyncio.run(native.invoke_tool("project-one", name, arguments))
 
 
-def test_service_keeps_engraphis_extraction_and_saved_account_connection(native):
+def test_service_keeps_native_engraphis_with_automatic_llm_extraction_disabled(native):
     from engraphis.service import MemoryService
     service = native.get_service()
     assert type(service) is MemoryService
-    from engraphis.backends.extractor import StructuredLLMExtractor
-    assert isinstance(service.engine.extractor, StructuredLLMExtractor)
+    assert service.engine.extractor is None
     assert service.engine.graph_extractor is not None
     assert native.get_service() is service
 
@@ -125,37 +123,3 @@ def test_discovered_read_uses_engine_schema_and_project_binding(native):
     assert actual["result"] == expected
     with pytest.raises(ValueError, match="scope_is_owned_by_project"):
         call(native, "engraphis_execute_read", **{**arguments, "arguments": {"workspace": "project-two"}})
-
-
-def test_account_extractor_preserves_engine_prompt_and_saved_card(monkeypatch):
-    import copy
-    import httpx
-    from app.python_models import card_domain
-    from engraphis.backends.extractor import StructuredLLMExtractor
-    card = {"runtime": {"kind": "hermes", "mode": "delegate", "profile": "thinkgraph"},
-            "runtimeOptions": {"provider": "openai", "accessMode": "chatgpt-account",
-                               "providerModelId": "gpt-5.6-luna", "reasoningEffort": "low"}}
-    before = copy.deepcopy(card)
-    def load(project, deck):
-        assert (project, deck) == ("selected-project", "deck_builder")
-        return {"deck": {"nodes": [card]}}
-    monkeypatch.setattr(card_domain, "load_deck", load)
-    monkeypatch.setenv("LIQUIDAITY_INTERNAL_MCP_SECRET", "account-transport-contract-secret")
-    calls = []
-    def post(url, **kwargs):
-        calls.append(kwargs["json"])
-        assert url.endswith("/api/thinkgraph/extraction-completion")
-        return httpx.Response(200, request=httpx.Request("POST", url), json={
-            "provider": "openai-codex", "model": "gpt-5.6-luna", "content": '{"facts": []}'})
-    monkeypatch.setattr(httpx, "post", post)
-    token = adapter._extraction_scope.set({"projectId": "selected-project", "deckId": "deck_builder"})
-    try:
-        client = adapter.AccountExtractionClient()
-        schema = {"type": "object", "properties": {"facts": {"type": "array"}}}
-        assert client.extract_json("Engine-owned extraction input", schema) == {"facts": []}
-        assert calls == [{"profile": "thinkgraph", "model": "gpt-5.6-luna", "reasoningEffort": "low",
-            "messages": [{"role": "system", "content": StructuredLLMExtractor._SYSTEM_PROMPT + "\nJSON schema:\n" + json.dumps(schema)},
-                         {"role": "user", "content": "Engine-owned extraction input"}]}]
-        assert card == before
-    finally:
-        adapter._extraction_scope.reset(token)

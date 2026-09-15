@@ -164,7 +164,7 @@ not an exact-name absence check. Preserve returned names/qualified names and ins
 Parameters: `{"project":"C-Projects-LiquidAIty-main","function_name":"<simple-name>","direction":"inbound|outbound","depth":2}`
 Pass an actual returned name or qualified name, according to the live schema. September 9 recovery
 successfully traced the qualified Python `idf.runtime_projection` and TypeScript
-`mainAdapter.materializeHermesProfileSelections` identities. The old blanket Python/qualified-name
+`profileMaterialization.materializeHermesProfileSelections` identities. The old blanket Python/qualified-name
 prohibition is obsolete. Depth 1 is direct; larger depths include transitive callers. Check
 `truncated` and continue the returned cursor when complete neighbors are necessary. A Markdown
 Module is not a callable function; audit its links and discovery consumers directly.

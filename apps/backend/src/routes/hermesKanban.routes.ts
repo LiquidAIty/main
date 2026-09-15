@@ -1,19 +1,15 @@
 import { execFile, spawn } from 'node:child_process';
 import path from 'node:path';
 import { resolveRepoRoot } from '../services/workspaceRoot';
-import {
-  requestHermesExtension,
-} from '../hermes/mainAdapter';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 
 /*
- * Internal native Team task projection/rejoin adapter.
+ * Internal retained standalone Kanban task projection/rejoin adapter.
  *
  * Native Hermes keeps its internal kanban/task/dispatcher vocabulary and
  * SQLite ownership. LiquidAIty retains only the bounded task reads, SQL Run
- * correlation, rejoin, recovery, and worker-bearer projection required by
- * ordinary Cards using delegate_task(role="team"). There is no product board,
+ * correlation, bounded reads, and recovery for retained native task roots.
+ * There is no product board,
  * public route, manual dispatcher control, or special Kanban Card start path.
  */
 
@@ -101,6 +97,27 @@ function parseHermesJson<T>(stdout: string): T {
   return JSON.parse(trimmed.slice(start)) as T;
 }
 
+async function showHermesKanbanTask(
+  profile: string,
+  taskId: string,
+  runner: typeof runHermes = runHermes,
+): Promise<HermesKanbanTaskSnapshot> {
+  const safeProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(safeProfile)) {
+    throw new Error('hermes_kanban_card_profile_invalid');
+  }
+  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) {
+    throw new Error('hermes_kanban_card_task_id_invalid');
+  }
+  const result = await runner(
+    ['-p', safeProfile, 'kanban', 'show', taskId, '--json'],
+    HERMES_BIN,
+    HERMES_STATUS_TIMEOUT_MS,
+  );
+  if (result.exitCode !== 0) throw new Error('hermes_kanban_card_show_failed');
+  return requireNativeTaskSnapshot(taskId, result.stdout);
+}
+
 export type HermesKanbanTaskSnapshot = {
   task: Record<string, unknown>;
   latest_summary?: unknown;
@@ -124,21 +141,6 @@ export type HermesKanbanProgress = {
   tasksTotal: number;
   activeWorkers: number;
   workerSessionIds: string[];
-  teamReceipt: HermesTeamReceipt | null;
-};
-
-export type HermesTeamReceipt = {
-  schemaVersion: 'hermes.team.policy.v1';
-  source: string;
-  mode: 'auto';
-  maxWorkers: number;
-  retryLimit: number;
-  maxRetries: number;
-  workerProvider: string;
-  workerModel: string;
-  leadProvider: string;
-  leadModel: string;
-  maxDepth: number;
 };
 
 export type HermesKanbanUsageTotals = {
@@ -177,48 +179,6 @@ function nativeTaskStatus(snapshot: HermesKanbanTaskSnapshot): string {
   return String(snapshot.task.status || '').trim().toLowerCase();
 }
 
-export function readHermesTeamReceipt(
-  snapshots: readonly HermesKanbanTaskSnapshot[],
-): HermesTeamReceipt | null {
-  for (const snapshot of snapshots) {
-    for (const event of [...snapshot.events].reverse()) {
-      if (String(event.kind || '') !== 'team_policy_applied') continue;
-      const payload = event.payload && typeof event.payload === 'object'
-        ? event.payload as Record<string, unknown>
-        : {};
-      if (payload.schema_version !== 'hermes.team.policy.v1' || payload.mode !== 'auto') {
-        throw new Error('hermes_team_policy_receipt_invalid');
-      }
-      const requiredText = (key: string): string => {
-        const value = String(payload[key] || '').trim();
-        if (!value) throw new Error('hermes_team_policy_receipt_invalid');
-        return value;
-      };
-      const requiredInteger = (key: string): number => {
-        const value = Number(payload[key]);
-        if (!Number.isSafeInteger(value) || value < 0) {
-          throw new Error('hermes_team_policy_receipt_invalid');
-        }
-        return value;
-      };
-      return {
-        schemaVersion: 'hermes.team.policy.v1',
-        source: requiredText('source'),
-        mode: 'auto',
-        maxWorkers: requiredInteger('max_workers'),
-        retryLimit: requiredInteger('retry_limit'),
-        maxRetries: requiredInteger('max_retries'),
-        workerProvider: requiredText('worker_provider'),
-        workerModel: requiredText('worker_model'),
-        leadProvider: requiredText('lead_provider'),
-        leadModel: requiredText('lead_model'),
-        maxDepth: requiredInteger('max_depth'),
-      };
-    }
-  }
-  return null;
-}
-
 export function deriveHermesKanbanProgress(
   taskId: string,
   snapshots: readonly HermesKanbanTaskSnapshot[],
@@ -254,7 +214,6 @@ export function deriveHermesKanbanProgress(
     tasksTotal: snapshots.length,
     activeWorkers,
     workerSessionIds,
-    teamReceipt: readHermesTeamReceipt(snapshots),
   };
 }
 
@@ -285,126 +244,16 @@ async function readHermesKanbanTaskGraph(
 
 /** Read the retained native root; this path never dispatches or rejoins workers. */
 export async function readHermesKanbanCardSnapshots(args: {
-  nativeRootId: string; cardId: string; projectId: string; teamRoot?: boolean;
-}, show: (taskId: string) => Promise<HermesKanbanTaskSnapshot> = async (taskId) => (
-  requestHermesExtension('_kanban/show', { taskId }) as Promise<HermesKanbanTaskSnapshot>
+  nativeRootId: string; cardId: string; projectId: string; runtimeProfile: string;
+}, show: (taskId: string) => Promise<HermesKanbanTaskSnapshot> = (taskId) => (
+  showHermesKanbanTask(args.runtimeProfile, taskId)
 )): Promise<HermesKanbanTaskSnapshot[]> {
   if (!/^t_[A-Za-z0-9_-]+$/.test(args.nativeRootId)) throw new Error('hermes_kanban_card_task_id_invalid');
   const root = requireNativeTaskSnapshot(args.nativeRootId, JSON.stringify(await show(args.nativeRootId)));
-  const expectedCreator = args.teamRoot ? 'delegate_task:team' : args.cardId;
-  if (root.task.created_by !== expectedCreator || (root.task.project_id && root.task.project_id !== args.projectId)) {
+  if (root.task.created_by !== args.cardId || (root.task.project_id && root.task.project_id !== args.projectId)) {
     throw new Error('hermes_kanban_terminal_identity_mismatch');
   }
   return readHermesKanbanTaskGraph(args.nativeRootId, root, show, true);
-}
-
-export type HermesKanbanCardExecutionContext = {
-  projectId: string;
-  deckId: string;
-  conversationId: string;
-  runId: string;
-  rootRunId: string;
-  cardId: string;
-  cardRevisionId: string;
-  runtimeMode: 'main' | 'delegate' | 'kanban';
-  runtimeProfile: string;
-  nativeRootId: string;
-  nativeChildId: string;
-  grantedTools: string[];
-};
-
-export async function resolveHermesKanbanCardExecutionContext(args: {
-  projectId?: string;
-  deckId?: string;
-  taskId: string;
-  show?: (taskId: string) => Promise<HermesKanbanTaskSnapshot>;
-  resolveRun?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
-}): Promise<HermesKanbanCardExecutionContext> {
-  const projectId = String(args.projectId || '').trim();
-  const deckId = String(args.deckId || '').trim();
-  const taskId = String(args.taskId || '').trim();
-  if (Boolean(projectId) !== Boolean(deckId)) {
-    throw new Error('hermes_kanban_card_authority_incomplete');
-  }
-  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
-  const show = args.show ?? (async (nativeTaskId: string) => (
-    requestHermesExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
-  ));
-  const first = requireNativeTaskSnapshot(taskId, JSON.stringify(await show(taskId)));
-  const snapshots = await readHermesKanbanTaskGraph(taskId, first, show);
-  const nativeTaskIds = snapshots.map((snapshot) => String(snapshot.task.id || '').trim());
-  const resolveRun = args.resolveRun ?? (async (payload) => (
-    requestPythonRailsJson('/domain/runs/resolve-native-hermes-task-context', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }) as Promise<Record<string, unknown>>
-  ));
-  const resolved = await resolveRun({
-    ...(projectId ? { projectId, deckId } : {}),
-    nativeTaskIds,
-  });
-  const rawContext = resolved?.context;
-  if (!resolved?.ok || !rawContext || typeof rawContext !== 'object') {
-    throw new Error('hermes_kanban_card_run_context_rejected');
-  }
-  const context = rawContext as Record<string, unknown>;
-  const resolvedProjectId = String(context.projectId || '').trim();
-  const resolvedDeckId = String(context.deckId || '').trim();
-  const conversationId = String(context.conversationId || '').trim();
-  const nativeRootId = String(context.nativeRootId || '').trim();
-  const runId = String(context.runId || '').trim();
-  const rootRunId = String(context.rootRunId || '').trim();
-  const runtimeMode = String(context.runtimeMode || '');
-  const teamDelegation = Boolean(runId && rootRunId && runId !== rootRunId);
-  const root = snapshots.find((snapshot) => String(snapshot.task.id || '').trim() === nativeRootId);
-  const grantedTools = Array.isArray(context.grantedTools)
-    ? [...new Set(context.grantedTools.map(String).map((value) => value.trim()).filter(Boolean))].sort()
-    : [];
-  if (
-    !root
-    || !resolvedProjectId
-    || !resolvedDeckId
-    || !conversationId
-    || (projectId && resolvedProjectId !== projectId)
-    || (deckId && resolvedDeckId !== deckId)
-    || !['main', 'delegate', 'kanban'].includes(runtimeMode)
-    || !runId
-    || !rootRunId
-    || (!teamDelegation && rootRunId !== runId)
-    || !String(context.cardId || '').trim()
-    || !String(context.cardRevisionId || '').trim()
-    || !Array.isArray(context.grantedTools)
-    || context.grantedTools.some((value) => typeof value !== 'string' || !value.trim())
-  ) {
-    throw new Error('hermes_kanban_card_run_context_invalid');
-  }
-  const nativeCardId = String(root.task.created_by || '').trim();
-  const nativeProjectId = String(root.task.project_id || '').trim();
-  if (
-    nativeCardId
-    && nativeCardId !== String(context.cardId)
-    && !(teamDelegation && nativeCardId === 'delegate_task:team')
-  ) {
-    throw new Error('hermes_kanban_card_run_card_mismatch');
-  }
-  if (nativeProjectId && nativeProjectId !== resolvedProjectId) {
-    throw new Error('hermes_kanban_card_run_project_mismatch');
-  }
-  return {
-    projectId: resolvedProjectId,
-    deckId: resolvedDeckId,
-    conversationId,
-    runId,
-    rootRunId,
-    cardId: String(context.cardId),
-    cardRevisionId: String(context.cardRevisionId),
-    runtimeMode: runtimeMode as HermesKanbanCardExecutionContext['runtimeMode'],
-    runtimeProfile: String(context.runtimeProfile || ''),
-    nativeRootId,
-    nativeChildId: taskId,
-    grantedTools,
-  };
 }
 
 export async function readHermesKanbanSessionUsage(
@@ -484,8 +333,8 @@ export async function waitForHermesKanbanCardTask(
   if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) {
     throw new Error('hermes_kanban_card_task_id_invalid');
   }
-  const show = options.show ?? (async (nativeTaskId: string) => (
-    requestHermesExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
+  const show = options.show ?? ((nativeTaskId: string) => (
+    showHermesKanbanTask(safeProfile, nativeTaskId)
   ));
   const now = options.now ?? Date.now;
   const pause = options.pause ?? ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
@@ -515,12 +364,7 @@ export async function waitForHermesKanbanCardTask(
       }
       return { taskId, runId: nativeRunId(snapshot), snapshot };
     }
-    const waitingForTeamCorrelation = (
-      status === 'blocked'
-      && String(snapshot.task.workflow_template_id || '').trim() === 'delegate-team-v1'
-      && String(snapshot.task.current_step_key || '').trim() === 'correlation'
-    );
-    if ((status === 'blocked' && !waitingForTeamCorrelation) || status === 'archived') {
+    if (status === 'blocked' || status === 'archived') {
       throw new Error(`hermes_kanban_card_${status}`);
     }
     if (now() >= deadline) throw new Error('hermes_kanban_card_join_timeout');
@@ -533,7 +377,7 @@ export async function rejoinNativeHermesKanbanTask(args: {
   taskId: string;
   expectedCardId: string;
   expectedProjectId: string;
-  requestExtension?: typeof requestHermesExtension;
+  show?: (taskId: string) => Promise<HermesKanbanTaskSnapshot>;
   onProgress?: (progress: HermesKanbanProgress) => Promise<void> | void;
 }): Promise<RejoinedHermesKanbanResult> {
   const expectedCardId = String(args.expectedCardId || '').trim();
@@ -541,10 +385,9 @@ export async function rejoinNativeHermesKanbanTask(args: {
   if (!expectedCardId || !expectedProjectId) {
     throw new Error('hermes_kanban_recovery_authority_incomplete');
   }
-  const requestExtension = args.requestExtension ?? requestHermesExtension;
-  const show = async (nativeTaskId: string) => (
-    requestExtension('_kanban/show', { taskId: nativeTaskId }) as Promise<HermesKanbanTaskSnapshot>
-  );
+  const show = args.show ?? ((nativeTaskId: string) => (
+    showHermesKanbanTask(args.profile, nativeTaskId)
+  ));
   let latestProgress: HermesKanbanProgress | null = null;
   const completed = await waitForHermesKanbanCardTask(args.profile, args.taskId, {
     show,
@@ -573,37 +416,6 @@ export async function rejoinNativeHermesKanbanTask(args: {
   };
 }
 
-export async function reclaimNativeHermesKanbanTask(
-  taskId: string,
-  reason = 'LiquidAIty operator reclaim',
-  requestExtension: typeof requestHermesExtension = requestHermesExtension,
-): Promise<HermesKanbanTaskSnapshot> {
-  if (!/^t_[A-Za-z0-9_-]+$/.test(taskId)) throw new Error('hermes_kanban_card_task_id_invalid');
-  return requireNativeTaskSnapshot(
-    taskId,
-    JSON.stringify(await requestExtension('_kanban/reclaim', { taskId, reason })),
-  );
-}
-
-export async function terminateNativeHermesKanbanRun(
-  runId: string | number,
-  reason = 'LiquidAIty operator terminate',
-  requestExtension: typeof requestHermesExtension = requestHermesExtension,
-): Promise<HermesKanbanTaskSnapshot> {
-  const nativeRunId = Number(runId);
-  if (!Number.isSafeInteger(nativeRunId) || nativeRunId <= 0) {
-    throw new Error('hermes_kanban_native_run_id_invalid');
-  }
-  const snapshot = await requestExtension('_kanban/terminate', {
-    runId: nativeRunId,
-    reason,
-  });
-  const taskId = String(snapshot?.task?.id || '').trim();
-  if (!taskId) throw new Error('hermes_kanban_card_snapshot_invalid');
-  return requireNativeTaskSnapshot(taskId, JSON.stringify(snapshot));
-}
-
-// Product Kanban Card startup and the board/manual-control router were removed.
-// The functions above remain internal because ordinary Card Team runs still
-// need exact native task projection, worker correlation, bounded rejoin, and
-// recovery across process restarts.
+// Product Kanban Card startup and board/manual-control routes remain removed.
+// These bounded readers exist only for recovery of historical standalone
+// kanban Runs.

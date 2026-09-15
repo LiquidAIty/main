@@ -1,5 +1,4 @@
 import type { AgentCardInstance, DeckDocument } from '../types';
-import { requestHermesNative } from './mainAdapter';
 import {
   readSavedSubagentModel,
   sameNativeSubagentModel,
@@ -108,7 +107,11 @@ export type HermesNativeCardOperation =
   | { method: 'mcp.servers.list'; params?: Record<string, unknown> }
   | { method: 'mcp.servers.test'; params: { name: string } };
 
-type RequestNative = typeof requestHermesNative;
+export type RequestHermesNative = (
+  method: string,
+  params?: Record<string, unknown>,
+  profile?: string,
+) => Promise<any>;
 
 function strings(value: unknown): string[] {
   return Array.isArray(value)
@@ -308,7 +311,7 @@ function normalizeNative(
 async function readNativeProfile(
   binding: HermesCardProfileBinding,
   desiredSubagentModel: SavedSubagentModel | null,
-  requestNative: RequestNative,
+  requestNative: RequestHermesNative,
 ): Promise<HermesCardProfileReadback> {
   const profile = await requestNative('profiles.describe', {
     name: binding.profile,
@@ -338,7 +341,7 @@ async function readNativeProfile(
 export async function hydrateHermesCardProfile(
   card: AgentCardInstance,
   deck: Pick<DeckDocument, 'workspaceRoot'>,
-  requestNative: RequestNative = requestHermesNative,
+  requestNative: RequestHermesNative,
 ): Promise<HermesCardProfileReadback> {
   const binding = projectHermesCardBinding(card, deck);
   if (!binding.profile) throw new Error('hermes_profile_binding_required');
@@ -349,7 +352,7 @@ export async function hydrateHermesCardProfile(
 async function callBoundNativeOperation(
   binding: HermesCardProfileBinding,
   operation: HermesNativeCardOperation,
-  requestNative: RequestNative,
+  requestNative: RequestHermesNative,
 ): Promise<unknown> {
   const params = { ...(operation.params || {}) };
   if ('name' in params && operation.method !== 'mcp.servers.test') {
@@ -380,7 +383,7 @@ export async function invokeHermesNativeOperation(
   card: AgentCardInstance,
   deck: Pick<DeckDocument, 'workspaceRoot'>,
   operation: HermesNativeCardOperation,
-  requestNative: RequestNative = requestHermesNative,
+  requestNative: RequestHermesNative,
 ): Promise<{ result: unknown; readback: HermesCardProfileReadback }> {
   const binding = projectHermesCardBinding(card, deck);
   if (!binding.profile) throw new Error('hermes_profile_binding_required');

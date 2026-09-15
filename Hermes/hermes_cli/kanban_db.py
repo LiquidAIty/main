@@ -7210,12 +7210,11 @@ def invalidate_descendants_for_parent_reopen(
 
 
 def activate_team_triage_task(conn: sqlite3.Connection, task_id: str) -> bool:
-    """Activate one host-correlated delegate Team root for Auto-Kanban.
+    """Activate one validated delegate Team root for Auto-Kanban.
 
     LIQUIDAITY VENDOR PATCH: Team roots are initially committed as ``blocked``
-    so an ACP host can durably allocate its child Run before any dispatcher
-    model call.  Standalone Hermes follows the same two-step path with a
-    no-op host allocation.  Only the exact Team workflow marker may cross this
+    so the durable task and configured policy can be read back before any
+    dispatcher model call. Only the exact Team workflow marker may cross this
     boundary; ordinary blocked tasks keep their existing lifecycle.
     """
     with write_txn(conn):
@@ -10916,42 +10915,6 @@ def _default_spawn(
     if task.workflow_template_id == "delegate-team-v1":
         env["HERMES_KANBAN_TEAM_WORKER"] = "1"
 
-    # LIQUIDAITY VENDOR PATCH: registered providers may add narrowly-scoped
-    # values to this one child
-    # only.  They receive bounded native identity rather than the mutable Task
-    # or inherited process environment, and may not replace any stock or
-    # inherited key.  A provider failure deliberately propagates into the
-    # dispatcher's existing spawn-failure/retry semantics.
-    from hermes_cli.plugins import (
-        KanbanWorkerEnvironmentContext,
-        resolve_kanban_worker_environment,
-    )
-    provider_env = resolve_kanban_worker_environment(
-        KanbanWorkerEnvironmentContext(
-            task_id=task.id,
-            run_id=str(task.current_run_id or ""),
-            board=resolved_board,
-            assignee=str(task.assignee or ""),
-            profile=profile_arg,
-            workspace=str(workspace or ""),
-            claim_lock=str(task.claim_lock or ""),
-        )
-    )
-    conflicts = sorted(set(provider_env).intersection(env))
-    if conflicts:
-        raise RuntimeError(
-            "Kanban worker environment provider attempted to replace existing key(s): "
-            + ", ".join(conflicts)
-        )
-    env.update(provider_env)
-    # LIQUIDAITY VENDOR PATCH: validate process-only MCP templates against the
-    # exact child environment before Popen; never write them into a profile.
-    process_servers = {}
-    if "HERMES_MCP_SERVERS" in env:
-        from tools.mcp_tool import process_mcp_servers
-
-        process_servers = process_mcp_servers(env)
-
     # A worker must NEVER boot the interactive TUI: an inherited HERMES_TUI=1
     # or a `display.interface: tui` in the profile's config would send the
     # quiet chat run into the Ink TUI, whose no-TTY bail-out exits 0 without
@@ -10993,12 +10956,6 @@ def _default_spawn(
     if task.reasoning_effort:
         cmd.extend(["--reasoning", task.reasoning_effort])
     worker_toolsets = _resolve_worker_cli_toolsets(env.get("HERMES_HOME"))
-    if process_servers:
-        if not worker_toolsets:
-            raise RuntimeError("kanban_worker_native_toolsets_unavailable")
-        worker_toolsets = list(dict.fromkeys([
-            *worker_toolsets, *(f"mcp-{name}" for name in process_servers),
-        ]))
     if worker_toolsets:
         cmd.extend(["--toolsets", ",".join(worker_toolsets)])
     cmd.extend([

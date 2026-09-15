@@ -204,7 +204,7 @@ export function parseStagedCardReviewLoaded(
       reviewContext: reviewContext as StagedCardReviewLoaded['reviewContext'],
     };
   }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output', 'nativeEvents']) {
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
     const loaded = parseStagedCardReviewLoaded(record[key], depth + 1);
     if (loaded) return loaded;
   }
@@ -284,7 +284,7 @@ export function parseLoadedCardGraphReference(
       ...(typeof record.error === 'string' ? { error: record.error } : {}),
     };
   }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output', 'nativeEvents']) {
+  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
     const loaded = parseLoadedCardGraphReference(record[key], depth + 1);
     if (loaded) return loaded;
   }

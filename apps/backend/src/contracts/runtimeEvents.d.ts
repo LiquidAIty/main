@@ -29,7 +29,7 @@ export type RuntimeEvent = RuntimeIdentity & {
 };
 
 /**
- * Main-only semantic view of the startup-owned Hermes CLI event stream.
+ * Main-only semantic view of the saved Main Card's persistent Hermes Gateway event stream.
  * This is a projection of native events, not another transcript or event log.
  */
 export type MainProjectionCategory =
@@ -66,7 +66,6 @@ export type RuntimeObservation = RuntimeIdentity & {
   activeAgentCount: number | null;
   observation: 'live' | 'unavailable' | 'finished';
   unavailableReason: string | null;
-  transcript: { sessionId: string | null; unavailableReason: string | null };
   finalText: string;
   errorCode: string | null;
   errorSummary: string;

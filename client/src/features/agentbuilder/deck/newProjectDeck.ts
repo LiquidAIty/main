@@ -321,7 +321,7 @@ export const INITIAL_DECK: DeckDocument = {
   nodes: [
     {
       // The Main front-door card. Its saved prompt/model/tools are
-      // resolved by the one persistent repo-owned Hermes ACP adapter.
+      // materialized before the repo-owned Hermes Gateway accepts a turn.
       id: 'card_main_chat',
       kind: 'agent',
       templateId: 'template_main_chat',
