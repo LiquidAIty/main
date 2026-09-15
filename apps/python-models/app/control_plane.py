@@ -757,6 +757,21 @@ async def card_update_configuration(
             }
         except ValueError as error:
             raise ControlPlaneError(str(error)) from error
+    if "script" in updates:
+        from app.python_models.card_script import saved_script
+        from app.python_models.idd import IddValidationError
+        if not isinstance(updates["script"], dict):
+            raise ControlPlaneError("card_script_configuration_invalid")
+        try:
+            updates = {**updates, "script": saved_script({
+                **updates["script"],
+                "author": {
+                    "kind": "user" if authenticated_user_edit else "agent-builder",
+                    "id": caller_card_id,
+                },
+            }, native_available=False)}
+        except IddValidationError as error:
+            raise ControlPlaneError(str(error)) from error
     if (
         "reasoningEffort" in updates
         and updates["reasoningEffort"] is not None

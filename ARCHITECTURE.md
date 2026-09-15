@@ -5,10 +5,10 @@ runtime receipt. `PLAN.md` records the current proof boundary and next ordered w
 contains deferred candidates, `DONT.md` records known failure patterns, and `AGENTS.md` is execution
 law.
 
-The September 15 cleanup removes LiquidAIty's abandoned Hermes ACP integration. Hermes' upstream
+The September 15 cleanup removed LiquidAIty's abandoned Hermes ACP integration. Hermes' upstream
 ACP implementation remains part of the vendored project, but it is not LiquidAIty's Card runtime
-boundary. The current working-tree source must be rebuilt and exercised before it can be described
-as the loaded application.
+boundary. The pushed cleanup source and the smaller current residue deletion still must be rebuilt
+and exercised before either can be described as the loaded application.
 
 ## One-line law
 
@@ -29,6 +29,7 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | --- | --- | --- |
 | Saved Card and deck state | `apps/python-models/app/python_models/card_domain.py` | Saved identity, revision, runtime binding, profile, provider/model, prompt, grants, topology, and Run state |
 | Canonical Run input | `apps/python-models/app/python_models/idf.py::materialize_idf` | One UTF-8 `in.idf`, written and reread before execution |
+| Card Python Script | `apps/python-models/app/python_models/card_script.py` plus the existing Card editor transport | Saved Card-owned source, structural compilation, live selected-tool validation, honest native availability, and retained receipt identity; no TypeScript executor |
 | Browser transport | `client/src` | Rendering, input controls, SSE/HTTP consumption, and no semantic routing |
 | Application HTTP transport | `apps/backend/src/routes` | Authentication, saved-scope checks, process/session lifecycle, native event delivery, and Python-rails calls |
 | Hermes Card process/session | `apps/backend/src/hermes/agentTerminal.ts` | One profile-scoped native Gateway, durable native session, and optional native TUI attachment |
@@ -82,6 +83,14 @@ inside their owning Hermes Card. A Hermes Team is one root boundary: Hermes owns
 worker prompts, retries, synthesis, and child context, so LiquidAIty does not manufacture per-worker
 IDFs from native child IDs.
 
+Card Python Scripts remain optional saved Card configuration. Python rails owns parsing, literal tool
+handle validation, hashes, and the compact presentation decision. The Agent Builder renders the editor
+below the Card's Tools selection; TypeScript only transports the draft and live palette. The removed ACP
+plugin/callback was not a valid reason to delete Script authoring, persistence, compilation, or
+validation. Until a separately approved Hermes-native owner exists, a valid enabled Script reports
+`card_script_native_bridge_unavailable` and the Run retains the Card's existing deliberate MCP
+presentation. No alternate executor or synthetic Script result is active.
+
 ## Application routes
 
 `apps/backend/src/routes/index.ts` mounts each domain once. Browser-facing routes use normal user
@@ -134,7 +143,10 @@ The following are not current architecture and have no retained fallback:
 - the external editable `liquidaity-hermes-plugin` package;
 - the Python `hermes_acp_bridge`;
 - ACP transcript, snapshot, synthetic native-event, and Team-receipt projections;
-- LiquidAIty-specific private ACP host-profile/script/tool-refresh hooks.
+- LiquidAIty-specific private ACP host-profile/Script-execution/tool-refresh hooks;
+- the orphan ACP MCP-connection projection left after `mainAdapter` was removed;
+- an abandoned frontend deck-workspace helper left by the removed Agent Builder operation surface;
+- an uncalled ThinkGraph NetworkX community/gap projection and its application-only dependency pin.
 
 Hermes' own `acp_adapter/` source and upstream ACP tests remain vendor functionality. Their presence
 does not authorize LiquidAIty to use ACP as a Card runtime or restore the removed integration.
@@ -297,7 +309,8 @@ No other Hermes customization is silently accepted by this document.
 
 ## Current proof limits
 
-- The ACP removal and Gateway consolidation are current working-tree source, not loaded-process proof.
+- The ACP removal and Gateway consolidation are pushed source; the smaller residue deletions remain
+  current working-tree source. Neither is loaded-process proof.
 - The retained Team path still needs real Gateway input, native worker activity, synthesis, and returned
   output through the same saved Run.
 - The retained profile branch is source/unit-only and currently fails closed because no supported

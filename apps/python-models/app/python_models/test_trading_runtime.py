@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.python_models.card_script import compile_card_script
 from app.python_models.lumibot_lifecycle import run_lumibot_local_backtest
 from app.python_models.trading_runtime import (
     _current_trading_card,
@@ -266,6 +267,24 @@ def test_trading_runtime_qualifies_by_saved_hermes_subsystem_not_card_name() -> 
 
     assert result["runtime_profile"] == "isolated-profile"
     assert result["subsystem"]["id"] == "lumibot"
+
+
+def test_trading_card_script_compiles_one_python_subsystem_boundary() -> None:
+    source = '''CARD_SCRIPT = {
+    "mode": "tool_recipe",
+    "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},
+    "output": {"type": "object", "properties": {"state": {"type": "object"}, "agent": {"type": "object", "properties": {"run": {"type": "boolean"}, "prompt": {"type": "string"}}, "required": ["run"]}}, "required": ["state", "agent"]},
+    "max_tool_calls": 1,
+}
+from hermes_tools import SCRIPT, input, output, tools
+tools.trading.get_state = SCRIPT
+state = tools.call("trading.get_state")
+output.emit({"state": state, "agent": {"run": True, "prompt": input.mission}})
+'''
+    compiled = compile_card_script(source, selected_tools=["trading.get_state"])
+    assert compiled["toolHandles"] == ["trading.get_state"]
+    assert compiled["scriptToolIds"] == ["trading.get_state"]
+    assert compiled["maxToolCalls"] == 1
 
 
 def test_pause_resume_fails_closed_until_a_real_trader_lifecycle_exists() -> None:

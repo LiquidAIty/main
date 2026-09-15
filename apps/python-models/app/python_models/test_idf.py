@@ -18,7 +18,10 @@ from app.python_models.idf import (
 )
 
 
-def _idf(*, graph_context: str = "", secret: bool = False):
+def _idf(
+    *, graph_context: str = "", secret: bool = False,
+    capabilities: dict | None = None,
+):
     reference = {
         "authority": "CodeGraph",
         "nativeId": "project.module.materialize_idf",
@@ -76,6 +79,7 @@ def _idf(*, graph_context: str = "", secret: bool = False):
             "skills": [],
             "toolsets": [],
             "mcpConnectionIds": ["liquidaity"],
+            **(capabilities or {}),
         },
         graph_context=graph_context,
         native_references=references,
@@ -101,6 +105,20 @@ def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
         "dynamicContext",
     ]
     assert load_idf_bytes(materialized.idf_bytes) == materialized
+
+
+def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:
+    presentation = {
+        "mode": "selected-mcp",
+        "fallbackReason": "card_script_native_bridge_unavailable",
+    }
+    materialized = _idf(capabilities={
+        "presentedTools": ["codegraph.search_graph"],
+        "scriptPresentation": presentation,
+    })
+    loaded = load_idf_bytes(materialized.idf_bytes)
+    assert loaded.idf.selectedToolsAndGrants.scriptPresentation == presentation
+    assert runtime_projection(loaded)["scriptPresentation"] == presentation
 
 
 def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:

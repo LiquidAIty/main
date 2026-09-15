@@ -180,7 +180,9 @@ def test_controller_flow_creation_reconnection_and_no_reverse_authority(monkeypa
 
 
 @pytest.mark.parametrize("policy", ["selected", "all_healthy"])
-def test_no_script_retains_every_saved_authorized_tool(monkeypatch, policy):
+def test_no_script_preserves_saved_presentation_without_narrowing_effective_grants(
+    monkeypatch, policy,
+):
     loaded = _destination_fixture(monkeypatch)
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"].update(tools=["canvas.inspect", "graphiti.search_nodes"], toolCatalogPolicy=policy)
@@ -194,9 +196,86 @@ def test_no_script_retains_every_saved_authorized_tool(monkeypatch, policy):
     } for name in card["runtimeOptions"]["tools"]]
     prepared = card_domain._prepare_invocation(payload)
     config = prepared["_callConfig"]
-    assert config["presentedTools"] == config["enabledTools"]
-    assert set(card["runtimeOptions"]["tools"]) <= set(config["presentedTools"])
+    assert config["presentedTools"] == card["runtimeOptions"]["tools"]
+    assert set(config["presentedTools"]) <= set(config["enabledTools"])
+    if policy == "all_healthy":
+        assert "web_search" in config["enabledTools"]
+        assert "web_search" not in config["presentedTools"]
     assert json.dumps(card, sort_keys=True) == before
+
+
+def test_valid_enabled_script_is_retained_but_cannot_replace_tools_without_native_owner(
+    monkeypatch,
+):
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"]["script"] = {
+        "enabled": True,
+        "source": '''CARD_SCRIPT = {
+    "mode": "tool_recipe",
+    "input": {"type": "object", "properties": {}},
+    "output": {"type": "object", "properties": {"result": {}}, "required": ["result"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.calculator = SCRIPT
+tools.call("calculator")
+output.emit({"result": {}})
+''',
+    }
+
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    saved = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
+
+    assert grants["enabledTools"] == ["calculator"]
+    assert grants["presentedTools"] == ["calculator"]
+    assert grants["scriptPresentation"] == {
+        "mode": "selected-mcp",
+        "fallbackReason": "card_script_native_bridge_unavailable",
+    }
+    assert saved["lastValidation"]["status"] == "valid"
+    assert saved["nativeSupport"] == {
+        "available": False,
+        "executor": None,
+        "active": False,
+        "reason": "card_script_native_bridge_unavailable",
+    }
+
+
+def test_invalid_enabled_script_falls_back_to_exact_saved_tool_schema(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"]["script"] = {
+        "enabled": True,
+        "source": "return InvocationPreparation()",
+    }
+
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+    grants = invocation["idf"]["selectedToolsAndGrants"]
+    saved = invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["script"]
+
+    assert grants["presentedTools"] == ["calculator"]
+    assert grants["scriptPresentation"] == {
+        "mode": "selected-mcp",
+        "fallbackReason": "card_script_validation_failed",
+    }
+    assert saved["lastValidation"]["status"] == "invalid"
+
+
+def test_disabled_script_remains_readable_saved_configuration(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"]["script"] = {
+        "enabled": False,
+        "source": "not executable",
+    }
+
+    stable = card_domain._stable_card(card)
+    saved = stable["runtimeExtensions"]["script"]
+    assert saved["enabled"] is False
+    assert saved["source"] == "not executable"
+    assert saved["nativeSupport"]["available"] is False
+    assert stable["grants"]["tools"] == ["calculator"]
 
 
 def test_saved_card_preserves_legacy_team_data_without_runtime_validation() -> None:
@@ -1273,6 +1352,42 @@ def test_finish_run_result_reconciliation_rejects_wrong_hash() -> None:
             "expectedResultSha256": "0" * 64,
             "reconcilePersistedResult": True,
         })
+
+
+def test_finish_run_rejects_unverifiable_card_script_receipt_before_database_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        card_domain,
+        "connect_postgres",
+        lambda **_kwargs: pytest.fail("invalid Script receipt reached PostgreSQL"),
+    )
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="run_card_script_execution_sourceHash_invalid",
+    ):
+        card_domain.finish_run({
+            "runId": "run-one",
+            "state": "completed",
+            "cardScriptExecution": {
+                "schemaVersion": "liquidaity.card-script.run-execution.v1",
+                "sourceHash": "not-a-hash",
+                "compiledHash": "0" * 64,
+            },
+        })
+
+
+def test_run_projection_preserves_existing_card_script_execution_receipt() -> None:
+    receipt = {
+        "schemaVersion": "liquidaity.card-script.run-execution.v1",
+        "sourceHash": "a" * 64,
+        "compiledHash": "b" * 64,
+    }
+    projected = card_domain._run_projection({
+        "run_id": "run-one",
+        "card_script_execution": receipt,
+    })
+    assert projected["cardScriptExecution"] == receipt
 
 
 def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(

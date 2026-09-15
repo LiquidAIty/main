@@ -931,7 +931,11 @@ describe('saved Card routes', () => {
       })
       .mockResolvedValueOnce({
         enabled: true, version: 3, sourceHash: 'source-hash', compiledHash: 'compiled-hash',
-        validation: { valid: true, errors: [], warnings: [] },
+        lastValidation: { status: 'valid', executionTested: false, errors: [], toolHandles: ['canvas.inspect'] },
+        nativeSupport: {
+          available: false, active: false, executor: null,
+          reason: 'card_script_native_bridge_unavailable',
+        },
         compiled: { toolHandles: ['canvas.inspect'] },
       });
     const { server, baseUrl } = await createApiServer();
@@ -953,7 +957,12 @@ describe('saved Card routes', () => {
       });
       expect(response.status).toBe(200);
       const payload = await response.json() as any;
-      expect(payload.script.validation.valid).toBe(true);
+      expect(payload.script.lastValidation.status).toBe('valid');
+      expect(payload.script.nativeSupport).toMatchObject({
+        available: false,
+        active: false,
+        reason: 'card_script_native_bridge_unavailable',
+      });
       expect(payload.references.map((entry: any) => entry.canonicalId)).toEqual(['canvas.inspect']);
       const validationCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
         ([endpoint]) => endpoint === '/card-script/validate',
@@ -963,7 +972,7 @@ describe('saved Card routes', () => {
         script,
         selectedTools: ['canvas.inspect'],
         defaultAgentTools: ['canvas.inspect'],
-        nativeAvailable: true,
+        nativeAvailable: false,
         paletteFingerprint: payload.paletteFingerprint,
       }));
     } finally { await closeServer(server); }

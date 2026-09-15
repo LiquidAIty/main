@@ -20,8 +20,6 @@ python-multipart==0.0.32
 PyJWT[crypto]==2.13.0
 # Python-owned AgentGraph assignments and run records use the same PostgreSQL store.
 psycopg[binary]==3.3.4
-# Bounded, read-only ThinkGraph community and gateway analysis.
-networkx==3.6.1
 # Deterministic trading lifecycle/backtest machinery beneath Hermes Cards.
 # Stable PyPI release verified against the current Python 3.11 / MCP v1 graph.
 lumibot==4.4.56

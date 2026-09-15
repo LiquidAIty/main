@@ -428,6 +428,37 @@ class TestCardUpdateConfiguration:
         assert card["prompt"] == "new prompt"
         assert card["runtimeOptions"]["tools"] == ["web_search"]
 
+    def test_card_script_update_preserves_source_and_records_unavailable_native_owner(
+        self, fake_backend,
+    ):
+        source = '''CARD_SCRIPT = {
+    "mode": "tool_recipe",
+    "input": {"type": "object", "properties": {}},
+    "output": {"type": "object", "properties": {"result": {}}, "required": ["result"]},
+}
+from hermes_tools import output
+output.emit({"result": {}})
+'''
+        result = asyncio.run(cp.card_update_configuration({
+            "expectedRevision": "rev1",
+            "expectedCardRevisionId": "revision:signals-card",
+            "projectId": "p",
+            "deckId": "d",
+            "cardId": "signals-card",
+            "updates": {"script": {"enabled": True, "source": source, "version": 1}},
+        }, caller_card_id="builder-card"))
+
+        assert result["ok"] is True
+        saved = next(
+            node for node in fake_backend["deck"]["nodes"]
+            if node["id"] == "signals-card"
+        )["runtimeOptions"]["script"]
+        assert saved["source"] == source
+        assert saved["lastValidation"]["status"] == "valid"
+        assert saved["author"] == {"kind": "agent-builder", "id": "builder-card"}
+        assert saved["nativeSupport"]["available"] is False
+        assert saved["nativeSupport"]["active"] is False
+
     def test_unrelated_edit_preserves_incomplete_legacy_provider_authority(self, fake_backend):
         result = asyncio.run(cp.card_update_configuration({
             "projectId": "p", "deckId": "d", "cardId": "signals-card",

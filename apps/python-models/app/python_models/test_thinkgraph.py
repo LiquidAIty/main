@@ -6,7 +6,6 @@ import pytest
 
 from app.python_models import engraphis, question_evidence
 from app.python_models.thinkgraph import validate_cognition
-from app.python_models.thinkgraph_analysis import analyze_graph
 
 
 def question():
@@ -68,23 +67,6 @@ def test_question_identity_content_evidence_and_legacy_preservation(tmp_path, mo
         assert engraphis.inspect("project-one", native_id)["memory"]["metadata"]["cognition"] == stored
     finally:
         owner.close()
-
-
-def test_weighted_communities_gateways_and_gaps_are_analysis_only():
-    nodes = list("abcdef") + ["isolated"]
-    edges = [[a, b, 1] for a, b in [("a", "b"), ("a", "c"), ("b", "c"), ("d", "e"), ("d", "f"), ("e", "f"), ("c", "d")]]
-    encoded = json.dumps({"nodes": nodes, "edges": edges})
-    analysis = analyze_graph("revision", encoded)
-    assert analysis["nodes"]["c"]["gatewayScore"] > analysis["nodes"]["a"]["gatewayScore"]
-    assert analysis["nodes"]["a"]["communityId"] != analysis["nodes"]["f"]["communityId"]
-    assert ["isolated"] in analysis["components"]
-    assert analysis["gaps"]
-    for gap in analysis["gaps"]:
-        assert gap["edgeClass"] == "derived"
-        assert not any({a, b} == {gap["source"], gap["target"]} for a, b, _ in edges)
-    assert json.loads(encoded) == {"nodes": nodes, "edges": edges}
-    assert analyze_graph("revision", encoded) is analysis
-    assert analyze_graph("empty", '{"nodes":[],"edges":[]}')["communities"] == []
 
 
 @pytest.mark.parametrize("change,error", [

@@ -30,6 +30,7 @@ from app.python_models.orchestration_contracts import (
     DataAnchorReference,
     GraphHook,
 )
+from app.python_models.card_script import saved_script, script_presentation
 from app.python_models.card_subsystem import normalize_card_subsystems
 from app.python_models.idd import (
     load_input_data_dictionary,
@@ -543,6 +544,14 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
         extensions["subagentModel"] = _json_object(
             extensions["subagentModel"], "card_subagent_model"
         )
+    if "script" in extensions:
+        try:
+            extensions["script"] = saved_script(
+                extensions["script"],
+                native_available=False,
+            )
+        except IddValidationError as error:
+            raise CardDomainError(str(error)) from error
     if "subsystems" in extensions:
         try:
             extensions["subsystems"] = normalize_card_subsystems(extensions["subsystems"])
@@ -2348,6 +2357,13 @@ def _prepare_invocation(
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
+    if runtime.get("kind") == "hermes":
+        # Native delegate_task(role="profile") is the one model-facing Card
+        # handoff. card.run_assistant_agent remains the internal execution
+        # handler and must not compete in the model-visible tool surface.
+        selected_tools = [
+            name for name in selected_tools if name != "card.run_assistant_agent"
+        ]
     call_config["enabledTools"] = selected_tools
     # `tools` remains the saved Card's deliberately selected presentation.
     # `all_healthy` broadens the authorization ceiling for healthy reads, but
@@ -2356,7 +2372,22 @@ def _prepare_invocation(
         name for name in ceiling
         if name in selected_tools and name in by_id
     ]
-    call_config["presentedTools"] = presented_tools
+    try:
+        script_plan = script_presentation(
+            options.get("script"),
+            selected_tools=selected_tools,
+            default_agent_tools=presented_tools,
+            native_available=False,
+        )
+    except IddValidationError as error:
+        raise CardDomainError(str(error)) from error
+    if options.get("script") is not None:
+        runtime_options["script"] = script_plan["script"]
+    call_config["scriptPresentation"] = {
+        "mode": script_plan["mode"],
+        "fallbackReason": script_plan["fallbackReason"],
+    }
+    call_config["presentedTools"] = script_plan["presentedTools"]
     tool_definitions = [by_id[name] for name in call_config["presentedTools"]]
     # Native thread ownership binds only stable saved-Card/runtime identity.
     # Live catalog schemas and availability can change after a plugin reconnect;
@@ -2528,6 +2559,7 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 "enabledTools": call_config["enabledTools"],
                 "presentedTools": call_config["presentedTools"],
                 "toolDefinitions": tool_definitions,
+                "scriptPresentation": call_config["scriptPresentation"],
                 "toolCatalogPolicy": call_config["toolCatalogPolicy"],
                 "disabledTools": call_config["disabledTools"],
                 "nativeTools": call_config["nativeTools"],
@@ -3135,6 +3167,11 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "result": str(row.get("final_result") or "") or None,
         "errorCode": str(row.get("error_code") or "") or None,
         "errorSummary": str(row.get("error_summary") or "") or None,
+        "cardScriptExecution": (
+            dict(row["card_script_execution"])
+            if isinstance(row.get("card_script_execution"), dict)
+            else None
+        ),
     }
 
 
@@ -3555,6 +3592,23 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     fallback_reason = str(payload.get("modelFallbackReason") or "").strip()
     if fallback_occurred and not fallback_reason:
         raise CardDomainError("run_model_fallback_reason_required")
+    script_execution = payload.get("cardScriptExecution")
+    if script_execution is not None:
+        if not isinstance(script_execution, dict):
+            raise CardDomainError("run_card_script_execution_invalid")
+        if script_execution.get("schemaVersion") != "liquidaity.card-script.run-execution.v1":
+            raise CardDomainError("run_card_script_execution_schema_invalid")
+        encoded_script_execution = json.dumps(
+            script_execution, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded_script_execution) > 100_000:
+            raise CardDomainError("run_card_script_execution_too_large")
+        for hash_field in ("sourceHash", "compiledHash"):
+            value = str(script_execution.get(hash_field) or "")
+            if not re.fullmatch(r"[a-f0-9]{64}", value):
+                raise CardDomainError(
+                    f"run_card_script_execution_{hash_field}_invalid"
+                )
     if reconcile_persisted_result:
         final_result = str(payload.get("finalResult") or "")
         expected_sha256 = _required_text(
@@ -3669,7 +3723,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                   native_task_completed_count=%s,
                   native_task_total_count=%s,
                   native_active_worker_count=%s,
-                  final_result=%s
+                  final_result=%s,
+                  card_script_execution=%s::jsonb
                 WHERE run_id=%s AND state IN ('pending','running')
                 """,
                 (
@@ -3685,6 +3740,10 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                     payload.get("nativePhase"), payload.get("tasksCompleted"),
                     payload.get("tasksTotal"), payload.get("activeWorkers"),
                     payload.get("finalResult"),
+                    (
+                        json.dumps(script_execution, ensure_ascii=False)
+                        if script_execution is not None else None
+                    ),
                     run_id,
                 ),
             )
@@ -3702,7 +3761,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                    provider_reasoning_tokens, tool_call_count, total_cost_usd,
                    native_phase, native_task_completed_count,
                    native_task_total_count, native_active_worker_count,
-                   final_result, model_fallback_occurred, model_fallback_reason
+                   final_result, model_fallback_occurred, model_fallback_reason,
+                   card_script_execution
             FROM ag_catalog.agent_runs WHERE run_id=%s
             """,
             (run_id,),
