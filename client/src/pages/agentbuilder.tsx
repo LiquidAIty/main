@@ -1903,7 +1903,7 @@ export default function AgentBuilder(): React.ReactElement {
         />
       </div>
     );
-    const agentBuilderTerminal = ({ directInput }: { directInput: boolean }) => (
+    const agentBuilderTerminal = () => (
       agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
           <AgentTerminalPanel
@@ -1913,7 +1913,6 @@ export default function AgentBuilder(): React.ReactElement {
               deckId: BUILDER_DECK_ID,
               cardId: agentBuilderCard.id,
             }}
-            readOnly={!directInput}
           />
         </div>
       ) : null

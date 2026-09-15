@@ -19,7 +19,7 @@ import {
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
 
-const GATEWAY_READY_TIMEOUT_MS = 30_000;
+const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
 
