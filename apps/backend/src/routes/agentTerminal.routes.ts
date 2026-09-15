@@ -56,6 +56,10 @@ export function createAgentTerminalRouter(deps = {
       const user = typeof sid === 'string' && sid ? await deps.getUser(sid) : null;
       if (!user) { res.status(401).json({ error: 'agent_terminal_existing_session_required' }); return; }
       const { projectId, deckId, cardId } = req.params;
+      const authenticatedUserId = String(user.id || '').trim();
+      if (!authenticatedUserId) {
+        res.status(401).json({ error: 'agent_terminal_existing_session_required' }); return;
+      }
       const project = await deps.getProject(projectId);
       const savedOwnerUserId = String(project?.ownerUserId || '').trim();
       if (!project || !savedOwnerUserId) {

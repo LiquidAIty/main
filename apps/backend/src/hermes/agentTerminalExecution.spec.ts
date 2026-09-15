@@ -146,6 +146,41 @@ describe('native Agent CLI canonical Run binding', () => {
     expect((await f.lifecycle.begin(owner, 'terminal-signal', 'signal', input)).runId).toBeTruthy();
   });
 
+  it('persists the stock Gateway completion without requiring callback-only fields or a Run readback', async () => {
+    const f = fixture();
+    f.lifecycle.stage(owner, 'terminal-signal', 'signal', f.preparedRun('prepared-run'));
+
+    await expect(f.lifecycle.completeStaged('terminal-signal', 'native-signal', {
+      text: 'Exact Gateway answer',
+      status: 'complete',
+      event: {
+        type: 'message.complete',
+        session_id: 'native-signal',
+        payload: { status: 'complete', text: 'Exact Gateway answer' },
+      },
+    })).resolves.toMatchObject({
+      hermesSessionId: 'native-signal',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: null,
+      inputTokens: null,
+      outputTokens: null,
+    });
+
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.request).toHaveBeenCalledWith('/domain/runs/finish', expect.objectContaining({
+      body: expect.any(String),
+    }));
+    expect(JSON.parse(String(f.request.mock.calls[0][1]?.body))).toMatchObject({
+      runId: 'prepared-run',
+      state: 'completed',
+      finalResult: 'Exact Gateway answer',
+      hermesSessionRef: 'native-signal',
+      effectiveProvider: 'openai-codex',
+      providerApiMode: null,
+    });
+    expect(f.lifecycle.activeRunId('terminal-signal')).toBeNull();
+  });
+
   it('creates no Run before model input and forwards the canonical IDF projection without a conversation', async () => {
     const f = fixture();
     expect(f.request).not.toHaveBeenCalled();

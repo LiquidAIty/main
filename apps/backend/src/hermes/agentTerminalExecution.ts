@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { buildHermesHostSessionProjection, resolveHermesTurnArgs, type HermesTurnArgs } from './mainAdapter';
+import { buildHermesHostSessionProjection, resolveHermesTurnArgs } from './mainAdapter';
 import { registerHermesRootExecutionContext, finishHermesExecutionContext } from './childExecutionContext';
-import type { AgentTerminalOwner } from './agentTerminal';
+import type { AgentTerminalOwner, AgentTerminalTurnResult } from './agentTerminal';
 import {
   handleHermesHostExecutionRequest,
   isHermesHostExecutionMethod,
@@ -14,6 +14,7 @@ import {
   runHermesProfileDelegation,
   type HermesProfileDelegationAuthority,
 } from './profileDelegation';
+import { resolveSavedHermesProvider } from './providerSelection';
 
 type StagedAgentTerminalRun = {
   owner: AgentTerminalOwner;
@@ -22,8 +23,40 @@ type StagedAgentTerminalRun = {
   runId: string;
   conversationId: string;
   message: string;
+  started: number;
   cancelRequested?: boolean;
 };
+
+export type AgentTerminalGatewayCompletion = {
+  hermesSessionId: string;
+  nativeRootId: string | null;
+  nativeRunId: string | null;
+  effectiveProvider: string | null;
+  providerApiMode: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedTokens: number | null;
+  reasoningTokens: number | null;
+  costUsd: number | null;
+};
+
+function optionalText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function optionalNonNegativeInteger(...values: unknown[]): number | null {
+  const value = values.find((candidate) => (
+    typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate >= 0
+  ));
+  return typeof value === 'number' ? value : null;
+}
+
+function optionalNonNegativeNumber(...values: unknown[]): number | null {
+  const value = values.find((candidate) => (
+    typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0
+  ));
+  return typeof value === 'number' ? value : null;
+}
 
 function sameOwner(left: AgentTerminalOwner, right: AgentTerminalOwner): boolean {
   return left.userId === right.userId
@@ -90,9 +123,87 @@ export class AgentTerminalExecution {
       runId,
       conversationId,
       message: args.message,
+      started: Date.now(),
     } satisfies StagedAgentTerminalRun;
     this.staged.set(terminalSessionId, staged);
     return { runId, message: staged.message };
+  }
+
+  /** Persist the exact native Gateway completion for an application-submitted turn. */
+  async completeStaged(
+    terminalSessionId: string,
+    nativeSessionId: string,
+    result: AgentTerminalTurnResult,
+  ): Promise<AgentTerminalGatewayCompletion> {
+    const staged = this.staged.get(terminalSessionId);
+    if (!staged) throw new Error('agent_terminal_staged_run_missing');
+    this.staged.delete(terminalSessionId);
+
+    const payload = result.event.payload || {};
+    const nativeUsage = payload.usage && typeof payload.usage === 'object'
+      ? payload.usage as Record<string, unknown>
+      : {};
+    const selectedProvider = resolveSavedHermesProvider(
+      staged.prepared.hermesTransport.request.provider,
+    );
+    const completion: AgentTerminalGatewayCompletion = {
+      hermesSessionId: nativeSessionId,
+      nativeRootId: optionalText(payload.nativeRootId ?? payload.native_root_id),
+      nativeRunId: optionalText(payload.nativeRunId ?? payload.native_run_id),
+      effectiveProvider: optionalText(payload.effectiveProvider ?? payload.effective_provider)
+        ?? selectedProvider.provider,
+      providerApiMode: optionalText(payload.providerApiMode ?? payload.provider_api_mode)
+        ?? selectedProvider.apiMode,
+      inputTokens: optionalNonNegativeInteger(
+        nativeUsage.providerInputTokens,
+        nativeUsage.inputTokens,
+        nativeUsage.input_tokens,
+        nativeUsage.prompt_tokens,
+      ),
+      outputTokens: optionalNonNegativeInteger(
+        nativeUsage.providerOutputTokens,
+        nativeUsage.outputTokens,
+        nativeUsage.output_tokens,
+        nativeUsage.completion_tokens,
+      ),
+      cachedTokens: optionalNonNegativeInteger(
+        nativeUsage.providerCachedTokens,
+        nativeUsage.cachedTokens,
+        nativeUsage.cached_tokens,
+      ),
+      reasoningTokens: optionalNonNegativeInteger(
+        nativeUsage.providerReasoningTokens,
+        nativeUsage.reasoningTokens,
+        nativeUsage.reasoning_tokens,
+      ),
+      costUsd: optionalNonNegativeNumber(
+        nativeUsage.totalCostUsd,
+        nativeUsage.total_cost_usd,
+        nativeUsage.costUsd,
+        nativeUsage.cost_usd,
+      ),
+    };
+    await this.request('/domain/runs/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId: staged.runId,
+        state: 'completed',
+        finalResult: result.text,
+        hermesSessionRef: completion.hermesSessionId,
+        providerThreadRef: completion.nativeRootId,
+        providerTurnRef: completion.nativeRunId,
+        effectiveProvider: completion.effectiveProvider,
+        providerApiMode: completion.providerApiMode,
+        providerInputTokens: completion.inputTokens,
+        providerOutputTokens: completion.outputTokens,
+        providerCachedTokens: completion.cachedTokens,
+        providerReasoningTokens: completion.reasoningTokens,
+        totalCostUsd: completion.costUsd,
+        durationMs: Date.now() - staged.started,
+      }),
+    });
+    return completion;
   }
 
   async cancelStaged(

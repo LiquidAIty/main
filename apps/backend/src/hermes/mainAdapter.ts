@@ -320,9 +320,8 @@ export function buildHermesOfficialMcpServer(
     | 'runtime'
     | 'tools'
     | 'grantedTools'
-    | 'script'
     | 'terminalOwner'
-  >,
+  > & { script?: unknown },
   env: NodeJS.ProcessEnv = process.env,
   executionContextId = '',
 ): Record<string, unknown> | null {
@@ -1434,6 +1433,64 @@ type ConfigureNativeSkills = (
   disabledSkills: string[],
 ) => Promise<any>;
 
+type ConfigureNativeSubagentModel = (
+  profile: string,
+  selection: NativeSubagentModel,
+) => Promise<unknown>;
+
+const HERMES_SUBAGENT_CONFIG_SCRIPT = [
+  'import sys',
+  'from hermes_cli.config import load_config, save_config',
+  'cfg = load_config() or {}',
+  'delegation = cfg.get("delegation")',
+  'delegation = dict(delegation) if isinstance(delegation, dict) else {}',
+  'provider = sys.argv[1]',
+  'model = sys.argv[2]',
+  'if delegation.get("provider") != provider or delegation.get("model") != model:',
+  '    delegation["provider"] = provider',
+  '    delegation["model"] = model',
+  '    cfg["delegation"] = delegation',
+  '    save_config(cfg)',
+].join('\n');
+
+export async function configureHermesNativeSubagentModel(
+  profile: string,
+  selection: NativeSubagentModel,
+): Promise<void> {
+  const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
+    throw new Error('hermes_runtime_profile_invalid');
+  }
+  const install = resolveHermesInstall();
+  const profileHome = path.join(install.root, '.hermes', 'profiles', normalizedProfile);
+  if (!existsSync(path.join(profileHome, 'config.yaml'))) {
+    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+  }
+  const childEnv = withoutInternalMcpSecret(process.env);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      install.executable,
+      ['-X', 'utf8', '-c', HERMES_SUBAGENT_CONFIG_SCRIPT, selection.provider, selection.model],
+      {
+        cwd: install.root,
+        env: {
+          ...childEnv,
+          HERMES_HOME: profileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+        stdio: 'ignore',
+      },
+    );
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error('hermes_native_subagent_config_process_failed'));
+    });
+  });
+}
+
 function toNativeParentModel(args: HermesProfileSelection): NativeParentModel {
   const resolved = resolveSavedHermesProvider({
     provider: args.provider,
@@ -1453,8 +1510,7 @@ function toNativeParentModel(args: HermesProfileSelection): NativeParentModel {
 function sameNativeParentModel(value: unknown, expected: NativeParentModel): boolean {
   const model = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return String(model.provider || '').trim() === expected.provider
-    && String(model.default || '').trim() === expected.model
-    && String(model.openaiRuntime || '').trim() === expected.openaiRuntime;
+    && String(model.default || '').trim() === expected.model;
 }
 
 function missingNativeProfile(error: unknown, profile: string): boolean {
@@ -1467,13 +1523,7 @@ export async function materializeHermesProfileSelections(
   readNativeProfile: (profile: string) => Promise<any> = (profile) => (
     requestHermesNative('profiles.describe', { name: profile })
   ),
-  configureNativeSubagentModel: (
-    profile: string,
-    selection: NativeSubagentModel,
-  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
-    name: profile,
-    subagent_model: selection,
-  }),
+  configureNativeSubagentModel: ConfigureNativeSubagentModel = configureHermesNativeSubagentModel,
   configureNativeParentModel: (
     profile: string,
     selection: NativeParentModel,
@@ -1570,17 +1620,11 @@ export async function materializeHermesProfileSelections(
   if (args.subagentModel) {
     const expected = toNativeSubagentModel(args.subagentModel);
     if (!sameNativeSubagentModel(native.subagent_model, expected)) {
-      const configured = await configureNativeSubagentModel(profile, expected);
-      const applied = configured?.applied && typeof configured.applied === 'object'
-        ? configured.applied as Record<string, unknown>
-        : {};
-      if (configured?.ok !== true || applied.subagent_model !== true) {
+      try {
+        await configureNativeSubagentModel(profile, expected);
+      } catch {
         throw new Error(`hermes_native_subagent_model_apply_failed:${profile}`);
       }
-      native = await readNativeProfile(profile);
-    }
-    if (!sameNativeSubagentModel(native?.subagent_model, expected)) {
-      throw new Error(`hermes_native_subagent_model_readback_mismatch:${profile}`);
     }
     effectiveSubagentModel = {
       desired: args.subagentModel,
@@ -1603,13 +1647,7 @@ export async function startHermesTurnWithOnePrePromptRecovery(
   readNativeProfile: (profile: string) => Promise<any> = (profile) => (
     requestHermesNative('profiles.describe', { name: profile })
   ),
-  configureNativeSubagentModel: (
-    profile: string,
-    selection: NativeSubagentModel,
-  ) => Promise<any> = (profile, selection) => requestHermesNative('profiles.configure', {
-    name: profile,
-    subagent_model: selection,
-  }),
+  configureNativeSubagentModel: ConfigureNativeSubagentModel = configureHermesNativeSubagentModel,
   configureNativeParentModel: (
     profile: string,
     selection: NativeParentModel,

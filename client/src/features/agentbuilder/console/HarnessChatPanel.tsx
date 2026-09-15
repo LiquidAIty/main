@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 const HANDLE_HEIGHT = 12;
+const DEFAULT_SPLIT_HEIGHT = 320;
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
@@ -26,16 +27,18 @@ export default function HarnessChatPanel({
   } | null>(null);
   const initialSplitHeight = (() => {
     try {
-      const saved = Number(window.localStorage.getItem(storageKey));
-      return Number.isFinite(saved) && saved >= 0 ? saved : 0;
+      const savedValue = window.localStorage.getItem(storageKey);
+      if (savedValue === null) return DEFAULT_SPLIT_HEIGHT;
+      const saved = Number(savedValue);
+      return Number.isFinite(saved) && saved >= 0 ? saved : DEFAULT_SPLIT_HEIGHT;
     } catch {
-      return 0;
+      return DEFAULT_SPLIT_HEIGHT;
     }
   })();
-  const heightRef = useRef(0);
+  const heightRef = useRef(initialSplitHeight);
   const lastOpenHeightRef = useRef(initialSplitHeight);
   const dragMovedRef = useRef(false);
-  const [height, setHeightState] = useState(0);
+  const [height, setHeightState] = useState(initialSplitHeight);
   const [manualFullCli, setManualFullCli] = useState(false);
   const [dragging, setDragging] = useState(false);
 

@@ -575,23 +575,8 @@ describe('Hermes ACP transport identity', () => {
         background_review: { enabled: false, provider: 'auto', model: '' },
         toolsets: [],
         mcp_servers: [],
-      })
-      .mockResolvedValueOnce({
-        name: 'liquidaity-main',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-sol', openaiRuntime: 'codex_app_server' },
-        subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
-        background_review: {
-          enabled: false,
-          provider: 'auto',
-          model: '',
-        },
-        toolsets: [],
-        mcp_servers: [],
       });
-    const configure = vi.fn(async () => ({
-      ok: true,
-      applied: { subagent_model: true },
-    }));
+    const configure = vi.fn(async () => undefined);
     const saved = {
       provider: 'openai',
       accessMode: 'chatgpt-account' as const,
@@ -611,7 +596,7 @@ describe('Hermes ACP transport identity', () => {
       provider: 'openai-codex',
       model: 'gpt-5.6-luna',
     });
-    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(readNative).toHaveBeenCalledTimes(1);
     expect(startTurn.mock.calls[0][0].effectiveSubagentModel).toEqual({
       desired: saved,
       provider: 'openai-codex',
@@ -656,7 +641,7 @@ describe('Hermes ACP transport identity', () => {
       })
       .mockResolvedValueOnce({
         name: 'trading',
-        model: { provider: 'openai-codex', default: 'gpt-5.6-luna', openaiRuntime: 'codex_app_server' },
+        model: { provider: 'openai-codex', default: 'gpt-5.6-luna' },
         subagent_model: { provider: '', model: '' },
         background_review: { enabled: false, provider: 'auto', model: '' },
         toolsets: [],

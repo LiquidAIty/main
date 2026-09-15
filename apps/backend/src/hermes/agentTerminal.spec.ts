@@ -113,8 +113,7 @@ class FakeGatewayClient {
       return { session_id: `live-${this.index}-created`, stored_session_id: durable } as T;
     }
     if (method === 'session.resume') {
-      const durable = String(params.session_id || '');
-      return { session_id: `live-${this.index}-resumed`, stored_session_id: durable } as T;
+      return { session_id: `live-${this.index}-resumed` } as T;
     }
     if (method === 'prompt.submit') {
       const sessionId = String(params.session_id || '');

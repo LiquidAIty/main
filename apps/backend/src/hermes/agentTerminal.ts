@@ -12,6 +12,7 @@ import { agentTerminalExecution } from './agentTerminalExecution';
 import type { HermesTeamResultDelivery } from './hostExecutionLifecycle';
 import type { RecoveredHermesTeamResult } from './kanbanRunRecovery';
 import {
+  configureHermesNativeSubagentModel,
   materializeHermesProfileSelections,
   type HermesProfileSelection,
 } from './mainAdapter';
@@ -275,6 +276,7 @@ export function prepareAgentTerminal(
     TERMINAL_CWD: cwd,
     HERMES_REQUIRE_CLI_HOST: 'liquidaity-card-mcp',
     HERMES_TUI_TOOLSETS: 'agent-terminal',
+    HERMES_TUI_DIR: path.join(hermesRoot, 'ui-tui'),
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     TERM: 'xterm-256color',
@@ -499,10 +501,7 @@ export class AgentTerminalManager {
       await this.materializeProfile(
         launch.profileSelection,
         (profile) => request('profiles.describe', { name: profile }),
-        (profile, selection) => request('profiles.configure', {
-          name: profile,
-          subagent_model: selection,
-        }),
+        configureHermesNativeSubagentModel,
         (profile, selection) => request('profiles.configure', {
           name: profile,
           provider: selection.provider,
@@ -529,8 +528,11 @@ export class AgentTerminalManager {
           : {};
         const stored = String(row.resolved_id || row.id || '').trim();
         if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
+        const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
         native = requireNativeSession(
-          await request('session.resume', { session_id: stored }),
+          resumed && typeof resumed === 'object'
+            ? { ...resumed, stored_session_id: stored }
+            : resumed,
           'agent_terminal_session_resume_invalid',
         );
       } else {

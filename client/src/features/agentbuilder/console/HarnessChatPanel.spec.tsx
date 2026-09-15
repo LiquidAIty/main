@@ -11,6 +11,7 @@ let container: HTMLDivElement | null = null;
 afterEach(() => {
   container?.remove();
   container = null;
+  window.localStorage.clear();
 });
 
 async function render(activeDriver: MainDriverSource | null = null) {
@@ -30,14 +31,16 @@ async function render(activeDriver: MainDriverSource | null = null) {
 }
 
 describe('Main Chat and Agent Builder work surface', () => {
-  it('starts collapsed and keeps Agent Builder mounted until pulled open', async () => {
+  it('starts with the genuine Agent Builder surface visible directly below Main Chat', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
-    expect(handle.getAttribute('aria-expanded')).toBe('false');
+    expect(handle.getAttribute('aria-expanded')).toBe('true');
     const region = host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement;
-    expect(region.style.height).toBe('0px');
-    expect(region.getAttribute('aria-hidden')).toBe('true');
+    expect(region.style.height).toBe('320px');
+    expect(region.getAttribute('aria-hidden')).toBe('false');
+    expect(host.querySelector('[data-testid="main-work-surface"]')?.getAttribute('data-terminal-mode'))
+      .toBe('split');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 

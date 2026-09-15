@@ -3934,7 +3934,10 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
             and authority_row.get("runtime_kind") == "hermes"
             and (
                 not supplied_effective_provider
-                or not supplied_provider_api_mode
+                or (
+                    expected_provider_api_mode
+                    and not supplied_provider_api_mode
+                )
                 or (
                     expected_provider_api_mode == "codex_app_server"
                     and (

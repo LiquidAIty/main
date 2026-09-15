@@ -190,6 +190,22 @@ describe('native Card terminal routes', () => {
     );
   });
 
+  it('uses the server-loaded project owner after authenticating the browser session', async () => {
+    const deps = dependencies();
+    deps.getUser.mockResolvedValue({ id: 'foreign-user' });
+    const response = await request(
+      deps,
+      '/project-1/deck_builder/card_signal_analyst/open',
+      json({ cols: 120, rows: 30 }),
+    );
+    expect(response.status).toBe(200);
+    expect(deps.getProject).toHaveBeenCalledWith('project-1');
+    expect(deps.manager.open).toHaveBeenCalledWith(
+      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_signal_analyst' },
+      card, deck, 120, 30, { attachTui: true },
+    );
+  });
+
   it.each([
     {
       cardId: 'card_main_chat',

@@ -133,22 +133,39 @@ const agentTerminalMocks = vi.hoisted(() => {
     options?: any,
     text = owner.cardId === 'builder' ? 'Builder reply' : 'Real assistant reply.',
     overrides: Record<string, unknown> = {},
+    includeNativeDefaults = true,
   ) => {
     const record = staged.get(sessionId);
     if (!record || record.message !== message || record.cardId !== owner.cardId) {
       throw new Error('agent_terminal_staged_run_identity_mismatch');
     }
-    staged.delete(sessionId);
-    complete(record.runId, owner, text, overrides);
+    const nativeFields = includeNativeDefaults ? {
+      effectiveProvider: 'openai-codex',
+      providerApiMode: 'codex_responses',
+      providerInputTokens: owner.cardId === 'builder' ? 240 : null,
+      providerOutputTokens: owner.cardId === 'builder' ? 20 : null,
+      providerCachedTokens: owner.cardId === 'builder' ? 100 : null,
+      providerReasoningTokens: owner.cardId === 'builder' ? 5 : null,
+      totalCostUsd: owner.cardId === 'builder' ? 0.012 : null,
+      ...overrides,
+    } : overrides;
     options?.onEvent?.({
       type: 'message.delta',
       session_id: `native:${profileFor(owner.cardId)}`,
       payload: { text },
     });
     const event = { type: 'message.complete', session_id: `native:${profileFor(owner.cardId)}`,
-      payload: { status: 'completed', text } };
+      payload: {
+        status: 'complete',
+        text,
+        usage: nativeFields,
+        effectiveProvider: nativeFields.effectiveProvider,
+        providerApiMode: nativeFields.providerApiMode,
+        nativeRootId: nativeFields.nativeRootId,
+        nativeRunId: nativeFields.nativeRunId,
+      } };
     options?.onEvent?.(event);
-    return { text, status: 'completed', event };
+    return { text, status: 'complete', event };
   };
   const submit = vi.fn(async (owner: any, sessionId: string, message: string, options?: any) => (
     finishSubmitted(owner, sessionId, message, options)
@@ -164,6 +181,26 @@ const agentTerminalMocks = vi.hoisted(() => {
     completed.set(record.runId, { state, finalResult: null, errorSummary });
     return true;
   });
+  const completeStaged = vi.fn(async (sessionId: string, nativeSessionId: string, result: any) => {
+    const record = staged.get(sessionId);
+    if (!record) throw new Error('agent_terminal_staged_run_missing');
+    staged.delete(sessionId);
+    const owner = { cardId: record.cardId };
+    const usage = result.event?.payload?.usage || {};
+    complete(record.runId, owner, result.text, usage);
+    return {
+      hermesSessionId: nativeSessionId,
+      nativeRootId: result.event?.payload?.nativeRootId ?? null,
+      nativeRunId: result.event?.payload?.nativeRunId ?? null,
+      effectiveProvider: result.event?.payload?.effectiveProvider ?? null,
+      providerApiMode: result.event?.payload?.providerApiMode ?? null,
+      inputTokens: usage.providerInputTokens ?? null,
+      outputTokens: usage.providerOutputTokens ?? null,
+      cachedTokens: usage.providerCachedTokens ?? null,
+      reasoningTokens: usage.providerReasoningTokens ?? null,
+      costUsd: usage.totalCostUsd ?? null,
+    };
+  });
   const abort = vi.fn(async () => undefined);
   const ownsRun = vi.fn((sessionId: string, runId: string) => (
     staged.get(sessionId)?.runId === runId || completed.has(runId)
@@ -177,7 +214,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
     },
-    execution: { stage, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
+    execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
   };
 });
 
@@ -2447,7 +2484,7 @@ describe('saved Card routes', () => {
         });
         expect(await response.text()).toContain('event: done');
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
-          '/domain/main/runs/begin', '/domain/runs/read', '/domain/agentgraph/inspect',
+          '/domain/main/runs/begin',
         ]);
       } finally { await closeServer(server); }
     });
@@ -2587,8 +2624,6 @@ describe('saved Card routes', () => {
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
           '/domain/main/runs/begin',
-          '/domain/runs/read',
-          '/domain/agentgraph/inspect',
         ]);
         expect(railsCalls[0]?.[1]?.body).toContain('"message":"materialize exactly once"');
         expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
@@ -2776,11 +2811,14 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('withholds the done event when the canonical Run reread fails', async () => {
-      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
-      orchestratorMocks.requestPythonRailsJson
-        .mockImplementationOnce(railsImplementation)
-        .mockRejectedValueOnce(new Error('write failed'));
+    it('renders native Gateway completion without a Run readback or optional transport fields', async () => {
+      agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, message, options) => (
+        agentTerminalMocks.finishSubmitted(
+          owner, sessionId, message, options, 'Gateway result without optional telemetry.',
+          {}, false,
+        )
+      ));
+      orchestratorMocks.requestPythonRailsJson.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
@@ -2790,12 +2828,11 @@ describe('saved Card routes', () => {
         });
         const body = await response.text();
         expect(response.status).toBe(200);
-        expect(body).toContain('main_gateway_turn_failed');
-        expect(body).not.toContain('event: done');
-        expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenLastCalledWith(
-          '/domain/runs/read',
-          expect.objectContaining({ body: expect.stringContaining('"runId":"req_') }),
-        );
+        expect(body).toContain('event: done');
+        expect(body).toContain('Gateway result without optional telemetry.');
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+          ([route]) => route === '/domain/runs/read',
+        )).toBe(false);
       } finally {
         await closeServer(server);
       }

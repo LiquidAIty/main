@@ -1329,6 +1329,73 @@ def test_finish_run_reconciliation_requires_a_stored_native_result() -> None:
         })
 
 
+def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    receipt = {
+        "run_id": "run-one",
+        "state": "running",
+        "runtime_kind": "hermes",
+        "runtime_mode": "main",
+        "provider": "openai",
+        "access_mode": "chatgpt-account",
+        "saved_openai_runtime": "",
+        "effective_provider": None,
+        "provider_api_mode": None,
+    }
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+            if "UPDATE ag_catalog.agent_runs SET state" in str(query):
+                self.rowcount = 1
+                receipt["state"] = "completed"
+                receipt["effective_provider"] = "openai-codex"
+
+        def fetchone(self):
+            return receipt
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_observe_run_finish", lambda *_args, **_kwargs: True)
+
+    result = card_domain.finish_run({
+        "runId": "run-one",
+        "state": "completed",
+        "finalResult": "Exact Gateway answer",
+        "hermesSessionRef": "native-session",
+        "effectiveProvider": "openai-codex",
+    })
+
+    update_query, update_params = next(
+        statement for statement in statements
+        if "UPDATE ag_catalog.agent_runs SET state" in statement[0]
+    )
+    assert "provider_api_mode=COALESCE(provider_api_mode, %s)" in update_query
+    assert update_params[6] == "openai-codex"
+    assert update_params[7] is None
+    assert result["updated"] is True
+    assert result["state"] == "completed"
+
+
 def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

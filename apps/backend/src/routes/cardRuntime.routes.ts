@@ -287,7 +287,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       contextAuthorityMode: contextAuthorityModeForDriver('external_plugin'),
       finalText: result.text,
       nativeSessionId: result.nativeSessionId,
-      nativeTurnId: result.status.nativeRunId,
+      nativeTurnId: result.nativeCompletion.nativeRunId,
       configuration: {
         subagentModel: run.prepared.hermesTransport.request.runtimeOptions?.subagentModel || null,
       },
@@ -537,7 +537,7 @@ type GatewayCardExecution = {
   nativeSessionId: string;
   storedSessionId: string;
   profile: string;
-  status: ConfiguredCardRunStatus;
+  nativeCompletion: Awaited<ReturnType<typeof agentTerminalExecution.completeStaged>>;
   text: string;
 };
 
@@ -612,23 +612,20 @@ async function executePreparedGatewayCardRun(args: {
     );
     args.onSubmitted?.();
     const result = await pending;
-    const status = await readConfiguredCardRunStatus({
-      projectId: args.owner.projectId,
-      deckId: args.owner.deckId,
-      runId: args.runId,
-    });
-    if (!status || status.state !== 'completed' || !status.resultReady) {
-      throw new Error(status?.errorSummary || 'agent_terminal_run_completion_missing');
-    }
-    if (status.output !== result.text) throw new Error('agent_terminal_run_result_mismatch');
+    const nativeCompletion = await agentTerminalExecution.completeStaged(
+      terminal.sessionId,
+      terminal.nativeSessionId,
+      result,
+    );
+    staged = false;
     return {
       owner: args.owner,
       terminalSessionId: terminal.sessionId,
       nativeSessionId: terminal.nativeSessionId,
       storedSessionId: terminal.storedSessionId,
       profile: terminal.profile,
-      status,
-      text: status.output,
+      nativeCompletion,
+      text: result.text,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'agent_terminal_turn_failed';
@@ -905,17 +902,17 @@ router.post('/run', async (req, res) => {
         });
         output = execution.text;
         transport = {
-          threadId: execution.status.nativeRootId,
-          turnId: execution.status.nativeRunId,
-          hermesSessionId: execution.status.hermesSessionId,
-          effectiveProvider: execution.status.effectiveProvider,
-          providerApiMode: execution.status.providerApiMode,
+          threadId: execution.nativeCompletion.nativeRootId,
+          turnId: execution.nativeCompletion.nativeRunId,
+          hermesSessionId: execution.nativeCompletion.hermesSessionId,
+          effectiveProvider: execution.nativeCompletion.effectiveProvider,
+          providerApiMode: execution.nativeCompletion.providerApiMode,
           terminalSessionId: execution.terminalSessionId,
           runtimeSource: 'repository_hermes_gateway',
         };
-        providerInputTokens = execution.status.inputTokens;
-        providerOutputTokens = execution.status.outputTokens;
-        totalCostUsd = execution.status.costUsd;
+        providerInputTokens = execution.nativeCompletion.inputTokens;
+        providerOutputTokens = execution.nativeCompletion.outputTokens;
+        totalCostUsd = execution.nativeCompletion.costUsd;
       } else if (prepared.nativeRuntimeRequest) {
         const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
         nativeRuntimeResult = response;
@@ -1327,12 +1324,13 @@ mainRoutes.post('/session/chat', async (req, res) => {
       fullText: result.text,
       contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
       usage: {
-        providerInputTokens: result.status.inputTokens,
-        providerOutputTokens: result.status.outputTokens,
-        providerCachedTokens: result.status.cachedTokens,
-        providerReasoningTokens: result.status.reasoningTokens,
-        totalCostUsd: result.status.costUsd,
-        usageAvailable: result.status.inputTokens > 0 || result.status.outputTokens > 0,
+        providerInputTokens: result.nativeCompletion.inputTokens,
+        providerOutputTokens: result.nativeCompletion.outputTokens,
+        providerCachedTokens: result.nativeCompletion.cachedTokens,
+        providerReasoningTokens: result.nativeCompletion.reasoningTokens,
+        totalCostUsd: result.nativeCompletion.costUsd,
+        usageAvailable: (result.nativeCompletion.inputTokens || 0) > 0
+          || (result.nativeCompletion.outputTokens || 0) > 0,
         usageSource: 'native_gateway',
       },
     });

@@ -104,6 +104,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       ],
     });
     expect(launch.env.HERMES_HOME).toBe('C:\\repo\\Hermes\\.hermes');
+    expect(launch.env.HERMES_TUI_DIR).toBe('C:\\repo\\Hermes\\ui-tui');
     expect(launch.env.TERMINAL_CWD).toBe(launch.cwd);
     expect(workspaceRoot.resolveProductChatWorkingDirectory).not.toHaveBeenCalled();
     expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBe(card.prompt);
