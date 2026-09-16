@@ -15,6 +15,49 @@ Main remains the conversation front door. Builder remains the saved `builder` Ca
 terminal in Agent Builder. Hermes owns native Card execution and delegation; AutoGen owns Magentic-One;
 the four graph authorities remain separate.
 
+## Current Hermes tool boundary — September 16, 2026
+
+### Confirmed current state
+
+- Python rails derives the saved Card's `enabledTools`, `unavailableTools`, `presentedTools`, schemas,
+  skills, native toolsets, and MCP connection IDs before Hermes inference.
+- The current Hermes profile materializer applies and reads back only the parent model, selected skills,
+  and native subagent model. It does not make the Card's selected LiquidAIty tools callable in Hermes.
+- IDF tool text is context, not registration. Stock Hermes presents and dispatches only tools in its
+  native registry snapshot, populated by built-ins, enabled native plugins, and deliberately configured
+  external MCP servers.
+- Stock `tools.configure` edits durable profile toolsets and may rebuild a session agent. It is not
+  Run-scoped authorization and cannot replace the saved Card/Run grant check.
+
+The current mismatch is therefore explicit:
+
+```text
+saved Card and Python rails know the intended grant
+Hermes independently owns the actual model-facing registry
+```
+
+### Approved direction
+
+Internal LiquidAIty capabilities for Hermes-backed Cards will be joined to Hermes through a native,
+profile-scoped Hermes plugin using the public `PluginContext.register_tool` contract. MCP remains the
+publication boundary for external clients and deliberately external MCP servers; it is not the internal
+Hermes-to-LiquidAIty execution bus.
+
+The plugin is a runtime projection, not another authority. It must not copy tool implementations, own a
+catalog, launch a service, infer grants, or accept caller-supplied Card/Run scope. Hermes owns tool schema
+presentation, model selection, dispatch, guardrails, approvals, hooks, and result delivery. The
+authenticated LiquidAIty host derives the calling Card/runtime from process and native session identity;
+Python rails reuses the saved Card and current execution authority and invokes the one existing operation
+owner. External MCP publication and the Hermes plugin must share that protocol-neutral Python operation
+core rather than call one another.
+
+The bounded implementation must still settle and prove two contracts before it can be called complete:
+
+1. exact per-Card visibility without treating durable `tools.configure` state as Run authorization; and
+2. the authority for a native Bot turn that intentionally has no fabricated application Run. A missing
+   Run-dependent grant must fail closed; it must not be replaced by a synthetic Run, broad profile token,
+   MCP credential, or plugin-owned policy.
+
 ## Current cleanup — September 15, 2026
 
 Baseline: branch `main`, pushed cleanup HEAD `0ed7fb63314ec00e0762ddeccd86417a5dce883b`
@@ -78,7 +121,8 @@ not the fabricated standalone tool initially suspected.
 | Named-profile delegation | Contained fail-closed vendor branch, exact-profile authority, internal-handle filtering, and unit contract | Supported Gateway-native host request and real result return; no ACP restoration |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
-| Bot Mode | First-party Hermes source and documentation preserved unchanged | Owner-supplied implementation packet is active; prove the stock Main-to-Builder canonical `Bot Chat` contract before application edits |
+| Bot Mode | First-party Hermes source plus the thin working-tree managed interception/profile-resolution boundary | Prove stock Main-to-Builder delivery and native reply through the canonical `Bot Chat`; source/tests are not loaded-runtime acceptance |
+| Hermes Card tools | Python saved-grant/IDF materialization and stock Hermes plugin/registry contracts | Implement the approved native-plugin projection and prove exact Main/Builder visibility plus invocation-time Python authorization |
 | Production boundaries | Backend and client production typechecks | Loaded build/source hashes and full product acceptance |
 
 ## Known baseline failures and environment limits
@@ -97,10 +141,10 @@ not the fabricated standalone tool initially suspected.
 - Hermes declares package version `0.21.0`, but the imported tree does not retain its original upstream
   commit SHA. The explicit vendor markers/register now contain only Team and profile, but an exhaustive
   unmarked-divergence audit requires first identifying the exact upstream base.
-- The direct Codex CBM tools are registered, but the first `codex_cbm.search_graph` discovery batch
-  returned `Transport closed`. No unchanged retry, plugin fallback, daemon launch/restart, cache read, or
-  reindex is permitted. This cleanup therefore uses the documented source/Git fallback and reports CBM
-  relationship/deletion proof as unavailable.
+- Direct Codex CBM produced useful structural evidence, but repeated frontend calls accumulated duplicate
+  client processes. Twenty-seven exact duplicate frontends were stopped while the one frontend owning the
+  upstream daemon was preserved. No reindex, cache mutation, alternate host, or daemon replacement was
+  performed; further discovery used bounded current-source reads.
 
 These are not converted into passing results by removing tests, adding mocks, fabricating data, or
 restoring the retired runtime.
@@ -113,24 +157,28 @@ restoring the retired runtime.
 4. Inspect the complete diff and every surviving former neighbor; classify every remaining ACP hit as
    either upstream Hermes functionality, historical recovery material, or a defect.
 5. Return one implementation report with exact deletions, preserved owners, baseline failures, gaps,
-   and Regression Ratio. The subsequent owner-supplied Bot Mode packet is a separate bounded feature.
+   and Regression Ratio. Bot Mode and the Hermes tool boundary remain separately proven working-tree
+   changes, not permission to restore any removed ACP path.
 
-## Next bounded decision after cleanup
+## Next bounded implementation decision
 
-First reload through canonical `npm run dev:fresh` only when Jeremiah explicitly authorizes it. Then
-prove one ordinary saved Hermes Card turn and one native Team turn through the new Gateway path. If
-those receipts are sound, prepare the Bot Mode Card/profile matrix and design from Hermes' actual
-profile, canonical Bot Chat, routines, room, peer, Gateway, and desktop contracts.
+The native Hermes-plugin route above is the preferred architecture. Before implementation, compare the
+bounded variants in the active task's options matrix and select only the smallest variant that proves:
 
-The Bot Mode design must answer before code:
+- one profile-scoped plugin registration enters Hermes' real registry;
+- Main sees exactly its saved internal tools plus deliberately selected native/external tools;
+- Builder sees its own exact, independent selection;
+- one tool call crosses one authenticated internal invocation boundary and executes through the existing
+  Python operation owner;
+- caller-supplied Card, Run, project, deck, or grant data cannot widen authority;
+- an unavailable plugin, schema, grant, or execution identity fails closed; and
+- external GPT/MCP behavior remains unchanged.
 
-- which saved Card fields map exactly to an existing Hermes profile and which Bot metadata is only
-  presentation;
-- whether LiquidAIty embeds/uses Hermes' native desktop Bot surfaces or renders a compatible Card view;
-- how one Card/Run/IDF relates to a Bot's forever chat and background routine without creating a second
-  history or scheduler;
-- how Main, Builder, Graph Agent, and other saved Cards appear as cards/bots without merging identities;
-- which current path is replaced and what observable result decides keep versus remove.
+Do not edit `Hermes/`, restore ACP, route internal Hermes tools through MCP, create a second catalog or
+dispatcher, or use profile configuration as invocation-time authorization. Live model sends and browser
+acceptance follow source, focused-test, typecheck, and canonical-stack readiness proof.
 
-No Bot Mode code, Card mutation, profile mutation, service restart, database operation, dependency
-installation, commit, or push is authorized by this plan.
+This implementation has an explicit anti-ACP stop condition: if stock plugin handlers plus existing
+native session/task identity cannot support one authenticated call into the Python operation owner, stop
+and document that precise public-contract gap. Do not add a host execution lifecycle, callback registry,
+worker protocol, session mirror, transcript projection, capability daemon, or replacement runtime.

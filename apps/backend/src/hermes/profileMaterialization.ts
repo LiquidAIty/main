@@ -23,6 +23,10 @@ export type HermesProfileSelection = {
   providerModelId: string;
   openaiRuntime: 'codex_app_server' | null;
   skills?: string[];
+  nativeTools?: string[];
+  toolsets?: string[];
+  requiredToolsets?: string[];
+  mcpConnectionIds?: string[];
   subagentModel?: SavedSubagentModel;
   effectiveSubagentModel?: {
     desired: SavedSubagentModel;
@@ -35,6 +39,8 @@ export type HermesProfileSelection = {
 
 export type HermesProfileMaterialization = {
   native: any;
+  unavailableNativeToolReasons: Record<string, 'native_exact_filter_unavailable'>;
+  unavailableMcpServerReasons: Record<string, 'mcp_server_not_configured'>;
   effectiveSubagentModel?: NonNullable<HermesProfileSelection['effectiveSubagentModel']>;
 };
 
@@ -48,6 +54,16 @@ type NativeParentModel = {
 type ConfigureNativeSkills = (
   profile: string,
   disabledSkills: string[],
+) => Promise<any>;
+
+type ConfigureNativeToolsets = (
+  profile: string,
+  enabledToolsets: string[],
+) => Promise<any>;
+
+type ConfigureNativeMcpServers = (
+  profile: string,
+  enabledMcpServers: string[],
 ) => Promise<any>;
 
 type ConfigureNativeSubagentModel = (
@@ -146,6 +162,8 @@ export async function materializeHermesProfileSelections(
     selection: NativeParentModel,
   ) => Promise<any>,
   configureNativeSkills: ConfigureNativeSkills,
+  configureNativeToolsets?: ConfigureNativeToolsets,
+  configureNativeMcpServers?: ConfigureNativeMcpServers,
 ): Promise<HermesProfileMaterialization> {
   const profile = String(args.runtime.profile || '').trim();
   const expectedParent = toNativeParentModel(args);
@@ -223,6 +241,109 @@ export async function materializeHermesProfileSelections(
   ) {
     throw new Error(`hermes_native_skills_readback_mismatch:${profile}`);
   }
+  const availableToolsets = new Map<string, string>(
+    (Array.isArray(native?.toolsets) ? native.toolsets : [])
+      .map((toolset: any) => String(toolset?.name || '').trim())
+      .filter(Boolean)
+      .map((name: string) => [name.toLowerCase(), name]),
+  );
+  const savedToolsets = [...new Set((args.toolsets || []).map((name) => String(name).trim()).filter(Boolean))];
+  const requiredToolsets = [...new Set(
+    (args.requiredToolsets || []).map((name) => String(name).trim()).filter(Boolean),
+  )];
+  const missingToolsets = [...savedToolsets, ...requiredToolsets]
+    .filter((name) => !availableToolsets.has(name.toLowerCase()));
+  if (missingToolsets.length) {
+    throw new Error(`hermes_native_toolset_missing:${profile}:${[...new Set(missingToolsets)].join(',')}`);
+  }
+  const nativeToolToolsets = (args.nativeTools || [])
+    .map((name) => availableToolsets.get(String(name).trim().toLowerCase()))
+    .filter((name): name is string => Boolean(name));
+  const unavailableNativeToolReasons = Object.fromEntries(
+    (args.nativeTools || [])
+      .map((name) => String(name).trim())
+      .filter((name) => name && !availableToolsets.has(name.toLowerCase()))
+      .map((name) => [name, 'native_exact_filter_unavailable' as const]),
+  );
+  const desiredToolsets: string[] = [...new Set<string>([
+    ...savedToolsets.map((name) => availableToolsets.get(name.toLowerCase())!),
+    ...nativeToolToolsets,
+    ...requiredToolsets.map((name) => availableToolsets.get(name.toLowerCase())!),
+  ])].sort();
+  if (desiredToolsets.length) {
+    if (!configureNativeToolsets) throw new Error(`hermes_native_toolset_configurator_missing:${profile}`);
+    const enabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+      .filter((toolset: any) => toolset?.enabled === true)
+      .map((toolset: any) => String(toolset?.name || '').trim())
+      .filter(Boolean)
+      .sort();
+    if (JSON.stringify(enabled) !== JSON.stringify(desiredToolsets)) {
+      const configured = await configureNativeToolsets(profile, desiredToolsets);
+      const applied = configured?.applied && typeof configured.applied === 'object'
+        ? configured.applied as Record<string, unknown>
+        : {};
+      if (configured?.ok !== true || applied.toolsets !== true) {
+        throw new Error(`hermes_native_toolsets_apply_failed:${profile}`);
+      }
+      native = await readNativeProfile(profile);
+    }
+    const finalEnabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+      .filter((toolset: any) => toolset?.enabled === true)
+      .map((toolset: any) => String(toolset?.name || '').trim())
+      .filter(Boolean)
+      .sort();
+    if (JSON.stringify(finalEnabled) !== JSON.stringify(desiredToolsets)) {
+      throw new Error(`hermes_native_toolsets_readback_mismatch:${profile}`);
+    }
+  } else {
+    const enabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+      .filter((toolset: any) => toolset?.enabled === true)
+      .map((toolset: any) => String(toolset?.name || '').trim())
+      .filter(Boolean);
+    if (enabled.length) {
+      // Stock profiles.configure removes an empty enabled_toolsets key, which
+      // restores Hermes defaults instead of representing an empty surface.
+      // Fail closed rather than silently granting those defaults.
+      throw new Error(`hermes_native_empty_toolset_filter_unavailable:${profile}`);
+    }
+  }
+  const desiredMcpServers = [...new Set(
+    (args.mcpConnectionIds || []).map((name) => String(name).trim()).filter(Boolean),
+  )].sort();
+  const enabledMcpServers = (Array.isArray(native?.mcp_servers) ? native.mcp_servers : [])
+    .filter((server: any) => server?.enabled === true)
+    .map((server: any) => String(server?.name || '').trim())
+    .filter(Boolean)
+    .sort();
+  if (JSON.stringify(enabledMcpServers) !== JSON.stringify(desiredMcpServers)) {
+    if (!configureNativeMcpServers) {
+      throw new Error(`hermes_native_mcp_server_configurator_missing:${profile}`);
+    }
+    const configured = await configureNativeMcpServers(profile, desiredMcpServers);
+    const applied = configured?.applied && typeof configured.applied === 'object'
+      ? configured.applied as Record<string, unknown>
+      : {};
+    if (configured?.ok !== true || applied.mcp_servers !== true) {
+      throw new Error(`hermes_native_mcp_servers_apply_failed:${profile}`);
+    }
+    native = await readNativeProfile(profile);
+  }
+  const finalEnabledMcpServers: string[] = (Array.isArray(native?.mcp_servers) ? native.mcp_servers : [])
+    .filter((server: any) => server?.enabled === true)
+    .map((server: any) => String(server?.name || '').trim())
+    .filter(Boolean)
+    .sort();
+  const desiredMcpServerNames = new Set(desiredMcpServers);
+  const extraMcpServers = finalEnabledMcpServers.filter((name) => !desiredMcpServerNames.has(name));
+  if (extraMcpServers.length) {
+    throw new Error(`hermes_native_mcp_servers_readback_broadened:${profile}:${extraMcpServers.join(',')}`);
+  }
+  const enabledMcpServerNames = new Set(finalEnabledMcpServers);
+  const unavailableMcpServerReasons = Object.fromEntries(
+    desiredMcpServers
+      .filter((name) => !enabledMcpServerNames.has(name))
+      .map((name) => [name, 'mcp_server_not_configured' as const]),
+  );
   let effectiveSubagentModel = args.effectiveSubagentModel;
   if (args.subagentModel) {
     const expected = toNativeSubagentModel(args.subagentModel);
@@ -243,6 +364,8 @@ export async function materializeHermesProfileSelections(
   }
   return {
     native,
+    unavailableNativeToolReasons,
+    unavailableMcpServerReasons,
     ...(effectiveSubagentModel ? { effectiveSubagentModel } : {}),
   };
 }

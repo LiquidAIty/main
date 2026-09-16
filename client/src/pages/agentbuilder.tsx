@@ -720,6 +720,7 @@ export default function AgentBuilder(): React.ReactElement {
     mainDriverSource,
     sessionHistoryLoading,
     stopMainTurn,
+    technicalError,
   } = useAgentBuilderMainChat({
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
@@ -1891,6 +1892,7 @@ export default function AgentBuilder(): React.ReactElement {
           busy={nativeSessionActive}
           connecting={nativeSessionConnecting}
           historyLoading={sessionHistoryLoading}
+          error={technicalError}
           onStop={() => {
             void stopMainTurn().catch((error) => {
               setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');

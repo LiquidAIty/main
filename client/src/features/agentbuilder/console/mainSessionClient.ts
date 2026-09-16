@@ -18,6 +18,23 @@ export type NativeSessionEvent = {
   [key: string]: unknown;
 };
 
+export type MainGatewayEvent = {
+  type: string;
+  session_id?: string;
+  seq?: number;
+  payload?: Record<string, unknown>;
+};
+
+export type MainNativeSessionEvent = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  cardId: string;
+  runtimeSessionId: string;
+  nativeSessionId: string;
+  event: MainGatewayEvent;
+};
+
 const BASE = '/api/main/session';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
@@ -201,6 +218,54 @@ export async function stopSession(args: {
   return { runId: String(payload.runId || ''), state: String(payload.state || 'stopping') };
 }
 
+export function subscribeSessionEvents(args: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  runtimeSessionId: string;
+  nativeSessionId: string;
+  onEvent: (event: MainNativeSessionEvent) => void;
+  onError: (code: string) => void;
+}): () => void {
+  const params = new URLSearchParams({
+    projectId: args.projectId,
+    deckId: args.deckId,
+    conversationId: args.conversationId,
+    runtimeSessionId: args.runtimeSessionId,
+    nativeSessionId: args.nativeSessionId,
+  });
+  const source = new EventSource(`${BASE}/events?${params.toString()}`, { withCredentials: true });
+  const receive = (raw: Event) => {
+    let value: MainNativeSessionEvent;
+    try {
+      value = JSON.parse((raw as MessageEvent<string>).data) as MainNativeSessionEvent;
+    } catch {
+      args.onError('main_native_event_invalid');
+      return;
+    }
+    if (
+      value.projectId !== args.projectId
+      || value.deckId !== args.deckId
+      || value.conversationId !== args.conversationId
+      || value.runtimeSessionId !== args.runtimeSessionId
+      || value.nativeSessionId !== args.nativeSessionId
+      || !value.event || typeof value.event.type !== 'string'
+      || value.event.session_id !== args.nativeSessionId
+      || !Number.isSafeInteger(value.event.seq) || Number(value.event.seq) < 1
+    ) {
+      args.onError('main_native_event_identity_mismatch');
+      return;
+    }
+    args.onEvent(value);
+  };
+  source.addEventListener('gateway', receive);
+  source.onerror = () => args.onError('main_native_event_stream_disconnected');
+  return () => {
+    source.removeEventListener('gateway', receive);
+    source.close();
+  };
+}
+
 /**
  * Reload the saved Main Card's native Hermes session history. A fresh native
  * conversation resolves to an empty array; transport and malformed-response
@@ -208,10 +273,13 @@ export async function stopSession(args: {
  */
 export async function loadSessionHistory(args: {
   projectId: string;
+  deckId?: string;
   conversationId: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{
+  runtimeSessionId: string;
+  nativeSessionId: string;
   messages: { role: 'assistant' | 'user'; text: string }[];
   terminalEvents: RuntimeEvent[];
 }> {
@@ -219,6 +287,7 @@ export async function loadSessionHistory(args: {
     projectId: args.projectId,
     conversationId: args.conversationId,
   });
+  if (args.deckId) params.set('deckId', args.deckId);
   const requestController = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => requestController.abort();
@@ -250,6 +319,8 @@ export async function loadSessionHistory(args: {
   }
   const payload = (await res.json().catch(() => null)) as {
     error?: unknown;
+    runtimeSessionId?: unknown;
+    sessionId?: unknown;
     messages?: { role?: unknown; text?: unknown }[];
     terminalEvents?: RuntimeEvent[];
   } | null;
@@ -283,5 +354,17 @@ export async function loadSessionHistory(args: {
         && event.category.startsWith('execution.')
       ))
     : [];
-  return { messages, terminalEvents };
+  const runtimeSessionId = typeof payload.runtimeSessionId === 'string'
+    ? payload.runtimeSessionId.trim()
+    : '';
+  const nativeSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+  if (!runtimeSessionId || !nativeSessionId) {
+    throw new SessionStreamError({
+      code: 'conversation_history_session_identity_missing',
+      message: 'Conversation history did not include the active native session identity.',
+      route: `${BASE}/history`,
+      status: res.status,
+    });
+  }
+  return { runtimeSessionId, nativeSessionId, messages, terminalEvents };
 }

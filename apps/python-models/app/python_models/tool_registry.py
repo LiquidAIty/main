@@ -123,6 +123,52 @@ def tool_publication(name: str) -> str | None:
     return reference["publication"] if reference else None
 
 
+def hermes_plugin_operation_ids() -> frozenset[str]:
+    """Return operations whose existing Python owner may be published by the Card plugin."""
+
+    main_mcp_operations = {
+        name for name, reference in _TOOL_POLICIES.items()
+        if "main_mcp" in reference["sourceIds"]
+    }
+    private_runtime_operations = set(DEFAULT_TOOL_REGISTRY.known_names())
+    # Native Bot/profile delegation remains a Hermes built-in. The saved-Card
+    # doorway is internal execution plumbing, not a second model-facing tool.
+    main_mcp_operations.discard("card.run_assistant_agent")
+    return frozenset(main_mcp_operations | private_runtime_operations)
+
+
+def hermes_private_runtime_contracts(
+    discovered: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project internal LiquidAIty operations onto their Hermes publisher.
+
+    ``main_mcp`` remains the external MCP publication. Hermes-backed Cards
+    invoke the same canonical operation through the authenticated private
+    Python runtime, so this second contract changes only publisher/transport
+    provenance; it does not copy the operation or create another grant owner.
+    """
+
+    plugin_operation_ids = hermes_plugin_operation_ids()
+    contracts: list[dict[str, Any]] = []
+    for raw in discovered:
+        if (
+            not isinstance(raw, dict)
+            or raw.get("name") not in plugin_operation_ids
+            or raw.get("sourceId") != "main_mcp"
+            or raw.get("connectionKind") != "external-mcp"
+        ):
+            continue
+        contract = deepcopy(raw)
+        contract["sourceId"] = "python_runtime"
+        contract["nativeName"] = str(raw["name"])
+        contract["connectionKind"] = "private-runtime"
+        # External OAuth metadata belongs to the MCP publisher, not to the
+        # process-authenticated Card runtime transport.
+        contract.pop("securitySchemes", None)
+        contracts.append(contract)
+    return contracts
+
+
 def tool_access(name: str) -> str | None:
     """Return explicit effect metadata; never infer it from prose or names."""
     reference = _TOOL_POLICIES.get(name)

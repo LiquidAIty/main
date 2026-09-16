@@ -120,6 +120,10 @@ export type PythonMcpToolDescriptor = {
   securitySchemes?: Record<string, unknown>[];
 };
 
+export type PythonMcpCatalogRead =
+  | { state: 'available'; tools: PythonMcpToolDescriptor[] }
+  | { state: 'unavailable'; tools: []; reason: 'catalog_unavailable' };
+
 /** The one supervised official Python MCP host used by every saved-Card adapter. */
 export function resolvePythonAgentMcpServerSpec(
   principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
@@ -239,6 +243,21 @@ export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescript
       };
     })
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/**
+ * Read the optional federated catalog without erasing a dependency failure.
+ *
+ * Saved Card preparation passes this state to Python so unavailable external
+ * catalog families remain visible as unavailable grants while Card-local
+ * conversation and private-runtime tools can continue.
+ */
+export async function readPythonAgentMcpCatalog(): Promise<PythonMcpCatalogRead> {
+  try {
+    return { state: 'available', tools: await listPythonAgentMcpCatalog() };
+  } catch {
+    return { state: 'unavailable', tools: [], reason: 'catalog_unavailable' };
+  }
 }
 
 /** List only names for runtime grant validation, derived from the same catalog. */

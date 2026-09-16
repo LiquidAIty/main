@@ -35,24 +35,15 @@ type HermesBotDmManager = {
     payload: string,
     signature: string,
   ): AuthenticatedHermesBotDmRequest | Promise<AuthenticatedHermesBotDmRequest>;
-  findCard(projectId: string, deckId: string, cardId: string): {
-    owner: AgentTerminalOwner;
-    state: AgentTerminalState;
-  } | null;
   verifyConfiguration(
     owner: AgentTerminalOwner,
     sessionId: string,
     card: AgentCardInstance,
     deck: DeckDocument,
   ): void;
-  submitBotMessage(
-    owner: AgentTerminalOwner,
-    sessionId: string,
-    text: string,
-  ): Promise<void>;
 };
 
-type AuthorizedHermesBotDmCard = {
+type ResolvedHermesBotDmCard = {
   cardId: string;
   title: string;
   profile: string;
@@ -141,17 +132,10 @@ function requireAuthenticatedRequest(value: unknown): AuthenticatedHermesBotDmRe
   return { owner, state, request: request as HermesBotDmRequest };
 }
 
-function sameOwner(left: AgentTerminalOwner, right: AgentTerminalOwner): boolean {
-  return left.userId === right.userId
-    && left.projectId === right.projectId
-    && left.deckId === right.deckId
-    && left.cardId === right.cardId;
-}
-
-function requireAuthorizedCard(
+function requireResolvedCard(
   value: unknown,
   owner: AgentTerminalOwner,
-): AuthorizedHermesBotDmCard {
+): ResolvedHermesBotDmCard {
   if (!isRecord(value)) routeError(502, 'hermes_bot_dm_authority_response_invalid');
   if (
     value.ok !== true
@@ -164,17 +148,17 @@ function requireAuthorizedCard(
   if (typeof card.title !== 'string' || typeof card.description !== 'string') {
     routeError(502, 'hermes_bot_dm_authority_response_invalid');
   }
-  const authorized = {
+  const resolved = {
     cardId: typeof card.cardId === 'string' ? card.cardId.trim() : '',
     title: card.title,
     profile: typeof card.profile === 'string' ? card.profile.trim() : '',
     description: card.description,
     cardRevisionId: typeof card.cardRevisionId === 'string' ? card.cardRevisionId.trim() : '',
   };
-  if (!authorized.cardId || !authorized.profile || !authorized.cardRevisionId) {
+  if (!resolved.cardId || !resolved.profile || !resolved.cardRevisionId) {
     routeError(502, 'hermes_bot_dm_authority_response_invalid');
   }
-  return authorized;
+  return resolved;
 }
 
 function sendError(res: Response, error: unknown): void {
@@ -261,10 +245,10 @@ export function createHermesBotDmRouter(
         routeError(409, 'hermes_bot_dm_source_runtime_stale');
       }
 
-      let authorizedCard: AuthorizedHermesBotDmCard;
+      let resolvedCard: ResolvedHermesBotDmCard;
       try {
-        authorizedCard = requireAuthorizedCard(
-          await dependencies.requestPythonRailsJson('/domain/hermes-bot-dm/authorize', {
+        resolvedCard = requireResolvedCard(
+          await dependencies.requestPythonRailsJson('/domain/hermes-bot-dm/resolve', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -279,30 +263,38 @@ export function createHermesBotDmRouter(
       } catch (error) {
         if (error instanceof HermesBotDmRouteError) throw error;
         const message = error instanceof Error ? error.message : '';
-        if (message === 'python_rails_http_403:hermes_bot_dm_card_not_authorized') {
-          routeError(403, 'hermes_bot_dm_card_unauthorized');
+        if (message === 'python_rails_http_404:hermes_bot_dm_profile_not_found') {
+          routeError(404, 'hermes_bot_dm_saved_card_not_found');
         }
-        if (message === 'python_rails_http_403:hermes_bot_dm_card_revision_missing') {
+        if (message === 'python_rails_http_409:hermes_bot_dm_profile_not_unique') {
+          routeError(409, 'hermes_bot_dm_saved_card_profile_not_unique');
+        }
+        if (message === 'python_rails_http_409:hermes_bot_dm_card_revision_missing') {
           routeError(409, 'hermes_bot_dm_card_runtime_stale');
         }
         if (
           message === 'python_rails_http_404:project_not_found'
           || message === 'python_rails_http_404:deck_not_found'
+          || message === 'python_rails_http_404:hermes_bot_dm_source_card_not_found'
         ) routeError(409, 'hermes_bot_dm_source_runtime_stale');
         if (message === 'python_rails_http_400:target_profile_required') {
-          routeError(403, 'hermes_bot_dm_card_unauthorized');
+          routeError(400, 'hermes_bot_dm_profile_required');
         }
-        if (message.startsWith('python_rails_http_400:') || message.startsWith('python_rails_http_403:')) {
+        if (
+          message.startsWith('python_rails_http_400:')
+          || message.startsWith('python_rails_http_404:')
+          || message.startsWith('python_rails_http_409:')
+        ) {
           routeError(502, 'hermes_bot_dm_authority_response_invalid');
         }
         routeError(503, 'hermes_bot_dm_authority_unavailable');
       }
-      const receivingCard = deck.nodes.find((card) => card.id === authorizedCard!.cardId);
+      const receivingCard = deck.nodes.find((card) => card.id === resolvedCard!.cardId);
       if (
         !receivingCard
-        || String(receivingCard._cardRevisionId || '') !== authorizedCard!.cardRevisionId
+        || String(receivingCard._cardRevisionId || '') !== resolvedCard!.cardRevisionId
         || receivingCard.runtime.kind !== 'hermes'
-        || normalizedProfile(receivingCard.runtime.profile) !== normalizedProfile(authorizedCard!.profile)
+        || normalizedProfile(receivingCard.runtime.profile) !== normalizedProfile(resolvedCard!.profile)
       ) routeError(409, 'hermes_bot_dm_card_runtime_stale');
 
       let receivingProfile: string;
@@ -311,50 +303,9 @@ export function createHermesBotDmRouter(
       } catch {
         routeError(409, 'hermes_bot_dm_card_runtime_stale');
       }
-      let live;
-      try {
-        live = dependencies.agentTerminalManager.findCard(owner.projectId, owner.deckId, receivingCard.id);
-      } catch {
-        routeError(409, 'hermes_bot_dm_card_runtime_stale');
-      }
-      if (!live) routeError(503, 'hermes_bot_dm_card_runtime_unavailable');
-      const expectedReceivingOwner: AgentTerminalOwner = { ...owner, cardId: receivingCard.id };
-      if (
-        !sameOwner(live.owner, expectedReceivingOwner)
-        || live.state.status !== 'running'
-        || live.state.cardId !== receivingCard.id
-        || live.state.profile !== receivingProfile!
-        || !live.state.sessionId
-        || !live.state.storedSessionId
-      ) routeError(409, 'hermes_bot_dm_card_runtime_stale');
-      try {
-        dependencies.agentTerminalManager.verifyConfiguration(
-          live.owner,
-          live.state.sessionId,
-          receivingCard,
-          deck,
-        );
-      } catch {
-        routeError(409, 'hermes_bot_dm_card_runtime_stale');
-      }
-
-      try {
-        await dependencies.agentTerminalManager.submitBotMessage(
-          live.owner,
-          live.state.sessionId,
-          `Message from 🤖 ${sourceProfile!} (@${sourceProfile!}): ${request.message}`,
-        );
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : '';
-        if (
-          reason === 'agent_terminal_not_running'
-          || reason === 'agent_terminal_session_not_found'
-        ) routeError(409, 'hermes_bot_dm_card_runtime_stale');
-        routeError(502, 'hermes_bot_dm_card_submit_failed');
-      }
-      routeError(501, 'hermes_bot_dm_native_completion_identity_unavailable');
+      return res.json({ ok: true, targetProfile: receivingProfile! });
     } catch (error) {
-      sendError(res, error);
+      return sendError(res, error);
     }
   });
   return router;

@@ -191,7 +191,8 @@ describe('Python-owned backend startup', () => {
     const reconcile = vi.fn(async (desired: any[]) => desired.map((entry, index) => ({
       sessionId: `session-${index}`, cardId: entry.card.id, profile: entry.card.runtime.profile,
       pid: 1, gatewayPid: 1, tuiPid: null, ptyId: null, nativeSessionId: `native-${index}`,
-      storedSessionId: `native-${index}`, hermesHome: '', status: 'running', cols: 120, rows: 36,
+      storedSessionId: `native-${index}`, hermesHome: '', unavailableToolReasons: {},
+      status: 'running', cols: 120, rows: 36,
     })));
 
     const states = await reconcileConnectedAgentTerminals({

@@ -19,7 +19,9 @@ from psycopg.rows import dict_row
 
 from app.python_models.tool_registry import (
     IddValidationError,
+    hermes_private_runtime_contracts,
     materialize_tool_catalog,
+    hermes_plugin_operation_ids,
     readable_tool_ids,
     writable_tool_ids,
     tool_access,
@@ -1941,13 +1943,13 @@ def _direct_card_targets(
     return direct
 
 
-def authorize_hermes_bot_dm_card(
+def resolve_hermes_bot_dm_card(
     project_id: str,
     deck_id: str,
     source_card_id: str,
     target_profile: str,
 ) -> dict[str, Any]:
-    """Resolve one native Bot DM profile to one authorized saved Card."""
+    """Resolve one native Bot DM profile to exactly one saved Hermes Card."""
     project_ref = _required_text(project_id, "project_id")
     requested_deck_id = _required_text(deck_id, "deck_id")
     source_id = _required_text(source_card_id, "source_card_id")
@@ -1969,7 +1971,7 @@ def authorize_hermes_bot_dm_card(
         if isinstance(card, dict) and str(card.get("id") or "")
     }
     if source_id not in cards:
-        raise CardDomainError("hermes_bot_dm_card_not_authorized")
+        raise CardDomainError("hermes_bot_dm_source_card_not_found")
     matches: list[dict[str, Any]] = []
     for card_id, card in cards.items():
         runtime = card.get("runtime")
@@ -1985,16 +1987,18 @@ def authorize_hermes_bot_dm_card(
             "description": str(card.get("subtitle") or "")[:1_000],
             "cardRevisionId": str(card.get("_cardRevisionId") or ""),
         })
-    if len(matches) != 1:
-        raise CardDomainError("hermes_bot_dm_card_not_authorized")
-    authorized_card = dict(matches[0])
-    if not str(authorized_card.get("cardRevisionId") or "").strip():
+    if not matches:
+        raise CardDomainError("hermes_bot_dm_profile_not_found")
+    if len(matches) > 1:
+        raise CardDomainError("hermes_bot_dm_profile_not_unique")
+    resolved_card = dict(matches[0])
+    if not str(resolved_card.get("cardRevisionId") or "").strip():
         raise CardDomainError("hermes_bot_dm_card_revision_missing")
     return {
         "projectId": _required_text(loaded.get("projectId"), "project_id"),
         "deckId": _required_text(deck.get("id"), "deck_id"),
         "sourceCardId": source_id,
-        "card": authorized_card,
+        "card": resolved_card,
     }
 
 
@@ -2382,20 +2386,88 @@ def _prepare_invocation(
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
         "mcpConnectionIds": _string_list(options.get("mcpConnectionIds"), "mcp_connection_ids"),
     }
+    catalog_state = str(
+        payload.get("discoveredToolCatalogState") or "available"
+    ).strip()
+    if catalog_state not in {"available", "unavailable"}:
+        raise CardDomainError("discovered_tool_catalog_state_invalid")
     try:
         discovered_tools = payload.get("discoveredTools") or []
         if not isinstance(discovered_tools, list):
             raise CardDomainError("discovered_tools_invalid")
-        catalog = materialize_tool_catalog([*tool_manifest(), *discovered_tools])
+        if catalog_state == "unavailable" and discovered_tools:
+            raise CardDomainError("discovered_tool_catalog_state_invalid")
+        runtime_contracts = (
+            hermes_private_runtime_contracts(discovered_tools)
+            if runtime.get("kind") == "hermes"
+            else []
+        )
+        catalog = materialize_tool_catalog([
+            *tool_manifest(),
+            *runtime_contracts,
+            *discovered_tools,
+        ])
     except IddValidationError as error:
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
+    unknown_tools = [name for name in ceiling if name not in by_id]
+    if unknown_tools:
+        raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
+    selected_mcp_connections = set(call_config["mcpConnectionIds"])
+    connection_granted_tools = [
+        item["canonicalId"] for item in catalog
+        if any(
+            isinstance(contract, dict)
+            and contract.get("connectionKind") == "external-mcp"
+            and str(contract.get("sourceId") or "") in selected_mcp_connections
+            for contract in item.get("contracts", [])
+        )
+    ]
+    # An individual saved tool is its own grant. A saved MCP connection is the
+    # optional broader form: it grants the catalog currently published by that
+    # connection. Neither form depends on the other.
+    ceiling = list(dict.fromkeys([*ceiling, *connection_granted_tools]))
+    call_config["enabledTools"] = ceiling
+
+    def unavailable_reason(name: str) -> str | None:
+        definition = by_id[name]
+        available_contracts = [
+            contract for contract in definition.get("contracts", [])
+            if isinstance(contract, dict) and contract.get("available") is not False
+        ]
+        if definition.get("availability") != "available":
+            return (
+                "catalog_unavailable"
+                if catalog_state == "unavailable"
+                else "capability_unavailable"
+            )
+        if runtime.get("kind") != "hermes":
+            return None
+        if any(
+            contract.get("sourceId") == "python_runtime"
+            and contract.get("connectionKind") == "private-runtime"
+            for contract in available_contracts
+        ):
+            return None
+        external_contracts = [
+            contract for contract in available_contracts
+            if contract.get("connectionKind") == "external-mcp"
+        ]
+        if external_contracts:
+            return None
+        return "hermes_capability_owner_unsupported"
+
+    unavailable_tool_reasons = {
+        name: reason for name in ceiling
+        if (reason := unavailable_reason(name)) is not None
+    }
+    unavailable_tools = list(unavailable_tool_reasons)
     if catalog_policy == "all_healthy":
         disabled = set(disabled_tools)
         healthy_reads = [
             item["canonicalId"] for item in catalog
             if item.get("publication") == "external-mcp"
-            and item.get("availability") == "available"
+            and unavailable_reason(item["canonicalId"]) is None
             and item.get("access") == "read"
             and item["canonicalId"] not in disabled
         ]
@@ -2403,15 +2475,15 @@ def _prepare_invocation(
             name for name in ceiling
             if name in by_id
             and by_id[name].get("publication") == "external-mcp"
-            and by_id[name].get("availability") == "available"
+            and unavailable_reason(name) is None
             and by_id[name].get("access") == "write"
         ]
         effective_tools = sorted(set(healthy_reads) | set(explicit_writes))
     else:
-        effective_tools = list(call_config["enabledTools"])
-    unknown_tools = [name for name in effective_tools if name not in by_id]
-    if unknown_tools:
-        raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
+        effective_tools = [
+            name for name in call_config["enabledTools"]
+            if unavailable_reason(name) is None
+        ]
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
     if runtime.get("kind") == "hermes":
@@ -2422,6 +2494,8 @@ def _prepare_invocation(
             name for name in selected_tools if name != "card.run_assistant_agent"
         ]
     call_config["enabledTools"] = selected_tools
+    call_config["unavailableTools"] = unavailable_tools
+    call_config["unavailableToolReasons"] = unavailable_tool_reasons
     # `tools` remains the saved Card's deliberately selected presentation.
     # `all_healthy` broadens the authorization ceiling for healthy reads, but
     # must not inject the entire MCP catalog into every model turn.
@@ -2482,6 +2556,188 @@ def _prepare_invocation(
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
+    }
+
+
+def _hermes_card_tool_name(canonical_name: str) -> str:
+    """Return one provider-safe Hermes name without changing Card authority."""
+
+    normalized = re.sub(r"[^A-Za-z0-9_]", "_", canonical_name).strip("_")
+    name = f"card__{normalized}"
+    if (
+        not normalized
+        or len(name) > 64
+        or re.fullmatch(r"[A-Za-z0-9_]+", name) is None
+    ):
+        raise CardDomainError(f"hermes_card_tool_name_invalid:{canonical_name}")
+    return name
+
+
+def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the exact saved Card tool surface registered in native Hermes.
+
+    The returned Hermes names are transport names only. Canonical operation
+    identity, availability, presentation and authorization remain the saved
+    Card/IDD result produced by ``_prepare_invocation``.
+    """
+
+    prepared = _prepare_invocation(
+        {
+            "projectId": payload.get("projectId"),
+            "deckId": payload.get("deckId"),
+            "cardId": payload.get("cardId"),
+            "assignment": "",
+            "discoveredTools": payload.get("discoveredTools"),
+            "discoveredToolCatalogState": payload.get(
+                "discoveredToolCatalogState"
+            ),
+        },
+        require_assignment=False,
+    )
+    call_config = prepared["_callConfig"]
+    runtime = call_config["runtime"]
+    if runtime.get("kind") != "hermes":
+        raise CardDomainError("hermes_card_tools_runtime_required")
+    expected_revision = str(payload.get("cardRevisionId") or "").strip()
+    if expected_revision and expected_revision != prepared["cardRevisionId"]:
+        raise CardDomainError("hermes_card_tools_card_revision_stale")
+
+    plugin_tools: list[dict[str, Any]] = []
+    external_mcp_tools: list[dict[str, Any]] = []
+    names: dict[str, str] = {}
+    for definition in prepared["_toolDefinitions"]:
+        canonical_name = str(definition.get("canonicalId") or "").strip()
+        available_contracts = [
+            contract for contract in definition.get("contracts", [])
+            if isinstance(contract, dict) and contract.get("available") is not False
+        ]
+        private_contracts = [
+            contract for contract in available_contracts
+            if contract.get("sourceId") == "python_runtime"
+            and contract.get("connectionKind") == "private-runtime"
+        ]
+        if private_contracts:
+            schemas = {
+                _canonical_json(contract.get("inputSchema"))
+                for contract in private_contracts
+                if isinstance(contract.get("inputSchema"), dict)
+            }
+            if len(schemas) != 1:
+                raise CardDomainError(
+                    f"hermes_card_tool_contract_ambiguous:{canonical_name}"
+                )
+            schema = json.loads(next(iter(schemas)))
+            hermes_name = _hermes_card_tool_name(canonical_name)
+            prior = names.get(hermes_name)
+            if prior is not None and prior != canonical_name:
+                raise CardDomainError(
+                    f"hermes_card_tool_name_collision:{prior}:{canonical_name}"
+                )
+            names[hermes_name] = canonical_name
+            plugin_tools.append({
+                "canonicalName": canonical_name,
+                "hermesName": hermes_name,
+                "description": str(
+                    definition.get("shortDescription")
+                    or private_contracts[0].get("description")
+                    or canonical_name
+                ),
+                "inputSchema": schema,
+            })
+            continue
+        external_contracts = [
+            contract for contract in available_contracts
+            if contract.get("connectionKind") == "external-mcp"
+        ]
+        if not external_contracts:
+            raise CardDomainError(f"hermes_card_tool_contract_unavailable:{canonical_name}")
+        identities = {
+            (
+                str(contract.get("sourceId") or ""),
+                str(contract.get("nativeName") or ""),
+            )
+            for contract in external_contracts
+        }
+        if len(identities) != 1:
+            raise CardDomainError(f"hermes_card_tool_contract_ambiguous:{canonical_name}")
+        connection_id, native_name = next(iter(identities))
+        external_mcp_tools.append({
+            "canonicalName": canonical_name,
+            "connectionId": connection_id,
+            "nativeName": native_name,
+        })
+    plugin_tools.sort(key=lambda item: item["canonicalName"])
+    external_mcp_tools.sort(key=lambda item: item["canonicalName"])
+    identity = {
+        "projectId": prepared["projectId"],
+        "deckId": prepared["deckId"],
+        "cardId": prepared["cardIdentity"]["cardId"],
+        "cardRevisionId": prepared["cardRevisionId"],
+        "cardRevisionSha256": prepared["cardRevisionSha256"],
+        "runtime": runtime,
+        "enabledTools": call_config["enabledTools"],
+        "unavailableTools": call_config["unavailableTools"],
+        "unavailableToolReasons": call_config["unavailableToolReasons"],
+        "presentedTools": call_config["presentedTools"],
+        "nativeTools": call_config["nativeTools"],
+        "toolsets": call_config["toolsets"],
+        "mcpConnectionIds": call_config["mcpConnectionIds"],
+        "pluginTools": plugin_tools,
+        "externalMcpTools": external_mcp_tools,
+    }
+    return {
+        "ok": True,
+        **identity,
+        "configurationFingerprint": _sha(_canonical_json(identity)),
+    }
+
+
+def authorize_hermes_card_plugin_invocation(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Recheck one plugin operation against the current saved Card revision."""
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    card_id = _required_text(payload.get("cardId"), "card_id")
+    expected_revision = _required_text(
+        payload.get("cardRevisionId"), "card_revision_id"
+    )
+    expected_mode = _required_text(payload.get("runtimeMode"), "runtime_mode")
+    tool_name = _required_text(payload.get("toolName"), "tool_name")
+    loaded = _load_deck_internal(project_ref, deck_id)
+    card = next(
+        (
+            value for value in loaded["deck"]["nodes"]
+            if str(value.get("id") or "") == card_id
+        ),
+        None,
+    )
+    if card is None:
+        raise CardDomainError("card_not_found")
+    if not _card_enabled(card):
+        raise CardDomainError("card_disabled")
+    if str(card.get("_cardRevisionId") or "") != expected_revision:
+        raise CardDomainError("hermes_card_tools_card_revision_stale")
+    runtime = _card_runtime(card)
+    if (
+        runtime.get("kind") != "hermes"
+        or runtime.get("mode") != expected_mode
+    ):
+        raise CardDomainError("hermes_card_tool_runtime_stale")
+    options = _json_object(card.get("runtimeOptions"), "runtime_options")
+    selected_tools = set(_string_list(options.get("tools"), "tools"))
+    if tool_name not in selected_tools:
+        raise CardDomainError(f"tool_not_granted:{tool_name}")
+    if tool_name not in hermes_plugin_operation_ids():
+        raise CardDomainError(f"hermes_card_tool_wrong_owner:{tool_name}")
+    return {
+        "projectId": loaded["projectId"],
+        "deckId": deck_id,
+        "cardId": card_id,
+        "cardRevisionId": expected_revision,
+        "runtime": runtime,
+        "toolName": tool_name,
     }
 
 
@@ -2614,6 +2870,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
             },
             capabilities={
                 "enabledTools": call_config["enabledTools"],
+                "unavailableTools": call_config["unavailableTools"],
+                "unavailableToolReasons": call_config["unavailableToolReasons"],
                 "presentedTools": call_config["presentedTools"],
                 "toolDefinitions": tool_definitions,
                 "scriptPresentation": call_config["scriptPresentation"],

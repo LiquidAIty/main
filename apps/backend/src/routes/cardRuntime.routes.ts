@@ -21,7 +21,7 @@ import {
   ConfiguredRuntimeFailure,
   requestPythonRailsJson,
 } from '../services/autogen/pythonRailsClient';
-import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import { readHermesKanbanCardSnapshots } from './hermesKanban.routes';
@@ -80,7 +80,7 @@ async function prepareSavedCardRun(args: {
   dataAnchors?: unknown[];
   images?: unknown[];
 }): Promise<any> {
-  const discoveredTools = await listPythonAgentMcpCatalog();
+  const discoveredToolCatalog = await readPythonAgentMcpCatalog();
   const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
   return requestPythonRailsJson('/domain/runs/begin', {
     method: 'POST',
@@ -98,7 +98,8 @@ async function prepareSavedCardRun(args: {
       cardRevisionId: args.cardRevisionId || undefined,
       runId: args.correlationId,
       correlationId: args.correlationId,
-      discoveredTools,
+      discoveredTools: discoveredToolCatalog.tools,
+      discoveredToolCatalogState: discoveredToolCatalog.state,
       configuredModels: listConfiguredModelOptions(openaiDefault),
     }),
   });
@@ -137,7 +138,7 @@ async function prepareMainCliRun(args: {
   dataAnchors?: unknown[];
 }): Promise<PreparedMainCliRun> {
   const runId = String(args.runId || `req_${randomUUID().slice(0, 8)}`);
-  const discoveredTools = await listPythonAgentMcpCatalog();
+  const discoveredToolCatalog = await readPythonAgentMcpCatalog();
   const prepared: any = await requestPythonRailsJson('/domain/main/runs/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -150,7 +151,8 @@ async function prepareMainCliRun(args: {
       runId,
       correlationId: runId,
       dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
-      discoveredTools,
+      discoveredTools: discoveredToolCatalog.tools,
+      discoveredToolCatalogState: discoveredToolCatalog.state,
     }),
   });
   if (
@@ -1130,6 +1132,65 @@ mainRoutes.get('/session/driver', async (req, res) => {
   }
 });
 
+mainRoutes.get('/session/events', async (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.query?.conversationId || '').trim();
+  const runtimeSessionId = String(req.query?.runtimeSessionId || '').trim();
+  const nativeSessionId = String(req.query?.nativeSessionId || '').trim();
+  if (!projectId || !conversationId || !runtimeSessionId || !nativeSessionId) {
+    return res.status(400).json({ ok: false, error: 'main_native_event_scope_required' });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+
+  let runtime: Awaited<ReturnType<typeof resolveMainGatewayRuntime>>;
+  let detach = () => {};
+  try {
+    runtime = await resolveMainGatewayRuntime(projectId, deckId);
+    if (runtime.state.sessionId !== runtimeSessionId) {
+      return res.status(409).json({ ok: false, error: 'main_gateway_runtime_identity_mismatch' });
+    }
+    if (runtime.state.nativeSessionId !== nativeSessionId) {
+      return res.status(409).json({ ok: false, error: 'main_gateway_native_session_identity_mismatch' });
+    }
+    detach = agentTerminalManager.subscribeGatewayEvents(
+      runtime.owner,
+      runtime.state.sessionId,
+      (event) => {
+        // Application-submitted Main turns already own their request SSE. This
+        // stream projects only exact native turns initiated inside the canonical
+        // Hermes session, such as Bot completion notifications.
+        if (agentTerminalExecution.activeRunId(runtime.state.sessionId)) return;
+        if (!['message.start', 'message.complete', 'status.update', 'error'].includes(event.type)) return;
+        if (!Number.isSafeInteger(event.seq) || Number(event.seq) < 1) return;
+        if (res.destroyed || res.writableEnded) return;
+        res.write(`event: gateway\ndata: ${JSON.stringify({
+          projectId,
+          deckId,
+          conversationId,
+          cardId: runtime.card.id,
+          runtimeSessionId: runtime.state.sessionId,
+          nativeSessionId: runtime.state.nativeSessionId,
+          event,
+        })}\n\n`);
+      },
+    );
+  } catch (error) {
+    return res.status(503).json({ ok: false,
+      error: error instanceof Error ? error.message : 'main_gateway_runtime_unavailable' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': native Main Gateway events\n\n');
+  res.once('close', detach);
+  return undefined;
+});
+
 mainRoutes.post('/session/chat', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
@@ -1195,6 +1256,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       onBound: (terminal) => {
         writeSse('session', {
           sessionId: terminal.nativeSessionId,
+          runtimeSessionId: terminal.sessionId,
           driverSource: 'internal_chat',
           contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
           configuration: {
@@ -1202,6 +1264,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
             model: run.prepared.hermesTransport.request.provider?.providerModelId || null,
             profile: terminal.profile,
             grantedTools: run.prepared.hermesTransport.request.enabledTools || [],
+            unavailableTools: run.prepared.hermesTransport.request.unavailableTools || [],
             loadedSkills: run.prepared.hermesTransport.request.skills || [],
           },
         });
@@ -1285,10 +1348,12 @@ mainRoutes.get('/session/history', async (req, res) => {
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
   let history;
   let nativeSessionId = '';
+  let runtimeSessionId = '';
   try {
     const runtime = await resolveMainGatewayRuntime(projectId, deckId);
     history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
     nativeSessionId = runtime.state.nativeSessionId;
+    runtimeSessionId = runtime.state.sessionId;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'main_cli_history_read_failed';
     return res.status(reason === 'agent_terminal_history_scope_mismatch' ? 409 : 503)
@@ -1298,6 +1363,7 @@ mainRoutes.get('/session/history', async (req, res) => {
   return res.json({
     ok: true,
     sessionId: nativeSessionId,
+    runtimeSessionId,
     messages: history.messages
       .filter((message) => message.role === 'user' || message.role === 'assistant')
       .map((message) => ({ role: message.role, text: String(message.text || '') })),

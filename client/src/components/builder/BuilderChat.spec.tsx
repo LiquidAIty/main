@@ -156,4 +156,20 @@ describe('BuilderChat', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
   });
+
+  it('shows a native transport failure as status instead of assistant speech', () => {
+    render(
+      <BuilderChat
+        messages={[]}
+        error="card_tools_unavailable:cbm.search_graph"
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.getByTestId('builder-chat-error').textContent)
+      .toBe('card_tools_unavailable:cbm.search_graph');
+    expect(screen.queryAllByText('card_tools_unavailable:cbm.search_graph')).toHaveLength(1);
+  });
 });

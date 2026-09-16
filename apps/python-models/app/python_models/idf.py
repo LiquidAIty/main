@@ -86,6 +86,8 @@ class SelectedToolsAndGrants(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabledTools: list[str] = Field(default_factory=list)
+    unavailableTools: list[str] = Field(default_factory=list)
+    unavailableToolReasons: dict[str, str] = Field(default_factory=dict)
     presentedTools: list[str] = Field(default_factory=list)
     toolDefinitions: list[dict[str, Any]] = Field(default_factory=list)
     scriptPresentation: dict[str, Any] = Field(default_factory=lambda: {
@@ -390,6 +392,8 @@ def materialize_idf(
     enabled_tools = list(capabilities.get("enabledTools") or [])
     tools_and_grants = SelectedToolsAndGrants(
         enabledTools=enabled_tools,
+        unavailableTools=list(capabilities.get("unavailableTools") or []),
+        unavailableToolReasons=dict(capabilities.get("unavailableToolReasons") or {}),
         presentedTools=list(
             capabilities.get("presentedTools")
             if "presentedTools" in capabilities
@@ -563,6 +567,8 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "provider": dict(stable.provider),
         "runtimeOptions": dict(stable.runtimeOptions),
         "enabledTools": list(grants.enabledTools),
+        "unavailableTools": list(grants.unavailableTools),
+        "unavailableToolReasons": dict(grants.unavailableToolReasons),
         "presentedTools": list(grants.presentedTools),
         "toolDefinitions": list(grants.toolDefinitions),
         "scriptPresentation": dict(grants.scriptPresentation),

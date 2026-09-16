@@ -77,7 +77,7 @@ def _loaded_deck() -> dict[str, Any]:
     }
 
 
-def test_bot_dm_authorization_resolves_normalized_profile_to_saved_card(
+def test_bot_dm_resolution_maps_normalized_profile_to_saved_card(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _loaded_deck()
@@ -90,7 +90,7 @@ def test_bot_dm_authorization_resolves_normalized_profile_to_saved_card(
 
     monkeypatch.setattr(card_domain, "load_deck", load)
 
-    assert card_domain.authorize_hermes_bot_dm_card(
+    assert card_domain.resolve_hermes_bot_dm_card(
         "project-server-derived", "deck-one", "main", "@bUiLdEr"
     ) == {
         "projectId": "project-canonical",
@@ -108,7 +108,7 @@ def test_bot_dm_authorization_resolves_normalized_profile_to_saved_card(
     assert loaded == before
 
 
-def test_bot_dm_authorization_does_not_consult_delegation_projection(
+def test_bot_dm_resolution_does_not_consult_delegation_projection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _loaded_deck()
@@ -121,7 +121,7 @@ def test_bot_dm_authorization_does_not_consult_delegation_projection(
         lambda *_args: (_ for _ in ()).throw(AssertionError("delegation path consulted")),
     )
 
-    resolved = card_domain.authorize_hermes_bot_dm_card(
+    resolved = card_domain.resolve_hermes_bot_dm_card(
         "project-one", "deck-one", "builder", "research"
     )
 
@@ -135,46 +135,61 @@ def test_bot_dm_authorization_does_not_consult_delegation_projection(
     }
 
 
-@pytest.mark.parametrize(
-    ("source_card_id", "target_profile", "mutate"),
-    [
-        ("main", "unknown", lambda deck: None),
-        ("main", "@@Builder", lambda deck: None),
-        ("missing", "Builder", lambda deck: None),
-        (
-            "main",
-            "Builder",
-            lambda deck: deck["deck"]["nodes"].append(
-                _agent(
-                    "duplicate-builder",
-                    profile="builder",
-                    mode="delegate",
-                    revision_id="revision-duplicate",
-                )
-            ),
-        ),
-    ],
-)
-def test_bot_dm_authorization_fails_closed_without_one_saved_card(
+@pytest.mark.parametrize("target_profile", ["unknown", "@@Builder"])
+def test_bot_dm_resolution_rejects_a_profile_without_a_saved_card(
     monkeypatch: pytest.MonkeyPatch,
-    source_card_id: str,
     target_profile: str,
-    mutate,
 ) -> None:
     loaded = _loaded_deck()
-    mutate(loaded)
     monkeypatch.setattr(card_domain, "load_deck", lambda *_args: loaded)
 
     with pytest.raises(
         card_domain.CardDomainError,
-        match="^hermes_bot_dm_card_not_authorized$",
+        match="^hermes_bot_dm_profile_not_found$",
     ):
-        card_domain.authorize_hermes_bot_dm_card(
-            "project-one", "deck-one", source_card_id, target_profile
+        card_domain.resolve_hermes_bot_dm_card(
+            "project-one", "deck-one", "main", target_profile
         )
 
 
-def test_bot_dm_authorization_requires_saved_card_revision(
+def test_bot_dm_resolution_rejects_a_missing_source_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: _loaded_deck())
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="^hermes_bot_dm_source_card_not_found$",
+    ):
+        card_domain.resolve_hermes_bot_dm_card(
+            "project-one", "deck-one", "missing", "Builder"
+        )
+
+
+def test_bot_dm_resolution_rejects_a_profile_shared_by_multiple_saved_cards(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _loaded_deck()
+    loaded["deck"]["nodes"].append(
+        _agent(
+            "duplicate-builder",
+            profile="builder",
+            mode="delegate",
+            revision_id="revision-duplicate",
+        )
+    )
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: loaded)
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="^hermes_bot_dm_profile_not_unique$",
+    ):
+        card_domain.resolve_hermes_bot_dm_card(
+            "project-one", "deck-one", "main", "Builder"
+        )
+
+
+def test_bot_dm_resolution_requires_saved_card_revision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _loaded_deck()
@@ -185,7 +200,7 @@ def test_bot_dm_authorization_requires_saved_card_revision(
         card_domain.CardDomainError,
         match="^hermes_bot_dm_card_revision_missing$",
     ):
-        card_domain.authorize_hermes_bot_dm_card(
+        card_domain.resolve_hermes_bot_dm_card(
             "project-one", "deck-one", "main", "Builder"
         )
 
@@ -197,7 +212,7 @@ def _isolated_endpoint() -> tuple[Any, list[str]]:
         node
         for node in module.body
         if isinstance(node, ast.FunctionDef)
-        and node.name == "domain_hermes_bot_dm_authorize_card"
+        and node.name == "domain_hermes_bot_dm_resolve_card"
     )
     registered_paths: list[str] = []
 
@@ -211,7 +226,7 @@ def _isolated_endpoint() -> tuple[Any, list[str]]:
         "CardDomainError": card_domain.CardDomainError,
         "HTTPException": _EndpointHttpError,
         "app": App(),
-        "authorize_hermes_bot_dm_card": lambda *args: {
+        "resolve_hermes_bot_dm_card": lambda *args: {
             "projectId": args[0],
             "deckId": args[1],
             "sourceCardId": args[2],
@@ -226,7 +241,7 @@ def _isolated_endpoint() -> tuple[Any, list[str]]:
     }
     ast.fix_missing_locations(endpoint)
     exec(compile(ast.Module(body=[endpoint], type_ignores=[]), str(source_path), "exec"), namespace)
-    return namespace["domain_hermes_bot_dm_authorize_card"], registered_paths
+    return namespace["domain_hermes_bot_dm_resolve_card"], registered_paths
 
 
 def test_private_bot_dm_endpoint_has_exact_request_and_response_contract() -> None:
@@ -238,7 +253,7 @@ def test_private_bot_dm_endpoint_has_exact_request_and_response_contract() -> No
         "targetProfile": "@builder",
     }
 
-    assert registered_paths == ["/domain/hermes-bot-dm/authorize"]
+    assert registered_paths == ["/domain/hermes-bot-dm/resolve"]
     assert endpoint(payload) == {
         "ok": True,
         "projectId": "project-one",
@@ -270,4 +285,4 @@ def test_private_bot_dm_endpoint_rejects_caller_authority_fields(
     with pytest.raises(_EndpointHttpError) as raised:
         endpoint(payload)
     assert raised.value.status_code == 400
-    assert raised.value.detail == "hermes_bot_dm_authorization_payload_invalid"
+    assert raised.value.detail == "hermes_bot_dm_resolution_payload_invalid"

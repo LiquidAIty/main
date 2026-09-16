@@ -32,6 +32,7 @@ export default function BuilderChat({
   busy = false,
   connecting = false,
   historyLoading = false,
+  error = null,
   onStop,
   draft,
   onDraftChange,
@@ -46,6 +47,8 @@ export default function BuilderChat({
   connecting?: boolean;
   /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
   historyLoading?: boolean;
+  /** Visible transport/configuration failure; never represented as assistant speech. */
+  error?: string | null;
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
@@ -161,6 +164,21 @@ export default function BuilderChat({
         </div>
       </div>
       <div className="px-4 pb-4">
+        {error ? (
+          <div
+            data-testid="builder-chat-error"
+            role="status"
+            style={{
+              color: "#FF9B9B",
+              fontSize: 12,
+              lineHeight: 1.35,
+              padding: "0 6px 8px",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {safeText(error)}
+          </div>
+        ) : null}
         <div
           className="flex items-center gap-2"
           style={{

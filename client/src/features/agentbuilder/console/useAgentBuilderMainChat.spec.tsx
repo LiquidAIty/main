@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   loadMainDriverStatus: vi.fn(),
   loadSessionHistory: vi.fn(),
   stopSession: vi.fn(),
+  subscribeSessionEvents: vi.fn(),
   streamSession: vi.fn(),
   waitForBackendReady: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock('./mainSessionClient', async () => {
     loadMainDriverStatus: mocks.loadMainDriverStatus,
     loadSessionHistory: mocks.loadSessionHistory,
     stopSession: mocks.stopSession,
+    subscribeSessionEvents: mocks.subscribeSessionEvents,
     streamSession: mocks.streamSession,
   };
 });
@@ -35,6 +37,7 @@ beforeEach(() => {
   mocks.loadMainDriverStatus.mockReset().mockResolvedValue({ ready: true, activeDriver: null });
   mocks.loadSessionHistory.mockReset();
   mocks.stopSession.mockReset();
+  mocks.subscribeSessionEvents.mockReset().mockReturnValue(vi.fn());
   mocks.streamSession.mockReset();
   mocks.waitForBackendReady.mockReset().mockResolvedValue(false);
 });
@@ -163,6 +166,8 @@ describe('Main chat live observation callbacks', () => {
 
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
     let resolveHistory!: (history: {
+      runtimeSessionId: string;
+      nativeSessionId: string;
       messages: Array<{ role: 'assistant' | 'user'; text: string }>;
       terminalEvents: Array<Record<string, unknown>>;
     }) => void;
@@ -179,6 +184,8 @@ describe('Main chat live observation callbacks', () => {
     expect(result.current.sessionHistoryLoading).toBe(true);
     await act(async () => {
       resolveHistory({
+        runtimeSessionId: 'runtime-main',
+        nativeSessionId: 'native-main',
         messages: [
           { role: 'user', text: 'Run Delegate.' },
           { role: 'assistant', text: 'Delegate completed.' },
@@ -219,6 +226,47 @@ describe('Main chat live observation callbacks', () => {
 
     expect(result.current.sessionHistoryLoading).toBe(false);
     expect(result.current.messages).toEqual([]);
+  });
+
+  it('renders an exact autonomous native completion without submitting another Main turn', async () => {
+    const closeNativeEvents = vi.fn();
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main',
+      nativeSessionId: 'native-main',
+      messages: [],
+      terminalEvents: [],
+    });
+    mocks.subscribeSessionEvents.mockReturnValue(closeNativeEvents);
+    const { result, unmount } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+    }));
+
+    await waitFor(() => expect(mocks.subscribeSessionEvents).toHaveBeenCalledOnce());
+    const subscription = mocks.subscribeSessionEvents.mock.calls[0][0];
+    expect(subscription).toMatchObject({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+    });
+    await act(async () => {
+      subscription.onEvent({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+        event: {
+          type: 'message.complete', session_id: 'native-main', seq: 12,
+          payload: { status: 'complete', text: 'Builder finished natively.' },
+        },
+      });
+    });
+    expect(result.current.messages).toEqual([
+      { role: 'assistant', text: 'Builder finished natively.' },
+    ]);
+    expect(mocks.streamSession).not.toHaveBeenCalled();
+
+    unmount();
+    expect(closeNativeEvents).toHaveBeenCalledOnce();
   });
 
   it('uses the native Run identity, forwards native reasoning separately, and settles after completion', async () => {
@@ -421,6 +469,8 @@ describe('Main chat live observation callbacks', () => {
 
   it('keys transcript state by conversation and never shows A while B loads', async () => {
     type LoadedHistory = {
+      runtimeSessionId: string;
+      nativeSessionId: string;
       messages: Array<{ role: 'assistant' | 'user'; text: string }>;
       terminalEvents: Array<Record<string, unknown>>;
     };
@@ -444,7 +494,7 @@ describe('Main chat live observation callbacks', () => {
       expect.objectContaining({ conversationId: 'conversation-a' }),
     ));
     await act(async () => {
-      resolveA({ messages: [
+      resolveA({ runtimeSessionId: 'runtime-a', nativeSessionId: 'native-a', messages: [
         { role: 'user', text: 'A user' },
         { role: 'assistant', text: 'A model' },
       ], terminalEvents: [] });
@@ -463,7 +513,10 @@ describe('Main chat live observation callbacks', () => {
       expect.objectContaining({ conversationId: 'conversation-b' }),
     ));
     await act(async () => {
-      resolveB({ messages: [{ role: 'user', text: 'B user' }], terminalEvents: [] });
+      resolveB({
+        runtimeSessionId: 'runtime-b', nativeSessionId: 'native-b',
+        messages: [{ role: 'user', text: 'B user' }], terminalEvents: [],
+      });
       await Promise.resolve();
     });
     expect(result.current.messages).toEqual([{ role: 'user', text: 'B user' }]);

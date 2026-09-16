@@ -33,6 +33,7 @@ import atexit
 import copy
 import functools
 import hashlib
+import hmac
 import inspect
 import json
 import os
@@ -474,7 +475,7 @@ def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any
     else:
         code, retryable = (
             ("internal_failure", False)
-            if dependency == "mcp"
+            if dependency in {"mcp", "tool-runtime"}
             else ("provider_failure", False)
         )
     if code in {
@@ -3342,11 +3343,11 @@ def _tool_result_category(result: Any) -> str:
     return "success"
 
 
-def _execution_receipt(name: str) -> dict[str, Any]:
+def _execution_receipt(name: str, transport: str = "mcp") -> dict[str, Any]:
     return {
         "schema": "agent-runtime.execution-receipt.v1",
         "tool": name,
-        "correlationId": f"mcp:{uuid4()}",
+        "correlationId": f"{transport}:{uuid4()}",
         "operationPhase": "dispatch",
         "local": True,
         "startedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -3419,21 +3420,32 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
     return _MCP_CALL_TIMEOUT_SECONDS
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+async def _execute_tool_request(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    authenticated_context: dict[str, Any] | None,
+    granted_tools: set[str] | None,
+    transport: str,
+) -> Any:
     started_clock = time.monotonic()
-    context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(None)
+    context_token = _ACTIVE_AUTHENTICATED_CONTEXT.set(authenticated_context)
     tool_name = str(name or "").strip()
-    receipt = _execution_receipt(tool_name)
+    receipt = _execution_receipt(tool_name, transport)
     receipt_token = _ACTIVE_EXECUTION_RECEIPT.set(receipt)
     trace_fields = {
-        "mcp_method": "tools/call",
+        "tool_transport": transport,
         "tool_name": tool_name[:160],
-        **_oauth_trace_fields(),
+        **(_oauth_trace_fields() if transport == "mcp" else {}),
     }
     _trace("tool_call_started", **trace_fields)
     try:
-        if not _request_tool_is_allowed(tool_name):
+        allowed = (
+            _request_tool_is_allowed(tool_name)
+            if granted_tools is None
+            else _tool_is_allowed(tool_name) and tool_name in granted_tools
+        )
+        if not allowed:
             raise PermissionError(f"tool_not_granted: {tool_name}")
         result = await asyncio.wait_for(
             _dispatch_tool(tool_name, arguments),
@@ -3484,7 +3496,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     except Exception as error:
         receipt["durationMs"] = int((time.monotonic() - started_clock) * 1000)
         receipt["state"] = "failed"
-        failure = _typed_failure(error, dependency="mcp")
+        failure = _typed_failure(
+            error,
+            dependency="mcp" if transport == "mcp" else "tool-runtime",
+        )
         receipt["failureCode"] = failure.get("failureCode")
         _trace(
             "tool_call_failed",
@@ -3517,6 +3532,86 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
     finally:
         _ACTIVE_EXECUTION_RECEIPT.reset(receipt_token)
         _ACTIVE_AUTHENTICATED_CONTEXT.reset(context_token)
+
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
+    return await _execute_tool_request(
+        name,
+        arguments,
+        authenticated_context=None,
+        granted_tools=None,
+        transport="mcp",
+    )
+
+
+def _card_tool_output(result: Any) -> str:
+    blocks = result.content if isinstance(result, CallToolResult) else result
+    if not isinstance(blocks, list):
+        return str(result)
+    texts = [
+        str(getattr(block, "text", "") or "")
+        for block in blocks
+        if str(getattr(block, "text", "") or "")
+    ]
+    return "\n".join(texts)
+
+
+async def execute_card_tool_request(payload: dict[str, Any]) -> dict[str, Any]:
+    expected = {
+        "projectId", "deckId", "cardId", "cardRevisionId",
+        "configurationFingerprint", "runtimeMode", "toolName", "arguments",
+        "conversationId", "parentRunId",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected:
+        raise ValueError("hermes_card_tool_request_invalid")
+    arguments = payload.get("arguments")
+    if not isinstance(arguments, dict):
+        raise ValueError("hermes_card_tool_arguments_invalid")
+    if not re.fullmatch(
+        r"[a-f0-9]{64}", str(payload.get("configurationFingerprint") or "")
+    ):
+        raise ValueError("hermes_card_tool_configuration_invalid")
+    from app.python_models.card_domain import authorize_hermes_card_plugin_invocation
+
+    authorized = await asyncio.to_thread(
+        authorize_hermes_card_plugin_invocation,
+        {
+            "projectId": payload.get("projectId"),
+            "deckId": payload.get("deckId"),
+            "cardId": payload.get("cardId"),
+            "cardRevisionId": payload.get("cardRevisionId"),
+            "runtimeMode": payload.get("runtimeMode"),
+            "toolName": payload.get("toolName"),
+        },
+    )
+    runtime = authorized.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("kind") != "hermes"
+        or runtime.get("mode") != payload.get("runtimeMode")
+    ):
+        raise PermissionError("hermes_card_tool_runtime_stale")
+    tool_name = str(payload.get("toolName") or "").strip()
+    context = {
+        "projectId": str(authorized["projectId"]),
+        "deckId": str(authorized["deckId"]),
+        "conversationId": str(payload.get("conversationId") or ""),
+        "parentRunId": str(payload.get("parentRunId") or ""),
+        "mainCardId": str(authorized["cardId"]),
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": str(runtime["mode"]),
+        "principalKind": "card-runtime",
+        "grantedTools": [tool_name],
+    }
+    result = await _execute_tool_request(
+        tool_name,
+        arguments,
+        authenticated_context=context,
+        granted_tools={tool_name},
+        transport="hermes-plugin",
+    )
+    return {"ok": True, "output": _card_tool_output(result)}
 
 
 async def _run_stdio() -> None:
@@ -3685,9 +3780,42 @@ async def _run_streamable_http() -> None:
             status_code=200 if ready else 503,
         )
 
+    async def card_tool_endpoint(request: Any) -> JSONResponse:
+        client_host = str(getattr(getattr(request, "client", None), "host", "") or "")
+        if client_host not in {"127.0.0.1", "::1"}:
+            return JSONResponse({"ok": False, "error": "loopback_required"}, status_code=403)
+        supplied = str(request.headers.get("x-liquidaity-internal-mcp-secret") or "")
+        if (
+            len(INTERNAL_MCP_SECRET) < 32
+            or not hmac.compare_digest(supplied, INTERNAL_MCP_SECRET)
+        ):
+            return JSONResponse({"ok": False, "error": "authentication_failed"}, status_code=401)
+        raw = await request.body()
+        if len(raw) > 768 * 1024:
+            return JSONResponse({"ok": False, "error": "request_too_large"}, status_code=413)
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            result = await execute_card_tool_request(payload)
+            return JSONResponse(result, status_code=200)
+        except (ValueError, PermissionError, KeyError) as error:
+            code = _sanitize_failure_detail(error)
+            status = 409 if any(term in code for term in (
+                "configuration_stale", "card_revision_stale", "runtime_stale",
+                "card_disabled", "not_found", "tool_not_granted",
+            )) else 400
+            return JSONResponse({"ok": False, "error": code}, status_code=status)
+        except Exception:
+            return JSONResponse(
+                {"ok": False, "error": "card_tool_internal_failure"},
+                status_code=500,
+            )
+
     health_routes = [
         Route("/health", endpoint=health_endpoint, methods=["GET"]),
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),
+    ]
+    internal_routes = [
+        Route("/internal/card-tool", endpoint=card_tool_endpoint, methods=["POST"]),
     ]
 
     if OAUTH_ENFORCED:
@@ -3751,6 +3879,7 @@ async def _run_streamable_http() -> None:
         )
         routes = [
             *health_routes,
+            *internal_routes,
             Route(
                 "/.well-known/oauth-protected-resource",
                 endpoint=protected_resource_routes[0].endpoint,
@@ -3760,7 +3889,7 @@ async def _run_streamable_http() -> None:
             Mount("/", app=protected_endpoint),
         ]
     else:
-        routes = [*health_routes, Mount("/", app=endpoint)]
+        routes = [*health_routes, *internal_routes, Mount("/", app=endpoint)]
     http_app = _SafeRequestTraceMiddleware(
         Starlette(routes=routes, lifespan=lifespan)
     )

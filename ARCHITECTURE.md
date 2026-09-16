@@ -37,7 +37,8 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply the exact saved parent model, selected skills, and desired native subagent model before a turn |
 | Hermes runtime | `Hermes/` | Native inference, sessions, tools, memory, delegation, Kanban/Team, Gateway, TUI, desktop, and Bot Mode |
 | AutoGen runtime | `apps/python-models/app/python_models/autogen_orchestrator.py` and `autogen-main/` | Native Magentic-One and accepted AutoGen primitives on Python rails |
-| Official MCP host | `apps/python-models/app/mcp_host.py` | One canonical catalog, external OAuth boundary, internal signed Card/Run authority, and native tool federation |
+| Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, native availability, deterministic validation, and execution; transports do not duplicate these owners |
+| Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
 | ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning and explicit writes |
 | KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
@@ -181,11 +182,14 @@ Bot Mode is substantial first-party Hermes functionality under `Hermes/apps/desk
 checked-in Hermes documentation. It is not ACP residue and must not be deleted or rewritten during
 LiquidAIty cleanup.
 
-LiquidAIty has not yet integrated Bot Mode as its Card presentation or runtime controller. No current
-source claim maps a saved LiquidAIty Card to a Bot Mode tile/profile metadata record. That design is a
-separate, owner-approved task after this cleanup and current Gateway/Team proof. The integration must
-reuse saved Card/profile authority and Hermes' public Gateway/profile/plugin contracts; it must not
-create a second Card type, daemon, catalog, router, or profile store.
+The current working tree contains a thin managed `message_agent` interception boundary that
+authenticates the source runtime, resolves the receiving saved Card's exact Hermes profile, and then
+resumes stock Hermes delivery once. It does not reproduce Hermes Desktop's Bot UI or own native Bot
+queueing, ordering, inference, completion, history, or notification. Main-to-Builder live execution and
+reply proof remain incomplete, so the working-tree source is not yet a loaded-runtime acceptance claim.
+The integration must continue to reuse saved Card/profile authority and Hermes' public
+Gateway/profile/plugin contracts; it must not create a second Card type, daemon, catalog, router,
+profile store, completion correlator, or application queue.
 
 ## Profile materialization and memory
 
@@ -208,6 +212,41 @@ Python rails owns deterministic runtime preparation, saved Card/Run persistence,
 materialization, native graph hydration, tool execution, parameterized SQL/Cypher, research/data
 processing, and AutoGen/Magentic-One execution.
 
+## Internal Card tools and external MCP
+
+Hermes and LiquidAIty currently disagree at the tool-presentation boundary. Python rails materializes
+the saved Card's exact presented tool set and definitions, while the live Hermes agent independently
+snapshots its native registry. Sending definitions in IDF prose does not register them. The existing
+profile materializer currently applies model, skills, and native subagent model only.
+
+The approved target separates publication from execution without duplicating tool ownership:
+
+```text
+saved Card and current execution authority
+  -> protocol-neutral Python operation owner
+     -> native Hermes plugin registration for internal Card use
+     -> official MCP publication for external clients
+```
+
+For Hermes-backed Cards, a profile-scoped native Hermes plugin registers model-facing LiquidAIty tools
+through the public plugin registry. Hermes continues to own tool presentation, selection, validation,
+guardrails, approvals, hooks, dispatch, and result delivery. Each plugin invocation crosses one
+authenticated LiquidAIty host boundary; the host derives the source Card/runtime from process and native
+session identity, and Python rails enforces the saved grant and current execution authority. The plugin
+does not own grants, cache a second catalog, copy implementations, launch a helper service, or route
+through MCP.
+
+MCP remains correct for external GPT clients and deliberately configured third-party/external servers.
+It is not the internal execution bus for LiquidAIty tools inside Hermes. Both publishers reuse the same
+Python schemas and operation implementations. Stock `tools.configure` is durable profile projection and
+session rebuilding only; it is never invocation-time authorization. Exact live registration/readback,
+Card-specific visibility, and native Bot turns without fabricated application Runs remain proof gaps in
+`PLAN.md`, not hidden fallback authority.
+
+The native TUI and Bot Chat are proof surfaces for the same plugin-backed Card runtime, not reasons to
+create separate tool paths. A public-contract failure stops the implementation; it does not authorize an
+ACP-like host execution layer, callback protocol, session mirror, transcript owner, or worker runtime.
+
 The approved AutoGen runtime is the checked-in v0.4+ `MagenticOneGroupChat` implementation with the
 accepted `AssistantAgent`, `Swarm`, `SocietyOfMindAgent`, and `UserProxyAgent` primitives. Saved
 `magentic_option` topology determines eligible workers. LiquidAIty does not subclass or project
@@ -215,11 +254,12 @@ Magentic-One's private ledgers and TypeScript does not schedule its participants
 
 ## MCP and Codebase Memory
 
-`apps/python-models/app/mcp_host.py` is the one official MCP host. It freezes one canonical catalog
-for internal runtimes and external connectors, preserves native tool schemas, and dispatches to the
-existing Python owners. External account access uses the configured OAuth resource boundary. Internal
-Card calls use signed saved Card/Run scope and the intersection of native availability, saved grants,
-and current Run authorization.
+`apps/python-models/app/mcp_host.py` is the one official MCP host. It currently freezes one canonical
+catalog, preserves native tool schemas, and dispatches to the existing Python owners. External account
+access uses the configured OAuth resource boundary. The approved Hermes-plugin work will extract/reuse
+the protocol-neutral Python operation boundary so internal Hermes Card tools do not depend on MCP, while
+external clients retain this one MCP publication surface. Until that refactor is implemented and proven,
+CURRENT and TARGET must not be collapsed.
 
 Codebase Memory is a native MCP dependency of that host. The checksum-pinned official binary, its one
 long-lived stdio frontend, upstream daemon/watcher, UI, and disposable native cache live outside the
@@ -315,8 +355,11 @@ No other Hermes customization is silently accepted by this document.
   output through the same saved Run.
 - The retained profile branch is source/unit-only and currently fails closed because no supported
   Gateway request owner supplies the trusted roster and receiving-Card invocation.
-- Native Bot Mode is present in Hermes, but LiquidAIty Card-to-Bot presentation and lifecycle mapping
-  has not been designed or implemented.
+- Native Bot Mode is present in Hermes and the current working tree contains the thin managed Card/profile
+  interception boundary, but Main-to-Builder native delivery, reply, and loaded-runtime acceptance remain
+  unproven.
+- Saved Card tool grants are materialized by Python but are not yet enforced as the live Hermes registry
+  surface. The approved native-plugin boundary remains unimplemented.
 - Native subagent configuration and actual child provider/model require a real child receipt; saved or
   projected selections alone are not execution proof.
 - Magentic-One, graph attention, external MCP selection, and visual behavior retain their own acceptance

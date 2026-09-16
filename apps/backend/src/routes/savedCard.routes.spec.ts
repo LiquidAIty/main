@@ -67,6 +67,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   const staged = new Map<string, { runId: string; message: string; cardId: string }>();
   const completed = new Map<string, Record<string, unknown>>();
   const cancelled = new Set<string>();
+  const gatewayListeners = new Set<(event: Record<string, unknown>) => void>();
   const profileFor = (cardId: string) => cardId === 'card_main_chat'
     ? 'default'
     : cardId === 'builder' ? 'builder'
@@ -82,6 +83,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     nativeSessionId: `native:${profileFor(owner.cardId)}`,
     storedSessionId: `native:${profileFor(owner.cardId)}`,
     hermesHome: `C:\\profiles\\${profileFor(owner.cardId)}`,
+    unavailableToolReasons: {},
     status: 'running',
     cols: 120,
     rows: 36,
@@ -227,11 +229,19 @@ const agentTerminalMocks = vi.hoisted(() => {
     cancelled.add(runId);
   });
   const activeRunId = vi.fn((sessionId: string) => staged.get(sessionId)?.runId || null);
+  const subscribeGatewayEvents = vi.fn((_owner: any, _sessionId: string, listener: any) => {
+    gatewayListeners.add(listener);
+    return () => gatewayListeners.delete(listener);
+  });
+  const emitGatewayEvent = (event: Record<string, unknown>) => {
+    for (const listener of gatewayListeners) listener(event);
+  };
   return {
-    staged, completed, cancelled, profileFor, stateFor, complete, finishSubmitted,
+    staged, completed, cancelled, gatewayListeners, emitGatewayEvent,
+    profileFor, stateFor, complete, finishSubmitted,
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
-      dispatchLearn, requestProfile,
+      dispatchLearn, requestProfile, subscribeGatewayEvents,
     },
     execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
   };
@@ -256,15 +266,25 @@ const chatSessionMocks = vi.hoisted(() => {
 const kanbanMocks = vi.hoisted(() => ({
   readHermesKanbanCardSnapshots: vi.fn(async () => []),
 }));
-const mcpClientMocks = vi.hoisted(() => ({
+const mcpClientMocks = vi.hoisted(() => {
+  const listPythonAgentMcpCatalog = vi.fn(async (): Promise<any[]> => []);
+  return {
   callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
-  listPythonAgentMcpCatalog: vi.fn(async (): Promise<any[]> => []),
+  listPythonAgentMcpCatalog,
+  readPythonAgentMcpCatalog: vi.fn(async () => {
+    try {
+      return { state: 'available' as const, tools: await listPythonAgentMcpCatalog() };
+    } catch {
+      return { state: 'unavailable' as const, tools: [], reason: 'catalog_unavailable' as const };
+    }
+  }),
   resolvePythonAgentMcpServerSpec: vi.fn(() => ({
     type: 'http',
     url: 'http://127.0.0.1:8765/mcp',
     headers: { Authorization: 'Bearer test-builder-terminal-token' },
   })),
-}));
+  };
+});
 
 const ptyMocks = vi.hoisted(() => {
   const children: any[] = [];
@@ -640,6 +660,7 @@ vi.mock('./hermesKanban.routes', () => ({
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   callPythonAgentMcpTool: mcpClientMocks.callPythonAgentMcpTool,
   listPythonAgentMcpCatalog: mcpClientMocks.listPythonAgentMcpCatalog,
+  readPythonAgentMcpCatalog: mcpClientMocks.readPythonAgentMcpCatalog,
   resolvePythonAgentMcpServerSpec: mcpClientMocks.resolvePythonAgentMcpServerSpec,
 }));
 
@@ -703,6 +724,7 @@ describe('saved Card routes', () => {
       expect(await response.json()).toEqual({
         ok: true,
         sessionId: 'native:default',
+        runtimeSessionId: 'terminal:card_main_chat',
         messages: [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer' }],
         terminalEvents: [],
       });
@@ -711,6 +733,88 @@ describe('saved Card routes', () => {
         'terminal:card_main_chat',
       );
     } finally { await closeServer(server); }
+  });
+
+  it('projects an exact autonomous native Main Gateway event without submitting another turn', async () => {
+    agentTerminalMocks.manager.subscribeGatewayEvents.mockClear();
+    agentTerminalMocks.manager.submit.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    const controller = new AbortController();
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/events?projectId=project-1&deckId=deck_builder`
+          + '&conversationId=main&runtimeSessionId=terminal%3Acard_main_chat'
+          + '&nativeSessionId=native%3Adefault',
+        { signal: controller.signal },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+      expect(agentTerminalMocks.manager.subscribeGatewayEvents).toHaveBeenCalledWith(
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+        'terminal:card_main_chat',
+        expect.any(Function),
+      );
+      agentTerminalMocks.emitGatewayEvent({
+        type: 'message.complete', session_id: 'native:default', seq: 9,
+        payload: { text: 'Native Builder reply.' },
+      });
+      reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let body = '';
+      for (let attempt = 0; attempt < 4 && !body.includes('event: gateway'); attempt += 1) {
+        const part = await reader.read();
+        if (part.done) break;
+        body += decoder.decode(part.value, { stream: true });
+      }
+      expect(body).toContain('event: gateway');
+      expect(body).toContain('"runtimeSessionId":"terminal:card_main_chat"');
+      expect(body).toContain('"nativeSessionId":"native:default"');
+      expect(body).toContain('"type":"message.complete"');
+      expect(body).toContain('Native Builder reply.');
+      expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+    } finally {
+      await reader?.cancel().catch(() => undefined);
+      controller.abort();
+      await closeServer(server);
+    }
+  });
+
+  it('rejects a stale application runtime identity before subscribing to native events', async () => {
+    agentTerminalMocks.manager.subscribeGatewayEvents.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/events?projectId=project-1&deckId=deck_builder`
+          + '&conversationId=main&runtimeSessionId=stale-runtime&nativeSessionId=native%3Adefault',
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        ok: false, error: 'main_gateway_runtime_identity_mismatch',
+      });
+      expect(agentTerminalMocks.manager.subscribeGatewayEvents).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('rejects a stale native Hermes session identity before subscribing to native events', async () => {
+    agentTerminalMocks.manager.subscribeGatewayEvents.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/events?projectId=project-1&deckId=deck_builder`
+          + '&conversationId=main&runtimeSessionId=terminal%3Acard_main_chat'
+          + '&nativeSessionId=stale-native-session',
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        ok: false, error: 'main_gateway_native_session_identity_mismatch',
+      });
+      expect(agentTerminalMocks.manager.subscribeGatewayEvents).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it('serves Main Chat at its own namespace', async () => {
@@ -1108,7 +1212,8 @@ describe('saved Card routes', () => {
       );
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
-        ok: true, sessionId: 'native:default', messages: [], terminalEvents: [],
+        ok: true, sessionId: 'native:default', runtimeSessionId: 'terminal:card_main_chat',
+        messages: [], terminalEvents: [],
       });
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
     } finally {
@@ -2257,6 +2362,38 @@ describe('saved Card routes', () => {
         );
         expect(agentTerminalMocks.completed.get(session.runId)).toMatchObject({
           state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default',
+        });
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('keeps ordinary Main available and sends typed catalog unavailability to Card authority', async () => {
+      mcpClientMocks.listPythonAgentMcpCatalog.mockRejectedValueOnce(
+        new Error('MCP catalog unavailable'),
+      );
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'catalog-down', message: 'Can you still answer?',
+          }),
+        });
+        const body = await response.text();
+        expect(response.status).toBe(200);
+        expect(body).toContain('event: done');
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        );
+        const beginBody = JSON.parse(String(beginCall?.[1]?.body || '{}'));
+        expect(beginBody).toMatchObject({
+          discoveredTools: [],
+          discoveredToolCatalogState: 'unavailable',
         });
       } finally {
         await closeServer(server);

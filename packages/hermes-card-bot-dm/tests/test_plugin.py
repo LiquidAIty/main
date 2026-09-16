@@ -132,9 +132,7 @@ def test_missing_native_runtime_identity_fails_closed(plugin, monkeypatch):
     assert calls == []
 
 
-def test_managed_call_signs_one_direct_host_request_without_completion_ids(
-    plugin, monkeypatch
-):
+def test_managed_call_resolves_once_then_calls_stock_tool_once(plugin, monkeypatch):
     _managed_env(monkeypatch)
     monkeypatch.setattr(plugin.secrets, "token_hex", lambda _size: "a" * 32)
     monkeypatch.setattr(plugin.time, "time", lambda: 1_000)
@@ -142,18 +140,18 @@ def test_managed_call_signs_one_direct_host_request_without_completion_ids(
 
     def post_once(host_url, envelope):
         captured.append((host_url, envelope))
-        return 501, {"error": "hermes_bot_dm_native_completion_identity_unavailable"}
+        return 200, {"ok": True, "targetProfile": "builder"}
 
     monkeypatch.setattr(plugin, "_post_once", post_once)
-    fallback = []
-    result = json.loads(_call(
+    native_calls = []
+    result = _call(
         plugin,
         {"target": " @builder ", "message": "private mission"},
-        fallback.append,
-    ))
+        lambda value: native_calls.append(value) or "native-ack",
+    )
 
-    assert result["reason"] == "native_completion_identity_unavailable"
-    assert fallback == []
+    assert result == "native-ack"
+    assert native_calls == [{"target": "builder", "message": "private mission"}]
     assert len(captured) == 1
     host_url, envelope = captured[0]
     assert host_url == "http://127.0.0.1:4000/hermes-bot-dm"
@@ -177,6 +175,29 @@ def test_managed_call_signs_one_direct_host_request_without_completion_ids(
     ).hexdigest()
 
 
+@pytest.mark.parametrize(
+    ("status", "response"),
+    [
+        (404, {"error": "hermes_bot_dm_saved_card_not_found"}),
+        (200, {"ok": True}),
+        (200, {"ok": True, "targetProfile": "  "}),
+    ],
+)
+def test_managed_card_resolution_failure_never_calls_stock_tool(
+    plugin, monkeypatch, status, response
+):
+    _managed_env(monkeypatch)
+    monkeypatch.setattr(plugin, "_post_once", lambda *_args: (status, response))
+    native_calls = []
+    result = json.loads(_call(
+        plugin,
+        {"target": "builder", "message": "hello"},
+        native_calls.append,
+    ))
+    assert result["reason"] == "saved_card_resolution_failed"
+    assert native_calls == []
+
+
 def test_managed_host_failure_never_falls_through(plugin, monkeypatch):
     _managed_env(monkeypatch)
     monkeypatch.setattr(plugin, "_post_once", lambda *_args: (_ for _ in ()).throw(OSError()))
@@ -186,7 +207,7 @@ def test_managed_host_failure_never_falls_through(plugin, monkeypatch):
         {"target": "builder", "message": "hello"},
         fallback.append,
     ))
-    assert result["reason"] == "managed_delivery_failed"
+    assert result["reason"] == "saved_card_resolution_failed"
     assert fallback == []
 
 
@@ -196,11 +217,11 @@ class _HostHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         type(self).calls.append(json.loads(self.rfile.read(length)))
-        self.send_response(501)
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps({
-            "error": "hermes_bot_dm_native_completion_identity_unavailable"
+            "ok": True, "targetProfile": "builder"
         }).encode("utf-8"))
 
     def log_message(self, _format, *_args):
@@ -221,8 +242,8 @@ def test_direct_host_transport_posts_once_and_does_not_retry(plugin):
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
-    assert status == 501
-    assert response == {"error": "hermes_bot_dm_native_completion_identity_unavailable"}
+    assert status == 200
+    assert response == {"ok": True, "targetProfile": "builder"}
     assert _HostHandler.calls == [
         {"keyId": "a" * 64, "payload": "{}", "signature": "b" * 64}
     ]

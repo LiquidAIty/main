@@ -185,11 +185,18 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
 ):
     loaded = _destination_fixture(monkeypatch)
     card = loaded["deck"]["nodes"][1]
-    card["runtimeOptions"].update(tools=["canvas.inspect", "graphiti.search_nodes"], toolCatalogPolicy=policy)
+    card["runtimeOptions"].update(
+        tools=["canvas.inspect", "graphiti.search_nodes"],
+        toolCatalogPolicy=policy,
+        mcpConnectionIds=["graphiti"],
+    )
     before = json.dumps(card, sort_keys=True)
     payload = _destination_payload("hermes")
     payload["discoveredTools"] = [{
-        "name": name, "nativeName": name, "kind": "tool", "sourceId": "main_mcp",
+        "name": name,
+        "nativeName": "search_nodes" if name == "graphiti.search_nodes" else name,
+        "kind": "tool",
+        "sourceId": "graphiti" if name == "graphiti.search_nodes" else "main_mcp",
         "namespace": name.split(".")[0], "connectionKind": "external-mcp",
         "description": name, "inputSchema": {"type": "object", "properties": {}},
         "annotations": {"readOnlyHint": True},
@@ -202,6 +209,201 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
         assert "web_search" in config["enabledTools"]
         assert "web_search" not in config["presentedTools"]
     assert json.dumps(card, sort_keys=True) == before
+
+
+def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = loaded["deck"]["nodes"][1]
+    card["runtimeOptions"].update(
+        tools=["canvas.inspect", "graphiti.search_nodes"],
+        toolCatalogPolicy="selected",
+    )
+    before = json.dumps(card, sort_keys=True)
+    payload = _destination_payload("hermes")
+    payload["discoveredTools"] = [{
+        "name": name,
+        "nativeName": name,
+        "kind": "tool",
+        "sourceId": "main_mcp",
+        "namespace": name.split(".")[0],
+        "connectionKind": "external-mcp",
+        "description": name,
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True},
+        "available": name == "canvas.inspect",
+    } for name in card["runtimeOptions"]["tools"]]
+
+    prepared = card_domain._prepare_invocation(payload)
+    config = prepared["_callConfig"]
+    assert config["enabledTools"] == ["canvas.inspect"]
+    assert config["presentedTools"] == ["canvas.inspect"]
+    assert config["unavailableTools"] == ["graphiti.search_nodes"]
+    assert json.dumps(card, sort_keys=True) == before
+
+
+def test_hermes_card_tools_are_exact_saved_presentation_with_stable_wire_names(monkeypatch):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["card.create", "graphiti.search_nodes"],
+        nativeTools=["memory"],
+        toolsets=["file", "terminal"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+    def discovered(name, native_name, source, *, read_only):
+        return {
+        "name": name,
+        "nativeName": native_name,
+        "kind": "tool",
+        "sourceId": source,
+        "namespace": name.split(".")[0],
+        "connectionKind": "external-mcp",
+        "description": name,
+        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+        "annotations": {"readOnlyHint": read_only},
+    }
+    discovered_tools = [
+        discovered("card.create", "card.create", "main_mcp", read_only=False),
+        discovered("graphiti.search_nodes", "search_nodes", "graphiti", read_only=True),
+    ]
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "cardRevisionId": "revision-builder",
+        "discoveredTools": discovered_tools,
+    })
+
+    assert resolved["presentedTools"] == ["card.create", "graphiti.search_nodes"]
+    assert resolved["nativeTools"] == ["memory"]
+    assert resolved["toolsets"] == ["file", "terminal"]
+    assert resolved["mcpConnectionIds"] == []
+    assert [(tool["canonicalName"], tool["hermesName"]) for tool in resolved["pluginTools"]] == [
+        ("card.create", "card__card_create"),
+    ]
+    assert resolved["externalMcpTools"] == [{
+        "canonicalName": "graphiti.search_nodes",
+        "connectionId": "graphiti",
+        "nativeName": "search_nodes",
+    }]
+    assert len(resolved["configurationFingerprint"]) == 64
+
+    with pytest.raises(card_domain.CardDomainError, match="card_revision_stale"):
+        card_domain.resolve_hermes_card_tools({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "builder",
+            "cardRevisionId": "stale",
+            "discoveredTools": discovered_tools,
+        })
+
+
+def test_individual_external_mcp_tool_grant_derives_its_backing_connection(
+    monkeypatch,
+):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["graphiti.search_nodes"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "cardRevisionId": "revision-builder",
+        "discoveredTools": [{
+            "name": "graphiti.search_nodes",
+            "nativeName": "search_nodes",
+            "kind": "tool",
+            "sourceId": "graphiti",
+            "namespace": "graphiti",
+            "connectionKind": "external-mcp",
+            "description": "Search Graphiti.",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": True},
+        }],
+    })
+
+    assert resolved["pluginTools"] == []
+    assert resolved["externalMcpTools"] == [{
+        "canonicalName": "graphiti.search_nodes",
+        "connectionId": "graphiti",
+        "nativeName": "search_nodes",
+    }]
+    assert resolved["presentedTools"] == ["graphiti.search_nodes"]
+    assert resolved["unavailableTools"] == []
+    assert resolved["unavailableToolReasons"] == {}
+
+
+def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_grant(
+    monkeypatch,
+):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(tools=[], mcpConnectionIds=["graphiti"])
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "cardRevisionId": "revision-builder",
+        "discoveredTools": [{
+            "name": "graphiti.search_nodes",
+            "nativeName": "search_nodes",
+            "kind": "tool",
+            "sourceId": "graphiti",
+            "namespace": "graphiti",
+            "connectionKind": "external-mcp",
+            "description": "Search Graphiti.",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": True},
+        }],
+    })
+
+    assert resolved["enabledTools"] == ["graphiti.search_nodes"]
+    assert resolved["presentedTools"] == ["graphiti.search_nodes"]
+    assert resolved["externalMcpTools"] == [{
+        "canonicalName": "graphiti.search_nodes",
+        "connectionId": "graphiti",
+        "nativeName": "search_nodes",
+    }]
 
 
 def test_valid_enabled_script_is_retained_but_cannot_replace_tools_without_native_owner(
@@ -569,7 +771,7 @@ def test_prepared_main_context_enters_the_same_idf_without_changing_the_mission(
     assert calls == []
 
 
-def test_main_context_preview_uses_saved_grants_without_starting_or_materializing_a_run(monkeypatch):
+def test_main_context_preview_uses_only_live_saved_grants_without_starting_a_run(monkeypatch):
     main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     main.update({"_cardRevisionId": "main-revision", "_cardRevision": 1, "_cardRevisionSha256": "main-sha"})
     main["runtimeOptions"]["tools"] = ["canvas.inspect"]
@@ -587,7 +789,8 @@ def test_main_context_preview_uses_saved_grants_without_starting_or_materializin
     result = card_domain.prepare_main_chat({**payload, "message": "source validity"})
     assert result["preparedContext"] == context
     assert calls == [("00000000-0000-0000-0000-000000000001", "deck-one", "main",
-                      "conversation-one", "source validity", ["canvas.inspect"])]
+                      "conversation-one", "source validity", [])]
+    assert result["sessionProfile"]["unavailableTools"] == ["canvas.inspect"]
     assert "idf" not in result and "runId" not in result
 
 
@@ -2310,7 +2513,8 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert prepared["message"] == "Help me prepare work for another agent."
     assert "idf" not in prepared
     assert prepared["sessionProfile"]["systemPrompt"] == main["prompt"]
-    assert prepared["sessionProfile"]["enabledTools"] == ["canvas.inspect"]
+    assert prepared["sessionProfile"]["enabledTools"] == []
+    assert prepared["sessionProfile"]["unavailableTools"] == ["canvas.inspect"]
     assert prepared["sessionProfile"]["runtime"] == {
         "kind": "hermes", "mode": "main", "profile": "default",
     }
@@ -2814,7 +3018,8 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
     assert plan_reads == []
     assert first.idf.stableSavedCardContext.instructions == builder["prompt"]
     assert first.idf.selectedToolsAndGrants.skills == ["agent-builder-inspection"]
-    assert first.idf.selectedToolsAndGrants.enabledTools == ["canvas.inspect"]
+    assert first.idf.selectedToolsAndGrants.enabledTools == []
+    assert first.idf.selectedToolsAndGrants.unavailableTools == ["canvas.inspect"]
     assert first.idf.dynamicContext.task == payload["assignment"]
     assert b"PLAN.md" not in first.idf_bytes
 

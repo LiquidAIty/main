@@ -5,6 +5,7 @@ import {
   loadSessionHistory,
   selectedConversationId,
   SessionStreamError,
+  subscribeSessionEvents,
   streamSession,
 } from './mainSessionClient';
 
@@ -235,11 +236,79 @@ describe('streamSession', () => {
   });
 });
 
+describe('subscribeSessionEvents', () => {
+  it('delivers only an exact native Gateway event and closes the one EventSource', () => {
+    const listeners = new Map<string, (event: Event) => void>();
+    const close = vi.fn();
+    const eventSource = {
+      addEventListener: vi.fn((name: string, listener: (event: Event) => void) => {
+        listeners.set(name, listener);
+      }),
+      removeEventListener: vi.fn((name: string) => listeners.delete(name)),
+      close,
+      onerror: null as null | (() => void),
+    };
+    const EventSourceMock = vi.fn(() => eventSource);
+    vi.stubGlobal('EventSource', EventSourceMock);
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const detach = subscribeSessionEvents({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+      runtimeSessionId: 'runtime-main',
+      nativeSessionId: 'native-main',
+      onEvent,
+      onError,
+    });
+
+    expect(EventSourceMock).toHaveBeenCalledWith(
+      '/api/main/session/events?projectId=project-1&deckId=deck_builder'
+        + '&conversationId=main&runtimeSessionId=runtime-main&nativeSessionId=native-main',
+      { withCredentials: true },
+    );
+    listeners.get('gateway')?.({
+      data: JSON.stringify({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+        event: {
+          type: 'message.complete', session_id: 'native-main', seq: 11,
+          payload: { text: 'Builder finished.' },
+        },
+      }),
+    } as MessageEvent<string>);
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(onError).not.toHaveBeenCalled();
+
+    listeners.get('gateway')?.({ data: JSON.stringify({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'other',
+      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      event: { type: 'message.complete', session_id: 'native-main', payload: { text: 'wrong' } },
+    }) } as MessageEvent<string>);
+    expect(onError).toHaveBeenCalledWith('main_native_event_identity_mismatch');
+    expect(onEvent).toHaveBeenCalledOnce();
+
+    listeners.get('gateway')?.({ data: JSON.stringify({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      cardId: 'card_main_chat', runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      event: { type: 'message.complete', session_id: 'native-main', payload: { text: 'unsequenced' } },
+    }) } as MessageEvent<string>);
+    expect(onError).toHaveBeenLastCalledWith('main_native_event_identity_mismatch');
+    expect(onEvent).toHaveBeenCalledOnce();
+
+    detach();
+    expect(close).toHaveBeenCalledOnce();
+    expect(eventSource.removeEventListener).toHaveBeenCalledWith('gateway', expect.any(Function));
+  });
+});
+
 describe('loadSessionHistory', () => {
   it('ignores persisted non-chat events instead of turning them into bubbles', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
         ok: true,
+        sessionId: 'native-main',
+        runtimeSessionId: 'runtime-main',
         messages: [
           { role: 'user', text: 'Exact user text' },
           { role: 'tool', text: 'tool event text' },
@@ -260,6 +329,8 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'conversation-history-roles',
     })).resolves.toEqual({
+      nativeSessionId: 'native-main',
+      runtimeSessionId: 'runtime-main',
       messages: [
         { role: 'user', text: 'Exact user text' },
         { role: 'assistant', text: 'Exact model text' },
@@ -270,14 +341,19 @@ describe('loadSessionHistory', () => {
 
   it('keeps a valid fresh conversation as an empty transcript', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
-      JSON.stringify({ ok: true, messages: [] }),
+      JSON.stringify({
+        ok: true, sessionId: 'native-main', runtimeSessionId: 'runtime-main', messages: [],
+      }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
 
     await expect(loadSessionHistory({
       projectId: 'project-1',
       conversationId: 'main',
-    })).resolves.toEqual({ messages: [], terminalEvents: [] });
+    })).resolves.toEqual({
+      nativeSessionId: 'native-main', runtimeSessionId: 'runtime-main',
+      messages: [], terminalEvents: [],
+    });
   });
 
   it('surfaces a persistence failure instead of substituting an empty transcript', async () => {

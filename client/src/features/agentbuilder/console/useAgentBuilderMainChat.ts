@@ -9,6 +9,7 @@ import {
   type MainDriverSource,
   type NativeSessionEvent,
   SessionStreamError,
+  subscribeSessionEvents,
   stopSession,
   streamSession,
 } from './mainSessionClient';
@@ -323,6 +324,12 @@ export default function useAgentBuilderMainChat({
     controller: AbortController;
     runId: string | null;
   } | null>(null);
+  const nativeEventsRef = useRef<{
+    key: string;
+    runtimeSessionId: string;
+    nativeSessionId: string;
+    close: () => void;
+  } | null>(null);
   const observedProjectionIdsRef = useRef<{ key: string; ids: Set<string> }>({
     key: conversationKey,
     ids: new Set(),
@@ -335,6 +342,50 @@ export default function useAgentBuilderMainChat({
   const nativeSessionPending = nativeSessionActive || nativeSessionConnecting;
   const sessionHistoryLoading = historyState.key === conversationKey && historyState.loading;
   const [mainDriverSource, setMainDriverSource] = useState<MainDriverSource | null>(null);
+
+  const subscribeToNativeSession = useCallback((runtimeSessionId: string, nativeSessionId: string) => {
+    if (!canvasProjectId || !runtimeSessionId || !nativeSessionId) return;
+    const existing = nativeEventsRef.current;
+    if (
+      existing?.key === conversationKey
+      && existing.runtimeSessionId === runtimeSessionId
+      && existing.nativeSessionId === nativeSessionId
+    ) return;
+    existing?.close();
+    const close = subscribeSessionEvents({
+      projectId: canvasProjectId,
+      deckId,
+      conversationId,
+      runtimeSessionId,
+      nativeSessionId,
+      onEvent: ({ event }) => {
+        if (event.type === 'message.complete') {
+          const status = String(event.payload?.status || 'complete');
+          const text = String(event.payload?.text || '');
+          if (status === 'error' || status === 'failed') {
+            setTechnical((current) => current.key === conversationKey
+              ? { ...current, error: String(event.payload?.error || text || 'main_native_turn_failed') }
+              : current);
+            return;
+          }
+          if (!text.trim()) return;
+          setTranscript((current) => current.key === conversationKey
+            ? { ...current, messages: [...current.messages, { role: 'assistant', text }] }
+            : current);
+        } else if (event.type === 'error') {
+          setTechnical((current) => current.key === conversationKey
+            ? { ...current, error: String(event.payload?.message || 'main_native_turn_failed') }
+            : current);
+        }
+      },
+      onError: (error) => {
+        setTechnical((current) => current.key === conversationKey
+          ? { ...current, error }
+          : current);
+      },
+    });
+    nativeEventsRef.current = { key: conversationKey, runtimeSessionId, nativeSessionId, close };
+  }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
   useEffect(() => {
     if (!canvasProjectId) {
@@ -362,6 +413,11 @@ export default function useAgentBuilderMainChat({
       priorStream.controller.abort();
       activeStreamRef.current = null;
     }
+    const priorNativeEvents = nativeEventsRef.current;
+    if (priorNativeEvents && priorNativeEvents.key !== conversationKey) {
+      priorNativeEvents.close();
+      nativeEventsRef.current = null;
+    }
     setTranscript({ key: conversationKey, messages: [] });
     setTechnical({ key: conversationKey, events: [], error: null });
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
@@ -386,6 +442,7 @@ export default function useAgentBuilderMainChat({
         }
         return loadSessionHistory({
           projectId,
+          deckId,
           conversationId,
           signal: controller.signal,
         });
@@ -393,6 +450,7 @@ export default function useAgentBuilderMainChat({
       .then((history) => {
         if (cancelled || !history) return;
         setTranscript({ key: conversationKey, messages: history.messages });
+        subscribeToNativeSession(history.runtimeSessionId, history.nativeSessionId);
         setTechnical({
           key: conversationKey,
           events: reconcileTerminalEvents(history.terminalEvents),
@@ -414,8 +472,12 @@ export default function useAgentBuilderMainChat({
     return () => {
       cancelled = true;
       controller.abort();
+      if (nativeEventsRef.current?.key === conversationKey) {
+        nativeEventsRef.current.close();
+        nativeEventsRef.current = null;
+      }
     };
-  }, [canvasProjectId, conversationId, conversationKey]);
+  }, [canvasProjectId, conversationId, conversationKey, deckId, subscribeToNativeSession]);
 
   const requestMainText = useCallback(
     async (text: string): Promise<string> => {
@@ -529,6 +591,25 @@ export default function useAgentBuilderMainChat({
                 ? { ...current, phase: 'active' }
                 : current);
             }
+            if (event.kind === 'session') {
+              subscribeToNativeSession(
+                String(event.runtimeSessionId || ''),
+                String(event.sessionId || ''),
+              );
+              const configuration = event.configuration && typeof event.configuration === 'object'
+                ? event.configuration as Record<string, unknown>
+                : {};
+              const unavailable = Array.isArray(configuration.unavailableTools)
+                ? configuration.unavailableTools.filter((name): name is string => (
+                    typeof name === 'string' && name.length > 0
+                  ))
+                : [];
+              if (unavailable.length > 0) {
+                setTechnical((current) => current.key === conversationKey
+                  ? { ...current, error: `card_tools_unavailable:${unavailable.join(',')}` }
+                  : current);
+              }
+            }
             if (runId) notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
               conversationId,
@@ -632,6 +713,7 @@ export default function useAgentBuilderMainChat({
       onCardGraphReferenceLoaded,
       onTurnFinished,
       onUserTurnStarted,
+      subscribeToNativeSession,
     ],
   );
 

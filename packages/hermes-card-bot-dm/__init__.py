@@ -1,4 +1,4 @@
-"""Thin, fail-closed middleware for Card-authorized native Hermes Bot DMs."""
+"""Thin, fail-closed middleware for saved-Card-scoped native Hermes Bot DMs."""
 
 from __future__ import annotations
 
@@ -101,11 +101,16 @@ def _post_once(host_url: str, envelope: dict[str, str]) -> tuple[int, dict[str, 
         return int(response.status), value
 
 
-def _managed_message_agent(args: Any, *, task_id: str) -> str:
+def _managed_message_agent(
+    args: Any,
+    *,
+    task_id: str,
+    next_call: Callable[[Any], Any],
+) -> Any:
     if os.getenv("CARD_BOT_DM_MANAGED") != "1":
         return _failure(
             "managed_mode_required",
-            "managed Bot DM routing is not enabled for this profile",
+            "managed Bot DM authorization is not enabled for this profile",
         )
     token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
     host_url = os.getenv("CARD_BOT_DM_HOST_URL", "").strip()
@@ -142,13 +147,21 @@ def _managed_message_agent(args: Any, *, task_id: str) -> str:
     try:
         status, response = _post_once(host_url, envelope)
     except Exception:
-        return _failure("managed_delivery_failed", "Managed Bot DM submission failed")
-    if status == 501 and response.get("error") == "hermes_bot_dm_native_completion_identity_unavailable":
-        return _failure(
-            "native_completion_identity_unavailable",
-            "Hermes Gateway accepted the Bot submission but exposes no exact completion identity",
-        )
-    return _failure("managed_delivery_failed", "Managed Bot DM host rejected the submission")
+        return _failure("saved_card_resolution_failed", "Saved Bot Card resolution failed")
+    target_profile = response.get("targetProfile")
+    if (
+        status != 200
+        or response.get("ok") is not True
+        or not isinstance(target_profile, str)
+        or not target_profile.strip()
+    ):
+        return _failure("saved_card_resolution_failed", "Saved Bot Card resolution failed")
+    # Hermes middleware's next_call is single-use and resumes the stock tool
+    # dispatch chain after this middleware. The host authenticates the source
+    # runtime and resolves the receiving Card's exact saved profile; stock
+    # message_agent remains the sole
+    # delivery, queueing, execution, acknowledgement, and notification owner.
+    return next_call({"target": target_profile.strip(), "message": message})
 
 
 def tool_execution(
@@ -159,10 +172,14 @@ def tool_execution(
     task_id: str = "",
     **_context: Any,
 ) -> Any:
-    """Forward unmanaged tools once; exclusively authorize managed message_agent."""
+    """Forward unmanaged tools once; validate managed message_agent once."""
     if tool_name != MESSAGE_TOOL or os.getenv("CARD_BOT_DM_MANAGED") != "1":
         return next_call(args)
-    return _managed_message_agent(args, task_id=str(task_id or ""))
+    return _managed_message_agent(
+        args,
+        task_id=str(task_id or ""),
+        next_call=next_call,
+    )
 
 
 def register(ctx: Any) -> None:

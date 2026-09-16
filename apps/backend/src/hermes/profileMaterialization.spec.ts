@@ -29,6 +29,8 @@ function nativeProfile(overrides: Record<string, unknown> = {}) {
     name: 'builder',
     model: { provider: 'openai-codex', default: 'gpt-5.6-sol' },
     skills: [{ name: 'hermes-agent', enabled: true }],
+    toolsets: [],
+    mcp_servers: [],
     subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
     background_review: { enabled: false, provider: 'openai', model: 'gpt-5.6-sol' },
     ...overrides,
@@ -144,5 +146,124 @@ describe('materializeHermesProfileSelections', () => {
       vi.fn(),
       vi.fn(),
     )).rejects.toThrow('hermes_native_skill_missing:builder:grounded-citations');
+  });
+
+  it('pins saved native toolsets plus the Card plugin toolset and reads them back', async () => {
+    const available = [
+      { name: 'memory', enabled: true },
+      { name: 'file', enabled: true },
+      { name: 'terminal', enabled: true },
+      { name: 'card-tools', enabled: false },
+    ];
+    const readNative = vi.fn()
+      .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
+      .mockResolvedValueOnce(nativeProfile({
+        toolsets: available.map((toolset) => ({
+          ...toolset,
+          enabled: ['card-tools', 'file', 'memory'].includes(toolset.name),
+        })),
+      }));
+    const configureToolsets = vi.fn(async () => ({ ok: true, applied: { toolsets: true } }));
+
+    await materializeHermesProfileSelections(
+      selection({
+        nativeTools: ['memory'],
+        toolsets: ['file'],
+        requiredToolsets: ['card-tools'],
+      }),
+      readNative,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureToolsets,
+    );
+
+    expect(configureToolsets).toHaveBeenCalledExactlyOnceWith(
+      'builder',
+      ['card-tools', 'file', 'memory'],
+    );
+    expect(readNative).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails before inference when a saved native toolset is not installed', async () => {
+    await expect(materializeHermesProfileSelections(
+      selection({ toolsets: ['missing-toolset'] }),
+      vi.fn(async () => nativeProfile({ toolsets: [{ name: 'file', enabled: true }] })),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )).rejects.toThrow('hermes_native_toolset_missing:builder:missing-toolset');
+  });
+
+  it('enables exactly the saved MCP servers through the public profile contract', async () => {
+    const readNative = vi.fn()
+      .mockResolvedValueOnce(nativeProfile({
+        mcp_servers: [
+          { name: 'graphiti', enabled: false },
+          { name: 'cbm', enabled: true },
+        ],
+      }))
+      .mockResolvedValueOnce(nativeProfile({
+        mcp_servers: [
+          { name: 'graphiti', enabled: true },
+          { name: 'cbm', enabled: false },
+        ],
+      }));
+    const configureMcpServers = vi.fn(async () => ({
+      ok: true,
+      applied: { mcp_servers: true },
+    }));
+
+    const result = await materializeHermesProfileSelections(
+      selection({ mcpConnectionIds: ['graphiti'] }),
+      readNative,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureMcpServers,
+    );
+
+    expect(configureMcpServers).toHaveBeenCalledExactlyOnceWith('builder', ['graphiti']);
+    expect(readNative).toHaveBeenCalledTimes(2);
+    expect(result.unavailableMcpServerReasons).toEqual({});
+  });
+
+  it('reports a required MCP server that stock Hermes could not find without broadening the profile', async () => {
+    const readNative = vi.fn()
+      .mockResolvedValueOnce(nativeProfile({ mcp_servers: [] }))
+      .mockResolvedValueOnce(nativeProfile({ mcp_servers: [] }));
+    const configureMcpServers = vi.fn(async () => ({
+      ok: true,
+      applied: { mcp_servers: true },
+    }));
+
+    const result = await materializeHermesProfileSelections(
+      selection({ mcpConnectionIds: ['graphiti'] }),
+      readNative,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureMcpServers,
+    );
+
+    expect(result.unavailableMcpServerReasons).toEqual({
+      graphiti: 'mcp_server_not_configured',
+    });
+  });
+
+  it('fails closed when stock Hermes cannot represent an empty toolset selection', async () => {
+    await expect(materializeHermesProfileSelections(
+      selection(),
+      vi.fn(async () => nativeProfile({
+        toolsets: [{ name: 'web', enabled: true }],
+      })),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+    )).rejects.toThrow('hermes_native_empty_toolset_filter_unavailable:builder');
   });
 });

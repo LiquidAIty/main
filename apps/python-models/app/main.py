@@ -14,7 +14,8 @@ from app.python_models.alpaca_market_data import (
 from app.python_models.autogen_orchestrator import dispatch_stored_runtime
 from app.python_models.card_domain import (
     CardDomainError,
-    authorize_hermes_bot_dm_card,
+    resolve_hermes_bot_dm_card,
+    resolve_hermes_card_tools,
     begin_main_chat_run,
     begin_run,
     describe_magentic_agents,
@@ -251,8 +252,8 @@ def card_script_validate(payload: dict[str, Any]):
             selected_tools=list(dict.fromkeys(item.strip() for item in selected_tools)),
             default_agent_tools=list(dict.fromkeys(item.strip() for item in default_agent_tools)),
             palette_fingerprint=str(payload.get("paletteFingerprint") or ""),
-            # The removed ACP callback/plugin is not a native executor. Keep
-            # activation honest until a separate Hermes-native owner exists.
+            # Activation stays disabled until its approved Hermes-native
+            # Script executor is connected.
             native_available=False,
         )
     except IddValidationError as err:
@@ -290,15 +291,15 @@ def card_script_header(payload: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/domain/hermes-bot-dm/authorize")
-def domain_hermes_bot_dm_authorize_card(payload: dict[str, Any]):
+@app.post("/domain/hermes-bot-dm/resolve")
+def domain_hermes_bot_dm_resolve_card(payload: dict[str, Any]):
     expected_fields = {"projectId", "deckId", "sourceCardId", "targetProfile"}
     try:
         if set(payload) != expected_fields:
-            raise CardDomainError("hermes_bot_dm_authorization_payload_invalid")
+            raise CardDomainError("hermes_bot_dm_resolution_payload_invalid")
         return {
             "ok": True,
-            **authorize_hermes_bot_dm_card(
+            **resolve_hermes_bot_dm_card(
                 payload.get("projectId"),
                 payload.get("deckId"),
                 payload.get("sourceCardId"),
@@ -308,8 +309,40 @@ def domain_hermes_bot_dm_authorize_card(payload: dict[str, Any]):
     except CardDomainError as err:
         message = str(err)
         status = (
-            404 if message in {"project_not_found", "deck_not_found"}
-            else 403 if message.startswith("hermes_bot_dm_card_")
+            404 if message in {
+                "project_not_found",
+                "deck_not_found",
+                "hermes_bot_dm_source_card_not_found",
+                "hermes_bot_dm_profile_not_found",
+            }
+            else 409 if message in {
+                "hermes_bot_dm_profile_not_unique",
+                "hermes_bot_dm_card_revision_missing",
+            }
+            else 400
+        )
+        raise HTTPException(status_code=status, detail=message) from err
+
+
+@app.post("/domain/hermes-card-tools/resolve")
+def domain_hermes_card_tools_resolve(payload: dict[str, Any]):
+    expected_fields = {
+        "projectId", "deckId", "cardId", "cardRevisionId", "discoveredTools",
+        "discoveredToolCatalogState",
+    }
+    try:
+        if set(payload) != expected_fields:
+            raise CardDomainError("hermes_card_tools_resolution_payload_invalid")
+        return resolve_hermes_card_tools(payload)
+    except CardDomainError as err:
+        message = str(err)
+        status = (
+            404 if message in {"project_not_found", "deck_not_found", "card_not_found"}
+            else 409 if message in {
+                "card_disabled",
+                "hermes_card_tools_card_revision_stale",
+                "hermes_card_tools_runtime_required",
+            } or message.startswith("hermes_card_tool_")
             else 400
         )
         raise HTTPException(status_code=status, detail=message) from err

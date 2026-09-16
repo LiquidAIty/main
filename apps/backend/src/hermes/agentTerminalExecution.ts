@@ -242,6 +242,11 @@ export class AgentTerminalExecution {
     return this.staged.get(terminalSessionId)?.runId || null;
   }
 
+  activeContext(terminalSessionId: string): { runId: string; conversationId: string } | null {
+    const staged = this.staged.get(terminalSessionId);
+    return staged ? { runId: staged.runId, conversationId: staged.conversationId } : null;
+  }
+
   requestCancellation(terminalSessionId: string, runId: string): void {
     const staged = this.staged.get(terminalSessionId);
     if (staged?.runId !== runId) throw new Error('agent_terminal_run_not_active');

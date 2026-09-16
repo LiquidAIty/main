@@ -114,11 +114,14 @@ def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -
     }
     materialized = _idf(capabilities={
         "presentedTools": ["codegraph.search_graph"],
+        "unavailableTools": ["graphiti.search_nodes"],
         "scriptPresentation": presentation,
     })
     loaded = load_idf_bytes(materialized.idf_bytes)
     assert loaded.idf.selectedToolsAndGrants.scriptPresentation == presentation
+    assert loaded.idf.selectedToolsAndGrants.unavailableTools == ["graphiti.search_nodes"]
     assert runtime_projection(loaded)["scriptPresentation"] == presentation
+    assert runtime_projection(loaded)["unavailableTools"] == ["graphiti.search_nodes"]
 
 
 def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:

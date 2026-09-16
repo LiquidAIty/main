@@ -35,6 +35,8 @@ function card(id: string, profile: string): AgentCardInstance {
       modelKey: 'gpt-5.6-sol',
       providerModelId: 'gpt-5.6-sol',
       nativeTools: ['memory'],
+      toolsets: ['memory'],
+      tools: ['canvas.inspect'],
     },
   };
 }
@@ -189,8 +191,15 @@ class FakeGatewayClient {
       return { status: 'streaming' } as T;
     }
     if (method === 'plugins.list') {
-      return { plugins: [{ name: 'card-bot-dm', version: '0.1.0', enabled: true }] } as T;
+      return { plugins: [
+        { name: 'card-bot-dm', version: '0.1.0', enabled: true },
+        { name: 'card-tools', version: '0.1.0', enabled: true },
+      ] } as T;
     }
+    if (method === 'tools.show') return { sections: [
+      { name: 'memory', tools: [{ name: 'memory', description: 'Memory' }] },
+      { name: 'card-tools', tools: [{ name: 'card__canvas_inspect', description: 'Inspect' }] },
+    ], total: 2 } as T;
     if (method === 'session.interrupt') return { ok: true } as T;
     throw new Error(`unexpected fake gateway request:${method}`);
   }
@@ -287,10 +296,41 @@ function fixture() {
     },
   }));
   const onExit = vi.fn(async () => undefined);
-  const materialize = vi.fn(async () => ({ native: {} }));
+  const materialize = vi.fn(async () => ({ native: {}, unavailableNativeToolReasons: {} }));
   const materializeBotDmPlugin = vi.fn(async () => ({
     key: 'card-bot-dm', sourceDir: 'source', destinationDir: 'destination', files: [],
   }));
+  const resolveCardTools = vi.fn(async (
+    owner: AgentTerminalOwner,
+    selected: AgentCardInstance,
+  ) => ({
+    projectId: owner.projectId,
+    deckId: owner.deckId,
+    cardId: owner.cardId,
+    cardRevisionId: selected._cardRevisionId || '',
+    cardRevisionSha256: selected._cardRevisionSha256 || '',
+    runtime: selected.runtime.kind === 'hermes' ? selected.runtime : {
+      kind: 'hermes' as const, mode: 'delegate' as const, profile: '',
+    },
+    enabledTools: ['canvas.inspect'],
+    unavailableTools: [],
+    unavailableToolReasons: {},
+    presentedTools: ['canvas.inspect'],
+    nativeTools: ['memory'],
+    toolsets: ['memory'],
+    mcpConnectionIds: [],
+    pluginTools: [{
+      canonicalName: 'canvas.inspect',
+      hermesName: 'card__canvas_inspect',
+      description: 'Inspect the saved canvas.',
+      inputSchema: { type: 'object', properties: {} },
+    }],
+    externalMcpTools: [],
+    configurationFingerprint: createHash('sha256')
+      .update(String(selected._cardRevisionId || ''))
+      .digest('hex'),
+  }));
+  const materializeCardToolsPlugin = vi.fn(async () => undefined);
   const manager = new AgentTerminalManager(
     spawnPty,
     prepare,
@@ -299,12 +339,15 @@ function fixture() {
     createGatewayClient,
     materialize as never,
     materializeBotDmPlugin as never,
+    resolveCardTools as never,
+    materializeCardToolsPlugin as never,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
   }));
   return {
-    manager, spawnPty, spawnGateway, prepare, materialize, materializeBotDmPlugin, cards, deck, owners,
+    manager, spawnPty, spawnGateway, prepare, materialize, materializeBotDmPlugin,
+    resolveCardTools, materializeCardToolsPlugin, cards, deck, owners,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -458,22 +501,33 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
   });
 
-  it('submits one native Bot message without owning its completion', async () => {
+  it('projects exact same-session Gateway events without submitting or owning a turn', async () => {
     const f = fixture();
     const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
     const handlersBefore = f.clients[0].handlers.size;
-    await f.manager.submitBotMessage(f.owners[0], state.sessionId, 'Bot delivery');
-    const submits = f.clients[0].requests.filter((request) => request.method === 'prompt.submit');
-    expect(submits).toEqual([{
-      method: 'prompt.submit',
-      params: {
-        session_id: state.nativeSessionId,
-        text: 'Bot delivery',
-        profile: state.profile,
-        queued: true,
-      },
-    }]);
+    const listener = vi.fn();
+    const detach = f.manager.subscribeGatewayEvents(f.owners[0], state.sessionId, listener);
+    f.clients[0].emitEvent({
+      type: 'message.complete', session_id: 'different-session', seq: 4,
+      payload: { text: 'wrong session' },
+    });
+    f.clients[0].emitEvent({
+      type: 'message.complete', session_id: state.nativeSessionId, seq: 5,
+      payload: { text: 'native completion' },
+    });
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({
+      type: 'message.complete', session_id: state.nativeSessionId, seq: 5,
+      payload: { text: 'native completion' },
+    });
+    expect(f.clients[0].requests.filter((request) => request.method === 'prompt.submit')).toEqual([]);
     expect(f.clients[0].handlers.size).toBe(handlersBefore);
+    detach();
+    f.clients[0].emitEvent({
+      type: 'message.complete', session_id: state.nativeSessionId, seq: 6,
+      payload: { text: 'after detach' },
+    });
+    expect(listener).toHaveBeenCalledOnce();
     expect(f.ptys[0].resize).not.toHaveBeenCalled();
   });
 
@@ -484,10 +538,21 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       'C:\\profiles\\signal-analyst',
       { env: expect.objectContaining({ SESSION: expect.any(String) }) },
     );
+    expect(f.materializeCardToolsPlugin).toHaveBeenCalledWith(
+      'C:\\profiles\\signal-analyst',
+      expect.objectContaining({
+        cardId: 'signal',
+        presentedTools: ['canvas.inspect'],
+        pluginTools: [expect.objectContaining({ hermesName: 'card__canvas_inspect' })],
+      }),
+      { env: expect.objectContaining({ SESSION: expect.any(String) }) },
+    );
     expect(f.spawnGateway.mock.calls[0][2].env).toEqual(expect.objectContaining({
       CARD_BOT_DM_MANAGED: '1',
       CARD_BOT_DM_HOST_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/hermes-bot-dm$/),
       HERMES_DASHBOARD_SESSION_TOKEN: expect.any(String),
+      CARD_TOOLS_MANAGED: '1',
+      CARD_TOOLS_HOST_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/hermes-card-tools$/),
     }));
     const creates = f.clients[0].requests.filter((request) => request.method === 'session.create');
     expect(creates).toHaveLength(1);
@@ -497,31 +562,15 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
   });
 
-  it('adopts exactly one legacy Card runtime session and rejects legacy collisions', async () => {
-    const adopted = fixture();
-    adopted.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-legacy');
-    const state = await adopted.manager.open(
-      adopted.owners[0], adopted.cards[0], adopted.deck, 80, 24,
-    );
-    expect(state.storedSessionId).toBe('stored-legacy');
-    expect(adopted.clients[0].requests.map((request) => request.method)).not.toContain('session.create');
-    expect(adopted.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe('stored-legacy');
+  it('ignores obsolete Card runtime sessions and owns only canonical Bot Chat', async () => {
+    const f = fixture();
+    f.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-old');
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
 
-    const collision = fixture();
-    collision.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ one', 'stored-one');
-    collision.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ two', 'stored-two');
-    await expect(collision.manager.open(
-      collision.owners[0], collision.cards[0], collision.deck, 80, 24,
-    )).rejects.toThrow('agent_terminal_legacy_session_ambiguous');
-    expect(collision.clients[0].requests.map((request) => request.method)).not.toContain('session.create');
-
-    const competing = fixture();
-    competing.durableByTitle.set('signal-analyst\u0000Bot Chat', 'stored-canonical');
-    competing.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-legacy');
-    await expect(competing.manager.open(
-      competing.owners[0], competing.cards[0], competing.deck, 80, 24,
-    )).rejects.toThrow('agent_terminal_bot_chat_legacy_collision');
-    expect(competing.clients[0].requests.map((request) => request.method)).not.toContain('session.resume');
+    expect(state.storedSessionId).not.toBe('stored-old');
+    expect(f.clients[0].requests.filter((request) => request.method === 'session.create')).toHaveLength(1);
+    expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
+    expect(f.durableByTitle.get('signal-analyst\u0000Card runtime: signal @ old')).toBe('stored-old');
   });
 
   it('authenticates one process-bound signed Bot-DM request and rejects replay', async () => {
@@ -548,6 +597,53 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       .rejects.toThrow('hermes_bot_dm_authentication_failed');
     await expect(f.manager.authenticateBotDmRequest(keyId, payload, '0'.repeat(64)))
       .rejects.toThrow('hermes_bot_dm_authentication_failed');
+  });
+
+  it('derives one registered Card tool from the signed live runtime and rejects replay', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const env = f.spawnGateway.mock.calls[0][2].env as Record<string, string>;
+    const token = env.HERMES_DASHBOARD_SESSION_TOKEN;
+    const payload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'e'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'card__canvas_inspect',
+      arguments: { depth: 1 },
+    });
+    const keyId = createHash('sha256').update(token).digest('hex');
+    const signature = createHmac('sha256', token).update(payload).digest('hex');
+
+    await expect(f.manager.authenticateCardToolRequest(keyId, payload, signature)).resolves.toEqual({
+      owner: f.owners[0],
+      state,
+      canonicalToolName: 'canvas.inspect',
+      cardTools: expect.objectContaining({
+        cardRevisionId: 'revision-signal',
+        runtimeMode: 'delegate',
+      }),
+      request: expect.objectContaining({
+        tool: 'card__canvas_inspect',
+        arguments: { depth: 1 },
+      }),
+    });
+    await expect(f.manager.authenticateCardToolRequest(keyId, payload, signature))
+      .rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    const unknownPayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'f'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'card__not_registered',
+      arguments: {},
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      unknownPayload,
+      createHmac('sha256', token).update(unknownPayload).digest('hex'),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed');
   });
 
   it('accepts a bounded manager-observed prior durable session after compression only', async () => {

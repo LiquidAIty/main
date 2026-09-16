@@ -26,15 +26,24 @@ import {
   materializeHermesBotDmPlugin,
   requireLoadedHermesBotDmPlugin,
 } from './botDmPlugin';
+import {
+  HERMES_CARD_TOOLS_TOOLSET,
+  materializeHermesExternalMcpTools,
+  materializeHermesCardToolsPlugin,
+  requireHermesCardToolsReadback,
+  requireLoadedHermesCardToolsPlugin,
+  resolveHermesCardTools,
+  type HermesCardTools,
+} from './cardToolsPlugin';
 
 const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
 const BOT_CHAT_TITLE = 'Bot Chat';
-const BOT_CHAT_ENUMERATION_LIMIT = 201;
 const BOT_DM_NONCE_LIMIT = 512;
 const BOT_DM_MAX_FUTURE_SECONDS = 10 * 60;
 const BOT_DM_PRIOR_SESSION_LIMIT = 8;
+const CARD_TOOL_NONCE_LIMIT = 512;
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
 export type AgentTerminalState = {
@@ -50,6 +59,7 @@ export type AgentTerminalState = {
   nativeSessionId: string;
   storedSessionId: string;
   hermesHome: string;
+  unavailableToolReasons: Record<string, string>;
   status: 'running' | 'exited' | 'failed';
   cols: number;
   rows: number;
@@ -61,6 +71,7 @@ export type AgentTerminalState = {
 export type AgentTerminalGatewayEvent = {
   type: string;
   session_id?: string;
+  seq?: number;
   payload?: Record<string, unknown>;
 };
 
@@ -74,6 +85,25 @@ export type AuthenticatedBotDmRequest = {
     sourceStoredSessionId: string;
     target: string;
     message: string;
+  };
+};
+
+export type AuthenticatedCardToolRequest = {
+  owner: AgentTerminalOwner;
+  state: AgentTerminalState;
+  canonicalToolName: string;
+  cardTools: {
+    cardRevisionId: string;
+    configurationFingerprint: string;
+    runtimeMode: 'main' | 'delegate' | 'kanban';
+  };
+  request: {
+    version: 1;
+    expiresAt: number;
+    nonce: string;
+    sourceStoredSessionId: string;
+    tool: string;
+    arguments: Record<string, unknown>;
   };
 };
 
@@ -126,12 +156,15 @@ type Session = {
   botDmKeyId: string;
   botDmNonces: Map<string, number>;
   botDmPriorStoredSessionIds: Map<string, number>;
+  cardToolNonces: Map<string, number>;
+  cardTools: HermesCardTools;
   launch: AgentTerminalLaunch;
   pty: IPty | null;
   output: Output[];
   outputBytes: number;
   sequence: number;
   listeners: Set<Listener>;
+  gatewayEventListeners: Set<(event: AgentTerminalGatewayEvent) => void>;
   stopping: boolean;
   turnTail: Promise<void>;
 };
@@ -139,6 +172,7 @@ type Session = {
 type PendingStart = {
   owner: AgentTerminalOwner;
   fingerprint: string;
+  cardToolsFingerprint: string;
   promise: Promise<AgentTerminalState>;
 };
 
@@ -267,6 +301,8 @@ function savedProfileSelection(
     providerModelId: providerSelection.model,
     openaiRuntime: providerSelection.openaiRuntime,
     skills: list(options?.skills),
+    nativeTools: list(options?.nativeTools),
+    toolsets: list(options?.toolsets),
     ...(subagentModel ? { subagentModel } : {}),
   };
 }
@@ -397,10 +433,6 @@ function gatewayReadyPort(gateway: ChildProcess, timeoutMs = GATEWAY_READY_TIMEO
   });
 }
 
-function legacySessionTitlePrefix(card: AgentCardInstance): string {
-  return `Card runtime: ${card.id} @ `;
-}
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -428,6 +460,14 @@ function botDmHostUrl(env: NodeJS.ProcessEnv = process.env): string {
     throw new Error('hermes_bot_dm_backend_port_invalid');
   }
   return `http://127.0.0.1:${port}/api/hermes-bot-dm`;
+}
+
+function cardToolsHostUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const port = Number(env.PORT || 4000);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('hermes_card_tools_backend_port_invalid');
+  }
+  return `http://127.0.0.1:${port}/api/hermes-card-tools`;
 }
 
 function equalHex(left: string, right: string): boolean {
@@ -468,6 +508,9 @@ export class AgentTerminalManager {
     private readonly createGatewayClient: GatewayClientFactory = createNativeGatewayClient,
     private readonly materializeProfile: typeof materializeHermesProfileSelections = materializeHermesProfileSelections,
     private readonly materializeBotDmPlugin: typeof materializeHermesBotDmPlugin = materializeHermesBotDmPlugin,
+    private readonly resolveCardTools: typeof resolveHermesCardTools = resolveHermesCardTools,
+    private readonly materializeCardToolsPlugin: typeof materializeHermesCardToolsPlugin = materializeHermesCardToolsPlugin,
+    private readonly materializeExternalMcpTools: typeof materializeHermesExternalMcpTools = materializeHermesExternalMcpTools,
   ) {}
 
   async open(
@@ -485,6 +528,7 @@ export class AgentTerminalManager {
       profile,
       options.workingDirectory,
     );
+    const cardTools = await this.resolveCardTools(owner, card);
     const fingerprint = agentTerminalFingerprint(owner, card, deck, workingDirectory);
     const attachTui = options.attachTui !== false;
     for (const session of this.sessions.values()) {
@@ -494,6 +538,9 @@ export class AgentTerminalManager {
       if (session.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
       }
+      if (session.cardTools.configurationFingerprint !== cardTools.configurationFingerprint) {
+        throw new Error('agent_terminal_tool_configuration_changed_stop_required');
+      }
       return attachTui ? this.attachTui(session, cols, rows) : { ...session.state };
     }
     const pending = this.pendingStarts.get(profile.toLowerCase());
@@ -501,6 +548,9 @@ export class AgentTerminalManager {
       if (!sameOwner(pending.owner, owner)) throw new Error('agent_terminal_profile_in_use');
       if (pending.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
+      }
+      if (pending.cardToolsFingerprint !== cardTools.configurationFingerprint) {
+        throw new Error('agent_terminal_tool_configuration_changed_stop_required');
       }
       const state = await pending.promise;
       return attachTui
@@ -512,8 +562,14 @@ export class AgentTerminalManager {
         this.sessions.delete(id);
       }
     }
-    const promise = this.start(owner, card, deck, cols, rows, fingerprint, workingDirectory);
-    this.pendingStarts.set(profile.toLowerCase(), { owner: { ...owner }, fingerprint, promise });
+    const promise = this.start(
+      owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
+    );
+    this.pendingStarts.set(profile.toLowerCase(), {
+      owner: { ...owner }, fingerprint,
+      cardToolsFingerprint: cardTools.configurationFingerprint,
+      promise,
+    });
     try {
       const state = await promise;
       return attachTui
@@ -578,22 +634,6 @@ export class AgentTerminalManager {
       limit: 200,
     }));
     if (exact.length > 1) throw new Error('agent_terminal_bot_chat_ambiguous');
-    const all = sessionRows(await request('session.list', {
-      include_hidden: true,
-      limit: BOT_CHAT_ENUMERATION_LIMIT,
-    }));
-    if (all.length >= BOT_CHAT_ENUMERATION_LIMIT) {
-      throw new Error('agent_terminal_session_enumeration_truncated');
-    }
-    const legacyPrefix = legacySessionTitlePrefix(card);
-    const legacy = all.filter((row) => (
-      String(row.title || '').startsWith(legacyPrefix)
-      || String(row.root_title || '').startsWith(legacyPrefix)
-    ));
-    if (exact.length === 1 && legacy.length > 0) {
-      throw new Error('agent_terminal_bot_chat_legacy_collision');
-    }
-
     let native: { sessionId: string; storedSessionId: string };
     if (exact.length === 1) {
       const stored = storedSessionId(exact[0]);
@@ -606,35 +646,22 @@ export class AgentTerminalManager {
         'agent_terminal_session_resume_invalid',
       );
     } else {
-      if (legacy.length > 1) throw new Error('agent_terminal_legacy_session_ambiguous');
-      if (legacy.length === 1) {
-        const stored = storedSessionId(legacy[0]);
-        if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
-        const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
-        native = requireNativeSession(
-          resumed && typeof resumed === 'object'
-            ? { ...resumed, stored_session_id: stored }
-            : resumed,
-          'agent_terminal_session_resume_invalid',
-        );
-      } else {
-        const createParams: Record<string, unknown> = {
-          title: BOT_CHAT_TITLE,
-          cwd: launch.cwd,
-          cols,
-          model: launch.providerSelection.model,
-          provider: launch.providerSelection.provider,
-          follow_profile_config: true,
-          close_on_disconnect: false,
-          hidden: true,
-        };
-        const reasoning = (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort;
-        if (reasoning) createParams.reasoning_effort = String(reasoning);
-        native = requireNativeSession(
-          await request('session.create', createParams),
-          'agent_terminal_session_create_invalid',
-        );
-      }
+      const createParams: Record<string, unknown> = {
+        title: BOT_CHAT_TITLE,
+        cwd: launch.cwd,
+        cols,
+        model: launch.providerSelection.model,
+        provider: launch.providerSelection.provider,
+        follow_profile_config: true,
+        close_on_disconnect: false,
+        hidden: true,
+      };
+      const reasoning = (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort;
+      if (reasoning) createParams.reasoning_effort = String(reasoning);
+      native = requireNativeSession(
+        await request('session.create', createParams),
+        'agent_terminal_session_create_invalid',
+      );
       const titled = record(await request('session.title', {
         session_id: native.sessionId,
         title: BOT_CHAT_TITLE,
@@ -662,10 +689,12 @@ export class AgentTerminalManager {
     rows: number,
     fingerprint: string,
     workingDirectory: string,
+    cardTools: HermesCardTools,
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
     await this.materializeBotDmPlugin(launch.profileHome, { env: launch.env });
+    await this.materializeCardToolsPlugin(launch.profileHome, cardTools, { env: launch.env });
     const gatewayToken = randomBytes(32).toString('hex');
     const botDmKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
     const gatewayEnv = {
@@ -673,6 +702,8 @@ export class AgentTerminalManager {
       HERMES_DASHBOARD_SESSION_TOKEN: gatewayToken,
       CARD_BOT_DM_MANAGED: '1',
       CARD_BOT_DM_HOST_URL: botDmHostUrl(),
+      CARD_TOOLS_MANAGED: '1',
+      CARD_TOOLS_HOST_URL: cardToolsHostUrl(),
     };
     const gateway = this.spawnGateway(launch.file, launch.gatewayArgs, {
       cwd: launch.cwd,
@@ -689,8 +720,17 @@ export class AgentTerminalManager {
       const request = <T>(method: string, params: Record<string, unknown>) => (
         client!.request<T>(method, { ...params, profile: launch.profile })
       );
-      await this.materializeProfile(
-        launch.profileSelection,
+      const externalMcpConnectionIds = [...new Set(
+        cardTools.externalMcpTools.map((tool) => tool.connectionId),
+      )];
+      const profileMaterialization = await this.materializeProfile(
+        {
+          ...launch.profileSelection,
+          nativeTools: cardTools.nativeTools,
+          toolsets: cardTools.toolsets,
+          requiredToolsets: cardTools.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
+          mcpConnectionIds: externalMcpConnectionIds,
+        },
         (profile) => request('profiles.describe', { name: profile }),
         configureHermesNativeSubagentModel,
         (profile, selection) => request('profiles.configure', {
@@ -703,10 +743,31 @@ export class AgentTerminalManager {
           name: profile,
           disabled_skills: disabledSkills,
         }),
+        (profile, enabledToolsets) => request('profiles.configure', {
+          name: profile,
+          enabled_toolsets: enabledToolsets,
+        }),
+        (profile, enabledMcpServers) => request('profiles.configure', {
+          name: profile,
+          enabled_mcp_servers: enabledMcpServers,
+        }),
+      );
+      const unavailableExternalMcpToolReasons = await this.materializeExternalMcpTools(
+        request,
+        cardTools,
+        profileMaterialization.unavailableMcpServerReasons,
       );
       await this.configureNativeBotProfile(request, launch, card);
       const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
-      requireLoadedHermesBotDmPlugin(await request('plugins.list', {}));
+      const plugins = await request('plugins.list', {});
+      requireLoadedHermesBotDmPlugin(plugins);
+      requireLoadedHermesCardToolsPlugin(plugins);
+      const unavailableToolReasons = requireHermesCardToolsReadback(
+        await request('tools.show', { session_id: native.sessionId }),
+        cardTools,
+        profileMaterialization.unavailableNativeToolReasons,
+        unavailableExternalMcpToolReasons,
+      );
 
       const session: Session = {
         owner: { ...owner },
@@ -719,6 +780,8 @@ export class AgentTerminalManager {
         botDmKeyId,
         botDmNonces: new Map(),
         botDmPriorStoredSessionIds: new Map(),
+        cardToolNonces: new Map(),
+        cardTools,
         launch,
         pty: null,
         state: {
@@ -732,6 +795,7 @@ export class AgentTerminalManager {
           nativeSessionId: native.sessionId,
           storedSessionId: native.storedSessionId,
           hermesHome: launch.profileHome,
+          unavailableToolReasons,
           status: 'running',
           cols,
           rows,
@@ -740,13 +804,19 @@ export class AgentTerminalManager {
         outputBytes: 0,
         sequence: 0,
         listeners: new Set(),
+        gatewayEventListeners: new Set(),
         stopping: false,
         turnTail: Promise.resolve(),
       };
       session.detachGatewayEvents = client.onEvent((event) => {
-        if (event.session_id !== session.state.nativeSessionId || event.type !== 'session.info') return;
-        const stored = String(event.payload?.stored_session_id || '').trim();
-        if (stored) this.recordBotDmStoredSessionId(session, stored);
+        if (event.session_id !== session.state.nativeSessionId) return;
+        if (event.type === 'session.info') {
+          const stored = String(event.payload?.stored_session_id || '').trim();
+          if (stored) this.recordBotDmStoredSessionId(session, stored);
+        }
+        for (const listener of session.gatewayEventListeners) {
+          try { listener(event); } catch {}
+        }
       });
       this.sessions.set(sessionId, session);
       gateway.once('exit', (exitCode) => this.onProcessExit(session, 'gateway', exitCode));
@@ -842,8 +912,10 @@ export class AgentTerminalManager {
     session.state.exitCode = exitCode ?? undefined;
     if (!session.stopping) session.state.error = `agent_terminal_${source}_exited:${exitCode ?? 'null'}`;
     session.detachGatewayEvents();
+    session.gatewayEventListeners.clear();
     session.botDmNonces.clear();
     session.botDmPriorStoredSessionIds.clear();
+    session.cardToolNonces.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
     session.pty = null;
@@ -1015,6 +1087,104 @@ export class AgentTerminalManager {
     };
   }
 
+  async authenticateCardToolRequest(
+    keyId: string,
+    payload: string,
+    signature: string,
+  ): Promise<AuthenticatedCardToolRequest> {
+    if (
+      Buffer.byteLength(keyId) > 256
+      || Buffer.byteLength(signature) > 256
+      || Buffer.byteLength(payload) > 512 * 1024
+    ) throw new Error('hermes_card_tool_authentication_failed');
+    const candidates = [...this.sessions.values()].filter((session) => (
+      session.state.status === 'running' && equalHex(session.botDmKeyId, keyId)
+    ));
+    if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
+    const session = candidates[0];
+    const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');
+    if (!equalHex(expected, signature)) throw new Error('hermes_card_tool_authentication_failed');
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      throw new Error('hermes_card_tool_authentication_failed');
+    }
+    const value = record(parsed);
+    const expectedKeys = [
+      'arguments', 'expiresAt', 'nonce', 'sourceStoredSessionId', 'tool', 'version',
+    ];
+    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
+      throw new Error('hermes_card_tool_authentication_failed');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = value.expiresAt;
+    const nonce = boundedString(value.nonce, 128);
+    const sourceStoredSessionId = boundedString(value.sourceStoredSessionId, 512);
+    const tool = boundedString(value.tool, 128);
+    const args = value.arguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      throw new Error('hermes_card_tool_authentication_failed');
+    }
+    const snapshot = record(await session.client.request('session.activate', {
+      session_id: session.state.nativeSessionId,
+      profile: session.state.profile,
+      omit_messages: true,
+    }));
+    if (String(snapshot.session_id || '').trim() !== session.state.nativeSessionId) {
+      throw new Error('hermes_card_tool_authentication_failed');
+    }
+    const stored = String(snapshot.session_key || '').trim();
+    if (!stored) throw new Error('hermes_card_tool_authentication_failed');
+    this.recordBotDmStoredSessionId(session, stored);
+    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
+      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
+    }
+    const sourceSessionKnown = sourceStoredSessionId === session.state.storedSessionId
+      || session.botDmPriorStoredSessionIds.has(sourceStoredSessionId);
+    const registered = session.cardTools.pluginTools.find(
+      (candidate) => candidate.hermesName === tool,
+    );
+    if (
+      value.version !== 1
+      || !Number.isSafeInteger(expiresAt)
+      || Number(expiresAt) < now
+      || Number(expiresAt) > now + BOT_DM_MAX_FUTURE_SECONDS
+      || !/^[a-f0-9]{32,128}$/i.test(nonce)
+      || !sourceSessionKnown
+      || !registered
+    ) throw new Error('hermes_card_tool_authentication_failed');
+    for (const [usedNonce, expiry] of session.cardToolNonces) {
+      if (expiry < now) session.cardToolNonces.delete(usedNonce);
+    }
+    if (session.cardToolNonces.has(nonce)) throw new Error('hermes_card_tool_authentication_failed');
+    session.cardToolNonces.set(nonce, Number(expiresAt));
+    while (session.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
+      const oldest = session.cardToolNonces.keys().next().value as string | undefined;
+      if (!oldest) break;
+      session.cardToolNonces.delete(oldest);
+    }
+    return {
+      owner: { ...session.owner },
+      state: { ...session.state },
+      canonicalToolName: registered.canonicalName,
+      cardTools: {
+        cardRevisionId: session.cardTools.cardRevisionId,
+        configurationFingerprint: session.cardTools.configurationFingerprint,
+        runtimeMode: session.cardTools.runtime.mode,
+      },
+      request: {
+        version: 1,
+        expiresAt: Number(expiresAt),
+        nonce,
+        sourceStoredSessionId,
+        tool,
+        arguments: args as Record<string, unknown>,
+      },
+    };
+  }
+
   async history(owner: AgentTerminalOwner, id: string): Promise<{
     count: number;
     messages: Array<Record<string, unknown>>;
@@ -1129,8 +1299,10 @@ export class AgentTerminalManager {
     session.stopping = true;
     session.state.status = 'exited';
     session.detachGatewayEvents();
+    session.gatewayEventListeners.clear();
     session.botDmNonces.clear();
     session.botDmPriorStoredSessionIds.clear();
+    session.cardToolNonces.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
     session.pty = null;
@@ -1162,19 +1334,19 @@ export class AgentTerminalManager {
     return result;
   }
 
-  async submitBotMessage(
+  subscribeGatewayEvents(
     owner: AgentTerminalOwner,
     id: string,
-    text: string,
-  ): Promise<void> {
-    if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
+    listener: (event: AgentTerminalGatewayEvent) => void,
+  ): () => void {
     const session = this.running(owner, id);
-    await session.client.request('prompt.submit', {
-      session_id: session.state.nativeSessionId,
-      text,
-      profile: session.state.profile,
-      queued: true,
-    });
+    session.gatewayEventListeners.add(listener);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) return;
+      subscribed = false;
+      session.gatewayEventListeners.delete(listener);
+    };
   }
 
   private async submitNow(

@@ -1,0 +1,8 @@
+name: card-tools
+version: 0.1.0
+description: "Registers the exact tools selected by one saved Card in native Hermes."
+kind: standalone
+platforms:
+  - linux
+  - macos
+  - windows
