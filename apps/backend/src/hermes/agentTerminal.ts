@@ -1,4 +1,10 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from 'node:crypto';
 import { spawn as spawnChild, type ChildProcess } from 'node:child_process';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -16,10 +22,19 @@ import {
 } from './profileMaterialization';
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
+import {
+  materializeHermesBotDmPlugin,
+  requireLoadedHermesBotDmPlugin,
+} from './botDmPlugin';
 
 const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
+const BOT_CHAT_TITLE = 'Bot Chat';
+const BOT_CHAT_ENUMERATION_LIMIT = 201;
+const BOT_DM_NONCE_LIMIT = 512;
+const BOT_DM_MAX_FUTURE_SECONDS = 10 * 60;
+const BOT_DM_PRIOR_SESSION_LIMIT = 8;
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
 export type AgentTerminalState = {
@@ -47,6 +62,19 @@ export type AgentTerminalGatewayEvent = {
   type: string;
   session_id?: string;
   payload?: Record<string, unknown>;
+};
+
+export type AuthenticatedBotDmRequest = {
+  owner: AgentTerminalOwner;
+  state: AgentTerminalState;
+  request: {
+    version: 1;
+    expiresAt: number;
+    nonce: string;
+    sourceStoredSessionId: string;
+    target: string;
+    message: string;
+  };
 };
 
 export type AgentTerminalTurnResult = {
@@ -79,6 +107,7 @@ type GatewayClient = {
 };
 
 type GatewayClientFactory = () => Promise<GatewayClient>;
+type ProfileRequest = <T>(method: string, params: Record<string, unknown>) => Promise<T>;
 type GatewaySpawner = (
   file: string,
   args: string[],
@@ -93,6 +122,10 @@ type Session = {
   gatewayUrl: string;
   client: GatewayClient;
   detachGatewayEvents: () => void;
+  gatewayToken: string;
+  botDmKeyId: string;
+  botDmNonces: Map<string, number>;
+  botDmPriorStoredSessionIds: Map<string, number>;
   launch: AgentTerminalLaunch;
   pty: IPty | null;
   output: Output[];
@@ -250,7 +283,7 @@ export function prepareAgentTerminal(
   if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
   const root = resolveRepoRoot();
   const hermesRoot = path.join(root, 'Hermes');
-  const file = path.join(hermesRoot, 'venv', 'Scripts', 'hermes.exe');
+  const file = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
   if (!existsSync(file)) throw new Error('agent_terminal_native_executable_missing');
   const hermesHome = path.join(hermesRoot, '.hermes');
   const profileHome = path.join(hermesHome, 'profiles', profile);
@@ -278,9 +311,11 @@ export function prepareAgentTerminal(
     HERMES_EPHEMERAL_SYSTEM_PROMPT: card.prompt,
   });
   const gatewayArgs = [
+    '-m', 'hermes_cli.main',
     '-p', profile, 'serve', '--host', '127.0.0.1', '--port', '0', '--isolated', '--skip-build',
   ];
   const tuiArgs = [
+    '-m', 'hermes_cli.main',
     '-p', profile, '--tui', '--in', cwd,
     '--model', providerSelection.model,
     '--provider', providerSelection.provider,
@@ -362,8 +397,48 @@ function gatewayReadyPort(gateway: ChildProcess, timeoutMs = GATEWAY_READY_TIMEO
   });
 }
 
-function sessionTitle(card: AgentCardInstance, fingerprint: string): string {
-  return `Card runtime: ${card.id} @ ${fingerprint}`;
+function legacySessionTitlePrefix(card: AgentCardInstance): string {
+  return `Card runtime: ${card.id} @ `;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function sessionRows(value: unknown): Array<Record<string, unknown>> {
+  const rows = record(value).sessions;
+  if (!Array.isArray(rows)) throw new Error('agent_terminal_session_enumeration_invalid');
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      throw new Error('agent_terminal_session_enumeration_invalid');
+    }
+    return row as Record<string, unknown>;
+  });
+}
+
+function storedSessionId(row: Record<string, unknown>): string {
+  return String(row.resolved_id || row.id || '').trim();
+}
+
+function botDmHostUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const port = Number(env.PORT || 4000);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('hermes_bot_dm_backend_port_invalid');
+  }
+  return `http://127.0.0.1:${port}/api/hermes-bot-dm`;
+}
+
+function equalHex(left: string, right: string): boolean {
+  if (!/^[a-f0-9]{64}$/i.test(left) || !/^[a-f0-9]{64}$/i.test(right)) return false;
+  const leftBytes = Buffer.from(left, 'hex');
+  const rightBytes = Buffer.from(right, 'hex');
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function boundedString(value: unknown, max: number): string {
+  return typeof value === 'string' && value.length <= max ? value : '';
 }
 
 function requireNativeSession(
@@ -392,6 +467,7 @@ export class AgentTerminalManager {
     ),
     private readonly createGatewayClient: GatewayClientFactory = createNativeGatewayClient,
     private readonly materializeProfile: typeof materializeHermesProfileSelections = materializeHermesProfileSelections,
+    private readonly materializeBotDmPlugin: typeof materializeHermesBotDmPlugin = materializeHermesBotDmPlugin,
   ) {}
 
   async open(
@@ -450,6 +526,134 @@ export class AgentTerminalManager {
     }
   }
 
+  private async configureNativeBotProfile(
+    request: ProfileRequest,
+    launch: AgentTerminalLaunch,
+    card: AgentCardInstance,
+  ): Promise<void> {
+    const findProfile = async (): Promise<Record<string, unknown>> => {
+      const listed = record(await request<unknown>('profiles.list', { include_sessions: false }));
+      if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
+      const matches = listed.profiles.filter((value) => (
+        record(value).name === launch.profile
+      ));
+      if (matches.length !== 1) throw new Error('hermes_bot_profile_identity_invalid');
+      return record(matches[0]);
+    };
+    const current = await findProfile();
+    const uiMeta = record(current.ui_meta);
+    const existing = record(uiMeta['hermes-bots']);
+    const desired = {
+      ...existing,
+      title: String(card.title || card.id).trim() || card.id,
+    };
+    if (JSON.stringify(existing) !== JSON.stringify(desired)) {
+      const revisions = record(current.ui_meta_revisions);
+      const revision = revisions['hermes-bots'];
+      if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
+        throw new Error('hermes_bot_profile_revision_invalid');
+      }
+      const configured = record(await request<unknown>('profiles.configure', {
+        name: launch.profile,
+        ui_meta: { 'hermes-bots': desired },
+        ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+      }));
+      if (configured.ok !== true || record(configured.applied).ui_meta !== true) {
+        throw new Error('hermes_bot_profile_configuration_failed');
+      }
+    }
+    const readback = record(record((await findProfile()).ui_meta)['hermes-bots']);
+    if (readback.title !== desired.title) throw new Error('hermes_bot_profile_readback_failed');
+  }
+
+  private async resolveCanonicalBotChat(
+    request: ProfileRequest,
+    card: AgentCardInstance,
+    launch: AgentTerminalLaunch,
+    cols: number,
+  ): Promise<{ sessionId: string; storedSessionId: string }> {
+    const exact = sessionRows(await request('session.list', {
+      title: BOT_CHAT_TITLE,
+      include_hidden: true,
+      limit: 200,
+    }));
+    if (exact.length > 1) throw new Error('agent_terminal_bot_chat_ambiguous');
+    const all = sessionRows(await request('session.list', {
+      include_hidden: true,
+      limit: BOT_CHAT_ENUMERATION_LIMIT,
+    }));
+    if (all.length >= BOT_CHAT_ENUMERATION_LIMIT) {
+      throw new Error('agent_terminal_session_enumeration_truncated');
+    }
+    const legacyPrefix = legacySessionTitlePrefix(card);
+    const legacy = all.filter((row) => (
+      String(row.title || '').startsWith(legacyPrefix)
+      || String(row.root_title || '').startsWith(legacyPrefix)
+    ));
+    if (exact.length === 1 && legacy.length > 0) {
+      throw new Error('agent_terminal_bot_chat_legacy_collision');
+    }
+
+    let native: { sessionId: string; storedSessionId: string };
+    if (exact.length === 1) {
+      const stored = storedSessionId(exact[0]);
+      if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
+      const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
+      native = requireNativeSession(
+        resumed && typeof resumed === 'object'
+          ? { ...resumed, stored_session_id: stored }
+          : resumed,
+        'agent_terminal_session_resume_invalid',
+      );
+    } else {
+      if (legacy.length > 1) throw new Error('agent_terminal_legacy_session_ambiguous');
+      if (legacy.length === 1) {
+        const stored = storedSessionId(legacy[0]);
+        if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
+        const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
+        native = requireNativeSession(
+          resumed && typeof resumed === 'object'
+            ? { ...resumed, stored_session_id: stored }
+            : resumed,
+          'agent_terminal_session_resume_invalid',
+        );
+      } else {
+        const createParams: Record<string, unknown> = {
+          title: BOT_CHAT_TITLE,
+          cwd: launch.cwd,
+          cols,
+          model: launch.providerSelection.model,
+          provider: launch.providerSelection.provider,
+          follow_profile_config: true,
+          close_on_disconnect: false,
+          hidden: true,
+        };
+        const reasoning = (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort;
+        if (reasoning) createParams.reasoning_effort = String(reasoning);
+        native = requireNativeSession(
+          await request('session.create', createParams),
+          'agent_terminal_session_create_invalid',
+        );
+      }
+      const titled = record(await request('session.title', {
+        session_id: native.sessionId,
+        title: BOT_CHAT_TITLE,
+      }));
+      if (titled.title !== BOT_CHAT_TITLE) throw new Error('agent_terminal_bot_chat_title_failed');
+    }
+
+    const readback = sessionRows(await request('session.list', {
+      title: BOT_CHAT_TITLE,
+      include_hidden: true,
+      limit: 200,
+    }));
+    if (readback.length !== 1) throw new Error('agent_terminal_bot_chat_readback_invalid');
+    if (storedSessionId(readback[0]) !== native.storedSessionId) {
+      throw new Error('agent_terminal_bot_chat_identity_mismatch');
+    }
+    return native;
+  }
+
   private async start(
     owner: AgentTerminalOwner,
     card: AgentCardInstance,
@@ -461,10 +665,14 @@ export class AgentTerminalManager {
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
+    await this.materializeBotDmPlugin(launch.profileHome, { env: launch.env });
     const gatewayToken = randomBytes(32).toString('hex');
+    const botDmKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
     const gatewayEnv = {
       ...launch.env,
       HERMES_DASHBOARD_SESSION_TOKEN: gatewayToken,
+      CARD_BOT_DM_MANAGED: '1',
+      CARD_BOT_DM_HOST_URL: botDmHostUrl(),
     };
     const gateway = this.spawnGateway(launch.file, launch.gatewayArgs, {
       cwd: launch.cwd,
@@ -496,45 +704,9 @@ export class AgentTerminalManager {
           disabled_skills: disabledSkills,
         }),
       );
-
-      const title = sessionTitle(card, fingerprint);
-      const listed = await request<{ sessions?: unknown }>('session.list', {
-        title,
-        include_hidden: true,
-      });
-      if (!Array.isArray(listed?.sessions)) throw new Error('agent_terminal_session_enumeration_invalid');
-      if (listed.sessions.length > 1) throw new Error('agent_terminal_session_ambiguous');
-      let native: { sessionId: string; storedSessionId: string };
-      if (listed.sessions.length === 1) {
-        const row = listed.sessions[0] && typeof listed.sessions[0] === 'object'
-          ? listed.sessions[0] as Record<string, unknown>
-          : {};
-        const stored = String(row.resolved_id || row.id || '').trim();
-        if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
-        const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
-        native = requireNativeSession(
-          resumed && typeof resumed === 'object'
-            ? { ...resumed, stored_session_id: stored }
-            : resumed,
-          'agent_terminal_session_resume_invalid',
-        );
-      } else {
-        const createParams: Record<string, unknown> = {
-          title,
-          cwd: launch.cwd,
-          cols,
-          model: launch.providerSelection.model,
-          provider: launch.providerSelection.provider,
-          follow_profile_config: true,
-          close_on_disconnect: false,
-        };
-        const reasoning = (card.runtimeOptions as Record<string, unknown> | undefined)?.reasoningEffort;
-        if (reasoning) createParams.reasoning_effort = String(reasoning);
-        native = requireNativeSession(
-          await request('session.create', createParams),
-          'agent_terminal_session_create_invalid',
-        );
-      }
+      await this.configureNativeBotProfile(request, launch, card);
+      const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
+      requireLoadedHermesBotDmPlugin(await request('plugins.list', {}));
 
       const session: Session = {
         owner: { ...owner },
@@ -543,6 +715,10 @@ export class AgentTerminalManager {
         gatewayUrl,
         client,
         detachGatewayEvents: () => {},
+        gatewayToken,
+        botDmKeyId,
+        botDmNonces: new Map(),
+        botDmPriorStoredSessionIds: new Map(),
         launch,
         pty: null,
         state: {
@@ -570,7 +746,7 @@ export class AgentTerminalManager {
       session.detachGatewayEvents = client.onEvent((event) => {
         if (event.session_id !== session.state.nativeSessionId || event.type !== 'session.info') return;
         const stored = String(event.payload?.stored_session_id || '').trim();
-        if (stored) session.state.storedSessionId = stored;
+        if (stored) this.recordBotDmStoredSessionId(session, stored);
       });
       this.sessions.set(sessionId, session);
       gateway.once('exit', (exitCode) => this.onProcessExit(session, 'gateway', exitCode));
@@ -666,6 +842,8 @@ export class AgentTerminalManager {
     session.state.exitCode = exitCode ?? undefined;
     if (!session.stopping) session.state.error = `agent_terminal_${source}_exited:${exitCode ?? 'null'}`;
     session.detachGatewayEvents();
+    session.botDmNonces.clear();
+    session.botDmPriorStoredSessionIds.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
     session.pty = null;
@@ -720,6 +898,121 @@ export class AgentTerminalManager {
     return [...this.sessions.values()]
       .filter((session) => session.state.status === 'running')
       .map((session) => ({ owner: { ...session.owner }, state: { ...session.state } }));
+  }
+
+  private recordBotDmStoredSessionId(
+    session: Session,
+    storedSessionId: string,
+    now = Math.floor(Date.now() / 1000),
+  ): void {
+    const stored = storedSessionId.trim();
+    if (!stored || stored === session.state.storedSessionId) return;
+    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
+      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
+    }
+    session.botDmPriorStoredSessionIds.delete(stored);
+    session.botDmPriorStoredSessionIds.set(
+      session.state.storedSessionId,
+      now + BOT_DM_MAX_FUTURE_SECONDS,
+    );
+    while (session.botDmPriorStoredSessionIds.size > BOT_DM_PRIOR_SESSION_LIMIT) {
+      const oldest = session.botDmPriorStoredSessionIds.keys().next().value as string | undefined;
+      if (!oldest) break;
+      session.botDmPriorStoredSessionIds.delete(oldest);
+    }
+    session.state.storedSessionId = stored;
+  }
+
+  private async refreshBotDmStoredSessionId(session: Session): Promise<void> {
+    const snapshot = record(await session.client.request('session.activate', {
+      session_id: session.state.nativeSessionId,
+      profile: session.state.profile,
+      omit_messages: true,
+    }));
+    if (String(snapshot.session_id || '').trim() !== session.state.nativeSessionId) {
+      throw new Error('hermes_bot_dm_authentication_failed');
+    }
+    const stored = String(snapshot.session_key || '').trim();
+    if (!stored) throw new Error('hermes_bot_dm_authentication_failed');
+    this.recordBotDmStoredSessionId(session, stored);
+  }
+
+  async authenticateBotDmRequest(
+    keyId: string,
+    payload: string,
+    signature: string,
+  ): Promise<AuthenticatedBotDmRequest> {
+    if (
+      Buffer.byteLength(keyId) > 256
+      || Buffer.byteLength(signature) > 256
+      || Buffer.byteLength(payload) > 256 * 1024
+    ) throw new Error('hermes_bot_dm_authentication_failed');
+    const candidates = [...this.sessions.values()].filter((session) => (
+      session.state.status === 'running' && equalHex(session.botDmKeyId, keyId)
+    ));
+    if (candidates.length !== 1) throw new Error('hermes_bot_dm_authentication_failed');
+    const session = candidates[0];
+    const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');
+    if (!equalHex(expected, signature)) throw new Error('hermes_bot_dm_authentication_failed');
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      throw new Error('hermes_bot_dm_authentication_failed');
+    }
+    const value = record(parsed);
+    const expectedKeys = [
+      'expiresAt', 'message', 'nonce', 'sourceStoredSessionId', 'target', 'version',
+    ];
+    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
+      throw new Error('hermes_bot_dm_authentication_failed');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const expiresAt = value.expiresAt;
+    const nonce = boundedString(value.nonce, 128);
+    const sourceStoredSessionId = boundedString(value.sourceStoredSessionId, 512);
+    const target = boundedString(value.target, 256);
+    const message = boundedString(value.message, 16_000);
+    await this.refreshBotDmStoredSessionId(session);
+    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
+      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
+    }
+    const sourceSessionKnown = sourceStoredSessionId === session.state.storedSessionId
+      || session.botDmPriorStoredSessionIds.has(sourceStoredSessionId);
+    if (
+      value.version !== 1
+      || !Number.isSafeInteger(expiresAt)
+      || Number(expiresAt) < now
+      || Number(expiresAt) > now + BOT_DM_MAX_FUTURE_SECONDS
+      || !/^[a-f0-9]{32,128}$/i.test(nonce)
+      || !sourceStoredSessionId
+      || !sourceSessionKnown
+      || !target.trim()
+      || !message.trim()
+    ) throw new Error('hermes_bot_dm_authentication_failed');
+    for (const [usedNonce, expiry] of session.botDmNonces) {
+      if (expiry < now) session.botDmNonces.delete(usedNonce);
+    }
+    if (session.botDmNonces.has(nonce)) throw new Error('hermes_bot_dm_authentication_failed');
+    session.botDmNonces.set(nonce, Number(expiresAt));
+    while (session.botDmNonces.size > BOT_DM_NONCE_LIMIT) {
+      const oldest = session.botDmNonces.keys().next().value as string | undefined;
+      if (!oldest) break;
+      session.botDmNonces.delete(oldest);
+    }
+    return {
+      owner: { ...session.owner },
+      state: { ...session.state },
+      request: {
+        version: 1,
+        expiresAt: Number(expiresAt),
+        nonce,
+        sourceStoredSessionId,
+        target,
+        message,
+      },
+    };
   }
 
   async history(owner: AgentTerminalOwner, id: string): Promise<{
@@ -836,6 +1129,8 @@ export class AgentTerminalManager {
     session.stopping = true;
     session.state.status = 'exited';
     session.detachGatewayEvents();
+    session.botDmNonces.clear();
+    session.botDmPriorStoredSessionIds.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
     session.pty = null;
@@ -865,6 +1160,21 @@ export class AgentTerminalManager {
     const result = session.turnTail.then(execute, execute);
     session.turnTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  async submitBotMessage(
+    owner: AgentTerminalOwner,
+    id: string,
+    text: string,
+  ): Promise<void> {
+    if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
+    const session = this.running(owner, id);
+    await session.client.request('prompt.submit', {
+      session_id: session.state.nativeSessionId,
+      text,
+      profile: session.state.profile,
+      queued: true,
+    });
   }
 
   private async submitNow(

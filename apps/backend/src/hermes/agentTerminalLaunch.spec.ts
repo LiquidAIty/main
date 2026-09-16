@@ -75,13 +75,15 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1', workspace);
 
     expect(launch).toMatchObject({
-      file: 'C:\\repo\\Hermes\\venv\\Scripts\\hermes.exe',
+      file: 'C:\\repo\\Hermes\\venv\\Scripts\\python.exe',
       cwd: 'C:\\saved-workspace-real',
       profile: 'agent-cli-proof',
       gatewayArgs: [
+        '-m', 'hermes_cli.main',
         '-p', 'agent-cli-proof', 'serve', '--host', '127.0.0.1', '--port', '0', '--isolated', '--skip-build',
       ],
       tuiArgs: [
+        '-m', 'hermes_cli.main',
         '-p', 'agent-cli-proof', '--tui', '--in', 'C:\\saved-workspace-real',
         '--model', 'gpt-5.6-sol', '--provider', 'openai-codex',
         '--reasoning', 'high', '--max-turns', '7', '--skills', 'saved-skill-a,saved-skill-b',
@@ -109,7 +111,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
   });
 
   it.each([
-    ['native executable', (target: string) => !target.endsWith('hermes.exe'), 'agent_terminal_native_executable_missing'],
+    ['native executable', (target: string) => !target.endsWith('python.exe'), 'agent_terminal_native_executable_missing'],
     ['profile', (target: string) => !target.endsWith('config.yaml'), 'agent_terminal_profile_missing'],
   ])('fails truthfully when the saved %s is unavailable', (_name, availability, error) => {
     nativeFs.existsSync.mockImplementation(availability);

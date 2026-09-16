@@ -1941,6 +1941,63 @@ def _direct_card_targets(
     return direct
 
 
+def authorize_hermes_bot_dm_card(
+    project_id: str,
+    deck_id: str,
+    source_card_id: str,
+    target_profile: str,
+) -> dict[str, Any]:
+    """Resolve one native Bot DM profile to one authorized saved Card."""
+    project_ref = _required_text(project_id, "project_id")
+    requested_deck_id = _required_text(deck_id, "deck_id")
+    source_id = _required_text(source_card_id, "source_card_id")
+    requested_profile = _required_text(target_profile, "target_profile")
+    if requested_profile.startswith("@"):
+        requested_profile = requested_profile[1:]
+    if not requested_profile:
+        raise CardDomainError("target_profile_required")
+    requested_profile = requested_profile.lower()
+
+    loaded = load_deck(project_ref, requested_deck_id)
+    deck = _json_object(loaded.get("deck"), "deck")
+    nodes = deck.get("nodes")
+    if not isinstance(nodes, list):
+        raise CardDomainError("deck_document_invalid")
+    cards = {
+        str(card.get("id") or ""): card
+        for card in nodes
+        if isinstance(card, dict) and str(card.get("id") or "")
+    }
+    if source_id not in cards:
+        raise CardDomainError("hermes_bot_dm_card_not_authorized")
+    matches: list[dict[str, Any]] = []
+    for card_id, card in cards.items():
+        runtime = card.get("runtime")
+        if not isinstance(runtime, dict) or runtime.get("kind") != "hermes":
+            continue
+        profile = str(runtime.get("profile") or "").strip()
+        if profile.lower() != requested_profile:
+            continue
+        matches.append({
+            "cardId": card_id,
+            "title": str(card.get("title") or card_id),
+            "profile": profile,
+            "description": str(card.get("subtitle") or "")[:1_000],
+            "cardRevisionId": str(card.get("_cardRevisionId") or ""),
+        })
+    if len(matches) != 1:
+        raise CardDomainError("hermes_bot_dm_card_not_authorized")
+    authorized_card = dict(matches[0])
+    if not str(authorized_card.get("cardRevisionId") or "").strip():
+        raise CardDomainError("hermes_bot_dm_card_revision_missing")
+    return {
+        "projectId": _required_text(loaded.get("projectId"), "project_id"),
+        "deckId": _required_text(deck.get("id"), "deck_id"),
+        "sourceCardId": source_id,
+        "card": authorized_card,
+    }
+
+
 _DATA_ANCHOR_LIMIT = 16
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",

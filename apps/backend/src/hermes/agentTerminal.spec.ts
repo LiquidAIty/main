@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { createHash, createHmac } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
@@ -72,11 +73,16 @@ class FakeGatewayClient {
   readonly handlers = new Set<(event: AgentTerminalGatewayEvent) => void>();
   url = '';
   closed = false;
+  private activeStored = '';
+  private activeNative = '';
+  private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
 
   constructor(
     private readonly index: number,
     private readonly durableByTitle: Map<string, string>,
-    private readonly controls: { enumerationFailure: boolean },
+    private readonly controls: {
+      enumerationFailure: boolean;
+    },
   ) {}
 
   async connect(url: string) {
@@ -95,25 +101,83 @@ class FakeGatewayClient {
   }
 
   emitEvent(event: AgentTerminalGatewayEvent) {
+    if (event.type === 'session.info') {
+      const stored = String(event.payload?.stored_session_id || '').trim();
+      if (stored) this.activeStored = stored;
+    }
     for (const handler of this.handlers) handler(event);
   }
 
   async request<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     this.requests.push({ method, params });
+    const profile = String(params.profile || '');
+    const titleKey = (title: string) => `${profile}\u0000${title}`;
+    if (method === 'profiles.list') {
+      const meta = this.botMeta.get(profile);
+      return { profiles: [{
+        name: profile,
+        ui_meta: meta ? { 'hermes-bots': meta.value } : {},
+        ui_meta_revisions: { 'hermes-bots': meta?.revision || 0 },
+      }] } as T;
+    }
+    if (method === 'profiles.configure') {
+      const desired = (params.ui_meta as Record<string, unknown> | undefined)?.['hermes-bots'];
+      const prior = this.botMeta.get(profile);
+      this.botMeta.set(profile, {
+        value: desired && typeof desired === 'object' ? desired as Record<string, unknown> : {},
+        revision: (prior?.revision || 0) + 1,
+      });
+      return { ok: true, applied: { ui_meta: true } } as T;
+    }
     if (method === 'session.list') {
       if (this.controls.enumerationFailure) throw new Error('storage failed');
       const title = String(params.title || '');
-      const durable = this.durableByTitle.get(title);
-      return { sessions: durable ? [{ id: durable, resolved_id: durable, title }] : [] } as T;
+      if (title) {
+        const durable = this.durableByTitle.get(titleKey(title));
+        return { sessions: durable ? [{ id: durable, resolved_id: durable, title }] : [] } as T;
+      }
+      return { sessions: [...this.durableByTitle.entries()]
+        .filter(([key]) => key.startsWith(`${profile}\u0000`))
+        .map(([key, durable]) => ({
+          id: durable,
+          resolved_id: durable,
+          title: key.slice(profile.length + 1),
+        })) } as T;
     }
     if (method === 'session.create') {
       const title = String(params.title || '');
       const durable = `stored-${this.durableByTitle.size + 1}`;
-      this.durableByTitle.set(title, durable);
-      return { session_id: `live-${this.index}-created`, stored_session_id: durable } as T;
+      this.durableByTitle.set(titleKey(title), durable);
+      this.activeStored = durable;
+      this.activeNative = `live-${this.index}-created`;
+      return { session_id: this.activeNative, stored_session_id: durable } as T;
     }
     if (method === 'session.resume') {
-      return { session_id: `live-${this.index}-resumed` } as T;
+      this.activeStored = String(params.session_id || '');
+      this.activeNative ||= `live-${this.index}-resumed`;
+      return {
+        session_id: this.activeNative,
+        stored_session_id: this.activeStored,
+        session_key: this.activeStored,
+        running: false,
+      } as T;
+    }
+    if (method === 'session.activate') {
+      return {
+        session_id: this.activeNative,
+        session_key: this.activeStored,
+        running: false,
+      } as T;
+    }
+    if (method === 'session.title') {
+      const title = String(params.title || '');
+      for (const [key, value] of [...this.durableByTitle.entries()]) {
+        if (key.startsWith(`${profile}\u0000`) && value === this.activeStored) {
+          this.durableByTitle.delete(key);
+        }
+      }
+      this.durableByTitle.set(titleKey(title), this.activeStored);
+      return { pending: false, title } as T;
     }
     if (method === 'prompt.submit') {
       const sessionId = String(params.session_id || '');
@@ -123,6 +187,9 @@ class FakeGatewayClient {
         payload: { text: `reply:${String(params.text || '')}`, status: 'completed' },
       }));
       return { status: 'streaming' } as T;
+    }
+    if (method === 'plugins.list') {
+      return { plugins: [{ name: 'card-bot-dm', version: '0.1.0', enabled: true }] } as T;
     }
     if (method === 'session.interrupt') return { ok: true } as T;
     throw new Error(`unexpected fake gateway request:${method}`);
@@ -183,7 +250,9 @@ function fixture() {
     return process as unknown as ChildProcess;
   });
   const durableByTitle = new Map<string, string>();
-  const controls = { enumerationFailure: false };
+  const controls = {
+    enumerationFailure: false,
+  };
   const clients: FakeGatewayClient[] = [];
   const createGatewayClient = vi.fn(async () => {
     const client = new FakeGatewayClient(clients.length + 1, durableByTitle, controls);
@@ -219,6 +288,9 @@ function fixture() {
   }));
   const onExit = vi.fn(async () => undefined);
   const materialize = vi.fn(async () => ({ native: {} }));
+  const materializeBotDmPlugin = vi.fn(async () => ({
+    key: 'card-bot-dm', sourceDir: 'source', destinationDir: 'destination', files: [],
+  }));
   const manager = new AgentTerminalManager(
     spawnPty,
     prepare,
@@ -226,12 +298,13 @@ function fixture() {
     spawnGateway,
     createGatewayClient,
     materialize as never,
+    materializeBotDmPlugin as never,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
   }));
   return {
-    manager, spawnPty, spawnGateway, prepare, materialize, cards, deck, owners,
+    manager, spawnPty, spawnGateway, prepare, materialize, materializeBotDmPlugin, cards, deck, owners,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -380,6 +453,152 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       { session_id: state.nativeSessionId, text: 'second', profile: state.profile },
     ]);
     expect(terminalEvents).not.toHaveBeenCalledWith('output', expect.anything());
+    expect(f.clients[0].requests.filter((request) => request.method === 'plugins.list')).toHaveLength(1);
+    expect(f.clients[0].requests.findIndex((request) => request.method === 'plugins.list'))
+      .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
+  });
+
+  it('submits one native Bot message without owning its completion', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const handlersBefore = f.clients[0].handlers.size;
+    await f.manager.submitBotMessage(f.owners[0], state.sessionId, 'Bot delivery');
+    const submits = f.clients[0].requests.filter((request) => request.method === 'prompt.submit');
+    expect(submits).toEqual([{
+      method: 'prompt.submit',
+      params: {
+        session_id: state.nativeSessionId,
+        text: 'Bot delivery',
+        profile: state.profile,
+        queued: true,
+      },
+    }]);
+    expect(f.clients[0].handlers.size).toBe(handlersBefore);
+    expect(f.ptys[0].resize).not.toHaveBeenCalled();
+  });
+
+  it('materializes managed Bot-DM before Gateway start and owns one canonical Bot Chat', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    expect(f.materializeBotDmPlugin).toHaveBeenCalledWith(
+      'C:\\profiles\\signal-analyst',
+      { env: expect.objectContaining({ SESSION: expect.any(String) }) },
+    );
+    expect(f.spawnGateway.mock.calls[0][2].env).toEqual(expect.objectContaining({
+      CARD_BOT_DM_MANAGED: '1',
+      CARD_BOT_DM_HOST_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/hermes-bot-dm$/),
+      HERMES_DASHBOARD_SESSION_TOKEN: expect.any(String),
+    }));
+    const creates = f.clients[0].requests.filter((request) => request.method === 'session.create');
+    expect(creates).toHaveLength(1);
+    expect(creates[0].params).toEqual(expect.objectContaining({
+      title: 'Bot Chat', hidden: true, follow_profile_config: true, close_on_disconnect: false,
+    }));
+    expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
+  });
+
+  it('adopts exactly one legacy Card runtime session and rejects legacy collisions', async () => {
+    const adopted = fixture();
+    adopted.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-legacy');
+    const state = await adopted.manager.open(
+      adopted.owners[0], adopted.cards[0], adopted.deck, 80, 24,
+    );
+    expect(state.storedSessionId).toBe('stored-legacy');
+    expect(adopted.clients[0].requests.map((request) => request.method)).not.toContain('session.create');
+    expect(adopted.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe('stored-legacy');
+
+    const collision = fixture();
+    collision.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ one', 'stored-one');
+    collision.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ two', 'stored-two');
+    await expect(collision.manager.open(
+      collision.owners[0], collision.cards[0], collision.deck, 80, 24,
+    )).rejects.toThrow('agent_terminal_legacy_session_ambiguous');
+    expect(collision.clients[0].requests.map((request) => request.method)).not.toContain('session.create');
+
+    const competing = fixture();
+    competing.durableByTitle.set('signal-analyst\u0000Bot Chat', 'stored-canonical');
+    competing.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-legacy');
+    await expect(competing.manager.open(
+      competing.owners[0], competing.cards[0], competing.deck, 80, 24,
+    )).rejects.toThrow('agent_terminal_bot_chat_legacy_collision');
+    expect(competing.clients[0].requests.map((request) => request.method)).not.toContain('session.resume');
+  });
+
+  it('authenticates one process-bound signed Bot-DM request and rejects replay', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const env = f.spawnGateway.mock.calls[0][2].env as Record<string, string>;
+    const token = env.HERMES_DASHBOARD_SESSION_TOKEN;
+    const payload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'a'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      target: 'builder',
+      message: 'Build this.',
+    });
+    const keyId = createHash('sha256').update(token).digest('hex');
+    const signature = createHmac('sha256', token).update(payload).digest('hex');
+    await expect(f.manager.authenticateBotDmRequest(keyId, payload, signature)).resolves.toEqual({
+      owner: f.owners[0],
+      state,
+      request: expect.objectContaining({ target: 'builder', message: 'Build this.' }),
+    });
+    await expect(f.manager.authenticateBotDmRequest(keyId, payload, signature))
+      .rejects.toThrow('hermes_bot_dm_authentication_failed');
+    await expect(f.manager.authenticateBotDmRequest(keyId, payload, '0'.repeat(64)))
+      .rejects.toThrow('hermes_bot_dm_authentication_failed');
+  });
+
+  it('accepts a bounded manager-observed prior durable session after compression only', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const env = f.spawnGateway.mock.calls[0][2].env as Record<string, string>;
+    const token = env.HERMES_DASHBOARD_SESSION_TOKEN;
+    const keyId = createHash('sha256').update(token).digest('hex');
+    const observedAt = Math.floor(Date.now() / 1000);
+    const signed = (sourceStoredSessionId: string, nonce: string, expiresAt: number) => {
+      const payload = JSON.stringify({
+        version: 1,
+        expiresAt,
+        nonce,
+        sourceStoredSessionId,
+        target: 'builder',
+        message: 'Build this.',
+      });
+      return {
+        payload,
+        signature: createHmac('sha256', token).update(payload).digest('hex'),
+      };
+    };
+    const delayed = signed(state.storedSessionId, 'b'.repeat(32), observedAt + 60);
+    f.clients[0].emitEvent({
+      type: 'session.info',
+      session_id: state.nativeSessionId,
+      payload: { stored_session_id: 'stored-after-compression' },
+    });
+
+    await expect(f.manager.authenticateBotDmRequest(keyId, delayed.payload, delayed.signature))
+      .resolves.toMatchObject({
+        owner: f.owners[0],
+        state: { storedSessionId: 'stored-after-compression' },
+        request: { sourceStoredSessionId: state.storedSessionId },
+      });
+
+    const fabricated = signed('caller-invented-session', 'c'.repeat(32), observedAt + 60);
+    await expect(f.manager.authenticateBotDmRequest(
+      keyId, fabricated.payload, fabricated.signature,
+    )).rejects.toThrow('hermes_bot_dm_authentication_failed');
+
+    const now = vi.spyOn(Date, 'now').mockReturnValue((observedAt + (11 * 60)) * 1000);
+    try {
+      const stale = signed(state.storedSessionId, 'd'.repeat(32), observedAt + (12 * 60));
+      await expect(f.manager.authenticateBotDmRequest(
+        keyId, stale.payload, stale.signature,
+      )).rejects.toThrow('hermes_bot_dm_authentication_failed');
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('restarts the Gateway and TUI while resuming the exact durable Card session', async () => {

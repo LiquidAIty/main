@@ -14,6 +14,7 @@ from app.python_models.alpaca_market_data import (
 from app.python_models.autogen_orchestrator import dispatch_stored_runtime
 from app.python_models.card_domain import (
     CardDomainError,
+    authorize_hermes_bot_dm_card,
     begin_main_chat_run,
     begin_run,
     describe_magentic_agents,
@@ -287,6 +288,31 @@ def card_script_header(payload: dict[str, Any]):
 # These internal rails endpoints never persist prompts, provider bodies,
 # selected context, or ordinary model output.
 # ---------------------------------------------------------------------------
+
+
+@app.post("/domain/hermes-bot-dm/authorize")
+def domain_hermes_bot_dm_authorize_card(payload: dict[str, Any]):
+    expected_fields = {"projectId", "deckId", "sourceCardId", "targetProfile"}
+    try:
+        if set(payload) != expected_fields:
+            raise CardDomainError("hermes_bot_dm_authorization_payload_invalid")
+        return {
+            "ok": True,
+            **authorize_hermes_bot_dm_card(
+                payload.get("projectId"),
+                payload.get("deckId"),
+                payload.get("sourceCardId"),
+                payload.get("targetProfile"),
+            ),
+        }
+    except CardDomainError as err:
+        message = str(err)
+        status = (
+            404 if message in {"project_not_found", "deck_not_found"}
+            else 403 if message.startswith("hermes_bot_dm_card_")
+            else 400
+        )
+        raise HTTPException(status_code=status, detail=message) from err
 
 
 @app.get("/domain/decks/{project_id}/{deck_id}")
