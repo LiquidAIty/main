@@ -91,7 +91,8 @@ from app.control_plane import card_tool_schema
 from app.python_models.provider_config import ensure_env_loaded
 from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
-    tool_manifest,
+    OperationDefinition,
+    external_mcp_manifest,
     tool_access,
 )
 from mcp.server import Server
@@ -875,11 +876,11 @@ def _bind_repo_tool_source(tool: Tool) -> Tool:
     return Tool.model_validate(payload)
 
 
-def _bind_idd_access(tool: Tool) -> Tool:
-    """Keep authorization metadata separate from native side-effect hints."""
+def _bind_operation_access(tool: Tool) -> Tool:
+    """Attach access from the canonical operation or native-owner definition."""
     access = tool_access(tool.name)
     if access is None:
-        raise RuntimeError(f"mcp_tool_missing_idd_access:{tool.name}")
+        raise RuntimeError(f"mcp_tool_missing_operation_access:{tool.name}")
     payload = tool.model_dump(by_alias=True, exclude_none=True)
     meta = dict(payload.get("_meta") or {})
     meta["liquidaityAccess"] = access
@@ -2245,10 +2246,8 @@ def _card_team_schema() -> dict[str, Any]:
     }
 
 
-async def _materialize_complete_catalog() -> list[Tool]:
-    global _LATEST_CATALOG_DIAGNOSTIC
-
-    tools = [
+def _application_tools() -> list[Tool]:
+    return [
         Tool(
             name="main.context",
             description=(
@@ -2428,26 +2427,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
             },
         ),
         Tool(
-            name="web_search",
-            description=(
-                "Search the live web through Tavily and return real URLs, titles, domains, "
-                "content excerpts, and available dates. Read-only; never fabricates sources."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "max_results": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 10,
-                        "default": 5,
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
             name="card.run_assistant_agent",
             description=(
                 "Submit or rejoin ONE saved, enabled Card through its saved runtime adapter "
@@ -2526,27 +2505,79 @@ async def _materialize_complete_catalog() -> list[Tool]:
             },
         ),
     ]
-    # These registrations already dispatch through this MCP server. Explicit
-    # host declarations retain their contract when a handler is also registered
-    # in the Python tool registry (web_search has one canonical identity).
-    registered = {
-        descriptor["name"]: Tool(
+
+
+_APPLICATION_OPERATION_ACCESS = {
+    "main.context": "read",
+    "agentgraph.inspect": "read",
+    "mag_one.describe_connected_agents": "read",
+    "run_mag_one": "write",
+    "write_mag_one_instructions": "write",
+    "card.load_graph_references": "write",
+    "canvas.inspect": "read",
+    "card.create": "write",
+    "card.update_configuration": "write",
+    "canvas.upsert_wire": "write",
+    "card.run_assistant_agent": "write",
+}
+
+
+def application_operation_definitions() -> list[OperationDefinition]:
+    """Contribute application operations without making MCP their owner."""
+
+    definitions: list[OperationDefinition] = []
+    for tool in _application_tools():
+        access = _APPLICATION_OPERATION_ACCESS.get(tool.name)
+        if access is None:
+            raise RuntimeError(f"application_operation_access_missing:{tool.name}")
+
+        async def dispatch(*, _name: str = tool.name, **arguments: Any) -> Any:
+            return await _dispatch_tool(_name, arguments)
+
+        definitions.append(OperationDefinition(
+            canonical_id=tool.name,
+            description=tool.description or tool.name,
+            parameters_schema=copy.deepcopy(tool.inputSchema),
+            handler=dispatch,
+            available=True,
+            publishers=(
+                frozenset({"internal-runtime", "external-mcp"})
+                if tool.name == "card.run_assistant_agent"
+                else frozenset({"internal-plugin", "external-mcp"})
+            ),
+            access=access,
+            namespace="main",
+            external_source_id="main_mcp",
+            required_caller_runtime=(
+                ("hermes", "main") if tool.name == "run_mag_one" else None
+            ),
+        ))
+    return definitions
+
+
+async def _materialize_complete_catalog() -> list[Tool]:
+    global _LATEST_CATALOG_DIAGNOSTIC
+
+    external_descriptors = await asyncio.to_thread(external_mcp_manifest)
+    tools = [
+        _bind_repo_tool_source(Tool(
             name=descriptor["name"],
             description=descriptor["description"],
             inputSchema=copy.deepcopy(descriptor["inputSchema"]),
-        )
-        for descriptor in tool_manifest()
-    }
-    registered.update({tool.name: tool for tool in tools})
-    tools = list(registered.values())
-    from app.python_models.engraphis import native_tools
-    for item in await native_tools():
-        tool = Tool.model_validate(item)
-        tools.append(tool)
-        _ALLOWED_KEYS[tool.name] = set(tool.inputSchema.get("properties", {}))
-    tools = [_bind_repo_tool_source(tool) for tool in tools]
+        ))
+        for descriptor in external_descriptors
+    ]
     for tool in tools:
         tool.inputSchema.setdefault("additionalProperties", False)
+        public_keys = set(tool.inputSchema.get("properties", {}))
+        dispatch_keys = _ALLOWED_KEYS.get(tool.name)
+        if dispatch_keys is None:
+            _ALLOWED_KEYS[tool.name] = public_keys
+        elif not public_keys <= dispatch_keys:
+            missing = sorted(public_keys - dispatch_keys)
+            raise RuntimeError(
+                f"mcp_tool_dispatch_keys_missing:{tool.name}:{','.join(missing)}"
+            )
     _complete_catalog_family("liquidaity")
     native_catalogs: dict[str, list[Tool]] = {}
     _set_catalog_initializing_family("cbm")
@@ -2566,7 +2597,7 @@ async def _materialize_complete_catalog() -> list[Tool]:
         if tool.name == "graphiti.add_memory":
             tool.inputSchema.setdefault("$defs", {}).update(question_schema.get("$defs", {}))
             tool.inputSchema["properties"]["questionEvidence"] = {key: value for key, value in question_schema.items() if key != "$defs"}
-    tools = [_bind_idd_access(tool) for tool in tools]
+    tools = [_bind_operation_access(tool) for tool in tools]
     names = [tool.name for tool in tools]
     if len(names) != len(set(names)):
         duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -2913,15 +2944,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
 
 }
 
-for _runtime_descriptor in tool_manifest():
-    _runtime_name = str(_runtime_descriptor.get("name") or "").strip()
-    _runtime_schema = _runtime_descriptor.get("inputSchema")
-    _runtime_properties = (
-        _runtime_schema.get("properties")
-        if isinstance(_runtime_schema, dict) else None
-    )
-    if _runtime_name and isinstance(_runtime_properties, dict):
-        _ALLOWED_KEYS.setdefault(_runtime_name, set(_runtime_properties))
+for _runtime_definition in DEFAULT_TOOL_REGISTRY.operation_definitions():
+    _runtime_properties = _runtime_definition.parameters_schema.get("properties")
+    if isinstance(_runtime_properties, dict):
+        _ALLOWED_KEYS.setdefault(
+            _runtime_definition.canonical_id,
+            set(_runtime_properties),
+        )
 for _trading_name in (
     "trading.get_state", "trading.accept_assignment", "trading.record_decision",
 ):

@@ -607,7 +607,6 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
-  const [disabledToolsText, setDisabledToolsText] = useState('');
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
@@ -804,13 +803,6 @@ export function AgentManager({
             .join('\n')
         : '',
     );
-    setDisabledToolsText(
-      Array.isArray(localConfig.runtime_options?.disabledTools)
-        ? localConfig.runtime_options.disabledTools
-            .filter((entry): entry is string => typeof entry === 'string')
-            .join('\n')
-        : '',
-    );
     setSkillsText(
       Array.isArray(localConfig.skills)
         ? localConfig.skills.filter((entry): entry is string => typeof entry === 'string').join('\n')
@@ -955,13 +947,6 @@ export function AgentManager({
       runtime_options: {
         ...(localConfig.runtime_options || {}),
         ...(providerModelId !== undefined ? { providerModelId } : {}),
-        toolCatalogPolicy: runtimeKind === 'hermes'
-          ? (localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected')
-          : 'selected',
-        disabledTools: runtimeKind === 'hermes'
-          && localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy'
-          ? parseListText(disabledToolsText)
-          : [],
         ...(subagentTouched ? { subagentModel } : {}),
         ...(delegationTouched ? { delegationRole } : {}),
         ...(
@@ -998,7 +983,6 @@ export function AgentManager({
     outputExpectationsTouched,
     promptText,
     toolsText,
-    disabledToolsText,
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
@@ -1189,9 +1173,6 @@ export function AgentManager({
     && maxTokensField
     && maxTurnsField,
   );
-  const completeHealthyCatalog = runtimeKind === 'hermes'
-    && localConfig?.runtime_options?.toolCatalogPolicy === 'all_healthy';
-  const disabledToolNames = parseListText(disabledToolsText);
   const savedToolNames = parseListText(toolsText);
   const selectedToolRows = buildInputDictionarySelectedRows(
     toolDictionaryPage.selectedKnownReferences,
@@ -1199,20 +1180,10 @@ export function AgentManager({
   );
   const availableToolRows = toolDictionaryPage.references.filter((reference) =>
     !savedToolNames.includes(reference.canonicalId)
-    && (!showSelectedToolsOnly || (
-      completeHealthyCatalog
-        ? reference.access === 'read'
-          ? !disabledToolNames.includes(reference.canonicalId)
-          : savedToolNames.includes(reference.canonicalId)
-        : savedToolNames.includes(reference.canonicalId)
-    )),
+    && !showSelectedToolsOnly,
   );
-  const toggleTool = (name: string, checked: boolean, access: 'read' | 'write' = 'write') => {
-    if (completeHealthyCatalog && access === 'read') {
-      setDisabledToolsText(toggleSavedToolAssignment(disabledToolNames, name, !checked).join('\n'));
-    } else {
-      setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
-    }
+  const toggleTool = (name: string, checked: boolean) => {
+    setToolsText(toggleSavedToolAssignment(savedToolNames, name, checked).join('\n'));
     markDraftDirty();
   };
 
@@ -1231,7 +1202,7 @@ export function AgentManager({
             limit: '100',
           });
           if (toolDictionaryNamespace) params.set('namespace', toolDictionaryNamespace);
-          if (!completeHealthyCatalog && savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
+          if (savedToolNames.length) params.set('selectedIds', savedToolNames.join(','));
           const response = await fetch(`/api/idd/tools?${params}`, {
             signal: controller.signal,
           });
@@ -1275,8 +1246,6 @@ export function AgentManager({
     isLocalConfigMode,
     localConfig,
     savedToolNames.join('\u0000'),
-    disabledToolNames.join('\u0000'),
-    completeHealthyCatalog,
     toolDictionaryNamespace,
     toolDictionaryOffset,
     toolDictionaryQuery,
@@ -1489,11 +1458,7 @@ export function AgentManager({
           cardId={cardId}
           runtimeKind={localConfig.runtime.kind}
           script={scriptDraft}
-          toolCatalogPolicy={runtimeKind === 'hermes'
-            ? (localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected')
-            : 'selected'}
           selectedTools={savedToolNames}
-          disabledTools={disabledToolNames}
           onChange={updateScriptDraft}
         />
       );
@@ -1992,14 +1957,13 @@ export function AgentManager({
             </label>
             <button
               type="button"
-              disabled={completeHealthyCatalog ? !disabledToolNames.length : !savedToolNames.length}
+              disabled={!savedToolNames.length}
               onClick={() => {
-                if (completeHealthyCatalog) setDisabledToolsText('');
-                else setToolsText('');
+                setToolsText('');
                 markDraftDirty();
               }}
             >
-              {completeHealthyCatalog ? 'Enable all healthy' : 'Clear selected'}
+              Clear selected
             </button>
             <span style={{ color: '#80969F', fontSize: 11 }}>
               {toolDictionaryBusy ? 'Loading tools…' : !toolOptionsError ? `${toolDictionaryPage.total.toLocaleString()} tools` : null}
@@ -2055,7 +2019,7 @@ export function AgentManager({
           {!showSelectedToolsOnly && availableToolRows.length ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-                {completeHealthyCatalog ? 'Catalog' : 'Available'}
+                Available
               </div>
               {availableToolRows.map((tool) => (
                 <label
@@ -2073,13 +2037,9 @@ export function AgentManager({
                 >
                   <input
                     type="checkbox"
-                    checked={completeHealthyCatalog && (
-                      tool.access === 'read'
-                        ? !disabledToolNames.includes(tool.canonicalId)
-                        : savedToolNames.includes(tool.canonicalId)
-                    )}
+                    checked={savedToolNames.includes(tool.canonicalId)}
                     disabled={tool.availability !== 'available'}
-                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked, tool.access)}
+                    onChange={(event) => toggleTool(tool.canonicalId, event.target.checked)}
                     aria-label={`Include ${tool.displayName || tool.canonicalId}`}
                   />
                   <span>

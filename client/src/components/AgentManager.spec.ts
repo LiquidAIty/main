@@ -275,7 +275,7 @@ describe('AgentManager active builder config', () => {
     expect(onSave.mock.calls[0][0].output_contract).toBe('Citations and a table');
     expect(onSave.mock.calls[0][0].prompt_template).toBe(original);
   });
-  it.each([undefined, 'selected', 'all_healthy'] as const)('shows the saved %s tool policy without changing grants', async (policy) => {
+  it('adds an explicit saved tool grant without implicit catalog grants', async () => {
     const fetchMock = mockEditorFetch();
     const fallback = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (input) => {
@@ -290,16 +290,16 @@ describe('AgentManager active builder config', () => {
     render(React.createElement(AgentManager, {
       agentType: 'agent_builder', activeTab: 'Tools', cardId: 'card-one',
       projectId: 'p', deckId: 'd',
-      localConfig: { ...savedConfig, runtime_options: { toolCatalogPolicy: policy } },
+      localConfig: savedConfig,
       onSaveLocalConfig: onSave,
     }));
     const availableRead = await screen.findByRole('checkbox', { name: 'Include Web search' });
-    expect((availableRead as HTMLInputElement).checked).toBe(policy === 'all_healthy');
+    expect((availableRead as HTMLInputElement).checked).toBe(false);
     expect((screen.getByRole('checkbox', { name: 'Include calculator' }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(availableRead);
     await leaveEditor();
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0].tools).toEqual(savedConfig.tools);
-    expect(onSave.mock.calls[0][0].runtime_options.toolCatalogPolicy).toBe(policy || 'selected');
+    expect(onSave.mock.calls[0][0].tools).toEqual(['calculator', 'web_search']);
   });
 
   it.each([false, true])('restores prompt sections and preserves untouched fields (edit: %s)', async (edit) => {
@@ -552,8 +552,6 @@ describe('AgentManager active builder config', () => {
     expect(source).toContain("runtimeMode === 'main' && nativeHermesState.native.honcho");
     expect(source).not.toContain('CardSubagentsTab');
     expect(source).not.toContain('Use account Luna');
-    expect(source).toContain("localConfig.runtime_options?.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected'");
-    expect(source).not.toContain("toolCatalogPolicy={runtimeKind === 'hermes' ? 'all_healthy'");
   });
 
   it('uses CLI while retaining exactly one mission composer', () => {

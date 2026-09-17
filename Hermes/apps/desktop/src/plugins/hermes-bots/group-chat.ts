@@ -40,7 +40,7 @@ export const $groupNeedsYou = atom<Record<string, boolean>>({})
 // Members run in invisible plumbing sessions, so a member's blocking prompt
 // used to park server-side with no surface to answer it — the user saw
 // "is thinking…" until the prompt timeout. The turn poll mirrors each
-// member's `pending_clarify` / `pending_approval` resume fields in here;
+// member's `open_requests` / `pending_approval` resume fields in here;
 // the room renders answer cards from it.
 export const $groupClarify = atom<Record<string, GroupPrompt>>({})
 
@@ -631,7 +631,11 @@ export function mergeRemoteGroupChatSnapshotIntoRooms(
 
     const isPreserved = preserved.has(displayName) || (localName && preserved.has(localName))
 
-    if (!isPreserved) {
+    // Membership follows the higher revision (a tie unions, as the publish
+    // merge does). An OLDER projection never unions: a room-side roster edit
+    // bumps the local revision precisely so a lagging mirror cannot re-seat
+    // the member it just removed.
+    if (!isPreserved && remoteRevision >= localRevision) {
       if (remoteRevision > localRevision) {
         members.clear()
       }
@@ -749,6 +753,10 @@ export function durableGroupChatRooms(all: Record<string, GroupChat> = $groupCha
       // already carries.
       roomId: typeof room.roomId === 'string' && room.roomId ? room.roomId : null,
       image: room.image || null,
+      rosterOrder: room.rosterOrder,
+      pinned: room.pinned,
+      // Sidebar filing (user-sections) is room-local; keep it across sync.
+      sectionId: room.sectionId ?? null,
       syncRevision: Math.max(0, Number(room.syncRevision || 0))
     }
   }
@@ -1348,6 +1356,10 @@ export function updateGroupChat(
         roomId: typeof room.roomId === 'string' && room.roomId ? room.roomId : null,
         // Room picture (small data URL, same normalization as bot avatars).
         image: room.image || null,
+        rosterOrder: room.rosterOrder,
+        pinned: room.pinned,
+        // Sidebar filing (user-sections) is room-local; keep it durable.
+        sectionId: room.sectionId ?? null,
         syncRevision: Math.max(0, Number(room.syncRevision || 0))
       }
     }
@@ -1375,12 +1387,12 @@ export interface GroupHoldStamp extends GroupHold {
 }
 
 /** The room record as the coordination engine handles it: `GroupChat` plus
- *  `turn`, the runtime-only name of the member currently mid-turn. Like
+ *  `turn`, the runtime-only descriptor of the member currently mid-turn. Like
  *  `running`/`epoch` it never persists, so it has no place in the durable
  *  shape. Holds carry the fuller live stamp. */
 export interface GroupChatRoom extends GroupChat {
   holds?: Record<string, GroupHoldStamp>
-  turn?: null | string
+  turn?: GroupMember | null
 }
 
 /** Set or clear a group chat's room picture (small data URL, normalized by

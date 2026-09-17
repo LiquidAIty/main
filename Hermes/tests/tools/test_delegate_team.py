@@ -1,4 +1,4 @@
-"""LiquidAIty's bounded native Team doorway on the stock delegate tool."""
+"""Focused contracts for LiquidAIty's two persistent delegate_task roles."""
 
 from __future__ import annotations
 
@@ -10,25 +10,29 @@ class _Parent:
     session_id = "session-team-1"
 
 
-def test_team_routes_directly_to_auto_kanban_without_temporary_children(monkeypatch):
+def _prepare(monkeypatch, delegate_tool):
+    monkeypatch.setattr(delegate_tool, "is_spawn_paused", lambda: False)
+    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
+    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {})
+
+
+def test_team_routes_to_auto_kanban_before_temporary_child_construction(monkeypatch):
     from hermes_cli import kanban_team
     from tools import delegate_tool
 
+    _prepare(monkeypatch, delegate_tool)
     captured = {}
 
     def submit_team(**kwargs):
         captured.update(kwargs)
         return {"ok": True, "role": "team", "task_id": "t_team"}
 
-    monkeypatch.setattr(delegate_tool, "is_spawn_paused", lambda: False)
-    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
-    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {})
     monkeypatch.setattr(kanban_team, "submit_team", submit_team)
     monkeypatch.setattr(
         delegate_tool,
         "_resolve_delegation_credentials",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("Team must branch before temporary child credentials")
+            AssertionError("Team must branch before temporary-child credentials")
         ),
     )
 
@@ -48,61 +52,50 @@ def test_team_routes_directly_to_auto_kanban_without_temporary_children(monkeypa
     }
 
 
-def test_team_accepts_only_one_top_level_goal_and_no_schema(monkeypatch):
+def test_team_rejects_batch_schema_and_images(monkeypatch):
     from tools import delegate_tool
 
-    monkeypatch.setattr(delegate_tool, "is_spawn_paused", lambda: False)
-    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
-    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {})
+    _prepare(monkeypatch, delegate_tool)
     parent = _Parent()
 
     batch = json.loads(delegate_tool.delegate_task(
-        goal="One durable mission",
-        tasks=[],
-        role="team",
-        parent_agent=parent,
+        goal="One durable mission", tasks=[], role="team", parent_agent=parent,
     ))
     schema = json.loads(delegate_tool.delegate_task(
-        goal="One durable mission",
-        output_schema={"type": "object"},
-        role="team",
-        parent_agent=parent,
+        goal="One durable mission", output_schema={"type": "object"}, role="team", parent_agent=parent,
+    ))
+    images = json.loads(delegate_tool.delegate_task(
+        goal="One durable mission", images=["image.png"], role="team", parent_agent=parent,
     ))
 
     assert "exactly one goal/context" in batch["error"]
     assert "does not accept output_schema" in schema["error"]
+    assert "does not accept images" in images["error"]
 
 
-def test_team_worker_cannot_start_any_nested_delegation(monkeypatch):
+def test_team_worker_cannot_start_nested_delegation(monkeypatch):
     from tools import delegate_tool
 
     monkeypatch.setenv("HERMES_KANBAN_TEAM_WORKER", "1")
     payload = json.loads(delegate_tool.delegate_task(
-        goal="Try to escape the depth-one recipe.",
-        role="leaf",
-        parent_agent=_Parent(),
+        goal="Try to escape the depth-one recipe.", role="leaf", parent_agent=_Parent(),
     ))
     assert "cannot delegate nested team, profile, leaf, or orchestrator" in payload["error"]
 
 
-def test_native_schema_keeps_compatibility_roles_but_team_is_top_level_only():
+def test_schema_exposes_persistent_roles_only_at_top_level():
     from tools.delegate_tool import _build_dynamic_schema_overrides
 
     parameters = _build_dynamic_schema_overrides()["parameters"]
-    assert parameters["properties"]["role"]["enum"] == [
-        "leaf", "orchestrator", "team", "profile",
-    ]
-    assert parameters["properties"]["tasks"]["items"]["properties"]["role"]["enum"] == [
-        "leaf", "orchestrator",
-    ]
+    assert parameters["properties"]["role"]["enum"] == ["team", "profile"]
+    assert "role" not in parameters["properties"]["tasks"]["items"]["properties"]
+    assert parameters["properties"]["dataAnchors"]["maxItems"] == 16
 
 
-def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch):
+def test_profile_calls_exactly_one_host_authorized_profile(monkeypatch):
     from tools import delegate_tool
 
-    monkeypatch.setattr(delegate_tool, "is_spawn_paused", lambda: False)
-    monkeypatch.setattr(delegate_tool, "_get_max_spawn_depth", lambda: 2)
-    monkeypatch.setattr(delegate_tool, "_load_config", lambda: {})
+    _prepare(monkeypatch, delegate_tool)
     calls = []
 
     def requester(method, params):
@@ -121,19 +114,20 @@ def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch)
     parent._host_profile_targets = [{
         "profile": "graph-agent", "title": "Graph Agent", "description": "",
     }]
+    anchors = [{
+        "authority": "ThinkGraph",
+        "nativeId": "memory-project-frame",
+        "reason": "Use the accepted project frame",
+        "priority": 10,
+        "boundedExpansion": 1,
+        "resultLimit": 8,
+    }]
     result = json.loads(delegate_tool.delegate_task(
         goal="Inspect the selected native graph.",
         context="Return bounded provenance.",
         role="profile",
         target_profile="graph-agent",
-        data_anchors=[{
-            "authority": "ThinkGraph",
-            "nativeId": "memory-project-frame",
-            "reason": "Use the accepted project frame",
-            "priority": 10,
-            "boundedExpansion": 1,
-            "resultLimit": 8,
-        }],
+        data_anchors=anchors,
         parent_agent=parent,
     ))
 
@@ -143,14 +137,7 @@ def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch)
     assert calls[0][1]["parentExecutionContextId"] == "root-context"
     assert calls[0][1]["goal"] == "Inspect the selected native graph."
     assert calls[0][1]["context"] == "Return bounded provenance."
-    assert calls[0][1]["dataAnchors"] == [{
-        "authority": "ThinkGraph",
-        "nativeId": "memory-project-frame",
-        "reason": "Use the accepted project frame",
-        "priority": 10,
-        "boundedExpansion": 1,
-        "resultLimit": 8,
-    }]
+    assert calls[0][1]["dataAnchors"] == anchors
     assert calls[0][1]["nativeChildId"].startswith("profile-")
 
     forged = json.loads(delegate_tool.delegate_task(
@@ -161,3 +148,44 @@ def test_profile_role_calls_only_one_host_authorized_native_profile(monkeypatch)
     ))
     assert "not authorized" in forged["error"]
     assert len(calls) == 1
+
+
+def test_profile_fails_closed_without_host_context(monkeypatch):
+    from tools import delegate_tool
+
+    _prepare(monkeypatch, delegate_tool)
+    parent = _Parent()
+    parent._host_profile_targets = [{"profile": "builder"}]
+    result = json.loads(delegate_tool.delegate_task(
+        goal="Use the existing Builder profile.",
+        role="profile",
+        target_profile="builder",
+        parent_agent=parent,
+    ))
+    assert result["error"] == "Profile delegation host context is unavailable."
+
+
+def test_run_agent_forwards_profile_fields_and_background(monkeypatch):
+    import run_agent
+    from tools import delegate_tool
+
+    captured = {}
+
+    def fake_delegate_task(**kwargs):
+        captured.update(kwargs)
+        return "{}"
+
+    monkeypatch.setattr(delegate_tool, "delegate_task", fake_delegate_task)
+    run_agent.AIAgent._dispatch_delegate_task(
+        _Parent(),
+        {
+            "goal": "Inspect the graph",
+            "role": "profile",
+            "target_profile": "graph-agent",
+            "dataAnchors": [{"nativeId": "n1"}],
+            "background": True,
+        },
+    )
+    assert captured["target_profile"] == "graph-agent"
+    assert captured["data_anchors"] == [{"nativeId": "n1"}]
+    assert captured["background"] is True

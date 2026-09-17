@@ -121,8 +121,8 @@ not the fabricated standalone tool initially suspected.
 | Named-profile delegation | Contained fail-closed vendor branch, exact-profile authority, internal-handle filtering, and unit contract | Supported Gateway-native host request and real result return; no ACP restoration |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
-| Bot Mode | First-party Hermes source plus the thin working-tree managed interception/profile-resolution boundary | Prove stock Main-to-Builder delivery and native reply through the canonical `Bot Chat`; source/tests are not loaded-runtime acceptance |
-| Hermes Card tools | Python saved-grant/IDF materialization and stock Hermes plugin/registry contracts | Implement the approved native-plugin projection and prove exact Main/Builder visibility plus invocation-time Python authorization |
+| Bot Mode | Loaded Main called stock `message_agent`; Hermes acknowledged once, ran the Builder-profile canonical `Bot Chat` helper, emitted Main's native completion notification, and created no Builder Run | Hermes terminal children strip the managed Gateway credential, so Builder's protocol-required `message_agent` reply fails closed; add a narrow upstream identity/credential contract before claiming attributed reply acceptance |
+| Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |
 | Production boundaries | Backend and client production typechecks | Loaded build/source hashes and full product acceptance |
 
 ## Known baseline failures and environment limits
@@ -160,19 +160,18 @@ restoring the retired runtime.
    and Regression Ratio. Bot Mode and the Hermes tool boundary remain separately proven working-tree
    changes, not permission to restore any removed ACP path.
 
-## Next bounded implementation decision
+## Next bounded proof boundary
 
-The native Hermes-plugin route above is the preferred architecture. Before implementation, compare the
-bounded variants in the active task's options matrix and select only the smallest variant that proves:
+The native Hermes-plugin route is implemented and has loaded internal-tool proof. Continue only with:
 
-- one profile-scoped plugin registration enters Hermes' real registry;
-- Main sees exactly its saved internal tools plus deliberately selected native/external tools;
-- Builder sees its own exact, independent selection;
-- one tool call crosses one authenticated internal invocation boundary and executes through the existing
-  Python operation owner;
-- caller-supplied Card, Run, project, deck, or grant data cannot widen authority;
-- an unavailable plugin, schema, grant, or execution identity fails closed; and
-- external GPT/MCP behavior remains unchanged.
+- a separately approved, upstream-defensible Hermes contract that lets a stock Bot-Chat delivery helper
+  prove the receiving profile/runtime identity when it calls `message_agent` back, without exposing or
+  reusing another Gateway's credential;
+- upstream tests covering credential scrubbing, canonical Bot Chat continuity, exact source identity,
+  one acknowledgement, and attributed completion delivery;
+- removal of no LiquidAIty guard until that native contract exists; and
+- live CBM/Graphiti external-tool proof through only the backing connections derived from saved individual
+  grants, without widening to sibling server tools.
 
 Do not edit `Hermes/`, restore ACP, route internal Hermes tools through MCP, create a second catalog or
 dispatcher, or use profile configuration as invocation-time authorization. Live model sends and browser

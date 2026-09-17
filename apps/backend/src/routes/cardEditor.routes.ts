@@ -188,9 +188,7 @@ iddRoutes.get('/script-tools', async (req, res) => {
   try {
     const catalog = await loadInputDictionaryToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
-      policy: req.query.policy === 'all_healthy' ? 'all_healthy' : 'selected',
       selectedIds: commaSeparatedIds(req.query.selectedIds),
-      disabledIds: commaSeparatedIds(req.query.disabledIds),
     });
     const referenceIds = new Set(references.map((reference) => reference.canonicalId));
     const defaultAgentTools = commaSeparatedIds(req.query.selectedIds)
@@ -226,9 +224,7 @@ router.post('/script/validate', async (req, res) => {
       : [];
     const catalog = await loadInputDictionaryToolCatalog();
     const references = resolveScriptToolReferences(catalog, {
-      policy: body.toolCatalogPolicy === 'all_healthy' ? 'all_healthy' : 'selected',
       selectedIds: selectedToolIds,
-      disabledIds: Array.isArray(body.disabledTools) ? body.disabledTools.map(String) : [],
     });
     const referenceIds = new Set(references.map((reference) => reference.canonicalId));
     const defaultAgentTools = selectedToolIds

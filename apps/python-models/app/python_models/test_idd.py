@@ -199,7 +199,7 @@ output.emit({"agent": {"run": True}})
     ]
 
 
-def test_authorized_all_healthy_tools_default_off_unless_saved_or_script_owned() -> None:
+def test_unsaved_tools_default_off_unless_script_owned() -> None:
     source = '''CARD_SCRIPT = {
     "mode": "tool_recipe",
     "input": {"type": "object", "properties": {"mission": {"type": "string"}}, "required": ["mission"]},

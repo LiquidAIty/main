@@ -472,17 +472,13 @@ export function CardScriptEditor({
   cardId,
   runtimeKind,
   script,
-  toolCatalogPolicy,
   selectedTools,
-  disabledTools,
   onChange,
 }: {
   cardId: string;
   runtimeKind: 'hermes' | 'autogen';
   script: CardScript;
-  toolCatalogPolicy: 'selected' | 'all_healthy';
   selectedTools: string[];
-  disabledTools: string[];
   onChange(script: CardScript): void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -520,12 +516,10 @@ export function CardScriptEditor({
   const selectionQuery = useMemo(() => {
     const params = new URLSearchParams({
       cardId,
-      policy: toolCatalogPolicy,
       selectedIds: selectedTools.join(','),
-      disabledIds: disabledTools.join(','),
     });
     return params.toString();
-  }, [cardId, toolCatalogPolicy, selectedTools.join('\u0000'), disabledTools.join('\u0000')]);
+  }, [cardId, selectedTools.join('\u0000')]);
 
   const switchDocument = (next: 'source' | 'header') => {
     const editor = editorRef.current;
@@ -906,7 +900,7 @@ export function CardScriptEditor({
       const response = await fetch('/api/cards/script/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runtimeKind, toolCatalogPolicy, selectedTools, disabledTools, script }),
+        body: JSON.stringify({ runtimeKind, selectedTools, script }),
       });
       const payload = await response.json();
       if (!response.ok || payload?.ok !== true || !payload.script) {

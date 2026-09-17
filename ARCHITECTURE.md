@@ -185,11 +185,18 @@ LiquidAIty cleanup.
 The current working tree contains a thin managed `message_agent` interception boundary that
 authenticates the source runtime, resolves the receiving saved Card's exact Hermes profile, and then
 resumes stock Hermes delivery once. It does not reproduce Hermes Desktop's Bot UI or own native Bot
-queueing, ordering, inference, completion, history, or notification. Main-to-Builder live execution and
-reply proof remain incomplete, so the working-tree source is not yet a loaded-runtime acceptance claim.
-The integration must continue to reuse saved Card/profile authority and Hermes' public
-Gateway/profile/plugin contracts; it must not create a second Card type, daemon, catalog, router,
-profile store, completion correlator, or application queue.
+queueing, ordering, inference, completion, history, or notification. Loaded Main-to-Builder proof now
+reaches stock `message_agent`, its asynchronous acknowledgement, Builder's canonical `Bot Chat` helper,
+and Main's native background-completion event without creating a Builder Run. The reply itself is blocked:
+the Builder helper correctly follows Hermes' Bot protocol and calls `message_agent` back to Main, but
+Hermes deliberately strips `HERMES_DASHBOARD_SESSION_TOKEN` from terminal-tool children and its public
+environment-passthrough contract refuses that internal credential. The managed plugin therefore fails
+closed with `missing_gateway_credential`; no attributed Builder reply is returned. Supplying Main's
+credential, allowing unmanaged fallthrough, or adding a LiquidAIty queue/correlator would create the wrong
+identity or another messaging owner and is not an accepted workaround. The integration must continue to
+reuse saved Card/profile authority and Hermes' public Gateway/profile/plugin contracts; it must not create
+a second Card type, daemon, catalog, router, profile store, completion correlator, application queue, or
+parallel child credential path.
 
 ## Profile materialization and memory
 
@@ -214,12 +221,7 @@ processing, and AutoGen/Magentic-One execution.
 
 ## Internal Card tools and external MCP
 
-Hermes and LiquidAIty currently disagree at the tool-presentation boundary. Python rails materializes
-the saved Card's exact presented tool set and definitions, while the live Hermes agent independently
-snapshots its native registry. Sending definitions in IDF prose does not register them. The existing
-profile materializer currently applies model, skills, and native subagent model only.
-
-The approved target separates publication from execution without duplicating tool ownership:
+The current working tree separates publication from execution without duplicating tool ownership:
 
 ```text
 saved Card and current execution authority
@@ -228,20 +230,29 @@ saved Card and current execution authority
      -> official MCP publication for external clients
 ```
 
-For Hermes-backed Cards, a profile-scoped native Hermes plugin registers model-facing LiquidAIty tools
-through the public plugin registry. Hermes continues to own tool presentation, selection, validation,
-guardrails, approvals, hooks, dispatch, and result delivery. Each plugin invocation crosses one
-authenticated LiquidAIty host boundary; the host derives the source Card/runtime from process and native
-session identity, and Python rails enforces the saved grant and current execution authority. The plugin
-does not own grants, cache a second catalog, copy implementations, launch a helper service, or route
-through MCP.
+`OperationDefinition` in Python is the canonical owner of LiquidAIty operation IDs, descriptions,
+parameter schemas, handlers, availability, and permitted publishers. Existing Python modules continue to
+contribute their own definitions. Saved Cards grant canonical IDs; the profile-scoped native Hermes plugin
+receives only selected `internal-plugin` definitions directly from that registry, the MCP host publishes
+only `external-mcp` definitions, and IDD receives derived Builder-facing metadata. No publisher discovery
+is fed back into the canonical registry, and `tool_manifest()` is a derived view rather than another owner.
+
+For Hermes-backed Cards, the profile-scoped plugin registers model-facing LiquidAIty tools through the
+public plugin registry using Hermes' exact `{name, description, parameters}` schema. Hermes continues to
+own tool presentation, selection, validation, guardrails, approvals, hooks, dispatch, and result delivery.
+Each invocation crosses one authenticated LiquidAIty host boundary; the host derives the source Card/runtime
+from process and native session identity, and Python rails enforces the saved grant and current revision.
+The plugin does not own grants, load IDD, cache a second catalog, copy implementations, launch a helper
+service, or route internal operations through MCP.
 
 MCP remains correct for external GPT clients and deliberately configured third-party/external servers.
 It is not the internal execution bus for LiquidAIty tools inside Hermes. Both publishers reuse the same
-Python schemas and operation implementations. Stock `tools.configure` is durable profile projection and
-session rebuilding only; it is never invocation-time authorization. Exact live registration/readback,
-Card-specific visibility, and native Bot turns without fabricated application Runs remain proof gaps in
-`PLAN.md`, not hidden fallback authority.
+Python definitions and implementations. A saved individual external-tool grant derives only its required
+backing MCP connection; a separate connection checkbox is not required and sibling tools on that server
+do not become granted. Stock `tools.configure` is durable profile projection and session rebuilding only;
+it is never invocation-time authorization. Loaded proof shows Main using its selected internal
+`engraphis_recall_context` operation through the native plugin and Python handler. External CBM/Graphiti
+invocation and the incomplete Bot reply retain their separate proof boundaries in `PLAN.md`.
 
 The native TUI and Bot Chat are proof surfaces for the same plugin-backed Card runtime, not reasons to
 create separate tool paths. A public-contract failure stops the implementation; it does not authorize an
@@ -254,12 +265,12 @@ Magentic-One's private ledgers and TypeScript does not schedule its participants
 
 ## MCP and Codebase Memory
 
-`apps/python-models/app/mcp_host.py` is the one official MCP host. It currently freezes one canonical
-catalog, preserves native tool schemas, and dispatches to the existing Python owners. External account
-access uses the configured OAuth resource boundary. The approved Hermes-plugin work will extract/reuse
-the protocol-neutral Python operation boundary so internal Hermes Card tools do not depend on MCP, while
-external clients retain this one MCP publication surface. Until that refactor is implemented and proven,
-CURRENT and TARGET must not be collapsed.
+`apps/python-models/app/mcp_host.py` is the one official MCP host. It freezes one canonical external
+publication view, preserves native tool schemas, and dispatches to the existing Python owners. External
+account access uses the configured OAuth resource boundary. Internal Hermes Card tools use the same
+protocol-neutral Python operation definitions through the native plugin and do not depend on MCP discovery.
+Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
+acceptance.
 
 Codebase Memory is a native MCP dependency of that host. The checksum-pinned official binary, its one
 long-lived stdio frontend, upstream daemon/watcher, UI, and disposable native cache live outside the
@@ -355,11 +366,14 @@ No other Hermes customization is silently accepted by this document.
   output through the same saved Run.
 - The retained profile branch is source/unit-only and currently fails closed because no supported
   Gateway request owner supplies the trusted roster and receiving-Card invocation.
-- Native Bot Mode is present in Hermes and the current working tree contains the thin managed Card/profile
-  interception boundary, but Main-to-Builder native delivery, reply, and loaded-runtime acceptance remain
-  unproven.
-- Saved Card tool grants are materialized by Python but are not yet enforced as the live Hermes registry
-  surface. The approved native-plugin boundary remains unimplemented.
+- Native Bot Mode is present in Hermes and the thin managed Card/profile interception boundary is loaded.
+  Main-to-Builder reached stock acknowledgement, Builder's canonical `Bot Chat` helper, and Main's native
+  completion notification without a fabricated Builder Run. Attributed reply acceptance is blocked because
+  Hermes strips the Gateway credential from that helper while the Bot protocol requires Builder to call
+  `message_agent` back; the plugin correctly fails closed instead of using unmanaged fallthrough.
+- Stable saved Card tool grants are enforced as the live Hermes registry surface through the native plugin.
+  Main's selected `engraphis_recall_context` completed through Python rails in the canonical stack. Focused
+  catalog tests prove publisher separation; external CBM/Graphiti live invocation remains outstanding.
 - Native subagent configuration and actual child provider/model require a real child receipt; saved or
   projected selections alone are not execution proof.
 - Magentic-One, graph attention, external MCP selection, and visual behavior retain their own acceptance

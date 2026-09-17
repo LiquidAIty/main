@@ -124,6 +124,17 @@ def test_hmac_headers_match_worldsignals_contract() -> None:
     assert len(headers["X-SB-Nonce"]) >= 16
 
 
+def test_missing_worldsignals_runtime_returns_typed_unavailable_error(monkeypatch) -> None:
+    def unavailable(*_args, **_kwargs):
+        raise wsc.URLError("backing runtime absent")
+
+    monkeypatch.setattr(wsc, "urlopen", unavailable)
+    client = WorldSignalsClient(base_url="http://127.0.0.1:8000", secret="")
+
+    with pytest.raises(WorldSignalsError, match="worldsignals_unreachable"):
+        client.capabilities()
+
+
 def test_mainstream_commands_pass_the_default_capability_boundary() -> None:
     # A representative mainstream research command is never gated.
     for cmd in ("get_summary", "find_entity", "correlate_entity", "search_news", "add_watch", "brief_area"):

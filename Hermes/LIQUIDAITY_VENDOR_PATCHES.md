@@ -1,145 +1,167 @@
 # LiquidAIty Hermes divergence register
 
-This file records the only two LiquidAIty-owned changes that are intended to
-remain in the vendored Hermes source. It is a source-scope register, not proof
-that either path has passed loaded application acceptance.
+This vendored tree is the official Hermes Agent source at the pinned base below,
+plus exactly two LiquidAIty-owned runtime extensions: durable Team delegation and
+named-profile delegation. This register describes source scope; loaded product
+acceptance is reported separately.
 
-The checked-in package declares Hermes Agent `0.21.0` from
-`https://github.com/NousResearch/hermes-agent`. The imported source does not
-record its original upstream commit SHA, so this register can prove the
-intended local patches and their current markers, but it cannot by itself prove
-an exhaustive byte-for-byte diff against the exact upstream import.
+## Verified upstream base
 
-Hermes' upstream ACP implementation remains vendored upstream functionality.
-LiquidAIty does not use it as its Card runtime boundary: Main, Builder, and
-ordinary Hermes-backed Cards run through the native Gateway/TUI system. The
-removed LiquidAIty ACP adapter, callback routes, editable plugin, execution
-context registry, transcript projection, and child-Run bridge are not fallback
-paths and must not be restored.
+- Project: `NousResearch/hermes-agent`
+- Official repository: `https://github.com/NousResearch/hermes-agent.git`
+- Version: `0.21.3`
+- Commit: `73521a8e375a867fae14ec0579f2dfb47aa0017e`
+- Commit subject: `fix(update): one bad workspaces glob no longer aborts the lockfile-churn cleanup`
+- Task-start resolution: one `git ls-remote origin refs/heads/main` resolved the
+  exact commit above. The detached verification snapshot's `FETCH_HEAD` was
+  written at `2026-09-16T20:44:57.3367113-04:00`.
+- Import proof: every one of the 13,698 upstream-tracked paths was compared by
+  SHA-256 after the mirror and before the feature port: zero missing, zero
+  mismatched, and zero old tracked-only paths remained.
 
-Any LiquidAIty-specific Hermes change outside the two entries below is residue
-unless a later owner-approved ImplementationPacket updates this register.
+Upstream Hermes owns Bot Mode, Gateway and session ownership, native queueing,
+delivery and receipts, `prompt.submit`, CLI/TUI behavior, tools, plugins, memory,
+profiles, and lifecycle. Upstream ACP source remains present but is not a
+LiquidAIty Card runtime boundary. No LiquidAIty Bot, Gateway, ACP, credential,
+completion-correlation, queue, or lifecycle patch is retained in this tree.
+
+Any production difference outside the two entries below is unexplained residue
+and blocks publication.
 
 ## 1. Durable Team through `delegate_task(role="team")`
 
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.0, imported upstream commit unknown.
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
 
-PURPOSE: add one top-level `team` role to Hermes' existing `delegate_task`
-tool. It creates one durable native Auto-Kanban root and then leaves
-decomposition, dispatch, worker execution, review, retry, synthesis,
-notification, Stop, and rejoin with Hermes' existing Kanban owners.
+PURPOSE: add one explicit top-level `team` role to Hermes' existing
+`delegate_task` tool. It creates and activates one durable native Auto-Kanban
+root, then native Kanban owners retain decomposition, dispatch, worker execution,
+retry, final synthesis, notification, Stop, and rejoin.
 
-EXTERNAL ALTERNATIVE CHECK: native leaf/orchestrator delegation is temporary
-child execution and cannot provide a durable Kanban task graph. A LiquidAIty
-scheduler, ACP callback loop, second task database, or TypeScript planner would
-duplicate Hermes owners and is rejected.
+EXTERNAL ALTERNATIVE CHECK: upstream temporary subagents do not create a durable
+task graph. A LiquidAIty scheduler, queue, worker process owner, task database, or
+TypeScript planner would duplicate native owners and is rejected.
 
 FILES AND SYMBOLS:
 
-- `tools/delegate_tool.py`: validates the single top-level Team mission,
-  prevents nested delegation from Team workers, and calls
-  `hermes_cli.kanban_team.submit_team` before temporary-child construction.
-- `hermes_cli/kanban_team.py`: validates native configuration and dispatcher
-  readiness, creates one initially blocked root, activates it into Triage, and
-  subscribes the originating native session.
-- `hermes_cli/config_defaults.py`: defines the optional native Team worker
-  provider/model/reasoning fields.
-- `hermes_cli/kanban_decompose.py`: carries the native Team worker selection
-  into decomposed child tasks.
-- `hermes_cli/kanban_db.py`: preserves the Team root/worker invariants,
-  activation boundary, depth-one worker environment, and root synthesis.
+- `tools/delegate_tool.py`: top-level Team schema/validation, depth-one worker
+  guard, and dispatch to `hermes_cli.kanban_team.submit_team` before temporary
+  child credential/runtime construction.
+- `hermes_cli/kanban_team.py`: validates decomposer/worker policy and native
+  dispatcher readiness, creates one parked root, activates Triage, and subscribes
+  the durable originating session.
+- `hermes_cli/config_defaults.py`: optional Team worker provider/model/reasoning
+  selections; empty provider/model leaves Team fail-closed.
+- `hermes_cli/kanban_db.py`: atomic workflow/step fields on task creation,
+  `activate_team_triage_task`, nested task-creation guard, and final-synthesis
+  worker context.
+- `hermes_cli/kanban_db_graph.py`: propagates the Team workflow, depth-one worker
+  route, retry limit, and root synthesis step through native decomposition.
+- `hermes_cli/kanban_decompose.py`: applies the configured Team worker policy to
+  native decomposed children and requires actual fan-out for Team missions.
+- `hermes_cli/kanban_db_dispatch.py`: marks Team worker processes and adds Team
+  workflow/provider/model facts to the existing native spawned event.
 
-UPSTREAM BEHAVIOR PRESERVED: `leaf` and `orchestrator` keep their upstream
-temporary-child paths. Ordinary manually created Kanban tasks retain their
-normal behavior. No Card ID, saved Card prompt, IDF, graph selection, or
-LiquidAIty Run definition is stored in Hermes' Kanban database.
+UPSTREAM BEHAVIOR PRESERVED: temporary subagent `tasks[]`, ordinary Kanban tasks,
+manual decomposition, dispatch, worker processes, task/run persistence, retries,
+and notifications remain upstream-owned. Team adds no Card identity, IDF, graph,
+LiquidAIty Run, scheduler, or queue to Hermes.
 
 CONTRACTS:
 
-- Team accepts one non-empty `goal` and optional string `context`.
-- `tasks[]`, `output_schema`, and nested delegation are rejected for Team.
-- the native decomposer and worker provider/model must be configured before a
-  Team root is created;
-- a live repository Gateway dispatcher and durable originating Hermes session
-  are required;
-- the root is committed blocked before activation, preventing dispatch before
-  correlation exists;
-- the Team recipe has native depth one; Hermes owns retries and synthesis.
+- one non-empty goal and optional string context;
+- no Team `tasks[]`, `output_schema`, images, or nested delegation;
+- explicit decomposer and Team worker provider/model before any root write;
+- live native dispatcher and durable source session before any root write;
+- one parked root before activation into native Triage;
+- native depth-one workers and a separate final synthesis pass;
+- no artificial Team task-count cap beyond native policy.
 
 TESTS:
 
 - `tests/tools/test_delegate_team.py`
 - `tests/hermes_cli/test_kanban_team.py`
+- affected upstream coverage in `tests/tools/test_delegate.py`
 
-FORK COST: one small adapter module plus contained changes in the existing
-delegate, configuration, decomposition, and Kanban owners. No downstream ACP
-plugin or callback service is part of this patch.
+FORK COST: one small adapter module and bounded branches in seven existing
+delegation/Kanban owners. There is no second scheduler, process owner, queue,
+Gateway, or callback runtime.
 
-ROLLBACK: remove the `team` enum/branch, `kanban_team.py`, Team-only config,
-decomposition metadata, database invariants, and matching tests together.
-Leave upstream leaf/orchestrator delegation and ordinary Kanban untouched.
+ROLLBACK: remove the Team schema/branch, `kanban_team.py`, Team-only defaults,
+workflow propagation/activation/worker marker/synthesis hunks, and corresponding
+tests together. Leave upstream temporary delegation and ordinary Kanban intact.
 
-Current proof limit: focused source tests and compilation can prove the
-contained contract. Real Gateway/TUI input, native worker activity, synthesis,
-and returned output require separate loaded acceptance.
+## 2. Named profile through `delegate_task(role="profile")`
 
-## 2. Named-profile branch through `delegate_task(role="profile")`
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
 
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.0, imported upstream commit unknown.
+PURPOSE: add one explicit top-level `profile` role that requests exactly one
+trusted-host-authorized existing profile with a parent-authored goal, context,
+and optional bounded native data references. Hermes does not learn Card or
+topology semantics.
 
-PURPOSE: reserve one direct `profile` role on the existing `delegate_task`
-doorway. A trusted host may expose an exact bounded roster of installed native
-profiles, after which Hermes can request one receiving-profile handoff with the
-parent-authored goal, context, and optional bounded native data references.
-
-EXTERNAL ALTERNATIVE CHECK: native leaf/orchestrator children inherit the
-current profile and Team is same-profile durable fan-out. None selects another
-existing profile. A second model-facing Card tool, deterministic router, ACP
-adapter, callback plugin, or duplicate Run materializer is rejected.
+EXTERNAL ALTERNATIVE CHECK: temporary children inherit their current runtime;
+Team is durable same-board fan-out. Neither selects a named persistent profile.
+A second Card tool, deterministic router, ACP adapter, callback service, or
+direct profile launcher is rejected.
 
 FILES AND SYMBOLS:
 
-- `tools/delegate_tool.py`: `role="profile"`, `target_profile`, bounded
-  `dataAnchors`, exact roster validation, and the fail-closed trusted-host
-  request.
-- `run_agent.py`: transports the profile arguments through the ordinary native
-  delegate-tool invocation without interpreting their meaning.
-- `tests/tools/test_delegate_team.py`: unit proof of exact-roster acceptance,
-  forged-target rejection, argument forwarding, and preserved Team nesting
-  constraints.
+- `tools/delegate_tool.py`: Profile schema/validation, exact trusted roster
+  membership, bounded `dataAnchors`, background choice, and fail-closed host
+  request through `session/delegate_profile`.
+- `run_agent.py`: mechanically forwards Profile arguments through the ordinary
+  native `delegate_task` dispatch point.
 
-UPSTREAM BEHAVIOR PRESERVED: without a trusted roster and request function the
-profile branch fails closed. Leaf, orchestrator, Team, model/provider selection,
-profile storage, memory, skills, MCP, and normal Gateway sessions are unchanged.
+UPSTREAM BEHAVIOR PRESERVED: without an authenticated host roster/request
+context the Profile branch fails closed. It does not create a Hermes Card,
+session owner, model fallback, direct process, queue, Run, or IDF.
 
 CONTRACTS:
 
-- one exact roster member is required;
-- one non-empty goal and optional string context are accepted;
-- batches and output schemas are rejected;
-- at most sixteen object-shaped `dataAnchors` may be transported; the receiving
-  LiquidAIty Python IDF owner, not Hermes, must validate and read them;
-- the receiving saved Card remains the sole owner of its profile, prompt,
-  grants, Run, and IDF;
-- missing trusted host context returns an explicit unavailable error and never
-  falls back to leaf, Team, ACP, a generic model call, or direct profile launch.
+- one exact host-authorized profile and one non-empty goal;
+- optional string context and at most sixteen object-shaped `dataAnchors`;
+- no batch, output schema, or image payload;
+- the host remains responsible for saved-Card authorization and for validating
+  native references; the receiving profile keeps its native runtime authority;
+- missing or invalid host context returns an explicit error with no fallback.
 
 TESTS:
 
 - `tests/tools/test_delegate_team.py`
+- affected upstream coverage in `tests/tools/test_delegate.py`
 
-FORK COST: a contained schema and dispatch branch in the existing delegate
-tool, plus argument transport in `run_agent.py`.
+FORK COST: one contained branch/schema extension in the existing delegate tool
+and mechanical field transport at its one agent-loop call site.
 
-ROLLBACK: remove `profile`, `target_profile`, `dataAnchors`, the profile branch,
-the matching `run_agent.py` arguments, and profile-specific tests together.
-Leave Team, leaf, orchestrator, and native profile management untouched.
+ROLLBACK: remove the Profile schema/branch and matching `run_agent.py` forwarding
+and tests together. Leave Team and upstream temporary delegation intact.
 
-Current proof limit: the branch is intentionally unavailable in the current
-stock Gateway/TUI integration because no supported native Gateway method yet
-supplies the trusted roster/request context. The old ACP host-profile adapter
-and editable LiquidAIty plugin that once supplied private `_host_*` attributes
-were removed. Unit injection proves only branch behavior, not a live Card
-handoff. The next implementation must either connect this branch through a
-documented native Gateway extension point or remove it; it must not restore the
-retired ACP/plugin system.
+## Complete upstream-relative difference manifest
+
+Production files:
+
+- `tools/delegate_tool.py` — Team and Profile
+- `run_agent.py` — Profile
+- `hermes_cli/config_defaults.py` — Team
+- `hermes_cli/kanban_team.py` — Team
+- `hermes_cli/kanban_db.py` — Team
+- `hermes_cli/kanban_db_graph.py` — Team
+- `hermes_cli/kanban_decompose.py` — Team
+- `hermes_cli/kanban_db_dispatch.py` — Team
+
+Focused tests:
+
+- `tests/tools/test_delegate.py` — adjusted public-schema assertions only
+- `tests/tools/test_delegate_team.py` — Team and Profile
+- `tests/hermes_cli/test_kanban_team.py` — Team
+
+Metadata:
+
+- `LIQUIDAITY_VENDOR_PATCHES.md` — this register
+
+Ignored runtime state beneath the vendor directory, including virtual
+environments, profile homes, history/databases, caches, bytecode, egg metadata,
+and test-duration caches, is neither upstream source nor a local source
+divergence and must not be reset as part of a vendor update.

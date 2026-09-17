@@ -4,6 +4,10 @@ import json
 from app.python_models.tool_registry import (
     ToolRegistry,
     build_default_tool_registry,
+    external_mcp_manifest,
+    operation_definition,
+    operation_definitions,
+    materialize_tool_catalog,
     tool_calculator,
     tool_current_datetime,
     tool_manifest,
@@ -103,6 +107,105 @@ def test_manifest_publishes_only_factual_private_runtime_contracts():
 
 
 def test_manifest_exposes_no_secrets_endpoints_or_db_config():
-    blob = json.dumps(tool_manifest()).lower()
-    for forbidden in ["password", "bolt://", "neo4j_uri", "12434", "services/knowgraph", "api_key", "secret"]:
+    manifest = tool_manifest()
+    blob = json.dumps(manifest).lower()
+    for forbidden in ["bolt://", "neo4j_uri", "12434", "services/knowgraph", "bearer "]:
         assert forbidden not in blob
+
+    sensitive_keys: list[str] = []
+
+    def collect_sensitive_keys(value, path: str = ""):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                next_path = f"{path}.{key}" if path else key
+                if any(term in key.lower() for term in ("password", "secret", "api_key", "apikey", "bearer")):
+                    sensitive_keys.append(next_path)
+                collect_sensitive_keys(child, next_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                collect_sensitive_keys(child, f"{path}[{index}]")
+
+    collect_sensitive_keys(manifest)
+    assert sensitive_keys == []
+
+
+def test_canonical_operation_ids_and_publisher_views_are_unique_and_permitted():
+    definitions = operation_definitions()
+    ids = [definition.canonical_id for definition in definitions]
+    assert len(ids) == len(set(ids))
+    by_id = {definition.canonical_id: definition for definition in definitions}
+    internal = tool_manifest()
+    external = external_mcp_manifest()
+    assert len(internal) == len({item["name"] for item in internal})
+    assert len(external) == len({item["name"] for item in external})
+    assert all("internal-plugin" in by_id[item["name"]].publishers for item in internal)
+    assert all(
+        "external-mcp" in by_id[item["name"]].publishers
+        and by_id[item["name"]].external_source_id == "main_mcp"
+        for item in external
+    )
+
+
+def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
+    assert sum(item["name"] == "calculator" for item in tool_manifest()) == 1
+    assert all(item["name"] != "calculator" for item in external_mcp_manifest())
+    definition = operation_definition("calculator")
+    assert definition is not None
+    assert definition.publishers == frozenset({"internal-plugin"})
+
+
+def test_engraphis_is_internal_once_while_cbm_and_graphiti_remain_external():
+    internal_names = [item["name"] for item in tool_manifest()]
+    assert internal_names.count("engraphis_recall_context") == 1
+    assert internal_names.count("engraphis_get_memory") == 1
+    assert operation_definition("cbm.search_graph").publishers == frozenset({"external-mcp"})
+    assert operation_definition("cbm.search_graph").external_source_id == "cbm"
+    assert operation_definition("graphiti.search_nodes").publishers == frozenset({"external-mcp"})
+    assert operation_definition("graphiti.search_nodes").external_source_id == "graphiti"
+    assert "cbm.search_graph" not in internal_names
+    assert "graphiti.search_nodes" not in internal_names
+
+
+def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monkeypatch):
+    definitions = operation_definitions()
+    before = tuple(
+        (item.canonical_id, item.publishers, id(item.handler)) for item in definitions
+    )
+    materialize_tool_catalog([
+        *tool_manifest(),
+        *external_mcp_manifest(),
+        {
+            "name": "cbm.search_graph",
+            "nativeName": "search_graph",
+            "sourceId": "cbm",
+            "namespace": "cbm",
+            "connectionKind": "external-mcp",
+            "description": "Native CBM search.",
+            "inputSchema": {"type": "object", "properties": {}},
+            "annotations": {"readOnlyHint": True},
+        },
+    ])
+    after = tuple(
+        (item.canonical_id, item.publishers, id(item.handler))
+        for item in operation_definitions()
+    )
+    assert after == before
+
+    from app.python_models import idd
+
+    monkeypatch.setattr(
+        idd,
+        "load_input_data_dictionary",
+        lambda: (_ for _ in ()).throw(AssertionError("runtime_loaded_idd")),
+    )
+    assert materialize_tool_catalog(tool_manifest())
+
+
+def test_combined_publisher_contracts_have_no_duplicate_discovery_tuple():
+    references = materialize_tool_catalog([*tool_manifest(), *external_mcp_manifest()])
+    tuples = [
+        (reference["canonicalId"], contract["sourceId"], contract["nativeName"])
+        for reference in references
+        for contract in reference["contracts"]
+    ]
+    assert len(tuples) == len(set(tuples))

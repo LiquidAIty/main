@@ -179,15 +179,13 @@ def test_controller_flow_creation_reconnection_and_no_reverse_authority(monkeypa
         })
 
 
-@pytest.mark.parametrize("policy", ["selected", "all_healthy"])
 def test_no_script_preserves_saved_presentation_without_narrowing_effective_grants(
-    monkeypatch, policy,
+    monkeypatch,
 ):
     loaded = _destination_fixture(monkeypatch)
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"].update(
         tools=["canvas.inspect", "graphiti.search_nodes"],
-        toolCatalogPolicy=policy,
         mcpConnectionIds=["graphiti"],
     )
     before = json.dumps(card, sort_keys=True)
@@ -205,9 +203,7 @@ def test_no_script_preserves_saved_presentation_without_narrowing_effective_gran
     config = prepared["_callConfig"]
     assert config["presentedTools"] == card["runtimeOptions"]["tools"]
     assert set(config["presentedTools"]) <= set(config["enabledTools"])
-    if policy == "all_healthy":
-        assert "web_search" in config["enabledTools"]
-        assert "web_search" not in config["presentedTools"]
+    assert "web_search" not in config["enabledTools"]
     assert json.dumps(card, sort_keys=True) == before
 
 
@@ -216,7 +212,6 @@ def test_saved_card_exposes_only_currently_available_enabled_tools(monkeypatch):
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"].update(
         tools=["canvas.inspect", "graphiti.search_nodes"],
-        toolCatalogPolicy="selected",
     )
     before = json.dumps(card, sort_keys=True)
     payload = _destination_payload("hermes")
@@ -789,8 +784,8 @@ def test_main_context_preview_uses_only_live_saved_grants_without_starting_a_run
     result = card_domain.prepare_main_chat({**payload, "message": "source validity"})
     assert result["preparedContext"] == context
     assert calls == [("00000000-0000-0000-0000-000000000001", "deck-one", "main",
-                      "conversation-one", "source validity", [])]
-    assert result["sessionProfile"]["unavailableTools"] == ["canvas.inspect"]
+                      "conversation-one", "source validity", ["canvas.inspect"])]
+    assert result["sessionProfile"]["unavailableTools"] == []
     assert "idf" not in result and "runId" not in result
 
 
@@ -831,7 +826,7 @@ def test_no_flow_edge_materializes_no_delegation_transport(
     assert invocation["delegationTargets"] == []
 
 
-def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
+def test_catalog_does_not_broaden_saved_card_grants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     card = _agent("catalog-card")
@@ -840,8 +835,6 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
     card["_cardRevisionSha256"] = "sha-catalog"
     card["runtimeOptions"] = {
         **card["runtimeOptions"],
-        "toolCatalogPolicy": "all_healthy",
-        "disabledTools": ["graphiti.search_nodes"],
         "tools": ["engraphis_remember"],
     }
     monkeypatch.setattr(
@@ -881,11 +874,7 @@ def test_all_healthy_catalog_grants_reads_but_only_explicit_available_writes(
     })
 
     grants = invocation["idf"]["selectedToolsAndGrants"]
-    assert grants["toolCatalogPolicy"] == "all_healthy"
-    assert grants["disabledTools"] == ["graphiti.search_nodes"]
-    assert grants["enabledTools"] == [
-        "cbm.search_graph", "engraphis_remember", "web_search",
-    ]
+    assert grants["enabledTools"] == ["engraphis_remember"]
     assert grants["presentedTools"] == ["engraphis_remember"]
     assert [tool["canonicalId"] for tool in grants["toolDefinitions"]] == [
         "engraphis_remember",
@@ -2513,8 +2502,8 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert prepared["message"] == "Help me prepare work for another agent."
     assert "idf" not in prepared
     assert prepared["sessionProfile"]["systemPrompt"] == main["prompt"]
-    assert prepared["sessionProfile"]["enabledTools"] == []
-    assert prepared["sessionProfile"]["unavailableTools"] == ["canvas.inspect"]
+    assert prepared["sessionProfile"]["enabledTools"] == ["canvas.inspect"]
+    assert prepared["sessionProfile"]["unavailableTools"] == []
     assert prepared["sessionProfile"]["runtime"] == {
         "kind": "hermes", "mode": "main", "profile": "default",
     }
@@ -3018,8 +3007,8 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
     assert plan_reads == []
     assert first.idf.stableSavedCardContext.instructions == builder["prompt"]
     assert first.idf.selectedToolsAndGrants.skills == ["agent-builder-inspection"]
-    assert first.idf.selectedToolsAndGrants.enabledTools == []
-    assert first.idf.selectedToolsAndGrants.unavailableTools == ["canvas.inspect"]
+    assert first.idf.selectedToolsAndGrants.enabledTools == ["canvas.inspect"]
+    assert first.idf.selectedToolsAndGrants.unavailableTools == []
     assert first.idf.dynamicContext.task == payload["assignment"]
     assert b"PLAN.md" not in first.idf_bytes
 

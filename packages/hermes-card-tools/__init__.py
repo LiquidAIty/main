@@ -167,7 +167,11 @@ def register(ctx: Any) -> None:
         ctx.register_tool(
             name=tool["hermesName"],
             toolset=TOOLSET,
-            schema=tool["inputSchema"],
+            schema={
+                "name": tool["hermesName"],
+                "description": tool["description"],
+                "parameters": tool["inputSchema"],
+            },
             handler=_handler(tool["hermesName"]),
             description=tool["description"],
         )

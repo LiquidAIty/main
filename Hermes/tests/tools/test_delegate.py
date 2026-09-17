@@ -62,12 +62,15 @@ class TestDelegateRequirements(unittest.TestCase):
     def test_schema_valid(self):
         self.assertEqual(DELEGATE_TASK_SCHEMA["name"], "delegate_task")
         props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        # Retain the host's single-mission profile/Team contract alongside
-        # upstream's native tasks[] contract.
+        # Upstream temporary subagents remain tasks[] only. LiquidAIty's two
+        # persistent roles use the explicit top-level mission shape.
         self.assertIn("tasks", props)
         self.assertIn("goal", props)
         self.assertIn("context", props)
-        self.assertIn("output_schema", props)
+        self.assertEqual(props["role"]["enum"], ["team", "profile"])
+        self.assertIn("target_profile", props)
+        self.assertIn("dataAnchors", props)
+        self.assertNotIn("output_schema", props)
         task_props = props["tasks"]["items"]["properties"]
         self.assertIn("goal", task_props)
         self.assertIn("context", task_props)
@@ -119,7 +122,7 @@ class TestDelegateRequirements(unittest.TestCase):
     def test_dynamic_limits_moved_to_param_descriptions(self):
         """Concurrency reaches the model through the tasks parameter
         description; the depth ceiling lives in the top-level description's
-        depth-derived recursion rule; the host role extension remains."""
+        depth-derived recursion rule; persistent roles stay top-level only."""
         from tools.delegate_tool import _build_dynamic_schema_overrides
         from tools.registry import registry
 
@@ -133,8 +136,8 @@ class TestDelegateRequirements(unittest.TestCase):
 
         for parameters in (overrides["parameters"], definition["parameters"]):
             self.assertIn("up to 7", parameters["properties"]["tasks"]["description"])
-            self.assertEqual(parameters["properties"]["role"]["enum"],
-                             ["leaf", "orchestrator", "team", "profile"])
+            self.assertEqual(parameters["properties"]["role"]["enum"], ["team", "profile"])
+            self.assertNotIn("role", parameters["properties"]["tasks"]["items"]["properties"])
         # Depth ceiling now rides the depth-derived recursion rule in the
         # top-level text (only rendered when nesting is available).
         self.assertIn("max_spawn_depth=4", overrides["description"])
@@ -423,7 +426,12 @@ class TestDelegateTask(unittest.TestCase):
 
     def test_nous_child_rederives_api_mode_from_model(self):
         """Portal is dual-wire — same provider + different model prefix must
-        not inherit the parent's Messages/chat_completions mode verbatim."""
+        not inherit the parent's Messages/chat_completions mode verbatim.
+        Native wire selected (opt-in since 2026-09-06, ``nous.anthropic_wire``)."""
+        with patch("hermes_cli.providers._nous_anthropic_wire", return_value="native"):
+            self._nous_child_rederives_api_mode_from_model()
+
+    def _nous_child_rederives_api_mode_from_model(self):
         parent = _make_mock_parent(depth=0)
         parent.base_url = "https://inference-api.nousresearch.com/v1"
         parent.api_key = "portal-jwt"
@@ -1041,7 +1049,7 @@ class TestDelegationCredentialResolution(unittest.TestCase):
     @patch("hermes_cli.runtime_provider.resolve_runtime_provider")
     def test_base_url_with_provider_carries_runtime_request_overrides(self, mock_resolve):
         """#65035: the base_url short-circuit must not drop the configured
-        provider's request_overrides / max_output_tokens."""
+        provider's generic request_overrides; dedicated output caps are ignored."""
         mock_resolve.return_value = {
             "provider": "custom",
             "base_url": "https://provider-default.example/v1",
@@ -1066,7 +1074,7 @@ class TestDelegationCredentialResolution(unittest.TestCase):
             creds["request_overrides"],
             {"extra_body": {"thinking": {"type": "disabled"}}},
         )
-        self.assertEqual(creds["max_output_tokens"], 8192)
+        self.assertNotIn("max_output_tokens", creds)
 
     def test_bare_base_url_returns_none_overrides(self):
         """No provider alongside base_url → no overrides source; keys are
@@ -1075,7 +1083,7 @@ class TestDelegationCredentialResolution(unittest.TestCase):
         cfg = {"model": "m", "provider": "", "base_url": "http://localhost:1234/v1", "api_key": "k"}
         creds = _resolve_delegation_credentials(cfg, parent)
         self.assertIsNone(creds["request_overrides"])
-        self.assertIsNone(creds["max_output_tokens"])
+        self.assertNotIn("max_output_tokens", creds)
 
     @patch("hermes_cli.runtime_provider.resolve_runtime_provider")
     def test_base_url_survives_runtime_resolution_failure(self, mock_resolve):
@@ -1088,7 +1096,7 @@ class TestDelegationCredentialResolution(unittest.TestCase):
         creds = _resolve_delegation_credentials(cfg, parent)
         self.assertEqual(creds["base_url"], "https://api.xiaomimimo.com/v1")
         self.assertIsNone(creds["request_overrides"])
-        self.assertIsNone(creds["max_output_tokens"])
+        self.assertNotIn("max_output_tokens", creds)
 
     @patch("hermes_cli.runtime_provider.resolve_runtime_provider")
     def test_provider_resolution_failure_raises_valueerror(self, mock_resolve):
@@ -1637,7 +1645,6 @@ class TestDispatchDelegateTask(unittest.TestCase):
                 parent,
                 {
                     "goal": "test",
-                    "dataAnchors": [{"authority": "ThinkGraph"}],
                     "acp_command": "claude",
                     "acp_args": ["--acp", "--stdio"],
                     "tasks": [
@@ -1653,7 +1660,6 @@ class TestDispatchDelegateTask(unittest.TestCase):
         self.assertNotIn("acp_command", captured)
         self.assertNotIn("acp_args", captured)
         self.assertEqual(captured["goal"], "test")
-        self.assertEqual(captured["data_anchors"], [{"authority": "ThinkGraph"}])
         self.assertNotIn("acp_command", captured["tasks"][0])
         self.assertNotIn("acp_args", captured["tasks"][0])
 
@@ -1836,29 +1842,12 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         child = self._run_with_mock_child("leaf")
         self.assertEqual(child._delegate_role, "orchestrator")
 
-    def test_profile_background_choice_survives_native_dispatch(self):
-        from run_agent import AIAgent
-        from tools.delegate_tool import _model_background_value
-        parent = _make_mock_parent(depth=0)
-        for args, expected in (({"role": "profile"}, False),
-                               ({"role": "profile", "background": False}, False),
-                               ({"role": "profile", "background": True}, True),
-                               ({"role": "leaf", "background": False}, True)):
-            self.assertIs(_model_background_value(args, parent), expected)
-            with patch("tools.delegate_tool.delegate_task", return_value="accepted") as dispatch:
-                self.assertEqual(AIAgent._dispatch_delegate_task(parent, args), "accepted")
-                self.assertIs(dispatch.call_args.kwargs["background"], expected)
-
-    def test_schema_preserves_host_roles_and_single_mission(self):
-        """The host still selects Team/profile; depth governs native children."""
+    def test_schema_advertises_only_persistent_top_level_roles(self):
+        """Temporary-child capability remains depth-derived; only Team/Profile are explicit."""
         from tools.delegate_tool import DELEGATE_TASK_SCHEMA
         props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        self.assertEqual(props["role"]["enum"], ["leaf", "orchestrator", "team", "profile"])
-        self.assertEqual(props["goal"]["type"], "string")
-        self.assertEqual(props["context"]["type"], "string")
-        self.assertEqual(props["target_profile"]["type"], "string")
-        self.assertEqual(props["tasks"]["items"]["properties"]["role"]["enum"],
-                         ["leaf", "orchestrator"])
+        self.assertEqual(props["role"]["enum"], ["team", "profile"])
+        self.assertNotIn("role", props["tasks"]["items"]["properties"])
 
     def test_schema_omits_acp_transport_fields(self):
         from tools.delegate_tool import DELEGATE_TASK_SCHEMA
@@ -2138,7 +2127,10 @@ class TestFallbackModelInheritance(unittest.TestCase):
         fallback_entry = {"provider": "openrouter", "model": "gpt-4o-mini", "api_key": "sk-or-x"}
         parent._fallback_chain = [fallback_entry]
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with (
+            patch("run_agent.AIAgent") as MockAgent,
+            patch("tools.delegate_tool._load_config", return_value={}),
+        ):
             MockAgent.return_value = MagicMock()
             _build_child_agent(
                 task_index=0,
@@ -2159,7 +2151,10 @@ class TestFallbackModelInheritance(unittest.TestCase):
         parent = _make_mock_parent(depth=0)
         parent._fallback_chain = []
 
-        with patch("run_agent.AIAgent") as MockAgent:
+        with (
+            patch("run_agent.AIAgent") as MockAgent,
+            patch("tools.delegate_tool._load_config", return_value={}),
+        ):
             MockAgent.return_value = MagicMock()
             _build_child_agent(
                 task_index=0,

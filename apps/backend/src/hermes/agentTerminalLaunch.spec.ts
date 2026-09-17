@@ -32,8 +32,8 @@ function savedCard(overrides: Partial<AgentCardInstance> = {}): AgentCardInstanc
       provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'saved-model-key',
       providerModelId: 'gpt-5.6-sol', reasoningEffort: 'high', maxTurns: 7,
       skills: ['saved-skill-a', 'saved-skill-b'], tools: ['read_repo', 'web_search', 'disabled_tool'],
-      nativeTools: ['native_saved_tool'], disabledTools: ['disabled_tool'], toolsets: ['saved-toolset'],
-      mcpConnectionIds: ['saved-remote-id'], toolCatalogPolicy: 'selected',
+      nativeTools: ['native_saved_tool'], toolsets: ['saved-toolset'],
+      mcpConnectionIds: ['saved-remote-id'],
     } as unknown as AgentCardInstance['runtimeOptions'],
     ...overrides,
   };
@@ -144,11 +144,9 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       .toContain('saved-model-key');
   });
 
-  it.each([
-    { script: { enabled: true } }, { toolCatalogPolicy: 'all_healthy' },
-  ])('defers capability materialization to the required canonical Run', (options) => {
+  it('defers Script capability materialization to the required canonical Run', () => {
     const card = savedCard({ runtimeOptions: {
-      ...savedCard().runtimeOptions, ...options,
+      ...savedCard().runtimeOptions, script: { enabled: true },
     } as AgentCardInstance['runtimeOptions'] });
     const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1');
     expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBeUndefined();

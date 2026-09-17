@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -77,6 +78,54 @@ async def native_tools() -> list[dict]:
             item["annotations"].update(readOnlyHint=True, idempotentHint=True)
         result.append(item)
     return result
+
+
+_OPERATION_DEFINITIONS: tuple[Any, ...] | None = None
+_OPERATION_DEFINITIONS_LOCK = threading.Lock()
+
+
+def operation_definitions() -> list[Any]:
+    """Contribute native Engraphis contracts without routing through MCP discovery."""
+
+    global _OPERATION_DEFINITIONS
+    if _OPERATION_DEFINITIONS is not None:
+        return list(_OPERATION_DEFINITIONS)
+    with _OPERATION_DEFINITIONS_LOCK:
+        if _OPERATION_DEFINITIONS is not None:
+            return list(_OPERATION_DEFINITIONS)
+        try:
+            native_contracts = asyncio.run(native_tools())
+        except BaseException as error:
+            raise RuntimeError("engraphis_operation_definitions_unavailable") from error
+
+        from app.python_models.tool_registry import OperationDefinition
+
+        definitions = []
+        for item in native_contracts:
+            name = str(item.get("name") or "").strip()
+            access = "read" if name in READ_TOOLS else "write" if name in WRITE_TOOLS else ""
+            if not name or not access:
+                raise RuntimeError(f"engraphis_operation_access_missing:{name}")
+
+            async def dispatch(*, _name: str = name, **arguments: Any) -> Any:
+                from app import mcp_host
+
+                return await mcp_host._dispatch_tool(_name, arguments)
+
+            definitions.append(OperationDefinition(
+                canonical_id=name,
+                description=str(item.get("description") or name),
+                parameters_schema=deepcopy(item["inputSchema"]),
+                handler=dispatch,
+                available=True,
+                publishers=frozenset({"internal-plugin", "external-mcp"}),
+                access=access,
+                namespace="engraphis",
+                external_source_id="main_mcp",
+                output_schema=deepcopy(item.get("outputSchema")),
+            ))
+        _OPERATION_DEFINITIONS = tuple(definitions)
+        return list(_OPERATION_DEFINITIONS)
 
 
 async def invoke_tool(project: str, name: str, arguments: dict) -> dict:

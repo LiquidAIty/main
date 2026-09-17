@@ -94,8 +94,6 @@ class SelectedToolsAndGrants(BaseModel):
         "mode": "selected-mcp",
         "fallbackReason": None,
     })
-    toolCatalogPolicy: str = "selected"
-    disabledTools: list[str] = Field(default_factory=list)
     nativeTools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     toolsets: list[str] = Field(default_factory=list)
@@ -404,8 +402,6 @@ def materialize_idf(
             "mode": "selected-mcp",
             "fallbackReason": None,
         }),
-        toolCatalogPolicy=str(capabilities.get("toolCatalogPolicy") or "selected"),
-        disabledTools=list(capabilities.get("disabledTools") or []),
         nativeTools=list(capabilities.get("nativeTools") or []),
         skills=list(capabilities.get("skills") or []),
         toolsets=list(capabilities.get("toolsets") or []),
@@ -572,8 +568,6 @@ def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
         "presentedTools": list(grants.presentedTools),
         "toolDefinitions": list(grants.toolDefinitions),
         "scriptPresentation": dict(grants.scriptPresentation),
-        "toolCatalogPolicy": grants.toolCatalogPolicy,
-        "disabledTools": list(grants.disabledTools),
         "nativeTools": list(grants.nativeTools),
         "skills": list(grants.skills),
         "toolsets": list(grants.toolsets),

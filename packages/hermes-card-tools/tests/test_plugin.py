@@ -55,7 +55,11 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
     assert {key: value for key, value in calls[0].items() if key != "handler"} == {
         "name": "card__card_create",
         "toolset": "card-tools",
-        "schema": tools[0]["inputSchema"],
+        "schema": {
+            "name": "card__card_create",
+            "description": "Create a saved Card.",
+            "parameters": tools[0]["inputSchema"],
+        },
         "description": "Create a saved Card.",
     }
 

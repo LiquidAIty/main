@@ -79,7 +79,7 @@ describe('IDD tool catalog lookup', () => {
     ]);
   });
 
-  it('derives Script handles from the same saved Tools-tab policy without widening writes', () => {
+  it('derives Script handles only from explicit saved tool grants', () => {
     const disabledRead = { ...reference(2, 'read'), availability: 'disabled' as const };
     const catalog = indexToolCatalogReferences([
       reference(1, 'read'),
@@ -89,15 +89,7 @@ describe('IDD tool catalog lookup', () => {
     ]);
 
     expect(resolveScriptToolReferences(catalog, {
-      policy: 'all_healthy',
-      selectedIds: ['cbm.tool_00003'],
-      disabledIds: ['cbm.tool_00001'],
-    }).map((item) => item.canonicalId)).toEqual(['cbm.tool_00003']);
-
-    expect(resolveScriptToolReferences(catalog, {
-      policy: 'selected',
-      selectedIds: ['cbm.tool_00001', 'cbm.tool_00004'],
-      disabledIds: [],
+      selectedIds: ['cbm.tool_00001', 'cbm.tool_00002', 'cbm.tool_00004'],
     }).map((item) => item.canonicalId)).toEqual([
       'cbm.tool_00001',
       'cbm.tool_00004',
@@ -107,9 +99,7 @@ describe('IDD tool catalog lookup', () => {
   it('rejects an unknown saved Script handle instead of silently dropping it', () => {
     const catalog = indexToolCatalogReferences([reference(1)]);
     expect(() => resolveScriptToolReferences(catalog, {
-      policy: 'selected',
       selectedIds: ['missing.tool'],
-      disabledIds: [],
     })).toThrow('tool_catalog_selected_id_unknown:missing.tool');
   });
 });

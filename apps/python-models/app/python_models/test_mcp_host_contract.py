@@ -1629,12 +1629,12 @@ def test_catalog_preserves_native_annotations_and_adds_only_source_identity():
 
 
 @pytest.mark.parametrize("name", ["engraphis_recall_context", "engraphis_get_memory"])
-def test_idd_read_access_does_not_overwrite_native_side_effect_annotations(name):
+def test_operation_access_does_not_overwrite_native_side_effect_annotations(name):
     import mcp_host
 
     native = mcp_host.Tool(name=name, inputSchema={"type": "object"},
                           annotations={"readOnlyHint": False, "destructiveHint": False})
-    bound = mcp_host._bind_idd_access(native)
+    bound = mcp_host._bind_operation_access(native)
     assert bound.annotations == native.annotations
     assert bound.meta["liquidaityAccess"] == "read"
 
@@ -1827,28 +1827,29 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             for name, tool in by_name.items()
             if not name.startswith(("cbm.", "graphiti."))
         )
-        assert "worldsignals.package" in by_name
+        assert "worldsignals.package" not in by_name
         assert by_name
         assert len(tools) == len(by_name)
-        from app.python_models.tool_registry import tool_manifest
-        assert set(by_name) == application_ids | {item["name"] for item in tool_manifest()}
+        from app.python_models.tool_registry import external_mcp_manifest
+        assert set(by_name) == {item["name"] for item in external_mcp_manifest()}
         return {name: tool.model_dump() for name, tool in by_name.items()}
 
     catalog = asyncio.run(check())
     assert len(catalog) == len(set(catalog))
 
 
-def test_registered_runtime_mcp_tools_are_in_the_same_catalog(monkeypatch):
+def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch):
     import asyncio
     import mcp_host
-    from app.python_models.tool_registry import tool_manifest
+    from app.python_models.tool_registry import external_mcp_manifest
 
     monkeypatch.setattr(mcp_host, "_native_cbm_tools", lambda: asyncio.sleep(0, result=[]))
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", lambda: asyncio.sleep(0, result=[]))
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     names = {tool.name for tool in tools}
-    assert {item["name"] for item in tool_manifest()}.issubset(names)
+    assert names == {item["name"] for item in external_mcp_manifest()}
     assert "card.run_assistant_agent" in names
+    assert "calculator" not in names
     assert "delegate_task" not in names
     assert len(tools) == len(names)
 
@@ -1871,14 +1872,9 @@ def test_all_clients_receive_the_same_canonical_catalog_without_rewriting_metada
     from app.python_models.tool_registry import tool_access
 
     declarations = load_input_data_dictionary()["operations"]
-    from app.python_models.tool_registry import tool_manifest
+    from app.python_models.tool_registry import external_mcp_manifest
     from app.python_models.engraphis import READ_TOOLS, WRITE_TOOLS
-    expected_names = {
-        "main.context", "agentgraph.inspect", "mag_one.describe_connected_agents",
-        "run_mag_one", "write_mag_one_instructions", "card.load_graph_references",
-        "canvas.inspect", "card.create", "card.update_configuration",
-        "canvas.upsert_wire", "web_search", "card.run_assistant_agent",
-    } | READ_TOOLS | WRITE_TOOLS | {item["name"] for item in tool_manifest()}
+    expected_names = {item["name"] for item in external_mcp_manifest()}
 
     def native_tool(canonical_name, native_name):
         read_only = tool_access(canonical_name) == "read"
@@ -3222,7 +3218,7 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(mon
         for name, tool in by_name.items()
         if name not in native_names
     )
-    assert "worldsignals.package" in by_name
+    assert "worldsignals.package" not in by_name
     assert {"engraphis_recall_context", "engraphis_get_memory", "engraphis_remember"}.issubset(by_name)
     assert "projectId" not in by_name["engraphis_recall_context"].inputSchema["properties"]
     assert "projectId" not in by_name["engraphis_remember"].inputSchema["properties"]

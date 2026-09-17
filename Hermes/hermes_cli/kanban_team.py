@@ -1,9 +1,9 @@
-"""Durable Auto-Kanban dispatch for ``delegate_task(role="team")``.
+"""Thin durable Auto-Kanban doorway for ``delegate_task(role="team")``.
 
-This module is deliberately a thin adapter into the existing Kanban domain.
-It creates one paused native root, validates the durable identity, then
-activates Triage for the gateway-owned dispatcher. It owns no task graph,
-scheduler, worker process, polling loop, or result synthesis.
+The adapter validates native readiness, creates one parked root, activates
+Triage, and subscribes the originating session. The existing Kanban owners
+retain decomposition, dispatch, worker execution, retries, synthesis, and
+notification.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from typing import Any
 
 from agent.runtime_cwd import resolve_agent_cwd
 from hermes_cli import kanban_db as kb
-from hermes_cli.config import load_config
+from hermes_cli import kanban_db_connect as kbc
+from hermes_cli.config import load_config_readonly
 from hermes_constants import (
     get_default_hermes_root,
     get_hermes_home,
@@ -28,11 +29,10 @@ TEAM_CREATED_BY = "delegate_task:team"
 
 
 def _shared_config() -> dict[str, Any]:
-    """Read the gateway/root Hermes config from a profile-scoped process."""
-
+    """Read the repository Gateway's config even when a named profile is active."""
     token = set_hermes_home_override(str(get_default_hermes_root()))
     try:
-        config = load_config()
+        config = load_config_readonly()
         return config if isinstance(config, dict) else {}
     finally:
         reset_hermes_home_override(token)
@@ -60,11 +60,11 @@ def _origin_session_id(parent_agent: Any) -> str:
     return current or str(getattr(parent_agent, "session_id", "") or "").strip()
 
 
-def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
+def team_policy(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve the exact decomposer, worker, retry, and synthesis route for Team."""
+    config = _shared_config() if config is None else config
     kanban = config.get("kanban") if isinstance(config.get("kanban"), dict) else {}
-    auxiliary = (
-        config.get("auxiliary") if isinstance(config.get("auxiliary"), dict) else {}
-    )
+    auxiliary = config.get("auxiliary") if isinstance(config.get("auxiliary"), dict) else {}
     decomposer = (
         auxiliary.get("kanban_decomposer")
         if isinstance(auxiliary.get("kanban_decomposer"), dict)
@@ -74,6 +74,7 @@ def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
     root_model = str(decomposer.get("model") or "").strip()
     worker_provider = str(kanban.get("team_worker_provider") or "").strip()
     worker_model = str(kanban.get("team_worker_model") or "").strip()
+    worker_reasoning = kanban.get("team_worker_reasoning_effort")
     if not root_provider or not root_model:
         raise RuntimeError(
             "Team requires auxiliary.kanban_decomposer.provider/model before task creation."
@@ -95,18 +96,13 @@ def _team_policy(config: dict[str, Any]) -> dict[str, Any]:
         "root_model": root_model,
         "worker_provider": worker_provider,
         "worker_model": worker_model,
+        "worker_reasoning": worker_reasoning,
         "max_retries": max_retries,
     }
 
 
-def submit_team(
-    *,
-    goal: str,
-    context: str | None,
-    parent_agent: Any,
-) -> dict[str, Any]:
+def submit_team(*, goal: str, context: str | None, parent_agent: Any) -> dict[str, Any]:
     """Create and activate exactly one durable native Team root."""
-
     goal_text = str(goal or "").strip()
     context_text = str(context or "").strip()
     if not goal_text:
@@ -114,8 +110,7 @@ def submit_team(
     if len(goal_text) > 20_000 or len(context_text) > 100_000:
         raise ValueError("Team goal/context exceeds the native bounded packet limit.")
 
-    shared_config = _shared_config()
-    policy = _team_policy(shared_config)
+    policy = team_policy()
     from hermes_cli.kanban import _check_dispatcher_presence
 
     repository_home = Path(get_default_hermes_root())
@@ -130,8 +125,7 @@ def submit_team(
     if not session_id:
         raise RuntimeError("Team requires a durable originating Hermes session.")
     profile = _active_profile_name()
-    title = next((line.strip() for line in goal_text.splitlines() if line.strip()), goal_text)
-    title = title[:200]
+    title = next((line.strip() for line in goal_text.splitlines() if line.strip()), goal_text)[:200]
     body = f"Mission:\n{goal_text}"
     if context_text:
         body += f"\n\nExplicit parent-authored context:\n{context_text}"
@@ -139,7 +133,7 @@ def submit_team(
         f"{session_id}\0{goal_text}\0{context_text}".encode("utf-8")
     ).hexdigest()
 
-    with kb.connect_closing() as conn:
+    with kbc.connect_closing() as conn:
         task_id = kb.create_task(
             conn,
             title=title,
@@ -162,16 +156,14 @@ def submit_team(
         if task is None:
             raise RuntimeError(f"Team root {task_id} was committed but cannot be read back.")
 
-    with kb.connect_closing() as conn:
+    with kbc.connect_closing() as conn:
         current = kb.get_task(conn, task_id)
         if current is None:
             raise RuntimeError(f"Team root {task_id} disappeared before activation.")
         if current.status == "blocked":
             if not kb.activate_team_triage_task(conn, task_id):
                 raise RuntimeError(f"Team root {task_id} could not enter Triage.")
-        elif current.status not in {
-            "triage", "todo", "ready", "running", "review", "done"
-        }:
+        elif current.status not in {"triage", "todo", "ready", "running", "review", "done"}:
             raise RuntimeError(
                 f"Team root {task_id} is durable in unexpected state {current.status!r}."
             )
@@ -194,12 +186,13 @@ def submit_team(
             "decomposition_model": policy["root_model"],
             "worker_provider": policy["worker_provider"],
             "worker_model": policy["worker_model"],
+            "worker_reasoning": policy["worker_reasoning"],
             "max_depth": 1,
             "synthesis_provider": policy["root_provider"],
             "synthesis_model": policy["root_model"],
         },
         "message": (
-            "Durable Team accepted. Hermes Auto-Kanban owns decomposition, "
-            "workers, review, synthesis, retries, Stop, notification, and rejoin."
+            "Durable Team accepted. Hermes Auto-Kanban owns decomposition, workers, "
+            "review, synthesis, retries, Stop, notification, and rejoin."
         ),
     }

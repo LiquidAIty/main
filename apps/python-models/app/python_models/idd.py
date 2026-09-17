@@ -37,6 +37,12 @@ def load_input_data_dictionary() -> dict[str, Any]:
             raise IddValidationError("idd_object_type_or_cardinality_invalid")
     for template in document["templates"]:
         template_objects(document, template)
+    # Operation metadata is a Builder-facing projection of executable Python
+    # definitions. Checked-in IDD text cannot grant, remove, or republish a
+    # runtime operation.
+    from app.python_models.tool_registry import operation_catalog_metadata
+
+    document["operations"] = operation_catalog_metadata()
     return document
 
 

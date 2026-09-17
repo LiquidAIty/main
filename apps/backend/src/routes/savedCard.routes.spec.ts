@@ -1055,7 +1055,6 @@ describe('saved Card routes', () => {
         body: JSON.stringify({
           script,
           selectedTools: ['canvas.inspect'],
-          toolCatalogPolicy: 'selected',
           runtimeKind: 'hermes',
         }),
       });

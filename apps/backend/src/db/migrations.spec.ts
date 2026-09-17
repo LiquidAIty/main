@@ -46,6 +46,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '033_trading_lifecycle_runs.sql', applied: true }),
       expect.objectContaining({ filename: '034_hermes_native_session_authority.sql', applied: true }),
       expect.objectContaining({ filename: '035_remove_provider_api_mode_constraint.sql', applied: true }),
+      expect.objectContaining({ filename: '036_remove_obsolete_card_tool_policy.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -132,6 +133,22 @@ describe('canonical backend migrations', () => {
 
     expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_provider_api_mode_check');
     expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('removes obsolete Card tool policy only through new current revisions', async () => {
+    const source = await readFile(
+      migrationPath('036_remove_obsolete_card_tool_policy.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("runtime_extension_config ? 'toolCatalogPolicy'");
+    expect(source).toContain("runtime_extension_config ? 'disabledTools'");
+    expect(source).toContain("source.runtime_extension_config\n      - 'toolCatalogPolicy'\n      - 'disabledTools'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 

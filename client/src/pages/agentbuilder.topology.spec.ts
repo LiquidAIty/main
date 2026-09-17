@@ -191,7 +191,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
-    expect(main?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(main?.prompt).toContain('delegate_task(role="profile")');
     expect(main?.prompt).toContain('A wire grants authority but never starts work');
     expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
@@ -208,7 +207,6 @@ describe('Main / Hermes / graph authority topology', () => {
         nativeTools: ['memory'],
         skills: ['hermes-agent', 'agent-builder-inspection'],
         toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
-        toolCatalogPolicy: 'selected',
         tools: [
           'canvas.inspect', 'card.create', 'card.update_configuration',
           'cbm.search_graph', 'cbm.trace_path', 'cbm.get_code_snippet',
@@ -216,7 +214,6 @@ describe('Main / Hermes / graph authority topology', () => {
         ],
       },
     });
-    expect(agentBuilder?.runtimeOptions?.toolCatalogPolicy).toBe('selected');
     expect(agentBuilder?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol',
       providerModelId: 'gpt-5.6-sol',
@@ -230,7 +227,6 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(steward?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
-    expect(steward?.runtimeOptions?.toolCatalogPolicy).toBe('all_healthy');
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
     expect(steward?.prompt).toContain('Use native delegate_task(role="profile")');
     expect(steward?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');

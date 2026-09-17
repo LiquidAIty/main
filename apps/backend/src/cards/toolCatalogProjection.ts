@@ -39,9 +39,7 @@ export type ToolCatalogSearch = {
 };
 
 export type ScriptToolSelection = {
-  policy: 'selected' | 'all_healthy';
   selectedIds: readonly string[];
-  disabledIds: readonly string[];
 };
 
 const DEFAULT_LIMIT = 50;
@@ -133,18 +131,8 @@ export function resolveScriptToolReferences(
   selection: ScriptToolSelection,
 ): ToolCatalogReference[] {
   const selectedIds = selection.selectedIds.map(asText).filter(Boolean);
-  const disabledIds = new Set(selection.disabledIds.map(asText).filter(Boolean));
-  const selected = new Set(selectedIds);
   const unresolved = selectedIds.find((id) => !catalog.definitionsById.has(id));
   if (unresolved) throw new Error(`tool_catalog_selected_id_unknown:${unresolved}`);
-  if (selection.policy === 'all_healthy') {
-    return catalog.references.filter((reference) => (
-      reference.availability === 'available'
-      && (reference.access === 'read'
-        ? !disabledIds.has(reference.canonicalId)
-        : selected.has(reference.canonicalId))
-    ));
-  }
   return resolveToolCatalogDefinitions(catalog, selectedIds)
     .filter((reference) => reference.availability === 'available');
 }

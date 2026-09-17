@@ -219,17 +219,15 @@
             },
             "paletteFingerprint": ""
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "profile",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "profile"
         },
-        "revision_sha256": "4c357d424d9c752f581d4741a2d813ffb87438a62a1598221b9f6beb5ca351e9",
+        "revision_sha256": "362dc1f3d2bbd2c77ce2aa3e8520c9c38d1676f91104ae2a2903845fe5c39186",
         "created_at": "2026-09-10T07:16:23.001016+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "main",
@@ -511,17 +509,15 @@
               "providerModelId": "gpt-5.6-luna"
             }
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "team",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "team"
         },
-        "revision_sha256": "2d60db391c704deda2a2701a2dbd97ed3abb7afc84814fb7506c81976b83d4c5",
+        "revision_sha256": "fded7ae880fce1e0dc620a0a90cb59ac8930e4df62188a48184548750db136f0",
         "created_at": "2026-09-09T10:58:13.547958+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -797,17 +793,15 @@
             },
             "schemaVersion": "trading.card.v1"
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "team",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "team"
         },
-        "revision_sha256": "0223414a93e9522ed1a8f9bfad850448b012e159ce897c845000d97150d78d93",
+        "revision_sha256": "1f017d417c49c3ec2b60393ec23271d39ada042f97262d28986c1741b4a5f247",
         "created_at": "2026-09-06T03:20:50.171287+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -933,17 +927,15 @@
               "providerModelId": "deepseek/deepseek-v4-flash-0731"
             }
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "deepseek/deepseek-v4-flash-0731",
             "provider": "openrouter",
             "accessMode": "openrouter-api",
             "providerModelId": "deepseek/deepseek-v4-flash-0731"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "5e01770401ad6feae74e929a25672444718ec25ecab8c8b29c04714eb81adeb9",
+        "revision_sha256": "fb23abe1ab943fdfab928c0d0239fabe9a76bb95f95a364070ba9fdf5d8748db",
         "created_at": "2026-09-11T18:39:28.961078+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -1094,17 +1086,15 @@
               "configurationSchema": null
             }
           ],
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "cdcb174e9b16479bb3f2c9d67b6caaeb17ac8690a166cc5c2c488a8e867a2ed1",
+        "revision_sha256": "8d2024e9b1266e7c3b9569f8ab86a06b545c6c62604fc59a1e372c2e55eaad21",
         "created_at": "2026-09-06T01:03:34.184173+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -1206,17 +1196,15 @@
               "providerModelId": "gpt-5.6-luna"
             }
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "87c5ad3bf9132dd06e381279f5eb655d24bd482c12a6909378db2fcae1cf159e",
+        "revision_sha256": "588e65c97bc9abb74ce4028f227f76671abe0b24e1eb3c11911d06b0cec85ab1",
         "created_at": "2026-09-06T01:03:34.184173+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -1306,17 +1294,15 @@
               "providerModelId": "gpt-5.6-luna"
             }
           },
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "9076adaabbb39743c74b1813e00c17128e5fe2a94a56aca4252207ad91dbcb68",
+        "revision_sha256": "9256e2c58decb2a7bdaef02245eeed61a2e2a1c502738a87df685483165646cd",
         "created_at": "2026-09-06T01:03:34.184173+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -1407,17 +1393,15 @@
         "enabled": true,
         "enabled_location": "card",
         "runtime_extension_config": {
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "81e7e8fc1af4add07b923dd70ecd0688221100d0df0b1528beb0f94411398421",
+        "revision_sha256": "adc96494b9b91aa00c843287742b4aaca32314227ef383c8b1a78f30d90f6975",
         "created_at": "2026-09-09T11:12:22.214758+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",
@@ -1514,17 +1498,15 @@
         "enabled": true,
         "enabled_location": "default",
         "runtime_extension_config": {
-          "disabledTools": [],
           "subagentModel": {
             "modelKey": "gpt-5.6-luna",
             "provider": "openai",
             "accessMode": "chatgpt-account",
             "providerModelId": "gpt-5.6-luna"
           },
-          "delegationRole": "off",
-          "toolCatalogPolicy": "selected"
+          "delegationRole": "off"
         },
-        "revision_sha256": "5f5b419cddbe2c8bc875c0c7778aba969459b8d56f68bca997bef6571a1f02d8",
+        "revision_sha256": "d8068c0b5208c48983aed9bcd4bc739f4a54f8a5e00758be42b7905aa05cf94e",
         "created_at": "2026-09-10T07:16:23.001016+00:00",
         "runtime_kind": "hermes",
         "runtime_mode": "delegate",

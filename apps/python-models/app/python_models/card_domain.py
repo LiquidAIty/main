@@ -19,7 +19,6 @@ from psycopg.rows import dict_row
 
 from app.python_models.tool_registry import (
     IddValidationError,
-    hermes_private_runtime_contracts,
     materialize_tool_catalog,
     hermes_plugin_operation_ids,
     readable_tool_ids,
@@ -2318,12 +2317,6 @@ def _prepare_invocation(
     graph_hooks = _normalized_graph_hooks(options.get("graphHooks"))
     runtime = _card_runtime(card)
     ceiling = _string_list(options.get("tools"), "tools")
-    catalog_policy = str(options.get("toolCatalogPolicy") or "selected").strip()
-    if catalog_policy not in {"selected", "all_healthy"}:
-        raise CardDomainError("tool_catalog_policy_invalid")
-    disabled_tools = _string_list(options.get("disabledTools"), "disabled_tools")
-    if catalog_policy != "all_healthy" and disabled_tools:
-        raise CardDomainError("disabled_tools_require_all_healthy_catalog")
     requested_tools = ceiling
     owner = _runtime_owner(card)
     common_prompt = str(card.get("prompt") or "")
@@ -2379,8 +2372,6 @@ def _prepare_invocation(
         },
         "runtimeOptions": runtime_options,
         "enabledTools": requested_tools,
-        "toolCatalogPolicy": catalog_policy,
-        "disabledTools": disabled_tools,
         "nativeTools": _string_list(options.get("nativeTools"), "native_tools"),
         "skills": _string_list(options.get("skills"), "skills"),
         "toolsets": _string_list(options.get("toolsets"), "toolsets"),
@@ -2397,14 +2388,8 @@ def _prepare_invocation(
             raise CardDomainError("discovered_tools_invalid")
         if catalog_state == "unavailable" and discovered_tools:
             raise CardDomainError("discovered_tool_catalog_state_invalid")
-        runtime_contracts = (
-            hermes_private_runtime_contracts(discovered_tools)
-            if runtime.get("kind") == "hermes"
-            else []
-        )
         catalog = materialize_tool_catalog([
             *tool_manifest(),
-            *runtime_contracts,
             *discovered_tools,
         ])
     except IddValidationError as error:
@@ -2462,28 +2447,10 @@ def _prepare_invocation(
         if (reason := unavailable_reason(name)) is not None
     }
     unavailable_tools = list(unavailable_tool_reasons)
-    if catalog_policy == "all_healthy":
-        disabled = set(disabled_tools)
-        healthy_reads = [
-            item["canonicalId"] for item in catalog
-            if item.get("publication") == "external-mcp"
-            and unavailable_reason(item["canonicalId"]) is None
-            and item.get("access") == "read"
-            and item["canonicalId"] not in disabled
-        ]
-        explicit_writes = [
-            name for name in ceiling
-            if name in by_id
-            and by_id[name].get("publication") == "external-mcp"
-            and unavailable_reason(name) is None
-            and by_id[name].get("access") == "write"
-        ]
-        effective_tools = sorted(set(healthy_reads) | set(explicit_writes))
-    else:
-        effective_tools = [
-            name for name in call_config["enabledTools"]
-            if unavailable_reason(name) is None
-        ]
+    effective_tools = [
+        name for name in call_config["enabledTools"]
+        if unavailable_reason(name) is None
+    ]
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
     if runtime.get("kind") == "hermes":
@@ -2497,8 +2464,6 @@ def _prepare_invocation(
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
     # `tools` remains the saved Card's deliberately selected presentation.
-    # `all_healthy` broadens the authorization ceiling for healthy reads, but
-    # must not inject the entire MCP catalog into every model turn.
     presented_tools = [
         name for name in ceiling
         if name in selected_tools and name in by_id
@@ -2578,7 +2543,7 @@ def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
 
     The returned Hermes names are transport names only. Canonical operation
     identity, availability, presentation and authorization remain the saved
-    Card/IDD result produced by ``_prepare_invocation``.
+    Card and canonical-operation result produced by ``_prepare_invocation``.
     """
 
     prepared = _prepare_invocation(
@@ -2875,8 +2840,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
                 "presentedTools": call_config["presentedTools"],
                 "toolDefinitions": tool_definitions,
                 "scriptPresentation": call_config["scriptPresentation"],
-                "toolCatalogPolicy": call_config["toolCatalogPolicy"],
-                "disabledTools": call_config["disabledTools"],
                 "nativeTools": call_config["nativeTools"],
                 "skills": call_config["skills"],
                 "toolsets": call_config["toolsets"],

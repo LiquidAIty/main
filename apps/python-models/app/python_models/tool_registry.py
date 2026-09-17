@@ -17,7 +17,9 @@ import ast
 import operator
 import re
 import inspect
+import threading
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -46,6 +48,113 @@ from app.python_models.worldsignals_client import (
 )
 
 
+_OPERATION_PUBLISHERS = frozenset({
+    "internal-plugin",
+    "external-mcp",
+    "internal-runtime",
+})
+
+
+@dataclass(frozen=True)
+class OperationDefinition:
+    """One canonical operation independent of any publisher transport."""
+
+    canonical_id: str
+    description: str
+    parameters_schema: dict[str, Any]
+    handler: Callable[..., Any]
+    available: bool
+    publishers: frozenset[str]
+    access: str
+    namespace: str
+    external_source_id: str = "main_mcp"
+    output_schema: dict[str, Any] | None = None
+    required_caller_runtime: tuple[str, str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.canonical_id.strip():
+            raise RuntimeError("operation_id_empty")
+        if not self.description.strip():
+            raise RuntimeError(f"operation_description_missing:{self.canonical_id}")
+        if self.parameters_schema.get("type") != "object":
+            raise RuntimeError(f"operation_parameters_invalid:{self.canonical_id}")
+        if not callable(self.handler):
+            raise RuntimeError(f"operation_handler_missing:{self.canonical_id}")
+        if not self.publishers or not self.publishers.issubset(_OPERATION_PUBLISHERS):
+            raise RuntimeError(f"operation_publishers_invalid:{self.canonical_id}")
+        if self.access not in {"read", "write"}:
+            raise RuntimeError(f"operation_access_invalid:{self.canonical_id}")
+        if not self.namespace.strip():
+            raise RuntimeError(f"operation_namespace_missing:{self.canonical_id}")
+        if "external-mcp" in self.publishers and not self.external_source_id.strip():
+            raise RuntimeError(f"operation_external_source_missing:{self.canonical_id}")
+
+
+def _external_operation_unavailable(**_arguments: Any) -> Any:
+    raise RuntimeError("external_operation_requires_mcp_owner")
+
+
+_CBM_READ_OPERATIONS = frozenset({
+    "cbm.check_index_coverage",
+    "cbm.detect_changes",
+    "cbm.get_architecture",
+    "cbm.get_code_snippet",
+    "cbm.get_graph_schema",
+    "cbm.index_status",
+    "cbm.list_projects",
+    "cbm.query_graph",
+    "cbm.search_code",
+    "cbm.search_graph",
+    "cbm.trace_path",
+})
+_CBM_WRITE_OPERATIONS = frozenset({
+    "cbm.delete_project",
+    "cbm.index_repository",
+    "cbm.ingest_traces",
+    "cbm.manage_adr",
+})
+_GRAPHITI_READ_OPERATIONS = frozenset({
+    "graphiti.get_entity_edge",
+    "graphiti.get_episode_entities",
+    "graphiti.get_episodes",
+    "graphiti.get_status",
+    "graphiti.search_memory_facts",
+    "graphiti.search_nodes",
+})
+_GRAPHITI_WRITE_OPERATIONS = frozenset({
+    "graphiti.add_memory",
+    "graphiti.add_triplet",
+    "graphiti.build_communities",
+    "graphiti.clear_graph",
+    "graphiti.delete_entity_edge",
+    "graphiti.delete_episode",
+    "graphiti.summarize_saga",
+})
+
+
+def _external_operation_definitions() -> list[OperationDefinition]:
+    """Known saved external identities; live MCP discovery supplies exact schemas."""
+
+    definitions: list[OperationDefinition] = []
+    for source_id, reads, writes in (
+        ("cbm", _CBM_READ_OPERATIONS, _CBM_WRITE_OPERATIONS),
+        ("graphiti", _GRAPHITI_READ_OPERATIONS, _GRAPHITI_WRITE_OPERATIONS),
+    ):
+        for canonical_id in sorted(reads | writes):
+            definitions.append(OperationDefinition(
+                canonical_id=canonical_id,
+                description=f"{canonical_id} from its configured {source_id} MCP owner.",
+                parameters_schema={"type": "object", "properties": {}},
+                handler=_external_operation_unavailable,
+                available=False,
+                publishers=frozenset({"external-mcp"}),
+                access="read" if canonical_id in reads else "write",
+                namespace=source_id,
+                external_source_id=source_id,
+            ))
+    return definitions
+
+
 async def _trading_context_required(**_arguments: Any) -> dict[str, Any]:
     """Trading writes require the authenticated Card/Run identity from MCP."""
 
@@ -72,121 +181,85 @@ def _worldsignals_package_context_required(
     raise RuntimeError("worldsignals_package_card_context_required")
 
 
-# One startup projection of effect/publication DATA, not a second dictionary or
-# saved grant owner. No Run reads the full builder dictionary. Native discovery
-# supplies actual schemas/availability; selection and authorization remain separate.
-def _load_operation_policies() -> dict[str, dict[str, Any]]:
-    from app.python_models.idd import load_input_data_dictionary
-    policies: dict[str, dict[str, Any]] = {}
-    for item in load_input_data_dictionary()["operations"]:
-        if (not isinstance(item.get("id"), str) or not item["id"]
-                or item["id"] in policies or item.get("access") not in {"read", "write"}
-                or item.get("publication") not in {"external-mcp", "private-runtime", "private-admin"}):
-            raise IddValidationError("operation_policy_invalid")
-        policies[item["id"]] = {
-            "canonicalId": item["id"], "kind": item["kind"],
-            "namespace": item["namespace"], "sourceIds": list(item["sourceIds"]),
-            "displayName": item["id"], "shortDescription": "",
-            "availability": "disabled", "access": item["access"],
-            "publication": item["publication"], "contracts": [],
-            **({"requiredCallerRuntimeKind": item["callerKind"],
-                "requiredCallerRuntimeMode": item["callerMode"]} if "callerKind" in item else {}),
+def _operation_references() -> dict[str, dict[str, Any]]:
+    references: dict[str, dict[str, Any]] = {}
+    for definition in operation_definitions():
+        source_ids = []
+        if "internal-plugin" in definition.publishers:
+            source_ids.append("python_runtime")
+        if "external-mcp" in definition.publishers:
+            source_ids.append(definition.external_source_id)
+        reference: dict[str, Any] = {
+            "canonicalId": definition.canonical_id,
+            "kind": "tool",
+            "namespace": definition.namespace,
+            "sourceIds": list(dict.fromkeys(source_ids)),
+            "displayName": definition.canonical_id,
+            "shortDescription": definition.description,
+            "availability": "disabled",
+            "access": definition.access,
+            "publication": (
+                "external-mcp"
+                if "external-mcp" in definition.publishers
+                else "private-runtime"
+            ),
+            "contracts": [],
         }
-    return policies
-
-
-_TOOL_POLICIES = _load_operation_policies()
+        if definition.required_caller_runtime is not None:
+            reference["requiredCallerRuntimeKind"] = definition.required_caller_runtime[0]
+            reference["requiredCallerRuntimeMode"] = definition.required_caller_runtime[1]
+        references[definition.canonical_id] = reference
+    return references
 
 
 def required_tool_caller_runtime(name: str) -> dict[str, str] | None:
     """Return one explicit runtime requirement; never infer one from a name."""
-    reference = _TOOL_POLICIES.get(name)
-    if reference is None:
+    definition = operation_definition(name)
+    if definition is None or definition.required_caller_runtime is None:
         return None
-    kind = reference.get("requiredCallerRuntimeKind")
-    mode = reference.get("requiredCallerRuntimeMode")
-    if not isinstance(kind, str) or not kind or not isinstance(mode, str) or not mode:
-        return None
+    kind, mode = definition.required_caller_runtime
     return {"kind": kind, "mode": mode}
 
 
 def external_mcp_tool_ids() -> frozenset[str]:
-    """Return the host policy identities published through the external MCP."""
+    """Return operations whose canonical owner permits external MCP publication."""
     return frozenset(
-        name for name, reference in _TOOL_POLICIES.items()
-        if reference["publication"] == "external-mcp"
+        definition.canonical_id for definition in operation_definitions()
+        if "external-mcp" in definition.publishers
     )
 
 
 def tool_publication(name: str) -> str | None:
-    reference = _TOOL_POLICIES.get(name)
-    return reference["publication"] if reference else None
+    definition = operation_definition(name)
+    if definition is None:
+        return None
+    return "external-mcp" if "external-mcp" in definition.publishers else "private-runtime"
 
 
 def hermes_plugin_operation_ids() -> frozenset[str]:
-    """Return operations whose existing Python owner may be published by the Card plugin."""
-
-    main_mcp_operations = {
-        name for name, reference in _TOOL_POLICIES.items()
-        if "main_mcp" in reference["sourceIds"]
-    }
-    private_runtime_operations = set(DEFAULT_TOOL_REGISTRY.known_names())
-    # Native Bot/profile delegation remains a Hermes built-in. The saved-Card
-    # doorway is internal execution plumbing, not a second model-facing tool.
-    main_mcp_operations.discard("card.run_assistant_agent")
-    return frozenset(main_mcp_operations | private_runtime_operations)
-
-
-def hermes_private_runtime_contracts(
-    discovered: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Project internal LiquidAIty operations onto their Hermes publisher.
-
-    ``main_mcp`` remains the external MCP publication. Hermes-backed Cards
-    invoke the same canonical operation through the authenticated private
-    Python runtime, so this second contract changes only publisher/transport
-    provenance; it does not copy the operation or create another grant owner.
-    """
-
-    plugin_operation_ids = hermes_plugin_operation_ids()
-    contracts: list[dict[str, Any]] = []
-    for raw in discovered:
-        if (
-            not isinstance(raw, dict)
-            or raw.get("name") not in plugin_operation_ids
-            or raw.get("sourceId") != "main_mcp"
-            or raw.get("connectionKind") != "external-mcp"
-        ):
-            continue
-        contract = deepcopy(raw)
-        contract["sourceId"] = "python_runtime"
-        contract["nativeName"] = str(raw["name"])
-        contract["connectionKind"] = "private-runtime"
-        # External OAuth metadata belongs to the MCP publisher, not to the
-        # process-authenticated Card runtime transport.
-        contract.pop("securitySchemes", None)
-        contracts.append(contract)
-    return contracts
+    return frozenset(
+        definition.canonical_id for definition in operation_definitions()
+        if "internal-plugin" in definition.publishers
+    )
 
 
 def tool_access(name: str) -> str | None:
     """Return explicit effect metadata; never infer it from prose or names."""
-    reference = _TOOL_POLICIES.get(name)
-    access = reference.get("access") if reference is not None else None
-    return access if access in {"read", "write"} else None
+    definition = operation_definition(name)
+    return definition.access if definition is not None else None
 
 
 def readable_tool_ids() -> frozenset[str]:
     return frozenset(
-        name for name, reference in _TOOL_POLICIES.items()
-        if reference["access"] == "read" and reference["publication"] != "private-admin"
+        definition.canonical_id for definition in operation_definitions()
+        if definition.access == "read"
     )
 
 
 def writable_tool_ids() -> frozenset[str]:
     return frozenset(
-        name for name, reference in _TOOL_POLICIES.items()
-        if reference["access"] == "write" and reference["publication"] != "private-admin"
+        definition.canonical_id for definition in operation_definitions()
+        if definition.access == "write"
     )
 
 
@@ -199,7 +272,7 @@ def materialize_tool_catalog(discovered: Any) -> list[dict[str, Any]]:
     """
     if not isinstance(discovered, list):
         raise IddValidationError("idd_tool_discovery_invalid")
-    references = deepcopy(_TOOL_POLICIES)
+    references = _operation_references()
     seen_contracts: set[tuple[str, str, str]] = set()
     for raw in discovered:
         if not isinstance(raw, dict):
@@ -425,22 +498,53 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._adapters: dict[str, Callable[..., Any]] = {}
+        self._publishers: dict[str, frozenset[str]] = {}
+        self._external_sources: dict[str, str] = {}
 
-    def register(self, spec: ToolSpec, adapter: Callable[..., Any]) -> None:
+    def register(
+        self,
+        spec: ToolSpec,
+        adapter: Callable[..., Any],
+        *,
+        publishers: frozenset[str] = frozenset({"internal-plugin"}),
+        external_source_id: str = "main_mcp",
+    ) -> None:
         if not isinstance(spec, ToolSpec):
             raise RuntimeError(f"card_tool_spec_invalid: {type(spec).__name__}")
         if spec.name in self._specs:
             raise RuntimeError(f"card_tool_already_registered: {spec.name}")
         if not callable(adapter):
             raise RuntimeError(f"card_tool_adapter_missing: {spec.name}")
+        if not publishers or not publishers.issubset(_OPERATION_PUBLISHERS):
+            raise RuntimeError(f"card_tool_publishers_invalid: {spec.name}")
         self._specs[spec.name] = spec
         self._adapters[spec.name] = adapter
+        self._publishers[spec.name] = publishers
+        self._external_sources[spec.name] = external_source_id
 
     def known_names(self) -> list[str]:
         return sorted(self._specs)
 
     def spec(self, name: str) -> ToolSpec | None:
         return self._specs.get(str(name or "").strip())
+
+    def operation_definitions(self) -> list[OperationDefinition]:
+        definitions: list[OperationDefinition] = []
+        for name in self.known_names():
+            spec = self._specs[name]
+            definitions.append(OperationDefinition(
+                canonical_id=spec.name,
+                description=spec.description,
+                parameters_schema=deepcopy(spec.inputSchema),
+                handler=self._adapters[name],
+                available=spec.enabled,
+                publishers=self._publishers[name],
+                access=spec.access,
+                namespace="python",
+                external_source_id=self._external_sources[name],
+                output_schema=deepcopy(spec.outputSchema),
+            ))
+        return definitions
 
     def resolve_one(self, name: str) -> FunctionTool:
         canonical_name = str(name or "").strip()
@@ -654,6 +758,7 @@ def build_default_tool_registry() -> ToolRegistry:
             },
         ),
         web_search,
+        publishers=frozenset({"internal-plugin", "external-mcp"}),
     )
     registry.register(
         ToolSpec(
@@ -880,29 +985,129 @@ def build_default_tool_registry() -> ToolRegistry:
 
 DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 
+_OPERATION_DEFINITIONS: tuple[OperationDefinition, ...] | None = None
+_OPERATION_DEFINITIONS_LOCK = threading.Lock()
 
-def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
-    """Publish factual live contracts from the private Python tool registry."""
-    registry = registry or DEFAULT_TOOL_REGISTRY
-    manifest: list[dict[str, Any]] = []
-    for name in registry.known_names():
-        spec = registry.spec(name)
-        if spec is None or not spec.enabled:
-            continue
-        manifest.append({
-            "name": spec.name,
-            "nativeName": spec.name,
+
+def operation_definitions() -> tuple[OperationDefinition, ...]:
+    """Assemble immutable contributions once and reject duplicate canonical IDs."""
+
+    global _OPERATION_DEFINITIONS
+    if _OPERATION_DEFINITIONS is not None:
+        return _OPERATION_DEFINITIONS
+    with _OPERATION_DEFINITIONS_LOCK:
+        if _OPERATION_DEFINITIONS is not None:
+            return _OPERATION_DEFINITIONS
+        from app import mcp_host
+        from app.python_models import engraphis
+
+        contributed = [
+            *DEFAULT_TOOL_REGISTRY.operation_definitions(),
+            *mcp_host.application_operation_definitions(),
+            *engraphis.operation_definitions(),
+            *_external_operation_definitions(),
+        ]
+        by_id: dict[str, OperationDefinition] = {}
+        for definition in contributed:
+            if definition.canonical_id in by_id:
+                raise RuntimeError(
+                    f"operation_definition_duplicate:{definition.canonical_id}"
+                )
+            by_id[definition.canonical_id] = definition
+        _OPERATION_DEFINITIONS = tuple(by_id[key] for key in sorted(by_id))
+        return _OPERATION_DEFINITIONS
+
+
+def operation_definition(name: str) -> OperationDefinition | None:
+    canonical_name = str(name or "").strip()
+    return next(
+        (
+            definition
+            for definition in operation_definitions()
+            if definition.canonical_id == canonical_name
+        ),
+        None,
+    )
+
+
+def operation_catalog_metadata() -> list[dict[str, Any]]:
+    """Builder-facing metadata derived from canonical operation definitions."""
+
+    result: list[dict[str, Any]] = []
+    for definition in operation_definitions():
+        source_ids = []
+        if "internal-plugin" in definition.publishers:
+            source_ids.append("python_runtime")
+        if "external-mcp" in definition.publishers:
+            source_ids.append(definition.external_source_id)
+        item: dict[str, Any] = {
+            "id": definition.canonical_id,
+            "access": definition.access,
+            "publication": (
+                "external-mcp"
+                if "external-mcp" in definition.publishers
+                else "private-runtime"
+            ),
+            "sourceIds": list(dict.fromkeys(source_ids)),
+            "namespace": definition.namespace,
             "kind": "tool",
-            "sourceId": "python_runtime",
-            "namespace": "python",
-            "connectionKind": "private-runtime",
-            "description": spec.description,
-            "enabled": spec.enabled,
-            "access": spec.access,
+        }
+        if definition.required_caller_runtime is not None:
+            item["callerKind"] = definition.required_caller_runtime[0]
+            item["callerMode"] = definition.required_caller_runtime[1]
+        result.append(item)
+    return result
+
+
+def _publisher_manifest(
+    publisher: str,
+    *,
+    registry: ToolRegistry | None = None,
+) -> list[dict[str, Any]]:
+    definitions = (
+        registry.operation_definitions()
+        if registry is not None
+        else operation_definitions()
+    )
+    manifest: list[dict[str, Any]] = []
+    for definition in definitions:
+        if publisher not in definition.publishers or not definition.available:
+            continue
+        if publisher == "external-mcp" and definition.external_source_id != "main_mcp":
+            continue
+        source_id = "python_runtime" if publisher == "internal-plugin" else "main_mcp"
+        manifest.append({
+            "name": definition.canonical_id,
+            "nativeName": definition.canonical_id,
+            "kind": "tool",
+            "sourceId": source_id,
+            "namespace": definition.namespace,
+            "connectionKind": (
+                "private-runtime" if publisher == "internal-plugin" else "external-mcp"
+            ),
+            "description": definition.description,
+            "enabled": definition.available,
+            "access": definition.access,
             "annotations": {
-                "readOnlyHint": spec.access == "read",
+                "readOnlyHint": definition.access == "read",
             },
-            "inputSchema": spec.inputSchema,
-            "outputSchema": spec.outputSchema,
+            "inputSchema": deepcopy(definition.parameters_schema),
+            **(
+                {"outputSchema": deepcopy(definition.output_schema)}
+                if definition.output_schema is not None
+                else {}
+            ),
         })
     return manifest
+
+
+def tool_manifest(registry: ToolRegistry | None = None) -> list[dict[str, Any]]:
+    """Derived compatibility view for the native Hermes plugin publisher."""
+
+    return _publisher_manifest("internal-plugin", registry=registry)
+
+
+def external_mcp_manifest() -> list[dict[str, Any]]:
+    """Derived view containing only operations permitted on LiquidAIty MCP."""
+
+    return _publisher_manifest("external-mcp")

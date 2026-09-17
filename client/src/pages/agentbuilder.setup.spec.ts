@@ -76,7 +76,7 @@ describe('agentbuilder authoring flow', () => {
     const builder = INITIAL_DECK.nodes.find(node => node.id === 'builder');
     expect(builder?.runtimeOptions).toMatchObject({
       modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol', delegationRole: 'off',
-      toolCatalogPolicy: 'selected', skills: ['hermes-agent', 'agent-builder-inspection'],
+      skills: ['hermes-agent', 'agent-builder-inspection'],
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
         'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',

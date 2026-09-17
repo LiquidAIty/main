@@ -173,7 +173,13 @@ export async function resolveHermesCardTools(
   card: AgentCardInstance,
 ): Promise<HermesCardTools> {
   if (card.runtime.kind !== 'hermes') throw new Error('hermes_card_tools_runtime_required');
-  const discoveredToolCatalog = await readPythonAgentMcpCatalog();
+  const externalToolCatalog = await readPythonAgentMcpCatalog();
+  const externalOwnerTools = externalToolCatalog.tools.filter((value) => {
+    const tool = record(value);
+    return tool.connectionKind === 'external-mcp'
+      && tool.sourceId !== 'main_mcp'
+      && tool.sourceId !== 'python_runtime';
+  });
   const resolved = await requestPythonRailsJson('/domain/hermes-card-tools/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -182,8 +188,11 @@ export async function resolveHermesCardTools(
       deckId: owner.deckId,
       cardId: owner.cardId,
       cardRevisionId: card._cardRevisionId,
-      discoveredTools: discoveredToolCatalog.tools,
-      discoveredToolCatalogState: discoveredToolCatalog.state,
+      // Internal plugin definitions come directly from Python's canonical
+      // operation registry. Only independently owned MCP contracts are supplied
+      // here for external-connection availability and native-name resolution.
+      discoveredTools: externalOwnerTools,
+      discoveredToolCatalogState: externalToolCatalog.state,
     }),
   });
   return requireCardTools(resolved, owner, card);
