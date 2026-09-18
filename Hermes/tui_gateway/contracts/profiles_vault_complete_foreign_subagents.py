@@ -249,7 +249,7 @@ class ProfilesDescribeResult(Result):
     toolsets: list[ToolsetEntry] = Field(default_factory=list)
     toolsets_pinned: bool = False
     mcp_servers: list[McpServerEntry] = Field(default_factory=list)
-    bot_mode_roster: list[str] = Field(default_factory=list)
+    bot_mode_roster: list[str] | None = None
 
 
 method("profiles.describe", params=ProfileNameParams, result=ProfilesDescribeResult,

@@ -1526,6 +1526,7 @@ export interface ProfilesDescribeResult {
   toolsets?: ToolsetEntry[]
   toolsets_pinned?: boolean
   mcp_servers?: McpServerEntry[]
+  bot_mode_roster?: string[] | null
 }
 export interface ProfileModelPin {
   provider?: string
@@ -1561,6 +1562,7 @@ export interface ProfilesConfigureParams {
   disabled_skills?: string[] | null
   enabled_toolsets?: string[] | null
   enabled_mcp_servers?: string[] | null
+  bot_mode_roster?: string[] | null
 }
 /** ``confirm_required`` mirrors ``config.set``: a guarded model pick wrote nothing yet. */
 export interface ProfilesConfigureResult {
@@ -1580,6 +1582,7 @@ export interface ProfilesConfigureApplied {
   skills?: boolean | null
   toolsets?: boolean | null
   mcp_servers?: boolean | null
+  bot_mode_roster?: boolean | null
 }
 export interface UiMetaConflict {
   expected?: unknown

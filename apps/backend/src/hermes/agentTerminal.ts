@@ -10,6 +10,7 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn as spawnPty, type IPty } from 'node-pty';
+import { tsImport } from 'tsx/esm/api';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import { BUILDER_CARD_ID } from '../decks/store';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
@@ -370,16 +371,16 @@ export function prepareAgentTerminal(
   };
 }
 
-async function createNativeGatewayClient(): Promise<GatewayClient> {
+export async function createNativeGatewayClient(): Promise<GatewayClient> {
   const source = path.join(
     resolveRepoRoot(), 'Hermes', 'apps', 'shared', 'src', 'json-rpc-gateway.ts',
   );
   if (!existsSync(source)) throw new Error('agent_terminal_gateway_client_missing');
-  // Node 22 executes this erasable TypeScript source directly. Keeping the
-  // computed URL avoids copying the protocol client into LiquidAIty or making
-  // the backend compiler own Hermes' package tree.
+  // Hermes' shared source keeps Node-ESM .js specifiers for emitted/bundled output.
+  // Load that source through the workspace's supported TypeScript loader instead
+  // of making bare Node resolve those specifiers against an unbuilt source tree.
   const moduleUrl = pathToFileURL(source).href;
-  const loaded = await import(moduleUrl) as {
+  const loaded = await tsImport(moduleUrl, pathToFileURL(__filename).href) as {
     JsonRpcGatewayClient?: new (options?: Record<string, unknown>) => GatewayClient;
   };
   if (typeof loaded.JsonRpcGatewayClient !== 'function') {
@@ -685,14 +686,17 @@ export class AgentTerminalManager {
       title: String(card.title || card.id).trim() || card.id,
     } : null;
     const described = record(await request<unknown>('profiles.describe', { name: projection.profile }));
-    const currentRoster = exactProfileNames(
-      described.bot_mode_roster,
-      'hermes_bot_profile_roster_readback_invalid',
-    );
+    const currentRoster = described.bot_mode_roster == null
+      ? null
+      : exactProfileNames(
+        described.bot_mode_roster,
+        'hermes_bot_profile_roster_readback_invalid',
+      );
     const metaChanged = projection.botEnabled
       ? JSON.stringify(existing) !== JSON.stringify(desired)
       : hasExistingBotMeta;
-    const rosterChanged = JSON.stringify(currentRoster) !== JSON.stringify(projection.roster);
+    const rosterChanged = currentRoster === null
+      || JSON.stringify(currentRoster) !== JSON.stringify(projection.roster);
     if (metaChanged || rosterChanged) {
       const revisions = record(current.ui_meta_revisions);
       const revision = revisions['hermes-bots'];
@@ -872,10 +876,13 @@ export class AgentTerminalManager {
         botRosterProjection ?? await this.resolveBotRoster(owner),
       );
       const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
-      const plugins = await request('plugins.list', {});
+      // These stock Gateway methods are session/install scoped and their public
+      // contracts deliberately do not accept a profile selector.  The live
+      // session already identifies the profile for tools.show.
+      const plugins = await client!.request('plugins.list', {});
       requireLoadedHermesCardToolsPlugin(plugins);
       const unavailableToolReasons = requireHermesCardToolsReadback(
-        await request('tools.show', { session_id: native.sessionId }),
+        await client!.request('tools.show', { session_id: native.sessionId }),
         cardTools,
         profileMaterialization.unavailableNativeToolReasons,
         unavailableExternalMcpToolReasons,
@@ -1454,48 +1461,6 @@ export class AgentTerminalManager {
       ...params,
       profile: gatewaySession.launch.profile,
     });
-    const projected = new Set(profiles.map((target) => target.projection.profile.toLowerCase()));
-    const listed = record(await request<unknown>('profiles.list', { include_sessions: false }));
-    if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
-    for (const value of listed.profiles) {
-      const row = record(value);
-      const name = String(row.name || '');
-      const uiMeta = record(row.ui_meta);
-      if (!Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots')
-        || projected.has(name.toLowerCase())) continue;
-      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name)) {
-        throw new Error('hermes_bot_profile_identity_invalid');
-      }
-      const revisions = record(row.ui_meta_revisions);
-      const revision = revisions['hermes-bots'];
-      if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
-        throw new Error('hermes_bot_profile_revision_invalid');
-      }
-      const configured = record(await request<unknown>('profiles.configure', {
-        name,
-        ui_meta: { 'hermes-bots': null },
-        ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
-        bot_mode_roster: [],
-      }));
-      const applied = record(configured.applied);
-      if (configured.ok !== true || applied.ui_meta !== true || applied.bot_mode_roster !== true) {
-        throw new Error('hermes_bot_profile_configuration_failed');
-      }
-      const readback = record(await request<unknown>('profiles.list', { include_sessions: false }));
-      if (!Array.isArray(readback.profiles)) throw new Error('hermes_bot_profile_list_invalid');
-      const matches = readback.profiles.filter((entry) => record(entry).name === name);
-      if (matches.length !== 1
-        || Object.prototype.hasOwnProperty.call(record(record(matches[0]).ui_meta), 'hermes-bots')) {
-        throw new Error('hermes_bot_profile_readback_failed');
-      }
-      const described = record(await request<unknown>('profiles.describe', { name }));
-      if (exactProfileNames(
-        described.bot_mode_roster,
-        'hermes_bot_profile_roster_readback_invalid',
-      ).length) {
-        throw new Error('hermes_bot_profile_roster_readback_failed');
-      }
-    }
     for (const target of profiles) {
       await this.configureNativeBotProfile(request, target.owner, target.card, target.projection);
     }

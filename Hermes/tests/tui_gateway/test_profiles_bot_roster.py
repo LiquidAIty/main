@@ -32,6 +32,10 @@ def _describe():
     )["result"]
 
 
+def test_absent_bot_roster_is_distinct_from_explicit_empty(home):
+    assert _describe()["bot_mode_roster"] is None
+
+
 def test_bot_roster_write_deduplicates_in_order_and_reads_back(home):
     response = _configure(["Beta", "alpha", "beta"])
 
@@ -47,7 +51,7 @@ def test_bot_roster_rejects_self_unknown_and_malformed_entries(home, roster):
     response = _configure(roster)
 
     assert response["error"]["code"] == 5064
-    assert _describe()["bot_mode_roster"] == []
+    assert _describe()["bot_mode_roster"] is None
 
 
 def test_empty_bot_roster_is_an_explicit_success(home):

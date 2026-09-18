@@ -117,7 +117,7 @@ not the fabricated standalone tool initially suspected.
 | Gateway consolidation | Backend source and focused terminal/Run contracts | Canonical reload; real input, stream, persisted completion, reconnect, and Stop |
 | Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
 | Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
-| Native Card Bot Mode | Python projects ordered symmetric orange peers into each native profile's explicit `bot_mode.roster`; prompt and stock `message_agent` share one fail-closed resolver; duplicate host/plugin authorization is removed | Canonical reload, ordinary Main, real attributed orange-peer reply, unwired-profile refusal, and no-alternate-machinery inspection |
+| Native Card Bot Mode | Python projects ordered symmetric orange peers into each managed profile's explicit `bot_mode.roster`; explicit `[]` denies all while a truly absent key preserves stock standalone discovery; prompt and stock `message_agent` share one resolver; duplicate host/plugin authorization is removed | Canonical reload, ordinary Main, real attributed orange-peer reply, unwired-profile refusal, and no-alternate-machinery inspection |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
 | Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |
@@ -185,4 +185,3 @@ acceptance:
 Do not force live/offline branches by changing state, restore the deleted Bot host/plugin, expose a Gateway
 credential, add a delivery adapter, or begin Builder/AutoBot work. If existing saved state lacks two valid
 orange-connected Cards, stop at that exact product-proof blocker.
-worker protocol, session mirror, transcript projection, capability daemon, or replacement runtime.

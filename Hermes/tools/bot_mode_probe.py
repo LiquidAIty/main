@@ -1,9 +1,10 @@
 """Bot Mode roster probe — canonical Bot Chat system prompt section.
 
-When the current profile carries ``ui_meta['hermes-bots']`` in profile.yaml (Bot-Mode-managed),
-its canonical "Bot Chat" session — ONLY that session (agent/system_prompt.py enforces
-the ``BOT_CHAT_TITLE`` gate) — gets a "Messaging other agents" section. Silent (``""``)
-when the current profile is unmanaged or on any error. Older desktop builds appended a frozen copy of
+When Bot Mode is active, the canonical "Bot Chat" session — ONLY that session
+(agent/system_prompt.py enforces the ``BOT_CHAT_TITLE`` gate) — gets a "Messaging other
+agents" section. An explicit profile-scoped roster requires the current profile's
+``ui_meta['hermes-bots']`` marker; an absent roster preserves stock install-wide activation and
+profile discovery. Silent (``""``) when Bot Mode is inactive or on any error. Older desktop builds appended a frozen copy of
 the section to SOUL.md; ``strip_legacy_protocol`` drops it at load time so the live roster
 here is the only copy any session sees. Cached per (process, home) so compression rebuilds
 produce identical bytes. Toggle: ``agent.bot_mode_protocol``. Also hosts path/roster
@@ -96,26 +97,33 @@ def resolve_live_profile_home(root: Path, name: str) -> Path | None:
     return candidate if named_profile_is_live(candidate) else None
 
 
-def _configured_bot_profile_names(home: Path) -> list[str]:
-    """The current profile's explicit ordered ``bot_mode.roster`` value, fail closed."""
-    from hermes_cli.config import load_config_readonly
+def _configured_bot_profile_names(home: Path) -> tuple[bool, list]:
+    """``(present, values)`` for this profile's presence-sensitive Bot roster.
+
+    A malformed explicit value is present but empty so it fails closed. Only true absence
+    selects stock standalone discovery.
+    """
+    from hermes_cli.config_effective import load_user_config_effective
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
     token = set_hermes_home_override(str(home))
     try:
-        config = load_config_readonly() or {}
+        config = load_user_config_effective() or {}
     finally:
         reset_hermes_home_override(token)
     bot_mode = config.get("bot_mode") if isinstance(config, dict) else None
-    roster = bot_mode.get("roster") if isinstance(bot_mode, dict) else None
-    return roster if isinstance(roster, list) else []
+    if not isinstance(bot_mode, dict) or "roster" not in bot_mode:
+        return False, []
+    roster = bot_mode.get("roster")
+    return True, roster if isinstance(roster, list) else []
 
 
 def resolve_bot_roster(home: str | os.PathLike | None = None) -> list[tuple[str, Path]]:
-    """Resolve this profile's explicit ordered local Bot roster.
+    """Resolve this profile's ordered local Bot roster.
 
-    Invalid, duplicate, self, unknown, or tombstoned entries are ignored. Missing/empty
-    configuration grants nobody and never falls back to scanning profile directories.
+    An absent setting preserves stock standalone discovery. An explicit list, including
+    ``[]``, is exact target authority. Invalid, duplicate, self, unknown, or tombstoned
+    entries are ignored without broadening either mode.
     """
     from hermes_cli.profiles import normalize_profile_name, validate_profile_name
 
@@ -124,7 +132,11 @@ def resolve_bot_roster(home: str | os.PathLike | None = None) -> list[tuple[str,
     me = _profile_name(resolved)
     result: list[tuple[str, Path]] = []
     seen: set[str] = set()
-    for raw_name in _swallow(lambda: _configured_bot_profile_names(resolved), []):
+    configured, configured_names = _swallow(
+        lambda: _configured_bot_profile_names(resolved), (True, []),
+    )
+    raw_names = configured_names if configured else [name for name, _ in _all_live_profiles(root)]
+    for raw_name in raw_names:
         if not isinstance(raw_name, str):
             continue
         try:
@@ -170,11 +182,22 @@ def _is_bot_managed(profile_dir: Path) -> bool:
     return _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots")) is not None
 
 
+def _any_bot_managed(root: Path) -> bool:
+    return any(_is_bot_managed(profile_dir) for _name, profile_dir in _all_live_profiles(root))
+
+
 def is_bot_mode_managed(home: str | os.PathLike | None = None) -> bool:
-    """True when the current profile is Bot-Mode-managed. Never raises. The
-    ``message_agent`` injection gate — deliberately independent of the protocol section's
-    emptiness: a SOUL.md carrying the legacy protocol gets an empty section but still gets the tool."""
-    return _swallow(lambda: _is_bot_managed(_resolve_home(home)), False)
+    """Bot activation for the current roster mode. Never raises.
+
+    Explicit roster profiles require their own marker. With no roster setting, retain stock
+    install-wide activation when any live profile is Bot-managed.
+    """
+    def _managed() -> bool:
+        resolved = _resolve_home(home)
+        configured, _names = _configured_bot_profile_names(resolved)
+        return _is_bot_managed(resolved) if configured else _any_bot_managed(_hermes_root(resolved))
+
+    return _swallow(_managed, False)
 
 
 def _role_line(*parts: str) -> str:
@@ -256,7 +279,7 @@ def _peer_paragraph(root: Path) -> str:
 def _build_section(home: Path) -> str:
     root = _hermes_root(home)
     me = _profile_name(home)
-    if not _is_bot_managed(home):
+    if not is_bot_mode_managed(home):
         return ""
 
     roster_lines = [_bullet(f"@{_handle(name)}", _profile_role(d)) for name, d in resolve_bot_roster(home)]
@@ -393,7 +416,15 @@ def stored_prompt_capability_stale(stored_prompt: str, home: str | os.PathLike |
     if not m:
         return False
     current = _swallow(lambda: capability_fingerprint(home), "unavailable")
-    return current != "unavailable" and m.group(1) != current
+    stale = current != "unavailable" and m.group(1) != current
+    if stale:
+        # The caller rebuilds the prompt exactly once after this verdict. Drop
+        # the matching protocol-section cache first so the rebuilt prompt and
+        # message_agent validation resolve the same current roster bytes.
+        resolved = str(_resolve_home(home))
+        with _lock:
+            _cached.pop(resolved, None)
+    return stale
 
 
 def stored_bot_chat_prompt_needs_upgrade(stored_prompt: str, home: str | os.PathLike | None = None) -> bool:

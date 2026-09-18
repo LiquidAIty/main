@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty';
 import {
   AgentTerminalManager,
+  createNativeGatewayClient,
   requireAgentTerminalCard,
   type AgentTerminalGatewayEvent,
   type AgentTerminalLaunch,
@@ -133,7 +134,10 @@ class FakeGatewayClient {
     }
     if (method === 'profiles.describe') {
       const name = String(params.name || '');
-      return { name, bot_mode_roster: this.botRosters.get(name) || [] } as T;
+      return {
+        name,
+        bot_mode_roster: this.botRosters.has(name) ? this.botRosters.get(name) : null,
+      } as T;
     }
     if (method === 'profiles.configure') {
       const name = String(params.name || '');
@@ -215,7 +219,6 @@ class FakeGatewayClient {
     }
     if (method === 'plugins.list') {
       return { plugins: [
-        { name: 'card-bot-dm', version: '0.1.0', enabled: true },
         { name: 'card-tools', version: '0.1.0', enabled: true },
       ] } as T;
     }
@@ -394,6 +397,16 @@ function fixture(extraProfileNames: string[] = []) {
   };
 }
 
+describe('native Hermes Gateway client loader', () => {
+  it('loads the shared TypeScript client with its Node-ESM output specifiers intact', async () => {
+    const client = await createNativeGatewayClient();
+    expect(client.connectionState).toBe('idle');
+    expect(typeof client.request).toBe('function');
+    expect(typeof client.onEvent).toBe('function');
+    client.close();
+  });
+});
+
 describe('one Gateway-owned runtime and native TUI per saved Card', () => {
   it('starts distinct Gateway AIAgents and attached native TUI PTYs, then reopens without duplicates', async () => {
     const f = fixture();
@@ -539,6 +552,10 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     ]);
     expect(terminalEvents).not.toHaveBeenCalledWith('output', expect.anything());
     expect(f.clients[0].requests.filter((request) => request.method === 'plugins.list')).toHaveLength(1);
+    expect(f.clients[0].requests.find((request) => request.method === 'plugins.list')?.params)
+      .toEqual({});
+    expect(f.clients[0].requests.find((request) => request.method === 'tools.show')?.params)
+      .toEqual({ session_id: state.nativeSessionId });
     expect(f.clients[0].requests.findIndex((request) => request.method === 'plugins.list'))
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
   });
@@ -750,7 +767,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.manager.find(f.owners[1])).toBeNull();
   });
 
-  it('revokes a managed profile removed from saved Card topology after a cold runtime gap', async () => {
+  it('does not claim or rewrite an unprojected standalone native Bot profile', async () => {
     const f = fixture(['retired-profile']);
     await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
     f.clients[0].seedManagedProfile('retired-profile', ['signal-analyst']);
@@ -771,14 +788,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       { owner: f.owners[0], card: f.cards[0], deck: f.deck },
     ], { cols: 120, rows: 36 }, currentProfiles);
 
-    expect(f.clients[0].requests).toContainEqual(expect.objectContaining({
-      method: 'profiles.configure',
-      params: expect.objectContaining({
-        name: 'retired-profile',
-        ui_meta: { 'hermes-bots': null },
-        bot_mode_roster: [],
-      }),
-    }));
+    expect(f.clients[0].requests.some((request) => (
+      request.method === 'profiles.configure' && request.params.name === 'retired-profile'
+    ))).toBe(false);
   });
 
   it('reconciles the complete desired topology, stopping disconnected Cards and replacing changed authority', async () => {

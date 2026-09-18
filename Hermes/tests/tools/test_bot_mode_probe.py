@@ -131,11 +131,22 @@ def test_explicit_roster_preserves_order_and_filters_unsafe_entries(tmp_path):
     ]
 
 
-def test_missing_or_empty_roster_never_falls_back_to_live_profiles(tmp_path):
+def test_absent_roster_preserves_stock_live_profile_discovery(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _make_bot_profile(home, "unwired", managed=True)
+
+    assert [name for name, _ in bot_mode_probe.resolve_bot_roster(home)] == ["unwired"]
+    section = bot_mode_probe.get_bot_mode_protocol_section(home)
+    assert "`@unwired`" in section
+
+
+def test_explicit_empty_roster_never_falls_back_to_live_profiles(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
     _mark_managed(home)
     _make_bot_profile(home, "unwired", managed=True)
+    _write_bot_roster(home, [])
 
     assert bot_mode_probe.resolve_bot_roster(home) == []
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
@@ -289,6 +300,26 @@ def test_stored_prompt_staleness(tmp_path):
     # prompts without a stamp (every non-Bot-Chat session) are never stale
     assert not bot_mode_probe.stored_prompt_capability_stale("ordinary prompt", home)
     assert not bot_mode_probe.stored_prompt_capability_stale("", home)
+
+
+def test_roster_epoch_change_invalidates_cached_protocol_section(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _mark_managed(home)
+    _make_bot_profile(home, "researcher", managed=True)
+    _make_bot_profile(home, "coder", managed=True)
+    _write_bot_roster(home, ["researcher"])
+
+    original = bot_mode_probe.get_bot_mode_protocol_section(home)
+    assert "researcher" in original
+    assert "coder" not in original
+    stamped = original + "\n\n" + bot_mode_probe.epoch_line(home)
+
+    _write_bot_roster(home, ["coder"])
+    assert bot_mode_probe.stored_prompt_capability_stale(stamped, home)
+    rebuilt = bot_mode_probe.get_bot_mode_protocol_section(home)
+    assert "researcher" not in rebuilt
+    assert "coder" in rebuilt
 
 
 def test_legacy_bot_chat_upgrade(tmp_path):

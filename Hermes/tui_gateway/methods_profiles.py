@@ -435,8 +435,10 @@ def _(rid, params: dict) -> dict:
         return err
     with _hermes_home_scope(profile_dir):
         from hermes_cli.config import load_config
+        from hermes_cli.config_effective import load_user_config_effective
         from hermes_cli.skills_config import get_disabled_skills
         cfg = load_config() or {}
+        user_cfg = load_user_config_effective() or {}
         disabled = {s.lower() for s in get_disabled_skills(cfg)}
         skills_root = profile_dir / "skills"
         installed = [
@@ -453,11 +455,11 @@ def _(rid, params: dict) -> dict:
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
-        bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
-        raw_bot_roster = bot_mode_cfg.get("roster")
+        bot_mode_cfg = user_cfg.get("bot_mode") if isinstance(user_cfg.get("bot_mode"), dict) else {}
+        raw_bot_roster = bot_mode_cfg.get("roster") if "roster" in bot_mode_cfg else None
         bot_mode_roster = raw_bot_roster if (
             isinstance(raw_bot_roster, list) and all(isinstance(item, str) for item in raw_bot_roster)
-        ) else []
+        ) else None
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,

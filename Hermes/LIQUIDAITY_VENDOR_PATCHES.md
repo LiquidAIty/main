@@ -111,10 +111,10 @@ one resolver, and the existing public profile configure/describe RPCs.
 
 FILES AND SYMBOLS:
 
-- `hermes_cli/config_defaults.py`: native empty `bot_mode.roster` default.
-- `tools/bot_mode_probe.py`: ordered fail-closed `resolve_bot_roster` and exact
-  live-profile resolution; the old all-profile scan remains only for lifecycle
-  migration work.
+- `hermes_cli/config_defaults.py`: Bot relay defaults deliberately omit the optional
+  `roster` key so absence remains distinguishable from explicit `[]`.
+- `tools/bot_mode_probe.py`: presence-sensitive ordered `resolve_bot_roster`, exact
+  live-profile resolution, and stock all-live-profile discovery only when the key is absent.
 - `tools/bot_mode_dm.py`: prompt-independent stock `message_agent` validation and
   local target-home lookup use the native resolver without changing delivery.
 - `tui_gateway/methods_profiles.py` and
@@ -133,12 +133,15 @@ are unchanged after exact local target resolution.
 
 CONTRACTS:
 
-- missing or empty configuration grants no local Bot targets;
+- absent configuration preserves stock standalone all-live-profile discovery;
+- explicit empty configuration grants no local Bot targets;
 - configured order is preserved and duplicates are removed without sorting;
 - self, malformed, unknown, deleted, and tombstoned profiles do not broaden access;
 - the default profile is available only when explicitly configured as `default`;
 - prompt construction, target validation, and capability fingerprinting share the
   same resolver;
+- an epoch mismatch invalidates the matching cached protocol section before the
+  existing one-time prompt rebuild;
 - configure rejects invalid/self/non-live entries and describe returns the exact
   stored ordered roster.
 
