@@ -74,7 +74,11 @@ class OperationDefinition:
     def __post_init__(self) -> None:
         if not self.canonical_id.strip():
             raise RuntimeError("operation_id_empty")
-        if not self.description.strip():
+        native_external = (
+            self.publishers == frozenset({"external-mcp"})
+            and self.external_source_id != "main_mcp"
+        )
+        if not self.description.strip() and not native_external:
             raise RuntimeError(f"operation_description_missing:{self.canonical_id}")
         if self.parameters_schema.get("type") != "object":
             raise RuntimeError(f"operation_parameters_invalid:{self.canonical_id}")
@@ -94,25 +98,6 @@ def _external_operation_unavailable(**_arguments: Any) -> Any:
     raise RuntimeError("external_operation_requires_mcp_owner")
 
 
-_CBM_READ_OPERATIONS = frozenset({
-    "cbm.check_index_coverage",
-    "cbm.detect_changes",
-    "cbm.get_architecture",
-    "cbm.get_code_snippet",
-    "cbm.get_graph_schema",
-    "cbm.index_status",
-    "cbm.list_projects",
-    "cbm.query_graph",
-    "cbm.search_code",
-    "cbm.search_graph",
-    "cbm.trace_path",
-})
-_CBM_WRITE_OPERATIONS = frozenset({
-    "cbm.delete_project",
-    "cbm.index_repository",
-    "cbm.ingest_traces",
-    "cbm.manage_adr",
-})
 _GRAPHITI_READ_OPERATIONS = frozenset({
     "graphiti.get_entity_edge",
     "graphiti.get_episode_entities",
@@ -137,7 +122,6 @@ def _external_operation_definitions() -> list[OperationDefinition]:
 
     definitions: list[OperationDefinition] = []
     for source_id, reads, writes in (
-        ("cbm", _CBM_READ_OPERATIONS, _CBM_WRITE_OPERATIONS),
         ("graphiti", _GRAPHITI_READ_OPERATIONS, _GRAPHITI_WRITE_OPERATIONS),
     ):
         for canonical_id in sorted(reads | writes):
@@ -987,10 +971,12 @@ DEFAULT_TOOL_REGISTRY = build_default_tool_registry()
 
 _OPERATION_DEFINITIONS: tuple[OperationDefinition, ...] | None = None
 _OPERATION_DEFINITIONS_LOCK = threading.Lock()
+_DISCOVERED_EXTERNAL_OPERATIONS: dict[str, tuple[OperationDefinition, ...]] = {}
+_DISCOVERED_EXTERNAL_OPERATIONS_LOCK = threading.RLock()
 
 
-def operation_definitions() -> tuple[OperationDefinition, ...]:
-    """Assemble immutable contributions once and reject duplicate canonical IDs."""
+def _static_operation_definitions() -> tuple[OperationDefinition, ...]:
+    """Assemble code-owned operations once; native MCP catalogs stay external."""
 
     global _OPERATION_DEFINITIONS
     if _OPERATION_DEFINITIONS is not None:
@@ -1016,6 +1002,79 @@ def operation_definitions() -> tuple[OperationDefinition, ...]:
             by_id[definition.canonical_id] = definition
         _OPERATION_DEFINITIONS = tuple(by_id[key] for key in sorted(by_id))
         return _OPERATION_DEFINITIONS
+
+
+def replace_discovered_external_operations(
+    source_id: str,
+    definitions: list[OperationDefinition] | tuple[OperationDefinition, ...],
+) -> None:
+    """Atomically replace one native owner's live catalog contribution.
+
+    The native MCP server supplies exact identities, schemas, descriptions and
+    effect annotations. LiquidAIty validates that metadata but never copies a
+    version-specific operation list into source.
+    """
+
+    canonical_source = str(source_id or "").strip()
+    if not canonical_source or canonical_source == "main_mcp":
+        raise RuntimeError("external_operation_source_invalid")
+    candidates = tuple(definitions)
+    by_id: dict[str, OperationDefinition] = {}
+    for definition in candidates:
+        if not isinstance(definition, OperationDefinition):
+            raise RuntimeError("external_operation_definition_invalid")
+        if definition.external_source_id != canonical_source:
+            raise RuntimeError(
+                f"external_operation_source_mismatch:{definition.canonical_id}"
+            )
+        if definition.publishers != frozenset({"external-mcp"}):
+            raise RuntimeError(
+                f"external_operation_publication_invalid:{definition.canonical_id}"
+            )
+        if not definition.available:
+            raise RuntimeError(
+                f"external_operation_availability_invalid:{definition.canonical_id}"
+            )
+        if definition.canonical_id in by_id:
+            raise RuntimeError(
+                f"external_operation_duplicate:{definition.canonical_id}"
+            )
+        by_id[definition.canonical_id] = definition
+
+    static_ids = {
+        definition.canonical_id for definition in _static_operation_definitions()
+    }
+    with _DISCOVERED_EXTERNAL_OPERATIONS_LOCK:
+        other_ids = {
+            definition.canonical_id
+            for owner, owner_definitions in _DISCOVERED_EXTERNAL_OPERATIONS.items()
+            if owner != canonical_source
+            for definition in owner_definitions
+        }
+        collisions = sorted((static_ids | other_ids) & set(by_id))
+        if collisions:
+            raise RuntimeError(
+                "external_operation_identity_collision:" + ",".join(collisions)
+            )
+        _DISCOVERED_EXTERNAL_OPERATIONS[canonical_source] = tuple(
+            by_id[key] for key in sorted(by_id)
+        )
+
+
+def operation_definitions() -> tuple[OperationDefinition, ...]:
+    """Return code-owned operations plus current native MCP discoveries."""
+
+    static_definitions = _static_operation_definitions()
+    with _DISCOVERED_EXTERNAL_OPERATIONS_LOCK:
+        discovered = tuple(
+            definition
+            for source_id in sorted(_DISCOVERED_EXTERNAL_OPERATIONS)
+            for definition in _DISCOVERED_EXTERNAL_OPERATIONS[source_id]
+        )
+    return tuple(sorted(
+        (*static_definitions, *discovered),
+        key=lambda definition: definition.canonical_id,
+    ))
 
 
 def operation_definition(name: str) -> OperationDefinition | None:

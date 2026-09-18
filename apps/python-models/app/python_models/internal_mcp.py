@@ -202,11 +202,11 @@ async def _call_read_tools_via_mcp_async(
     deadline_seconds: float | None = None,
     conversation_id: str = "",
 ) -> list[dict[str, Any]]:
-    from app.python_models.tool_registry import tool_access
-
-    for name, _arguments in calls:
-        if tool_access(name) != "read":
-            raise RuntimeError(f"materializer_mcp_read_required:{name}")
+    # The MCP host owns the live native catalogs and is therefore the only
+    # process that can classify a dynamically discovered operation correctly.
+    # Its materializer-read principal rejects every operation whose live
+    # definition is not read-only before dispatch.  Do not mirror that catalog
+    # in Python rails or consult its process-local static registry here.
     token = create_materializer_read_token(
         project_id=project_id,
         deck_id=deck_id,

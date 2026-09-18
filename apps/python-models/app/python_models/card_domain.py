@@ -128,6 +128,14 @@ def _required_text(value: Any, field: str) -> str:
     return value.strip()
 
 
+def _required_content(value: Any, field: str) -> str:
+    """Validate non-empty user/model content without changing its exact bytes."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise CardDomainError(f"{field}_required")
+    return value
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -2279,7 +2287,7 @@ def _prepare_invocation(
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     card_id = _required_text(payload.get("cardId"), "card_id")
     assignment = (
-        _required_text(payload.get("assignment"), "assignment")
+        _required_content(payload.get("assignment"), "assignment")
         if require_assignment
         else str(payload.get("assignment") or "")
     )
@@ -3281,16 +3289,58 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _main_shared_conversation_task(message: str, value: Any) -> str:
+    """Mechanically include the bounded shared transcript only on a Main turn."""
+
+    if value is None:
+        return message
+    if not isinstance(value, list) or len(value) > 24:
+        raise CardDomainError("shared_conversation_context_invalid")
+    rendered: list[str] = []
+    total_characters = 0
+    allowed = {
+        "role", "speakerCardId", "speakerLabel", "targetCardId", "targetLabel", "content"
+    }
+    for raw in value:
+        if not isinstance(raw, dict) or set(raw) != allowed:
+            raise CardDomainError("shared_conversation_context_invalid")
+        if raw.get("role") not in {"user", "assistant"}:
+            raise CardDomainError("shared_conversation_context_invalid")
+        if any(not isinstance(raw.get(key), str) for key in allowed - {"role"}):
+            raise CardDomainError("shared_conversation_context_invalid")
+        content = str(raw["content"])
+        speaker = str(raw["speakerLabel"]).strip()
+        target = str(raw["targetLabel"]).strip()
+        if not content or not speaker:
+            raise CardDomainError("shared_conversation_context_invalid")
+        total_characters += len(content)
+        if total_characters > 12_000:
+            raise CardDomainError("shared_conversation_context_too_large")
+        heading = f"{speaker} -> {target}" if target else speaker
+        rendered.append(f"{heading}:\n{content}")
+    if not rendered:
+        return message
+    return "\n\n".join((
+        "## Shared conversation before this Main turn",
+        *rendered,
+        "## Current user message to Main",
+        message,
+    ))
+
+
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve Main, then use the one canonical saved-Card Run function."""
-    message = _required_text(payload.get("message"), "message")
+    message = _required_content(payload.get("message"), "message")
+    assignment = _main_shared_conversation_task(
+        message, payload.get("sharedConversation")
+    )
     main = prepare_main_chat({**payload, "message": ""})
     return begin_run({
         **payload,
         "projectId": main["projectId"],
         "deckId": main["deckId"],
         "cardId": main["cardIdentity"]["cardId"],
-        "assignment": message,
+        "assignment": assignment,
     })
 
 

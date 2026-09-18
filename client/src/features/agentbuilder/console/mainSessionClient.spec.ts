@@ -309,11 +309,18 @@ describe('loadSessionHistory', () => {
         ok: true,
         sessionId: 'native-main',
         runtimeSessionId: 'runtime-main',
+        mainCardId: 'card_main_chat',
+        addressableAgents: [{
+          cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
+          title: 'Builder', address: 'builder', aliases: ['builder'],
+        }],
         messages: [
-          { role: 'user', text: 'Exact user text' },
+          { role: 'user', text: 'Exact user text', speaker: { kind: 'user', label: 'You' },
+            target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
           { role: 'tool', text: 'tool event text' },
           { role: 'status', text: 'Working' },
-          { role: 'assistant', text: 'Exact model text' },
+          { role: 'assistant', text: 'Exact model text',
+            speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
         ],
         terminalEvents: [{ id: 'answer', category: 'conversation.answer' }, {
           id: 'tool', category: 'execution.tool', projectId: 'project-1', deckId: 'deck_builder',
@@ -331,9 +338,16 @@ describe('loadSessionHistory', () => {
     })).resolves.toEqual({
       nativeSessionId: 'native-main',
       runtimeSessionId: 'runtime-main',
+      mainCardId: 'card_main_chat',
+      addressableAgents: [{
+        cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
+        title: 'Builder', address: 'builder', aliases: ['builder'],
+      }],
       messages: [
-        { role: 'user', text: 'Exact user text' },
-        { role: 'assistant', text: 'Exact model text' },
+        { role: 'user', text: 'Exact user text', speaker: { kind: 'user', label: 'You' },
+          target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
+        { role: 'assistant', text: 'Exact model text',
+          speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
       ],
       terminalEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
     });
@@ -342,7 +356,8 @@ describe('loadSessionHistory', () => {
   it('keeps a valid fresh conversation as an empty transcript', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({
-        ok: true, sessionId: 'native-main', runtimeSessionId: 'runtime-main', messages: [],
+        ok: true, sessionId: 'native-main', runtimeSessionId: 'runtime-main',
+        mainCardId: 'card_main_chat', addressableAgents: [], messages: [],
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )));
@@ -351,8 +366,8 @@ describe('loadSessionHistory', () => {
       projectId: 'project-1',
       conversationId: 'main',
     })).resolves.toEqual({
-      nativeSessionId: 'native-main', runtimeSessionId: 'runtime-main',
-      messages: [], terminalEvents: [],
+      nativeSessionId: 'native-main', runtimeSessionId: 'runtime-main', mainCardId: 'card_main_chat',
+      addressableAgents: [], messages: [], terminalEvents: [],
     });
   });
 

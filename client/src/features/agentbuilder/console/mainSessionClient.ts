@@ -1,6 +1,8 @@
 /**
- * Frontend client for the saved Main Card's persistent Hermes Gateway session.
- * The browser consumes backend SSE; the Card-owned Gateway owns the AIAgent.
+ * Frontend client for shared chat over saved Cards' persistent Hermes Gateway
+ * sessions. Unaddressed turns resolve to Main; an addressed turn resolves to
+ * the selected saved Card before any inference. The browser consumes backend
+ * SSE while each Card-owned Gateway remains the AIAgent/runtime owner.
  *
  * `streamSession` forwards backend-projected native events to `onEvent` and
  * resolves with the native completion text. Stable event IDs are delivered
@@ -33,6 +35,30 @@ export type MainNativeSessionEvent = {
   runtimeSessionId: string;
   nativeSessionId: string;
   event: MainGatewayEvent;
+};
+
+export type SharedChatParticipant = {
+  kind: 'user' | 'card';
+  label: string;
+  cardId?: string;
+  profile?: string;
+  address?: string;
+};
+
+export type AddressableAgent = {
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  title: string;
+  address: string;
+  aliases: string[];
+};
+
+export type SharedChatMessage = {
+  role: 'assistant' | 'user';
+  text: string;
+  speaker: SharedChatParticipant;
+  target?: SharedChatParticipant;
 };
 
 const BASE = '/api/main/session';
@@ -122,7 +148,7 @@ export async function streamSession(args: {
     } | null;
     throw new SessionStreamError({
       code: typeof payload?.error === 'string' ? payload.error : 'session_chat_failed',
-      message: `Main chat request failed with status ${res.status}.`,
+      message: `Shared chat request failed with status ${res.status}.`,
       correlationId: typeof payload?.correlationId === 'string'
         ? payload.correlationId
         : undefined,
@@ -194,6 +220,7 @@ export async function stopSession(args: {
   deckId?: string;
   conversationId: string;
   expectedRunId: string;
+  expectedCardId?: string;
 }): Promise<{ runId: string; state: string }> {
   const res = await fetch(`${BASE}/stop`, {
     method: 'POST',
@@ -280,7 +307,9 @@ export async function loadSessionHistory(args: {
 }): Promise<{
   runtimeSessionId: string;
   nativeSessionId: string;
-  messages: { role: 'assistant' | 'user'; text: string }[];
+  mainCardId: string;
+  addressableAgents: AddressableAgent[];
+  messages: SharedChatMessage[];
   terminalEvents: RuntimeEvent[];
 }> {
   const params = new URLSearchParams({
@@ -321,7 +350,14 @@ export async function loadSessionHistory(args: {
     error?: unknown;
     runtimeSessionId?: unknown;
     sessionId?: unknown;
-    messages?: { role?: unknown; text?: unknown }[];
+    mainCardId?: unknown;
+    addressableAgents?: unknown[];
+    messages?: {
+      role?: unknown;
+      text?: unknown;
+      speaker?: unknown;
+      target?: unknown;
+    }[];
     terminalEvents?: RuntimeEvent[];
   } | null;
   if (!res.ok) {
@@ -340,13 +376,34 @@ export async function loadSessionHistory(args: {
       status: res.status,
     });
   }
+  const participant = (value: unknown): SharedChatParticipant | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const item = value as Record<string, unknown>;
+    if (!['user', 'card'].includes(String(item.kind)) || typeof item.label !== 'string' || !item.label) {
+      return null;
+    }
+    return {
+      kind: item.kind as 'user' | 'card',
+      label: item.label,
+      ...(typeof item.cardId === 'string' && item.cardId ? { cardId: item.cardId } : {}),
+      ...(typeof item.profile === 'string' && item.profile ? { profile: item.profile } : {}),
+      ...(typeof item.address === 'string' && item.address ? { address: item.address } : {}),
+    };
+  };
   const messages = payload.messages
     .filter((message) => message.role === 'assistant' || message.role === 'user')
-    .map((m) => ({
-      role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
-      text: typeof m.text === 'string' ? m.text : '',
-    }))
-    .filter((m) => m.text.length > 0);
+    .map((m): SharedChatMessage | null => {
+      const speaker = participant(m.speaker);
+      if (!speaker) return null;
+      const target = participant(m.target);
+      return {
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        text: typeof m.text === 'string' ? m.text : '',
+        speaker,
+        ...(target ? { target } : {}),
+      };
+    })
+    .filter((message): message is SharedChatMessage => message !== null && message.text.length > 0);
   const terminalEvents = Array.isArray(payload.terminalEvents)
     ? payload.terminalEvents.filter((event) => (
         event && typeof event.id === 'string'
@@ -358,7 +415,32 @@ export async function loadSessionHistory(args: {
     ? payload.runtimeSessionId.trim()
     : '';
   const nativeSessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
-  if (!runtimeSessionId || !nativeSessionId) {
+  const mainCardId = typeof payload.mainCardId === 'string' ? payload.mainCardId.trim() : '';
+  const addressableAgents = Array.isArray(payload.addressableAgents)
+    ? payload.addressableAgents.flatMap((value): AddressableAgent[] => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const agent = value as Record<string, unknown>;
+      const aliases = Array.isArray(agent.aliases)
+        ? agent.aliases.filter((alias): alias is string => typeof alias === 'string' && alias.length > 0)
+        : [];
+      if (
+        typeof agent.cardId !== 'string' || !agent.cardId
+        || typeof agent.profile !== 'string' || !agent.profile
+        || typeof agent.title !== 'string' || !agent.title
+        || typeof agent.address !== 'string' || !agent.address
+        || aliases.length === 0
+      ) return [];
+      return [{
+        cardId: agent.cardId,
+        cardRevisionId: typeof agent.cardRevisionId === 'string' ? agent.cardRevisionId : '',
+        profile: agent.profile,
+        title: agent.title,
+        address: agent.address,
+        aliases,
+      }];
+    })
+    : [];
+  if (!runtimeSessionId || !nativeSessionId || !mainCardId) {
     throw new SessionStreamError({
       code: 'conversation_history_session_identity_missing',
       message: 'Conversation history did not include the active native session identity.',
@@ -366,5 +448,5 @@ export async function loadSessionHistory(args: {
       status: res.status,
     });
   }
-  return { runtimeSessionId, nativeSessionId, messages, terminalEvents };
+  return { runtimeSessionId, nativeSessionId, mainCardId, addressableAgents, messages, terminalEvents };
 }

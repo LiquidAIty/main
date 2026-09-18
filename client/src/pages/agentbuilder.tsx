@@ -715,6 +715,7 @@ export default function AgentBuilder(): React.ReactElement {
   const {
     handleNativeSend,
     messages,
+    addressableAgents,
     nativeSessionActive,
     nativeSessionConnecting,
     mainDriverSource,
@@ -1874,6 +1875,7 @@ export default function AgentBuilder(): React.ReactElement {
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
           messages={messages}
+          addressableAgents={addressableAgents}
           onSend={handleNativeSend}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
           onDraftChange={(value) => {

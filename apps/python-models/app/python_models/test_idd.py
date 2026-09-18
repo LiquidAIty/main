@@ -3,9 +3,47 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 from app.python_models.idd import IddValidationError, load_input_data_dictionary, materialize_card_editor, materialize_runtime_options, template_objects
-from app.python_models.tool_registry import materialize_tool_catalog, required_tool_caller_runtime
+from app.python_models.tool_registry import (
+    OperationDefinition,
+    materialize_tool_catalog,
+    replace_discovered_external_operations,
+    required_tool_caller_runtime,
+)
 from app.python_models.card_script import compile_card_script, generate_card_script_header, saved_script, script_presentation
 from app.python_models.orchestration_contracts import HermesRuntime
+
+
+@pytest.fixture
+def live_cbm_operations():
+    definitions = [
+        OperationDefinition(
+            canonical_id="cbm.search_graph",
+            description="Live native CBM read.",
+            parameters_schema={"type": "object", "properties": {}},
+            handler=lambda **_arguments: None,
+            available=True,
+            publishers=frozenset({"external-mcp"}),
+            access="read",
+            namespace="cbm",
+            external_source_id="cbm",
+        ),
+        OperationDefinition(
+            canonical_id="cbm.current_write",
+            description="Live native CBM restricted operation.",
+            parameters_schema={"type": "object", "properties": {}},
+            handler=lambda **_arguments: None,
+            available=True,
+            publishers=frozenset({"external-mcp"}),
+            access="write",
+            namespace="cbm",
+            external_source_id="cbm",
+        ),
+    ]
+    replace_discovered_external_operations("cbm", definitions)
+    try:
+        yield
+    finally:
+        replace_discovered_external_operations("cbm", [])
 
 
 def test_literal_idd_is_the_only_loaded_builder_data() -> None:
@@ -412,20 +450,21 @@ def test_engraphis_tools_are_bounded_and_codegraph_stays_with_cbm():
     assert engraphis.issubset(external_mcp_tool_ids())
     assert {"engraphis_recall_context", "engraphis_get_memory"}.issubset(readable_tool_ids())
     assert "engraphis_remember" in writable_tool_ids()
-    assert {"cbm.search_graph", "cbm.search_code"}.issubset(readable_tool_ids())
+    assert not any(name.startswith("cbm.") for name in external_mcp_tool_ids())
 
 
-def test_explicit_tool_permissions_come_from_the_idd() -> None:
+def test_live_cbm_permissions_come_from_native_discovery(live_cbm_operations) -> None:
     dictionary = load_input_data_dictionary()
     tool_names = {
         tool["id"] for tool in dictionary["operations"]
     }
     assert {"agentgraph.inspect", "run_mag_one"}.issubset(tool_names)
+    assert {"cbm.search_graph", "cbm.current_write"}.issubset(tool_names)
     assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
     assert required_tool_caller_runtime("cbm.search_graph") is None
     from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
     assert "cbm.search_graph" in readable_tool_ids()
-    assert "cbm.index_repository" in writable_tool_ids()
+    assert "cbm.current_write" in writable_tool_ids()
     assert "write_mag_one_instructions" in writable_tool_ids()
     assert "card.load_graph_references" in writable_tool_ids()
     assert "write_mag_one_instructions" not in readable_tool_ids()

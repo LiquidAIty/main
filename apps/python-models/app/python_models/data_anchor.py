@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 import json
 import os
 import re
-import shlex
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError
@@ -49,6 +48,10 @@ def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
         return _read_codegraph_projection(deck["projectId"], deck_id, card_id, arguments)
     if name == "trace_path":
         arguments.update(depth=1, limit=100, include_tests=False)
+    # This product read surface consumes stable native identities. Request the
+    # official machine-readable representation here instead of changing the
+    # native CBM catalog or the default behavior of ordinary cbm.* calls.
+    arguments["format"] = "json"
     result = call_read_tools_via_mcp(project_id=deck["projectId"], deck_id=deck_id,
         card_id=card_id, calls=[("cbm." + name, arguments)])[0]
     if result.get("error") or result.get("ok") is False:
@@ -57,18 +60,34 @@ def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _cbm_table(result: dict[str, Any], columns: list[str]) -> list[list[str]]:
-    """Decode CBM's labelled table; reject a changed or incomplete wire format."""
-    lines = str(result.get("text", "")).strip().splitlines()
-    header = re.fullmatch(r"rows: (\d+)\s+\(cols: (.*)\)", lines[0]) if lines else None
-    if not header or header[2].split() != columns:
+    """Decode the official query_graph JSON table without parsing prose."""
+    native_columns = result.get("columns")
+    if native_columns != columns:
         raise DataAnchorError("codegraph_query_format_invalid")
-    count = int(header[1])
-    if len(lines) < count + 2 or lines[count + 1] != f"total: {count}":
+
+    rows: list[Any] = list(result.get("rows") or [])
+    normalized: list[list[str]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            if any(column not in row for column in columns):
+                raise DataAnchorError("codegraph_query_rows_invalid")
+            values = [row[column] for column in columns]
+        elif isinstance(row, list) and len(row) == len(columns):
+            values = row
+        else:
+            raise DataAnchorError("codegraph_query_rows_invalid")
+        normalized.append([
+            "null" if value is None else str(value)
+            for value in values
+        ])
+
+    total = result.get("total")
+    if isinstance(total, bool) or (
+        total is not None
+        and (not isinstance(total, (int, float)) or int(total) < len(normalized))
+    ):
         raise DataAnchorError("codegraph_query_rows_invalid")
-    rows = [shlex.split(line) for line in lines[1:count + 1]]
-    if len(rows) != int(header[1]) or any(len(row) != len(columns) for row in rows):
-        raise DataAnchorError("codegraph_query_rows_invalid")
-    return rows
+    return normalized
 
 
 def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
@@ -97,7 +116,11 @@ def _read_codegraph_projection(project_id: str, deck_id: str, card_id: str,
         f"RETURN {', '.join(edge_columns)} LIMIT 300",
     ]
     responses = call_read_tools_via_mcp(project_id=project_id, deck_id=deck_id, card_id=card_id,
-        calls=[("cbm.query_graph", {"project": _CODEGRAPH_PROJECT, "query": query}) for query in queries])
+        calls=[("cbm.query_graph", {
+            "project": _CODEGRAPH_PROJECT,
+            "query": query,
+            "format": "json",
+        }) for query in queries])
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[str, dict[str, Any]] = {}
 
@@ -410,11 +433,12 @@ def read_codegraph_exact(
     if not deck_id or not card_id:
         raise DataAnchorError("data_anchor_codegraph_context_missing")
     calls: list[tuple[str, dict[str, Any]]] = [
-        ("cbm.index_status", {"project": _CODEGRAPH_PROJECT}),
+        ("cbm.index_status", {"project": _CODEGRAPH_PROJECT, "format": "json"}),
         ("cbm.get_code_snippet", {
             "project": _CODEGRAPH_PROJECT,
             "qualified_name": native_id,
             "include_neighbors": False,
+            "format": "json",
         }),
     ]
     if bounded_expansion:

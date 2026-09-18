@@ -7,8 +7,10 @@
 
 Use for selecting repository structure and source evidence for a coding task. Recovered from
 `2ddadeeb^` and refreshed September 9, 2026. The existing native CBM indexer owns CodeGraph.
-Clients use only the application's published `cbm.*` tools. See [codebasedmemory.md](codebasedmemory.md)
-for discovery, coverage limits and inverse deletion/rename checks; do not duplicate that procedure.
+LiquidAIty product clients use only the application's published `cbm.*` tools. Codex repository work uses its
+separately registered official direct frontend and never depends on the GPT/plugin connection or the running
+application. See [codebasedmemory.md](codebasedmemory.md) for discovery, coverage limits and inverse
+deletion/rename checks; do not duplicate that procedure.
 
 Return actual project identity, qualified symbols, paths, native references, and relevant callers.
 Read current complete source before changing behavior. Report missing coverage and use the

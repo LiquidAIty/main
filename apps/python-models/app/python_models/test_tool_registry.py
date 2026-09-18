@@ -2,11 +2,13 @@
 import json
 
 from app.python_models.tool_registry import (
+    OperationDefinition,
     ToolRegistry,
     build_default_tool_registry,
     external_mcp_manifest,
     operation_definition,
     operation_definitions,
+    replace_discovered_external_operations,
     materialize_tool_catalog,
     tool_calculator,
     tool_current_datetime,
@@ -154,16 +156,35 @@ def test_calculator_is_one_internal_operation_and_is_not_republished_by_mcp():
     assert definition.publishers == frozenset({"internal-plugin"})
 
 
-def test_engraphis_is_internal_once_while_cbm_and_graphiti_remain_external():
+def test_engraphis_is_internal_while_cbm_comes_only_from_live_discovery():
     internal_names = [item["name"] for item in tool_manifest()]
     assert internal_names.count("engraphis_recall_context") == 1
     assert internal_names.count("engraphis_get_memory") == 1
-    assert operation_definition("cbm.search_graph").publishers == frozenset({"external-mcp"})
-    assert operation_definition("cbm.search_graph").external_source_id == "cbm"
+    assert operation_definition("cbm.unfamiliar_current_tool") is None
     assert operation_definition("graphiti.search_nodes").publishers == frozenset({"external-mcp"})
     assert operation_definition("graphiti.search_nodes").external_source_id == "graphiti"
     assert "cbm.search_graph" not in internal_names
     assert "graphiti.search_nodes" not in internal_names
+
+    definition = OperationDefinition(
+        canonical_id="cbm.unfamiliar_current_tool",
+        description="A tool discovered from the current official CBM server.",
+        parameters_schema={"type": "object", "properties": {}},
+        handler=lambda **_arguments: None,
+        available=True,
+        publishers=frozenset({"external-mcp"}),
+        access="write",
+        namespace="cbm",
+        external_source_id="cbm",
+    )
+    try:
+        replace_discovered_external_operations("cbm", [definition])
+        discovered = operation_definition("cbm.unfamiliar_current_tool")
+        assert discovered is definition
+        assert discovered.publishers == frozenset({"external-mcp"})
+        assert discovered.external_source_id == "cbm"
+    finally:
+        replace_discovered_external_operations("cbm", [])
 
 
 def test_discovered_publisher_contracts_never_mutate_canonical_definitions(monkeypatch):

@@ -2,7 +2,6 @@
 name: codebasedmemory
 description: Canonical operating guide for Code-Based Memory (CBM) inside LiquidAIty. Use it for repository analysis, cleanup, architecture, refactoring, deletion-impact, and code changes.
 version: 5.1.0
-cbm_version: 0.10.8
 project: C-Projects-LiquidAIty-main
 ---
 
@@ -103,7 +102,11 @@ Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself i
 
 Never claim CBM-path-proven unless trace_path returned the edge. Never claim a function is dead without inbound trace + rg + coverage reasoning.
 
-## Installed Tools (v0.10.8)
+## Discovery Procedure and Known Native Operations
+
+This section is usage guidance, not a copied or exhaustive native catalog. The official server's live
+`tools/list` response is authoritative for names, schemas, descriptions, and availability. New valid tools do
+not require a skill or application-source update before the application can publish them.
 
 ### Indexing & Project State
 
@@ -150,7 +153,7 @@ belong in the live `get_graph_schema` result, not in this skill.
 
 **get_architecture** — Structure overview.
 Parameter: `{"project":"C-Projects-LiquidAIty-main"}`
-The installed 0.10.8 build can return structure, dependencies, routes, entry points, hotspots,
+The current official build can return structure, dependencies, routes, entry points, hotspots,
 boundaries, layers, file tree, and graph-derived clusters. Use only the aspects needed for the
 current task. It is an optional cold-start/broad-orientation tool, not a normal first call.
 
@@ -170,7 +173,7 @@ prohibition is obsolete. Depth 1 is direct; larger depths include transitive cal
 Module is not a callable function; audit its links and discovery consumers directly.
 
 Some older documentation and older clients called this operation `trace_call_path`. Treat that as a
-historical alias only. The installed v0.10.8 MCP surface exposed to this repository is `trace_path`;
+historical alias only. The current official MCP surface exposed to this repository is `trace_path`;
 do not invent or call an unavailable alias.
 
 **query_graph** — Custom Cypher queries.
@@ -185,7 +188,7 @@ bound. Cypher support is limited — no subqueries and no OPTIONAL MATCH with co
 Parameters: `{"project":"C-Projects-LiquidAIty-main","qualified_name":"<exact-qualified-name>"}`
 Use after locating symbol via search_graph. Returns source, signature, return type, complexity, lines, fingerprint. Discover qualified names through search_graph — do not guess them. Known bug: line-offset can return wrong function for ambiguous names; verify against expected line range.
 
-**search_code** — Graph-augmented code search. The installed 0.10.8 build returns graph-ranked
+**search_code** — Graph-augmented code search. The current official build returns graph-ranked
 results with structural degree and directory context. Use it when structural graph lookup cannot
 resolve the target; it is not part of the default first-call chain.
 Use `rg` for files outside CBM coverage, configs, docs, comments, and exhaustive exact matching.
@@ -200,9 +203,10 @@ Use for durable architecture decisions only. Not for temporary notes, cleanup fi
 Treat imported traces as an explicit operation; do not ingest runtime data during ordinary code
 discovery.
 
-## Current 0.10.8 Notes
+## Current Official Build Notes
 
-- The installed executable reports `codebase-memory-mcp 0.10.8`.
+- LiquidAIty startup resolves the official `codebase-memory-mcp` command from the machine's normal installed
+  PATH and accepts its native MCP identity; the repository does not retain a version or checksum pin.
 - `search_code`, `semantic_query`, richer architecture output, complexity signals, and
   cross-service tracing are available through the current MCP schema.
 - CBM is independent of the LiquidAIty Hermes runtime. Do not stop, restart, or describe Hermes as
@@ -225,10 +229,11 @@ Note: Route nodes have empty `file_path`. Route→handler mapping requires readi
 
 The canonical `C-Projects-LiquidAIty-main` index is a rebuildable projection of repository source. Source and
 tests are authoritative. It indexes the canonical host checkout `C:/Projects/LiquidAIty/main`; no second root
-or alias exists. The checksum-pinned official binary lives under LiquidAIty AppData, and the official Python
-MCP host owns its one long-lived native frontend. Codex, Hermes, Cards, plugins, and connectors use only the
-application-published `cbm.*` catalog. They never register a direct server, launch a frontend or daemon, or own
-an index lifecycle.
+or alias exists. The current official binary is resolved through the installed `codebase-memory-mcp` command.
+LiquidAIty's official Python MCP host owns one application frontend; Codex Desktop may own one separate
+frontend through its official direct user registration. Both use the same upstream per-account daemon,
+cache, and runtime identity. Hermes, Cards, plugins, connectors, and application UI use only the
+application-published `cbm.*` catalog and never launch another frontend or own index lifecycle.
 
 The upstream watcher owns ordinary incremental freshness. Empty and failed searches remain visible and fail
 open to bounded source inspection. There is no Codex lifecycle hook, host CLI doorway, second daemon, mutex,
@@ -281,10 +286,12 @@ authority proves it remains required, and document that contract. Never leave an
 The connected application MCP keeps one native frontend warm; the upstream host coordination daemon owns its
 watcher and embedded UI. Neither lifecycle depends on Hermes.
 
-Use one doorway per run: LiquidAIty's application-published `cbm.*` federation. It mechanically preserves
-native schemas and uses one persistent native child. An implementation worker never substitutes a direct native connection,
-host CLI, or alternate facade. If the application doorway is unavailable, record the boundary as unproven and
-use verified direct-source fallback.
+Use exactly one doorway owned by the current client. Codex repository work uses its directly registered official
+MCP server and never falls back through LiquidAIty or the GPT/plugin connection. LiquidAIty product execution
+uses the application-published `cbm.*` federation, which mechanically preserves native schemas through one
+persistent application child. Product workers never substitute a direct native connection, host CLI, or
+alternate facade. If the owning doorway is unavailable, record the boundary as unproven and use verified
+direct-source fallback.
 
 Independent bounded read operations may run concurrently through that same application-owned frontend,
 canonical native projection, and project; do not impose an arbitrary concurrency count. Dependent calls wait for
@@ -592,7 +599,7 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 - **Protected/excluded dirs**: autogen-main/, worldsignal/, Kronos-main/,
   services/esn_rls/, and EDGAR caches are off-limits for cleanup. Verify index coverage rather
   than assuming these vendored/protected boundaries are indexed.
-- **search_code**: Working in the installed 0.10.8 build. Use it for indexed code text; use `rg` for
+- **search_code**: Working in the current official build. Use it for indexed code text; use `rg` for
   exhaustive exact matches, comments, configs, docs, and files outside CBM coverage.
 - **Cypher**: Limited. Simple MATCH patterns only. No EXISTS subqueries, no OPTIONAL MATCH with complex patterns, no aggregations with WHERE on aggregates.
 

@@ -152,17 +152,20 @@ architecture work, read [skills/codebasedmemory.md](./skills/codebasedmemory.md)
 ordered discovery recipe. That skill is the sole detailed authority for CBM discovery, coverage fallback, and
 the mandatory inverse deletion/rename audit.
 
-CBM is installed only as the checksum-pinned official binary under the user's LiquidAIty AppData directory.
-It indexes the canonical host checkout `C:/Projects/LiquidAIty/main`, which derives the one canonical project
-name `C-Projects-LiquidAIty-main`. The official Python MCP host owns exactly one long-lived stdio frontend; the
-unmodified upstream coordination daemon, watcher, embedded UI, and disposable native cache remain outside the
-repository and are reached only through that frontend. Docker does not own or launch CBM.
+CBM uses the current official `codebase-memory-mcp` command resolved from the machine's normal installed PATH;
+the repository does not pin, copy, or install a client-specific build. It indexes the canonical host checkout
+`C:/Projects/LiquidAIty/main`, which derives the one canonical project name `C-Projects-LiquidAIty-main`.
+LiquidAIty's official Python MCP host owns exactly one long-lived application stdio frontend. Codex Desktop may
+own exactly one separate frontend through its official user registration. Both frontends use the same upstream
+per-account coordination daemon, watcher, cache, and runtime identity outside the repository. Docker does not
+own or launch CBM.
 
-Codex, Hermes, Cards, plugins, and connectors use only LiquidAIty's application-published `cbm.*` tools. No
-tracked Codex prompt/Stop hook, direct client registration, connector refresh,
-or model turn may launch CBM, attach another frontend, index, retry, repair, or own lifecycle. Normal freshness
-belongs to the upstream watcher. Initial or destructive projection maintenance is an explicit application-MCP
-administrative operation, never an automatic coding-agent hook.
+Codex repository work uses its directly registered official CBM server and does not depend on LiquidAIty,
+GPT Web, or the LiquidAIty plugin. Hermes, Cards, plugins, connectors, and application UI use only
+LiquidAIty's application-published `cbm.*` tools. No tracked prompt/Stop hook, connector refresh, or model turn
+may launch an extra frontend, index, retry, repair, or own lifecycle. Normal freshness belongs to the upstream
+watcher. Initial or destructive projection maintenance is an explicit application-MCP administrative operation,
+never an automatic coding-agent hook.
 
 Begin with `search_graph`; retain real native IDs/provenance supplied by Main or the IDF actual-graph-data section; never fabricate
 symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or

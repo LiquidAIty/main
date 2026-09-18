@@ -6,18 +6,18 @@ import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuth
 import {
   loadSessionHistory,
   loadMainDriverStatus,
+  type AddressableAgent,
   type MainDriverSource,
   type NativeSessionEvent,
   SessionStreamError,
+  type SharedChatMessage,
+  type SharedChatParticipant,
   subscribeSessionEvents,
   stopSession,
   streamSession,
 } from './mainSessionClient';
 
-export type AgentBuilderChatMessage = {
-  role: 'assistant' | 'user';
-  text: string;
-};
+export type AgentBuilderChatMessage = SharedChatMessage & { status?: 'pending' | 'complete' | 'error' };
 
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
@@ -104,6 +104,53 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
   } catch (error) {
     console.warn('[NATIVE_GRAPH_ATTENTION_OBSERVER]', error);
   }
+}
+
+const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
+
+function participantFromEvent(value: unknown): SharedChatParticipant | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const participant = value as Record<string, unknown>;
+  if (
+    !['user', 'card'].includes(String(participant.kind))
+    || typeof participant.label !== 'string'
+    || !participant.label
+  ) return null;
+  return {
+    kind: participant.kind as 'user' | 'card',
+    label: participant.label,
+    ...(typeof participant.cardId === 'string' && participant.cardId
+      ? { cardId: participant.cardId } : {}),
+    ...(typeof participant.profile === 'string' && participant.profile
+      ? { profile: participant.profile } : {}),
+    ...(typeof participant.address === 'string' && participant.address
+      ? { address: participant.address } : {}),
+  };
+}
+
+function requestedParticipant(
+  text: string,
+  mainCardId: string,
+  agents: AddressableAgent[],
+): SharedChatParticipant {
+  const match = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(text);
+  if (!match) return { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
+  const address = match[1].toLowerCase();
+  const target = agents.find((agent) => agent.aliases.includes(address));
+  return target ? {
+    kind: 'card',
+    label: target.title,
+    cardId: target.cardId,
+    profile: target.profile,
+    address: target.address,
+  } : { kind: 'card', label: `@${address}`, address };
+}
+
+function lastUserMessageIndex(messages: AgentBuilderChatMessage[], text: string): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === 'user' && messages[index].text === text) return index;
+  }
+  return -1;
 }
 
 export function parseStagedCardReviewLoaded(
@@ -323,6 +370,7 @@ export default function useAgentBuilderMainChat({
     key: string;
     controller: AbortController;
     runId: string | null;
+    cardId: string | null;
   } | null>(null);
   const nativeEventsRef = useRef<{
     key: string;
@@ -342,6 +390,13 @@ export default function useAgentBuilderMainChat({
   const nativeSessionPending = nativeSessionActive || nativeSessionConnecting;
   const sessionHistoryLoading = historyState.key === conversationKey && historyState.loading;
   const [mainDriverSource, setMainDriverSource] = useState<MainDriverSource | null>(null);
+  const [sharedAuthority, setSharedAuthority] = useState<{
+    key: string;
+    mainCardId: string;
+    agents: AddressableAgent[];
+  }>({ key: conversationKey, mainCardId: '', agents: [] });
+  const addressableAgents = sharedAuthority.key === conversationKey ? sharedAuthority.agents : [];
+  const mainCardId = sharedAuthority.key === conversationKey ? sharedAuthority.mainCardId : '';
 
   const subscribeToNativeSession = useCallback((runtimeSessionId: string, nativeSessionId: string) => {
     if (!canvasProjectId || !runtimeSessionId || !nativeSessionId) return;
@@ -366,12 +421,11 @@ export default function useAgentBuilderMainChat({
             setTechnical((current) => current.key === conversationKey
               ? { ...current, error: String(event.payload?.error || text || 'main_native_turn_failed') }
               : current);
-            return;
           }
-          if (!text.trim()) return;
-          setTranscript((current) => current.key === conversationKey
-            ? { ...current, messages: [...current.messages, { role: 'assistant', text }] }
-            : current);
+          // A completion arriving outside the request-owned SSE is native Main
+          // session traffic (for example a Bot notification), not a shared-chat
+          // speaker turn. Never make Main appear to speak for another Card.
+          return;
         } else if (event.type === 'error') {
           setTechnical((current) => current.key === conversationKey
             ? { ...current, error: String(event.payload?.message || 'main_native_turn_failed') }
@@ -419,6 +473,7 @@ export default function useAgentBuilderMainChat({
       nativeEventsRef.current = null;
     }
     setTranscript({ key: conversationKey, messages: [] });
+    setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
     setTechnical({ key: conversationKey, events: [], error: null });
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
     setTurnState({ key: conversationKey, phase: 'idle' });
@@ -450,6 +505,11 @@ export default function useAgentBuilderMainChat({
       .then((history) => {
         if (cancelled || !history) return;
         setTranscript({ key: conversationKey, messages: history.messages });
+        setSharedAuthority({
+          key: conversationKey,
+          mainCardId: history.mainCardId,
+          agents: history.addressableAgents,
+        });
         subscribeToNativeSession(history.runtimeSessionId, history.nativeSessionId);
         setTechnical({
           key: conversationKey,
@@ -488,17 +548,29 @@ export default function useAgentBuilderMainChat({
       }
       if (nativeSessionPending) throw new Error('main_session_busy');
 
+      let turnParticipant = requestedParticipant(text, mainCardId, addressableAgents);
       setTranscript((current) => ({
         key: conversationKey,
         messages: [
           ...(current.key === conversationKey ? current.messages : []),
-          { role: 'user', text },
+          {
+            role: 'user',
+            text,
+            speaker: SHARED_CHAT_USER,
+            target: turnParticipant,
+            status: 'pending',
+          },
         ],
       }));
       let runId: string | null = null;
       setTechnical({ key: conversationKey, events: [], error: null });
       const streamController = new AbortController();
-      activeStreamRef.current = { key: conversationKey, controller: streamController, runId: null };
+      activeStreamRef.current = {
+        key: conversationKey,
+        controller: streamController,
+        runId: null,
+        cardId: turnParticipant.cardId || null,
+      };
       setTurnState({ key: conversationKey, phase: 'connecting' });
 
       const appendModelText = (chunk: string) => {
@@ -511,9 +583,13 @@ export default function useAgentBuilderMainChat({
             copy[copy.length - 1] = {
               role: 'assistant',
               text: last.text + chunk,
+              speaker: turnParticipant,
+              status: 'pending',
             };
           } else {
-            copy.push({ role: 'assistant', text: chunk });
+            copy.push({
+              role: 'assistant', text: chunk, speaker: turnParticipant, status: 'pending',
+            });
           }
           return { key: conversationKey, messages: copy };
         });
@@ -524,9 +600,13 @@ export default function useAgentBuilderMainChat({
           const copy = [...current.messages];
           const last = copy[copy.length - 1];
           if (last?.role === 'assistant') {
-            copy[copy.length - 1] = { role: 'assistant', text: nativeFinalText };
+            copy[copy.length - 1] = {
+              role: 'assistant', text: nativeFinalText, speaker: turnParticipant, status: 'complete',
+            };
           } else {
-            copy.push({ role: 'assistant', text: nativeFinalText });
+            copy.push({
+              role: 'assistant', text: nativeFinalText, speaker: turnParticipant, status: 'complete',
+            });
           }
           return { key: conversationKey, messages: copy };
         });
@@ -569,6 +649,20 @@ export default function useAgentBuilderMainChat({
               }
               observedProjectionIdsRef.current.ids.add(projection.id);
             }
+            const observedParticipant = participantFromEvent(event.participant);
+            if (observedParticipant) {
+              turnParticipant = observedParticipant;
+              if (activeStreamRef.current?.controller === streamController) {
+                activeStreamRef.current.cardId = observedParticipant.cardId || null;
+              }
+              setTranscript((current) => {
+                if (current.key !== conversationKey) return current;
+                const copy = [...current.messages];
+                const userIndex = lastUserMessageIndex(copy, text);
+                if (userIndex >= 0) copy[userIndex] = { ...copy[userIndex], target: observedParticipant };
+                return { key: conversationKey, messages: copy };
+              });
+            }
             // UI pending state is local; graph/Run identity is issued only by
             // the canonical backend Run, never a second browser-generated ID.
             if (observedRunId && !runId) {
@@ -592,10 +686,12 @@ export default function useAgentBuilderMainChat({
                 : current);
             }
             if (event.kind === 'session') {
-              subscribeToNativeSession(
-                String(event.runtimeSessionId || ''),
-                String(event.sessionId || ''),
-              );
+              if (event.directAddressed !== true) {
+                subscribeToNativeSession(
+                  String(event.runtimeSessionId || ''),
+                  String(event.sessionId || ''),
+                );
+              }
               const configuration = event.configuration && typeof event.configuration === 'object'
                 ? event.configuration as Record<string, unknown>
                 : {};
@@ -663,6 +759,17 @@ export default function useAgentBuilderMainChat({
         // message. Replace the in-progress streamed bubble with those bytes so
         // the completed UI and a later history read are identical.
         finalizeModelText(completedText);
+        setTranscript((current) => {
+          if (current.key !== conversationKey) return current;
+          return {
+            key: conversationKey,
+            messages: current.messages.map((item) => (
+              item.role === 'user' && item.text === text && item.status === 'pending'
+                ? { ...item, status: 'complete' as const }
+                : item
+            )),
+          };
+        });
         if (runId) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
@@ -676,6 +783,8 @@ export default function useAgentBuilderMainChat({
           if (current.key !== conversationKey) return current;
           const messages = [...current.messages];
           if (messages[messages.length - 1]?.role === 'assistant') messages.pop();
+          const userIndex = lastUserMessageIndex(messages, text);
+          if (userIndex >= 0) messages[userIndex] = { ...messages[userIndex], status: 'error' };
           return { key: conversationKey, messages };
         });
         setTechnical((current) => current.key === conversationKey ? { ...current,
@@ -703,10 +812,12 @@ export default function useAgentBuilderMainChat({
     },
     [
       canvasProjectId,
+      addressableAgents,
       conversationId,
       conversationKey,
       dataAnchors,
       deckId,
+      mainCardId,
       nativeSessionPending,
       onNativeTurnEvent,
       onCardReviewStaged,
@@ -730,6 +841,7 @@ export default function useAgentBuilderMainChat({
     if (!nativeSessionPending || !canvasProjectId) return;
     const active = activeStreamRef.current;
     const expectedRunId = active?.key === conversationKey ? active.runId : null;
+    const expectedCardId = active?.key === conversationKey ? active.cardId : null;
     if (!expectedRunId) {
       throw new SessionStreamError({
         code: 'expected_run_id_required',
@@ -743,6 +855,7 @@ export default function useAgentBuilderMainChat({
         deckId,
         conversationId,
         expectedRunId,
+        ...(expectedCardId ? { expectedCardId } : {}),
       });
     } catch (error) {
       if (error instanceof SessionStreamError && error.code === 'no_active_turn') {
@@ -761,6 +874,7 @@ export default function useAgentBuilderMainChat({
     technicalError: technical.key === conversationKey ? technical.error : null,
     handleNativeSend,
     messages,
+    addressableAgents,
     mainDriverSource,
     nativeSessionActive,
     nativeSessionConnecting,

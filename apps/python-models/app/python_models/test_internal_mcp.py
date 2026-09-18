@@ -200,6 +200,11 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
 
         async def call_tool(self, name, arguments):
             observed["calls"].append((name, arguments))
+            if name == "cbm.index_repository":
+                return SimpleNamespace(
+                    content=[SimpleNamespace(text='{"error":"tool_not_granted"}')],
+                    isError=True,
+                )
             return SimpleNamespace(
                 content=[SimpleNamespace(text='{"ok":true}')],
                 isError=False,
@@ -208,10 +213,6 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
     monkeypatch.setattr(internal_mcp.httpx, "AsyncClient", HttpClient)
     monkeypatch.setattr(internal_mcp, "streamable_http_client", transport)
     monkeypatch.setattr(internal_mcp, "ClientSession", Session)
-    monkeypatch.setattr(
-        "app.python_models.tool_registry.tool_access",
-        lambda name: "write" if name == "cbm.index_repository" else "read",
-    )
 
     results = internal_mcp.call_read_tools_via_mcp(
         project_id="project-1",
@@ -235,9 +236,10 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
             calls=[("cbm.index_repository", {"repo_path": "x"})],
         )
     except RuntimeError as error:
-        assert str(error) == "materializer_mcp_read_required:cbm.index_repository"
+        assert str(error) == "materializer_mcp_read_failed:cbm.index_repository"
     else:
-        raise AssertionError("write tool was accepted by the materializer client")
+        raise AssertionError("write tool was accepted by the authoritative MCP host")
+    assert observed["calls"][-1][0] == "cbm.index_repository"
 
 
 def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(monkeypatch):

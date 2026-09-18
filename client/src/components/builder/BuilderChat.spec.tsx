@@ -157,6 +157,59 @@ describe('BuilderChat', () => {
     expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
   });
 
+  it('filters the saved callable roster and completes the selected address with Tab', () => {
+    render(
+      <BuilderChat
+        messages={[]}
+        addressableAgents={[
+          {
+            cardId: 'builder', profile: 'builder', title: 'Builder',
+            address: 'builder', aliases: ['builder'],
+          },
+          {
+            cardId: 'trading', profile: 'trading', title: 'Trading',
+            address: 'trading', aliases: ['trading'],
+          },
+        ]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    const input = screen.getByTestId('builder-chat-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '@b' } });
+    expect(screen.getByTestId('builder-chat-address-builder').textContent).toContain('@builder');
+    expect(screen.queryByTestId('builder-chat-address-trading')).toBeNull();
+    fireEvent.keyDown(input, { key: 'Tab' });
+    expect(input.value).toBe('@builder ');
+  });
+
+  it('renders the actual user target and replying Card identity', () => {
+    render(
+      <BuilderChat
+        messages={[
+          {
+            role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK', status: 'complete',
+            speaker: { kind: 'user', label: 'You' },
+            target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
+          },
+          {
+            role: 'assistant', text: 'BUILDER_DIRECT_OK', status: 'complete',
+            speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
+          },
+        ]}
+        onSend={vi.fn()}
+        knowledgeProjectId="project-1"
+        colors={colors}
+      />,
+    );
+
+    expect(screen.getByText('You → Builder')).not.toBeNull();
+    expect(screen.getByText('Builder')).not.toBeNull();
+    expect(screen.getByText('BUILDER_DIRECT_OK')).not.toBeNull();
+  });
+
   it('shows a native transport failure as status instead of assistant speech', () => {
     render(
       <BuilderChat

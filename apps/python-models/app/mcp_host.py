@@ -31,7 +31,6 @@ from __future__ import annotations
 import asyncio
 import atexit
 import copy
-import functools
 import hashlib
 import hmac
 import inspect
@@ -39,6 +38,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -93,6 +93,7 @@ from app.python_models.tool_registry import (
     DEFAULT_TOOL_REGISTRY,
     OperationDefinition,
     external_mcp_manifest,
+    replace_discovered_external_operations,
     tool_access,
 )
 from mcp.server import Server
@@ -785,19 +786,10 @@ _NATIVE_CBM_INDEX_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
 _NATIVE_CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
 _NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
-_NATIVE_CBM_EXPECTED_VERSION = "0.10.8"
-_NATIVE_CBM_EXPECTED_SHA256 = "b4b403b1d7c4def3785f148b93f345ce8427858f4f5489ce28580c4387a336a6"
-_NATIVE_CBM_BINARY = os.environ.get("MCP_CBM_BINARY", "").strip() or os.path.join(
-    os.environ.get("LOCALAPPDATA", ""),
-    "LiquidAIty",
-    "cbm",
-    _NATIVE_CBM_EXPECTED_VERSION,
-    "codebase-memory-mcp.exe",
+_NATIVE_CBM_COMMAND = (
+    os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
 )
-_NATIVE_CBM_CACHE_ROOT = os.path.join(
-    os.path.expanduser("~"), ".cache", "codebase-memory-mcp"
-)
-_NATIVE_CBM_DAEMON_LOG = os.path.join(_NATIVE_CBM_CACHE_ROOT, "logs", "cbm-daemon.log")
+_NATIVE_CBM_BINARY = shutil.which(_NATIVE_CBM_COMMAND) or _NATIVE_CBM_COMMAND
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
@@ -826,15 +818,6 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             "connectionKind": "external-mcp",
         }
         payload["_meta"] = meta
-        if provider == "cbm":
-            schema = copy.deepcopy(payload.get("inputSchema") or {})
-            format_schema = schema.get("properties", {}).get("format", {})
-            if "json" in format_schema.get("enum", []):
-                format_schema["default"] = "json"
-                payload["inputSchema"] = schema
-                payload["description"] = (payload.get("description") or "") + (
-                    " LiquidAIty defaults to native JSON for exact attention IDs; an explicit format is preserved."
-                )
         if provider == "graphiti" and native_name == "get_episodes":
             schema = copy.deepcopy(payload.get("inputSchema") or {})
             properties = schema.setdefault("properties", {})
@@ -860,6 +843,46 @@ def _namespace_native_tools(provider: str, tools: list[Tool]) -> list[Tool]:
             payload["inputSchema"] = schema
         result.append(Tool.model_validate(payload))
     return result
+
+
+def _external_mcp_operation_unavailable(**_arguments: Any) -> Any:
+    raise RuntimeError("external_operation_requires_mcp_owner")
+
+
+def _register_native_cbm_catalog(tools: list[Tool]) -> None:
+    """Project the current official CBM catalog into runtime authorization.
+
+    Access comes only from the standardized native MCP annotation. A positive
+    read-only hint maps to read; absent or non-read-only metadata stays
+    conservatively write/restricted without guessing from a tool name.
+    """
+
+    definitions: list[OperationDefinition] = []
+    for tool in tools:
+        payload = tool.model_dump(by_alias=True, exclude_none=True)
+        annotations = payload.get("annotations")
+        read_only = (
+            annotations.get("readOnlyHint")
+            if isinstance(annotations, dict)
+            else None
+        )
+        definitions.append(OperationDefinition(
+            canonical_id=tool.name,
+            description=str(tool.description or "").strip(),
+            parameters_schema=copy.deepcopy(tool.inputSchema),
+            handler=_external_mcp_operation_unavailable,
+            available=True,
+            publishers=frozenset({"external-mcp"}),
+            access="read" if read_only is True else "write",
+            namespace="cbm",
+            external_source_id="cbm",
+            output_schema=(
+                copy.deepcopy(tool.outputSchema)
+                if tool.outputSchema is not None
+                else None
+            ),
+        ))
+    replace_discovered_external_operations("cbm", definitions)
 
 
 def _bind_repo_tool_source(tool: Tool) -> Tool:
@@ -1594,8 +1617,8 @@ class _NativeStdioMcpClient:
 
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
-    """Open the one AppData-installed native CBM frontend owned by this host."""
-    return (os.path.abspath(_NATIVE_CBM_BINARY), [], _NATIVE_CBM_HOST_REPO_ROOT)
+    """Open the one current official user-installed CBM frontend owned by this host."""
+    return (_NATIVE_CBM_BINARY, [], _NATIVE_CBM_HOST_REPO_ROOT)
 
 
 def _normalize_native_cbm_index_arguments(
@@ -1676,13 +1699,7 @@ def _call_native_cbm(name: str, arguments: dict[str, Any]) -> CallToolResult:
     client = _NATIVE_CBM_CLIENT
     if client is None:
         raise RuntimeError("native_cbm_client_unavailable")
-    native_arguments = dict(arguments)
-    native_tool = next((tool for tool in (_NATIVE_CBM_TOOLS or ()) if tool.name == name), None)
-    format_schema = (native_tool.inputSchema.get("properties", {}).get("format", {})
-                     if native_tool is not None else {})
-    if "format" not in native_arguments and "json" in format_schema.get("enum", []):
-        native_arguments["format"] = "json"
-    return client.call_tool(name, native_arguments)
+    return client.call_tool(name, dict(arguments))
 
 
 def _call_native_cbm_index(arguments: dict[str, Any]) -> CallToolResult:
@@ -1759,85 +1776,17 @@ def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
     raise RuntimeError("native_cbm_health_payload_invalid")
 
 
-@functools.lru_cache(maxsize=1)
-def _native_cbm_binary_sha256() -> str:
-    digest = hashlib.sha256()
-    with open(_NATIVE_CBM_BINARY, "rb") as binary:
-        for chunk in iter(lambda: binary.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _host_codegraph_runtime() -> dict[str, Any]:
-    binary_path = os.path.abspath(_NATIVE_CBM_BINARY)
+    binary_path = _NATIVE_CBM_BINARY
     binary_exists = os.path.isfile(binary_path)
-    binary_sha256 = _native_cbm_binary_sha256() if binary_exists else ""
-    binary_ready = binary_sha256 == _NATIVE_CBM_EXPECTED_SHA256
+    binary_ready = binary_exists
     return {
         "runtimeReady": binary_ready,
-        "runtimeState": "ready" if binary_ready else (
-            "checksum_mismatch" if binary_exists else "missing"
-        ),
+        "runtimeState": "ready" if binary_ready else "missing",
         "binaryPath": binary_path,
         "binaryReady": binary_ready,
-        "binaryState": "ready" if binary_ready else (
-            "checksum_mismatch" if binary_exists else "missing"
-        ),
-        "binarySha256": binary_sha256,
-        "cachePath": _NATIVE_CBM_CACHE_ROOT,
+        "binaryState": "ready" if binary_ready else "missing",
     }
-
-
-def _native_codegraph_watcher_status() -> dict[str, Any]:
-    try:
-        with open(_NATIVE_CBM_DAEMON_LOG, "r", encoding="utf-8", errors="replace") as log:
-            lines = list(deque(log, maxlen=500))
-    except OSError as error:
-        return {
-            "watcherActive": False,
-            "watcherState": "unavailable",
-            "watcherFailure": str(error),
-        }
-    latest_start = max(
-        (index for index, line in enumerate(lines) if "msg=watcher.start " in line),
-        default=-1,
-    )
-    registration = (
-        f"msg=watcher.watch project={_NATIVE_CBM_PROJECT} "
-        f"path={_NATIVE_CBM_HOST_REPO_ROOT}"
-    )
-    latest_registration = max(
-        (
-            index
-            for index, line in enumerate(lines)
-            if index > latest_start and registration in line
-        ),
-        default=-1,
-    )
-    if latest_start < 0 or latest_registration < 0:
-        return {"watcherActive": False, "watcherState": "inactive"}
-
-    failure_marker = f"msg=watcher.git.failed project={_NATIVE_CBM_PROJECT} "
-    failures = [
-        line
-        for line in lines[latest_registration + 1 :]
-        if failure_marker in line
-    ]
-    if failures:
-        reason = next(
-            (
-                token.removeprefix("reason=")
-                for token in failures[-1].split()
-                if token.startswith("reason=")
-            ),
-            "unknown",
-        )
-        return {
-            "watcherActive": False,
-            "watcherState": "failed",
-            "watcherFailure": reason,
-        }
-    return {"watcherActive": True, "watcherState": "active"}
 
 
 def _project_count(payload: dict[str, Any], *keys: str) -> int:
@@ -1859,9 +1808,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         "binaryReady": False,
         "binaryState": "unavailable",
         "binaryVersion": "",
-        "binaryPath": os.path.abspath(_NATIVE_CBM_BINARY),
-        "binarySha256": "",
-        "cachePath": _NATIVE_CBM_CACHE_ROOT,
+        "binaryPath": _NATIVE_CBM_BINARY,
         "daemonAttached": False,
         "daemonState": "unattached",
         "nativeFrontendAttached": False,
@@ -1870,8 +1817,6 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         "projectState": "missing",
         "indexReady": False,
         "indexState": "missing",
-        "watcherActive": False,
-        "watcherState": "inactive",
         "codeGraphReady": False,
     }
     try:
@@ -1886,17 +1831,19 @@ def _codegraph_diagnostics() -> dict[str, Any]:
     diagnostics["nativeFrontendAttached"] = True
     diagnostics["nativeFrontendState"] = "attached"
     server_info = dict(getattr(client, "server_info", {}) or {})
+    server_name = str(server_info.get("name") or "")
     binary_version = str(server_info.get("version") or "")
     diagnostics["binaryVersion"] = binary_version
-    diagnostics["binaryReady"] = binary_version == _NATIVE_CBM_EXPECTED_VERSION
-    diagnostics["binaryState"] = (
-        "ready" if diagnostics["binaryReady"] else "version_mismatch"
-    )
+    diagnostics["binaryReady"] = server_name == "codebase-memory-mcp"
+    if diagnostics["binaryReady"]:
+        diagnostics["binaryState"] = "ready"
+    else:
+        diagnostics["binaryState"] = "identity_mismatch"
     try:
         projects = _native_result_payload(
             client.call_tool(
                 "list_projects",
-                {},
+                {"format": "json", "detail": "stats"},
                 timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
             )
         )
@@ -1925,7 +1872,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         status = _native_result_payload(
             client.call_tool(
                 "index_status",
-                {"project": _NATIVE_CBM_PROJECT},
+                {"project": _NATIVE_CBM_PROJECT, "format": "json"},
                 timeout_seconds=_NATIVE_CBM_HEALTH_TIMEOUT_SECONDS,
             )
         )
@@ -1951,7 +1898,6 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         diagnostics["indexState"] = "ready" if diagnostics["indexReady"] else (
             status_name or "not_ready"
         )
-        diagnostics.update(_native_codegraph_watcher_status())
     except Exception as error:
         diagnostics["nativeFailure"] = str(error)
 
@@ -1964,7 +1910,6 @@ def _codegraph_diagnostics() -> dict[str, Any]:
             "nativeFrontendAttached",
             "canonicalProjectRegistered",
             "indexReady",
-            "watcherActive",
         )
     )
     return diagnostics
@@ -2587,7 +2532,10 @@ async def _materialize_complete_catalog() -> list[Tool]:
     native_catalogs["graphiti"] = await _native_graphiti_tools()
     _complete_catalog_family("graphiti")
     for provider, native_tools in native_catalogs.items():
-        tools.extend(_namespace_native_tools(provider, native_tools))
+        namespaced_tools = _namespace_native_tools(provider, native_tools)
+        if provider == "cbm":
+            _register_native_cbm_catalog(namespaced_tools)
+        tools.extend(namespaced_tools)
     from app.python_models.question_evidence import QuestionEvidence
     question_schema = QuestionEvidence.model_json_schema()
     reference_schema = question_schema["$defs"]["GraphReference"]
@@ -2788,6 +2736,15 @@ def _catalog_or_error() -> list[Tool]:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """Return the one frozen catalog unchanged for every MCP client."""
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        initializing = _CATALOG_STATE == "initializing"
+    if initializing:
+        # HTTP binds before its native providers finish initializing so health
+        # can report truthful progress. A tools/list client, however, must not
+        # observe an incomplete catalog or turn a transient startup state into
+        # missing saved grants. Shield the one process-wide initializer from a
+        # client cancellation, then return only its frozen terminal catalog.
+        await asyncio.shield(_start_catalog_initialization())
     return _catalog_or_error()
 
 

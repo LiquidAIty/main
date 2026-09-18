@@ -33,6 +33,10 @@ import useAgentBuilderMainChat, {
 } from './useAgentBuilderMainChat';
 import { SessionStreamError } from './mainSessionClient';
 
+function messageText(messages: Array<{ role: string; text: string }>) {
+  return messages.map(({ role, text }) => ({ role, text }));
+}
+
 beforeEach(() => {
   mocks.loadMainDriverStatus.mockReset().mockResolvedValue({ ready: true, activeDriver: null });
   mocks.loadSessionHistory.mockReset();
@@ -79,7 +83,9 @@ describe('Main chat live observation callbacks', () => {
     expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
     expect(onNativeTurnEvent.mock.calls.every(([turn]) => turn.runId === 'server-run')).toBe(true);
     expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
-    expect(result.current.messages).toEqual([{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Actual reply' }]);
+    expect(messageText(result.current.messages)).toEqual([
+      { role: 'user', text: 'Question' }, { role: 'assistant', text: 'Actual reply' },
+    ]);
   });
 
   it('projects input and final answer into Chat exactly once while execution stays terminal-only', async () => {
@@ -106,12 +112,77 @@ describe('Main chat live observation callbacks', () => {
       deckId: 'deck_builder', conversationId: 'main' }));
     await act(async () => { await result.current.requestMainText('Question'); });
 
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Question' },
       { role: 'assistant', text: 'Short answer.' },
     ]);
     expect(result.current.technicalEvents).toEqual([tool]);
     expect(JSON.stringify(result.current.technicalEvents)).not.toContain('Short answer.');
+  });
+
+  it('attributes a direct addressed turn to Builder and never subscribes it as Main', async () => {
+    const builder = {
+      kind: 'card' as const,
+      label: 'Builder',
+      cardId: 'builder',
+      profile: 'builder',
+      address: 'builder',
+    };
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({
+        kind: 'run', runId: 'builder-run', cardId: 'builder', participant: builder,
+        directAddressed: true,
+      });
+      onEvent({
+        kind: 'session', runId: 'builder-run', cardId: 'builder', participant: builder,
+        directAddressed: true, runtimeSessionId: 'runtime-builder', sessionId: 'native-builder',
+      });
+      onEvent({
+        kind: 'text', runId: 'builder-run', cardId: 'builder', participant: builder,
+        directAddressed: true, text: 'BUILDER_DIRECT_OK',
+      });
+      return { finalText: 'BUILDER_DIRECT_OK' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+
+    await act(async () => {
+      await result.current.requestMainText('@builder Reply exactly BUILDER_DIRECT_OK');
+    });
+
+    expect(result.current.messages).toEqual([
+      {
+        role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK', status: 'complete',
+        speaker: { kind: 'user', label: 'You' }, target: builder,
+      },
+      { role: 'assistant', text: 'BUILDER_DIRECT_OK', status: 'complete', speaker: builder },
+    ]);
+    expect(mocks.subscribeSessionEvents).not.toHaveBeenCalled();
+  });
+
+  it('keeps a failed addressed turn attributed to the attempted target without fake assistant speech', async () => {
+    mocks.streamSession.mockRejectedValue(new SessionStreamError({
+      code: 'addressed_card_turn_failed',
+      message: 'The native Builder turn failed.',
+    }));
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+
+    await act(async () => {
+      await expect(result.current.requestMainText('@builder unavailable test'))
+        .rejects.toMatchObject({ code: 'addressed_card_turn_failed' });
+    });
+
+    expect(result.current.messages).toEqual([{
+      role: 'user',
+      text: '@builder unavailable test',
+      status: 'error',
+      speaker: { kind: 'user', label: 'You' },
+      target: { kind: 'card', label: '@builder', address: 'builder' },
+    }]);
+    expect(result.current.technicalError).toBe('addressed_card_turn_failed');
   });
   it('accepts optional editor review with no selected graph data and no IDF', () => {
     expect(parseStagedCardReviewLoaded({
@@ -168,7 +239,16 @@ describe('Main chat live observation callbacks', () => {
     let resolveHistory!: (history: {
       runtimeSessionId: string;
       nativeSessionId: string;
-      messages: Array<{ role: 'assistant' | 'user'; text: string }>;
+      mainCardId: string;
+      addressableAgents: Array<{
+        cardId: string; cardRevisionId: string; profile: string; title: string;
+        address: string; aliases: string[];
+      }>;
+      messages: Array<{
+        role: 'assistant' | 'user'; text: string;
+        speaker: { kind: 'user' | 'card'; label: string; cardId?: string };
+        target?: { kind: 'user' | 'card'; label: string; cardId?: string };
+      }>;
       terminalEvents: Array<Record<string, unknown>>;
     }) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
@@ -186,9 +266,13 @@ describe('Main chat live observation callbacks', () => {
       resolveHistory({
         runtimeSessionId: 'runtime-main',
         nativeSessionId: 'native-main',
+        mainCardId: 'card_main_chat',
+        addressableAgents: [],
         messages: [
-          { role: 'user', text: 'Run Delegate.' },
-          { role: 'assistant', text: 'Delegate completed.' },
+          { role: 'user', text: 'Run Delegate.', speaker: { kind: 'user', label: 'You' },
+            target: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
+          { role: 'assistant', text: 'Delegate completed.',
+            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
         ],
         terminalEvents: [{
           projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', cardName: 'Main',
@@ -202,8 +286,10 @@ describe('Main chat live observation callbacks', () => {
 
     expect(result.current.sessionHistoryLoading).toBe(false);
     expect(result.current.messages).toEqual([
-      { role: 'user', text: 'Run Delegate.' },
-      { role: 'assistant', text: 'Delegate completed.' },
+      { role: 'user', text: 'Run Delegate.', speaker: { kind: 'user', label: 'You' },
+        target: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
+      { role: 'assistant', text: 'Delegate completed.',
+        speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' } },
     ]);
     expect(result.current.technicalEvents).toEqual([
       expect.objectContaining({ id: 'run-history:tool:1', category: 'execution.tool' }),
@@ -228,12 +314,14 @@ describe('Main chat live observation callbacks', () => {
     expect(result.current.messages).toEqual([]);
   });
 
-  it('renders an exact autonomous native completion without submitting another Main turn', async () => {
+  it('keeps autonomous native Main completions out of the shared transcript', async () => {
     const closeNativeEvents = vi.fn();
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
       runtimeSessionId: 'runtime-main',
       nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat',
+      addressableAgents: [],
       messages: [],
       terminalEvents: [],
     });
@@ -260,9 +348,7 @@ describe('Main chat live observation callbacks', () => {
         },
       });
     });
-    expect(result.current.messages).toEqual([
-      { role: 'assistant', text: 'Builder finished natively.' },
-    ]);
+    expect(result.current.messages).toEqual([]);
     expect(mocks.streamSession).not.toHaveBeenCalled();
 
     unmount();
@@ -318,7 +404,7 @@ describe('Main chat live observation callbacks', () => {
       runId: 'native-run', event: { kind: 'reasoning', runId: 'native-run', text: 'private provider reasoning' },
     }));
     expect(onTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Fix the build.' },
       { role: 'assistant', text: 'Visible answer.' },
     ]);
@@ -345,7 +431,7 @@ describe('Main chat live observation callbacks', () => {
         .resolves.toBe('Native answer.');
     });
 
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: '  Normal human message.  ' },
       { role: 'assistant', text: 'Native answer.' },
     ]);
@@ -541,9 +627,10 @@ describe('Main chat live observation callbacks', () => {
       await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
     });
 
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Normal user message.' },
     ]);
+    expect(result.current.messages[0]).toMatchObject({ status: 'error', target: { label: 'Main' } });
     expect(result.current.nativeSessionActive).toBe(false);
     expect(onUserTurnStarted).not.toHaveBeenCalled();
     expect(onTurnFinished).not.toHaveBeenCalled();
@@ -561,7 +648,8 @@ describe('Main chat live observation callbacks', () => {
     await act(async () => { await expect(result.current.requestMainText('Question')).rejects.toThrow('Run identity changed'); });
     expect(onNativeTurnEvent).toHaveBeenCalledTimes(1);
     expect(result.current.technicalError).toBe('main_run_identity_mismatch');
-    expect(result.current.messages).toEqual([{ role: 'user', text: 'Question' }]);
+    expect(messageText(result.current.messages)).toEqual([{ role: 'user', text: 'Question' }]);
+    expect(result.current.messages[0]).toMatchObject({ status: 'error' });
   });
 
   it('removes an unfinished assistant stream when the native turn fails', async () => {
@@ -584,9 +672,10 @@ describe('Main chat live observation callbacks', () => {
       await expect(result.current.requestMainText('Normal user message.')).rejects.toThrow();
     });
 
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Normal user message.' },
     ]);
+    expect(result.current.messages[0]).toMatchObject({ status: 'error' });
   });
 
   it('clears the native active state when the backend reports no active turn', async () => {
@@ -618,7 +707,7 @@ describe('Main chat live observation callbacks', () => {
       await request.catch(() => undefined);
     });
     expect(result.current.nativeSessionActive).toBe(false);
-    expect(result.current.messages).toEqual([
+    expect(messageText(result.current.messages)).toEqual([
       { role: 'user', text: 'Normal user message.' },
     ]);
   });

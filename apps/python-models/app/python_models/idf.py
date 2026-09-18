@@ -532,10 +532,11 @@ def load_idf(
 def model_task(idf: Idf) -> str:
     """Return the exact graph-first user/task text represented by the IDF."""
 
-    return "\n\n".join(value for value in (
-        idf.actualGraphData.modelText.strip(),
-        idf.dynamicContext.task.strip(),
-    ) if value)
+    graph_context = idf.actualGraphData.modelText.strip()
+    task = idf.dynamicContext.task
+    if graph_context and task:
+        return f"{graph_context}\n\n{task}"
+    return graph_context or task
 
 
 def kanban_mission(idf: Idf) -> str:

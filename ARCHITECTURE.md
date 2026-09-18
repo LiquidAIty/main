@@ -101,7 +101,7 @@ signed runtime boundary and are mounted separately from browser authentication.
 | Route family | Current responsibility |
 | --- | --- |
 | `/api/cards` | Card editor choices, saved Card execution, connected relationships, Run inspection, and Stop |
-| `/api/main` | Main context, streaming chat, driver state, native Gateway history, native attention, and exact-Run Stop |
+| `/api/main` | Shared-chat address resolution, saved-Card streaming turns, Main context/driver state, participant-aware history, native attention, and exact-Run Stop |
 | `/api/agent-terminals` | Authenticated open, SSE events, input, resize/detach, and Stop for the Card's native TUI |
 | `/api/hermes-profile` | Saved-Card-scoped native profile projection and explicit native profile operations |
 | `/api/idd` | IDD-backed Card editor and tool projections |
@@ -130,9 +130,13 @@ Main, Builder, and ordinary Hermes-backed Cards use the native Gateway/TUI path:
 7. Gateway events drive streaming output. The completed native text, session references, provider
    identity, available usage, cost, duration, and failure/cancellation state finish the same saved Run.
 
-The browser Main history route reads user/assistant messages through the running Gateway. History
-deletion is deliberately unavailable because Hermes owns native history. The terminal surface streams
-real PTY bytes; a mounted component or running process is not proof that a turn executed.
+Each saved Card's native session remains the authority for its runtime history. The browser shared-chat
+history route additionally reads an exact completed-turn presentation projection from the existing
+normalized conversation tables so user, target, and replying Card identities survive reload across
+multiple native Card sessions. That projection is not another runtime, delivery queue, or agent registry;
+it is written only after the real target turn completes. History deletion remains deliberately
+unavailable. The terminal surface streams real PTY bytes; a mounted component, queued UI item, or running
+process is not proof that a turn executed.
 
 ### Removed LiquidAIty ACP path
 
@@ -168,6 +172,14 @@ Saved-Card conversation is not delegation. One enabled orange `flow` connection 
 Hermes agent Cards authorizes either endpoint to contact the other saved profile through native
 `message_agent`; Hermes owns the receiving profile's canonical `Bot Chat` and the conversation.
 
+Direct user addressing in shared chat is a separate entrance. A leading saved-roster address such as
+`@builder` resolves before inference, prepares the addressed saved Card's ordinary canonical Run/IDF,
+and submits the exact user text to that Card's own profile-scoped Gateway session. Main is not invoked,
+does not acknowledge the turn, and does not inspect the result. Only the actual addressed Card response
+is rendered and persisted with that Card's identity. An unaddressed turn invokes Main; only then may its
+IDF include the bounded preceding shared conversation. Main's independent native `message_agent` route
+remains unchanged for model-chosen Card-to-Card communication.
+
 LiquidAIty has no TypeScript participant classifier, task-count router, callback scheduler, copied
 Kanban database, or Team receipt product. `apps/backend/src/hermes/kanbanRunRecovery.ts` monitors only
 eligible existing active `runtimeMode === "kanban"` rows and does not create new Team work.
@@ -202,10 +214,12 @@ profiles. The default profile is available only when explicitly listed. Blue Mag
 not enter this projection.
 
 The former Card Bot-DM plugin, backend host/authentication route, and Python per-message target resolver
-are removed. No application component intercepts `message_agent`, forwards a Gateway credential, chooses
-live versus offline delivery, waits for a reply, reconstructs a transcript, or creates a Card Run for the
-conversation. Hermes owns the canonical Bot Chat, acknowledgement, delivery choice, queueing, ordering,
-completion, receipts, attributed replies, silence, retries, and background notification.
+are removed. No application component intercepts Card-to-Card `message_agent`, forwards a Gateway
+credential, chooses live versus offline delivery, waits for its reply, reconstructs its transcript, or
+creates a Card Run for that native Card-to-Card conversation. Hermes owns the canonical Bot Chat,
+acknowledgement, delivery choice, queueing, ordering, completion, receipts, attributed replies, silence,
+retries, and background notification. The direct user-addressed shared-chat entrance above uses the
+existing ordinary saved-Card Run/Gateway path; it does not replace or proxy `message_agent`.
 
 `delegate_task` remains native in-Card subagent/Team work; it is not a profile-to-profile Card
 conversation entrance. Loaded ordinary-Main and real Card-to-Card attributed-reply acceptance remain a
@@ -285,10 +299,13 @@ protocol-neutral Python operation definitions through the native plugin and do n
 Catalog/readback tests and loaded internal-tool execution are proven separately from external-client live
 acceptance.
 
-Codebase Memory is a native MCP dependency of that host. The checksum-pinned official binary, its one
-long-lived stdio frontend, upstream daemon/watcher, UI, and disposable native cache live outside the
-repository. Docker, Codex hooks, Hermes, and plugins do not own or launch CBM. The upstream watcher owns
-ordinary freshness; indexing/deletion are explicit application-MCP administrative operations.
+Codebase Memory is a native MCP dependency of that host. Canonical startup resolves the current official
+`codebase-memory-mcp` command from the machine's normal installed PATH; the repository does not retain a
+versioned copy or checksum pin. LiquidAIty owns one long-lived application stdio frontend. Codex Desktop may own one separate
+frontend through its official direct registration, independent of LiquidAIty and GPT/plugin availability. Both
+join the same upstream per-account daemon/cache/runtime identity outside the repository. Docker, Hermes, Cards,
+plugins, and connectors do not launch another frontend. The upstream watcher owns ordinary freshness;
+indexing/deletion are explicit application-MCP administrative operations.
 
 `POST /api/codegraph/read` is not an additional CBM tool and not a second catalog. It is an
 authenticated browser transport that checks the saved Card scope, permits only `list_projects`,
@@ -344,9 +361,9 @@ when their wording is old.
 
 ## Startup and loaded proof
 
-Canonical development startup is `npm run dev:fresh`. It validates the pinned CBM executable and starts
-the supported local service graph. No cleanup task may launch a second CBM frontend, restart the daemon,
-or partially replace the supervisor.
+Canonical development startup is `npm run dev:fresh`. It resolves the current official CBM command from PATH,
+validates its native MCP server identity, and starts the supported local service graph. No cleanup task
+may launch an extra CBM frontend, restart the daemon, or partially replace the supervisor.
 
 Evidence tiers remain separate:
 

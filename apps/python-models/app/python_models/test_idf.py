@@ -20,7 +20,7 @@ from app.python_models.idf import (
 
 def _idf(
     *, graph_context: str = "", secret: bool = False,
-    capabilities: dict | None = None,
+    capabilities: dict | None = None, task: str = "Inspect the exact bounded slice.",
 ):
     reference = {
         "authority": "CodeGraph",
@@ -69,7 +69,7 @@ def _idf(
             },
         },
         variable={
-            "task": "Inspect the exact bounded slice.",
+            "task": task,
             "images": [],
         },
         capabilities={
@@ -105,6 +105,13 @@ def test_empty_graph_section_is_valid_and_idf_is_graph_first() -> None:
         "dynamicContext",
     ]
     assert load_idf_bytes(materialized.idf_bytes) == materialized
+
+
+def test_native_projection_preserves_exact_user_task_whitespace() -> None:
+    exact = "  @builder Reply exactly BUILDER_DIRECT_OK  "
+    materialized = _idf(task=exact)
+    assert materialized.idf.dynamicContext.task == exact
+    assert runtime_projection(materialized)["message"] == exact
 
 
 def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:

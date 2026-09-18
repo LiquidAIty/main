@@ -11,9 +11,25 @@ A user talks to Main or deliberately invokes a saved Card, the exact saved Card 
 input produce one canonical IDF, the selected native runtime performs real work, and the application
 shows truthful output, references, artifacts, usage, failure, and lineage without losing saved state.
 
-Main remains the conversation front door. Builder remains the saved `builder` Card and the lower
-terminal in Agent Builder. Hermes owns native Card execution and delegation; AutoGen owns Magentic-One;
-the four graph authorities remain separate.
+Shared chat sends an unaddressed user turn to Main and an explicitly addressed turn directly to the
+authorized saved Card. Builder remains the saved `builder` Card and the lower terminal in Agent Builder.
+Hermes owns native Card execution and delegation; AutoGen owns Magentic-One; the four graph authorities
+remain separate.
+
+## Current shared-chat direct addressing — September 18, 2026
+
+The shared composer obtains callable addresses from the existing Python-owned saved Hermes Bot-roster
+projection. It performs case-insensitive prefix autocomplete and Tab completion without another registry.
+A leading address is resolved before inference. The addressed saved Card receives the exact user text
+through its ordinary canonical Run/IDF and profile-scoped Gateway session; Main has no Run, inference,
+acknowledgement, or `message_agent` role in that turn. Only a completed native target response is stored
+and rendered with target identity. An unavailable address fails before either target or Main execution.
+
+The existing normalized conversation tables retain the exact completed shared-chat projection so speaker
+and target identity survive reload. On a later unaddressed turn, Main alone receives a bounded mechanical
+projection of the shared exchange plus the current user message. Main's independent model-chosen native
+`message_agent` capability remains the only Card-to-Card conversational doorway and is not used to fake
+direct user addressing.
 
 ## Current Hermes tool boundary — September 16, 2026
 
@@ -67,8 +83,8 @@ uncommitted working tree and has not been loaded into the running application.
 ### Requested Delta
 
 Keep saved Hermes Card execution on the existing native Gateway/TUI path. Native `message_agent`,
-authorized between both endpoints of an enabled orange `flow` connection, is the only conversational
-saved-Card path. Preserve the one intended Hermes extension: native `delegate_task(role="team")`.
+authorized between both endpoints of an enabled orange `flow` connection, is the only Card-to-Card
+conversational path. Preserve the one intended Hermes extension: native `delegate_task(role="team")`.
 
 ### Preservation Set
 
@@ -118,6 +134,7 @@ not the fabricated standalone tool initially suspected.
 | Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
 | Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
 | Native Card Bot Mode | Python projects ordered symmetric orange peers into each managed profile's explicit `bot_mode.roster`; explicit `[]` denies all while a truly absent key preserves stock standalone discovery; prompt and stock `message_agent` share one resolver; duplicate host/plugin authorization is removed | Canonical reload, ordinary Main, real attributed orange-peer reply, unwired-profile refusal, and no-alternate-machinery inspection |
+| Shared-chat direct Card addressing | Canonical saved-roster resolution, target saved-Card Run/Gateway route, exact-message preservation, participant persistence, autocomplete, failure attribution, and focused backend/client/Python tests | Canonical reload; real Builder exact reply, identity persistence, later Main context, and preserved independent Main-to-Builder native delegation |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
 | Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |

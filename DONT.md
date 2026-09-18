@@ -40,9 +40,12 @@ owns source boundaries. A historical report is evidence, never permission to act
    ownership. Do not change mounts, polling, panel dimensions or collapse behavior as a side effect.
 10. Keep saved tools available without a Script. A Script uses the existing Hermes Python runner
     and saved grants. Do not invent a tool or widen grants to make a proof succeed.
-11. CBM is app-owned. Use the published tools and the coverage procedure in
-    `skills/codebasedmemory.md`. No direct cache/database access, extra daemon, automatic repair,
-    OAuth change or index-freshness gate. Known source and excluded files can be read directly.
+11. LiquidAIty owns the product CBM publication and its one application frontend. Codex owns one separately
+    registered official development frontend and must not depend on GPT Web, the plugin, or the running
+    application. Both use the same upstream daemon/cache/runtime identity. Product clients use the published
+    tools and the coverage procedure in `skills/codebasedmemory.md`. No direct cache/database access, extra
+    frontend or daemon, automatic repair, OAuth change, or index-freshness gate. Known source and excluded files
+    can be read directly.
 12. Required tests/builds may exceed a minute. Poll the existing command; do not duplicate it or
     discard work because it is slow. Source proof, tests, saved readback, loaded runtime and UI
     acceptance are different claims. Report each honestly.

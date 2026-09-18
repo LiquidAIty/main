@@ -236,6 +236,21 @@ const agentTerminalMocks = vi.hoisted(() => {
   const emitGatewayEvent = (event: Record<string, unknown>) => {
     for (const listener of gatewayListeners) listener(event);
   };
+  const resolveHermesBotRosterProjections = vi.fn(async () => ([
+    {
+      cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
+      profile: 'default', title: 'Main', botEnabled: true,
+      roster: ['delegate', 'builder'],
+    },
+    {
+      cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
+      profile: 'delegate', title: 'Delegate', botEnabled: true, roster: ['default'],
+    },
+    {
+      cardId: 'builder', cardRevisionId: 'revision:builder',
+      profile: 'builder', title: 'Builder', botEnabled: true, roster: ['default'],
+    },
+  ]));
   return {
     staged, completed, cancelled, gatewayListeners, emitGatewayEvent,
     profileFor, stateFor, complete, finishSubmitted,
@@ -243,6 +258,7 @@ const agentTerminalMocks = vi.hoisted(() => {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
       dispatchLearn, requestProfile, subscribeGatewayEvents,
     },
+    resolveHermesBotRosterProjections,
     execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
   };
 });
@@ -258,6 +274,7 @@ const chatSessionMocks = vi.hoisted(() => {
   };
   return {
     getConversationMessages: vi.fn(async () => []),
+    appendSharedConversationTurn: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
     usage,
   };
@@ -627,6 +644,7 @@ vi.mock('../decks/store', () => ({
 }));
 
 vi.mock('../conversations/store', () => ({
+  appendSharedConversationTurn: chatSessionMocks.appendSharedConversationTurn,
   getConversationMessages: chatSessionMocks.getConversationMessages,
   listConversations: chatSessionMocks.listConversations,
 }));
@@ -640,6 +658,7 @@ vi.mock('../hermes/agentTerminal', () => ({
     }
     return String(card.runtime.profile).trim();
   },
+  resolveHermesBotRosterProjections: agentTerminalMocks.resolveHermesBotRosterProjections,
 }));
 
 vi.mock('../hermes/agentTerminalExecution', () => ({
@@ -714,18 +733,72 @@ describe('saved Card routes', () => {
     try {
       const response = await fetch(`${baseUrl}/main/session/history?projectId=project-1&conversationId=other`);
       expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
+      const payload = await response.json();
+      expect(payload).toMatchObject({
         ok: true,
         sessionId: 'native:default',
         runtimeSessionId: 'terminal:card_main_chat',
-        messages: [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer' }],
+        mainCardId: 'card_main_chat',
+        messages: [
+          { role: 'user', text: 'Question', speaker: { kind: 'user', label: 'You' },
+            target: { cardId: 'card_main_chat', label: 'Main' } },
+          { role: 'assistant', text: 'Answer', speaker: { cardId: 'card_main_chat', label: 'Main' } },
+        ],
         terminalEvents: [],
       });
+      expect(payload.addressableAgents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ cardId: 'builder', profile: 'builder', address: 'builder' }),
+      ]));
       expect(agentTerminalMocks.manager.history).toHaveBeenCalledWith(
         { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
         'terminal:card_main_chat',
       );
     } finally { await closeServer(server); }
+  });
+
+  it('reloads the persisted direct Builder exchange with the original speaker identities', async () => {
+    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
+      {
+        role: 'user', status: 'complete', content: '@builder Reply exactly BUILDER_DIRECT_OK',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+          { kind: 'shared_chat_target', status: 'card', label: 'Builder', cardId: 'builder',
+            profile: 'builder', address: 'builder' },
+        ],
+      },
+      {
+        role: 'assistant', status: 'complete', content: 'BUILDER_DIRECT_OK',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'card', label: 'Builder', cardId: 'builder',
+            profile: 'builder', address: 'builder' },
+        ],
+      },
+    ] as any);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=direct-builder`,
+      );
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.messages).toEqual([
+        {
+          role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK',
+          speaker: { kind: 'user', label: 'You' },
+          target: {
+            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder',
+          },
+        },
+        {
+          role: 'assistant', text: 'BUILDER_DIRECT_OK',
+          speaker: {
+            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder',
+          },
+        },
+      ]);
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it('projects an exact autonomous native Main Gateway event without submitting another turn', async () => {
@@ -1203,9 +1276,9 @@ describe('saved Card routes', () => {
         `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
       );
       expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({
+      await expect(response.json()).resolves.toMatchObject({
         ok: true, sessionId: 'native:default', runtimeSessionId: 'terminal:card_main_chat',
-        messages: [], terminalEvents: [],
+        mainCardId: 'card_main_chat', messages: [], terminalEvents: [],
       });
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
     } finally {
@@ -2354,6 +2427,186 @@ describe('saved Card routes', () => {
         );
         expect(agentTerminalMocks.completed.get(session.runId)).toMatchObject({
           state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default',
+        });
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('routes an explicit user address to the real saved Builder Run and never prepares Main', async () => {
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, submitted, options) => (
+        agentTerminalMocks.finishSubmitted(
+          owner, sessionId, submitted, options, 'BUILDER_DIRECT_OK', {}, true,
+        )
+      ));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const exactMessage = '@builder Reply exactly BUILDER_DIRECT_OK';
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'direct-builder', message: exactMessage }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(body).toContain('BUILDER_DIRECT_OK');
+        const runFrame = body.split('\n\n').find((frame) => frame.startsWith('event: run'))!;
+        expect(JSON.parse(runFrame.split('\ndata: ')[1])).toMatchObject({
+          cardId: 'builder', directAddressed: true, turnOwner: 'addressed_card',
+          participant: { cardId: 'builder', profile: 'builder', label: 'Builder' },
+        });
+        const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
+        expect(railsCalls.filter(([endpoint]) => endpoint === '/domain/main/runs/begin')).toHaveLength(0);
+        const beginCalls = railsCalls.filter(([endpoint]) => endpoint === '/domain/runs/begin');
+        expect(beginCalls).toHaveLength(1);
+        expect(JSON.parse(String(beginCalls[0][1]?.body))).toMatchObject({
+          cardId: 'builder', assignment: exactMessage, conversationId: 'direct-builder',
+        });
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+          'terminal:builder',
+          exactMessage,
+          expect.any(Object),
+        );
+        expect(chatSessionMocks.appendSharedConversationTurn).toHaveBeenCalledWith(expect.objectContaining({
+          projectId: 'project-1',
+          conversationId: 'direct-builder',
+          messages: [
+            expect.objectContaining({
+              role: 'user', content: exactMessage,
+              target: expect.objectContaining({ cardId: 'builder', profile: 'builder', label: 'Builder' }),
+            }),
+            expect.objectContaining({
+              role: 'assistant', content: 'BUILDER_DIRECT_OK',
+              speaker: expect.objectContaining({ cardId: 'builder', profile: 'builder', label: 'Builder' }),
+            }),
+          ],
+        }));
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('attributes a failed direct Builder turn without invoking Main or recording fake delivery', async () => {
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      agentTerminalMocks.manager.submit.mockRejectedValueOnce(new Error('native_builder_unavailable'));
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const exactMessage = '@builder Native failure probe';
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'direct-builder-failure', message: exactMessage,
+          }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        const runFrame = body.split('\n\n').find((frame) => frame.startsWith('event: run'))!;
+        expect(JSON.parse(runFrame.split('\ndata: ')[1])).toMatchObject({
+          state: 'preparing', cardId: 'builder', directAddressed: true,
+          participant: { cardId: 'builder', profile: 'builder', label: 'Builder' },
+        });
+        const errorFrame = body.split('\n\n').find((frame) => frame.startsWith('event: error'))!;
+        expect(JSON.parse(errorFrame.split('\ndata: ')[1])).toMatchObject({
+          code: 'addressed_card_turn_failed', cardId: 'builder', directAddressed: true,
+          participant: { cardId: 'builder', profile: 'builder', label: 'Builder' },
+        });
+        expect(body).not.toMatch(/sent|asked|delivered|dispatched/i);
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+          'terminal:builder',
+          exactMessage,
+          expect.any(Object),
+        );
+        expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('refuses an unavailable explicit address before any Card or Main execution', async () => {
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'unwired', message: '@unwired do work',
+          }),
+        });
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({
+          ok: false, error: 'addressed_card_unavailable', address: 'unwired',
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+        )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+        expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('supplies the completed direct exchange to Main only on the later unaddressed turn', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
+        {
+          role: 'user', status: 'complete', content: '@builder Reply exactly BUILDER_DIRECT_OK',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+            { kind: 'shared_chat_target', status: 'card', label: 'Builder', cardId: 'builder',
+              profile: 'builder', address: 'builder' },
+          ],
+        },
+        {
+          role: 'assistant', status: 'complete', content: 'BUILDER_DIRECT_OK',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'card', label: 'Builder', cardId: 'builder',
+              profile: 'builder', address: 'builder' },
+          ],
+        },
+      ] as any);
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'direct-builder', message: 'Who just replied to me?',
+          }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+        const begin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        );
+        expect(begin).toBeDefined();
+        expect(JSON.parse(String(begin?.[1]?.body))).toMatchObject({
+          message: 'Who just replied to me?',
+          sharedConversation: [
+            {
+              role: 'user', speakerLabel: 'You', targetCardId: 'builder', targetLabel: 'Builder',
+              content: '@builder Reply exactly BUILDER_DIRECT_OK',
+            },
+            {
+              role: 'assistant', speakerCardId: 'builder', speakerLabel: 'Builder',
+              content: 'BUILDER_DIRECT_OK',
+            },
+          ],
         });
       } finally {
         await closeServer(server);

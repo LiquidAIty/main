@@ -26,6 +26,7 @@ function safeText(value: unknown): string {
 
 export default function BuilderChat({
   messages,
+  addressableAgents = [],
   onSend,
   knowledgeProjectId,
   colors,
@@ -37,7 +38,20 @@ export default function BuilderChat({
   draft,
   onDraftChange,
 }: {
-  messages: { role: "assistant" | "user"; text: string }[];
+  messages: {
+    role: "assistant" | "user";
+    text: string;
+    speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
+    target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
+    status?: "pending" | "complete" | "error";
+  }[];
+  addressableAgents?: {
+    cardId: string;
+    profile: string;
+    title: string;
+    address: string;
+    aliases: string[];
+  }[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
@@ -54,11 +68,31 @@ export default function BuilderChat({
   onDraftChange?: (value: string) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
+  const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
   const interactionDisabled = busy || connecting || historyLoading;
   const value = draft === undefined ? localDraft : draft;
   const setValue = (next: string) => {
     if (draft === undefined) setLocalDraft(next);
     onDraftChange?.(next);
+  };
+  const addressMatch = /^@([a-z0-9_-]*)$/i.exec(value);
+  const addressPrefix = addressMatch?.[1]?.toLowerCase() ?? null;
+  const addressSuggestions = addressPrefix === null
+    ? []
+    : addressableAgents.filter((agent) => (
+      agent.aliases.some((alias) => alias.toLowerCase().startsWith(addressPrefix))
+    ));
+  const boundedAddressIndex = addressSuggestions.length > 0
+    ? Math.min(selectedAddressIndex, addressSuggestions.length - 1)
+    : 0;
+  useEffect(() => {
+    setSelectedAddressIndex(0);
+  }, [addressPrefix]);
+  const completeAddress = (index = boundedAddressIndex) => {
+    const agent = addressSuggestions[index];
+    if (!agent) return;
+    setValue(`@${agent.address} `);
+    setSelectedAddressIndex(0);
   };
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -120,6 +154,9 @@ export default function BuilderChat({
         >
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
+          const identity = isUser
+            ? m.target ? `You → ${m.target.label}` : m.speaker.label
+            : m.speaker.label;
           // Never render an empty/whitespace assistant bubble — only real assistant
           // text appears as a bubble. (Real user messages always render.)
           if (!isUser && !safeText(m.text).trim()) return null;
@@ -132,6 +169,20 @@ export default function BuilderChat({
                 width: "fit-content",
               }}
             >
+              <div
+                data-testid="builder-chat-speaker"
+                style={{
+                  color: m.status === "error" ? "#FF9B9B" : colors.neutral,
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  margin: "0 6px 5px",
+                  textTransform: "uppercase",
+                  textAlign: isUser ? "right" : "left",
+                }}
+              >
+                {identity}
+              </div>
               <div
                 style={{
                   padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",
@@ -182,6 +233,7 @@ export default function BuilderChat({
         <div
           className="flex items-center gap-2"
           style={{
+            position: "relative",
             borderRadius: 15,
             background: colors.panel,
             border: `1px solid ${colors.border}`,
@@ -200,6 +252,23 @@ export default function BuilderChat({
             onChange={(e) => setValue(e.target.value)}
             disabled={interactionDisabled}
             onKeyDown={(e) => {
+              if (e.key === "Tab" && addressSuggestions.length > 0) {
+                e.preventDefault();
+                completeAddress();
+                return;
+              }
+              if (e.key === "ArrowDown" && addressSuggestions.length > 1) {
+                e.preventDefault();
+                setSelectedAddressIndex((current) => (current + 1) % addressSuggestions.length);
+                return;
+              }
+              if (e.key === "ArrowUp" && addressSuggestions.length > 1) {
+                e.preventDefault();
+                setSelectedAddressIndex((current) => (
+                  (current - 1 + addressSuggestions.length) % addressSuggestions.length
+                ));
+                return;
+              }
               if (e.key === "Enter") send();
             }}
             placeholder="Type a message…"
@@ -214,6 +283,57 @@ export default function BuilderChat({
               lineHeight: 1.25,
             }}
           />
+          {addressSuggestions.length > 0 ? (
+            <div
+              data-testid="builder-chat-address-suggestions"
+              role="listbox"
+              aria-label="Available agents"
+              style={{
+                position: "absolute",
+                left: 48,
+                right: 52,
+                bottom: "calc(100% + 7px)",
+                zIndex: 20,
+                padding: 5,
+                borderRadius: 11,
+                background: "rgba(20,22,26,0.98)",
+                border: `1px solid ${colors.border}`,
+                boxShadow: "0 12px 32px rgba(0,0,0,0.42)",
+              }}
+            >
+              {addressSuggestions.map((agent, index) => (
+                <button
+                  key={agent.cardId}
+                  type="button"
+                  role="option"
+                  aria-selected={index === boundedAddressIndex}
+                  data-testid={`builder-chat-address-${agent.address}`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    completeAddress(index);
+                  }}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    padding: "8px 10px",
+                    border: 0,
+                    borderRadius: 8,
+                    background: index === boundedAddressIndex
+                      ? "rgba(79,162,173,0.18)" : "transparent",
+                    color: colors.text,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontWeight: 700 }}>@{agent.address}</span>
+                  <span style={{ color: colors.neutral, fontSize: 11 }}>{agent.title}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           {busy ? (
             <span
               data-testid="builder-chat-active-indicator"

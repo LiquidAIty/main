@@ -2605,6 +2605,33 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert materializations == ["Help me prepare work for another agent."]
 
 
+def test_main_shared_conversation_is_visible_only_when_main_is_invoked() -> None:
+    current = "Who just replied to me?"
+    context = [
+        {
+            "role": "user",
+            "speakerCardId": "",
+            "speakerLabel": "You",
+            "targetCardId": "builder",
+            "targetLabel": "Builder",
+            "content": "@builder Reply exactly BUILDER_DIRECT_OK",
+        },
+        {
+            "role": "assistant",
+            "speakerCardId": "builder",
+            "speakerLabel": "Builder",
+            "targetCardId": "",
+            "targetLabel": "",
+            "content": "BUILDER_DIRECT_OK",
+        },
+    ]
+    rendered = card_domain._main_shared_conversation_task(current, context)
+    assert "You -> Builder:\n@builder Reply exactly BUILDER_DIRECT_OK" in rendered
+    assert "Builder:\nBUILDER_DIRECT_OK" in rendered
+    assert rendered.endswith("## Current user message to Main\n\nWho just replied to me?")
+    assert card_domain._main_shared_conversation_task(current, []) == current
+
+
 def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
