@@ -180,8 +180,9 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     home = _agent_home(agent)
     try:
         from tools.bot_mode_probe import (
-            BOT_CHAT_TITLE, _handle, _hermes_root, _peers, _profile_name as _self_profile_name, _roster,
+            BOT_CHAT_TITLE, _handle, _hermes_root, _peers, _profile_name as _self_profile_name,
             is_bot_mode_managed,
+            resolve_bot_roster,
         )
         from tools.bot_relay import BOT_CHAT_TURN_ARGS, _hermes_cli
 
@@ -195,7 +196,7 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         return _err(f"Bot Mode gate check failed: {exc}")
 
     root, me = _hermes_root(Path(home)), _self_profile_name(Path(home))
-    roster_homes = dict(_roster(root))
+    roster_homes = dict(resolve_bot_roster(home))
     roster = list(roster_homes)
     peers = _peers(root)
     teammates = [_handle(n) for n in roster if n != me]
@@ -244,7 +245,8 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
     is_local_shape = bool(_LOCAL_TARGET_RE.match(raw_target))
     if not is_local_shape and "@" not in raw_target:
         return _roster_err(f"Invalid target: {raw_target!r}.")
-    resolved = _resolve_local_name(raw_target, roster) if is_local_shape else None
+    targets_self = raw_target.lower() in {me.lower(), _handle(me).lower()}
+    resolved = me if targets_self else (_resolve_local_name(raw_target, roster) if is_local_shape else None)
     if resolved is None or resolved == me:
         # Unknown locally, or same-name target on ANOTHER connection (this gateway's 'default'
         # messaging the cloud 'default'): every Desktop-connected gateway is reachable via the
@@ -501,9 +503,9 @@ def _local_delivery_home(argv: list[str]) -> Path | None:
     cli = (argv[0] if argv else "").rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
     if len(argv) < 3 or cli not in ("hermes", "hermes.exe") or argv[1] != "-p":
         return None
-    from tools.bot_mode_probe import _hermes_root, _roster
+    from tools.bot_mode_probe import _hermes_root, resolve_live_profile_home
 
-    return dict(_roster(_hermes_root(Path(_default_home())))).get(argv[2])
+    return resolve_live_profile_home(_hermes_root(Path(_default_home())), argv[2])
 
 
 def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,

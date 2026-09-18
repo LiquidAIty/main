@@ -523,10 +523,10 @@ def _migrate_to_41(results: Dict[str, Any], quiet: bool) -> None:
     # server injects the live Bot Mode section in Bot Chat sessions; the frozen SOUL copy taxed
     # every other session (~600 tok) and shadowed the live roster in Bot Chat itself.
     from hermes_constants import get_hermes_home
-    from tools.bot_mode_probe import _PROTOCOL_HEADING, _hermes_root, _roster, strip_legacy_protocol
+    from tools.bot_mode_probe import _PROTOCOL_HEADING, _all_live_profiles, _hermes_root, strip_legacy_protocol
 
     cleaned: List[str] = []
-    for name, profile_dir in _roster(_hermes_root(get_hermes_home())):
+    for name, profile_dir in _all_live_profiles(_hermes_root(get_hermes_home())):
         soul = profile_dir / "SOUL.md"
         try:
             text = soul.read_text(encoding="utf-8") if soul.is_file() else ""

@@ -1938,72 +1938,71 @@ def _direct_card_targets(
     return direct
 
 
-def resolve_hermes_bot_dm_card(
-    project_id: str,
-    deck_id: str,
-    source_card_id: str,
-    target_profile: str,
-) -> dict[str, Any]:
-    """Resolve one native Bot DM profile to exactly one saved Hermes Card."""
-    project_ref = _required_text(project_id, "project_id")
-    requested_deck_id = _required_text(deck_id, "deck_id")
-    source_id = _required_text(source_card_id, "source_card_id")
-    requested_profile = _required_text(target_profile, "target_profile")
-    if requested_profile.startswith("@"):
-        requested_profile = requested_profile[1:]
-    if not requested_profile:
-        raise CardDomainError("target_profile_required")
-    requested_profile = requested_profile.lower()
+_HERMES_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-    loaded = load_deck(project_ref, requested_deck_id)
-    deck = _json_object(loaded.get("deck"), "deck")
+
+def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compile ordered symmetric orange peers for every enabled Hermes agent Card."""
     nodes = deck.get("nodes")
-    if not isinstance(nodes, list):
+    edges = deck.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
         raise CardDomainError("deck_document_invalid")
     cards = {
         str(card.get("id") or ""): card
         for card in nodes
         if isinstance(card, dict) and str(card.get("id") or "")
     }
-    if source_id not in cards:
-        raise CardDomainError("hermes_bot_dm_source_card_not_found")
-    matches: list[dict[str, Any]] = []
-    for card_id, card in cards.items():
+    hermes_profiles: list[str] = []
+    for card in cards.values():
         runtime = card.get("runtime")
         if not isinstance(runtime, dict) or runtime.get("kind") != "hermes":
             continue
         profile = str(runtime.get("profile") or "").strip()
-        if profile.lower() != requested_profile:
-            continue
-        matches.append({
-            "cardId": card_id,
-            "title": str(card.get("title") or card_id),
-            "profile": profile,
-            "description": str(card.get("subtitle") or "")[:1_000],
-            "cardRevisionId": str(card.get("_cardRevisionId") or ""),
-        })
-    if not matches:
-        raise CardDomainError("hermes_bot_dm_profile_not_found")
-    if len(matches) > 1:
-        raise CardDomainError("hermes_bot_dm_profile_not_unique")
-    authorized = [
-        target for target in _direct_card_targets(
-            source_id,
-            cards,
-            deck.get("edges") if isinstance(deck.get("edges"), list) else [],
+        if not _HERMES_PROFILE_ID_RE.fullmatch(profile):
+            raise CardDomainError(f"runtime_profile_invalid:{profile or 'missing'}")
+        hermes_profiles.append(profile)
+    folded_profiles = [profile.lower() for profile in hermes_profiles]
+    if len(folded_profiles) != len(set(folded_profiles)):
+        duplicate = next(
+            profile for profile in folded_profiles if folded_profiles.count(profile) > 1
         )
-        if str(target.get("profile") or "").strip().lower() == requested_profile
-    ]
-    if not authorized:
-        raise CardDomainError("hermes_bot_dm_profile_not_found")
-    resolved_card = dict(authorized[0])
-    if not str(resolved_card.get("cardRevisionId") or "").strip():
-        raise CardDomainError("hermes_bot_dm_card_revision_missing")
+        raise CardDomainError(f"card_profile_duplicate:{duplicate}")
+
+    projections: list[dict[str, Any]] = []
+    for card in nodes:
+        if not isinstance(card, dict):
+            continue
+        runtime = card.get("runtime")
+        if not isinstance(runtime, dict) or runtime.get("kind") != "hermes":
+            continue
+        card_id = str(card.get("id") or "")
+        profile = str(runtime.get("profile") or "").strip()
+        bot_enabled = card.get("kind") == "agent" and _card_enabled(card)
+        projections.append({
+            "cardId": card_id,
+            "cardRevisionId": str(card.get("_cardRevisionId") or ""),
+            "profile": profile,
+            "title": str(card.get("title") or card_id),
+            "botEnabled": bot_enabled,
+            "roster": [
+                str(target["profile"]).strip().lower()
+                for target in _direct_card_targets(card_id, cards, edges)
+            ] if bot_enabled else [],
+        })
+    return projections
+
+
+def resolve_hermes_bot_rosters(project_id: str, deck_id: str) -> dict[str, Any]:
+    """Read one saved Deck and return its native Hermes Bot roster projections."""
+    loaded = load_deck(
+        _required_text(project_id, "project_id"),
+        _required_text(deck_id, "deck_id"),
+    )
+    deck = _json_object(loaded.get("deck"), "deck")
     return {
         "projectId": _required_text(loaded.get("projectId"), "project_id"),
         "deckId": _required_text(deck.get("id"), "deck_id"),
-        "sourceCardId": source_id,
-        "card": resolved_card,
+        "profiles": _project_hermes_bot_rosters(deck),
     }
 
 

@@ -1,7 +1,8 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly one LiquidAIty-owned runtime extension: durable Team delegation.
+plus exactly two LiquidAIty-owned runtime extensions: durable Team delegation and
+profile-scoped native Bot rosters projected from saved Card topology.
 This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
@@ -18,11 +19,12 @@ This register describes source scope; loaded product acceptance is reported sepa
   SHA-256 after the mirror and before the feature port: zero missing, zero
   mismatched, and zero old tracked-only paths remained.
 
-Upstream Hermes owns Bot Mode, Gateway and session ownership, native queueing,
+Upstream Hermes owns Bot delivery, Gateway and session ownership, native queueing,
 delivery and receipts, `prompt.submit`, CLI/TUI behavior, tools, plugins, memory,
 profiles, and lifecycle. Upstream ACP source remains present but is not a
-LiquidAIty Card runtime boundary. No LiquidAIty Bot, Gateway, ACP, credential,
-completion-correlation, queue, or lifecycle patch is retained in this tree.
+LiquidAIty Card runtime boundary. The roster extension below changes only native
+target authority and prompt presentation; no LiquidAIty Bot delivery, Gateway,
+ACP, credential, completion-correlation, queue, or lifecycle patch is retained.
 
 Any production difference outside the entry below is unexplained residue
 and blocks publication.
@@ -90,23 +92,97 @@ ROLLBACK: remove the Team schema/branch, `kanban_team.py`, Team-only defaults,
 workflow propagation/activation/worker marker/synthesis hunks, and corresponding
 tests together. Leave upstream temporary delegation and ordinary Kanban intact.
 
+## 2. Profile-scoped native Bot roster
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: make one profile's explicit `bot_mode.roster` the sole local
+`message_agent` target authority. LiquidAIty projects saved, enabled, symmetric
+orange Card relationships into this field while Hermes continues to own Bot Chat
+sessions, live-owner/offline selection, delivery, receipts, replies, retries, and
+notifications.
+
+EXTERNAL ALTERNATIVE CHECK: pinned Hermes 0.21.3 derives local Bot teammates by
+enumerating every live profile directory and exposes no public profile-scoped
+roster provider. Keeping application middleware authorization would leave two
+target authorities, so the smallest coherent change is one native config field,
+one resolver, and the existing public profile configure/describe RPCs.
+
+FILES AND SYMBOLS:
+
+- `hermes_cli/config_defaults.py`: native empty `bot_mode.roster` default.
+- `tools/bot_mode_probe.py`: ordered fail-closed `resolve_bot_roster` and exact
+  live-profile resolution; the old all-profile scan remains only for lifecycle
+  migration work.
+- `tools/bot_mode_dm.py`: prompt-independent stock `message_agent` validation and
+  local target-home lookup use the native resolver without changing delivery.
+- `tui_gateway/methods_profiles.py` and
+  `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py`: typed
+  profile configure/describe write and readback contract.
+- `tui_gateway/methods_bot_relay.py`: inbound delivery resolves one exact live
+  target profile without treating profile enumeration as sender authority.
+- `hermes_cli/config_migrations.py`: legacy install-wide cleanup explicitly uses
+  the lifecycle-only profile enumerator.
+
+UPSTREAM BEHAVIOR PRESERVED: canonical Bot Chat identity/history, stock
+`message_agent` acknowledgement, live-owner admission, quiet-CLI offline delivery,
+queueing, ordering, retries, receipts, attributed replies, silence handling,
+background notification, remote peer relay, Gateway, terminal, and TUI ownership
+are unchanged after exact local target resolution.
+
+CONTRACTS:
+
+- missing or empty configuration grants no local Bot targets;
+- configured order is preserved and duplicates are removed without sorting;
+- self, malformed, unknown, deleted, and tombstoned profiles do not broaden access;
+- the default profile is available only when explicitly configured as `default`;
+- prompt construction, target validation, and capability fingerprinting share the
+  same resolver;
+- configure rejects invalid/self/non-live entries and describe returns the exact
+  stored ordered roster.
+
+TESTS:
+
+- `tests/tools/test_bot_mode_probe.py`
+- `tests/tools/test_bot_mode_dm.py`
+- `tests/tui_gateway/test_profiles_bot_roster.py`
+
+FORK COST: one additive profile field, one bounded resolver conversion, and public
+profile RPC plumbing. There is no application delivery adapter, credential bridge,
+queue, waiter, callback, correlator, or alternate session/runtime owner.
+
+ROLLBACK: remove the field and typed profile RPC members, restore the upstream
+all-live-profile local roster in prompt and target validation, restore lifecycle
+callers to the upstream helper, and remove the focused tests together. No saved
+Card, session, message, or Hermes delivery data requires migration.
+
 ## Complete upstream-relative difference manifest
 
 Production files:
 
 - `tools/delegate_tool.py` — Team
-- `hermes_cli/config_defaults.py` — Team
+- `hermes_cli/config_defaults.py` — Team and native Bot roster field
 - `hermes_cli/kanban_team.py` — Team
 - `hermes_cli/kanban_db.py` — Team
 - `hermes_cli/kanban_db_graph.py` — Team
 - `hermes_cli/kanban_decompose.py` — Team
 - `hermes_cli/kanban_db_dispatch.py` — Team
+- `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
+- `tools/bot_mode_probe.py` — profile-scoped native Bot roster resolver
+- `tools/bot_mode_dm.py` — native local-target validation through the resolver
+- `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` — typed Bot roster RPC field
+- `tui_gateway/methods_profiles.py` — Bot roster configure/describe implementation
+- `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution
 
 Focused tests:
 
 - `tests/tools/test_delegate.py` — adjusted public-schema assertions only
 - `tests/tools/test_delegate_team.py` — Team
 - `tests/hermes_cli/test_kanban_team.py` — Team
+- `tests/tools/test_bot_mode_probe.py` — native Bot roster resolution/prompt
+- `tests/tools/test_bot_mode_dm.py` — native Bot target and unchanged delivery selection
+- `tests/tui_gateway/test_profiles_bot_roster.py` — profile roster write/readback
 
 Metadata:
 

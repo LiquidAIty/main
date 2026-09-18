@@ -116,6 +116,88 @@ def test_one_flow_connection_is_symmetric_authority_without_a_separate_source_se
     assert [target['cardId'] for target in card_domain._direct_card_targets('b', {card['id']: card for card in cards}, edges)] == ['a']
 
 
+def test_hermes_bot_roster_projection_is_symmetric_ordered_and_blue_independent():
+    cards = [
+        _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
+        _agent("builder", runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"}),
+        _agent("graph", runtime={"kind": "hermes", "mode": "delegate", "profile": "graph"}),
+        _agent("disconnected", runtime={"kind": "hermes", "mode": "delegate", "profile": "disconnected"}),
+        _agent("disabled", runtime={"kind": "hermes", "mode": "delegate", "profile": "disabled"}),
+        _agent("mag", runtime={"kind": "autogen", "mode": "magentic_one"}),
+    ]
+    cards[4]["runtimeOptions"]["enabled"] = False
+    edges = [
+        {"source": "main", "target": "graph", "edgeType": "flow"},
+        {"source": "main", "target": "mag", "edgeType": "magentic_option"},
+        {"source": "builder", "target": "main", "edgeType": "flow"},
+        {"source": "main", "target": "disabled", "edgeType": "flow"},
+        {"source": "main", "target": "disconnected", "edgeType": "flow", "enabled": False},
+    ]
+
+    projected = {
+        row["cardId"]: row["roster"]
+        for row in card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": edges})
+    }
+
+    assert list(projected) == ["main", "builder", "graph", "disconnected", "disabled"]
+    assert projected == {
+        "main": ["graph", "builder"],
+        "builder": ["main"],
+        "graph": ["main"],
+        "disconnected": [],
+        "disabled": [],
+    }
+
+
+def test_hermes_bot_roster_projection_revokes_both_ends_when_edge_is_deleted():
+    cards = [
+        _agent("a", runtime={"kind": "hermes", "mode": "delegate", "profile": "a"}),
+        _agent("b", runtime={"kind": "hermes", "mode": "delegate", "profile": "b"}),
+    ]
+    connected = card_domain._project_hermes_bot_rosters({
+        "nodes": cards,
+        "edges": [{"source": "a", "target": "b", "edgeType": "flow"}],
+    })
+    revoked = card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": []})
+
+    assert [row["roster"] for row in connected] == [["b"], ["a"]]
+    assert [row["roster"] for row in revoked] == [[], []]
+
+
+def test_hermes_bot_roster_projection_fails_closed_on_profile_ambiguity():
+    cards = [
+        _agent("a", runtime={"kind": "hermes", "mode": "delegate", "profile": "shared"}),
+        _agent("b", runtime={"kind": "hermes", "mode": "delegate", "profile": "shared"}),
+    ]
+
+    with pytest.raises(card_domain.CardDomainError, match="card_profile_duplicate:shared"):
+        card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": []})
+
+
+def test_hermes_bot_roster_resolution_accepts_saved_deck_without_revision_metadata(monkeypatch):
+    card = _agent(
+        "main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    monkeypatch.setattr(card_domain, "load_deck", lambda project_id, deck_id: {
+        "projectId": project_id,
+        "deck": {"id": deck_id, "nodes": [card], "edges": [], "meta": {}},
+    })
+
+    assert card_domain.resolve_hermes_bot_rosters("project", "deck") == {
+        "projectId": "project",
+        "deckId": "deck",
+        "profiles": [{
+            "cardId": "main",
+            "cardRevisionId": card.get("_cardRevisionId", ""),
+            "profile": "main",
+            "title": card["title"],
+            "botEnabled": True,
+            "roster": [],
+        }],
+    }
+
+
 @pytest.mark.parametrize('edge_type', ['magentic_control', 'magentic_option'])
 def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles(edge_type):
     cards = [_agent('a'), _agent('b'), _agent('mag', runtime={"kind": "autogen", "mode": "magentic_one"})]

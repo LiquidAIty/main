@@ -1,8 +1,0 @@
-name: card-bot-dm
-version: 0.1.0
-description: "Routes managed native message_agent calls through the Card-owned Bot DM host seam."
-kind: standalone
-platforms:
-  - linux
-  - macos
-  - windows

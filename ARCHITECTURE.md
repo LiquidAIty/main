@@ -174,7 +174,8 @@ eligible existing active `runtimeMode === "kanban"` rows and does not create new
 
 The complete Hermes fork scope and rollback contract is
 [`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). Exactly one
-LiquidAIty-owned Hermes change is retained: `delegate_task(role="team")`.
+additional execution feature and one authority projection are retained:
+`delegate_task(role="team")` and the profile-scoped native Bot roster.
 
 ## Native Hermes Bot Mode
 
@@ -183,22 +184,32 @@ Bot Mode is substantial first-party Hermes functionality under `Hermes/apps/desk
 checked-in Hermes documentation. It is not ACP residue and must not be deleted or rewritten during
 LiquidAIty cleanup.
 
-The current working tree contains a thin managed `message_agent` interception boundary that
-authenticates the source runtime, resolves the selected profile only when it is the other endpoint of an
-enabled orange `flow`, and then resumes stock Hermes delivery once. It does not reproduce
-Hermes Desktop's Bot UI or own native Bot
-queueing, ordering, inference, completion, history, or notification. Loaded Main-to-Builder proof now
-reaches stock `message_agent`, its asynchronous acknowledgement, Builder's canonical `Bot Chat` helper,
-and Main's native background-completion event without creating a Builder Run. The reply itself is blocked:
-the Builder helper correctly follows Hermes' Bot protocol and calls `message_agent` back to Main, but
-Hermes deliberately strips `HERMES_DASHBOARD_SESSION_TOKEN` from terminal-tool children and its public
-environment-passthrough contract refuses that internal credential. The managed plugin therefore fails
-closed with `missing_gateway_credential`; no attributed Builder reply is returned. Supplying Main's
-credential, allowing unmanaged fallthrough, or adding a LiquidAIty queue/correlator would create the wrong
-identity or another messaging owner and is not an accepted workaround. The integration must continue to
-reuse saved Card/profile authority and Hermes' public Gateway/profile/plugin contracts; it must not create
-a second Card type, daemon, catalog, router, profile store, completion correlator, application queue, or
-parallel child credential path.
+The current working tree projects saved Bot authority through one native chain:
+
+```text
+saved enabled Hermes Cards + enabled orange flow edges
+  -> Python Card-domain ordered symmetric profile projection
+  -> existing Hermes profile materialization owner
+  -> profile-scoped bot_mode.roster write and exact readback
+  -> native resolve_bot_roster
+  -> canonical Bot Chat prompt and stock message_agent target validation
+  -> unchanged stock live-owner or quiet-CLI delivery
+```
+
+Missing or empty roster configuration grants no local target. The resolver preserves configured order,
+deduplicates without sorting, excludes self, and filters malformed, unknown, deleted, or tombstoned
+profiles. The default profile is available only when explicitly listed. Blue Magentic-One topology does
+not enter this projection.
+
+The former Card Bot-DM plugin, backend host/authentication route, and Python per-message target resolver
+are removed. No application component intercepts `message_agent`, forwards a Gateway credential, chooses
+live versus offline delivery, waits for a reply, reconstructs a transcript, or creates a Card Run for the
+conversation. Hermes owns the canonical Bot Chat, acknowledgement, delivery choice, queueing, ordering,
+completion, receipts, attributed replies, silence, retries, and background notification.
+
+`delegate_task` remains native in-Card subagent/Team work; it is not a profile-to-profile Card
+conversation entrance. Loaded ordinary-Main and real Card-to-Card attributed-reply acceptance remain a
+separate proof tier until the canonical stack is started from this source.
 
 ## Profile materialization and memory
 
@@ -356,8 +367,9 @@ upstream forks or first-party runtime source, not general cleanup targets. Prefe
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-For Hermes, the only retained LiquidAIty divergence is the Team entry in
-`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Upstream ACP and native Bot Mode are not LiquidAIty divergences.
+For Hermes, the retained LiquidAIty divergences are the Team entry and the bounded native Bot-roster
+entry in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Bot delivery remains upstream-owned; the roster entry
+changes only profile-scoped local target authority. Upstream ACP is not a LiquidAIty runtime boundary.
 No other Hermes customization is silently accepted by this document.
 
 ## Current proof limits
@@ -366,11 +378,15 @@ No other Hermes customization is silently accepted by this document.
   current working-tree source. Neither is loaded-process proof.
 - The retained Team path still needs real Gateway input, native worker activity, synthesis, and returned
   output through the same saved Run.
-- Native Bot Mode is present in Hermes and the thin managed Card/profile interception boundary is loaded.
-  Main-to-Builder reached stock acknowledgement, Builder's canonical `Bot Chat` helper, and Main's native
-  completion notification without a fabricated Builder Run. Attributed reply acceptance is blocked because
-  Hermes strips the Gateway credential from that helper while the Bot protocol requires Builder to call
-  `message_agent` back; the plugin correctly fails closed instead of using unmanaged fallthrough.
+- Native profile-scoped Bot roster source, focused tests, typechecks, and backend build are complete in the
+  current working tree. The canonical stack loaded the saved roster endpoint successfully, then the existing
+  Gateway client boundary failed before any Card session because
+  `Hermes/apps/shared/src/json-rpc-gateway.ts` imports a non-existent sibling
+  `json-rpc-channel.js` while only `json-rpc-channel.ts` is present. MCP readiness independently remained
+  `503` because its one native CBM frontend could not attach to the already-active daemon within 30 seconds.
+  Neither unrelated boundary was changed in this Bot pass. Ordinary Main, one real orange-connected Card Bot
+  message/reply, unwired-profile live refusal, and no-alternate-machinery runtime inspection therefore remain
+  unproven.
 - Stable saved Card tool grants are enforced as the live Hermes registry surface through the native plugin.
   Main's selected `engraphis_recall_context` completed through Python rails in the canonical stack. Focused
   catalog tests prove publisher separation; external CBM/Graphiti live invocation remains outstanding.

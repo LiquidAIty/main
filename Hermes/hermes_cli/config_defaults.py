@@ -1817,6 +1817,9 @@ DEFAULT_CONFIG = {
     # Bot Mode cross-connection relay (tools/bot_relay.py): envelopes queued by message_agent for
     # agents on other connections wait in an on-disk outbox until the Desktop drains them.
     "bot_mode": {
+        # Explicit profile-scoped local teammate roster. An empty list means this profile has no
+        # local Bot teammates; callers must never infer authority from other profile directories.
+        "roster": [],
         # Drain-time TTL (seconds): older envelopes are NOT delivered on drain; the sender gets an
         # error reply (reason 'queued_expired') so a DM can't land hours late as a zombie. 0 = no
         # drain-time expiry (the 6h stale-artifact sweep still applies).

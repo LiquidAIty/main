@@ -453,13 +453,19 @@ def _(rid, params: dict) -> dict:
             if isinstance(entry, dict)
         ], []) if isinstance(mcp_cfg, dict) else []
         model_cfg = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+        bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
+        raw_bot_roster = bot_mode_cfg.get("roster")
+        bot_mode_roster = raw_bot_roster if (
+            isinstance(raw_bot_roster, list) and all(isinstance(item, str) for item in raw_bot_roster)
+        ) else []
         meta = _try(lambda: _lazy("hermes_cli.profiles", "read_profile_meta")(profile_dir), {})
         return _ok(rid, {
             "name": name, "description": str(meta.get("description") or ""), "soul": soul,
             "model": {"provider": str(model_cfg.get("provider") or ""),
                       "default": str(model_cfg.get("default") or "")},
             "skills": installed, "toolsets": toolsets_out,
-            "toolsets_pinned": pinned_set is not None, "mcp_servers": mcp_out})
+            "toolsets_pinned": pinned_set is not None, "mcp_servers": mcp_out,
+            "bot_mode_roster": bot_mode_roster})
 
 
 def _configure_ui_meta(profile_dir, params, applied) -> None:
@@ -561,11 +567,44 @@ def _save_mcp_toggles(cfg, enabled, launch_mcp, save_config) -> None:
     save_config(cfg)
 
 
+def _canonical_bot_roster(profile_dir, values) -> list[str]:
+    """Validate and canonicalize an explicit local Bot roster without broadening it."""
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+    from tools.bot_mode_probe import _hermes_root, _profile_name, resolve_live_profile_home
+
+    root = _hermes_root(profile_dir)
+    current = _profile_name(profile_dir)
+    result = []
+    seen = set()
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("bot_mode_roster entries must be profile names")
+        name = normalize_profile_name(value)
+        validate_profile_name(name)
+        if name == current:
+            raise ValueError("bot_mode_roster cannot contain the current profile")
+        if name in seen:
+            continue
+        if resolve_live_profile_home(root, name) is None:
+            raise ValueError(f"bot_mode_roster profile '{name}' is not live")
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def _save_bot_roster(profile_dir, cfg, values, save_config) -> None:
+    bot_mode_cfg = cfg.get("bot_mode") if isinstance(cfg.get("bot_mode"), dict) else {}
+    bot_mode_cfg["roster"] = _canonical_bot_roster(profile_dir, values)
+    cfg["bot_mode"] = bot_mode_cfg
+    save_config(cfg)
+
+
 def _configure_cfg_sections(profile_dir, params, applied) -> None:
-    """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` (replace
+    """Apply ``disabled_skills`` / ``enabled_toolsets`` / ``enabled_mcp_servers`` / Bot roster (replace
     semantics; empty toolsets clears the pin). An undefined MCP server is copied from the LAUNCH
     catalog (unknown names skipped); credentials stay in .env/auth."""
     want_mcp = isinstance(params.get("enabled_mcp_servers"), list)
+    want_bot_roster = isinstance(params.get("bot_mode_roster"), list)
     launch_mcp = {}
     if want_mcp:  # launch catalog read BEFORE the home override flips config resolution
         load_launch = _lazy("hermes_cli.config", "load_config_readonly")
@@ -587,13 +626,17 @@ def _configure_cfg_sections(profile_dir, params, applied) -> None:
         if want_mcp:
             applied["mcp_servers"] = _best_effort(lambda: _save_mcp_toggles(
                 load_config() or {}, params["enabled_mcp_servers"], launch_mcp, save_config))
+        if want_bot_roster:
+            _save_bot_roster(profile_dir, load_config() or {}, params["bot_mode_roster"], save_config)
+            applied["bot_mode_roster"] = True
 
 
 @_profile_handler("profiles.configure", 5064)
 def _(rid, params: dict) -> dict:
     """Editor Save: ``name`` plus any of ``ui_meta`` (+ ``ui_meta_expected_revisions``), ``soul``,
     ``description``, ``model`` + ``provider`` (+ ``confirm_expensive_model``), ``disabled_skills``,
-    ``enabled_toolsets``, ``enabled_mcp_servers``; sections are independent, ``applied`` reports each."""
+    ``enabled_toolsets``, ``enabled_mcp_servers``, ``bot_mode_roster``; sections are independent,
+    ``applied`` reports each."""
     _name, profile_dir, err = _resolve_profile(rid, params)
     if err is not None:
         return err
@@ -607,7 +650,9 @@ def _(rid, params: dict) -> dict:
         applied["description"] = _best_effort(lambda: write_meta(
             profile_dir, description=params["description"].strip(), description_auto=False))
     confirm_message = _configure_model(profile_dir, params, applied)
-    if any(isinstance(params.get(k), list) for k in ("disabled_skills", "enabled_toolsets", "enabled_mcp_servers")):
+    if any(isinstance(params.get(k), list) for k in (
+        "disabled_skills", "enabled_toolsets", "enabled_mcp_servers", "bot_mode_roster",
+    )):
         _configure_cfg_sections(profile_dir, params, applied)
     # confirm_* is the shape config.set returns, so clients reuse one confirm handler.
     return _ok(rid, {"ok": all(applied.values()) if applied else True, "applied": applied,

@@ -2,8 +2,11 @@ import { recoverActiveKanbanRunMonitors } from '../hermes/kanbanRunRecovery';
 import {
   agentTerminalManager,
   agentTerminalPresentationOptions,
+  resolveHermesBotRosterProjections,
   type AgentTerminalState,
   type DesiredAgentTerminal,
+  type DesiredHermesBotProfile,
+  type HermesBotRosterProjection,
 } from '../hermes/agentTerminal';
 import { getV3ProjectBlob } from '../decks/store';
 import { BUILDER_CARD_ID } from '../decks/store';
@@ -38,29 +41,26 @@ function isMagenticOne(card: AgentCardInstance | undefined): boolean {
   return card?.runtime.kind === 'autogen' && card.runtime.mode === 'magentic_one';
 }
 
-function isHermesBotCard(card: AgentCardInstance | undefined): boolean {
-  return Boolean(
-    card
-    && card.kind === 'agent'
-    && card.runtime.kind === 'hermes'
-    && isEnabledCard(card)
-    && card.runtime.profile.trim(),
-  );
-}
-
 /**
- * Resolve automatic Hermes runtime demand from the same persisted invocation
- * contracts used by the Card domain. FLOW connects two symmetric Bot peers.
+ * Resolve automatic Hermes runtime demand from Python-owned Bot roster projections
+ * and the existing Mag One wire contract. FLOW authority is not reimplemented here.
  * The two Magentic-One edge types identify the bus structurally and remain
  * endpoint-order independent; handles are preserved presentation metadata once
  * the saved edgeType has been established.
  */
-export function deriveAutomaticHermesCardIds(deck: DeckDocument): Set<string> {
+export function deriveAutomaticHermesCardIds(
+  deck: DeckDocument,
+  botProfiles: HermesBotRosterProjection[],
+): Set<string> {
   const cards = new Map(deck.nodes.map((card) => [card.id, card] as const));
   const required = new Set<string>();
 
   for (const card of deck.nodes) {
     if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') required.add(card.id);
+  }
+
+  for (const projection of botProfiles) {
+    if (projection.botEnabled && projection.roster.length) required.add(projection.cardId);
   }
 
   for (const edge of deck.edges) {
@@ -69,13 +69,7 @@ export function deriveAutomaticHermesCardIds(deck: DeckDocument): Set<string> {
     const target = cards.get(String(edge.target || '').trim());
     if (!source || !target || source.id === target.id) continue;
 
-    if (edge.edgeType === 'flow') {
-      if (isHermesBotCard(source) && isHermesBotCard(target)) {
-        required.add(source.id);
-        required.add(target.id);
-      }
-      continue;
-    }
+    if (edge.edgeType === 'flow') continue;
 
     if (edge.edgeType !== 'magentic_option' && edge.edgeType !== 'magentic_control') continue;
     const sourceIsBus = isMagenticOne(source);
@@ -99,6 +93,7 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
   listProjects?: typeof listOwnedAgentProjects;
   loadProject?: typeof getV3ProjectBlob;
   reconcile?: typeof agentTerminalManager.reconcile;
+  resolveBotProfiles?: typeof resolveHermesBotRosterProjections;
   mainWorkingDirectory?: () => string;
   builderWorkingDirectory?: () => string;
 } = {}): Promise<AgentTerminalState[]> {
@@ -109,10 +104,33 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
     blob: await loadProject(project.id),
   })));
   const desired: DesiredAgentTerminal[] = [];
+  const botProfiles: DesiredHermesBotProfile[] = [];
+  const resolveBotProfiles = dependencies.resolveBotProfiles ?? resolveHermesBotRosterProjections;
   for (const { project, blob } of projectDecks) {
     if (!project.ownerUserId.trim()) throw new Error('agent_terminal_project_owner_missing');
     for (const [deckId, deck] of Object.entries(blob.decks)) {
-      const requiredCardIds = deriveAutomaticHermesCardIds(deck);
+      const projections = await resolveBotProfiles(project.id, deckId);
+      const cards = new Map(deck.nodes.map((card) => [card.id, card] as const));
+      for (const projection of projections) {
+        const card = cards.get(projection.cardId);
+        if (!card || card.runtime.kind !== 'hermes'
+          || card.runtime.profile !== projection.profile
+          || Boolean(card.kind === 'agent' && isEnabledCard(card)) !== projection.botEnabled
+          || (card._cardRevisionId || '') !== projection.cardRevisionId) {
+          throw new Error('agent_terminal_bot_roster_saved_identity_mismatch');
+        }
+        botProfiles.push({
+          owner: {
+            userId: project.ownerUserId,
+            projectId: project.id,
+            deckId,
+            cardId: card.id,
+          },
+          card,
+          projection,
+        });
+      }
+      const requiredCardIds = deriveAutomaticHermesCardIds(deck, projections);
       for (const card of deck.nodes) {
         if (card.runtime.kind !== 'hermes') continue;
         const isMainPresentation = card.runtime.mode === 'main';
@@ -136,7 +154,11 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
       }
     }
   }
-  return (dependencies.reconcile ?? agentTerminalManager.reconcile.bind(agentTerminalManager))(desired);
+  return (dependencies.reconcile ?? agentTerminalManager.reconcile.bind(agentTerminalManager))(
+    desired,
+    { cols: 120, rows: 36 },
+    botProfiles,
+  );
 }
 
 export function requestConnectedAgentTerminalReconcile(

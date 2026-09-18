@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tools import bot_mode_dm, bot_mode_probe, bot_relay
 
@@ -29,6 +30,10 @@ def _fresh_probe_cache():
 def _managed_home(tmp_path, *, teammates=("researcher",), peers=()) -> Path:
     home = tmp_path / ".hermes"
     home.mkdir(exist_ok=True)
+    (home / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots:\n    shape: cloud\n",
+        encoding="utf-8",
+    )
     for name in teammates:
         d = home / "profiles" / name
         d.mkdir(parents=True, exist_ok=True)
@@ -43,11 +48,16 @@ def _managed_home(tmp_path, *, teammates=("researcher",), peers=()) -> Path:
             ),
             encoding="utf-8",
         )
+        (d / "config.yaml").write_text(yaml.safe_dump({
+            "bot_mode": {"roster": ["default", *[peer for peer in teammates if peer != name]]},
+        }, sort_keys=False), encoding="utf-8")
+    config = {"bot_mode": {"roster": list(teammates)}}
     if peers:
-        lines = ["bot_peers:"]
-        for peer in peers:
-            lines += [f"  {peer}:", f"    url: http://{peer}.lan:8377"]
-        (home / "config.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        config["bot_peers"] = {
+            peer: {"url": f"http://{peer}.lan:8377"}
+            for peer in peers
+        }
+    (home / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     return home
 
 
@@ -161,6 +171,22 @@ def test_unknown_target_lists_roster(tmp_path):
     )
     assert "error" in result
     assert set(result["teammates"]) == {"researcher", "coder"}
+
+
+def test_live_but_unwired_profile_is_rejected(tmp_path):
+    home = _managed_home(tmp_path, teammates=("wired", "unwired"))
+    (home / "config.yaml").write_text(
+        "bot_mode:\n  roster: [wired]\n",
+        encoding="utf-8",
+    )
+    agent = _FakeAgent(home, title="Bot Chat")
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="unwired", message="hi", agent=agent,
+    ))
+
+    assert "error" in result
+    assert result["teammates"] == ["wired"]
 
 
 def test_cannot_message_self(tmp_path):
@@ -305,6 +331,14 @@ def test_peer_delivery_command_pins_registry_profile_for_secondary_bots(
     # machine-root config (home/config.yaml) still holds the registry.
     reviewer_home = home / "profiles" / "reviewer"
     reviewer_home.mkdir(parents=True)
+    (reviewer_home / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots:\n    shape: cloud\n",
+        encoding="utf-8",
+    )
+    (reviewer_home / "config.yaml").write_text(
+        "bot_mode:\n  roster: []\n",
+        encoding="utf-8",
+    )
     agent = _FakeAgent(reviewer_home, title="Bot Chat")
 
     result = json.loads(

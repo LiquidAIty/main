@@ -22,10 +22,7 @@ import {
 } from './profileMaterialization';
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
-import {
-  materializeHermesBotDmPlugin,
-  requireLoadedHermesBotDmPlugin,
-} from './botDmPlugin';
+import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import {
   HERMES_CARD_TOOLS_TOOLSET,
   materializeHermesExternalMcpTools,
@@ -40,12 +37,19 @@ const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
 const BOT_CHAT_TITLE = 'Bot Chat';
-const BOT_DM_NONCE_LIMIT = 512;
-const BOT_DM_MAX_FUTURE_SECONDS = 10 * 60;
-const BOT_DM_PRIOR_SESSION_LIMIT = 8;
+const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
+const PRIOR_SESSION_LIMIT = 8;
 const CARD_TOOL_NONCE_LIMIT = 512;
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
+export type HermesBotRosterProjection = {
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  title: string;
+  botEnabled: boolean;
+  roster: string[];
+};
 export type AgentTerminalState = {
   sessionId: string;
   cardId: string;
@@ -73,19 +77,6 @@ export type AgentTerminalGatewayEvent = {
   session_id?: string;
   seq?: number;
   payload?: Record<string, unknown>;
-};
-
-export type AuthenticatedBotDmRequest = {
-  owner: AgentTerminalOwner;
-  state: AgentTerminalState;
-  request: {
-    version: 1;
-    expiresAt: number;
-    nonce: string;
-    sourceStoredSessionId: string;
-    target: string;
-    message: string;
-  };
 };
 
 export type AuthenticatedCardToolRequest = {
@@ -153,9 +144,8 @@ type Session = {
   client: GatewayClient;
   detachGatewayEvents: () => void;
   gatewayToken: string;
-  botDmKeyId: string;
-  botDmNonces: Map<string, number>;
-  botDmPriorStoredSessionIds: Map<string, number>;
+  gatewayKeyId: string;
+  priorStoredSessionIds: Map<string, number>;
   cardToolNonces: Map<string, number>;
   cardTools: HermesCardTools;
   launch: AgentTerminalLaunch;
@@ -184,9 +174,16 @@ export type DesiredAgentTerminal = {
   attachTui?: boolean;
 };
 
+export type DesiredHermesBotProfile = {
+  owner: AgentTerminalOwner;
+  card: AgentCardInstance;
+  projection: HermesBotRosterProjection;
+};
+
 export type AgentTerminalOpenOptions = {
   workingDirectory?: string;
   attachTui?: boolean;
+  botRosterProjection?: HermesBotRosterProjection;
 };
 
 export function agentTerminalPresentationOptions(
@@ -439,6 +436,72 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function exactProfileNames(value: unknown, error: string): string[] {
+  if (!Array.isArray(value)) throw new Error(error);
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(entry)) {
+      throw new Error(error);
+    }
+    if (seen.has(entry)) throw new Error(error);
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
+
+export async function resolveHermesBotRosterProjections(
+  projectId: string,
+  deckId: string,
+): Promise<HermesBotRosterProjection[]> {
+  const response = record(await requestPythonRailsJson(
+    `/domain/hermes-bot-rosters/${encodeURIComponent(projectId)}/${encodeURIComponent(deckId)}`,
+    { method: 'GET' },
+  ));
+  if (response.ok !== true || response.projectId !== projectId || response.deckId !== deckId) {
+    throw new Error('hermes_bot_roster_projection_identity_invalid');
+  }
+  if (!Array.isArray(response.profiles)) throw new Error('hermes_bot_roster_projection_invalid');
+  const seenCards = new Set<string>();
+  const seenProfiles = new Set<string>();
+  return response.profiles.map((value) => {
+    const entry = record(value);
+    const cardId = String(entry.cardId || '');
+    const profile = String(entry.profile || '');
+    if (!cardId || seenCards.has(cardId)) {
+      throw new Error('hermes_bot_roster_projection_card_invalid');
+    }
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(profile) || seenProfiles.has(profile)) {
+      throw new Error('hermes_bot_roster_projection_profile_invalid');
+    }
+    if (typeof entry.botEnabled !== 'boolean') {
+      throw new Error('hermes_bot_roster_projection_enabled_invalid');
+    }
+    seenCards.add(cardId);
+    seenProfiles.add(profile);
+    return {
+      cardId,
+      cardRevisionId: String(entry.cardRevisionId || ''),
+      profile,
+      title: String(entry.title || cardId),
+      botEnabled: entry.botEnabled,
+      roster: exactProfileNames(entry.roster, 'hermes_bot_roster_projection_roster_invalid'),
+    };
+  });
+}
+
+export async function resolveHermesBotRosterProjection(
+  owner: AgentTerminalOwner,
+): Promise<HermesBotRosterProjection> {
+  const matches = (await resolveHermesBotRosterProjections(owner.projectId, owner.deckId))
+    .filter((entry) => entry.cardId === owner.cardId);
+  if (matches.length !== 1) {
+    throw new Error('hermes_bot_roster_projection_card_invalid');
+  }
+  return matches[0];
+}
+
 function sessionRows(value: unknown): Array<Record<string, unknown>> {
   const rows = record(value).sessions;
   if (!Array.isArray(rows)) throw new Error('agent_terminal_session_enumeration_invalid');
@@ -452,14 +515,6 @@ function sessionRows(value: unknown): Array<Record<string, unknown>> {
 
 function storedSessionId(row: Record<string, unknown>): string {
   return String(row.resolved_id || row.id || '').trim();
-}
-
-function botDmHostUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const port = Number(env.PORT || 4000);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error('hermes_bot_dm_backend_port_invalid');
-  }
-  return `http://127.0.0.1:${port}/api/hermes-bot-dm`;
 }
 
 function cardToolsHostUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -507,10 +562,10 @@ export class AgentTerminalManager {
     ),
     private readonly createGatewayClient: GatewayClientFactory = createNativeGatewayClient,
     private readonly materializeProfile: typeof materializeHermesProfileSelections = materializeHermesProfileSelections,
-    private readonly materializeBotDmPlugin: typeof materializeHermesBotDmPlugin = materializeHermesBotDmPlugin,
     private readonly resolveCardTools: typeof resolveHermesCardTools = resolveHermesCardTools,
     private readonly materializeCardToolsPlugin: typeof materializeHermesCardToolsPlugin = materializeHermesCardToolsPlugin,
     private readonly materializeExternalMcpTools: typeof materializeHermesExternalMcpTools = materializeHermesExternalMcpTools,
+    private readonly resolveBotRoster: typeof resolveHermesBotRosterProjection = resolveHermesBotRosterProjection,
   ) {}
 
   async open(
@@ -541,6 +596,16 @@ export class AgentTerminalManager {
       if (session.cardTools.configurationFingerprint !== cardTools.configurationFingerprint) {
         throw new Error('agent_terminal_tool_configuration_changed_stop_required');
       }
+      const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
+      await this.configureNativeBotProfile(
+        (method, params) => session.client.request(method, {
+          ...params,
+          profile: session.launch.profile,
+        }),
+        owner,
+        card,
+        botRosterProjection,
+      );
       return attachTui ? this.attachTui(session, cols, rows) : { ...session.state };
     }
     const pending = this.pendingStarts.get(profile.toLowerCase());
@@ -564,6 +629,7 @@ export class AgentTerminalManager {
     }
     const promise = this.start(
       owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
+      options.botRosterProjection,
     );
     this.pendingStarts.set(profile.toLowerCase(), {
       owner: { ...owner }, fingerprint,
@@ -584,42 +650,86 @@ export class AgentTerminalManager {
 
   private async configureNativeBotProfile(
     request: ProfileRequest,
-    launch: AgentTerminalLaunch,
+    owner: AgentTerminalOwner,
     card: AgentCardInstance,
+    projection: HermesBotRosterProjection,
   ): Promise<void> {
+    if (card.runtime.kind !== 'hermes') throw new Error('hermes_bot_roster_projection_card_invalid');
+    const cardProfile = String(card.runtime.profile || '').trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(cardProfile)) {
+      throw new Error('hermes_bot_roster_projection_profile_invalid');
+    }
+    if (projection.cardId !== owner.cardId || projection.cardId !== card.id
+      || projection.profile !== cardProfile) {
+      throw new Error('hermes_bot_roster_projection_identity_mismatch');
+    }
+    if (card._cardRevisionId && projection.cardRevisionId
+      && projection.cardRevisionId !== card._cardRevisionId) {
+      throw new Error('hermes_bot_roster_projection_revision_mismatch');
+    }
     const findProfile = async (): Promise<Record<string, unknown>> => {
       const listed = record(await request<unknown>('profiles.list', { include_sessions: false }));
       if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
       const matches = listed.profiles.filter((value) => (
-        record(value).name === launch.profile
+        record(value).name === projection.profile
       ));
       if (matches.length !== 1) throw new Error('hermes_bot_profile_identity_invalid');
       return record(matches[0]);
     };
     const current = await findProfile();
     const uiMeta = record(current.ui_meta);
+    const hasExistingBotMeta = Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots');
     const existing = record(uiMeta['hermes-bots']);
-    const desired = {
+    const desired = projection.botEnabled ? {
       ...existing,
       title: String(card.title || card.id).trim() || card.id,
-    };
-    if (JSON.stringify(existing) !== JSON.stringify(desired)) {
+    } : null;
+    const described = record(await request<unknown>('profiles.describe', { name: projection.profile }));
+    const currentRoster = exactProfileNames(
+      described.bot_mode_roster,
+      'hermes_bot_profile_roster_readback_invalid',
+    );
+    const metaChanged = projection.botEnabled
+      ? JSON.stringify(existing) !== JSON.stringify(desired)
+      : hasExistingBotMeta;
+    const rosterChanged = JSON.stringify(currentRoster) !== JSON.stringify(projection.roster);
+    if (metaChanged || rosterChanged) {
       const revisions = record(current.ui_meta_revisions);
       const revision = revisions['hermes-bots'];
       if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
         throw new Error('hermes_bot_profile_revision_invalid');
       }
       const configured = record(await request<unknown>('profiles.configure', {
-        name: launch.profile,
-        ui_meta: { 'hermes-bots': desired },
-        ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+        name: projection.profile,
+        ...(metaChanged ? {
+          ui_meta: { 'hermes-bots': desired },
+          ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+        } : {}),
+        ...(rosterChanged ? { bot_mode_roster: projection.roster } : {}),
       }));
-      if (configured.ok !== true || record(configured.applied).ui_meta !== true) {
+      const applied = record(configured.applied);
+      if (configured.ok !== true
+        || (metaChanged && applied.ui_meta !== true)
+        || (rosterChanged && applied.bot_mode_roster !== true)) {
         throw new Error('hermes_bot_profile_configuration_failed');
       }
     }
-    const readback = record(record((await findProfile()).ui_meta)['hermes-bots']);
-    if (readback.title !== desired.title) throw new Error('hermes_bot_profile_readback_failed');
+    const readbackRow = await findProfile();
+    const readbackMeta = record(record(readbackRow.ui_meta)['hermes-bots']);
+    if (projection.botEnabled) {
+      if (readbackMeta.title !== desired?.title) throw new Error('hermes_bot_profile_readback_failed');
+    } else if (Object.prototype.hasOwnProperty.call(record(readbackRow.ui_meta), 'hermes-bots')) {
+      throw new Error('hermes_bot_profile_readback_failed');
+    }
+    const rosterReadback = record(await request<unknown>(
+      'profiles.describe', { name: projection.profile },
+    ));
+    if (JSON.stringify(exactProfileNames(
+      rosterReadback.bot_mode_roster,
+      'hermes_bot_profile_roster_readback_invalid',
+    )) !== JSON.stringify(projection.roster)) {
+      throw new Error('hermes_bot_profile_roster_readback_failed');
+    }
   }
 
   private async resolveCanonicalBotChat(
@@ -690,18 +800,16 @@ export class AgentTerminalManager {
     fingerprint: string,
     workingDirectory: string,
     cardTools: HermesCardTools,
+    botRosterProjection?: HermesBotRosterProjection,
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
-    await this.materializeBotDmPlugin(launch.profileHome, { env: launch.env });
     await this.materializeCardToolsPlugin(launch.profileHome, cardTools, { env: launch.env });
     const gatewayToken = randomBytes(32).toString('hex');
-    const botDmKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
+    const gatewayKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
     const gatewayEnv = {
       ...launch.env,
       HERMES_DASHBOARD_SESSION_TOKEN: gatewayToken,
-      CARD_BOT_DM_MANAGED: '1',
-      CARD_BOT_DM_HOST_URL: botDmHostUrl(),
       CARD_TOOLS_MANAGED: '1',
       CARD_TOOLS_HOST_URL: cardToolsHostUrl(),
     };
@@ -757,10 +865,14 @@ export class AgentTerminalManager {
         cardTools,
         profileMaterialization.unavailableMcpServerReasons,
       );
-      await this.configureNativeBotProfile(request, launch, card);
+      await this.configureNativeBotProfile(
+        request,
+        owner,
+        card,
+        botRosterProjection ?? await this.resolveBotRoster(owner),
+      );
       const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
       const plugins = await request('plugins.list', {});
-      requireLoadedHermesBotDmPlugin(plugins);
       requireLoadedHermesCardToolsPlugin(plugins);
       const unavailableToolReasons = requireHermesCardToolsReadback(
         await request('tools.show', { session_id: native.sessionId }),
@@ -777,9 +889,8 @@ export class AgentTerminalManager {
         client,
         detachGatewayEvents: () => {},
         gatewayToken,
-        botDmKeyId,
-        botDmNonces: new Map(),
-        botDmPriorStoredSessionIds: new Map(),
+        gatewayKeyId,
+        priorStoredSessionIds: new Map(),
         cardToolNonces: new Map(),
         cardTools,
         launch,
@@ -812,7 +923,7 @@ export class AgentTerminalManager {
         if (event.session_id !== session.state.nativeSessionId) return;
         if (event.type === 'session.info') {
           const stored = String(event.payload?.stored_session_id || '').trim();
-          if (stored) this.recordBotDmStoredSessionId(session, stored);
+          if (stored) this.recordStoredSessionId(session, stored);
         }
         for (const listener of session.gatewayEventListeners) {
           try { listener(event); } catch {}
@@ -913,8 +1024,7 @@ export class AgentTerminalManager {
     if (!session.stopping) session.state.error = `agent_terminal_${source}_exited:${exitCode ?? 'null'}`;
     session.detachGatewayEvents();
     session.gatewayEventListeners.clear();
-    session.botDmNonces.clear();
-    session.botDmPriorStoredSessionIds.clear();
+    session.priorStoredSessionIds.clear();
     session.cardToolNonces.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
@@ -972,119 +1082,27 @@ export class AgentTerminalManager {
       .map((session) => ({ owner: { ...session.owner }, state: { ...session.state } }));
   }
 
-  private recordBotDmStoredSessionId(
+  private recordStoredSessionId(
     session: Session,
     storedSessionId: string,
     now = Math.floor(Date.now() / 1000),
   ): void {
     const stored = storedSessionId.trim();
     if (!stored || stored === session.state.storedSessionId) return;
-    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
-      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
+    for (const [prior, expiry] of session.priorStoredSessionIds) {
+      if (expiry < now) session.priorStoredSessionIds.delete(prior);
     }
-    session.botDmPriorStoredSessionIds.delete(stored);
-    session.botDmPriorStoredSessionIds.set(
+    session.priorStoredSessionIds.delete(stored);
+    session.priorStoredSessionIds.set(
       session.state.storedSessionId,
-      now + BOT_DM_MAX_FUTURE_SECONDS,
+      now + AUTH_MAX_FUTURE_SECONDS,
     );
-    while (session.botDmPriorStoredSessionIds.size > BOT_DM_PRIOR_SESSION_LIMIT) {
-      const oldest = session.botDmPriorStoredSessionIds.keys().next().value as string | undefined;
+    while (session.priorStoredSessionIds.size > PRIOR_SESSION_LIMIT) {
+      const oldest = session.priorStoredSessionIds.keys().next().value as string | undefined;
       if (!oldest) break;
-      session.botDmPriorStoredSessionIds.delete(oldest);
+      session.priorStoredSessionIds.delete(oldest);
     }
     session.state.storedSessionId = stored;
-  }
-
-  private async refreshBotDmStoredSessionId(session: Session): Promise<void> {
-    const snapshot = record(await session.client.request('session.activate', {
-      session_id: session.state.nativeSessionId,
-      profile: session.state.profile,
-      omit_messages: true,
-    }));
-    if (String(snapshot.session_id || '').trim() !== session.state.nativeSessionId) {
-      throw new Error('hermes_bot_dm_authentication_failed');
-    }
-    const stored = String(snapshot.session_key || '').trim();
-    if (!stored) throw new Error('hermes_bot_dm_authentication_failed');
-    this.recordBotDmStoredSessionId(session, stored);
-  }
-
-  async authenticateBotDmRequest(
-    keyId: string,
-    payload: string,
-    signature: string,
-  ): Promise<AuthenticatedBotDmRequest> {
-    if (
-      Buffer.byteLength(keyId) > 256
-      || Buffer.byteLength(signature) > 256
-      || Buffer.byteLength(payload) > 256 * 1024
-    ) throw new Error('hermes_bot_dm_authentication_failed');
-    const candidates = [...this.sessions.values()].filter((session) => (
-      session.state.status === 'running' && equalHex(session.botDmKeyId, keyId)
-    ));
-    if (candidates.length !== 1) throw new Error('hermes_bot_dm_authentication_failed');
-    const session = candidates[0];
-    const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');
-    if (!equalHex(expected, signature)) throw new Error('hermes_bot_dm_authentication_failed');
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(payload);
-    } catch {
-      throw new Error('hermes_bot_dm_authentication_failed');
-    }
-    const value = record(parsed);
-    const expectedKeys = [
-      'expiresAt', 'message', 'nonce', 'sourceStoredSessionId', 'target', 'version',
-    ];
-    if (Object.keys(value).sort().join('\0') !== expectedKeys.join('\0')) {
-      throw new Error('hermes_bot_dm_authentication_failed');
-    }
-    const now = Math.floor(Date.now() / 1000);
-    const expiresAt = value.expiresAt;
-    const nonce = boundedString(value.nonce, 128);
-    const sourceStoredSessionId = boundedString(value.sourceStoredSessionId, 512);
-    const target = boundedString(value.target, 256);
-    const message = boundedString(value.message, 16_000);
-    await this.refreshBotDmStoredSessionId(session);
-    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
-      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
-    }
-    const sourceSessionKnown = sourceStoredSessionId === session.state.storedSessionId
-      || session.botDmPriorStoredSessionIds.has(sourceStoredSessionId);
-    if (
-      value.version !== 1
-      || !Number.isSafeInteger(expiresAt)
-      || Number(expiresAt) < now
-      || Number(expiresAt) > now + BOT_DM_MAX_FUTURE_SECONDS
-      || !/^[a-f0-9]{32,128}$/i.test(nonce)
-      || !sourceStoredSessionId
-      || !sourceSessionKnown
-      || !target.trim()
-      || !message.trim()
-    ) throw new Error('hermes_bot_dm_authentication_failed');
-    for (const [usedNonce, expiry] of session.botDmNonces) {
-      if (expiry < now) session.botDmNonces.delete(usedNonce);
-    }
-    if (session.botDmNonces.has(nonce)) throw new Error('hermes_bot_dm_authentication_failed');
-    session.botDmNonces.set(nonce, Number(expiresAt));
-    while (session.botDmNonces.size > BOT_DM_NONCE_LIMIT) {
-      const oldest = session.botDmNonces.keys().next().value as string | undefined;
-      if (!oldest) break;
-      session.botDmNonces.delete(oldest);
-    }
-    return {
-      owner: { ...session.owner },
-      state: { ...session.state },
-      request: {
-        version: 1,
-        expiresAt: Number(expiresAt),
-        nonce,
-        sourceStoredSessionId,
-        target,
-        message,
-      },
-    };
   }
 
   async authenticateCardToolRequest(
@@ -1098,7 +1116,7 @@ export class AgentTerminalManager {
       || Buffer.byteLength(payload) > 512 * 1024
     ) throw new Error('hermes_card_tool_authentication_failed');
     const candidates = [...this.sessions.values()].filter((session) => (
-      session.state.status === 'running' && equalHex(session.botDmKeyId, keyId)
+      session.state.status === 'running' && equalHex(session.gatewayKeyId, keyId)
     ));
     if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
     const session = candidates[0];
@@ -1137,12 +1155,12 @@ export class AgentTerminalManager {
     }
     const stored = String(snapshot.session_key || '').trim();
     if (!stored) throw new Error('hermes_card_tool_authentication_failed');
-    this.recordBotDmStoredSessionId(session, stored);
-    for (const [prior, expiry] of session.botDmPriorStoredSessionIds) {
-      if (expiry < now) session.botDmPriorStoredSessionIds.delete(prior);
+    this.recordStoredSessionId(session, stored);
+    for (const [prior, expiry] of session.priorStoredSessionIds) {
+      if (expiry < now) session.priorStoredSessionIds.delete(prior);
     }
     const sourceSessionKnown = sourceStoredSessionId === session.state.storedSessionId
-      || session.botDmPriorStoredSessionIds.has(sourceStoredSessionId);
+      || session.priorStoredSessionIds.has(sourceStoredSessionId);
     const registered = session.cardTools.pluginTools.find(
       (candidate) => candidate.hermesName === tool,
     );
@@ -1150,7 +1168,7 @@ export class AgentTerminalManager {
       value.version !== 1
       || !Number.isSafeInteger(expiresAt)
       || Number(expiresAt) < now
-      || Number(expiresAt) > now + BOT_DM_MAX_FUTURE_SECONDS
+      || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
       || !/^[a-f0-9]{32,128}$/i.test(nonce)
       || !sourceSessionKnown
       || !registered
@@ -1300,8 +1318,7 @@ export class AgentTerminalManager {
     session.state.status = 'exited';
     session.detachGatewayEvents();
     session.gatewayEventListeners.clear();
-    session.botDmNonces.clear();
-    session.botDmPriorStoredSessionIds.clear();
+    session.priorStoredSessionIds.clear();
     session.cardToolNonces.clear();
     session.client.close();
     try { session.pty?.kill(); } catch {}
@@ -1429,9 +1446,65 @@ export class AgentTerminalManager {
     return () => { session.listeners.delete(listener); };
   }
 
+  private async materializeNativeBotProfiles(
+    gatewaySession: Session,
+    profiles: DesiredHermesBotProfile[],
+  ): Promise<void> {
+    const request: ProfileRequest = (method, params) => gatewaySession.client.request(method, {
+      ...params,
+      profile: gatewaySession.launch.profile,
+    });
+    const projected = new Set(profiles.map((target) => target.projection.profile.toLowerCase()));
+    const listed = record(await request<unknown>('profiles.list', { include_sessions: false }));
+    if (!Array.isArray(listed.profiles)) throw new Error('hermes_bot_profile_list_invalid');
+    for (const value of listed.profiles) {
+      const row = record(value);
+      const name = String(row.name || '');
+      const uiMeta = record(row.ui_meta);
+      if (!Object.prototype.hasOwnProperty.call(uiMeta, 'hermes-bots')
+        || projected.has(name.toLowerCase())) continue;
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(name)) {
+        throw new Error('hermes_bot_profile_identity_invalid');
+      }
+      const revisions = record(row.ui_meta_revisions);
+      const revision = revisions['hermes-bots'];
+      if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
+        throw new Error('hermes_bot_profile_revision_invalid');
+      }
+      const configured = record(await request<unknown>('profiles.configure', {
+        name,
+        ui_meta: { 'hermes-bots': null },
+        ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
+        bot_mode_roster: [],
+      }));
+      const applied = record(configured.applied);
+      if (configured.ok !== true || applied.ui_meta !== true || applied.bot_mode_roster !== true) {
+        throw new Error('hermes_bot_profile_configuration_failed');
+      }
+      const readback = record(await request<unknown>('profiles.list', { include_sessions: false }));
+      if (!Array.isArray(readback.profiles)) throw new Error('hermes_bot_profile_list_invalid');
+      const matches = readback.profiles.filter((entry) => record(entry).name === name);
+      if (matches.length !== 1
+        || Object.prototype.hasOwnProperty.call(record(record(matches[0]).ui_meta), 'hermes-bots')) {
+        throw new Error('hermes_bot_profile_readback_failed');
+      }
+      const described = record(await request<unknown>('profiles.describe', { name }));
+      if (exactProfileNames(
+        described.bot_mode_roster,
+        'hermes_bot_profile_roster_readback_invalid',
+      ).length) {
+        throw new Error('hermes_bot_profile_roster_readback_failed');
+      }
+    }
+    for (const target of profiles) {
+      await this.configureNativeBotProfile(request, target.owner, target.card, target.projection);
+    }
+  }
+
   async reconcile(
     desired: DesiredAgentTerminal[],
     dimensions: { cols: number; rows: number } = { cols: 120, rows: 36 },
+    botProfiles?: DesiredHermesBotProfile[],
   ): Promise<AgentTerminalState[]> {
     const wantedOwners = new Map<string, DesiredAgentTerminal>();
     const wantedProfiles = new Map<string, string>();
@@ -1443,6 +1516,50 @@ export class AgentTerminalManager {
       const other = wantedProfiles.get(profile);
       if (other && other !== key) throw new Error(`agent_terminal_topology_profile_shared:${profile}`);
       wantedProfiles.set(profile, key);
+    }
+    const projectedByOwner = new Map<string, DesiredHermesBotProfile>();
+    const projectedProfiles = new Set<string>();
+    for (const target of botProfiles ?? []) {
+      const key = ownerKey(target.owner);
+      if (projectedByOwner.has(key)) throw new Error('agent_terminal_bot_profile_owner_duplicate');
+      if (target.card.id !== target.owner.cardId || target.projection.cardId !== target.owner.cardId) {
+        throw new Error('agent_terminal_bot_profile_identity_invalid');
+      }
+      const profile = target.projection.profile.toLowerCase();
+      if (projectedProfiles.has(profile)) {
+        throw new Error(`agent_terminal_bot_profile_shared:${profile}`);
+      }
+      projectedByOwner.set(key, target);
+      projectedProfiles.add(profile);
+    }
+    const existingGateway = [...this.sessions.values()].find((session) => (
+      session.state.status === 'running'
+    ));
+    if (existingGateway && botProfiles !== undefined) {
+      const revocations: DesiredHermesBotProfile[] = [];
+      for (const session of this.sessions.values()) {
+        if (session.state.status !== 'running'
+          || projectedProfiles.has(session.launch.profile.toLowerCase())) continue;
+        const card = {
+          id: session.owner.cardId,
+          title: session.launch.profile,
+          kind: 'agent',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: session.launch.profile },
+        } as AgentCardInstance;
+        revocations.push({
+          owner: session.owner,
+          card,
+          projection: {
+            cardId: session.owner.cardId,
+            cardRevisionId: '',
+            profile: session.launch.profile,
+            title: session.launch.profile,
+            botEnabled: false,
+            roster: [],
+          },
+        });
+      }
+      await this.materializeNativeBotProfiles(existingGateway, [...botProfiles, ...revocations]);
     }
     for (const session of this.sessions.values()) {
       if (session.state.status !== 'running') continue;
@@ -1465,7 +1582,7 @@ export class AgentTerminalManager {
         this.stopSession(session);
       }
     }
-    return Promise.all(desired.map((target) => this.open(
+    const opened = await Promise.all(desired.map((target) => this.open(
       target.owner,
       target.card,
       target.deck,
@@ -1474,8 +1591,19 @@ export class AgentTerminalManager {
       {
         workingDirectory: target.workingDirectory,
         attachTui: target.attachTui,
+        botRosterProjection: projectedByOwner.get(ownerKey(target.owner))?.projection,
       },
     )));
+    if (!existingGateway && botProfiles !== undefined && botProfiles.length) {
+      const firstState = opened[0];
+      if (!firstState) throw new Error('agent_terminal_bot_profile_gateway_unavailable');
+      const gatewaySession = this.running(
+        desired[0].owner,
+        firstState.sessionId,
+      );
+      await this.materializeNativeBotProfiles(gatewaySession, botProfiles);
+    }
+    return opened;
   }
 
   stopAll(): void {

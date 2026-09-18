@@ -72,10 +72,9 @@ def _(rid, params: dict, _root=_relay_root, _run=_run_delivery) -> dict:
         if len(message) > MESSAGE_MAX_CHARS + 200:  # + attribution headroom
             return _err(rid, 4091, "message too long")
         root = _root()
-        from tools.bot_mode_probe import _roster
-        known = {name for name, _ in _roster(root)}
+        from tools.bot_mode_probe import resolve_live_profile_home
         resolved = "default" if profile.lower() == "hermes" else profile
-        if resolved not in known:
+        if resolve_live_profile_home(root, resolved) is None:
             return _err(rid, 4092, f"no profile '{profile}' on this gateway")
 
         # When THIS gateway already hosts the target's Bot Chat live, the subprocess transport is

@@ -78,6 +78,7 @@ class FakeGatewayClient {
   private activeStored = '';
   private activeNative = '';
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
+  private readonly botRosters = new Map<string, string[]>();
 
   constructor(
     private readonly index: number,
@@ -85,7 +86,13 @@ class FakeGatewayClient {
     private readonly controls: {
       enumerationFailure: boolean;
     },
+    private readonly profileNames: string[],
   ) {}
+
+  seedManagedProfile(name: string, roster: string[]) {
+    this.botMeta.set(name, { value: { title: name }, revision: 1 });
+    this.botRosters.set(name, roster);
+  }
 
   async connect(url: string) {
     this.url = url;
@@ -115,21 +122,37 @@ class FakeGatewayClient {
     const profile = String(params.profile || '');
     const titleKey = (title: string) => `${profile}\u0000${title}`;
     if (method === 'profiles.list') {
-      const meta = this.botMeta.get(profile);
-      return { profiles: [{
-        name: profile,
-        ui_meta: meta ? { 'hermes-bots': meta.value } : {},
-        ui_meta_revisions: { 'hermes-bots': meta?.revision || 0 },
-      }] } as T;
+      return { profiles: this.profileNames.map((name) => {
+        const meta = this.botMeta.get(name);
+        return {
+          name,
+          ui_meta: meta ? { 'hermes-bots': meta.value } : {},
+          ui_meta_revisions: { 'hermes-bots': meta?.revision || 0 },
+        };
+      }) } as T;
+    }
+    if (method === 'profiles.describe') {
+      const name = String(params.name || '');
+      return { name, bot_mode_roster: this.botRosters.get(name) || [] } as T;
     }
     if (method === 'profiles.configure') {
+      const name = String(params.name || '');
       const desired = (params.ui_meta as Record<string, unknown> | undefined)?.['hermes-bots'];
-      const prior = this.botMeta.get(profile);
-      this.botMeta.set(profile, {
-        value: desired && typeof desired === 'object' ? desired as Record<string, unknown> : {},
-        revision: (prior?.revision || 0) + 1,
-      });
-      return { ok: true, applied: { ui_meta: true } } as T;
+      const prior = this.botMeta.get(name);
+      if (params.ui_meta) {
+        if (desired === null) this.botMeta.delete(name);
+        else this.botMeta.set(name, {
+          value: desired && typeof desired === 'object' ? desired as Record<string, unknown> : {},
+          revision: (prior?.revision || 0) + 1,
+        });
+      }
+      if (Array.isArray(params.bot_mode_roster)) {
+        this.botRosters.set(name, params.bot_mode_roster as string[]);
+      }
+      return { ok: true, applied: {
+        ...(params.ui_meta ? { ui_meta: true } : {}),
+        ...(Array.isArray(params.bot_mode_roster) ? { bot_mode_roster: true } : {}),
+      } } as T;
     }
     if (method === 'session.list') {
       if (this.controls.enumerationFailure) throw new Error('storage failed');
@@ -205,7 +228,7 @@ class FakeGatewayClient {
   }
 }
 
-function fixture() {
+function fixture(extraProfileNames: string[] = []) {
   const cards = [card('signal', 'signal-analyst'), card('quant', 'quant-analyst')];
   const deck: DeckDocument = {
     id: 'deck',
@@ -264,7 +287,15 @@ function fixture() {
   };
   const clients: FakeGatewayClient[] = [];
   const createGatewayClient = vi.fn(async () => {
-    const client = new FakeGatewayClient(clients.length + 1, durableByTitle, controls);
+    const client = new FakeGatewayClient(
+      clients.length + 1,
+      durableByTitle,
+      controls,
+      [
+        ...cards.map((selected) => selected.runtime.kind === 'hermes' ? selected.runtime.profile : ''),
+        ...extraProfileNames,
+      ],
+    );
     clients.push(client);
     return client;
   });
@@ -297,9 +328,6 @@ function fixture() {
   }));
   const onExit = vi.fn(async () => undefined);
   const materialize = vi.fn(async () => ({ native: {}, unavailableNativeToolReasons: {} }));
-  const materializeBotDmPlugin = vi.fn(async () => ({
-    key: 'card-bot-dm', sourceDir: 'source', destinationDir: 'destination', files: [],
-  }));
   const resolveCardTools = vi.fn(async (
     owner: AgentTerminalOwner,
     selected: AgentCardInstance,
@@ -331,6 +359,18 @@ function fixture() {
       .digest('hex'),
   }));
   const materializeCardToolsPlugin = vi.fn(async () => undefined);
+  const materializeExternalMcpTools = vi.fn(async () => ({}));
+  const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
+    const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
+    return {
+      cardId: selected.id,
+      cardRevisionId: '',
+      profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
+      title: selected.title,
+      botEnabled: true,
+      roster: [],
+    };
+  });
   const manager = new AgentTerminalManager(
     spawnPty,
     prepare,
@@ -338,16 +378,18 @@ function fixture() {
     spawnGateway,
     createGatewayClient,
     materialize as never,
-    materializeBotDmPlugin as never,
     resolveCardTools as never,
     materializeCardToolsPlugin as never,
+    materializeExternalMcpTools as never,
+    resolveBotRoster,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
   }));
   return {
-    manager, spawnPty, spawnGateway, prepare, materialize, materializeBotDmPlugin,
+    manager, spawnPty, spawnGateway, prepare, materialize,
     resolveCardTools, materializeCardToolsPlugin, cards, deck, owners,
+    materializeExternalMcpTools, resolveBotRoster,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -531,13 +573,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.ptys[0].resize).not.toHaveBeenCalled();
   });
 
-  it('materializes managed Bot-DM before Gateway start and owns one canonical Bot Chat', async () => {
+  it('materializes Card tools before Gateway start and owns one canonical Bot Chat', async () => {
     const f = fixture();
     const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
-    expect(f.materializeBotDmPlugin).toHaveBeenCalledWith(
-      'C:\\profiles\\signal-analyst',
-      { env: expect.objectContaining({ SESSION: expect.any(String) }) },
-    );
     expect(f.materializeCardToolsPlugin).toHaveBeenCalledWith(
       'C:\\profiles\\signal-analyst',
       expect.objectContaining({
@@ -548,8 +586,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       { env: expect.objectContaining({ SESSION: expect.any(String) }) },
     );
     expect(f.spawnGateway.mock.calls[0][2].env).toEqual(expect.objectContaining({
-      CARD_BOT_DM_MANAGED: '1',
-      CARD_BOT_DM_HOST_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/hermes-bot-dm$/),
       HERMES_DASHBOARD_SESSION_TOKEN: expect.any(String),
       CARD_TOOLS_MANAGED: '1',
       CARD_TOOLS_HOST_URL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/hermes-card-tools$/),
@@ -571,32 +607,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.clients[0].requests.filter((request) => request.method === 'session.create')).toHaveLength(1);
     expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
     expect(f.durableByTitle.get('signal-analyst\u0000Card runtime: signal @ old')).toBe('stored-old');
-  });
-
-  it('authenticates one process-bound signed Bot-DM request and rejects replay', async () => {
-    const f = fixture();
-    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
-    const env = f.spawnGateway.mock.calls[0][2].env as Record<string, string>;
-    const token = env.HERMES_DASHBOARD_SESSION_TOKEN;
-    const payload = JSON.stringify({
-      version: 1,
-      expiresAt: Math.floor(Date.now() / 1000) + 60,
-      nonce: 'a'.repeat(32),
-      sourceStoredSessionId: state.storedSessionId,
-      target: 'builder',
-      message: 'Build this.',
-    });
-    const keyId = createHash('sha256').update(token).digest('hex');
-    const signature = createHmac('sha256', token).update(payload).digest('hex');
-    await expect(f.manager.authenticateBotDmRequest(keyId, payload, signature)).resolves.toEqual({
-      owner: f.owners[0],
-      state,
-      request: expect.objectContaining({ target: 'builder', message: 'Build this.' }),
-    });
-    await expect(f.manager.authenticateBotDmRequest(keyId, payload, signature))
-      .rejects.toThrow('hermes_bot_dm_authentication_failed');
-    await expect(f.manager.authenticateBotDmRequest(keyId, payload, '0'.repeat(64)))
-      .rejects.toThrow('hermes_bot_dm_authentication_failed');
   });
 
   it('derives one registered Card tool from the signed live runtime and rejects replay', async () => {
@@ -646,57 +656,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     )).rejects.toThrow('hermes_card_tool_authentication_failed');
   });
 
-  it('accepts a bounded manager-observed prior durable session after compression only', async () => {
-    const f = fixture();
-    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
-    const env = f.spawnGateway.mock.calls[0][2].env as Record<string, string>;
-    const token = env.HERMES_DASHBOARD_SESSION_TOKEN;
-    const keyId = createHash('sha256').update(token).digest('hex');
-    const observedAt = Math.floor(Date.now() / 1000);
-    const signed = (sourceStoredSessionId: string, nonce: string, expiresAt: number) => {
-      const payload = JSON.stringify({
-        version: 1,
-        expiresAt,
-        nonce,
-        sourceStoredSessionId,
-        target: 'builder',
-        message: 'Build this.',
-      });
-      return {
-        payload,
-        signature: createHmac('sha256', token).update(payload).digest('hex'),
-      };
-    };
-    const delayed = signed(state.storedSessionId, 'b'.repeat(32), observedAt + 60);
-    f.clients[0].emitEvent({
-      type: 'session.info',
-      session_id: state.nativeSessionId,
-      payload: { stored_session_id: 'stored-after-compression' },
-    });
-
-    await expect(f.manager.authenticateBotDmRequest(keyId, delayed.payload, delayed.signature))
-      .resolves.toMatchObject({
-        owner: f.owners[0],
-        state: { storedSessionId: 'stored-after-compression' },
-        request: { sourceStoredSessionId: state.storedSessionId },
-      });
-
-    const fabricated = signed('caller-invented-session', 'c'.repeat(32), observedAt + 60);
-    await expect(f.manager.authenticateBotDmRequest(
-      keyId, fabricated.payload, fabricated.signature,
-    )).rejects.toThrow('hermes_bot_dm_authentication_failed');
-
-    const now = vi.spyOn(Date, 'now').mockReturnValue((observedAt + (11 * 60)) * 1000);
-    try {
-      const stale = signed(state.storedSessionId, 'd'.repeat(32), observedAt + (12 * 60));
-      await expect(f.manager.authenticateBotDmRequest(
-        keyId, stale.payload, stale.signature,
-      )).rejects.toThrow('hermes_bot_dm_authentication_failed');
-    } finally {
-      now.mockRestore();
-    }
-  });
-
   it('restarts the Gateway and TUI while resuming the exact durable Card session', async () => {
     const f = fixture();
     const first = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
@@ -742,6 +701,84 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const missing = card('other', 'valid');
     missing.runtime = { kind: 'hermes', mode: 'delegate', profile: '' };
     expect(() => requireAgentTerminalCard(missing, { ...frozenDeck(missing) })).toThrow('profile_missing');
+  });
+
+  it('materializes reciprocal native rosters and revokes both profiles before stopping demand', async () => {
+    const f = fixture();
+    const desired = f.cards.map((selected, index) => ({
+      owner: f.owners[index], card: selected, deck: f.deck,
+    }));
+    const projected = f.cards.map((selected, index) => {
+      const peer = f.cards[index === 0 ? 1 : 0];
+      return {
+        owner: f.owners[index],
+        card: selected,
+        projection: {
+          cardId: selected.id,
+          cardRevisionId: selected._cardRevisionId || '',
+          profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
+          title: selected.title,
+          botEnabled: true,
+          roster: [peer.runtime.kind === 'hermes' ? peer.runtime.profile : ''],
+        },
+      };
+    });
+
+    await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
+    const configured = f.clients.flatMap((client) => client.requests)
+      .filter((request) => request.method === 'profiles.configure');
+    expect(configured).toEqual(expect.arrayContaining([
+      expect.objectContaining({ params: expect.objectContaining({
+        name: 'signal-analyst', bot_mode_roster: ['quant-analyst'],
+      }) }),
+      expect.objectContaining({ params: expect.objectContaining({
+        name: 'quant-analyst', bot_mode_roster: ['signal-analyst'],
+      }) }),
+    ]));
+
+    const revoked = projected.map((target) => ({
+      ...target,
+      projection: { ...target.projection, roster: [] },
+    }));
+    await f.manager.reconcile([desired[0]], { cols: 120, rows: 36 }, revoked);
+    const quantWrites = f.clients.flatMap((client) => client.requests)
+      .filter((request) => request.method === 'profiles.configure'
+        && request.params.name === 'quant-analyst');
+    expect(quantWrites.some((request) => (
+      JSON.stringify(request.params.bot_mode_roster) === '[]'
+    ))).toBe(true);
+    expect(f.manager.find(f.owners[1])).toBeNull();
+  });
+
+  it('revokes a managed profile removed from saved Card topology after a cold runtime gap', async () => {
+    const f = fixture(['retired-profile']);
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    f.clients[0].seedManagedProfile('retired-profile', ['signal-analyst']);
+    const currentProfiles = f.cards.map((selected, index) => ({
+      owner: f.owners[index],
+      card: selected,
+      projection: {
+        cardId: selected.id,
+        cardRevisionId: selected._cardRevisionId || '',
+        profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
+        title: selected.title,
+        botEnabled: true,
+        roster: [],
+      },
+    }));
+
+    await f.manager.reconcile([
+      { owner: f.owners[0], card: f.cards[0], deck: f.deck },
+    ], { cols: 120, rows: 36 }, currentProfiles);
+
+    expect(f.clients[0].requests).toContainEqual(expect.objectContaining({
+      method: 'profiles.configure',
+      params: expect.objectContaining({
+        name: 'retired-profile',
+        ui_meta: { 'hermes-bots': null },
+        bot_mode_roster: [],
+      }),
+    }));
   });
 
   it('reconciles the complete desired topology, stopping disconnected Cards and replacing changed authority', async () => {

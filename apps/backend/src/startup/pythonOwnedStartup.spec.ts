@@ -147,7 +147,25 @@ describe('Python-owned backend startup', () => {
         { id: 'not-a-bus', source: 'worker', target: 'idle', edgeType: 'magentic_option' },
       ] } as any;
 
-    expect([...deriveAutomaticHermesCardIds(deck)]).toEqual([
+    const botProfiles = [
+      { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
+        botEnabled: true, roster: ['builder-profile'] },
+      { cardId: 'controller', cardRevisionId: '', profile: 'controller-profile', title: 'Controller',
+        botEnabled: true, roster: ['worker-profile'] },
+      { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
+        botEnabled: true, roster: ['controller-profile'] },
+      { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
+        botEnabled: true, roster: ['main-profile'] },
+      { cardId: 'mag-worker-a', cardRevisionId: '', profile: 'mag-worker-a-profile', title: 'Mag worker A',
+        botEnabled: true, roster: [] },
+      { cardId: 'mag-worker-b', cardRevisionId: '', profile: 'mag-worker-b-profile', title: 'Mag worker B',
+        botEnabled: true, roster: [] },
+      { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
+        botEnabled: true, roster: [] },
+      { cardId: 'disabled', cardRevisionId: '', profile: 'disabled-profile', title: 'Disabled',
+        botEnabled: false, roster: [] },
+    ];
+    expect([...deriveAutomaticHermesCardIds(deck, botProfiles)]).toEqual([
       'main-card', 'controller', 'worker', 'builder', 'mag-worker-a', 'mag-worker-b',
     ]);
   });
@@ -165,9 +183,12 @@ describe('Python-owned backend startup', () => {
     const first = { id: 'one', source: 'controller-a', target: 'target', edgeType: 'flow' };
     const second = { id: 'two', source: 'controller-b', target: 'target', edgeType: 'flow' };
 
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [first, second] }).has('target')).toBe(true);
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [second] }).has('target')).toBe(true);
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [] }).has('target')).toBe(false);
+    const projection = (roster: string[]) => [{
+      cardId: 'target', cardRevisionId: '', profile: 'target', title: 'Target', botEnabled: true, roster,
+    }];
+    expect(deriveAutomaticHermesCardIds({ ...base, edges: [first, second] }, projection(['controller-a', 'controller-b'])).has('target')).toBe(true);
+    expect(deriveAutomaticHermesCardIds({ ...base, edges: [second] }, projection(['controller-b'])).has('target')).toBe(true);
+    expect(deriveAutomaticHermesCardIds({ ...base, edges: [] }, projection([])).has('target')).toBe(false);
   });
 
   it('passes exact Card identities and structural presentation workspaces to the existing manager', async () => {
@@ -186,7 +207,7 @@ describe('Python-owned backend startup', () => {
         { id: 'active-worker', source: 'main-card', target: 'worker', edgeType: 'flow' },
         { id: 'active-builder', source: 'main-card', target: 'builder', edgeType: 'flow' },
       ] } as any;
-    const reconcile = vi.fn(async (desired: any[]) => desired.map((entry, index) => ({
+    const reconcile = vi.fn(async (desired: any[], _dimensions?: unknown, _botProfiles?: unknown[]) => desired.map((entry, index) => ({
       sessionId: `session-${index}`, cardId: entry.card.id, profile: entry.card.runtime.profile,
       pid: 1, gatewayPid: 1, tuiPid: null, ptyId: null, nativeSessionId: `native-${index}`,
       storedSessionId: `native-${index}`, hermesHome: '', unavailableToolReasons: {},
@@ -197,6 +218,16 @@ describe('Python-owned backend startup', () => {
       listProjects: async () => [{ id: 'project', name: 'Project', code: null,
         status: 'active', project_type: 'agent', ownerUserId: 'owner' }],
       loadProject: async () => ({ decks: { deck }, meta: { decks: {} } }),
+      resolveBotProfiles: async () => [
+        { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
+          botEnabled: true, roster: ['worker-profile', 'builder-profile'] },
+        { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
+          botEnabled: true, roster: ['main-profile'] },
+        { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
+          botEnabled: true, roster: ['main-profile'] },
+        { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
+          botEnabled: true, roster: [] },
+      ],
       reconcile: reconcile as any,
       mainWorkingDirectory: () => 'C:\\neutral-main',
       builderWorkingDirectory: () => 'C:\\repository',
@@ -213,6 +244,7 @@ describe('Python-owned backend startup', () => {
     expect(desired[1]).toMatchObject({ attachTui: true });
     expect(desired[1]).not.toHaveProperty('workingDirectory');
     expect(desired[2]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
+    expect(reconcile.mock.calls[0][2]).toHaveLength(4);
   });
 
   it('serializes startup and saved-topology reconciliation through the existing manager', async () => {

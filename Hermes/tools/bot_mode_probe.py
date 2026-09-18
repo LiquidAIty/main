@@ -1,9 +1,9 @@
 """Bot Mode roster probe — canonical Bot Chat system prompt section.
 
-When any profile carries ``ui_meta['hermes-bots']`` in profile.yaml (Bot-Mode-managed),
-a bot's canonical "Bot Chat" session — ONLY that session (agent/system_prompt.py enforces
+When the current profile carries ``ui_meta['hermes-bots']`` in profile.yaml (Bot-Mode-managed),
+its canonical "Bot Chat" session — ONLY that session (agent/system_prompt.py enforces
 the ``BOT_CHAT_TITLE`` gate) — gets a "Messaging other agents" section. Silent (``""``)
-when no profile is managed or on any error. Older desktop builds appended a frozen copy of
+when the current profile is unmanaged or on any error. Older desktop builds appended a frozen copy of
 the section to SOUL.md; ``strip_legacy_protocol`` drops it at load time so the live roster
 here is the only copy any session sees. Cached per (process, home) so compression rebuilds
 produce identical bytes. Toggle: ``agent.bot_mode_protocol``. Also hosts path/roster
@@ -69,10 +69,8 @@ def _handle(name: str) -> str:
     return "hermes" if name == "default" else name
 
 
-def _roster(root: Path) -> list[tuple[str, Path]]:
-    """(name, dir) for the default profile + every live named profile, sorted. Same identity
-    predicate as ``profile list``: infra dirs (``sessions/``, ``logs/``) and tombstones are not
-    teammates (#99392)."""
+def _all_live_profiles(root: Path) -> list[tuple[str, Path]]:
+    """All live profiles for install-wide lifecycle work, never Bot target authority."""
     from hermes_constants import named_profile_is_live
 
     profiles = root / "profiles"
@@ -80,6 +78,68 @@ def _roster(root: Path) -> list[tuple[str, Path]]:
         lambda: [(c.name, c) for c in sorted(profiles.iterdir()) if named_profile_is_live(c)] if profiles.is_dir() else [],
         [])
     return [("default", root), *named]
+
+
+def resolve_live_profile_home(root: Path, name: str) -> Path | None:
+    """Resolve one canonical profile name to a live home without enumerating Bot authority."""
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+    from hermes_constants import named_profile_is_live
+
+    try:
+        canonical = normalize_profile_name(name)
+        validate_profile_name(canonical)
+    except (TypeError, ValueError):
+        return None
+    if canonical == "default":
+        return root if root.is_dir() else None
+    candidate = root / "profiles" / canonical
+    return candidate if named_profile_is_live(candidate) else None
+
+
+def _configured_bot_profile_names(home: Path) -> list[str]:
+    """The current profile's explicit ordered ``bot_mode.roster`` value, fail closed."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(str(home))
+    try:
+        config = load_config_readonly() or {}
+    finally:
+        reset_hermes_home_override(token)
+    bot_mode = config.get("bot_mode") if isinstance(config, dict) else None
+    roster = bot_mode.get("roster") if isinstance(bot_mode, dict) else None
+    return roster if isinstance(roster, list) else []
+
+
+def resolve_bot_roster(home: str | os.PathLike | None = None) -> list[tuple[str, Path]]:
+    """Resolve this profile's explicit ordered local Bot roster.
+
+    Invalid, duplicate, self, unknown, or tombstoned entries are ignored. Missing/empty
+    configuration grants nobody and never falls back to scanning profile directories.
+    """
+    from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+
+    resolved = _resolve_home(home)
+    root = _hermes_root(resolved)
+    me = _profile_name(resolved)
+    result: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for raw_name in _swallow(lambda: _configured_bot_profile_names(resolved), []):
+        if not isinstance(raw_name, str):
+            continue
+        try:
+            name = normalize_profile_name(raw_name)
+            validate_profile_name(name)
+        except (TypeError, ValueError):
+            continue
+        if name == me or name in seen:
+            continue
+        profile_home = resolve_live_profile_home(root, name)
+        if profile_home is None:
+            continue
+        seen.add(name)
+        result.append((name, profile_home))
+    return result
 
 
 def _read_yaml_dict(path: Path, needle: str | None = None) -> dict | None:
@@ -110,15 +170,11 @@ def _is_bot_managed(profile_dir: Path) -> bool:
     return _bots_meta(_read_yaml_dict(profile_dir / "profile.yaml", "hermes-bots")) is not None
 
 
-def _any_managed(root: Path) -> bool:
-    return any(_is_bot_managed(d) for _n, d in _roster(root))
-
-
 def is_bot_mode_managed(home: str | os.PathLike | None = None) -> bool:
-    """True when ANY profile on this install is Bot-Mode-managed. Never raises. The
+    """True when the current profile is Bot-Mode-managed. Never raises. The
     ``message_agent`` injection gate — deliberately independent of the protocol section's
     emptiness: a SOUL.md carrying the legacy protocol gets an empty section but still gets the tool."""
-    return _swallow(lambda: _any_managed(_hermes_root(_resolve_home(home))), False)
+    return _swallow(lambda: _is_bot_managed(_resolve_home(home)), False)
 
 
 def _role_line(*parts: str) -> str:
@@ -200,10 +256,10 @@ def _peer_paragraph(root: Path) -> str:
 def _build_section(home: Path) -> str:
     root = _hermes_root(home)
     me = _profile_name(home)
-    if not _any_managed(root):
+    if not _is_bot_managed(home):
         return ""
 
-    roster_lines = [_bullet(f"@{_handle(name)}", _profile_role(d)) for name, d in _roster(root) if name != me]
+    roster_lines = [_bullet(f"@{_handle(name)}", _profile_role(d)) for name, d in resolve_bot_roster(home)]
     roster_block = "\n".join(roster_lines) or "- (no teammates yet)"
 
     return (
@@ -300,11 +356,11 @@ def capability_fingerprint(home: str | os.PathLike | None = None) -> str:
     surface["soul"] = _swallow(_soul, "")
     surface["skills"] = _swallow(_skills, [])
     try:
-        roster = _roster(root)
-        surface["roster"] = sorted(n for n, d in roster if _is_bot_managed(d))
+        roster = resolve_bot_roster(resolved)
+        surface["roster"] = [n for n, _d in roster]
         # Roles are part of the messaging surface: renaming a bot or editing a
         # description must refresh the roster block teammates pick recipients from.
-        surface["roster_roles"] = sorted(f"{n}:{_profile_role(d)}" for n, d in roster)
+        surface["roster_roles"] = [f"{n}:{_profile_role(d)}" for n, d in roster]
     except Exception:
         surface["roster"] = []
     # Protocol-text version salt: bumping it refreshes every eternal Bot Chat

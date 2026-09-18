@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import {
   access,
   copyFile,
@@ -17,13 +18,47 @@ import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveRepoRoot } from '../services/workspaceRoot';
-import { runHermesCli, type HermesCliRunner } from './botDmPlugin';
 import type { AgentTerminalOwner } from './agentTerminal';
 
 export const HERMES_CARD_TOOLS_PLUGIN_KEY = 'card-tools';
 export const HERMES_CARD_TOOLS_TOOLSET = 'card-tools';
 
 const SOURCE_FILES = ['__init__.py', 'plugin.yaml'] as const;
+const MAX_CLI_OUTPUT_BYTES = 16_384;
+
+export type HermesCliRunOptions = {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  windowsHide: boolean;
+};
+
+export type HermesCliRunner = (
+  executable: string,
+  args: string[],
+  options: HermesCliRunOptions,
+) => Promise<void>;
+
+export const runHermesCli: HermesCliRunner = async (executable, args, options) => {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, args, {
+      cwd: options.cwd,
+      env: options.env,
+      windowsHide: options.windowsHide,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const capture = (chunk: Buffer | string) => {
+      output = `${output}${String(chunk)}`.slice(-MAX_CLI_OUTPUT_BYTES);
+    };
+    child.stdout?.on('data', capture);
+    child.stderr?.on('data', capture);
+    child.once('error', () => reject(new Error('hermes_card_tools_plugin_enable_spawn_failed')));
+    child.once('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`hermes_card_tools_plugin_enable_failed:${code ?? 'signal'}:${output.trim()}`));
+    });
+  });
+};
 
 export type HermesCardPluginTool = {
   canonicalName: string;

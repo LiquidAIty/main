@@ -18,7 +18,6 @@ import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
 import worldviewRoutes from './worldview.routes';
 import agentTerminalRoutes from './agentTerminal.routes';
-import hermesBotDmRoutes from './hermesBotDm.routes';
 import hermesCardToolsRoutes from './hermesCardTools.routes';
 
 const router = Router();
@@ -33,8 +32,6 @@ router.use('/health', health);
 // The official Python MCP host calls these process-secret endpoints. Mount the
 // bridge before browser auth so it cannot be converted into an anonymous user.
 router.use('/main', internalMainMcpRoutes);
-// Process-bound, signed, loopback-only native message_agent delivery.
-router.use('/hermes-bot-dm', hermesBotDmRoutes);
 router.use('/hermes-card-tools', hermesCardToolsRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor, cardRuntime);

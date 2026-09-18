@@ -14,7 +14,7 @@ from app.python_models.alpaca_market_data import (
 from app.python_models.autogen_orchestrator import dispatch_stored_runtime
 from app.python_models.card_domain import (
     CardDomainError,
-    resolve_hermes_bot_dm_card,
+    resolve_hermes_bot_rosters,
     resolve_hermes_card_tools,
     begin_main_chat_run,
     begin_run,
@@ -291,39 +291,6 @@ def card_script_header(payload: dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 
-@app.post("/domain/hermes-bot-dm/resolve")
-def domain_hermes_bot_dm_resolve_card(payload: dict[str, Any]):
-    expected_fields = {"projectId", "deckId", "sourceCardId", "targetProfile"}
-    try:
-        if set(payload) != expected_fields:
-            raise CardDomainError("hermes_bot_dm_resolution_payload_invalid")
-        return {
-            "ok": True,
-            **resolve_hermes_bot_dm_card(
-                payload.get("projectId"),
-                payload.get("deckId"),
-                payload.get("sourceCardId"),
-                payload.get("targetProfile"),
-            ),
-        }
-    except CardDomainError as err:
-        message = str(err)
-        status = (
-            404 if message in {
-                "project_not_found",
-                "deck_not_found",
-                "hermes_bot_dm_source_card_not_found",
-                "hermes_bot_dm_profile_not_found",
-            }
-            else 409 if message in {
-                "hermes_bot_dm_profile_not_unique",
-                "hermes_bot_dm_card_revision_missing",
-            }
-            else 400
-        )
-        raise HTTPException(status_code=status, detail=message) from err
-
-
 @app.post("/domain/hermes-card-tools/resolve")
 def domain_hermes_card_tools_resolve(payload: dict[str, Any]):
     expected_fields = {
@@ -352,6 +319,15 @@ def domain_hermes_card_tools_resolve(payload: dict[str, Any]):
 def domain_deck_read(project_id: str, deck_id: str):
     try:
         return {"ok": True, **load_deck(project_id, deck_id)}
+    except CardDomainError as err:
+        status = 404 if str(err) in {"project_not_found", "deck_not_found"} else 409
+        raise HTTPException(status_code=status, detail=str(err)) from err
+
+
+@app.get("/domain/hermes-bot-rosters/{project_id}/{deck_id}")
+def domain_hermes_bot_rosters(project_id: str, deck_id: str):
+    try:
+        return {"ok": True, **resolve_hermes_bot_rosters(project_id, deck_id)}
     except CardDomainError as err:
         status = 404 if str(err) in {"project_not_found", "deck_not_found"} else 409
         raise HTTPException(status_code=status, detail=str(err)) from err

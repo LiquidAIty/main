@@ -3,6 +3,7 @@
 import textwrap
 
 import pytest
+import yaml
 
 from tools import bot_mode_probe
 
@@ -14,7 +15,24 @@ def _fresh_cache():
     bot_mode_probe._reset_cache_for_tests()
 
 
-def _make_bot_profile(root, name, *, managed=True, soul=None):
+def _write_bot_roster(home, names):
+    path = home / "config.yaml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    config = config if isinstance(config, dict) else {}
+    bot_mode = config.get("bot_mode") if isinstance(config.get("bot_mode"), dict) else {}
+    bot_mode["roster"] = list(names)
+    config["bot_mode"] = bot_mode
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+
+def _mark_managed(home):
+    (home / "profile.yaml").write_text(
+        "ui_meta:\n  hermes-bots:\n    shape: cloud\n",
+        encoding="utf-8",
+    )
+
+
+def _make_bot_profile(root, name, *, managed=True, soul=None, roster=None):
     d = root / "profiles" / name
     d.mkdir(parents=True, exist_ok=True)
     if managed:
@@ -31,6 +49,8 @@ def _make_bot_profile(root, name, *, managed=True, soul=None):
         )
     if soul is not None:
         (d / "SOUL.md").write_text(soul, encoding="utf-8")
+    if roster is not None:
+        _write_bot_roster(d, roster)
     return d
 
 
@@ -41,13 +61,15 @@ def test_roster_excludes_infra_dirs_and_tombstones(tmp_path):
 
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
     for stray in ("sessions", "logs"):
         (home / "profiles" / stray / "cron").mkdir(parents=True)
     ghost = _make_bot_profile(home, "ghost", managed=True)
     mark_named_profile_deleted(ghost)
+    _write_bot_roster(home, ["sessions", "researcher", "ghost", "researcher"])
 
-    assert [name for name, _ in bot_mode_probe._roster(home)] == ["default", "researcher"]
+    assert [name for name, _ in bot_mode_probe.resolve_bot_roster(home)] == ["researcher"]
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
     assert "`@researcher`" in section
     assert not any(f"`@{s}`" in section for s in ("sessions", "logs", "ghost", ".deleted"))
@@ -60,10 +82,12 @@ def test_silent_when_no_profile_is_bot_managed(tmp_path):
     assert bot_mode_probe.get_bot_mode_protocol_section(home) == ""
 
 
-def test_emits_for_default_when_any_profile_is_managed(tmp_path):
+def test_emits_for_default_with_explicit_roster(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
 
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
     assert section.startswith("## Messaging other agents")
@@ -77,7 +101,7 @@ def test_emits_for_default_when_any_profile_is_managed(tmp_path):
 def test_emits_for_named_profile_with_own_handle(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
-    profile_dir = _make_bot_profile(home, "coder", managed=True)
+    profile_dir = _make_bot_profile(home, "coder", managed=True, roster=["default"])
 
     section = bot_mode_probe.get_bot_mode_protocol_section(profile_dir)
     assert "@coder" in section
@@ -87,12 +111,45 @@ def test_emits_for_named_profile_with_own_handle(tmp_path):
     assert "`@coder`" not in roster_block
 
 
+def test_explicit_roster_preserves_order_and_filters_unsafe_entries(tmp_path):
+    from hermes_constants import mark_named_profile_deleted
+
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    sender = _make_bot_profile(home, "sender", managed=True)
+    for name in ("alpha", "beta"):
+        _make_bot_profile(home, name, managed=True)
+    ghost = _make_bot_profile(home, "ghost", managed=True)
+    mark_named_profile_deleted(ghost)
+    _write_bot_roster(
+        sender,
+        ["beta", "sender", "bad profile", "beta", "default", "ghost", "missing", 7, "alpha"],
+    )
+
+    assert [name for name, _ in bot_mode_probe.resolve_bot_roster(sender)] == [
+        "beta", "default", "alpha",
+    ]
+
+
+def test_missing_or_empty_roster_never_falls_back_to_live_profiles(tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    _mark_managed(home)
+    _make_bot_profile(home, "unwired", managed=True)
+
+    assert bot_mode_probe.resolve_bot_roster(home) == []
+    section = bot_mode_probe.get_bot_mode_protocol_section(home)
+    assert "- (no teammates yet)" in section
+    assert "`@unwired`" not in section
+
+
 def test_roster_lines_carry_roles(tmp_path):
     """Bots must know WHO to message: the roster carries title/description."""
     import textwrap as _tw
 
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     d = home / "profiles" / "researcher"
     d.mkdir(parents=True)
     (d / "profile.yaml").write_text(
@@ -106,6 +163,7 @@ def test_roster_lines_carry_roles(tmp_path):
         ),
         encoding="utf-8",
     )
+    _write_bot_roster(home, ["researcher"])
 
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
     assert "`@researcher`" in section
@@ -117,7 +175,9 @@ def test_soul_legacy_protocol_no_longer_suppresses_live_section(tmp_path):
     """Plugin-era SOUL append is stripped at load time; the live roster is the only copy."""
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "coder", managed=True)
+    _write_bot_roster(home, ["coder"])
     (home / "SOUL.md").write_text(
         "# Me\n\n## Messaging other agents\nold plugin text\n", encoding="utf-8"
     )
@@ -128,7 +188,9 @@ def test_soul_legacy_protocol_no_longer_suppresses_live_section(tmp_path):
 def test_deterministic_across_calls(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
     first = bot_mode_probe.get_bot_mode_protocol_section(home)
     # Even if the filesystem changes, the cached result must be byte-stable
     # for the life of the process (prompt-cache invariant).
@@ -145,7 +207,7 @@ def test_never_raises_on_garbage(tmp_path, monkeypatch):
     (profiles / "profile.yaml").write_text("ui_meta: [unclosed", encoding="utf-8")
     assert isinstance(bot_mode_probe.get_bot_mode_protocol_section(home), str)
 
-    monkeypatch.setattr(bot_mode_probe, "_roster", lambda root: (_ for _ in ()).throw(OSError("boom")))
+    monkeypatch.setattr(bot_mode_probe, "resolve_bot_roster", lambda root: (_ for _ in ()).throw(OSError("boom")))
     bot_mode_probe._reset_cache_for_tests()
     assert bot_mode_probe.get_bot_mode_protocol_section(home) == ""
 
@@ -156,14 +218,18 @@ def test_never_raises_on_garbage(tmp_path, monkeypatch):
 def test_fingerprint_stable_when_nothing_changes(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
     assert bot_mode_probe.capability_fingerprint(home) == bot_mode_probe.capability_fingerprint(home)
 
 
 def test_fingerprint_changes_on_each_capability_axis(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
     base = bot_mode_probe.capability_fingerprint(home)
 
     # new skill installed
@@ -174,13 +240,17 @@ def test_fingerprint_changes_on_each_capability_axis(tmp_path):
     assert after_skill != base
 
     # toolset pin changed
-    (home / "config.yaml").write_text("tools:\n  enabled_toolsets: [web]\n", encoding="utf-8")
+    (home / "config.yaml").write_text(
+        "tools:\n  enabled_toolsets: [web]\nbot_mode:\n  roster: [researcher]\n",
+        encoding="utf-8",
+    )
     after_tools = bot_mode_probe.capability_fingerprint(home)
     assert after_tools != after_skill
 
     # MCP server added
     (home / "config.yaml").write_text(
-        "tools:\n  enabled_toolsets: [web]\nmcp_servers:\n  github:\n    preset: github\n",
+        "tools:\n  enabled_toolsets: [web]\nmcp_servers:\n  github:\n    preset: github\n"
+        "bot_mode:\n  roster: [researcher]\n",
         encoding="utf-8",
     )
     after_mcp = bot_mode_probe.capability_fingerprint(home)
@@ -193,13 +263,16 @@ def test_fingerprint_changes_on_each_capability_axis(tmp_path):
 
     # teammate added to the roster
     _make_bot_profile(home, "coder", managed=True)
+    _write_bot_roster(home, ["researcher", "coder"])
     assert bot_mode_probe.capability_fingerprint(home) != after_soul
 
 
 def test_stored_prompt_staleness(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
 
     stamped = "system stuff\n\n" + bot_mode_probe.epoch_line(home)
     # unchanged surface → not stale (cache preserved)
@@ -221,7 +294,9 @@ def test_stored_prompt_staleness(tmp_path):
 def test_legacy_bot_chat_upgrade(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
 
     legacy = "old prompt with no protocol and no stamp"
     # legacy Bot Chat on a managed install → upgrade once
@@ -249,6 +324,7 @@ def test_legacy_bot_chat_upgrade(tmp_path):
 def test_peer_paragraph_absent_without_peers(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
 
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
@@ -259,6 +335,7 @@ def test_peer_paragraph_absent_without_peers(tmp_path):
 def test_peer_paragraph_lists_registered_peers(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
     (home / "config.yaml").write_text(
         textwrap.dedent(
@@ -272,6 +349,7 @@ def test_peer_paragraph_lists_registered_peers(tmp_path):
         ),
         encoding="utf-8",
     )
+    _write_bot_roster(home, ["researcher"])
 
     section = bot_mode_probe.get_bot_mode_protocol_section(home)
     assert "message_agent" in section
@@ -283,11 +361,13 @@ def test_peer_paragraph_lists_registered_peers(tmp_path):
 def test_fingerprint_changes_when_a_peer_is_registered(tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir()
+    _mark_managed(home)
     _make_bot_profile(home, "researcher", managed=True)
+    _write_bot_roster(home, ["researcher"])
 
     before = bot_mode_probe.capability_fingerprint(home)
     (home / "config.yaml").write_text(
-        "bot_peers:\n  spark:\n    url: http://spark.lan:8377\n",
+        "bot_peers:\n  spark:\n    url: http://spark.lan:8377\nbot_mode:\n  roster: [researcher]\n",
         encoding="utf-8",
     )
     after = bot_mode_probe.capability_fingerprint(home)

@@ -117,10 +117,9 @@ not the fabricated standalone tool initially suspected.
 | Gateway consolidation | Backend source and focused terminal/Run contracts | Canonical reload; real input, stream, persisted completion, reconnect, and Stop |
 | Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
 | Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
-| Native Card Bot Mode | Source-authenticated orange-wire authorization followed by stock `message_agent` once | Real attributed reply acceptance through the target canonical `Bot Chat` |
+| Native Card Bot Mode | Python projects ordered symmetric orange peers into each native profile's explicit `bot_mode.roster`; prompt and stock `message_agent` share one fail-closed resolver; duplicate host/plugin authorization is removed | Canonical reload, ordinary Main, real attributed orange-peer reply, unwired-profile refusal, and no-alternate-machinery inspection |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
-| Bot Mode | Loaded Main called stock `message_agent`; Hermes acknowledged once, ran the Builder-profile canonical `Bot Chat` helper, emitted Main's native completion notification, and created no Builder Run | Hermes terminal children strip the managed Gateway credential, so Builder's protocol-required `message_agent` reply fails closed; add a narrow upstream identity/credential contract before claiming attributed reply acceptance |
 | Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |
 | Production boundaries | Backend and client production typechecks | Loaded build/source hashes and full product acceptance |
 
@@ -130,19 +129,26 @@ not the fabricated standalone tool initially suspected.
   `/idd/script-tools` and `/cards/script/validate` are restored, the Python compiler and Card editor are
   present again, saved Script data remains readable, and ordinary Runs retain their exact model-visible
   tool presentation while native execution reports `card_script_native_bridge_unavailable`.
-- The focused Python Card-domain suite covers the Hermes model-facing removal of the internal
-  `card.run_assistant_agent` handle while native `message_agent` remains the conversational doorway.
+- The focused Python Card-domain suite covers reciprocal ordered orange projection, blue-edge isolation,
+  disabled/unwired exclusion, two-sided revocation, and profile-ambiguity failure. Native `message_agent`
+  remains the conversational doorway; no application Bot host/authentication route survives.
 - Client production typecheck passes. Client spec typecheck has unrelated existing errors in Agent
   Manager mocks, Testing Library role options, graph/team specs, and imported Hermes desktop aliases/types;
   none references a file removed by this cleanup.
 - Hermes' repository virtual environment does not contain `pytest`; this cleanup does not install a
   dependency into the vendored runtime. Python compilation and available application tests are separate proof.
 - The Hermes vendor register pins upstream 0.21.3 at
-  `73521a8e375a867fae14ec0579f2dfb47aa0017e`; its intentional divergence manifest contains only Team.
+  `73521a8e375a867fae14ec0579f2dfb47aa0017e`; its intentional divergence manifest contains Team and the
+  bounded profile-scoped native Bot-roster contract. Bot delivery remains stock Hermes.
 - Direct Codex CBM produced useful structural evidence, but repeated frontend calls accumulated duplicate
   client processes. Twenty-seven exact duplicate frontends were stopped while the one frontend owning the
   upstream daemon was preserved. No reindex, cache mutation, alternate host, or daemon replacement was
   performed; further discovery used bounded current-source reads.
+- The canonical roster endpoint loaded the real saved `deck_builder` after removing an invalid dependency on
+  absent legacy `deckRevision` metadata. Startup then stopped at the unchanged Gateway-client module boundary:
+  `json-rpc-gateway.ts` imports missing `json-rpc-channel.js` although the source tree contains
+  `json-rpc-channel.ts`. MCP publication separately stayed at `503` after its native CBM frontend timed out
+  attaching to the already-active daemon. This Bot pass did not change either unrelated owner.
 
 These are not converted into passing results by removing tests, adding mocks, fabricating data, or
 restoring the retired runtime.
@@ -160,22 +166,23 @@ restoring the retired runtime.
 
 ## Next bounded proof boundary
 
-The native Hermes-plugin route is implemented and has loaded internal-tool proof. Continue only with:
+The native profile-scoped Bot roster and application projection are implemented in the working tree. The
+canonical load reached saved-state projection but failed before a Hermes Card session at the existing shared
+TypeScript Gateway module-resolution boundary. Repair and independently prove that exact canonical Gateway
+client import in a separately authorized pass; do not fold it into Bot delivery or roster logic. Once that
+boundary and the independently owned MCP/CBM readiness failure are healthy, continue with existing-state
+acceptance:
 
-- a separately approved, upstream-defensible Hermes contract that lets a stock Bot-Chat delivery helper
-  prove the receiving profile/runtime identity when it calls `message_agent` back, without exposing or
-  reusing another Gateway's credential;
-- upstream tests covering credential scrubbing, canonical Bot Chat continuity, exact source identity,
-  one acknowledgement, and attributed completion delivery;
-- removal of no LiquidAIty guard until that native contract exists; and
-- live CBM/Graphiti external-tool proof through only the backing connections derived from saved individual
-  grants, without widening to sibling server tools.
+- prove ordinary Main returns a real Hermes response;
+- inspect existing saved topology without creating Cards or edges;
+- send one harmless message between two existing enabled orange-connected Hermes Cards;
+- prove the source roster excludes an existing unwired live profile and stock `message_agent` rejects it;
+- prove the receiving canonical `Bot Chat`, sender attribution, native acknowledgement/completion, and
+  attributed reply notification; and
+- prove Hermes chose delivery without a Card Run, application queue, callback, waiter, correlator,
+  alternate executor, or duplicate Bot session.
 
-Do not edit `Hermes/`, restore ACP, route internal Hermes tools through MCP, create a second catalog or
-dispatcher, or use profile configuration as invocation-time authorization. Live model sends and browser
-acceptance follow source, focused-test, typecheck, and canonical-stack readiness proof.
-
-This implementation has an explicit anti-ACP stop condition: if stock plugin handlers plus existing
-native session/task identity cannot support one authenticated call into the Python operation owner, stop
-and document that precise public-contract gap. Do not add a host execution lifecycle, callback registry,
+Do not force live/offline branches by changing state, restore the deleted Bot host/plugin, expose a Gateway
+credential, add a delivery adapter, or begin Builder/AutoBot work. If existing saved state lacks two valid
+orange-connected Cards, stop at that exact product-proof blocker.
 worker protocol, session mirror, transcript projection, capability daemon, or replacement runtime.
