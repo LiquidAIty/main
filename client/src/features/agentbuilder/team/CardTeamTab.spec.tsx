@@ -12,7 +12,7 @@ describe('Team Card recovery', () => {
       ok: String(input) === '/api/cards/options',
       json: async () => ({ ok: true, catalogs: {}, fields: [
         { name: 'delegationRole', label: 'Delegate task', path: 'delegationRole', control: 'select',
-          options: ['off', 'profile', 'team'].map(value => ({ value, label: value })) },
+          options: ['off', 'team'].map(value => ({ value, label: value })) },
       ] }),
     })));
     const legacy = { mode: 'auto', maxWorkers: 3, retryLimit: 1 };

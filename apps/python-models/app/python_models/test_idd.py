@@ -489,6 +489,9 @@ def test_editor_fields_resolve_only_their_referenced_definitions():
     from jsonschema import Draft202012Validator
     fields = {field["name"]: field for field in materialize_card_editor([])["fields"]}
     assert "$defs" not in fields["delegationRole"]["valueSchema"]
+    assert fields["delegationRole"]["valueSchema"]["enum"] == [
+        "off", "leaf", "orchestrator", "team",
+    ]
     assert "teamMode" not in fields
     assert not {"teamMaxWorkers", "teamRetryLimit", "teamWorkerModel", "teamLeadModel"} & fields.keys()
     schema = fields["subagentModel"]["valueSchema"]

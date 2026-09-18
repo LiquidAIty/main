@@ -67,9 +67,9 @@ class TestDelegateRequirements(unittest.TestCase):
         self.assertIn("tasks", props)
         self.assertIn("goal", props)
         self.assertIn("context", props)
-        self.assertEqual(props["role"]["enum"], ["team", "profile"])
-        self.assertIn("target_profile", props)
-        self.assertIn("dataAnchors", props)
+        self.assertEqual(props["role"]["enum"], ["team"])
+        removed_profile_fields = {"target_" + "profile", "data" + "Anchors"}
+        self.assertTrue(removed_profile_fields.isdisjoint(props))
         self.assertNotIn("output_schema", props)
         task_props = props["tasks"]["items"]["properties"]
         self.assertIn("goal", task_props)
@@ -136,7 +136,7 @@ class TestDelegateRequirements(unittest.TestCase):
 
         for parameters in (overrides["parameters"], definition["parameters"]):
             self.assertIn("up to 7", parameters["properties"]["tasks"]["description"])
-            self.assertEqual(parameters["properties"]["role"]["enum"], ["team", "profile"])
+            self.assertEqual(parameters["properties"]["role"]["enum"], ["team"])
             self.assertNotIn("role", parameters["properties"]["tasks"]["items"]["properties"])
         # Depth ceiling now rides the depth-derived recursion rule in the
         # top-level text (only rendered when nesting is available).
@@ -1843,10 +1843,10 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         self.assertEqual(child._delegate_role, "orchestrator")
 
     def test_schema_advertises_only_persistent_top_level_roles(self):
-        """Temporary-child capability remains depth-derived; only Team/Profile are explicit."""
+        """Temporary-child capability remains depth-derived; only Team is explicit."""
         from tools.delegate_tool import DELEGATE_TASK_SCHEMA
         props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        self.assertEqual(props["role"]["enum"], ["team", "profile"])
+        self.assertEqual(props["role"]["enum"], ["team"])
         self.assertNotIn("role", props["tasks"]["items"]["properties"])
 
     def test_schema_omits_acp_transport_fields(self):

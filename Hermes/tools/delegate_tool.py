@@ -59,7 +59,7 @@ from tools.delegate_tool_results import (  # noqa: F401
 )
 
 _ROLES = frozenset({"leaf", "orchestrator"})
-_TOP_LEVEL_ROLES = frozenset({*_ROLES, "team", "profile"})
+_TOP_LEVEL_ROLES = frozenset({*_ROLES, "team"})
 
 # Nested delegation is granted by depth/role in _build_child_agent, never by the
 # model naming toolsets (there is no model-facing toolsets argument).
@@ -428,17 +428,16 @@ def _build_children(
 
 def delegate_task(
     goal: Optional[str] = None, context: Optional[str] = None, tasks: Optional[List[Dict[str, Any]]] = None,
-    max_iterations: Optional[int] = None, role: Optional[str] = None, target_profile: Optional[str] = None,
-    data_anchors: Optional[List[Dict[str, Any]]] = None, background: Optional[bool] = None,
+    max_iterations: Optional[int] = None, role: Optional[str] = None, background: Optional[bool] = None,
     output_schema: Optional[Dict[str, Any]] = None, images: Optional[List[str]] = None, action: Optional[str] = None,
     subagent_id: Optional[str] = None, message: Optional[str] = None, parent_agent=None,
     credentials_cfg: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Spawn temporary children, submit one durable Team mission, or invoke one authorized profile.
+    """Spawn temporary children or submit one durable Team mission.
 
     ``action`` list/steer/stop controls temporary children synchronously. ``tasks[]`` retains upstream's
-    depth-derived temporary-child behavior; explicit top-level ``team`` and ``profile`` roles branch before
-    temporary-child credential or runtime construction.
+    depth-derived temporary-child behavior; explicit top-level ``team`` branches before temporary-child
+    credential or runtime construction.
     """
     if parent_agent is None:
         return tool_error("delegate_task requires a parent agent context.")
@@ -453,7 +452,7 @@ def delegate_task(
     # create another temporary or durable delegation tree.
     if os.environ.get("HERMES_KANBAN_TEAM_WORKER", "").strip() == "1":
         return tool_error(
-            "Team workers cannot delegate nested team, profile, leaf, or orchestrator work."
+            "Team workers cannot delegate nested team, leaf, or orchestrator work."
         )
 
     # Operator kill switch (TUI / delegation.pause RPC): blocks NEW spawns only.
@@ -464,8 +463,6 @@ def delegate_task(
         )
 
     top_role = _normalize_top_level_role(role)
-    if top_role != "profile" and data_anchors is not None:
-        return tool_error("dataAnchors is accepted only for role='profile'.")
     # background applies to single tasks AND batches: a batch is ONE async unit
     # that joins on every child and re-enters as a single consolidated message.
     background = is_truthy_value(background, default=False) if background is not None else False
@@ -512,63 +509,6 @@ def delegate_task(
             )
         except Exception as exc:
             return tool_error(f"Team dispatch failed: {exc}")
-
-    if top_role == "profile":
-        if tasks is not None:
-            return tool_error(
-                "role='profile' accepts exactly one goal/context task; tasks[] "
-                "batches remain available only for leaf/orchestrator."
-            )
-        if not isinstance(goal, str) or not goal.strip():
-            return tool_error("role='profile' requires one non-empty goal.")
-        if context is not None and not isinstance(context, str):
-            return tool_error("role='profile' context must be a string when provided.")
-        if output_schema is not None:
-            return tool_error("role='profile' does not accept output_schema.")
-        if images is not None:
-            return tool_error("role='profile' does not accept images.")
-        if data_anchors is not None:
-            if not isinstance(data_anchors, list):
-                return tool_error("role='profile' dataAnchors must be an array.")
-            if len(data_anchors) > 16:
-                return tool_error("role='profile' accepts at most 16 dataAnchors.")
-            if not all(isinstance(anchor, dict) for anchor in data_anchors):
-                return tool_error("role='profile' dataAnchors entries must be objects.")
-        profile = str(target_profile or "").strip().lower()
-        allowed = {
-            str(item.get("profile") or "").strip().lower()
-            for item in getattr(parent_agent, "_host_profile_targets", []) or []
-            if isinstance(item, dict)
-        }
-        if not profile or profile not in allowed:
-            return tool_error("Profile delegation target is not authorized for this session.")
-        requester = getattr(parent_agent, "_host_execution_requester", None)
-        parent_context_id = str(
-            getattr(parent_agent, "_host_execution_context_id", "") or ""
-        ).strip()
-        session_id = str(
-            getattr(parent_agent, "_host_execution_session_id", "") or ""
-        ).strip()
-        if not callable(requester) or not parent_context_id or not session_id:
-            return tool_error("Profile delegation host context is unavailable.")
-        import uuid
-
-        try:
-            response = requester("session/delegate_profile", {
-                "sessionId": session_id,
-                "parentExecutionContextId": parent_context_id,
-                "nativeChildId": f"profile-{uuid.uuid4().hex[:12]}",
-                "targetProfile": profile,
-                "background": background,
-                "goal": goal.strip(),
-                "context": context or "",
-                **({"dataAnchors": data_anchors} if data_anchors is not None else {}),
-            })
-        except Exception as exc:
-            return tool_error(f"Profile delegation failed: {exc}")
-        if not isinstance(response, dict):
-            return tool_error("Profile delegation returned an invalid host response.")
-        return json.dumps(response, ensure_ascii=False)
 
     # credentials_cfg (internal callers only, e.g. /review → auxiliary.review) is
     # a per-call routing owner shaped like the delegation config section. Keep
@@ -725,34 +665,19 @@ DELEGATE_TASK_SCHEMA = {
         "properties": {
             "goal": _p(
                 "string",
-                "One self-contained mission for role='team' or role='profile'.",
+                "One self-contained mission for role='team'.",
             ),
             "context": _p(
                 "string",
-                "Optional explicit context for the top-level Team or profile mission.",
+                "Optional explicit context for the top-level Team mission.",
             ),
             "role": _p(
                 "string",
-                "Use team for one durable Auto-Kanban mission or profile for one host-authorized existing profile; "
-                "ordinary temporary subagents use tasks[].",
-                enum=["team", "profile"],
-            ),
-            "target_profile": _p(
-                "string",
-                "Host-authorized existing profile required for role='profile'.",
-            ),
-            "dataAnchors": _p(
-                "array",
-                "Optional bounded native data references for role='profile'; the receiving host validates them.",
-                items={"type": "object"},
-                maxItems=16,
-            ),
-            "background": _p(
-                "boolean",
-                "For role='profile', return host acceptance before completion when supported.",
+                "Use team for one durable Auto-Kanban mission; ordinary temporary subagents use tasks[].",
+                enum=["team"],
             ),
             # Temporary subagents retain upstream's tasks[] shape. The top-level
-            # goal/context fields above are only for Team/Profile; output_schema
+            # goal/context fields above are only for Team; output_schema
             # remains available per temporary task and handler-only for old wires.
             "tasks": {
                 "type": "array",
@@ -825,11 +750,9 @@ from tools.registry import registry, tool_error
 def _model_background_value(args: dict, parent_agent=None) -> bool:
     """Resolve the model-facing background flag without changing temporary-child behavior.
 
-    Profile delegation preserves its explicit host contract. Upstream temporary top-level delegation remains one
-    asynchronous unit, while an orchestrator child stays synchronous because it needs its workers in-turn.
+    Upstream temporary top-level delegation remains one asynchronous unit, while an orchestrator child stays
+    synchronous because it needs its workers in-turn.
     """
-    if _normalize_top_level_role(args.get("role")) == "profile":
-        return is_truthy_value(args.get("background"), default=False)
     return not getattr(parent_agent, "_delegate_depth", 0) > 0
 
 _MODEL_HIDDEN_TASK_FIELDS = {"acp_command", "acp_args"}
@@ -847,8 +770,7 @@ registry.register(
     schema=DELEGATE_TASK_SCHEMA,
     handler=lambda args, **kw: delegate_task(
         goal=args.get("goal"), context=args.get("context"), tasks=_strip_model_hidden_task_fields(args.get("tasks")),
-        max_iterations=args.get("max_iterations"), role=args.get("role"), target_profile=args.get("target_profile"),
-        data_anchors=args.get("dataAnchors"),
+        max_iterations=args.get("max_iterations"), role=args.get("role"),
         background=_model_background_value(args, kw.get("parent_agent")), output_schema=args.get("output_schema"),
         images=args.get("images"), action=args.get("action"), subagent_id=args.get("subagent_id"), message=args.get("message"),
         parent_agent=kw.get("parent_agent"),

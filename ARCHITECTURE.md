@@ -162,18 +162,19 @@ Native Hermes delegation remains model-selected within the Card's native capabil
 
 - upstream `leaf` and `orchestrator` use Hermes' temporary child execution;
 - retained `team` creates one durable native Auto-Kanban root and lets Hermes own decomposition,
-  dispatch, workers, retry, review, synthesis, notification, and rejoin;
-- retained `profile` validates an exact trusted roster and requests another saved profile, but the
-  current Gateway integration does not provide its trusted host request context, so it fails closed.
+  dispatch, workers, retry, review, synthesis, notification, and rejoin.
+
+Saved-Card conversation is not delegation. One enabled orange `flow` connection between two enabled
+Hermes agent Cards authorizes either endpoint to contact the other saved profile through native
+`message_agent`; Hermes owns the receiving profile's canonical `Bot Chat` and the conversation.
 
 LiquidAIty has no TypeScript participant classifier, task-count router, callback scheduler, copied
 Kanban database, or Team receipt product. `apps/backend/src/hermes/kanbanRunRecovery.ts` monitors only
 eligible existing active `runtimeMode === "kanban"` rows and does not create new Team work.
 
 The complete Hermes fork scope and rollback contract is
-[`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). Exactly two
-LiquidAIty-owned Hermes changes are retained: `delegate_task(role="team")` and
-`delegate_task(role="profile")`.
+[`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). Exactly one
+LiquidAIty-owned Hermes change is retained: `delegate_task(role="team")`.
 
 ## Native Hermes Bot Mode
 
@@ -183,8 +184,9 @@ checked-in Hermes documentation. It is not ACP residue and must not be deleted o
 LiquidAIty cleanup.
 
 The current working tree contains a thin managed `message_agent` interception boundary that
-authenticates the source runtime, resolves the receiving saved Card's exact Hermes profile, and then
-resumes stock Hermes delivery once. It does not reproduce Hermes Desktop's Bot UI or own native Bot
+authenticates the source runtime, resolves the selected profile only when it is the other endpoint of an
+enabled orange `flow`, and then resumes stock Hermes delivery once. It does not reproduce
+Hermes Desktop's Bot UI or own native Bot
 queueing, ordering, inference, completion, history, or notification. Loaded Main-to-Builder proof now
 reaches stock `message_agent`, its asynchronous acknowledgement, Builder's canonical `Bot Chat` helper,
 and Main's native background-completion event without creating a Builder Run. The reply itself is blocked:
@@ -354,7 +356,7 @@ upstream forks or first-party runtime source, not general cleanup targets. Prefe
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-For Hermes, the only retained LiquidAIty divergences are the two entries in
+For Hermes, the only retained LiquidAIty divergence is the Team entry in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Upstream ACP and native Bot Mode are not LiquidAIty divergences.
 No other Hermes customization is silently accepted by this document.
 
@@ -364,8 +366,6 @@ No other Hermes customization is silently accepted by this document.
   current working-tree source. Neither is loaded-process proof.
 - The retained Team path still needs real Gateway input, native worker activity, synthesis, and returned
   output through the same saved Run.
-- The retained profile branch is source/unit-only and currently fails closed because no supported
-  Gateway request owner supplies the trusted roster and receiving-Card invocation.
 - Native Bot Mode is present in Hermes and the thin managed Card/profile interception boundary is loaded.
   Main-to-Builder reached stock acknowledgement, Builder's canonical `Bot Chat` helper, and Main's native
   completion notification without a fabricated Builder Run. Attributed reply acceptance is blocked because

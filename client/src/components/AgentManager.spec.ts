@@ -42,7 +42,7 @@ const runtimeOptions = {
     { name: 'provider', options: ['openai', 'openrouter'] },
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
     { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
-    { name: 'delegationRole', options: ['off', 'profile', 'leaf', 'orchestrator', 'team'] },
+    { name: 'delegationRole', options: ['off', 'leaf', 'orchestrator', 'team'] },
     ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
   ].map(({ name, options }) => ({ name, label: name, path: name, control: 'select',
     options: options.map((value) => ({ value, label: value })) })),
@@ -87,7 +87,7 @@ describe('AgentManager active builder config', () => {
     const initial = structuredClone(INITIAL_DECK);
     const card = initial.nodes.find(node => node.id === 'card_main_chat')!;
     card.runtimeOptions = { ...card.runtimeOptions, provider: 'openai', accessMode: 'chatgpt-account',
-      modelKey: 'old-choice', providerModelId: 'old-execution-model', delegationRole: 'profile' };
+      modelKey: 'old-choice', providerModelId: 'old-execution-model', delegationRole: 'off' };
     const persist = vi.fn(async (_document: typeof initial) => undefined);
     function Harness() {
       const [deck, setDeck] = React.useState(initial);
@@ -340,7 +340,7 @@ describe('AgentManager active builder config', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
     expect(onSave.mock.calls[0][0].runtime).toEqual(savedConfig.runtime);
   });
-  it.each([undefined, 'off', 'profile', 'leaf', 'orchestrator', 'team'] as const)('preserves delegation %s without a separate controller toggle', async (enabled) => {
+  it.each([undefined, 'off', 'leaf', 'orchestrator', 'team'] as const)('preserves delegation %s without a separate controller toggle', async (enabled) => {
     mockEditorFetch();
     const onSave = vi.fn();
     const options = enabled === undefined ? {} : { delegationRole: enabled };
@@ -367,16 +367,17 @@ describe('AgentManager active builder config', () => {
     }));
     const selector = await screen.findByLabelText('Delegate task');
     await waitFor(() => expect((selector as HTMLSelectElement).disabled).toBe(false));
+    expect(Array.from((selector as HTMLSelectElement).options).map(option => option.value))
+      .toEqual(['off', 'leaf', 'orchestrator', 'team']);
     expect(screen.queryByLabelText('Maximum workers')).toBeNull();
     fireEvent.change(selector, { target: { value: 'team' } });
     expect(screen.queryByLabelText('Maximum workers')).toBeNull();
     expect(screen.queryByLabelText('Retry limit')).toBeNull();
     expect(screen.queryByLabelText('Team lead model')).toBeNull();
-    fireEvent.change(selector, { target: { value: 'profile' } });
     expect(screen.queryByLabelText('Maximum workers')).toBeNull();
     expect(screen.queryByLabelText('Control connected Cards')).toBeNull();
     await leaveEditor();
-    expect(onSave.mock.calls[0][0].runtime_options.delegationRole).toBe('profile');
+    expect(onSave.mock.calls[0][0].runtime_options.delegationRole).toBe('team');
     expect(onSave.mock.calls[0][0].runtime_options.team).toBeUndefined();
     expect(onSave.mock.calls[0][0].runtime).toEqual(savedConfig.runtime);
   });

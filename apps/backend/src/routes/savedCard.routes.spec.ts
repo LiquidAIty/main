@@ -25,7 +25,7 @@ const deckMocks = vi.hoisted(() => ({
           prompt: 'Saved Main prompt',
           kind: 'main',
           runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
-          runtimeOptions: { delegationRole: 'profile' },
+          runtimeOptions: {},
         },
         {
           id: 'card_test_delegate',
@@ -531,13 +531,6 @@ const orchestratorMocks = vi.hoisted(() => {
             idfPath: 'C:\\runtime-inputs\\root-run\\in.idf',
             idfSha256: 'a'.repeat(64), idfBytes: 400,
           },
-          delegationTargets: cardId === 'card_main_chat' ? [{
-            cardId: 'card_test_delegate',
-            cardRevisionId: 'revision:card_test_delegate',
-            title: 'Delegate',
-            profile: 'delegate',
-            description: 'Local repository patch/test execution',
-          }] : [],
           cardIdentity: {
             cardId,
             title: cardId === 'card_main_chat' ? 'Main' : agentBuilder ? 'Builder' : delegateCard ? 'Delegate'

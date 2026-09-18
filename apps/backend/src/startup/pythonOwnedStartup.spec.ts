@@ -103,13 +103,13 @@ describe('Python-owned backend startup', () => {
     expect(recoverKanban).toHaveBeenCalledOnce();
   });
 
-  it('derives automatic Hermes demand from exact directed flow and Mag One wire authority', () => {
+  it('derives automatic Hermes demand from symmetric Bot connections and Mag One wire authority', () => {
     const main = { id: 'main-card', templateId: 'template_main_chat', title: 'Main',
       kind: 'agent', runtime: { kind: 'hermes', mode: 'main', profile: 'main-profile' },
-      runtimeOptions: { delegationRole: 'profile' }, position: { x: 0, y: 0 } };
+      runtimeOptions: {}, position: { x: 0, y: 0 } };
     const controller = { id: 'controller', templateId: 'template_worker', title: 'Controller',
       kind: 'agent', runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-profile' },
-      runtimeOptions: { delegationRole: 'profile' }, position: { x: 1, y: 1 } };
+      runtimeOptions: {}, position: { x: 1, y: 1 } };
     const connected = { id: 'worker', templateId: 'template_worker', title: 'Worker', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker-profile' }, position: { x: 2, y: 2 } };
     const builder = { id: 'builder', templateId: 'template_assist', title: 'Builder',
@@ -133,9 +133,7 @@ describe('Python-owned backend startup', () => {
         disconnected, disabled, magOne, visual],
       edges: [
         { id: 'active-worker', source: 'controller', target: 'worker', edgeType: 'flow', enabled: true },
-        { id: 'duplicate-worker', source: 'controller', target: 'worker', edgeType: 'flow' },
         { id: 'active-builder', source: 'main-card', target: 'builder', edgeType: 'flow' },
-        { id: 'reversed-flow', source: 'worker', target: 'controller', edgeType: 'flow' },
         { id: 'worker-before-bus', source: 'mag-worker-a', target: 'mag-one',
           targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
         { id: 'bus-before-worker', source: 'mag-one', sourceHandle: 'bus-in-2',
@@ -150,14 +148,14 @@ describe('Python-owned backend startup', () => {
       ] } as any;
 
     expect([...deriveAutomaticHermesCardIds(deck)]).toEqual([
-      'main-card', 'worker', 'builder', 'mag-worker-a', 'mag-worker-b',
+      'main-card', 'controller', 'worker', 'builder', 'mag-worker-a', 'mag-worker-b',
     ]);
   });
 
   it('keeps a Card demanded until its final activating edge is removed', () => {
     const controllerA = { id: 'controller-a', templateId: 'controller', title: 'A', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-a' },
-      runtimeOptions: { delegationRole: 'profile' }, position: { x: 0, y: 0 } };
+      runtimeOptions: {}, position: { x: 0, y: 0 } };
     const controllerB = { ...controllerA, id: 'controller-b', title: 'B',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-b' } };
     const target = { id: 'target', templateId: 'worker', title: 'Target', kind: 'agent',
@@ -175,7 +173,7 @@ describe('Python-owned backend startup', () => {
   it('passes exact Card identities and structural presentation workspaces to the existing manager', async () => {
     const main = { id: 'main-card', templateId: 'template_main_chat', title: 'Main', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main-profile' },
-      runtimeOptions: { delegationRole: 'profile' }, position: { x: 0, y: 0 } };
+      runtimeOptions: {}, position: { x: 0, y: 0 } };
     const connected = { id: 'worker', templateId: 'template_worker', title: 'Worker', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'worker-profile' }, position: { x: 1, y: 1 } };
     const builder = { id: 'builder', templateId: 'template_assist', title: 'Builder',

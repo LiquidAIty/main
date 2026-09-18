@@ -19,8 +19,8 @@ and existing native Runs; do not create another evidence store or task document.
 Use `skills/codebasedmemory.md` to resolve the affected owners, then read current source. The current
 seams are `data_anchor.py::prepare_main_context` for bounded Main context,
 `idf.py::materialize_idf` for exact input, `engraphis.py` for ThinkGraph,
-`mcp_host.py` for tool publication, and the existing Hermes profile delegation adapter for
-connected saved Cards. Automatic completed-pair processing is removed. Main chooses direct writes
+`mcp_host.py` for tool publication, and native Hermes `message_agent` for orange-connected saved
+Cards. Automatic completed-pair processing is removed. Main chooses direct writes
 or focused delegated extraction; conversation completion does not launch a graph worker.
 Verify these pointers before relying on them.
 
@@ -103,10 +103,10 @@ model/grants and canonical IDF, graph reads with native references, and a useful
 Main saying "Builder is working" or writing a long response does not establish delegation. Ordinary
 prose may be long without being a requested report; assess the actual user request.
 
-The checked-in Hermes supports native asynchronous delegation. Its ordinary child behavior and
-separate-profile `background` contract differ; inspect the current native tool before changing an
-adapter. Preserve native completion delivery and capacity limits. Do not add an application queue,
-temporary saved Cards, or a second scheduler to work around a rejected call.
+The checked-in Hermes supports native asynchronous child delegation inside one Card and native Bot
+conversation between authorized saved Cards. Inspect the current native tools before changing the
+thin authorization policy. Preserve native completion delivery and capacity limits. Do not add an
+application queue, temporary saved Cards, or a second scheduler to work around a rejected call.
 
 ## Measure the boundaries separately
 

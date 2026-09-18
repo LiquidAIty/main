@@ -22,18 +22,14 @@ def _agent(
     profile: str,
     mode: str,
     revision_id: str,
-    delegation_role: str | None = None,
 ) -> dict[str, Any]:
-    options: dict[str, Any] = {}
-    if delegation_role is not None:
-        options["delegationRole"] = delegation_role
     return {
         "id": card_id,
         "kind": "agent",
         "title": card_id.title(),
         "subtitle": f"{card_id} description",
         "runtime": {"kind": "hermes", "mode": mode, "profile": profile},
-        "runtimeOptions": options,
+        "runtimeOptions": {},
         "_cardRevisionId": revision_id,
     }
 
@@ -49,7 +45,6 @@ def _loaded_deck() -> dict[str, Any]:
                     profile="main",
                     mode="main",
                     revision_id="revision-main",
-                    delegation_role="profile",
                 ),
                 _agent(
                     "builder",
@@ -108,31 +103,65 @@ def test_bot_dm_resolution_maps_normalized_profile_to_saved_card(
     assert loaded == before
 
 
-def test_bot_dm_resolution_does_not_consult_delegation_projection(
+def test_one_flow_connection_authorizes_each_bot_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loaded = _loaded_deck()
-    loaded["deck"]["edges"] = []
-    loaded["deck"]["nodes"][0]["runtimeOptions"] = {}
+    before = deepcopy(loaded)
     monkeypatch.setattr(card_domain, "load_deck", lambda *_args: loaded)
-    monkeypatch.setattr(
-        card_domain,
-        "_direct_card_targets",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("delegation path consulted")),
-    )
 
     resolved = card_domain.resolve_hermes_bot_dm_card(
-        "project-one", "deck-one", "builder", "research"
+        "project-one", "deck-one", "builder", "@main"
     )
 
     assert resolved["sourceCardId"] == "builder"
     assert resolved["card"] == {
-        "cardId": "disconnected",
-        "title": "Disconnected",
-        "profile": "research",
-        "description": "disconnected description",
-        "cardRevisionId": "revision-research",
+        "cardId": "main",
+        "title": "Main",
+        "profile": "main",
+        "description": "main description",
+        "cardRevisionId": "revision-main",
     }
+    assert loaded == before
+
+
+def test_bot_dm_resolution_rejects_an_unwired_saved_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _loaded_deck()
+    loaded["deck"]["edges"] = []
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: loaded)
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="^hermes_bot_dm_profile_not_found$",
+    ):
+        card_domain.resolve_hermes_bot_dm_card(
+            "project-one", "deck-one", "main", "research"
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"enabled": False},
+        {"runtimeOptions": {"enabled": False}},
+        {"kind": "visual"},
+        {"runtime": {"kind": "autogen", "mode": "assistant"}},
+    ],
+)
+def test_bot_dm_resolution_rejects_a_disabled_or_invalid_wired_card(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: dict[str, Any],
+) -> None:
+    loaded = _loaded_deck()
+    loaded["deck"]["nodes"][1].update(mutation)
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: loaded)
+
+    with pytest.raises(card_domain.CardDomainError, match="^hermes_bot_dm_profile_not_found$"):
+        card_domain.resolve_hermes_bot_dm_card(
+            "project-one", "deck-one", "main", "builder"
+        )
 
 
 @pytest.mark.parametrize("target_profile", ["unknown", "@@Builder"])

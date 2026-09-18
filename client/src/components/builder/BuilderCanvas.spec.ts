@@ -39,7 +39,7 @@ describe('orange controller connection validation', () => {
     const deck = structuredClone(INITIAL_DECK);
     for (const [cardId, busHandle, edgeType] of [
       ['card_main_chat', 'task-bus-top', 'magentic_control'],
-      ['card_test_delegate', 'bus-in-1', 'magentic_option'],
+      ['card_trading_workbench', 'bus-in-1', 'magentic_option'],
     ] as const) {
       const forward = { source: cardId, target: 'card_magentic', sourceHandle: null, targetHandle: busHandle };
       const reverse = { source: forward.target, target: forward.source, sourceHandle: busHandle, targetHandle: null };
@@ -48,7 +48,7 @@ describe('orange controller connection validation', () => {
       const edges = [{ ...forward, id: 'existing', data: { edgeType } }];
       expect(isPlainConnectionAllowedForDocument(deck, reverse, edges)).toBe(false);
       if (edgeType === 'magentic_option') {
-        expect(isPlainConnectionAllowedForDocument(deck, { ...forward, source: 'card_trading_workbench' }, edges)).toBe(true);
+        expect(isPlainConnectionAllowedForDocument(deck, { ...forward, source: 'card_worldsignals_agent' }, edges)).toBe(true);
       }
     }
     const bus = deck.nodes.find(card => card.id === 'card_magentic')!;
@@ -68,17 +68,19 @@ describe('orange controller connection validation', () => {
   });
   it('rejects invalid creations and reconnections without changing blue membership', () => {
     const deck = structuredClone(INITIAL_DECK);
-    const connect = { source: 'card_main_chat', target: 'card_agent_builder', sourceHandle: null, targetHandle: null };
+    const connect = { source: 'card_main_chat', target: 'builder', sourceHandle: null, targetHandle: null };
     const allowed = (value = connect, ignore?: string) => isPlainConnectionAllowedForDocument(deck, value, [], ignore);
     expect(allowed()).toBe(true);
-    expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
+    expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(true);
     const main = deck.nodes.find(card => card.id === connect.source)!;
     main.runtimeOptions!.delegationRole = 'off';
+    expect(allowed()).toBe(true);
+    main.runtimeOptions!.enabled = false;
     expect(allowed()).toBe(false);
     expect(allowed(connect, 'reconnected-edge')).toBe(false);
     expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'task-bus-top' as any })).toBe(true);
-    expect(allowed({ ...connect, source: 'card_test_delegate', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
-    main.runtimeOptions!.delegationRole = 'profile';
+    expect(allowed({ ...connect, source: 'card_trading_workbench', target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
+    main.runtimeOptions!.enabled = true;
     deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
     expect(allowed()).toBe(false);
   });
@@ -735,7 +737,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     const document = createBusTestDocument();
     for (const card of document.nodes.filter(card => card.id !== 'card_magentic')) {
       card.runtime = { kind: 'hermes', mode: 'delegate', profile: card.id };
-      card.runtimeOptions = { delegationRole: card.id !== 'card_research_agent' ? 'profile' : 'off' };
+      card.runtimeOptions = { delegationRole: 'off' };
     }
     const currentEdges: Edge[] = [
       {

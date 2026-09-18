@@ -8,7 +8,7 @@ const source = {
   id: 'card_main_chat', kind: 'agent', templateId: 'main', title: 'Main', prompt: 'Main prompt',
   _cardRevisionId: 'revision-main',
   runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
-  runtimeOptions: { delegationRole: 'profile' }, position: { x: 0, y: 0 },
+  runtimeOptions: {}, position: { x: 0, y: 0 },
 };
 const builder = {
   id: 'builder', kind: 'agent', templateId: 'builder', title: 'Builder', prompt: 'Builder prompt',
@@ -19,7 +19,8 @@ const builder = {
 function savedDeck(overrides: Record<string, unknown> = {}) {
   return {
     id: 'deck-1', name: 'Deck', version: 1, promptTemplates: [],
-    nodes: [structuredClone(source), structuredClone(builder)], edges: [],
+    nodes: [structuredClone(source), structuredClone(builder)],
+    edges: [{ id: 'main-builder', source: source.id, target: builder.id, edgeType: 'flow' }],
     ...overrides,
   } as any;
 }
@@ -181,10 +182,8 @@ describe('managed Hermes Bot-DM host route', () => {
     });
   });
 
-  it('does not turn Bot contacts into delegation or topology policy', async () => {
-    const deck = savedDeck();
-    deck.nodes[0].runtimeOptions.delegationRole = 'off';
-    const deps = dependencies(deck);
+  it('does not require a separate Profile-delegation flag', async () => {
+    const deps = dependencies(savedDeck());
     expect(await request(deps, envelope)).toEqual({
       status: 200, body: { ok: true, targetProfile: 'builder' },
     });
@@ -242,7 +241,7 @@ describe('managed Hermes Bot-DM host route', () => {
     });
   });
 
-  it('returns the exact resolved saved profile without submitting to a target Gateway', async () => {
+  it('returns the exact resolved saved profile without prechecking Hermes delivery ownership', async () => {
     const deps = dependencies();
     const sourceBefore = structuredClone(deps.sourceState);
     const response = await request(deps, envelope);

@@ -15,6 +15,13 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
     (card) => card.id === 'card_hermes_steward'
       && card.runtime.kind === 'hermes'
       && card.runtime.mode === 'delegate',
+  ) || hasDirectedCardConnection(
+    nodes,
+    edges,
+    (card) => card.id === 'card_hermes_steward'
+      && card.runtime.kind === 'hermes'
+      && card.runtime.mode === 'delegate',
+    (card) => card.runtime.kind === 'hermes' && card.runtime.mode === 'main',
   );
 
 describe('Main / Hermes / graph authority topology', () => {
@@ -61,7 +68,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(deriveVisibleRailItems({ deck: disconnected, workspaceView: 'chat' }).showKnowledge).toBe(true);
   });
 
-  it('requires the directed Main to Graph Agent flow edge', () => {
+  it('treats one Main and Graph Agent flow connection as symmetric', () => {
     const withoutHermesFlow = INITIAL_DECK.edges.filter((edge) => edge.id !== 'edge_main_chat_hermes');
     const replacement = (edgeType: string, source = 'card_main_chat', target = 'card_hermes_steward') => ({
       id: `test:${edgeType}:${source}:${target}`,
@@ -72,7 +79,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainToGraphAgentConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('flow', 'card_hermes_steward', 'card_main_chat'),
-    ] as any)).toBe(false);
+    ] as any)).toBe(true);
     expect(mainToGraphAgentConnected(INITIAL_DECK.nodes, [
       ...withoutHermesFlow,
       replacement('invalid'),
@@ -185,18 +192,17 @@ describe('Main / Hermes / graph authority topology', () => {
     for (const card of [main, agentBuilder, steward]) {
       expect(card?.runtimeOptions).not.toHaveProperty('team');
     }
-    expect(main?.runtimeOptions?.delegationRole).toBe('profile');
+    expect(main?.runtimeOptions?.delegationRole).toBe('off');
     expect(agentBuilder?.runtimeOptions?.delegationRole ?? 'off').toBe('off');
 
     expect(main?.runtimeOptions?.tools).toContain('run_mag_one');
     expect(main?.runtimeOptions?.tools).not.toContain('card.run_assistant_agent');
     expect(main?.runtimeOptions?.toolsets).toEqual(['file', 'terminal']);
-    expect(main?.prompt).toContain('delegate_task(role="profile")');
+    expect(main?.prompt).toContain('Use native message_agent');
     expect(main?.prompt).toContain('A wire grants authority but never starts work');
-    expect(main?.prompt).toContain('send one exact mission and the deliberately selected native graph references');
+    expect(main?.prompt).toContain('Address the connected Bot by its saved profile/name');
     expect(main?.prompt).toContain('Do not copy this conversation or Main memory into another Card');
-    expect(main?.prompt).toContain('A normal handoff executes immediately');
-    expect(main?.prompt).toContain('existing Card CLI input and Context editors');
+    expect(main?.prompt).toContain('Use a formal Card Run only when');
     expect(main?.prompt).toContain('official MCP run_mag_one seam');
 
     expect(agentBuilder).toMatchObject({
@@ -228,7 +234,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(steward?.runtimeOptions?.tools).toContain('write_mag_one_instructions');
     expect(steward?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(steward?.prompt).toContain('Do not use a repository-writing terminal');
-    expect(steward?.prompt).toContain('Use native delegate_task(role="profile")');
+    expect(steward?.prompt).toContain('Use native message_agent');
     expect(steward?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');
     expect(steward?.prompt).toContain('Inspect the supplied current native graph data first');
     expect(steward?.prompt).toContain('Firecrawl backend');

@@ -95,10 +95,11 @@ export function normalizeRuntimeOptions(
 export function isCardController(card: AgentCardInstance): boolean {
   const record = card as AgentCardInstance & { enabled?: boolean };
   const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
-  return card.runtime.kind === 'hermes'
+  return card.kind === 'agent'
+    && card.runtime.kind === 'hermes'
+    && Boolean(card.runtime.profile.trim())
     && record.enabled !== false
-    && options?.enabled !== false
-    && options?.delegationRole === 'profile';
+    && options?.enabled !== false;
 }
 
 

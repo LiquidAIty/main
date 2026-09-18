@@ -260,8 +260,8 @@ const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
 
 /** Classify a user-drawn connection into the REAL runtime edge types:
  * bus top handle → 'magentic_control'; any other bus connection →
- * 'magentic_option'; ordinary directed agent invocation → 'flow'
- * (a directional Call: source may invoke target). The browser only labels
+ * 'magentic_option'; ordinary Hermes Bot availability → 'flow'
+ * (one connection authorizes either endpoint to initiate). The browser only labels
  * what the user drew — authority is resolved server-side from the persisted type. */
 function resolveCanvasConnectionEdgeType(
   document: DeckDocument,
@@ -293,7 +293,6 @@ function resolveCanvasConnectionEdgeType(
     || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
     || targetOptions?.enabled === false
     || targetNode.runtime.kind !== 'hermes'
-    || targetNode.runtime.mode !== 'delegate'
     || !targetProfile
     || document.nodes.filter((card) => card.runtime.kind === 'hermes'
       && card.runtime.profile.trim().toLowerCase() === targetProfile).length !== 1

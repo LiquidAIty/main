@@ -5,7 +5,7 @@ import type { DeckDocument } from '../../../types/agentgraph';
 import { INITIAL_DECK } from '../deck/newProjectDeck';
 import useAgentBuilderCardEditor from './useAgentBuilderCardEditor';
 
-describe('Card delegation setting and saved wires', () => {
+describe('Card settings and saved Bot wires', () => {
   it('uses one canonical save and does not replace local settings when persistence fails', async () => {
     const deck = structuredClone(INITIAL_DECK);
     const setDeck = vi.fn();
@@ -22,7 +22,7 @@ describe('Card delegation setting and saved wires', () => {
     expect(result.current.selectedCardConfig?.prompt_template).not.toBe('Changed instructions');
   });
 
-  it('removes only outgoing orange wires when delegation is saved off', async () => {
+  it('preserves orange Bot connections when an unrelated Card setting changes', async () => {
     const deck = structuredClone(INITIAL_DECK);
     const main = deck.nodes.find(card => card.id === 'card_main_chat')!;
     deck.edges.push({ id: 'incoming', source: 'card_agent_builder', target: main.id, edgeType: 'flow' });
@@ -37,7 +37,7 @@ describe('Card delegation setting and saved wires', () => {
     await act(async () => { await result.current.handleSaveSelectedCardConfig({
       ...config, runtime_options: { ...config.runtime_options, delegationRole: 'off' },
     }); });
-    expect(saved.edges).toEqual(deck.edges.filter(edge => edge.edgeType !== 'flow' || edge.source !== main.id));
+    expect(saved.edges).toEqual(deck.edges);
     expect(saved.edges).toContainEqual(deck.edges.find(edge => edge.id === 'incoming'));
     expect(saved.nodes.filter(card => card.id !== main.id)).toEqual(deck.nodes.filter(card => card.id !== main.id));
     const after = saved.nodes.find(card => card.id === main.id)!;

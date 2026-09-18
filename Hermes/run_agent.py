@@ -1315,7 +1315,6 @@ class AIAgent(
             goal=function_args.get("goal"), context=function_args.get("context"),
             tasks=_strip_model_hidden_task_fields(function_args.get("tasks")),
             max_iterations=function_args.get("max_iterations"), role=function_args.get("role"),
-            target_profile=function_args.get("target_profile"), data_anchors=function_args.get("dataAnchors"),
             background=_model_background_value(function_args, self),
             output_schema=function_args.get("output_schema"), images=function_args.get("images"),
             action=function_args.get("action"),

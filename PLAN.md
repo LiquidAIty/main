@@ -66,10 +66,9 @@ uncommitted working tree and has not been loaded into the running application.
 
 ### Requested Delta
 
-Remove the abandoned LiquidAIty ACP architecture and all of its live source, tests, packaging, and
-canonical-documentation residue. Consolidate saved Hermes Card execution on the existing native
-Gateway/TUI path. Preserve only the two explicitly intended Hermes changes: native
-`delegate_task(role="team")` and `delegate_task(role="profile")`.
+Keep saved Hermes Card execution on the existing native Gateway/TUI path. Native `message_agent`,
+authorized between both endpoints of an enabled orange `flow` connection, is the only conversational
+saved-Card path. Preserve the one intended Hermes extension: native `delegate_task(role="team")`.
 
 ### Preservation Set
 
@@ -78,7 +77,7 @@ Gateway/TUI path. Preserve only the two explicitly intended Hermes changes: nati
 - Main, Builder, ordinary Hermes Cards, native Gateway/TUI, and honest Run completion;
 - upstream Hermes ACP as dormant vendor functionality, not a LiquidAIty execution route;
 - native Hermes Bot Mode source, desktop UI, Gateway methods, profile/session state, routines, and peer relay;
-- upstream `leaf`/`orchestrator`, retained native Team, and the retained fail-closed profile branch;
+- upstream `leaf`/`orchestrator`, retained native Team, and native Bot Mode;
 - Card-owned Python Script source, compiler, validation, editor, saved configuration, IDF presentation,
   and historical Run receipt data;
 - Magentic-One and accepted AutoGen primitives;
@@ -118,7 +117,7 @@ not the fabricated standalone tool initially suspected.
 | Gateway consolidation | Backend source and focused terminal/Run contracts | Canonical reload; real input, stream, persisted completion, reconnect, and Stop |
 | Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
 | Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
-| Named-profile delegation | Contained fail-closed vendor branch, exact-profile authority, internal-handle filtering, and unit contract | Supported Gateway-native host request and real result return; no ACP restoration |
+| Native Card Bot Mode | Source-authenticated orange-wire authorization followed by stock `message_agent` once | Real attributed reply acceptance through the target canonical `Bot Chat` |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
 | Bot Mode | Loaded Main called stock `message_agent`; Hermes acknowledged once, ran the Builder-profile canonical `Bot Chat` helper, emitted Main's native completion notification, and created no Builder Run | Hermes terminal children strip the managed Gateway credential, so Builder's protocol-required `message_agent` reply fails closed; add a narrow upstream identity/credential contract before claiming attributed reply acceptance |
@@ -131,16 +130,15 @@ not the fabricated standalone tool initially suspected.
   `/idd/script-tools` and `/cards/script/validate` are restored, the Python compiler and Card editor are
   present again, saved Script data remains readable, and ordinary Runs retain their exact model-visible
   tool presentation while native execution reports `card_script_native_bridge_unavailable`.
-- The focused Python Card-domain suite now passes, including the Hermes model-facing removal of the
-  internal `card.run_assistant_agent` handle while native profile delegation remains the named doorway.
+- The focused Python Card-domain suite covers the Hermes model-facing removal of the internal
+  `card.run_assistant_agent` handle while native `message_agent` remains the conversational doorway.
 - Client production typecheck passes. Client spec typecheck has unrelated existing errors in Agent
   Manager mocks, Testing Library role options, graph/team specs, and imported Hermes desktop aliases/types;
   none references a file removed by this cleanup.
 - Hermes' repository virtual environment does not contain `pytest`; this cleanup does not install a
   dependency into the vendored runtime. Python compilation and available application tests are separate proof.
-- Hermes declares package version `0.21.0`, but the imported tree does not retain its original upstream
-  commit SHA. The explicit vendor markers/register now contain only Team and profile, but an exhaustive
-  unmarked-divergence audit requires first identifying the exact upstream base.
+- The Hermes vendor register pins upstream 0.21.3 at
+  `73521a8e375a867fae14ec0579f2dfb47aa0017e`; its intentional divergence manifest contains only Team.
 - Direct Codex CBM produced useful structural evidence, but repeated frontend calls accumulated duplicate
   client processes. Twenty-seven exact duplicate frontends were stopped while the one frontend owning the
   upstream daemon was preserved. No reindex, cache mutation, alternate host, or daemon replacement was

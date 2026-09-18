@@ -14,11 +14,11 @@ export type CardRuntime =
       mode: 'assistant' | 'magentic_one';
     };
 
-// flow = ORANGE explicit saved Card→Card authority; magentic_option = BLUE side worker
+// flow = ORANGE symmetric Bot availability between saved Hermes Cards; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
 // finalized prompt to Mag One — never worker membership).
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
-// stays inert/visible, never silently promoted to a directional Call.
+// stays inert/visible, never silently promoted to a Bot connection.
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type CardSubsystemCapability =
@@ -44,7 +44,7 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
-  delegationRole?: 'off' | 'profile' | 'leaf' | 'orchestrator' | 'team';
+  delegationRole?: 'off' | 'leaf' | 'orchestrator' | 'team';
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;

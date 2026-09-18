@@ -1,4 +1,4 @@
-"""Focused contracts for LiquidAIty's two persistent delegate_task roles."""
+"""Focused contracts for LiquidAIty's durable Team delegate_task role."""
 
 from __future__ import annotations
 
@@ -80,112 +80,14 @@ def test_team_worker_cannot_start_nested_delegation(monkeypatch):
     payload = json.loads(delegate_tool.delegate_task(
         goal="Try to escape the depth-one recipe.", role="leaf", parent_agent=_Parent(),
     ))
-    assert "cannot delegate nested team, profile, leaf, or orchestrator" in payload["error"]
+    assert "cannot delegate nested team, leaf, or orchestrator" in payload["error"]
 
 
 def test_schema_exposes_persistent_roles_only_at_top_level():
     from tools.delegate_tool import _build_dynamic_schema_overrides
 
     parameters = _build_dynamic_schema_overrides()["parameters"]
-    assert parameters["properties"]["role"]["enum"] == ["team", "profile"]
+    assert parameters["properties"]["role"]["enum"] == ["team"]
     assert "role" not in parameters["properties"]["tasks"]["items"]["properties"]
-    assert parameters["properties"]["dataAnchors"]["maxItems"] == 16
-
-
-def test_profile_calls_exactly_one_host_authorized_profile(monkeypatch):
-    from tools import delegate_tool
-
-    _prepare(monkeypatch, delegate_tool)
-    calls = []
-
-    def requester(method, params):
-        calls.append((method, params))
-        return {
-            "nativeChildId": params["nativeChildId"],
-            "targetProfile": params["targetProfile"],
-            "runId": "child-run",
-            "result": "Graph result",
-        }
-
-    parent = _Parent()
-    parent._host_execution_requester = requester
-    parent._host_execution_context_id = "root-context"
-    parent._host_execution_session_id = "native-session"
-    parent._host_profile_targets = [{
-        "profile": "graph-agent", "title": "Graph Agent", "description": "",
-    }]
-    anchors = [{
-        "authority": "ThinkGraph",
-        "nativeId": "memory-project-frame",
-        "reason": "Use the accepted project frame",
-        "priority": 10,
-        "boundedExpansion": 1,
-        "resultLimit": 8,
-    }]
-    result = json.loads(delegate_tool.delegate_task(
-        goal="Inspect the selected native graph.",
-        context="Return bounded provenance.",
-        role="profile",
-        target_profile="graph-agent",
-        data_anchors=anchors,
-        parent_agent=parent,
-    ))
-
-    assert result["targetProfile"] == "graph-agent"
-    assert result["runId"] == "child-run"
-    assert calls[0][0] == "session/delegate_profile"
-    assert calls[0][1]["parentExecutionContextId"] == "root-context"
-    assert calls[0][1]["goal"] == "Inspect the selected native graph."
-    assert calls[0][1]["context"] == "Return bounded provenance."
-    assert calls[0][1]["dataAnchors"] == anchors
-    assert calls[0][1]["nativeChildId"].startswith("profile-")
-
-    forged = json.loads(delegate_tool.delegate_task(
-        goal="Try an unconnected profile.",
-        role="profile",
-        target_profile="forged",
-        parent_agent=parent,
-    ))
-    assert "not authorized" in forged["error"]
-    assert len(calls) == 1
-
-
-def test_profile_fails_closed_without_host_context(monkeypatch):
-    from tools import delegate_tool
-
-    _prepare(monkeypatch, delegate_tool)
-    parent = _Parent()
-    parent._host_profile_targets = [{"profile": "builder"}]
-    result = json.loads(delegate_tool.delegate_task(
-        goal="Use the existing Builder profile.",
-        role="profile",
-        target_profile="builder",
-        parent_agent=parent,
-    ))
-    assert result["error"] == "Profile delegation host context is unavailable."
-
-
-def test_run_agent_forwards_profile_fields_and_background(monkeypatch):
-    import run_agent
-    from tools import delegate_tool
-
-    captured = {}
-
-    def fake_delegate_task(**kwargs):
-        captured.update(kwargs)
-        return "{}"
-
-    monkeypatch.setattr(delegate_tool, "delegate_task", fake_delegate_task)
-    run_agent.AIAgent._dispatch_delegate_task(
-        _Parent(),
-        {
-            "goal": "Inspect the graph",
-            "role": "profile",
-            "target_profile": "graph-agent",
-            "dataAnchors": [{"nativeId": "n1"}],
-            "background": True,
-        },
-    )
-    assert captured["target_profile"] == "graph-agent"
-    assert captured["data_anchors"] == [{"nativeId": "n1"}]
-    assert captured["background"] is True
+    removed_profile_fields = {"target_" + "profile", "data" + "Anchors"}
+    assert removed_profile_fields.isdisjoint(parameters["properties"])

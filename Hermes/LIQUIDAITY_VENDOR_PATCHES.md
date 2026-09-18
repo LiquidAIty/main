@@ -1,9 +1,8 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly two LiquidAIty-owned runtime extensions: durable Team delegation and
-named-profile delegation. This register describes source scope; loaded product
-acceptance is reported separately.
+plus exactly one LiquidAIty-owned runtime extension: durable Team delegation.
+This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
 
@@ -25,7 +24,7 @@ profiles, and lifecycle. Upstream ACP source remains present but is not a
 LiquidAIty Card runtime boundary. No LiquidAIty Bot, Gateway, ACP, credential,
 completion-correlation, queue, or lifecycle patch is retained in this tree.
 
-Any production difference outside the two entries below is unexplained residue
+Any production difference outside the entry below is unexplained residue
 and blocks publication.
 
 ## 1. Durable Team through `delegate_task(role="team")`
@@ -91,59 +90,11 @@ ROLLBACK: remove the Team schema/branch, `kanban_team.py`, Team-only defaults,
 workflow propagation/activation/worker marker/synthesis hunks, and corresponding
 tests together. Leave upstream temporary delegation and ordinary Kanban intact.
 
-## 2. Named profile through `delegate_task(role="profile")`
-
-VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
-`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
-
-PURPOSE: add one explicit top-level `profile` role that requests exactly one
-trusted-host-authorized existing profile with a parent-authored goal, context,
-and optional bounded native data references. Hermes does not learn Card or
-topology semantics.
-
-EXTERNAL ALTERNATIVE CHECK: temporary children inherit their current runtime;
-Team is durable same-board fan-out. Neither selects a named persistent profile.
-A second Card tool, deterministic router, ACP adapter, callback service, or
-direct profile launcher is rejected.
-
-FILES AND SYMBOLS:
-
-- `tools/delegate_tool.py`: Profile schema/validation, exact trusted roster
-  membership, bounded `dataAnchors`, background choice, and fail-closed host
-  request through `session/delegate_profile`.
-- `run_agent.py`: mechanically forwards Profile arguments through the ordinary
-  native `delegate_task` dispatch point.
-
-UPSTREAM BEHAVIOR PRESERVED: without an authenticated host roster/request
-context the Profile branch fails closed. It does not create a Hermes Card,
-session owner, model fallback, direct process, queue, Run, or IDF.
-
-CONTRACTS:
-
-- one exact host-authorized profile and one non-empty goal;
-- optional string context and at most sixteen object-shaped `dataAnchors`;
-- no batch, output schema, or image payload;
-- the host remains responsible for saved-Card authorization and for validating
-  native references; the receiving profile keeps its native runtime authority;
-- missing or invalid host context returns an explicit error with no fallback.
-
-TESTS:
-
-- `tests/tools/test_delegate_team.py`
-- affected upstream coverage in `tests/tools/test_delegate.py`
-
-FORK COST: one contained branch/schema extension in the existing delegate tool
-and mechanical field transport at its one agent-loop call site.
-
-ROLLBACK: remove the Profile schema/branch and matching `run_agent.py` forwarding
-and tests together. Leave Team and upstream temporary delegation intact.
-
 ## Complete upstream-relative difference manifest
 
 Production files:
 
-- `tools/delegate_tool.py` — Team and Profile
-- `run_agent.py` — Profile
+- `tools/delegate_tool.py` — Team
 - `hermes_cli/config_defaults.py` — Team
 - `hermes_cli/kanban_team.py` — Team
 - `hermes_cli/kanban_db.py` — Team
@@ -154,7 +105,7 @@ Production files:
 Focused tests:
 
 - `tests/tools/test_delegate.py` — adjusted public-schema assertions only
-- `tests/tools/test_delegate_team.py` — Team and Profile
+- `tests/tools/test_delegate_team.py` — Team
 - `tests/hermes_cli/test_kanban_team.py` — Team
 
 Metadata:

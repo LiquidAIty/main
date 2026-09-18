@@ -8,7 +8,7 @@ from app.python_models.idf import Idf
 
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-CardDelegationRole = Literal["off", "profile", "leaf", "orchestrator", "team"]
+CardDelegationRole = Literal["off", "leaf", "orchestrator", "team"]
 
 
 class ToolSpec(BaseModel):

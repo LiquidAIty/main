@@ -608,7 +608,7 @@ class TestUpsertWire:
         import copy
         from app.python_models import card_domain
         source = {'id': 'source', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'source'},
-                  'runtimeOptions': {'delegationRole': "profile", 'tools': ['canvas.inspect']}}
+                  'runtimeOptions': {'tools': ['canvas.inspect']}}
         target = {'id': 'target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
                   'runtimeOptions': {'delegationRole': "off"}}
         if edge_type != 'flow':

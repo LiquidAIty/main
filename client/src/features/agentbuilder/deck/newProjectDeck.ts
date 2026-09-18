@@ -88,9 +88,9 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       'Your product purpose is to help the user design, build, test, and intentionally run useful agents through the visible LiquidAIty Cards, graphs, Builder, native Team, and Magentic-One boundaries.',
       '',
       'Your working context is the current project conversation, your persistent Hermes memory, and the granted ThinkGraph/KnowGraph MCP tools. There is no replacement graph API and no ordinary web search.',
-      'Use native delegate_task(role="profile") only when you explicitly need bounded help from a target profile exposed by an enabled outgoing orange Card connection. A wire grants authority but never starts work by itself.',
-      'For each help request, send one exact mission and the deliberately selected native graph references. Python rails re-resolves that exact bounded selection and the receiving Card builds its own one retained in.idf from its saved context and grants. Do not copy this conversation or Main memory into another Card.',
-      'A normal handoff executes immediately through the receiving Card run path. When the user asks to review first, use the existing Card CLI input and Context editors, then submit the same Card run path once after approval.',
+      'Use native message_agent when you explicitly need a persistent conversation with a saved agent Card exposed by an enabled orange connection. Either connected endpoint may initiate. A wire grants authority but never starts work by itself.',
+      'Address the connected Bot by its saved profile/name and send only the useful mission and context. Hermes owns its canonical Bot Chat, attribution, acknowledgement, completion, and history. Do not copy this conversation or Main memory into another Card.',
+      'Use a formal Card Run only when the application or an approved orchestrator requires bounded receipt-bearing execution; it is not an ordinary conversational handoff.',
       'Use the helper first when a Builder assignment needs research or graph grounding, then either let it run the grounded Builder handoff or ask it to stage one exact mission and graph selection for review.',
       'Use the same rule for Mag One: automatic handoff normally executes; optional review remains in the existing Mag One Card editor before one explicit run.',
       'Invoke Builder for bounded code work as needed and require an implementation report.',
@@ -131,7 +131,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Inspect the supplied current native graph data first. Use web_search or web_extract through the configured Firecrawl backend only when the mission requires missing, stale, contradictory, or explicitly requested verification.',
         'Keep candidate links in Run-scoped working context; reject weak, duplicate, or irrelevant results and write only useful source-backed findings to Graphiti.',
         'Do not use a repository-writing terminal when operating as the planning and KnowGraph helper.',
-        'Use native delegate_task(role="profile") only for a target profile exposed by an enabled outgoing orange Card connection. Pass one bounded mission and explicit context; the receiving saved Card materializes and runs its own in.idf.',
+        'Use native message_agent only for a saved agent Card exposed by an enabled orange connection. Either connected endpoint may initiate; pass one bounded mission and explicit context, and let Hermes own the receiving Card\'s canonical Bot Chat.',
         'Use card.load_graph_references and write_mag_one_instructions only when Main or the user requests review first. They stage the mission and graph selection in the existing target Card CLI input and Context editors; they never create a second input or execute the Card.',
         'After optional review, Main submits the target Card through the same one-run path used by automatic handoff.',
         'Do not invent sources, graph writes, tool results, worker results, or Team activity.',
@@ -333,7 +333,7 @@ export const INITIAL_DECK: DeckDocument = {
       // Main's tools are role-filtered before the Python MCP host exposes them.
       // No ordinary web search is granted.
       runtimeOptions: {
-        delegationRole: 'profile',
+        delegationRole: 'off',
         provider: DEFAULT_CARD_PROVIDER,
         accessMode: 'chatgpt-account',
         modelKey: DEFAULT_CARD_MODEL_KEY,
@@ -536,7 +536,7 @@ export const INITIAL_DECK: DeckDocument = {
   ],
   // The two independent connection networks (explicit type + handle semantics;
   // color is presentation only):
-  //   flow             ORANGE  explicit saved Card → saved Card authority
+  //   flow             ORANGE  symmetric Bot Mode availability between saved Hermes Cards
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
   edges: [

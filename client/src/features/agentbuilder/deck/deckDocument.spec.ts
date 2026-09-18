@@ -5,9 +5,9 @@ import { buildQuickAddAssistCard } from './deckDocument';
 import { INITIAL_DECK } from './newProjectDeck';
 
 describe('requested initial Card topology', () => {
-  it('keeps unique profiles, only Builder/Graph orange targets, and existing Mag One edges', () => {
+  it('keeps unique profiles, one orange connection per system-agent peer, and existing Mag One edges', () => {
     const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
-    expect(main.runtimeOptions?.delegationRole).toBe('profile');
+    expect(main.runtimeOptions?.delegationRole).toBe('off');
     expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
       { id: 'edge_main_chat_hermes', source: main.id, target: 'card_hermes_steward', edgeType: 'flow' },

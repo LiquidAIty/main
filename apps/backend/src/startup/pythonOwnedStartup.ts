@@ -38,18 +38,19 @@ function isMagenticOne(card: AgentCardInstance | undefined): boolean {
   return card?.runtime.kind === 'autogen' && card.runtime.mode === 'magentic_one';
 }
 
-function isFlowController(card: AgentCardInstance | undefined): boolean {
+function isHermesBotCard(card: AgentCardInstance | undefined): boolean {
   return Boolean(
     card
+    && card.kind === 'agent'
     && card.runtime.kind === 'hermes'
     && isEnabledCard(card)
-    && (card.runtimeOptions as Record<string, unknown> | null | undefined)?.delegationRole === 'profile',
+    && card.runtime.profile.trim(),
   );
 }
 
 /**
  * Resolve automatic Hermes runtime demand from the same persisted invocation
- * contracts used by the Card domain. FLOW is directed controller -> target.
+ * contracts used by the Card domain. FLOW connects two symmetric Bot peers.
  * The two Magentic-One edge types identify the bus structurally and remain
  * endpoint-order independent; handles are preserved presentation metadata once
  * the saved edgeType has been established.
@@ -69,12 +70,10 @@ export function deriveAutomaticHermesCardIds(deck: DeckDocument): Set<string> {
     if (!source || !target || source.id === target.id) continue;
 
     if (edge.edgeType === 'flow') {
-      if (
-        isFlowController(source)
-        && target.runtime.kind === 'hermes'
-        && target.runtime.mode === 'delegate'
-        && isEnabledCard(target)
-      ) required.add(target.id);
+      if (isHermesBotCard(source) && isHermesBotCard(target)) {
+        required.add(source.id);
+        required.add(target.id);
+      }
       continue;
     }
 

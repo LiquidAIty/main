@@ -1863,37 +1863,18 @@ def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
     )
 
 
-def _profile_delegation_enabled(card: dict[str, Any]) -> bool:
-    return (
-        _card_runtime(card).get("kind") == "hermes"
-        and _card_enabled(card)
-        and (card.get("runtimeOptions") or {}).get("delegationRole") == "profile"
-    )
-
-
 def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
                                  previous: list[dict[str, Any]]) -> None:
     cards = {card["id"]: card for card in nodes}
-    old = {edge["id"]: edge for edge in previous}
-    removed: set[str] = set()
+    del previous
     for edge in edges:
         if edge.get("edgeType") != "flow":
             continue
-        prior = old.get(edge["id"])
-        source = cards[edge["source"]]
-        if (source.get("runtimeOptions") or {}).get("delegationRole") != "profile":
-            if prior and all(prior.get(key) == edge.get(key) for key in (
-                "source", "target", "sourceHandle", "targetHandle", "edgeType", "enabled",
-            )):
-                removed.add(edge["id"])
-                continue
-            raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
         if edge.get("enabled") is False:
             continue
         targets = _direct_card_targets(edge["source"], cards, [edge])
         if not any(target["cardId"] == edge["target"] for target in targets):
             raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
-    edges[:] = [edge for edge in edges if edge["id"] not in removed]
 
 
 def _direct_card_targets(
@@ -1901,9 +1882,15 @@ def _direct_card_targets(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project explicit saved Hermes Card targets from enabled FLOW edges."""
+    """Project saved Hermes Card peers from enabled FLOW connections."""
     source = cards.get(card_id)
-    if source is None or not _profile_delegation_enabled(source):
+    if source is None or source.get("kind") != "agent" or not _card_enabled(source):
+        return []
+    try:
+        source_runtime = _card_runtime(source)
+    except CardDomainError:
+        return []
+    if source_runtime.get("kind") != "hermes":
         return []
     profiles = [
         str(runtime.get("profile") or "").strip().lower()
@@ -1913,28 +1900,37 @@ def _direct_card_targets(
     direct: list[dict[str, Any]] = []
     seen: set[str] = set()
     for edge in edges:
+        source_id = str(edge.get("source") or "")
         target_id = str(edge.get("target") or "")
-        target = cards.get(target_id)
+        if source_id == card_id:
+            peer_id = target_id
+        elif target_id == card_id:
+            peer_id = source_id
+        else:
+            continue
+        target = cards.get(peer_id)
         if (
-            edge.get("source") != card_id
-            or edge.get("edgeType") != "flow"
+            edge.get("edgeType") != "flow"
             or edge.get("enabled") is False
-            or target_id == card_id
-            or target_id in seen
+            or peer_id == card_id
+            or peer_id in seen
             or target is None
             or target.get("kind") != "agent"
             or not _card_enabled(target)
         ):
             continue
-        runtime = _card_runtime(target)
-        if runtime.get("kind") != "hermes" or runtime.get("mode") != "delegate":
+        try:
+            runtime = _card_runtime(target)
+        except CardDomainError:
+            continue
+        if runtime.get("kind") != "hermes":
             continue
         if profiles.count(runtime["profile"].strip().lower()) != 1:
             continue
-        seen.add(target_id)
+        seen.add(peer_id)
         direct.append({
-            "cardId": target_id,
-            "title": str(target.get("title") or target_id),
+            "cardId": peer_id,
+            "title": str(target.get("title") or peer_id),
             "profile": runtime["profile"],
             "description": str(target.get("subtitle") or "")[:1_000],
             "cardRevisionId": str(target.get("_cardRevisionId") or ""),
@@ -1990,7 +1986,17 @@ def resolve_hermes_bot_dm_card(
         raise CardDomainError("hermes_bot_dm_profile_not_found")
     if len(matches) > 1:
         raise CardDomainError("hermes_bot_dm_profile_not_unique")
-    resolved_card = dict(matches[0])
+    authorized = [
+        target for target in _direct_card_targets(
+            source_id,
+            cards,
+            deck.get("edges") if isinstance(deck.get("edges"), list) else [],
+        )
+        if str(target.get("profile") or "").strip().lower() == requested_profile
+    ]
+    if not authorized:
+        raise CardDomainError("hermes_bot_dm_profile_not_found")
+    resolved_card = dict(authorized[0])
     if not str(resolved_card.get("cardRevisionId") or "").strip():
         raise CardDomainError("hermes_bot_dm_card_revision_missing")
     return {
@@ -2334,7 +2340,6 @@ def _prepare_invocation(
     if not provider or not model_key or not provider_model_id:
         raise CardDomainError("card_model_configuration_incomplete")
     runtime_options = {
-        "delegationRole": options.get("delegationRole", "off"),
         "reasoningEffort": options.get("reasoningEffort"),
         "temperature": options.get("temperature"),
         "maxTokens": options.get("maxTokens"),
@@ -2358,7 +2363,6 @@ def _prepare_invocation(
         if write_mode not in {"read-only", "edit"}:
             raise CardDomainError("card_write_mode_invalid")
         runtime_options["writeMode"] = write_mode
-    direct_card_targets = _direct_card_targets(card_id, cards, loaded["deck"]["edges"])
     deck_revision = str((loaded.get("meta") or {}).get("deckRevision") or "")
     card_identity = {"cardId": card_id, "title": card["title"]}
     call_config = {
@@ -2454,9 +2458,9 @@ def _prepare_invocation(
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
     if runtime.get("kind") == "hermes":
-        # Native delegate_task(role="profile") is the one model-facing Card
-        # handoff. card.run_assistant_agent remains the internal execution
-        # handler and must not compete in the model-visible tool surface.
+        # Native message_agent is the model-facing saved-Card conversation.
+        # card.run_assistant_agent remains the internal execution handler and
+        # must not compete in the model-visible tool surface.
         selected_tools = [
             name for name in selected_tools if name != "card.run_assistant_agent"
         ]
@@ -2517,7 +2521,6 @@ def _prepare_invocation(
         "_outputRequirements": str(card.get("outputContract") or ""),
         "assignment": assignment,
         "cardIdentity": card_identity,
-        "delegationTargets": direct_card_targets,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_graphHooks": graph_hooks,
@@ -3396,7 +3399,6 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             "request": runtime_input,
             "inputFile": input_files,
             "cardIdentity": card_identity,
-            "delegationTargets": prepared.get("delegationTargets") or [],
         } if owner == "hermes" else None,
     }
 
