@@ -72,9 +72,9 @@ describe('ordinary saved Card adaptive terminal', () => {
     }
     expect(usesCardRunResults('agent', { kind: 'hermes', mode: 'main', profile: 'main' })).toBe(false);
     expect(usesCardRunResults('agent', { kind: 'hermes', mode: 'kanban', profile: 'anything' })).toBe(true);
-    for (const mode of ['assistant', 'magentic_one'] as const) {
-      expect(usesCardRunResults('agent', { kind: 'autogen', mode })).toBe(true);
-    }
+    expect(usesCardRunResults('agent', {
+      kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
+    })).toBe(true);
     expect(usesCardRunResults('graph', runtime)).toBe(false);
     expect(usesCardRunResults(undefined, runtime)).toBe(false);
     render(<CardRunResults {...props} enabled={false} run={running} />);
@@ -160,12 +160,35 @@ describe('ordinary saved Card adaptive terminal', () => {
     expect(screen.getByTestId('card-terminal-final').textContent).toBe('Accepted final');
   });
 
-  it('does not replace the Mag One adapter or expose a fabricated stop command', () => {
-    render(<CardRunResults {...props} runtime={{ kind: 'autogen', mode: 'magentic_one' }} onStop={vi.fn()}
-      run={{ ...running, terminal: { ...observation, events: [], observation: 'unavailable', unavailableReason: 'autogen_adapter_completion_only' } }} />);
-    expect(screen.getByText(/reports output at completion/)).toBeTruthy();
+  it('keeps headless Mag One free of fabricated terminal output while returning the real final result', () => {
+    const view = render(<CardRunResults {...props}
+      runtime={{ kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' }}
+      onStop={vi.fn()}
+      onRejoin={vi.fn()}
+      run={{ ...running, terminal: {
+        ...observation,
+        events: [],
+        observation: 'unavailable',
+        unavailableReason: 'magentic_execution_headless',
+      } }} />);
+    expect(screen.getByRole('status').textContent).toBe('Running');
+    expect(document.body.textContent).not.toContain('magentic_execution_headless');
+    expect(document.body.textContent).not.toContain('Magentic-One');
     expect(screen.queryByText('Stop')).toBeNull();
+    expect(screen.queryByText('Reconnect to this Run')).toBeNull();
     expect(screen.queryByText('Model text')).toBeNull();
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(screen.queryByTestId('terminal-active-agents')).toBeNull();
+    view.rerender(<CardRunResults {...props}
+      runtime={{ kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' }}
+      run={{ ...running, state: 'completed', status: 'complete', output: 'Real synthesis', terminal: {
+        ...observation,
+        events: [],
+        observation: 'finished',
+        activeAgentCount: 0,
+        finalText: 'Real synthesis',
+      } }} />);
+    expect(screen.getByTestId('card-terminal-final').textContent).toBe('Real synthesis');
   });
 
   it('reports a structured fatal failure', () => {

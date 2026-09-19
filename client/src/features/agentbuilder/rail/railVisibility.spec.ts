@@ -28,7 +28,7 @@ const worldView = {
 const magOne = {
   id: 'card_magentic', title: 'Mag One', role: 'Manager', prompt: '',
   templateId: 'template_magentic',
-  runtime: { kind: 'autogen', mode: 'magentic_one' },
+  runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
   position: { x: 100, y: 0 },
 } as const;
 

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 
 type Dependencies = {
   requestRails: typeof requestPythonRailsJson;

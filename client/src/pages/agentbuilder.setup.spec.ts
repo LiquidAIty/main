@@ -43,24 +43,32 @@ function createDeck(nodes: AgentCardInstance[]): DeckDocument {
 describe('agentbuilder authoring flow', () => {
   it('does not manufacture Delegate authority from a Card id or template', () => {
     const deck = createDeck([
-      createCard('card_test_delegate', { kind: 'autogen', mode: 'assistant' }, {
+      createCard('card_test_delegate', {
+        kind: 'hermes', mode: 'delegate', profile: 'card_test_delegate',
+      }, {
         templateId: 'template_assist',
         runtimeOptions: { provider: 'openai', modelKey: 'gpt-5.6-luna' },
       }),
     ]);
 
     const loaded = readDeckDocument(deck);
-    expect(loaded.nodes[0]?.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
+    expect(loaded.nodes[0]?.runtime).toEqual({
+      kind: 'hermes', mode: 'delegate', profile: 'card_test_delegate',
+    });
   });
 
   it('seeds Builder and keeps the remaining Card bindings and topology explicit', () => {
     expect(INITIAL_DECK.nodes.map(node => [node.id, node.title, node.runtime])).toEqual([
       ['card_main_chat', 'Main Chat', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }],
       ['builder', 'Builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }],
-      ['card_magentic', 'Magentic-One', { kind: 'autogen', mode: 'magentic_one' }],
+      ['card_magentic', 'Magentic-One', {
+        kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
+      }],
       ['card_hermes_steward', 'Graph Agent', { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' }],
       ['card_trading_workbench', 'Trading Agent', { kind: 'hermes', mode: 'delegate', profile: 'trading' }],
-      ['card_worldsignals_agent', 'WorldSignals Agent', { kind: 'autogen', mode: 'assistant' }],
+      ['card_worldsignals_agent', 'WorldSignals Agent', {
+        kind: 'hermes', mode: 'delegate', profile: 'worldsignals',
+      }],
     ]);
     expect(INITIAL_DECK.nodes.map(node => node.templateId)).toEqual([
       'template_main_chat', 'template_assist', 'template_magentic',
@@ -97,7 +105,9 @@ describe('agentbuilder authoring flow', () => {
           templateId: 'template_main_chat',
           title: 'Saved A',
         }),
-        createCard('card_saved_b', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_saved_b', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_saved_b',
+        }, {
           templateId: 'template_research',
           title: 'Saved B',
         }),
@@ -206,19 +216,27 @@ describe('agentbuilder authoring flow', () => {
           templateId: 'template_main_chat',
           title: 'Main Chat',
         }),
-        createCard('card_kg_ingest', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_kg_ingest', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_kg_ingest',
+        }, {
           templateId: 'template_kg_ingest',
           title: 'KG Ingest / ThinkGraph',
         }),
-        createCard('card_research', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_research', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_research',
+        }, {
           templateId: 'template_research',
           title: 'Research Agent',
         }),
-        createCard('card_knowgraph', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_knowgraph', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_knowgraph',
+        }, {
           templateId: 'template_knowgraph',
           title: 'KnowGraph',
         }),
-        createCard('card_neo4j', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_neo4j', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_neo4j',
+        }, {
           templateId: 'template_neo4j',
           title: 'Neo4j',
         }),
@@ -310,7 +328,7 @@ describe('agentbuilder authoring flow', () => {
       kind: 'agent',
       templateId: 'template_code_workbench',
       prompt: 'retired',
-      runtime: { kind: 'autogen', mode: 'assistant' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'card_code_workbench' },
       runtimeOptions: null,
       parentGraphId: 'workbench_code',
       title: 'Code Agent',
@@ -359,8 +377,8 @@ describe('agentbuilder authoring flow', () => {
       version: 1,
       promptTemplates: [],
       nodes: [
-        createCard('card_a', { kind: 'autogen', mode: 'assistant' }, { title: 'A' }),
-        createCard('card_b', { kind: 'autogen', mode: 'assistant' }, { title: 'B' }),
+        createCard('card_a', { kind: 'hermes', mode: 'delegate', profile: 'card_a' }, { title: 'A' }),
+        createCard('card_b', { kind: 'hermes', mode: 'delegate', profile: 'card_b' }, { title: 'B' }),
       ],
       edges: [
         { id: 'edge_a_b', source: 'card_a', target: 'card_b', edgeType: 'flow' },
@@ -388,7 +406,9 @@ describe('agentbuilder authoring flow', () => {
           templateId: 'template_main_chat',
           title: 'Main Chat',
         }),
-        createCard('card_custom_research', { kind: 'autogen', mode: 'assistant' }, {
+        createCard('card_custom_research', {
+          kind: 'hermes', mode: 'delegate', profile: 'card_custom_research',
+        }, {
           templateId: 'template_research',
           title: 'Research Agent',
         }),
@@ -435,8 +455,8 @@ describe('agentbuilder authoring flow', () => {
       promptTemplates: [],
       version: 2,
       nodes: [
-        createCard('card_a', { kind: 'autogen', mode: 'assistant' }, { title: 'A' }),
-        createCard('card_b', { kind: 'autogen', mode: 'assistant' }, { title: 'B' }),
+        createCard('card_a', { kind: 'hermes', mode: 'delegate', profile: 'card_a' }, { title: 'A' }),
+        createCard('card_b', { kind: 'hermes', mode: 'delegate', profile: 'card_b' }, { title: 'B' }),
       ],
       edges: [
         { id: 'edge_call', source: 'card_a', target: 'card_b', edgeType: 'flow' },

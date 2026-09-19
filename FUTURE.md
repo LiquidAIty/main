@@ -14,7 +14,7 @@ Named-Card conversation/Bot Mode remains a separate feature; do not mix it into 
    duration, success/failure, and AGE lineage.
 4. One ordinary Hermes Card completes a bounded native Team task with its actual native configuration,
    Card Run/native-root correlation and durable rejoin. Do not restore the removed Card Team-policy overlay.
-5. Main approves one transient Mag One Card input and hands it to native Magentic-One through the official MCP boundary.
+5. Main approves one transient Mag One Card input and hands it to the saved Mag One Card through the official MCP boundary; Hermes performs the headless native task/dependency execution.
 
 These calls require explicit approval. Structural tests must not be presented as live proof.
 
@@ -73,8 +73,8 @@ Engraphis work. A separate owner decision would be required to reconsider any su
 
 - Refine Chat/Graphs as the primary modality and Agent Canvas as the build/test modality.
 - Preserve the existing Builder terminal beneath Chat.
-- Explore distinct visual treatment for internal Hermes Cards versus AutoGen/Mag One Cards without
-  creating new runtime types.
+- Explore distinct visual treatment for ordinary Cards versus the Mag One bus without creating new
+  runtime types.
 - Preserve the current bus layout for now: protected System 3 Cards above it, ordinary information/source/
   processor/support Cards on one side, and sandboxed strategy Trading Cards on the other. Explore a
   magnetic plus/X presentation later, with slim collapsed Cards and optional visual quadrants, only after

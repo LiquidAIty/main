@@ -14,7 +14,7 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentCardInstance } from '../types';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveRepoRoot } from '../services/workspaceRoot';
@@ -79,7 +79,7 @@ export type HermesCardTools = {
   cardId: string;
   cardRevisionId: string;
   cardRevisionSha256: string;
-  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban'; profile: string };
+  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban' | 'magentic_one'; profile: string };
   enabledTools: string[];
   unavailableTools: string[];
   unavailableToolReasons: Record<string, string>;
@@ -134,7 +134,7 @@ function requireCardTools(value: unknown, owner: AgentTerminalOwner, card: Agent
     || body.cardRevisionSha256 !== card._cardRevisionSha256
     || runtime.kind !== 'hermes'
     || runtime.profile !== (card.runtime.kind === 'hermes' ? card.runtime.profile : '')
-    || !['main', 'delegate', 'kanban'].includes(String(runtime.mode || ''))
+    || !['main', 'delegate', 'kanban', 'magentic_one'].includes(String(runtime.mode || ''))
     || !/^[a-f0-9]{64}$/.test(String(body.configurationFingerprint || ''))
     || !rawPluginTools
     || !rawExternalMcpTools

@@ -54,7 +54,8 @@ or silently change their write policy.
   It builds prompts, Cards, agent apps, UI pages and supporting code using explicit tools.
 - Do not delete saved Cards, Runs, profiles, or shared state without an explicit owner-authorized exact target.
 - Bun is outside the supported graph.
-- AutoGen 0.7.5 remains checked in at `autogen-main`; its upstream base is frozen.
+- The existing Mag One Card and blue topology remain LiquidAIty product authority; current source executes
+  that bus through the repository-owned Hermes task/dependency runtime with no legacy executor fallback.
 - Engraphis owns ThinkGraph, Graphiti owns KnowGraph, native CBM owns CodeGraph and AGE owns
   Card topology/Run observations. Preserve the accepted graph surfaces and data.
 - Static tests, loaded application execution and external plugin acceptance are separate proofs.
@@ -63,7 +64,8 @@ or silently change their write policy.
 ### APPROVED TARGET
 
 - Repo-owned Hermes Main, Builder, and graph helpers complete live proof without another runtime or fallback.
-- Main approves exact IDF handoff to the one native AutoGen Magentic-One runtime.
+- Main approves exact IDF handoff to the saved Mag One Card; Hermes performs its native headless
+  task/dependency execution and final synthesis through the exact blue-connected Card roster.
 - Real native graph reads, Context Selections, handoffs, consumption, traversal, and writes drive the
   two visual canvases.
 - Native child Runs, tools, references, artifacts, failures, and completion become truthful AGE
@@ -172,9 +174,9 @@ symbols or graph seeds; and read complete current source before changing behavio
 rename must resolve actual qualified identities, traverse inverse relationships, repair surviving neighbors,
 and prove residue absence according to the skill.
 
-The current derived projection intentionally excludes `autogen-main` through `.cbmignore`; AutoGen remains
-first-party runtime source. Never open or manipulate CBM SQLite/cache files, create backups, launch another
-daemon/frontend, change global Codex configuration, or bypass LiquidAIty's application MCP boundary.
+The current derived projection intentionally excludes controlled imported roots listed in `.cbmignore`.
+Never open or manipulate CBM SQLite/cache files, create backups, launch another daemon/frontend, change
+global Codex configuration, or bypass LiquidAIty's application MCP boundary.
 
 ---
 
@@ -307,7 +309,7 @@ Required value: **0.000**.
 
 ### User interface
 
-React/TypeScript renders Main Chat, Agent Canvas, knowledge graphs, inspector, Kanban/profile surfaces,
+React/TypeScript renders Main Chat, Agent Canvas, knowledge graphs, inspector, saved Card surfaces,
 and Builder terminal. It may validate typed transport fields and render activity states. It may not
 interpret task meaning, plan, classify intent, rank agents, merge graphs, or infer knowledge access.
 
@@ -319,7 +321,7 @@ other proven protocol bridges, and event delivery. It is not an agent brain.
 
 ### Python rails
 
-Python owns AutoGen/Magentic-One, configured agent execution, tool execution, parameterized SQL/Cypher,
+Python owns configured agent execution, Mag One runtime preparation, tool execution, parameterized SQL/Cypher,
 data processing, graph/data adapters, research ingestion, deterministic validation/computation, and
 specialist runtimes.
 
@@ -349,7 +351,7 @@ model/tool authority and real streaming/session/failure behavior.
 Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
 selection into the bound native profile and reads it back before inference; actual child provider/model
 and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,
-Kanban worker selection, Magentic-One, or the ThinkGraph engine. External-memory selection remains native
+Mag One worker selection or the ThinkGraph engine. External-memory selection remains native
 profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
 general Card memory-provider field or reconfigures memory at Run start.
 
@@ -368,28 +370,26 @@ Agent Builder lower terminal reach the same saved Card/Run authority. It accepts
 missions and chooses granted tools for files, terminal, research, prompts, Card configuration
 and application/UI construction. Card creation and configuration use explicit tool arguments,
 exact targets, current revisions and saved grants. No prefilled operation tasks or hidden modes.
-Saving a Card and invoking a Card remain separate actions. Builder has no Magentic-One edge.
+Saving a Card and invoking a Card remain separate actions. Builder has no Mag One edge.
 
-### Magentic-One
+### Mag One
 
-Use the real Microsoft AutoGen v0.4+ `MagenticOneGroupChat` on Python rails. Preserve these available
-runtime primitives:
+The existing Mag One Card is the bus orchestrator. Its saved identity, prompt, provider/model, grants,
+current revision, canonical IDF, outer Run, Canvas placement, and blue `magentic_option` topology remain
+LiquidAIty authority. Python projects the exact enabled connected Cards and their current saved Hermes
+bindings; titles, prompts, installed profiles, and global discovery never add workers.
 
-```text
-MagenticOneGroupChat
-AssistantAgent with tools
-Swarm
-SocietyOfMindAgent
-UserProxyAgent
-```
+The headless Mag One adapter submits one bounded root mission to Hermes' existing SQLite
+task/dependency runtime. The saved Mag One profile decomposes the mission, assigns work only to the
+projected worker identities, creates exactly one dependency sink assigned back to itself for final
+synthesis, and returns that native summary as the outer Run result. Hermes' inherited native assignee
+ceiling rejects assignments outside the exact root roster without changing unrestricted ordinary tasks.
 
-Bus connectivity through saved `magentic_option` edges is worker eligibility. Do not create a TS
-participant classifier or another scheduler.
-
-Task and Progress Ledgers are private native Magentic-One state. Never override AutoGen defaults or
-`_get_task_ledger_plan_prompt`; never subclass to capture the orchestrator; never read `_facts`,
-`_plan`, `_team_description`, or other private ledger state; and never reconstruct, transport,
-project, trace, or render ledger artifacts in LiquidAIty.
+Hermes owns native tasks, dependencies, attempts, dispatch, retries, worker processes, and final synthesis.
+LiquidAIty stores no copy of those rows and creates no second scheduler, task store, worker identity,
+terminal, transcript, activity feed, or board UI. TypeScript owns transport and structured Run observation,
+not decomposition or scheduling. The outer Run remains one product invocation/lineage record and the one
+canonical `in.idf` remains mission and selected-context transport; neither duplicates the native task ledger.
 
 ---
 
@@ -467,7 +467,7 @@ in.idf = actual bounded native graph data, references, and provenance
        + current dynamic mission, context, and images
 ```
 
-The existing Run artifact catalog retains its path, byte size, and hash. Hermes and AutoGen receive only a
+The existing Run artifact catalog retains its path, byte size, and hash. Hermes receives only a
 mechanical native request projected from those exact reloaded bytes; no adapter may reconstruct, wrap,
 validate, hash, or reinterpret a competing payload. TypeScript transports the file reference and renders
 selected-Run inspection; it is never a materializer. AGE data, receipts, approval state, and runtime lineage
@@ -477,7 +477,7 @@ alternate TypeScript assembler.
 There is no second runtime-input format or file. Optional graph or handoff artifacts remain ordinary Run
 artifacts and never become a prerequisite, retained input authority, or competing model payload.
 
-Cards remain one product concept. Their explicit Hermes or AutoGen runtime binding is saved Card
+Cards remain one product concept. Their explicit Hermes runtime mode/profile binding is saved Card
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; Python validates or rereads that exact bounded selection, and
 the receiving Card owns materialization. A normal `card.run_assistant_agent` handoff executes immediately
@@ -485,7 +485,7 @@ through the receiving Card's canonical Run path. Optional review uses the existi
 Knowledge editors, then submits that same path once; staged review state is not a retained input or Run.
 Mag One workers
 receive their dynamic task through the saved-worker Card doorway, so each independently invoked saved worker
-Card gets its own root IDF. A Hermes Kanban Card is one root boundary: Hermes owns native task decomposition,
+Card gets its own root IDF. A Mag One Card is one root boundary: Hermes owns native task decomposition,
 worker prompts, handoffs, and child context. Never infer per-worker IDFs from native child IDs.
 
 IDD is the Input Data Dictionary: the one literal repo-root `LiquidAIty.idd` definition source
@@ -646,8 +646,8 @@ Until approved task-node execution is genuinely wired, Run Task fails closed:
 Run Task unavailable: approved task-node execution is not wired yet.
 ```
 
-Do not execute from fallback assistant text, `finalResponseText`, `autogenMessages`, raw chat, fake
-task objects, or reconstructed Magentic-One ledgers. Do not mark completion without proof.
+Do not execute from fallback assistant text, `finalResponseText`, raw chat, fake task objects, or
+reconstructed native task-ledger state. Do not mark completion without proof.
 
 ---
 
@@ -709,7 +709,7 @@ direction. Do not solve uncertainty by writing another document.
 - No invented tools or schemas.
 - No direct CBM database access.
 - No UI-as-brain or TypeScript semantic logic.
-- No edits to vendored AutoGen private ledger behavior.
+- No duplicate or application-owned replacement for Hermes task/dependency execution.
 - No unrelated cleanup inside a bounded task.
 - No deletion outside the owner-authorized exact Card scope.
 - No calling TARGET behavior CURRENT.

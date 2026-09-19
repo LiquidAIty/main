@@ -35,8 +35,8 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Hermes Card process/session | `apps/backend/src/hermes/agentTerminal.ts` | One profile-scoped native Gateway, durable native session, and optional native TUI attachment |
 | Hermes Run receipt | `apps/backend/src/hermes/agentTerminalExecution.ts` | Bind one already-materialized saved Run to one Gateway turn and persist its native completion |
 | Hermes profile application | `apps/backend/src/hermes/profileMaterialization.ts` | Apply the exact saved parent model, selected skills, and desired native subagent model before a turn |
-| Hermes runtime | `Hermes/` | Native inference, sessions, tools, memory, delegation, Kanban/Team, Gateway, TUI, desktop, and Bot Mode |
-| AutoGen runtime | `apps/python-models/app/python_models/autogen_orchestrator.py` and `autogen-main/` | Native Magentic-One and accepted AutoGen primitives on Python rails |
+| Hermes runtime | `Hermes/` | Native inference, sessions, tools, memory, delegation, task/dependency dispatch, Gateway, TUI, desktop, and direct-agent messaging |
+| Mag One execution | `apps/python-models/app/python_models/magentic_execution.py` | Headless structured submit, status/rejoin, stop, and final-result observation against Hermes' existing SQLite task/dependency runtime |
 | Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, native availability, deterministic validation, and execution; transports do not duplicate these owners |
 | Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
@@ -52,7 +52,7 @@ saved Card revision
   + deliberately selected native references and bounded data
   + effective saved grants
   -> Python materializes and rereads one in.idf
-  -> saved runtime binding chooses Hermes or AutoGen
+  -> saved runtime binding chooses the exact Hermes mode and profile
   -> native runtime executes
   -> PostgreSQL stores Run state and artifact metadata
   -> AGE may observe stable identities and truthful native events
@@ -185,9 +185,9 @@ Kanban database, or Team receipt product. `apps/backend/src/hermes/kanbanRunReco
 eligible existing active `runtimeMode === "kanban"` rows and does not create new Team work.
 
 The complete Hermes fork scope and rollback contract is
-[`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). Exactly one
-additional execution feature and one authority projection are retained:
-`delegate_task(role="team")` and the profile-scoped native Bot roster.
+[`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). It records the
+previously retained Hermes extensions, the profile-scoped direct-agent roster, and the nullable root-scoped
+assignee ceiling used only when Mag One submits a bounded native execution.
 
 ## Native Hermes Bot Mode
 
@@ -210,7 +210,7 @@ saved enabled Hermes Cards + enabled orange flow edges
 
 Missing or empty roster configuration grants no local target. The resolver preserves configured order,
 deduplicates without sorting, excludes self, and filters malformed, unknown, deleted, or tombstoned
-profiles. The default profile is available only when explicitly listed. Blue Magentic-One topology does
+profiles. The default profile is available only when explicitly listed. Blue Mag One topology does
 not enter this projection.
 
 The former Card Bot-DM plugin, backend host/authentication route, and Python per-message target resolver
@@ -240,11 +240,11 @@ Hermes owns profile-local credentials, sessions, native memory, skills, and back
 LiquidAIty exposes Honcho setup/status only for Main; it does not project a general Card memory-provider
 field or copy memory between profiles.
 
-## Python rails and AutoGen
+## Python rails and Mag One
 
 Python rails owns deterministic runtime preparation, saved Card/Run persistence, IDF
 materialization, native graph hydration, tool execution, parameterized SQL/Cypher, research/data
-processing, and AutoGen/Magentic-One execution.
+processing, and the structured Mag One boundary into Hermes' existing execution machinery.
 
 ## Internal Card tools and external MCP
 
@@ -285,10 +285,12 @@ The native TUI and Bot Chat are proof surfaces for the same plugin-backed Card r
 create separate tool paths. A public-contract failure stops the implementation; it does not authorize an
 ACP-like host execution layer, callback protocol, session mirror, transcript owner, or worker runtime.
 
-The approved AutoGen runtime is the checked-in v0.4+ `MagenticOneGroupChat` implementation with the
-accepted `AssistantAgent`, `Swarm`, `SocietyOfMindAgent`, and `UserProxyAgent` primitives. Saved
-`magentic_option` topology determines eligible workers. LiquidAIty does not subclass or project
-Magentic-One's private ledgers and TypeScript does not schedule its participants.
+The existing Mag One Card remains the LiquidAIty bus authority. Saved `magentic_option` topology is
+projected into one exact roster of enabled current Card revisions and Hermes profile bindings. The
+headless adapter submits the reloaded canonical mission to Hermes' existing SQLite task/dependency
+runtime with an inherited root-scoped assignee ceiling, observes only outer execution state, and
+returns the one verified native final-synthesis summary. LiquidAIty does not copy native task, dependency,
+attempt, or event rows into PostgreSQL/AGE; TypeScript does not schedule workers or fabricate a transcript.
 
 ## MCP and Codebase Memory
 
@@ -313,7 +315,6 @@ authenticated browser transport that checks the saved Card scope, permits only `
 the actual `cbm.*` reads through the official host. The client uses it to hydrate CodeGraph UI state.
 
 The canonical project is `C-Projects-LiquidAIty-main` at `C:/Projects/LiquidAIty/main`.
-`autogen-main/` is deliberately excluded from the projection and must be read directly.
 
 ## Graph authorities and native observations
 
@@ -379,15 +380,17 @@ A lower tier never proves a higher one.
 
 ## Controlled imported and vendored roots
 
-`Hermes/`, `autogen-main/`, `worldsignal/`, `Kronos-main/`, and other imported systems are controlled
+`Hermes/`, `worldsignal/`, `Kronos-main/`, and other imported systems are controlled
 upstream forks or first-party runtime source, not general cleanup targets. Prefer a public API,
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-For Hermes, the retained LiquidAIty divergences are the Team entry and the bounded native Bot-roster
-entry in `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Bot delivery remains upstream-owned; the roster entry
-changes only profile-scoped local target authority. Upstream ACP is not a LiquidAIty runtime boundary.
-No other Hermes customization is silently accepted by this document.
+For Hermes, the retained local fork patches are the previously recorded extension, the bounded
+direct-agent roster entry, and the root-scoped Mag One assignee ceiling in
+`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery remains upstream-owned; its roster entry
+changes only profile-scoped local target authority. The Mag One entry changes only assignment authority
+inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
+LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
 
 ## Current proof limits
 
@@ -409,5 +412,5 @@ No other Hermes customization is silently accepted by this document.
   catalog tests prove publisher separation; external CBM/Graphiti live invocation remains outstanding.
 - Native subagent configuration and actual child provider/model require a real child receipt; saved or
   projected selections alone are not execution proof.
-- Magentic-One, graph attention, external MCP selection, and visual behavior retain their own acceptance
+- Mag One, graph attention, external MCP selection, and visual behavior retain their own acceptance
   boundaries.

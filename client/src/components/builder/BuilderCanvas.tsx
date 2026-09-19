@@ -201,14 +201,14 @@ export function toFlowNodes(
   activeCardIds: Set<string>,
   activeAgentCounts: Record<string, number> = {},
 ): Node[] {
-  const bus = document.nodes.find((node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one');
+  const bus = document.nodes.find((node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one');
   const neighborsByNode = buildUndirectedNeighborMap(
     document.nodes.map((node) => node.id),
     document.edges.map((edge) => ({ source: edge.source, target: edge.target })),
   );
   const hoveredRelatedNodeIds = buildFocusedNodeSet(hoveredCardId, neighborsByNode);
   return document.nodes.map((node) => {
-    const isMagenticBus = node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one';
+    const isMagenticBus = node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one';
     return {
       id: node.id,
       type: isMagenticBus ? 'magenticBus' : 'agentCard',
@@ -276,8 +276,8 @@ function resolveCanvasConnectionEdgeType(
   const targetNode = nodeMap.get(connection.target);
   if (!sourceNode || !targetNode) return null;
 
-  const sourceIsBus = sourceNode.runtime.kind === 'autogen' && sourceNode.runtime.mode === 'magentic_one';
-  const targetIsBus = targetNode.runtime.kind === 'autogen' && targetNode.runtime.mode === 'magentic_one';
+  const sourceIsBus = sourceNode.runtime.kind === 'hermes' && sourceNode.runtime.mode === 'magentic_one';
+  const targetIsBus = targetNode.runtime.kind === 'hermes' && targetNode.runtime.mode === 'magentic_one';
   if (sourceIsBus && targetIsBus) return null;
 
   if (sourceIsBus || targetIsBus) {

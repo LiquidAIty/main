@@ -727,12 +727,19 @@ class Task:
     block_kind: Optional[str] = None
     block_recurrences: int = 0               # unblock-loop counter, see BLOCK_RECURRENCE_LIMIT
     completion_contract: Optional[str] = None
+    allowed_assignees: Optional[list[str]] = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
         g = lambda col, default=None: _lossy_text(_row_get(row, col, default))  # noqa: E731
         parsed = _json_or(g("skills"))
         skills_value = [str(s) for s in parsed if s] if isinstance(parsed, list) else None
+        parsed_assignees = _json_or(g("allowed_assignees"))
+        allowed_assignees = (
+            [str(name) for name in parsed_assignees if str(name).strip()]
+            if isinstance(parsed_assignees, list)
+            else None
+        )
         return cls(
             **{col: _lossy_text(row[col]) for col in _TASK_REQUIRED_COLUMNS},
             **{col: g(col) for col in _TASK_OPTIONAL_COLUMNS},
@@ -742,6 +749,7 @@ class Task:
             consecutive_failures=g("consecutive_failures", g("spawn_failures", 0)),
             last_failure_error=g("last_failure_error", g("last_spawn_error")),
             skills=skills_value,
+            allowed_assignees=allowed_assignees,
             goal_mode=bool(g("goal_mode")),
             block_recurrences=int(g("block_recurrences") or 0),
         )
@@ -960,7 +968,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- ``blocked`` so a cron can't spin it forever. Reset to 0 only on a
     -- successful completion — NOT on unblock (resetting on unblock is exactly
     -- the amnesia that let the loop run unbounded).
-    block_recurrences    INTEGER NOT NULL DEFAULT 0
+    block_recurrences    INTEGER NOT NULL DEFAULT 0,
+    -- Optional root-scoped assignment ceiling. NULL preserves ordinary
+    -- behavior; a JSON array is inherited by tasks created from this task.
+    allowed_assignees    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_links (
@@ -1114,6 +1125,53 @@ def _canonical_assignee(assignee: Optional[str]) -> Optional[str]:
     return normalize_profile_name(assignee)
 
 
+def _normalize_allowed_assignees(value: Optional[Iterable[str]]) -> Optional[list[str]]:
+    """Canonical ordered assignee ceiling; ``None`` means unrestricted."""
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise ValueError("allowed_assignees must be an iterable of assignee names")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError("allowed_assignees entries must be non-empty strings")
+        name = _canonical_assignee(raw)
+        if name is not None and name not in seen:
+            normalized.append(name)
+            seen.add(name)
+    return normalized
+
+
+def _stored_allowed_assignees(value: Any) -> Optional[list[str]]:
+    if value is None:
+        return None
+    parsed = _json_or(value)
+    if not isinstance(parsed, list):
+        raise ValueError("task has an invalid allowed_assignees value")
+    return _normalize_allowed_assignees(parsed)
+
+
+def _require_allowed_assignee(value: Any, assignee: Optional[str]) -> None:
+    allowed = _stored_allowed_assignees(value)
+    if allowed is not None and assignee not in allowed:
+        raise ValueError(f"assignee {assignee!r} is outside this execution's allowed assignees")
+
+
+def _inherited_allowed_assignees(
+    conn: sqlite3.Connection,
+    creator_task_id: Optional[str],
+) -> Optional[list[str]]:
+    if not creator_task_id:
+        return None
+    row = conn.execute(
+        "SELECT allowed_assignees FROM tasks WHERE id = ?", (creator_task_id,),
+    ).fetchone()
+    if row is None or row["allowed_assignees"] is None:
+        return None
+    return _stored_allowed_assignees(row["allowed_assignees"])
+
+
 def _resolve_project_link(
     conn: sqlite3.Connection, project_id: Optional[str], project_source_task_id: Optional[str],
     workspace_kind: str, workspace_path: Optional[str],
@@ -1256,6 +1314,7 @@ def create_task(
     completion_contract: Optional[str] = None,
     workflow_template_id: Optional[str] = None,
     current_step_key: Optional[str] = None,
+    allowed_assignees: Optional[Iterable[str]] = None,
 ) -> str:
     """Create a task (optionally under ``parents``); returns its id.
 
@@ -1285,6 +1344,20 @@ def create_task(
     workflow_template_id = str(workflow_template_id or "").strip() or None
     current_step_key = str(current_step_key or "").strip() or None
     assignee = _canonical_assignee(assignee)
+    requested_allowed_assignees = _normalize_allowed_assignees(allowed_assignees)
+    inherited_allowed_assignees = _inherited_allowed_assignees(conn, creator_task_id)
+    if inherited_allowed_assignees is not None:
+        if (
+            requested_allowed_assignees is not None
+            and requested_allowed_assignees != inherited_allowed_assignees
+        ):
+            raise ValueError("child task cannot change its inherited allowed_assignees")
+        requested_allowed_assignees = inherited_allowed_assignees
+    if (
+        requested_allowed_assignees is not None
+        and assignee not in requested_allowed_assignees
+    ):
+        raise ValueError(f"assignee {assignee!r} is outside this execution's allowed assignees")
     if not title or not title.strip():
         raise ValueError("title is required")
     if initial_status not in VALID_INITIAL_STATUSES:
@@ -1362,8 +1435,8 @@ def create_task(
                         skills, max_retries, model_override, provider_override,
                         reasoning_effort,
                         goal_mode, goal_max_turns, session_id, completion_contract,
-                        workflow_template_id, current_step_key
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        workflow_template_id, current_step_key, allowed_assignees
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id, title.strip(), body, assignee, task_status, priority,
@@ -1374,6 +1447,8 @@ def create_task(
                         _opt_int(max_retries), model_override, provider_override, reasoning_effort,
                         1 if goal_mode else 0, _opt_int(goal_max_turns), session_id, completion_contract,
                         workflow_template_id, current_step_key,
+                        json.dumps(requested_allowed_assignees)
+                        if requested_allowed_assignees is not None else None,
                     ),
                 )
                 for pid in parents:
@@ -1398,6 +1473,7 @@ def create_task(
                         "provider_override": provider_override,
                         "workflow_template_id": workflow_template_id,
                         "current_step_key": current_step_key,
+                        "allowed_assignees": requested_allowed_assignees,
                     },
                 )
                 if task_status == "blocked":
@@ -1554,10 +1630,12 @@ def assign_task(conn: sqlite3.Connection, task_id: str, profile: Optional[str]) 
     profile = _canonical_assignee(profile)
     with write_txn(conn):
         row = conn.execute(
-            "SELECT status, claim_lock, assignee FROM tasks WHERE id = ?", (task_id,)
+            "SELECT status, claim_lock, assignee, allowed_assignees "
+            "FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
         if not row:
             return False
+        _require_allowed_assignee(row["allowed_assignees"], profile)
         if row["claim_lock"] is not None and row["status"] == "running":
             raise RuntimeError(
                 f"cannot reassign {task_id}: currently running (claimed). "
@@ -3205,7 +3283,7 @@ def request_review(
                 return _ret(False, "parent dependencies are not satisfied")
             trow = conn.execute(
                 "SELECT assignee, status, claim_lock, current_run_id, worker_pid, "
-                "worker_started_at FROM tasks WHERE id = ?", (task_id,),
+                "worker_started_at, allowed_assignees FROM tasks WHERE id = ?", (task_id,),
             ).fetchone()
             if trow is None:
                 return _ret(False, "task not found")
@@ -3228,6 +3306,8 @@ def request_review(
                         "malformed); pass reviewer= explicitly",
                     )
             reviewer = _canonical_assignee(reviewer)
+            if reviewer is not None:
+                _require_allowed_assignee(trow["allowed_assignees"], reviewer)
             assignee_sql = ", assignee = ?" if reviewer is not None else ""
             run_guard = "" if expected_run_id is None else " AND current_run_id = ?"
             params: tuple[Any, ...] = (
@@ -3654,11 +3734,14 @@ def specify_triage_task(
     assignee = _canonical_assignee(assignee)
     with write_txn(conn):
         existing = conn.execute(
-            "SELECT title, body, assignee FROM tasks WHERE id = ? AND status = 'triage'",
+            "SELECT title, body, assignee, allowed_assignees "
+            "FROM tasks WHERE id = ? AND status = 'triage'",
             (task_id,),
         ).fetchone()
         if existing is None:
             return False
+        if assignee is not None:
+            _require_allowed_assignee(existing["allowed_assignees"], assignee)
         sets: list[str] = ["status = 'todo'"]
         params: list[Any] = []
         changed_fields: list[str] = []

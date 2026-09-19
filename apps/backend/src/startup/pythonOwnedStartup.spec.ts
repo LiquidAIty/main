@@ -125,9 +125,9 @@ describe('Python-owned backend startup', () => {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'disabled-profile' },
       runtimeOptions: { enabled: false }, position: { x: 7, y: 7 } };
     const magOne = { id: 'mag-one', templateId: 'template_magentic', title: 'Mag One', kind: 'agent',
-      runtime: { kind: 'autogen', mode: 'magentic_one' }, position: { x: 8, y: 8 } };
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'mag-one' }, position: { x: 8, y: 8 } };
     const visual = { id: 'chart', templateId: 'template_chart', title: 'Chart',
-      runtime: { kind: 'autogen', mode: 'assistant' }, position: { x: 9, y: 9 } };
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'chart' }, position: { x: 9, y: 9 } };
     const deck = { id: 'deck', name: 'Deck', version: 1, promptTemplates: [],
       nodes: [main, controller, connected, builder, magWorkerA, magWorkerB,
         disconnected, disabled, magOne, visual],
@@ -202,8 +202,11 @@ describe('Python-owned backend startup', () => {
       position: { x: 2, y: 2 } };
     const disconnected = { id: 'idle', templateId: 'template_worker', title: 'Idle', kind: 'agent',
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'idle-profile' }, position: { x: 3, y: 3 } };
+    const magOne = { id: 'mag-one', templateId: 'template_magentic', title: 'Mag One', kind: 'agent',
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'mag-one-profile' },
+      position: { x: 4, y: 4 } };
     const deck = { id: 'deck', name: 'Deck', version: 1, promptTemplates: [],
-      nodes: [main, connected, builder, disconnected], edges: [
+      nodes: [main, connected, builder, disconnected, magOne], edges: [
         { id: 'active-worker', source: 'main-card', target: 'worker', edgeType: 'flow' },
         { id: 'active-builder', source: 'main-card', target: 'builder', edgeType: 'flow' },
       ] } as any;

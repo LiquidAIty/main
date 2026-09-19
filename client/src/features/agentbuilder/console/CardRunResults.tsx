@@ -11,7 +11,6 @@ export type TerminalRun = {
 
 export function usesCardRunResults(kind: string | undefined, runtime: CardRuntime | undefined): boolean {
   if (kind !== 'agent' || !runtime) return false;
-  if (runtime.kind === 'autogen') return runtime.mode === 'assistant' || runtime.mode === 'magentic_one';
   return runtime.kind === 'hermes' && runtime.mode !== 'main';
 }
 
@@ -147,7 +146,8 @@ export default function CardRunResults(props: {
   </div>;
 
   const terminal = run?.terminal;
-  const count = active && typeof terminal?.activeAgentCount === 'number' && Number.isSafeInteger(terminal.activeAgentCount)
+  const headlessMagentic = runtime.kind === 'hermes' && runtime.mode === 'magentic_one';
+  const count = !headlessMagentic && active && typeof terminal?.activeAgentCount === 'number' && Number.isSafeInteger(terminal.activeAgentCount)
     ? terminal.activeAgentCount : 0;
   const starting = active && (!run || state === 'pending');
   const finalText = terminal?.finalText || run?.output || '';
@@ -159,17 +159,14 @@ export default function CardRunResults(props: {
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <span role="status">{starting ? 'Starting…' : active ? 'Running' : state}</span>
       {count > 0 ? <span data-testid="terminal-active-agents" aria-label={`${count} active agents`}>{count}</span> : null}
-      {active && runtime.kind === 'hermes' && props.onStop
+      {active && runtime.kind === 'hermes' && runtime.mode !== 'magentic_one' && props.onStop
         ? <button type="button" onClick={props.onStop}>Stop</button> : null}
     </div>
-    {runtime.kind === 'autogen' && runtime.mode === 'magentic_one' ? <div>Orchestrator · Magentic-One</div> : null}
     {!active && finalText ? <div data-testid="card-terminal-final"><BoundedText text={finalText} /></div> : null}
     {failure ? <div role="alert">{terminal?.errorCode ? `${terminal.errorCode}: ` : ''}{failure}</div> : null}
     {run?.observationError ? <div role="alert">{run.observationError}</div> : null}
-    {terminal?.unavailableReason ? <div role="status">{terminal.unavailableReason === 'autogen_adapter_completion_only'
-      ? 'This AutoGen adapter reports output at completion; live output is unavailable.'
-      : terminal.unavailableReason}</div> : null}
-    {active || events.length > 0 ? <>
+    {!headlessMagentic && terminal?.unavailableReason ? <div role="status">{terminal.unavailableReason}</div> : null}
+    {!headlessMagentic && (active || events.length > 0) ? <>
       {terminal?.nativeTasks ? <label>Task <select aria-label="Run task filter" value={selectedTaskId || ''}
         onChange={(event) => setSelectedTaskId(event.target.value || null)}>
         <option value="">All tasks</option>
@@ -187,7 +184,7 @@ export default function CardRunResults(props: {
     {!active ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       <button type="button" onClick={() => setNewInputFor(runId)}>New input</button>
     </div> : null}
-    {props.onRejoin && (run?.observationError || (active && terminal?.observation === 'unavailable' && runtime.kind === 'hermes'))
+    {!headlessMagentic && props.onRejoin && (run?.observationError || (active && terminal?.observation === 'unavailable' && runtime.kind === 'hermes'))
       ? <button type="button" onClick={props.onRejoin}>Reconnect to this Run</button> : null}
   </section>;
 }

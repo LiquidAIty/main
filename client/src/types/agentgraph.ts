@@ -3,22 +3,17 @@ export type PromptTemplate = {
   content: string;
 };
 
-export type CardRuntime =
-  | {
-      kind: 'hermes';
-      mode: 'main' | 'delegate' | 'kanban';
-      profile: string;
-    }
-  | {
-      kind: 'autogen';
-      mode: 'assistant' | 'magentic_one';
-    };
+export type CardRuntime = {
+  kind: 'hermes';
+  mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  profile: string;
+};
 
-// flow = ORANGE symmetric Bot availability between saved Hermes Cards; magentic_option = BLUE side worker
+// flow = ORANGE symmetric direct-Agent availability between saved Hermes Cards; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the
 // finalized prompt to Mag One — never worker membership).
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
-// stays inert/visible, never silently promoted to a Bot connection.
+// stays inert/visible, never silently promoted to a direct-Agent connection.
 export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
 
 export type CardSubsystemCapability =

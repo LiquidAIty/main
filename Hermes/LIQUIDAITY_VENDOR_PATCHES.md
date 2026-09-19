@@ -1,8 +1,9 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly two LiquidAIty-owned runtime extensions: durable Team delegation and
-profile-scoped native Bot rosters projected from saved Card topology.
+plus exactly three LiquidAIty-owned runtime extensions: durable Team delegation,
+profile-scoped native Bot rosters projected from saved Card topology, and a nullable
+root-scoped assignee ceiling used by headless Mag One execution.
 This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
@@ -26,7 +27,7 @@ LiquidAIty Card runtime boundary. The roster extension below changes only native
 target authority and prompt presentation; no LiquidAIty Bot delivery, Gateway,
 ACP, credential, completion-correlation, queue, or lifecycle patch is retained.
 
-Any production difference outside the entry below is unexplained residue
+Any production difference outside the entries below is unexplained residue
 and blocks publication.
 
 ## 1. Durable Team through `delegate_task(role="team")`
@@ -160,6 +161,64 @@ all-live-profile local roster in prompt and target validation, restore lifecycle
 callers to the upstream helper, and remove the focused tests together. No saved
 Card, session, message, or Hermes delivery data requires migration.
 
+## 3. Root-scoped assignee ceiling for Mag One
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: let the existing headless Mag One adapter restrict one native creator tree
+to the saved Mag One profile and the exact enabled blue-connected Card profiles.
+Hermes continues to own decomposition, dependencies, dispatch, retries, task runs,
+and summaries. LiquidAIty does not add a scheduler, worker registry, or task store.
+
+EXTERNAL ALTERNATIVE CHECK: upstream direct task submission accepts one root
+assignee but exposes no per-root assignment ceiling. Its install-wide dispatcher
+profile filter is not mission-scoped, and prompt text alone cannot enforce the
+saved topology boundary. A nullable inherited field on the existing task rows is
+the smallest native enforcement point.
+
+FILES AND SYMBOLS:
+
+- `hermes_cli/kanban_db.py`: nullable `Task.allowed_assignees`, canonical ordered
+  normalization, creator-task inheritance, no-widening validation, assignment and
+  review-handoff checks, schema storage, readback, and creation event payload.
+- `hermes_cli/kanban_db_connect.py`: additive nullable column migration for existing
+  Hermes task databases.
+- `hermes_cli/kanban_db_graph.py`: atomic decomposition inherits the same ceiling
+  and rejects an out-of-scope root or child assignment.
+- `hermes_cli/kanban_db_dispatch.py`: the existing default-assignee write observes
+  the ceiling if it encounters a bounded task.
+
+UPSTREAM BEHAVIOR PRESERVED: `NULL` keeps ordinary task creation unrestricted.
+Existing dispatcher, worker processes, task tools, retries, dependencies, events,
+summaries, CLI/TUI, and profile discovery remain upstream-owned. The model-facing
+task-creation schema cannot set, replace, or widen the ceiling.
+
+CONTRACTS:
+
+- omission means unrestricted upstream behavior;
+- an explicit list is canonicalized, order-preserving, and duplicate-free;
+- the root assignee must be present in an explicit ceiling;
+- every task created with a bounded `creator_task_id` inherits the exact list;
+- a child cannot replace, narrow, or widen the inherited list;
+- an assignee outside the inherited list is rejected before task creation,
+  reassignment, or a review handoff changes the row;
+- the application supplies the field only on the structured Mag One root call.
+
+TESTS:
+
+- `tests/hermes_cli/test_kanban_creator_origin.py`
+- application integration coverage in
+  `apps/python-models/app/python_models/test_magentic_execution.py`
+
+FORK COST: one nullable task column and bounded validation in the existing task
+creator. There is no alternate dispatcher, process owner, queue, database, or UI.
+
+ROLLBACK: remove the nullable column from new schema definitions and the later-column
+migration, remove normalization/inheritance/enforcement and focused tests, and stop
+passing the field from the Mag One adapter. Existing rows with `NULL` already behave
+like upstream; SQLite column removal is unnecessary for functional rollback.
+
 ## Complete upstream-relative difference manifest
 
 Production files:
@@ -167,10 +226,11 @@ Production files:
 - `tools/delegate_tool.py` — Team
 - `hermes_cli/config_defaults.py` — Team and native Bot roster field
 - `hermes_cli/kanban_team.py` — Team
-- `hermes_cli/kanban_db.py` — Team
-- `hermes_cli/kanban_db_graph.py` — Team
+- `hermes_cli/kanban_db.py` — Team and root-scoped assignee ceiling
+- `hermes_cli/kanban_db_connect.py` — nullable assignee-ceiling migration
+- `hermes_cli/kanban_db_graph.py` — Team and assignee-ceiling inheritance
 - `hermes_cli/kanban_decompose.py` — Team
-- `hermes_cli/kanban_db_dispatch.py` — Team
+- `hermes_cli/kanban_db_dispatch.py` — Team and bounded default-assignee enforcement
 - `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
 - `tools/bot_mode_probe.py` — profile-scoped native Bot roster resolver
 - `tools/bot_mode_dm.py` — native local-target validation through the resolver
@@ -183,6 +243,7 @@ Focused tests:
 - `tests/tools/test_delegate.py` — adjusted public-schema assertions only
 - `tests/tools/test_delegate_team.py` — Team
 - `tests/hermes_cli/test_kanban_team.py` — Team
+- `tests/hermes_cli/test_kanban_creator_origin.py` — assignee-ceiling inheritance and unrestricted behavior
 - `tests/tools/test_bot_mode_probe.py` — native Bot roster resolution/prompt
 - `tests/tools/test_bot_mode_dm.py` — native Bot target and unchanged delivery selection
 - `tests/tui_gateway/test_profiles_bot_roster.py` — profile roster write/readback

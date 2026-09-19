@@ -26,10 +26,8 @@ import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { resolveExternalIdentityMainGrant } from '../auth/externalIdentityGrantStore';
 import {
   describeConnectedAgents,
-  dispatchConfiguredRuntime,
-  ConfiguredRuntimeFailure,
   requestPythonRailsJson,
-} from '../services/autogen/pythonRailsClient';
+} from '../services/pythonRailsClient';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
 import { listConfiguredModelOptions } from '../llm/models.config';
@@ -524,6 +522,197 @@ function nullableNonNegativeNumber(value: unknown): number | null {
   return value === null || value === undefined ? null : nonNegativeNumber(value);
 }
 
+type MagenticExecutionStatus = {
+  ok: boolean;
+  state: 'ready' | 'running' | 'working' | 'completed' | 'blocked' | 'failed' | 'cancelled';
+  nativePhase: string;
+  nativeRootId: string;
+  nativeIdentity?: string | null;
+  effectiveProvider?: string | null;
+  providerApiMode?: string | null;
+  model?: string | null;
+  finalResult?: string;
+  error?: string;
+};
+
+class MagenticExecutionFailure extends Error {
+  constructor(public readonly status: MagenticExecutionStatus) {
+    super(status.error || `magentic_execution_${status.state}`);
+  }
+}
+
+async function ensureMagenticAgents(
+  req: Request,
+  projectId: string,
+  deckId: string,
+  prepared: any,
+): Promise<void> {
+  const execution = prepared?.magenticExecution;
+  const workers = Array.isArray(execution?.workers) ? execution.workers : [];
+  if (!execution || workers.length === 0) throw new Error('magentic_execution_workers_missing');
+  const { deck } = await getDeckDocument(projectId, deckId);
+  if (!deck) throw new Error('magentic_execution_deck_missing');
+
+  const orchestrator = execution.orchestrator;
+  const orchestratorCardId = String(orchestrator?.cardId || '').trim();
+  const orchestratorRevisionId = String(orchestrator?.cardRevisionId || '').trim();
+  const orchestratorIdentity = String(orchestrator?.nativeIdentity || '').trim();
+  const orchestratorCard = deck.nodes.find((candidate) => candidate.id === orchestratorCardId);
+  if (!orchestratorCardId || !orchestratorRevisionId || !orchestratorIdentity
+    || !orchestratorCard || orchestratorCard.runtime.kind !== 'hermes'
+    || orchestratorCard.runtime.mode !== 'magentic_one') {
+    throw new Error('magentic_execution_orchestrator_identity_invalid');
+  }
+  const currentOrchestratorIdentity = requireAgentTerminalCard(orchestratorCard, deck);
+  if (currentOrchestratorIdentity !== orchestratorIdentity
+    || String(orchestratorCard._cardRevisionId || '') !== orchestratorRevisionId) {
+    throw new Error('magentic_execution_orchestrator_saved_identity_changed');
+  }
+  const orchestratorOwner = await resolveCardRuntimeOwner(
+    req, projectId, deckId, orchestratorCardId,
+  );
+  await agentTerminalManager.open(
+    orchestratorOwner,
+    orchestratorCard,
+    deck,
+    120,
+    36,
+    {
+      ...agentTerminalPresentationOptions(orchestratorCard, false),
+      materializeTaskProfile: true,
+    },
+  );
+
+  const seen = new Set<string>();
+  for (const worker of workers) {
+    const cardId = String(worker?.cardId || '').trim();
+    const revisionId = String(worker?.cardRevisionId || '').trim();
+    const nativeIdentity = String(worker?.profile || '').trim();
+    if (!cardId || !revisionId || !nativeIdentity || seen.has(nativeIdentity)) {
+      throw new Error('magentic_execution_worker_identity_invalid');
+    }
+    seen.add(nativeIdentity);
+    const card = deck.nodes.find((candidate) => candidate.id === cardId);
+    if (!card || card.runtime.kind !== 'hermes') {
+      throw new Error(`magentic_execution_worker_card_invalid:${cardId}`);
+    }
+    const currentIdentity = requireAgentTerminalCard(card, deck);
+    if (currentIdentity !== nativeIdentity || String(card._cardRevisionId || '') !== revisionId) {
+      throw new Error(`magentic_execution_worker_saved_identity_changed:${cardId}`);
+    }
+    const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId);
+    await agentTerminalManager.open(
+      owner,
+      card,
+      deck,
+      120,
+      36,
+      {
+        ...agentTerminalPresentationOptions(card, false),
+        materializeTaskProfile: true,
+      },
+    );
+  }
+}
+
+async function writeMagenticProgress(runId: string, status: MagenticExecutionStatus): Promise<void> {
+  if (!['queued', 'decomposing', 'working', 'synthesizing', 'complete', 'blocked', 'failed']
+    .includes(status.nativePhase)) return;
+  await requestPythonRailsJson('/domain/runs/progress', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId,
+      nativeRootId: status.nativeRootId,
+      nativePhase: status.nativePhase,
+    }),
+  });
+}
+
+async function readMagenticExecution(nativeRootId: string): Promise<MagenticExecutionStatus> {
+  const result = await requestPythonRailsJson('/magentic/execution/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nativeRootId }),
+  }) as MagenticExecutionStatus;
+  if (!result?.ok || result.nativeRootId !== nativeRootId) {
+    throw new Error('magentic_execution_status_invalid');
+  }
+  return result;
+}
+
+async function executePreparedMagenticRun(args: {
+  req: Request;
+  projectId: string;
+  deckId: string;
+  runId: string;
+  prepared: any;
+  onSubmitted: () => void;
+}): Promise<MagenticExecutionStatus> {
+  await ensureMagenticAgents(
+    args.req, args.projectId, args.deckId, args.prepared,
+  );
+  const submitted = await requestPythonRailsJson('/magentic/execution/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(args.prepared.magenticExecution),
+  }) as MagenticExecutionStatus;
+  const nativeRootId = String(submitted?.nativeRootId || '').trim();
+  if (!submitted?.ok || !nativeRootId) throw new Error('magentic_execution_submit_invalid');
+  await writeMagenticProgress(args.runId, {
+    ...submitted,
+    nativeRootId,
+    state: submitted.state || 'ready',
+    nativePhase: 'queued',
+  });
+  args.onSubmitted();
+
+  const deadline = Date.now() + (2 * 60 * 60_000);
+  while (Date.now() < deadline) {
+    const status = await readMagenticExecution(nativeRootId);
+    await writeMagenticProgress(args.runId, status);
+    if (status.state === 'completed') return status;
+    if (['blocked', 'failed', 'cancelled'].includes(status.state)) {
+      throw new MagenticExecutionFailure(status);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error('magentic_execution_observation_timeout');
+}
+
+async function finishMagenticOuterRun(
+  runId: string,
+  status: MagenticExecutionStatus,
+): Promise<any> {
+  const state = status.state === 'completed'
+    ? 'completed'
+    : status.state === 'cancelled'
+      ? 'cancelled'
+      : status.state === 'blocked'
+        ? 'blocked'
+        : 'failed';
+  if (state === 'completed' && !String(status.finalResult || '').trim()) {
+    throw new Error('magentic_final_result_missing');
+  }
+  return requestPythonRailsJson('/domain/runs/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      runId,
+      state,
+      hermesSessionRef: status.nativeIdentity || null,
+      providerThreadRef: status.nativeRootId,
+      providerTurnRef: null,
+      effectiveProvider: status.effectiveProvider || null,
+      providerApiMode: status.providerApiMode || null,
+      nativePhase: status.nativePhase,
+      finalResult: state === 'completed' ? status.finalResult : null,
+      errorCode: state === 'completed' ? null : `magentic_execution_${state}`,
+      errorSummary: state === 'completed' ? null : status.error || `magentic_execution_${state}`,
+    }),
+  });
+}
+
 async function readConfiguredCardRunStatus(args: {
   projectId: string;
   deckId: string;
@@ -546,7 +735,7 @@ async function readConfiguredCardRunStatus(args: {
     && !candidate.nativeChildId
   ));
   if (args.cardId && args.conversationId && !scopedRun?.runId) return null;
-  const response = await requestPythonRailsJson('/domain/runs/read', {
+  let response = await requestPythonRailsJson('/domain/runs/read', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(scopedRun ? {
@@ -554,8 +743,33 @@ async function readConfiguredCardRunStatus(args: {
       includeTerminal: args.includeTerminal,
     } : args),
   }) as any;
-  const run = response?.run;
+  let run = (response as any)?.run;
   if (!run || typeof run !== 'object') return null;
+  if (
+    run.runtimeKind === 'hermes'
+    && run.runtimeMode === 'magentic_one'
+    && ['pending', 'running'].includes(String(run.state || ''))
+    && /^t_[A-Za-z0-9_-]+$/.test(String(run.nativeRootId || ''))
+  ) {
+    const nativeStatus = await readMagenticExecution(String(run.nativeRootId));
+    if (['completed', 'blocked', 'failed', 'cancelled'].includes(nativeStatus.state)) {
+      await finishMagenticOuterRun(String(run.runId), nativeStatus);
+    } else {
+      await writeMagenticProgress(String(run.runId), nativeStatus);
+    }
+    response = await requestPythonRailsJson('/domain/runs/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        runId: String(run.runId),
+        includeTerminal: args.includeTerminal,
+      }),
+    });
+    run = (response as any)?.run;
+    if (!run || typeof run !== 'object') return null;
+  }
   const runId = String(run.runId || '').trim();
   const state = String(run.state || 'running');
   const nativeRootId = String(run.nativeRootId || '').trim();
@@ -888,6 +1102,22 @@ router.post('/run', async (req, res) => {
       if (['completed', 'failed', 'cancelled', 'blocked'].includes(status.state)) {
         return res.json({ ok: true, result: status });
       }
+      if (status.runtimeKind === 'hermes' && status.runtimeMode === 'magentic_one') {
+        if (!status.nativeRootId) {
+          return res.status(409).json({ ok: false, error: 'magentic_native_root_missing' });
+        }
+        const stopped = await requestPythonRailsJson('/magentic/execution/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nativeRootId: status.nativeRootId }),
+        }) as MagenticExecutionStatus;
+        if (!stopped?.ok || stopped.state !== 'cancelled') {
+          throw new Error('magentic_execution_stop_invalid');
+        }
+        await finishMagenticOuterRun(runId, stopped);
+        const cancelled = await readConfiguredCardRunStatus({ projectId, deckId, runId });
+        return res.status(202).json({ ok: true, result: cancelled });
+      }
       if (status.runtimeKind === 'hermes' && status.runtimeMode === 'kanban') {
         return res.status(409).json({ ok: false, error: 'hermes_kanban_stop_requires_native_task_control' });
       }
@@ -950,7 +1180,13 @@ router.post('/run', async (req, res) => {
     const runId = String(prepared.runId || correlationId).trim();
     if (prepared.rejoined) {
       const status = await readConfiguredCardRunStatus({ projectId, deckId, runId });
-      return res.json({ ok: true, result: status });
+      const canResumeUnboundMagentic = prepared.runtimeOwner === 'mag_one'
+        && status
+        && ['pending', 'running'].includes(status.state)
+        && !status.nativeRootId;
+      if (!canResumeUnboundMagentic) {
+        return res.json({ ok: true, result: status });
+      }
     }
 
     // A live native execution must own cancellation before acceptance is sent.
@@ -981,7 +1217,7 @@ router.post('/run', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
-    let nativeRuntimeResult: Awaited<ReturnType<typeof dispatchConfiguredRuntime>> | null = null;
+    let magenticStatus: MagenticExecutionStatus | null = null;
     try {
       if (prepared.runtimeOwner === 'hermes') {
         const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId);
@@ -1005,18 +1241,33 @@ router.post('/run', async (req, res) => {
         providerInputTokens = execution.nativeCompletion.inputTokens;
         providerOutputTokens = execution.nativeCompletion.outputTokens;
         totalCostUsd = execution.nativeCompletion.costUsd;
-      } else if (prepared.nativeRuntimeRequest) {
-        const response = await dispatchConfiguredRuntime(prepared.nativeRuntimeRequest);
-        nativeRuntimeResult = response;
-        if (!response.ok) throw new Error(response.error || 'configured_runtime_failed');
-        output = String(response.finalResponseText || '');
-        providerInputTokens = response.runtimeEvidence?.usage?.inputTokens ?? null;
-        providerOutputTokens = response.runtimeEvidence?.usage?.outputTokens ?? null;
+      } else if (prepared.runtimeOwner === 'mag_one' && prepared.magenticExecution) {
+        magenticStatus = await executePreparedMagenticRun({
+          req,
+          projectId,
+          deckId,
+          runId,
+          prepared,
+          onSubmitted: acceptBackground,
+        });
+        output = String(magenticStatus.finalResult || '');
+        transport = {
+          threadId: magenticStatus.nativeRootId,
+          turnId: null,
+          hermesSessionId: magenticStatus.nativeIdentity || null,
+          effectiveProvider: magenticStatus.effectiveProvider || null,
+          providerApiMode: magenticStatus.providerApiMode || null,
+          runtimeSource: 'repository_hermes_magentic',
+        };
+      } else if (prepared.runtimeOwner === 'mag_one') {
+        throw new Error('magentic_execution_contract_missing');
       } else {
         throw new Error(`configured_card_runtime_owner_unsupported:${String(prepared.runtimeOwner || '')}`);
       }
       let finished: any = null;
-      if (prepared.runtimeOwner !== 'hermes') {
+      if (magenticStatus) {
+        finished = await finishMagenticOuterRun(runId, magenticStatus);
+      } else if (prepared.runtimeOwner !== 'hermes') {
         finished = await finishRun('completed', {
           hermesSessionRef: transport?.hermesSessionId || null,
           providerThreadRef: transport?.threadId || null,
@@ -1027,7 +1278,6 @@ router.post('/run', async (req, res) => {
           providerOutputTokens,
           totalCostUsd,
           finalResult: output,
-          ...(nativeRuntimeResult ? { nativePhase: nativeRuntimeResult.runtimeEvidence?.stage } : {}),
         }) as any;
       }
       if (res.destroyed || res.writableEnded) return undefined;
@@ -1056,29 +1306,23 @@ router.post('/run', async (req, res) => {
           },
           output,
           transport,
-          ...(nativeRuntimeResult ? {
-            runtimeEvidence: nativeRuntimeResult.runtimeEvidence,
-            stopReason: nativeRuntimeResult.stopReason,
-            resultArtifact: nativeRuntimeResult.resultArtifact,
-          } : {}),
           receipt: finished?.receipt || null,
         },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'configured_card_transport_failed';
-      const nativeFailure = error instanceof ConfiguredRuntimeFailure ? error.result : null;
+      const magenticFailure = error instanceof MagenticExecutionFailure ? error.status : null;
       const cancelled = message === 'hermes_turn_cancelled';
       if (prepared.runtimeOwner !== 'hermes') {
-        await finishRun(cancelled ? 'cancelled' : 'failed', {
-          nativePhase: nativeFailure?.runtimeEvidence?.stage || (cancelled ? 'cancelled' : 'failed'),
-          errorCode: nativeFailure?.runtimeEvidence?.failure?.failure_code || (cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed'),
-          errorSummary: message,
-          ...(nativeFailure ? {
-            finalResult: nativeFailure.finalResponseText || null,
-            providerInputTokens: nativeFailure.runtimeEvidence?.usage?.inputTokens ?? null,
-            providerOutputTokens: nativeFailure.runtimeEvidence?.usage?.outputTokens ?? null,
-          } : {}),
-        }).catch(() => undefined);
+        if (magenticFailure) {
+          await finishMagenticOuterRun(runId, magenticFailure).catch(() => undefined);
+        } else {
+          await finishRun(cancelled ? 'cancelled' : 'failed', {
+            nativePhase: cancelled ? 'cancelled' : 'failed',
+            errorCode: cancelled ? 'configured_card_run_stopped' : 'configured_card_transport_failed',
+            errorSummary: message,
+          }).catch(() => undefined);
+        }
       }
       throw error;
     }

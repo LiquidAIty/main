@@ -242,7 +242,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(steward?.prompt).toContain('Do not create recursive workers');
 
     expect(magOne).toMatchObject({
-      runtime: { kind: 'autogen', mode: 'magentic_one' },
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
     });
     expect(INITIAL_DECK.nodes.filter(
       (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',

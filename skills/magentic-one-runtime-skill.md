@@ -1,50 +1,51 @@
-# Native Magentic-One Runtime
+# Mag One Hermes Runtime
 
-Use this procedure only for the real Python-rails `MagenticOneGroupChat` boundary.
+The filename is retained for compatibility. Use this procedure for the existing LiquidAIty Mag One
+bus whose execution engine is Hermes.
 
 ## Invariants
 
-1. The saved Magentic-One Card owns provider/model/runtime configuration.
-2. The saved `magentic_control` edge owns who may start it.
-3. Saved `magentic_option` edges own worker eligibility.
-4. The approved transient Mag One Card input carries task meaning and selected native references.
-5. `run_mag_one` is the one team-run MCP entrypoint.
-6. Task and Progress Ledgers remain private AutoGen state.
-7. No TypeScript participant classifier, hidden provider substitution, copied ledger, or fallback team.
-8. A Hermes-backed Card is a Mag One worker only when its current saved `magentic_option` edge makes it
-   eligible. Read the current saved roster; no retired Card is a current worker requirement.
-   No title, profile, or prompt implies membership.
-9. Supply all eligible connected Cards. Do not add per-Run worker subsets, Main-selected speakers,
-   candidate intersections, or manual worker sequences. An unused participant is not a failed member.
-10. Distinguish native task completion from the pinned `Max rounds reached.` termination. A native
-    final answer may exist after exhaustion; nonempty text alone is not successful completion.
+1. The saved Mag One Card owns orchestrator identity, prompt, provider/model, grants, and Hermes profile.
+2. The saved `magentic_control` edge owns who may start the bus.
+3. Enabled saved `magentic_option` edges own the complete worker roster.
+4. Resolve exact current Card revisions and Hermes bindings; never infer membership from titles, prompts,
+   installed profiles, or global discovery.
+5. The transient Mag One input and selected native references pass through the one canonical reloaded
+   `in.idf`; `run_mag_one` and the Canvas share the existing `/api/cards/run` doorway.
+6. Hermes SQLite owns native tasks, dependencies, attempts, assignment, retries, dispatch, and summaries.
+   PostgreSQL keeps only the one outer product Run and final result; do not copy native task rows.
+7. The root task carries an inherited assignee ceiling containing only the saved Mag One profile and the
+   exact projected workers. A native child cannot widen or replace that ceiling.
+8. The saved Mag One profile performs model-driven decomposition and creates exactly one final dependency
+   sink assigned back to itself. Return only that verified native summary as the final result.
+9. Keep the bus headless. Do not add a terminal, transcript, task feed, board UI, fabricated artifacts,
+   replacement scheduler, worker registry, temporary global workers, or fallback executor.
+10. Each worker runs its exact saved profile configuration, tools, skills, plugins/MCP, model/provider,
+    context authority, and native session. Contained subagents remain inside that Card's runtime.
 
 ## Discovery
 
-Use the application-published `cbm.*` doorway on `C-Projects-LiquidAIty-main` to resolve `run_mag_one`, the configured Card runner,
-roster composition, and AGE relationship checks. Direct-read the Python implementations and focused
-tests after CBM bounds the slice.
+Use Codebase Memory when available to resolve `run_mag_one`, `/api/cards/run`, `begin_run`,
+`_connected_hermes_card_targets`, `ensureMagenticAgents`, and `magentic_execution.py`. Direct-read the
+complete current owners and focused tests after the graph bounds the slice. Hermes is excluded from the
+derived projection, so inspect its exact SQLite task owners directly.
 
-## Proof
+## Static proof
 
-- saved Magentic-One Card and connected roster readback;
-- exact one-call field equality at the Python runtime boundary;
-- native `MagenticOneGroupChat` construction with no private-ledger interception;
-- provider/model chosen only from the saved Card;
-- one explicitly approved bounded live run, with tokens/cost and truthful Run/AGE completion.
+- saved Mag One Card, current revision, provider/model/profile, and connected roster readback;
+- canonical IDF write/reload and exact mission equality at structured submit;
+- profile materialization/readback for the orchestrator and every worker before root creation;
+- root `allowed_assignees` readback, inherited child enforcement, and unrestricted ordinary-task behavior;
+- idempotent root submission and creator-tree-scoped Stop;
+- unique final dependency sink assigned to the saved Mag One profile;
+- final text sourced only from the native final task summary;
+- no legacy executor import/package/route/config residue outside immutable migration or recovery evidence;
+- focused Python, Hermes, backend, and client tests plus production typecheck/build.
 
-Do not execute a provider or model during an audit or cleanup task.
+## Live proof
 
-## Characterization before live acceptance
-
-Use the checked-in 0.7.5 `MagenticOneGroupChat` with deterministic model responses for mechanical
-tests. Do not mock away the native loop or subclass its Orchestrator to capture private ledgers.
-Check the full saved roster, exact descriptions, native public selection events, child-Run lineage,
-stall recovery, explicit termination, and safe failures. Keep test fixtures distinct from product
-proof. Native lifecycle evidence must not persist private Task/Progress Ledgers or reasoning.
-
-On 2026-09-03, a provider-free native replay confirmed that the saved two-turn setting permits three
-worker selections before the pinned `>` round check terminates. The old adapter incorrectly reported
-that exhaustion as success. It also supplied `hermes/delegate` as every Hermes worker description.
-The source repairs these projection/result defects, but the full-team live acceptance remains
-unproven; failed historical receipts lacking stage data must not be retrospectively given a cause.
+After a Python-rails restart, use one explicitly approved bounded saved-product mission. Prove the existing
+Card/Canvas/blue topology remains unchanged, the native root is assigned to `card_magentic`, every executing
+worker is in the projected roster, an unwired profile cannot be assigned, the verified final synthesis is
+returned through the same outer Run, and no terminal or copied native task feed appears. Static tests are not
+provider execution proof; report any credential/runtime blocker exactly.

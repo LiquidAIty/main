@@ -11,7 +11,6 @@ from app.python_models.alpaca_market_data import (
     get_market_snapshot,
     get_paper_account_readiness,
 )
-from app.python_models.autogen_orchestrator import dispatch_stored_runtime
 from app.python_models.card_domain import (
     CardDomainError,
     resolve_hermes_bot_rosters,
@@ -38,7 +37,12 @@ from app.python_models.idd import (
     materialize_card_editor,
     materialize_runtime_options,
 )
-from app.python_models.orchestration_contracts import StoredRuntimeRequest
+from app.python_models.magentic_execution import (
+    MagenticExecutionError,
+    read_magentic_execution,
+    stop_magentic_execution,
+    submit_magentic_execution,
+)
 from app.python_models.tool_registry import tool_manifest, materialize_tool_catalog
 from app.python_models.trading_runtime import (
     TradingRuntimeError,
@@ -459,6 +463,30 @@ def domain_run_progress(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@app.post("/magentic/execution/submit")
+def magentic_execution_submit(payload: dict[str, Any]):
+    try:
+        return submit_magentic_execution(payload)
+    except MagenticExecutionError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/magentic/execution/status")
+def magentic_execution_status(payload: dict[str, Any]):
+    try:
+        return read_magentic_execution(payload)
+    except MagenticExecutionError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/magentic/execution/stop")
+def magentic_execution_stop(payload: dict[str, Any]):
+    try:
+        return stop_magentic_execution(payload)
+    except MagenticExecutionError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
 @app.post("/domain/agentgraph/inspect")
 def domain_agentgraph_inspect(payload: dict[str, Any]):
     """Private rails readback for existing AGE attention/run telemetry."""
@@ -474,14 +502,6 @@ def domain_artifact_record(payload: dict[str, Any]):
         return record_explicit_artifact(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.post("/autogen/dispatch")
-async def autogen_dispatch(req: StoredRuntimeRequest):
-    try:
-        return await dispatch_stored_runtime(req)
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=str(err)) from err
 
 
 @app.get("/thinkgraph/projection")

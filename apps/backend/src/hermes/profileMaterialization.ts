@@ -16,7 +16,7 @@ import { resolveSavedHermesProvider } from './providerSelection';
 const NATIVE_ESSENTIAL_SKILL_NAMES = new Set(['hermes-agent']);
 
 export type HermesProfileSelection = {
-  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban'; profile: string };
+  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban' | 'magentic_one'; profile: string };
   provider: string;
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
   modelKey: string;
@@ -86,6 +86,122 @@ const HERMES_SUBAGENT_CONFIG_SCRIPT = [
   '    save_config(cfg)',
 ].join('\n');
 
+const HERMES_CARD_MODEL_RUNTIME_SCRIPT = [
+  'import sys',
+  'from hermes_cli.config import load_config, save_config',
+  'expected_provider = sys.argv[1]',
+  'expected_model = sys.argv[2]',
+  'expected_runtime = sys.argv[3]',
+  'cfg = load_config() or {}',
+  'model = cfg.get("model")',
+  'model = dict(model) if isinstance(model, dict) else {}',
+  'if (model.get("provider"), model.get("default"), model.get("openai_runtime")) != (expected_provider, expected_model, expected_runtime):',
+  '    model["provider"] = expected_provider',
+  '    model["default"] = expected_model',
+  '    model["openai_runtime"] = expected_runtime',
+  '    cfg["model"] = model',
+  '    save_config(cfg)',
+  'readback = load_config() or {}',
+  'actual = readback.get("model") or {}',
+  'if (actual.get("provider"), actual.get("default"), actual.get("openai_runtime")) != (expected_provider, expected_model, expected_runtime):',
+  '    raise SystemExit(3)',
+].join('\n');
+
+const HERMES_CARD_INSTRUCTIONS_SCRIPT = [
+  'import sys',
+  'from hermes_cli.config import load_config, save_config',
+  'instructions = sys.stdin.read()',
+  'if not instructions.strip():',
+  '    raise SystemExit(2)',
+  'cfg = load_config() or {}',
+  'agent = cfg.get("agent")',
+  'agent = dict(agent) if isinstance(agent, dict) else {}',
+  'if agent.get("system_prompt") != instructions:',
+  '    agent["system_prompt"] = instructions',
+  '    cfg["agent"] = agent',
+  '    save_config(cfg)',
+  'readback = load_config() or {}',
+  'if (readback.get("agent") or {}).get("system_prompt") != instructions:',
+  '    raise SystemExit(3)',
+].join('\n');
+
+const HERMES_CARD_IDENTITY_SCRIPT = [
+  'import sys',
+  'from hermes_cli.profiles import create_profile, get_profile_dir, profile_exists, seed_profile_skills',
+  'name = sys.argv[1]',
+  'if not profile_exists(name):',
+  '    profile_dir = create_profile(name=name, no_alias=True)',
+  '    if seed_profile_skills(profile_dir) is None:',
+  '        raise SystemExit(3)',
+  'profile_dir = get_profile_dir(name)',
+  'if not (profile_dir / "config.yaml").is_file():',
+  '    raise SystemExit(4)',
+].join('\n');
+
+export async function configureHermesCardInstructions(
+  profile: string,
+  instructions: string,
+): Promise<void> {
+  const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
+    throw new Error('hermes_runtime_profile_invalid');
+  }
+  if (!String(instructions || '').trim()) throw new Error('hermes_card_instructions_missing');
+  const hermesRoot = path.join(resolveRepoRoot(), 'Hermes');
+  const executable = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
+  const hermesHome = path.join(hermesRoot, '.hermes');
+  const profileHome = path.join(hermesHome, 'profiles', normalizedProfile);
+  if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
+  const childEnv = withoutInternalMcpSecret(process.env);
+  if (!existsSync(path.join(profileHome, 'config.yaml'))) {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        executable,
+        ['-X', 'utf8', '-c', HERMES_CARD_IDENTITY_SCRIPT, normalizedProfile],
+        {
+          cwd: hermesRoot,
+          env: {
+            ...childEnv,
+            HERMES_HOME: hermesHome,
+            PYTHONUTF8: '1',
+            PYTHONIOENCODING: 'utf-8',
+          },
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'ignore'],
+        },
+      );
+      child.once('error', reject);
+      child.once('exit', (code, signal) => {
+        if (code === 0 && signal === null) resolve();
+        else reject(new Error('hermes_card_identity_materialization_failed'));
+      });
+    });
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      executable,
+      ['-X', 'utf8', '-c', HERMES_CARD_INSTRUCTIONS_SCRIPT],
+      {
+        cwd: hermesRoot,
+        env: {
+          ...childEnv,
+          HERMES_HOME: profileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+        stdio: ['pipe', 'ignore', 'ignore'],
+      },
+    );
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error('hermes_card_instructions_config_process_failed'));
+    });
+    child.stdin?.end(instructions, 'utf8');
+  });
+}
+
 export async function configureHermesNativeSubagentModel(
   profile: string,
   selection: NativeSubagentModel,
@@ -122,6 +238,53 @@ export async function configureHermesNativeSubagentModel(
     child.once('exit', (code, signal) => {
       if (code === 0 && signal === null) resolve();
       else reject(new Error('hermes_native_subagent_config_process_failed'));
+    });
+  });
+}
+
+export async function configureHermesCardModelRuntime(
+  profile: string,
+  selection: {
+    provider: string;
+    model: string;
+    openaiRuntime: 'codex_app_server' | 'auto';
+  },
+): Promise<void> {
+  const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
+    throw new Error('hermes_runtime_profile_invalid');
+  }
+  const hermesRoot = path.join(resolveRepoRoot(), 'Hermes');
+  const executable = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
+  const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
+  if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
+  if (!existsSync(path.join(profileHome, 'config.yaml'))) {
+    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+  }
+  const childEnv = withoutInternalMcpSecret(process.env);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      executable,
+      [
+        '-X', 'utf8', '-c', HERMES_CARD_MODEL_RUNTIME_SCRIPT,
+        selection.provider, selection.model, selection.openaiRuntime,
+      ],
+      {
+        cwd: hermesRoot,
+        env: {
+          ...childEnv,
+          HERMES_HOME: profileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+        stdio: 'ignore',
+      },
+    );
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error('hermes_card_model_runtime_config_process_failed'));
     });
   });
 }

@@ -27,7 +27,7 @@ owns source boundaries. A historical report is evidence, never permission to act
    same completed repair, after proving the retained capability. Do not remove distinct useful work.
 4. A Card is one saved agent with its own profile. Hermes internal agents remain within their
    owning Card. Connected saved Cards never share a profile or become child Cards.
-5. Use existing Hermes, AutoGen and graph capabilities through their real boundaries. No extra
+5. Use existing Hermes, Mag One and graph capabilities through their real boundaries. No extra
    runtime, scheduler, graph writer, input format, artifact-ID prerequisite or fake terminal.
 6. IDD is the common definition source: a field list in Cards, a dictionary for Builder, and
    dropdown/default definitions for templates. IDF is the actual bounded input for one Run.

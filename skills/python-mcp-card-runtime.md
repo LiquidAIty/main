@@ -4,10 +4,9 @@
 @type Skill
 @status active
 
-The canonical way a canvas Agent Card becomes a runnable, tool-authorized capability.
-Established for configured AutoGen cards. Native Hermes Cards use their saved MCP grants and must
-never select AutoGen-only tools. Reuse the appropriate pattern; never build a
-parallel runtime, second host, second registry, or direct-DB side path.
+The canonical way a Canvas Agent Card becomes a runnable, tool-authorized capability. Every current
+Card executes through its exact saved Hermes binding. Reuse the existing owners; never build a parallel
+runtime, second host, second registry, or direct-DB side path.
 
 ## Source path to verify for the selected runtime
 
@@ -18,8 +17,9 @@ the current source and separately prove the selected saved Card path.
 canvas card (deck_builder)            ← identity, prompt, model, enabled, tools (source of truth)
   → /api/cards/run (backend transport)
                                     ← ids and exact prepared bytes forwarded; overrides rejected
-  → /autogen/dispatch (Python)       ← Python selects the saved AssistantAgent or Mag One runtime
-                                      (AssistantAgent or typed runtime adapter)
+  → /domain/runs/begin (Python)      ← Python authorizes the saved Card and writes/reloads one in.idf
+  → saved Hermes profile             ← exact prompt/model/tools/skills/plugins/MCP materialized and reread
+  → Gateway turn or Mag One submit   ← ordinary Card turn, or headless native SQLite task execution
   → card tools (tool_registry)       ← FunctionTools resolved by saved grants, never invented model args
   → domain endpoints (backend)      ← transport to the single store authority
   → transactional store writer       ← structural/provenance/idempotency validation ONLY; one txn or honest failure
@@ -56,9 +56,8 @@ canvas card (deck_builder)            ← identity, prompt, model, enabled, tool
   servers and mechanically namespaced as `cbm.<native_name>` and `graphiti.<native_name>`.
   ThinkGraph uses native `engraphis_recall_context`, `engraphis_get_memory`, and
   explicitly granted Engraphis writes through its single Python-rails owner.
-- AutoGen/Mag One card tool ids pass through TypeScript unchanged and resolve
-  only in Python's canonical `tool_registry.py`; those runtime tools never
-  become replacement graph APIs on native Hermes Cards.
+- Mag One worker tool IDs pass through TypeScript unchanged and resolve through the same saved-Card
+  projection and Python `tool_registry.py`; the bus does not widen worker grants or invent graph APIs.
 - ThinkGraph, KnowGraph, and CodeGraph are authorities, never agent cards.
 - Unknown names fail with a runtime-specific error; no aliases or cross-runtime
   fallback are allowed.

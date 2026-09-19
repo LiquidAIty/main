@@ -1,7 +1,7 @@
 """The one official Python MCP host for LiquidAIty runtimes and connectors.
 
 The canonical supervised service tree launches one Streamable HTTP host for
-the process lifetime. Hermes and AutoGen use that same authenticated seam; no
+the process lifetime. Hermes Cards use that same authenticated seam; no
 per-turn spawn or fallback host exists.
 
 Exposes this application tool surface plus the process-owned Engraphis
@@ -116,7 +116,7 @@ def graphiti_project_group_id(project_id: str) -> str:
 
 BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 PYTHON_RAILS = os.environ.get(
-    "AUTOGEN_ORCHESTRATOR_URL", "http://127.0.0.1:8003"
+    "PYTHON_RAILS_URL", "http://127.0.0.1:8003"
 ).rstrip("/")
 MCP_TRANSPORT = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
 HTTP_MCP_HOST = "127.0.0.1"
@@ -2254,8 +2254,8 @@ def _application_tools() -> list[Tool]:
             name="run_mag_one",
             description=(
                 "Main Chat only: submit one explicit mission and any deliberately selected native graph anchors "
-                "to the AGE-connected Magentic-One "
-                "Card and invoke native MagenticOneGroupChat. Python materializes the saved "
+                "to the AGE-connected Mag One "
+                "Card and invoke its native Hermes task execution. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Use only for the current user-directed mission. This tool executes "

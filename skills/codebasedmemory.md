@@ -241,9 +241,8 @@ turn claim, lease, generation file, worktree fingerprint, state file, database w
 retry loop, static graph handoff, or prompt-time lifecycle recovery. The active agent uses the application MCP
 for result-informed graph navigation and never repairs or mutates the index during its response.
 
-The current projection intentionally excludes `autogen-main` through `.cbmignore` for the measured lifecycle
-boundary. AutoGen remains first-party source and runtime infrastructure; exclusion from this derived projection
-does not transfer or remove ownership.
+The current projection intentionally excludes controlled imported roots listed in `.cbmignore`. Verify actual
+coverage before relying on graph absence; use bounded direct-source reads for every excluded path.
 
 ## Mandatory Inverse Deletion Audit
 
@@ -596,7 +595,7 @@ visible failure, direct recovery, and no need for the user to supervise the mach
 - **index_status / detect_changes**: Accept project name string, never filesystem path.
 - **Python functions**: Current lookup resolves covered functions. Missing dynamic calls and excluded paths still need source reads and focused searches.
 - **Route nodes**: file_path is empty. Read route files directly for handler mapping.
-- **Protected/excluded dirs**: autogen-main/, worldsignal/, Kronos-main/,
+- **Protected/excluded dirs**: worldsignal/, Kronos-main/, Hermes/,
   services/esn_rls/, and EDGAR caches are off-limits for cleanup. Verify index coverage rather
   than assuming these vendored/protected boundaries are indexed.
 - **search_code**: Working in the current official build. Use it for indexed code text; use `rg` for

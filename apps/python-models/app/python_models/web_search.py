@@ -1,4 +1,4 @@
-"""One real Tavily search operation shared by native Harness and AutoGen cards."""
+"""One real Tavily search operation shared by configured Card runtimes."""
 
 from __future__ import annotations
 

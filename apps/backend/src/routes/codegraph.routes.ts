@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 
 const router = Router();
 

@@ -24,7 +24,7 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
-  it('shows Card control output for every enabled Hermes Bot source and retains worker output', () => {
+  it('shows Card control output for every enabled Hermes Agent source and retains worker output', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
     const { rerender } = render(<AgentCardNode data={card} />);
     expect(screen.getByLabelText('Test Agent Card control output')).not.toBeNull();
@@ -34,7 +34,7 @@ describe('AgentCardNode shared Card geometry', () => {
     rerender(<AgentCardNode data={{ ...card, runtimeOptions: { enabled: false } }} />);
     expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
   });
-  it('keeps the same compact geometry for Hermes and AutoGen Cards', () => {
+  it('keeps the same compact geometry across Hermes Card runtime modes', () => {
     const { container, rerender } = render(
       <AgentCardNode
         data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'main', profile: 'main' } }}
@@ -45,7 +45,10 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(card.style.minHeight).toBe('90px');
     expect(card.style.aspectRatio).toBe('');
 
-    rerender(<AgentCardNode data={{ ...baseCard, runtime: { kind: 'autogen', mode: 'assistant' } }} />);
+    rerender(<AgentCardNode data={{
+      ...baseCard,
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+    }} />);
     expect(card.style.width).toBe('124px');
     expect(card.style.minHeight).toBe('90px');
     expect(card.style.aspectRatio).toBe('');

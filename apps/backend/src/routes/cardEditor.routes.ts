@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createHash } from 'crypto';
 import { getDeckDocument } from '../decks/store';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { listPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
 import { indexToolCatalogReferences, resolveScriptToolReferences, searchToolCatalogReferences, type ToolCatalogReference } from '../cards/toolCatalogProjection';
 import { listConfiguredModelOptions } from '../llm/models.config';

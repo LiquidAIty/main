@@ -4,7 +4,7 @@ import {
   fetchThinkGraphNeighborhood,
   fetchThinkGraphProjection,
   requestPythonRailsJson,
-} from '../services/autogen/pythonRailsClient';
+} from '../services/pythonRailsClient';
 
 const router = Router();
 

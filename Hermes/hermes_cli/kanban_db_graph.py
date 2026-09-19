@@ -101,7 +101,7 @@ def decompose_triage_task(
     """
     from hermes_cli.kanban_db import (
         _canonical_assignee, _link, _append_event, _insert_comment,
-        write_txn, recompute_ready,
+        _require_allowed_assignee, write_txn, recompute_ready,
     )
 
     if not children:
@@ -116,11 +116,17 @@ def decompose_triage_task(
     with write_txn(conn):
         root_row = conn.execute(
             "SELECT id, status, tenant, workspace_kind, workspace_path, "
-            "workflow_template_id, max_retries "
+            "workflow_template_id, max_retries, allowed_assignees "
             "FROM tasks WHERE id = ?", (task_id,),
         ).fetchone()
         if root_row is None or root_row["status"] != "triage":
             return None
+        if root_assignee is not None:
+            _require_allowed_assignee(root_row["allowed_assignees"], root_assignee)
+        for child in children:
+            _require_allowed_assignee(
+                root_row["allowed_assignees"], _canonical_assignee(child.get("assignee")),
+            )
         # Dependency links alone do not imply lineage. The completion event is
         # committed with the graph, and survives re-triage or unlinking.
         if conn.execute(
@@ -184,7 +190,8 @@ def _insert_decomposed_child(
     ``<repo>/.worktrees/<child-id>`` per child from the board anchor.
     """
     from hermes_cli.kanban_db import (
-        _new_task_id, _canonical_assignee, _append_event, normalize_reasoning_effort,
+        _new_task_id, _canonical_assignee, _append_event, _stored_allowed_assignees,
+        normalize_reasoning_effort,
     )
 
     root_ws_kind = root_row["workspace_kind"] or "scratch"
@@ -203,8 +210,9 @@ def _insert_decomposed_child(
         "INSERT INTO tasks "
         "(id, title, body, assignee, status, workspace_kind, "
         " workspace_path, tenant, created_at, created_by, workflow_template_id, "
-        " current_step_key, max_retries, model_override, provider_override, reasoning_effort) "
-        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " current_step_key, max_retries, model_override, provider_override, reasoning_effort, "
+        " allowed_assignees) "
+        "VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             new_id, child["title"].strip(), body if isinstance(body, str) else None,
             _canonical_assignee(child.get("assignee")), child_ws_kind, child_ws_path,
@@ -214,10 +222,16 @@ def _insert_decomposed_child(
             child.get("max_retries", root_row["max_retries"]),
             child.get("model_override"), child.get("provider_override"),
             normalize_reasoning_effort(child.get("reasoning_effort")),
+            root_row["allowed_assignees"],
         ),
     )
     _append_event(
-        conn, new_id, "created", {"by": author or "decomposer", "from_decompose_of": root_id},
+        conn, new_id, "created", {
+            "by": author or "decomposer",
+            "from_decompose_of": root_id,
+            "creator_task_id": root_id,
+            "allowed_assignees": _stored_allowed_assignees(root_row["allowed_assignees"]),
+        },
     )
     inherit_creator_origin(conn, new_id, root_id, created_at=now)
     return new_id

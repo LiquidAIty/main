@@ -3,16 +3,11 @@ export type PromptTemplate = {
   content: string;
 };
 
-export type CardRuntime =
-  | {
-      kind: 'hermes';
-      mode: 'main' | 'delegate' | 'kanban';
-      profile: string;
-    }
-  | {
-      kind: 'autogen';
-      mode: 'assistant' | 'magentic_one';
-    };
+export type CardRuntime = {
+  kind: 'hermes';
+  mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  profile: string;
+};
 
 // flow = ORANGE explicit saved Card→Card authority; magentic_option = BLUE side worker
 // slot; magentic_control = BLUE dedicated top control input (submit the

@@ -42,7 +42,7 @@ function buildBusConnectedCardIds(
 ): Set<string> {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const busIds = nodes
-    .filter((node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one')
+    .filter((node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one')
     .map((node) => node.id);
   if (busIds.length === 0) return new Set<string>();
 

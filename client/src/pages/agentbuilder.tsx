@@ -529,7 +529,7 @@ export default function AgentBuilder(): React.ReactElement {
     const graphProjection = loaded.reviewContext?.resolvedGraphProjection;
     const supportedTarget = target && (
       (target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate')
-      || (target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one')
+      || (target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one')
     );
     if (!target || !supportedTarget) {
       setDeckStatusMessage('Grounded invocation target is not an active saved delegate or Mag One Card.');
@@ -947,7 +947,7 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const selectedMagOneWorkers = useMemo(() => {
-    if (!selectedCard || selectedCard.runtime.kind !== 'autogen' || selectedCard.runtime.mode !== 'magentic_one') {
+    if (!selectedCard || selectedCard.runtime.kind !== 'hermes' || selectedCard.runtime.mode !== 'magentic_one') {
       return [];
     }
     return deck.edges
@@ -961,8 +961,7 @@ export default function AgentBuilder(): React.ReactElement {
         title: card.title,
         ready: card.status !== 'error'
           && (
-            (card.runtime.kind === 'autogen' && card.runtime.mode === 'assistant')
-            || (card.runtime.kind === 'hermes' && card.runtime.mode === 'delegate')
+            card.runtime.kind === 'hermes' && card.runtime.mode !== 'magentic_one'
           )
           && Boolean(card.runtimeOptions?.provider)
           && Boolean(card.runtimeOptions?.modelKey),
@@ -1593,7 +1592,7 @@ export default function AgentBuilder(): React.ReactElement {
       setInspectorDrawerOpen(Boolean(selectedNode));
       const isMagenticSelection = Boolean(
         selectedNode &&
-          selectedNode.runtime.kind === 'autogen'
+          selectedNode.runtime.kind === 'hermes'
           && selectedNode.runtime.mode === 'magentic_one',
       );
       if (cardId) {
@@ -1738,6 +1737,7 @@ export default function AgentBuilder(): React.ReactElement {
                       void runStandaloneCardTest();
                     }}
                     onLearnCard={selectedCard.runtime.kind === 'hermes'
+                      && selectedCard.runtime.mode !== 'magentic_one'
                       ? () => { void learnFromStandaloneCardInput(); }
                       : undefined}
                     onStopCard={stopStandaloneCardTest}
@@ -1747,7 +1747,7 @@ export default function AgentBuilder(): React.ReactElement {
                     runDisabled={
                       !showStandaloneTestControls ||
                       !standaloneTestPrompt.trim() ||
-                      (selectedCard.runtime.kind === 'autogen' &&
+                      (selectedCard.runtime.kind === 'hermes' &&
                         selectedCard.runtime.mode === 'magentic_one' &&
                         (
                           selectedMagOneWorkers.length === 0 ||

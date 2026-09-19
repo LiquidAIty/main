@@ -76,7 +76,7 @@ test('host configuration preserves the native agent as explicitly user-initiated
     schemaVersion: 'gev.embed.host-config.v1',
     projectId: 'project-1',
     cardId: 'card-worldview',
-    parentRuntime: 'autogen',
+    parentRuntime: 'unsupported',
     nativeAgentPolicy: 'always-on',
   }), false);
 });

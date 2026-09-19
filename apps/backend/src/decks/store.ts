@@ -1,7 +1,7 @@
 // Thin HTTP transport to the Python-owned stable Card/deck domain.
 // TypeScript deliberately owns no SQL, JSONB deck aggregate, Card revision,
 // relationship authority, or topology mutation in this module.
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import type { DeckDocument, V3ProjectBlob } from '../types';
 
 /** The deck currently opened by the Agent Builder view. Projects may own more. */

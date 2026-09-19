@@ -144,6 +144,21 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       .toContain('saved-model-key');
   });
 
+  it('uses the canonical app-server transport for the existing Mag One account binding', () => {
+    const card = savedCard({
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+    });
+    const launch = prepareAgentTerminal(owner, card, savedDeck(card), 'session-1');
+
+    expect(launch.providerSelection).toMatchObject({
+      provider: 'openai-codex',
+      model: 'gpt-5.6-sol',
+      apiMode: 'codex_app_server',
+      openaiRuntime: 'codex_app_server',
+      profileOpenaiRuntime: 'codex_app_server',
+    });
+  });
+
   it('defers Script capability materialization to the required canonical Run', () => {
     const card = savedCard({ runtimeOptions: {
       ...savedCard().runtimeOptions, script: { enabled: true },

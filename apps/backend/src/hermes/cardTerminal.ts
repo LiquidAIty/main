@@ -68,8 +68,8 @@ export function buildCardTerminal(run: any): RuntimeObservation {
     // native stream detail remains on the Gateway/TUI surface that owns it.
     activeAgentCount: active ? 1 + Number(run.terminal?.activeChildren || 0) : 0,
     observation: active || pending ? 'unavailable' : 'finished',
-    unavailableReason: active ? (run.runtimeKind === 'autogen'
-      ? 'autogen_adapter_completion_only' : 'hermes_gateway_stream_only') : null,
+    unavailableReason: active ? (run.runtimeMode === 'magentic_one'
+      ? 'magentic_execution_headless' : 'hermes_gateway_stream_only') : null,
     finalText: terminalText(run.result || ''),
     errorCode: run.errorCode || null,
     errorSummary: terminalText(run.errorSummary || ''),

@@ -1909,6 +1909,12 @@ def _apply_default_assignee(
         return True
     try:
         with _kb.write_txn(conn):
+            row = conn.execute(
+                "SELECT allowed_assignees FROM tasks WHERE id = ?", (task_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            _kb._require_allowed_assignee(row["allowed_assignees"], assignee)
             conn.execute(
                 "UPDATE tasks SET assignee = ? WHERE id = ? "
                 "AND (assignee IS NULL OR assignee = '')",

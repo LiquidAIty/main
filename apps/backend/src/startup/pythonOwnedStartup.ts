@@ -11,7 +11,7 @@ import {
 import { getV3ProjectBlob } from '../decks/store';
 import { BUILDER_CARD_ID } from '../decks/store';
 import { listOwnedAgentProjects } from '../services/agentBuilderStore';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { logModelConfiguration } from './modelConfig';
 import type { AgentCardInstance, DeckDocument } from '../types';
 
@@ -38,7 +38,7 @@ function isEnabledCard(card: AgentCardInstance): boolean {
 }
 
 function isMagenticOne(card: AgentCardInstance | undefined): boolean {
-  return card?.runtime.kind === 'autogen' && card.runtime.mode === 'magentic_one';
+  return card?.runtime.kind === 'hermes' && card.runtime.mode === 'magentic_one';
 }
 
 /**

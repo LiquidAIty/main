@@ -13,8 +13,41 @@ shows truthful output, references, artifacts, usage, failure, and lineage withou
 
 Shared chat sends an unaddressed user turn to Main and an explicitly addressed turn directly to the
 authorized saved Card. Builder remains the saved `builder` Card and the lower terminal in Agent Builder.
-Hermes owns native Card execution and delegation; AutoGen owns Magentic-One; the four graph authorities
-remain separate.
+Hermes owns native Card execution, delegation, and the task/dependency execution beneath Mag One; the
+four graph authorities remain separate.
+
+## Current Mag One execution-engine cutover — September 19, 2026
+
+### Requested Delta
+
+Keep the existing `card_magentic` product identity, Canvas node, blue `magentic_control` and
+`magentic_option` connections, canonical `in.idf`, saved Card authorities, and ordinary outer Run.
+Replace only the live Microsoft executor beneath that bus with headless Hermes orchestration and its
+existing SQLite task/dependency machinery. No legacy executor fallback or historical-Run compatibility
+path remains live.
+
+### Current working-tree source
+
+- Python projects the exact enabled blue-connected Card identities, current revisions, and saved Hermes
+  bindings through the same saved-topology projection pattern already used by direct Card relationships.
+- Before submit, the backend materializes and rereads the exact saved prompt, provider/model, tools,
+  skills, plugins/MCP, and profile for the Mag One Card and every worker without opening a visible TUI.
+- Python reloads the retained canonical `in.idf`, requires exact mission equality, and creates one
+  idempotent native root assigned to the saved Mag One profile.
+- The native root carries an inherited assignee ceiling containing only that profile and the projected
+  workers. Ordinary Hermes tasks remain unrestricted when the field is absent.
+- The root model performs decomposition and must create one final dependency sink assigned back to the
+  Mag One profile. Structured status returns only the verified native final summary.
+- PostgreSQL retains one product-level invocation/lineage Run. Hermes SQLite exclusively owns native
+  tasks, dependencies, attempts, assignment, retries, and task state; none is copied into PostgreSQL/AGE.
+- The bus remains headless. The existing Results area shows ordinary outer Run state and the real final
+  answer only—no CLI, task feed, transcript, active-worker display, board, or fabricated artifacts.
+- The checked-in AutoGen fork, adapter package, Python executor, routes, package dependencies, and live
+  runtime contracts are removed. Applied migrations and checksum-bound recovery evidence may still name
+  the removed runtime, but no production caller can select it.
+
+Static source/tests/build proof and one restarted real saved-product execution remain separate tiers.
+Do not describe this working tree as loaded runtime proof until both are completed.
 
 ## Current shared-chat direct addressing — September 18, 2026
 
@@ -96,7 +129,7 @@ conversational path. Preserve the one intended Hermes extension: native `delegat
 - upstream `leaf`/`orchestrator`, retained native Team, and native Bot Mode;
 - Card-owned Python Script source, compiler, validation, editor, saved configuration, IDF presentation,
   and historical Run receipt data;
-- Magentic-One and accepted AutoGen primitives;
+- the existing Mag One Card, Canvas topology, blue worker connections, and outer Run/IDF boundary;
 - ThinkGraph, KnowGraph, CodeGraph, and AgentGraph owners and data;
 - the authenticated `/api/codegraph/read` UI transport to actual application-published `cbm.*` reads;
 - unrelated imported roots and application features.

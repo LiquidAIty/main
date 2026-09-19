@@ -23,7 +23,7 @@ operations = [
   { id = "card.create", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "card.update_configuration", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "canvas.upsert_wire", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
-  { id = "web_search", access = "read", publication = "external-mcp", sourceIds = ["main_mcp","autogen"], namespace = "main", kind = "tool" },
+  { id = "web_search", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "card.run_assistant_agent", access = "write", publication = "private-runtime", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "engraphis_answer", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "engraphis", kind = "tool" },
   { id = "engraphis_check_update", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "engraphis", kind = "tool" },
@@ -80,8 +80,8 @@ operations = [
   { id = "graphiti.search_memory_facts", access = "read", publication = "external-mcp", sourceIds = ["graphiti"], namespace = "graphiti", kind = "tool" },
   { id = "graphiti.search_nodes", access = "read", publication = "external-mcp", sourceIds = ["graphiti"], namespace = "graphiti", kind = "tool" },
   { id = "graphiti.summarize_saga", access = "write", publication = "external-mcp", sourceIds = ["graphiti"], namespace = "graphiti", kind = "tool" },
-  { id = "calculator", access = "read", publication = "private-runtime", sourceIds = ["autogen"], namespace = "autogen", kind = "tool" },
-  { id = "current_datetime", access = "read", publication = "private-runtime", sourceIds = ["autogen"], namespace = "autogen", kind = "tool" },
+  { id = "calculator", access = "read", publication = "private-runtime", sourceIds = ["python_runtime"], namespace = "python", kind = "tool" },
+  { id = "current_datetime", access = "read", publication = "private-runtime", sourceIds = ["python_runtime"], namespace = "python", kind = "tool" },
   { id = "find_recent_sec_filing_signals", access = "read", publication = "private-runtime", sourceIds = ["worldsignals"], namespace = "trading", kind = "tool" },
   { id = "get_historical_bars", access = "read", publication = "private-runtime", sourceIds = ["trading_data"], namespace = "trading", kind = "tool" },
   { id = "get_market_snapshot", access = "read", publication = "private-runtime", sourceIds = ["trading_data"], namespace = "trading", kind = "tool" },
@@ -202,7 +202,7 @@ label = "Hermes helper"
 extends = "template_assist"
 [templates.template_magentic]
 label = "Magentic-One"
-runtime = { kind = "autogen", mode = "magentic_one" }
+runtime = { kind = "hermes", mode = "magentic_one", profile = "card_magentic" }
 extends = "template_assist"
 [templates.template_worldsignals_agent]
 label = "WorldSignals"
@@ -229,4 +229,3 @@ fields = [
 [cardEditor.schemas]
 CardConfiguration = "app.python_models.orchestration_contracts.CardConfiguration"
 HermesRuntime = "app.python_models.orchestration_contracts.HermesRuntime"
-AutoGenRuntime = "app.python_models.orchestration_contracts.AutoGenRuntime"

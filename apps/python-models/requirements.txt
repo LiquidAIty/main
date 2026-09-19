@@ -30,13 +30,6 @@ polygon-api-client==1.16.3
 ccxt==4.5.64
 # Bound resolver search across Databento's paired Python/native releases.
 databento==0.86.0
-# LiquidAIty owns the checked-in AutoGen 0.7.5 execution fork. These editable
-# installs are the only authoritative AutoGen distributions for Python rails;
-# there is no wheel fallback or runtime sys.path substitution.
--e ../../autogen-main/python/packages/autogen-core
--e ../../autogen-main/python/packages/autogen-agentchat
--e ../../autogen-main/python/packages/autogen-ext[magentic-one,openai]
-
 # ThinkGraph native Python engine; local semantic model, no dashboard/server extras.
 engraphis==1.7.1
 sentence-transformers==5.7.0

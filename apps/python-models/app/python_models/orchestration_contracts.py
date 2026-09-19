@@ -4,9 +4,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
-from app.python_models.idf import Idf
-
-
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 CardDelegationRole = Literal["off", "leaf", "orchestrator", "team"]
 
@@ -36,40 +33,10 @@ class ToolSpec(BaseModel):
         return value
 
 
-class ProjectSession(BaseModel):
-    sessionId: str
-    projectId: str
-    deckId: str
-    cardId: str
-    conversationId: str | None = None
-    turnId: str
-    # The backend's run identity when the caller supplies one.
-    runId: str | None = None
-    parentRunId: str | None = None
-    route: str
-    orchestrator: Literal[
-        "magentic_one",
-        "assistant_agent",
-    ] = "magentic_one"
-    startedAt: str
-
-
-class AutoGenRuntime(BaseModel):
-    kind: Literal["autogen"]
-    mode: Literal["assistant", "magentic_one"]
-
-
 class HermesRuntime(BaseModel):
     kind: Literal["hermes"]
-    mode: Literal["main", "delegate", "kanban"]
+    mode: Literal["main", "delegate", "kanban", "magentic_one"]
     profile: RequiredRuntimeString
-
-
-class RuntimeParticipant(BaseModel):
-    cardId: str
-    title: str
-    description: str = ""
-    runtime: HermesRuntime | AutoGenRuntime
 
 
 class ModelOption(BaseModel):
@@ -140,66 +107,9 @@ class GraphHook(BaseModel):
     maxFacts: int = 8
 
 
-class AutoGenMessage(BaseModel):
-    """A real AutoGen message/event captured verbatim from ``run_stream``.
-
-    ``source`` and ``type`` are the message's own fields (the agent/orchestrator
-    name and the message class name); ``content`` is the message's own text. The
-    app never invents, classifies, or reshapes this — it is what AutoGen emitted.
-    """
-
-    source: str
-    type: str
-    content: str
-
-
 class NativeReference(BaseModel):
     authority: RequiredRuntimeString
     nativeId: RequiredRuntimeString
     reason: RequiredRuntimeString
     asOf: RequiredRuntimeString
     required: bool = False
-
-
-class RuntimeInputFile(BaseModel):
-    workspace: str
-    idfPath: str
-    idfSha256: str
-    idfBytes: int
-
-
-class StoredRuntimeRequest(BaseModel):
-    """External request that names the already-retained canonical bytes."""
-
-    session: ProjectSession
-    inputFile: RuntimeInputFile
-    participants: list[RuntimeParticipant] = Field(default_factory=list)
-
-
-class RuntimeRequest(BaseModel):
-    """Internal request loaded and validated from the one retained IDF."""
-
-    session: ProjectSession
-    idf: Idf
-    inputFile: RuntimeInputFile
-    participants: list[RuntimeParticipant] = Field(default_factory=list)
-
-
-class OrchestratorRunResponse(BaseModel):
-    ok: bool
-    session: ProjectSession
-    runId: str
-    resultId: str | None = None
-    stopReason: str | None = None
-    # finalResponseText is the real last AutoGen message text (never an app-authored
-    # summary). It is data only; the conversation panel does not auto-render it.
-    finalResponseText: str
-    # The real AutoGen run output: every message/event captured verbatim from
-    # run_stream.
-    autogenMessages: list[AutoGenMessage] = Field(default_factory=list)
-    autogenEvents: list[AutoGenMessage] = Field(default_factory=list)
-    error: str | None = None
-    # Observable identities, selection events, usage and safe failure codes only.
-    # Never a copy of the native Task/Progress Ledger or model reasoning.
-    runtimeEvidence: dict[str, Any] = Field(default_factory=dict)
-    resultArtifact: dict[str, Any] | None = None

@@ -545,7 +545,9 @@ def test_template_runtime_is_shared_creation_data_and_inherits():
     from app.python_models.idd import template_runtime
     document = load_input_data_dictionary()
     assert template_runtime(document, "template_assist") == {"kind": "hermes", "mode": "delegate"}
-    assert template_runtime(document, "template_magentic") == {"kind": "autogen", "mode": "magentic_one"}
+    assert template_runtime(document, "template_magentic") == {
+        "kind": "hermes", "mode": "magentic_one", "profile": "card_magentic",
+    }
     document["templates"]["example"] = {"extends": "template_assist"}
     assert template_runtime(document, "example") == template_runtime(document, "template_assist")
 

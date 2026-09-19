@@ -41,14 +41,14 @@ Evaluate these complementary outcomes only when the current PromptSpec selects t
 
 - **Trading as a durable specialist:** one saved Portfolio Manager Card owns the strategic portfolio,
   plans, theses, proposals, approvals, deterministic automation artifacts, performance reporting, and
-  broker reconciliation. It runs directly or as a Magentic-One participant; it is not an orchestrator.
+  broker reconciliation. It runs directly or as a Mag One worker; it is not the bus orchestrator.
 - **Future repositories as agents or tools:** add a saved specialist Card only when the capability needs
   durable product identity and model judgment. Otherwise attach the repository as a bounded tool,
   provider, library, native plugin, or controlled fork behind an existing Card.
 
 WorldView is an existing evidence specialist whose Trading handoff remains a target. It evaluates real-world signals and
 returns sourced evidence or scenarios. Trading evaluates that evidence against its portfolio and plan.
-Neither WorldView nor Trading replaces Magentic-One's team orchestration.
+Neither WorldView nor Trading replaces Mag One orchestration.
 
 ## Agent or Tool?
 
@@ -143,8 +143,7 @@ Map every retained responsibility to one existing owner:
 ```text
 saved Card + saved topology    identity, prompt, model/profile, grants, worker eligibility
 one canonical IDF             exact transient task, selected data, references, images, tools
-Hermes                        persistent specialist execution, native memory, skills, sessions, Kanban
-AutoGen Magentic-One          multi-agent orchestration and native private ledgers
+Hermes                        persistent specialist execution, native memory, skills, sessions, and Mag One task/dependency execution
 Python rails                  deterministic computation, data access, tools, specialist adapters
 official Python MCP host      shared tool doorway and per-Run authorization
 native Hermes plugin          Hermes lifecycle/tool extension that belongs inside Hermes execution
@@ -163,13 +162,13 @@ state, and repeatable Runs—not merely because the upstream calls itself an age
 - Preserve an existing stable Card ID when one already owns the product role; change the visible title
   without duplicating the Card unless an explicit stored-data migration is approved.
 - Bind runtime explicitly in saved Card configuration. Never infer runtime from title, template, or ID.
-- A durable Hermes specialist remains a Hermes-backed saved Card. Do not convert Hermes into AutoGen.
-- A Card connected through `magentic_option` is eligible to participate in Magentic-One; it does not
+- A durable Hermes specialist remains a Hermes-backed saved Card. Do not create a second runtime identity.
+- A Card connected through `magentic_option` is eligible to participate in Mag One; it does not
   become an orchestrator and it does not coordinate Mag One's other workers.
-- Use the existing external `ChatAgent` participant boundary when Magentic-One needs a saved Card-shaped
-  participant. The shell owns no second prompt, model, memory, tools, or identity.
-- Direct Card Run and Mag One participant Run must resolve the same saved Card identity and canonical
-  receiving-Card materialization path.
+- Resolve the exact saved Card revision and Hermes profile before a Mag One task can be assigned. The
+  execution shell owns no second prompt, model, memory, tools, or identity.
+- Direct Card execution and Mag One worker execution must resolve the same saved Card authority. Native
+  task state remains Hermes-owned and does not create another global Card or per-task IDF.
 - Product-specific durable state belongs to the specialist product schema. External provider state is a
   distinct authority and may be reconciled, never silently substituted.
 - Generated scripts and deterministic automation are artifacts owned or referenced by the accepted
@@ -201,8 +200,8 @@ Complete and prove one boundary before expanding to the next:
    are involved.
 5. **Saved Card proof:** save/readback, exact runtime binding and grants, one direct Run, artifact/Run
    persistence, restart/rejoin, and idempotent retry behavior.
-6. **Team proof:** the same saved Card participates through `magentic_option` in one native Magentic-One
-   Run without acquiring orchestration authority.
+6. **Mag One proof:** the same saved Card participates through `magentic_option` in one native Mag One
+   execution without acquiring orchestration authority.
 7. **Evidence proof:** selected native graph data reaches the Card, real attention/receipt events identify
    what was read or handed off, and no copied graph authority appears.
 8. **Whole-product proof:** canonical startup, affected builds/typechecks, focused tests, UI Run surface,

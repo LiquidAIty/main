@@ -54,6 +54,21 @@ const deckMocks = vi.hoisted(() => ({
             modelKey: 'gpt-5.6-luna',
           },
         },
+        {
+          id: 'card_magentic',
+          _cardRevisionId: 'revision:card_magentic',
+          title: 'Mag One',
+          prompt: 'Saved Mag One prompt',
+          kind: 'agent',
+          templateId: 'template_magentic',
+          runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+          runtimeOptions: {
+            provider: 'openai',
+            accessMode: 'chatgpt-account',
+            modelKey: 'gpt-5.6-sol',
+            providerModelId: 'gpt-5.6-sol',
+          },
+        },
       ],
       edges: [
         { id: 'flow-main-delegate', source: 'card_main_chat', target: 'card_test_delegate', edgeType: 'flow' },
@@ -70,6 +85,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   const gatewayListeners = new Set<(event: Record<string, unknown>) => void>();
   const profileFor = (cardId: string) => cardId === 'card_main_chat'
     ? 'default'
+    : cardId === 'card_magentic' ? 'card_magentic'
     : cardId === 'builder' ? 'builder'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
   const stateFor = (owner: any) => ({
@@ -678,8 +694,8 @@ vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
 
 vi.mock('node-pty', () => ({ spawn: ptyMocks.spawn }));
 
-vi.mock('../services/autogen/pythonRailsClient', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../services/autogen/pythonRailsClient')>(),
+vi.mock('../services/pythonRailsClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../services/pythonRailsClient')>(),
   ...orchestratorMocks,
 }));
 
@@ -1218,22 +1234,6 @@ describe('saved Card routes', () => {
       const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
       const body = JSON.parse(String(call?.[1]?.body));
       expect(body.selectedIds).toContain('profile:default');
-    } finally { await closeServer(server); }
-  });
-
-  it('returns the current catalog for an AutoGen Card without loading a Hermes profile', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: { nodes: [{ id: 'assistant',
-      templateId: 'template_assist', runtime: { kind: 'autogen', mode: 'assistant' },
-      runtimeOptions: { tools: ['canvas.inspect'] } }], edges: [] } } as any);
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/idd/card-editor?projectId=p&deckId=d&cardId=assistant`);
-      expect(response.status).toBe(200);
-      const call = orchestratorMocks.requestPythonRailsJson.mock.calls.find(([endpoint]) => endpoint === '/idd/card-editor/materialize');
-      const body = JSON.parse(String(call?.[1]?.body));
-      expect(body.selectedIds).toEqual(['template_assist', 'canvas.inspect']);
-      expect(body.nativeOptions.some((option: any) => option.kind === 'profile')).toBe(false);
     } finally { await closeServer(server); }
   });
 
@@ -2124,42 +2124,100 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('sends the exact Python-retained root inputs to native Mag One', async () => {
+  it('runs Mag One through exact connected Cards and native Hermes execution', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     orchestratorMocks.dispatchConfiguredRuntime.mockClear();
-    orchestratorMocks.dispatchConfiguredRuntime.mockResolvedValueOnce({
-      ok: true, runId: 'corr-mag-1', finalResponseText: 'Native Mag One response.',
-      stopReason: 'Native completion',
-      runtimeEvidence: { stage: 'completed', usage: { inputTokens: 11, outputTokens: 7 } },
-      resultArtifact: { artifact_id: 'native-result-one' },
-    });
-    const nativeRuntimeRequest = {
-      session: {
-        sessionId: 'deck_builder:card_magentic:corr-mag-1',
-        projectId: 'project-1',
-        deckId: 'deck_builder',
-        cardId: 'card_magentic',
-        turnId: 'corr-mag-1',
-        runId: 'corr-mag-1',
-        route: 'deck_runtime',
-        orchestrator: 'magentic_one',
-        startedAt: '2026-08-17T00:00:00Z',
-      },
+    agentTerminalMocks.manager.open.mockClear();
+    const magenticExecution = {
+      runId: 'corr-mag-1',
+      correlationId: 'corr-mag-1',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
       inputFile: {
         workspace: 'C:\\runtime-inputs\\mag-root',
         idfPath: 'C:\\runtime-inputs\\mag-root\\in.idf',
         idfSha256: 'c'.repeat(64),
         idfBytes: 500,
       },
-      participants: [],
+      mission: 'Coordinate the mission.',
+      orchestrator: {
+        cardId: 'card_magentic',
+        cardRevisionId: 'revision:card_magentic',
+        nativeIdentity: 'card_magentic',
+        instructions: 'Saved Mag One prompt',
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+        },
+        runtimeOptions: {},
+      },
+      workers: [
+        {
+          cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
+          profile: 'delegate', title: 'Delegate', description: 'Saved worker',
+        },
+        {
+          cardId: 'builder', cardRevisionId: 'revision:builder',
+          profile: 'builder', title: 'Builder', description: 'Saved worker',
+        },
+      ],
     };
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/runs/begin');
       return {
+        runId: 'corr-mag-1',
+        correlationId: 'corr-mag-1',
         runtimeOwner: 'mag_one',
         cardRevisionId: 'revision:card_magentic',
-        nativeRuntimeRequest,
+        magenticExecution,
       };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/magentic/execution/submit');
+      expect(JSON.parse(String(init?.body))).toEqual(magenticExecution);
+      return {
+        ok: true, state: 'ready', nativePhase: 'queued', nativeRootId: 't_mag_root',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativePhase: 'queued',
+      });
+      return { ok: true };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/status');
+      return {
+        ok: true, state: 'completed', nativePhase: 'complete', nativeRootId: 't_mag_root',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+        finalResult: 'Native Hermes Mag One response.',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      expect(JSON.parse(String(init?.body))).toEqual({
+        runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativePhase: 'complete',
+      });
+      return { ok: true };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/finish');
+      const finish = JSON.parse(String(init?.body));
+      expect(finish).toMatchObject({
+        runId: 'corr-mag-1', state: 'completed', hermesSessionRef: 'card_magentic',
+        providerThreadRef: 't_mag_root', providerTurnRef: null,
+        effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server',
+        nativePhase: 'complete',
+        finalResult: 'Native Hermes Mag One response.',
+      });
+      expect(finish).not.toHaveProperty('tasksCompleted');
+      expect(finish).not.toHaveProperty('tasksTotal');
+      expect(finish).not.toHaveProperty('activeWorkers');
+      return { receipt: { runId: 'corr-mag-1', state: 'completed' } };
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -2178,35 +2236,117 @@ describe('saved Card routes', () => {
         }),
       });
       expect(response.status).toBe(200);
-      expect(orchestratorMocks.dispatchConfiguredRuntime).toHaveBeenCalledWith(nativeRuntimeRequest);
-      await expect(response.json()).resolves.toMatchObject({
+      expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.open).toHaveBeenCalledTimes(3);
+      expect(agentTerminalMocks.manager.open).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ cardId: 'card_magentic' }),
+        expect.objectContaining({ id: 'card_magentic' }),
+        expect.any(Object),
+        120,
+        36,
+        { attachTui: false, materializeTaskProfile: true },
+      );
+      expect(agentTerminalMocks.manager.open).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ cardId: 'card_test_delegate' }),
+        expect.objectContaining({ id: 'card_test_delegate' }),
+        expect.any(Object),
+        120,
+        36,
+        { attachTui: false, materializeTaskProfile: true },
+      );
+      expect(agentTerminalMocks.manager.open).toHaveBeenNthCalledWith(
+        3,
+        expect.objectContaining({ cardId: 'builder' }),
+        expect.objectContaining({ id: 'builder' }),
+        expect.any(Object),
+        120,
+        36,
+        { attachTui: false, materializeTaskProfile: true },
+      );
+      const body = await response.json() as any;
+      expect(body).toMatchObject({
         ok: true,
         result: {
           runtimeOwner: 'mag_one',
-          output: 'Native Mag One response.',
-          stopReason: 'Native completion',
-          runtimeEvidence: { stage: 'completed' },
-          resultArtifact: { artifact_id: 'native-result-one' },
+          output: 'Native Hermes Mag One response.',
+          transport: {
+            threadId: 't_mag_root', turnId: null, hermesSessionId: 'card_magentic',
+            runtimeSource: 'repository_hermes_magentic',
+          },
+          receipt: { runId: 'corr-mag-1', state: 'completed' },
         },
       });
-      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
-        '/domain/runs/finish', expect.objectContaining({ body: expect.stringContaining('"providerInputTokens":11') }),
-      );
+      expect(body.result).not.toHaveProperty('resultArtifact');
+      expect(body.result).not.toHaveProperty('runtimeEvidence');
     } finally {
       await closeServer(server);
     }
   });
 
-  it('persists native Mag One safe failure stage without claiming completion', async () => {
-    const { ConfiguredRuntimeFailure } = await import('../services/autogen/pythonRailsClient.js');
-    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async () => ({
-      runId: 'failed-native-root', runtimeOwner: 'mag_one',
-      nativeRuntimeRequest: { session: { runId: 'failed-native-root' } },
-    }));
-    orchestratorMocks.dispatchConfiguredRuntime.mockRejectedValueOnce(new ConfiguredRuntimeFailure({
-      ok: false, runId: 'failed-native-root', error: 'magentic_run_failed',
-      runtimeEvidence: { stage: 'native_stream', failure: { failure_code: 'codex_app_server_turn_failed' } },
-    }));
+  it('persists a native Mag One blocked task without claiming completion', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.dispatchConfiguredRuntime.mockClear();
+    const magenticExecution = {
+      runId: 'failed-native-root', projectId: 'project-1', deckId: 'deck_builder',
+      mission: 'Bounded test mission', inputFile: {}, orchestrator: {
+        cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
+        nativeIdentity: 'card_magentic', instructions: 'Saved Mag One prompt',
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+        },
+        runtimeOptions: {},
+      },
+      workers: [{
+        cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
+        profile: 'delegate', title: 'Delegate', description: '',
+      }],
+    };
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/begin');
+      return {
+        runId: 'failed-native-root', runtimeOwner: 'mag_one',
+        cardRevisionId: 'revision:card_magentic', magenticExecution,
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/submit');
+      return {
+        ok: true, state: 'ready', nativePhase: 'queued', nativeRootId: 't_failed_root',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      return { ok: true };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/status');
+      return {
+        ok: true, state: 'blocked', nativePhase: 'blocked', nativeRootId: 't_failed_root',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+        error: 'magentic_task_blocked:t_worker',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      return { ok: true };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/finish');
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        runId: 'failed-native-root', state: 'blocked', nativePhase: 'blocked',
+        providerThreadRef: 't_failed_root',
+        errorCode: 'magentic_execution_blocked',
+        errorSummary: 'magentic_task_blocked:t_worker',
+        finalResult: null,
+      });
+      return { receipt: { runId: 'failed-native-root', state: 'blocked' } };
+    });
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(`${baseUrl}/cards/run`, {
@@ -2215,12 +2355,10 @@ describe('saved Card routes', () => {
           correlationId: 'failed-native-root', input: 'Bounded test mission', action: 'execute' }),
       });
       expect(response.status).toBe(502);
-      const finish = orchestratorMocks.requestPythonRailsJson.mock.calls
-        .filter(([path]) => path === '/domain/runs/finish')
-        .map(([, init]) => JSON.parse(String(init?.body)))
-        .find((body) => body.runId === 'failed-native-root');
-      expect(finish).toMatchObject({ state: 'failed', nativePhase: 'native_stream',
-        errorCode: 'codex_app_server_turn_failed', errorSummary: 'magentic_run_failed' });
+      await expect(response.json()).resolves.toEqual({
+        ok: false, error: 'magentic_task_blocked:t_worker',
+      });
+      expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }

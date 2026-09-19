@@ -81,7 +81,7 @@ export type NativeHermesCardView = {
   cardSaveMutatesNative: false;
   binding: {
     profile: string;
-    mode: 'main' | 'delegate' | 'kanban';
+    mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
   };
 };
 

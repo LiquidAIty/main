@@ -226,8 +226,7 @@ describe('AgentManager active builder config', () => {
   it.each([
     { kind: 'hermes', mode: 'main', profile: 'main-profile' },
     { kind: 'hermes', mode: 'delegate', profile: 'worker-profile' },
-    { kind: 'autogen', mode: 'magentic_one' },
-    { kind: 'autogen', mode: 'assistant' },
+    { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
   ] as const)('preserves the fixed $kind/$mode binding without runtime conversion controls', async (runtime) => {
     mockEditorFetch();
     const onSave = vi.fn();
@@ -493,7 +492,7 @@ describe('AgentManager active builder config', () => {
 
   it('serializes the selected two-owner runtime without implicit mode coercion', () => {
     const assistant = buildActiveAgentManagerLocalConfig({
-      runtime: { kind: 'autogen', mode: 'assistant' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'assistant' },
       provider: 'openai',
       accessMode: 'openai-api',
       modelKey: 'gpt-test',
@@ -507,7 +506,7 @@ describe('AgentManager active builder config', () => {
       toolsetsText: '',
       mcpConnectionIdsText: '',
     });
-    expect(assistant.runtime).toEqual({ kind: 'autogen', mode: 'assistant' });
+    expect(assistant.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'assistant' });
 
     const delegate = buildActiveAgentManagerLocalConfig({
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' },
@@ -632,7 +631,7 @@ describe('AgentManager active builder config', () => {
       agentType: 'agent_builder',
       activeTab: 'Memory',
       cardId: 'card-one',
-      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
       onSaveLocalConfig: vi.fn(),
       showTaskComposer: false,
       runInputs: {
@@ -681,7 +680,7 @@ describe('AgentManager active builder config', () => {
       agentType: 'agent_builder',
       activeTab: 'Memory',
       cardId: 'card-one',
-      localConfig: { runtime: { kind: 'autogen', mode: 'assistant' } },
+      localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
       onSaveLocalConfig: vi.fn(),
       runInputs: {
         available: true,
@@ -749,7 +748,7 @@ describe('AgentManager active builder config', () => {
     expect(pageSource).toContain('const [transientCardGraphContext, setTransientCardGraphContext]');
     expect(pageSource).toContain('[target.id]: loaded.mission');
     expect(pageSource).toContain("target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate'");
-    expect(pageSource).toContain("target.runtime.kind === 'autogen' && target.runtime.mode === 'magentic_one'");
+    expect(pageSource).toContain("target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one'");
     expect(pageSource).toContain('invocation: null');
     expect(chatSource).not.toContain('reviewContext.idf');
     expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[card.id] || [])');

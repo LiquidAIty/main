@@ -76,11 +76,8 @@ export function normalizeCardRuntime(value: unknown): CardRuntime | null {
   const mode = safeText(candidate.mode).trim().toLowerCase();
   if (kind === 'hermes') {
     const profile = safeText(candidate.profile).trim();
-    if (!profile || !['main', 'delegate', 'kanban'].includes(mode)) return null;
-    return { kind, mode: mode as 'main' | 'delegate' | 'kanban', profile };
-  }
-  if (kind === 'autogen' && ['assistant', 'magentic_one'].includes(mode)) {
-    return { kind, mode: mode as 'assistant' | 'magentic_one' };
+    if (!profile || !['main', 'delegate', 'kanban', 'magentic_one'].includes(mode)) return null;
+    return { kind, mode: mode as 'main' | 'delegate' | 'kanban' | 'magentic_one', profile };
   }
   return null;
 }

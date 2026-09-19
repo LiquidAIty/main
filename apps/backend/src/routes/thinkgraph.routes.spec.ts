@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   fetchThinkGraphNeighborhood: vi.fn(),
 }));
 
-vi.mock('../services/autogen/pythonRailsClient', () => ({
+vi.mock('../services/pythonRailsClient', () => ({
   fetchThinkGraphProjection: mocks.fetchThinkGraphProjection,
   fetchThinkGraphNeighborhood: mocks.fetchThinkGraphNeighborhood,
 }));

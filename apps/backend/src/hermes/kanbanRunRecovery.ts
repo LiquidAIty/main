@@ -1,5 +1,5 @@
 import { logHarnessTrace, redactTrace } from '../services/harnessTrace';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   readHermesKanbanSessionUsage,
   rejoinNativeHermesKanbanTask,

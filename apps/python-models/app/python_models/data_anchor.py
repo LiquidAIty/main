@@ -193,7 +193,7 @@ def read_thinkgraph_exact(
         # This resolver also runs inside MCP for selected-Card handoffs. Only
         # Python rails may own Engraphis; never instantiate it in this process.
         request = Request(
-            os.environ.get("AUTOGEN_ORCHESTRATOR_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
+            os.environ.get("PYTHON_RAILS_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
             data=json.dumps({"projectId": project_id, "operation": "inspect",
                              "arguments": {"nativeId": native_id}}).encode("utf-8"),
             headers={"Content-Type": "application/json"}, method="POST",

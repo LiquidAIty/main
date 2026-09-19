@@ -386,7 +386,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_magentic',
         )?.content || '',
-      runtime: { kind: 'autogen', mode: 'magentic_one' },
+      runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
       runtimeOptions: {
         provider: MAGENTIC_ONE_DEFAULT_PROVIDER,
         accessMode: 'chatgpt-account',
@@ -509,7 +509,7 @@ export const INITIAL_DECK: DeckDocument = {
         INITIAL_PROMPT_TEMPLATES.find(
           (template) => template.id === 'prompt_worldsignals_agent',
         )?.content || '',
-      runtime: { kind: 'autogen', mode: 'assistant' },
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' },
       // Real configured outside-world data sources only (EDGAR filings + Alpaca
       // market data — the registered runner tools). Never invented integrations.
       runtimeOptions: {
@@ -536,7 +536,7 @@ export const INITIAL_DECK: DeckDocument = {
   ],
   // The two independent connection networks (explicit type + handle semantics;
   // color is presentation only):
-  //   flow             ORANGE  symmetric Bot Mode availability between saved Hermes Cards
+  //   flow             ORANGE  symmetric direct-Agent availability between saved Hermes Cards
   //   magentic_option  BLUE    side worker slot on the Mag One bus
   //   magentic_control BLUE    dedicated top control input (submit final prompt)
   edges: [

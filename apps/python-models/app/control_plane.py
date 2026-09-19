@@ -32,8 +32,7 @@ _BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/
 
 SUPPORTED_WIRE_TYPES = ("flow", "magentic_option", "magentic_control")
 _SUPPORTED_CARD_RUNTIME_MODES = {
-    "hermes": {"main", "delegate"},
-    "autogen": {"assistant", "magentic_one"},
+    "hermes": {"main", "delegate", "magentic_one"},
 }
 _CARD_CREATE_KEYS = {
     "templateId",
@@ -440,7 +439,7 @@ async def write_mag_one_instructions(args: dict[str, Any]) -> dict[str, Any]:
     target_runtime = target.get("runtime")
     if not isinstance(target_runtime, dict) or (
         target_runtime.get("kind"), target_runtime.get("mode")
-    ) not in {("hermes", "delegate"), ("autogen", "magentic_one")}:
+    ) not in {("hermes", "delegate"), ("hermes", "magentic_one")}:
         raise ControlPlaneError("grounded_staging_target_runtime_invalid")
     raw_anchors = args.get("dataAnchors") or []
     if not isinstance(raw_anchors, list):
@@ -921,7 +920,10 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
                         if old_field in prior:
                             candidate[field] = prior[old_field]
             if blue:
-                bus_count = sum(cards[key].get("runtime") == {"kind": "autogen", "mode": "magentic_one"}
+                bus_count = sum(
+                    isinstance(cards[key].get("runtime"), dict)
+                    and cards[key]["runtime"].get("kind") == "hermes"
+                    and cards[key]["runtime"].get("mode") == "magentic_one"
                                 for key in (source, target))
                 if bus_count != 1:
                     raise ControlPlaneError("wire_magentic_endpoint_required")

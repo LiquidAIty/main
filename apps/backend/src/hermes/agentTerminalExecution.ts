@@ -1,4 +1,4 @@
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import type { AgentTerminalOwner, AgentTerminalTurnResult } from './agentTerminal';
 import { resolveSavedHermesProvider } from './providerSelection';
 

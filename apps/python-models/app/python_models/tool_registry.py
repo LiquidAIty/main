@@ -6,8 +6,8 @@ duplicate, empty-name, or schema-missing tools. There is no fallback,
 substitution, guessing, auto-selection, or tool invention.
 
 The real tool callables (``tool_current_datetime``, ``tool_calculator``) live
-here and keep executing through real AutoGen ``FunctionTool`` behavior;
-``magentic_runtime.build_card_tools`` resolves through this registry.
+here. Native runtimes receive only the exact saved selection projected from
+this registry.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from autogen_core.tools import FunctionTool
 from app.python_models.idd import IddValidationError
 
 from app.python_models.web_search import web_search
@@ -156,9 +155,9 @@ def _worldsignals_package_context_required(
 ) -> dict[str, Any]:
     """Typed packages require trusted Card/Run identity from the MCP host.
 
-    Keeping the public arguments in this callable preserves an accurate native
-    FunctionTool schema, while a direct AutoGen invocation fails closed instead
-    of accepting model-authored scope identifiers.
+    Keeping the public arguments in this callable preserves the accurate native
+    schema, while an unscoped invocation fails closed instead of accepting
+    model-authored scope identifiers.
     """
 
     del command, reason, arguments, domains, sourceRefs, maxAgeSeconds, limit
@@ -477,7 +476,7 @@ async def get_paper_account_readiness_tool() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 class ToolRegistry:
-    """Resolves only explicitly selected native FunctionTools."""
+    """Resolves only explicitly selected native tool specifications."""
 
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
@@ -530,7 +529,7 @@ class ToolRegistry:
             ))
         return definitions
 
-    def resolve_one(self, name: str) -> FunctionTool:
+    def resolve_one(self, name: str) -> ToolSpec:
         canonical_name = str(name or "").strip()
         if not canonical_name:
             raise RuntimeError("card_tool_name_empty")
@@ -545,13 +544,9 @@ class ToolRegistry:
         # mutated spec can never resolve silently.
         if not spec.inputSchema or not spec.outputSchema:
             raise RuntimeError(f"card_tool_schema_missing: {canonical_name}")
-        return FunctionTool(
-            self._adapters[canonical_name],
-            description=spec.description,
-            name=spec.name,
-        )
+        return spec
 
-    def resolve_selected(self, selected_names: list[str]) -> list[FunctionTool]:
+    def resolve_selected(self, selected_names: list[str]) -> list[ToolSpec]:
         """Resolve exactly the selected set; public/native reads grant nothing."""
         selected: list[str] = []
         seen_selected: set[str] = set()
@@ -562,7 +557,7 @@ class ToolRegistry:
             self.resolve_one(canonical)
             seen_selected.add(canonical)
             selected.append(canonical)
-        resolved: list[FunctionTool] = []
+        resolved: list[ToolSpec] = []
         runtime_names: set[str] = set()
         for name in selected:
             tool = self.resolve_one(name)

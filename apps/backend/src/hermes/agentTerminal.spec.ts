@@ -330,7 +330,9 @@ function fixture(extraProfileNames: string[] = []) {
     },
   }));
   const onExit = vi.fn(async () => undefined);
-  const materialize = vi.fn(async () => ({ native: {}, unavailableNativeToolReasons: {} }));
+  const materialize = vi.fn(async (..._args: any[]) => ({
+    native: {}, unavailableNativeToolReasons: {},
+  }));
   const resolveCardTools = vi.fn(async (
     owner: AgentTerminalOwner,
     selected: AgentCardInstance,
@@ -363,6 +365,8 @@ function fixture(extraProfileNames: string[] = []) {
   }));
   const materializeCardToolsPlugin = vi.fn(async () => undefined);
   const materializeExternalMcpTools = vi.fn(async () => ({}));
+  const configureCardInstructions = vi.fn(async () => undefined);
+  const configureCardModelRuntime = vi.fn(async () => undefined);
   const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
     const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
     return {
@@ -385,6 +389,8 @@ function fixture(extraProfileNames: string[] = []) {
     materializeCardToolsPlugin as never,
     materializeExternalMcpTools as never,
     resolveBotRoster,
+    configureCardInstructions,
+    configureCardModelRuntime,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
@@ -393,6 +399,7 @@ function fixture(extraProfileNames: string[] = []) {
     manager, spawnPty, spawnGateway, prepare, materialize,
     resolveCardTools, materializeCardToolsPlugin, cards, deck, owners,
     materializeExternalMcpTools, resolveBotRoster,
+    configureCardInstructions, configureCardModelRuntime,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -424,7 +431,75 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.spawnGateway).toHaveBeenCalledTimes(2);
     expect(f.spawnPty).toHaveBeenCalledTimes(2);
     expect(f.materialize).toHaveBeenCalledTimes(2);
+    expect(f.configureCardInstructions).not.toHaveBeenCalled();
     expect(String(f.ptys[0].options.env)).not.toContain('message.complete');
+  });
+
+  it('materializes saved instructions only for native task-profile preparation', async () => {
+    const f = fixture();
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+      materializeTaskProfile: true,
+    });
+    expect(f.configureCardInstructions).toHaveBeenCalledOnce();
+    expect(f.configureCardInstructions).toHaveBeenCalledWith(
+      'signal-analyst', 'Prompt signal',
+    );
+  });
+
+  it('projects the saved app-server model without requiring profile-local OAuth', async () => {
+    const f = fixture();
+    f.materialize.mockImplementationOnce(async (
+      _selection: unknown,
+      _readNative: unknown,
+      _configureSubagent: unknown,
+      configureParent: (profile: string, selection: {
+        provider: string;
+        model: string;
+        apiMode: 'codex_app_server' | null;
+        openaiRuntime: 'codex_app_server' | 'auto';
+      }) => Promise<unknown>,
+    ) => {
+      await configureParent('signal-analyst', {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-sol',
+        apiMode: 'codex_app_server',
+        openaiRuntime: 'codex_app_server',
+      });
+      return { native: {}, unavailableNativeToolReasons: {} };
+    });
+
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+      materializeTaskProfile: true,
+    });
+
+    expect(f.clients[0].requests.some((request) => (
+      request.method === 'profiles.configure'
+      && (request.params.provider != null || request.params.model != null)
+    ))).toBe(false);
+    expect(f.configureCardModelRuntime).toHaveBeenCalledExactlyOnceWith(
+      'signal-analyst', {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-sol',
+        apiMode: 'codex_app_server',
+        openaiRuntime: 'codex_app_server',
+      },
+    );
+  });
+
+  it('does not rewrite task-profile instructions before rejecting changed saved configuration', async () => {
+    const f = fixture();
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+    });
+    f.cards[0].prompt = 'Changed prompt';
+
+    await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+      materializeTaskProfile: true,
+    })).rejects.toThrow('agent_terminal_configuration_changed_stop_required');
+    expect(f.configureCardInstructions).not.toHaveBeenCalled();
   });
 
   it('deduplicates concurrent first opens for the same Card', async () => {

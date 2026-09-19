@@ -16,8 +16,8 @@ export type InternalMcpPrincipal =
       conversationId: string;
       parentRunId: string;
       callerCardId: string;
-      callerRuntimeKind: 'hermes' | 'autogen';
-      callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'assistant' | 'magentic_one';
+      callerRuntimeKind: 'hermes';
+      callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
       grantedTools: string[];
       presentedTools?: string[];
       // Signed native attribution only; these do not grant permissions.

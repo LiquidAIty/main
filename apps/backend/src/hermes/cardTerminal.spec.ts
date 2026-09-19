@@ -52,8 +52,8 @@ describe('persisted Run to Card terminal presentation', () => {
     expect(buildCardTerminal(run)).toMatchObject({
       observation: 'unavailable', unavailableReason: 'hermes_gateway_stream_only',
     });
-    expect(buildCardTerminal({ ...run, runtimeKind: 'autogen' })).toMatchObject({
-      observation: 'unavailable', unavailableReason: 'autogen_adapter_completion_only',
+    expect(buildCardTerminal({ ...run, runtimeMode: 'magentic_one' })).toMatchObject({
+      observation: 'unavailable', unavailableReason: 'magentic_execution_headless',
     });
   });
 

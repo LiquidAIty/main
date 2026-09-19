@@ -81,11 +81,12 @@ DECK = {
     "nodes": [
         {"id": "signals-card", "title": "WorldSignals", "role": "",
          "templateId": "template_assist",
-         "runtime": {"kind": "autogen", "mode": "assistant"}, "prompt": "p",
+         "runtime": {"kind": "hermes", "mode": "delegate", "profile": "signals-card"},
+         "prompt": "p",
          "runtimeOptions": {"tools": ["worldsignals.capabilities", "worldsignals.command"]},
          "_cardRevisionId": "revision:signals-card"},
         {"id": "worker", "title": "Worker",
-         "runtime": {"kind": "autogen", "mode": "assistant"},
+         "runtime": {"kind": "hermes", "mode": "delegate", "profile": "worker"},
          "prompt": "", "runtimeOptions": None,
          "_cardRevisionId": "revision:worker"},
         {"id": "builder-card", "title": "Agent Builder",
@@ -136,7 +137,9 @@ def test_saved_card_reference_exposes_explicit_runtime() -> None:
         deck=DECK,
     )
 
-    assert reference["runtime"] == {"kind": "autogen", "mode": "assistant"}
+    assert reference["runtime"] == {
+        "kind": "hermes", "mode": "delegate", "profile": "signals-card",
+    }
     assert reference["role"] == ""
 
 
@@ -152,7 +155,7 @@ def test_canvas_inspect_returns_only_the_bounded_public_projection(fake_backend)
     assert result["cards"][0] == {
         "id": "signals-card",
         "title": "WorldSignals",
-        "runtime": {"kind": "autogen", "mode": "assistant"},
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "signals-card"},
         "tools": ["worldsignals.capabilities", "worldsignals.command"],
         "savedWriteTools": ["worldsignals.command"],
         "legacyReadableSelections": ["worldsignals.capabilities"],
@@ -186,7 +189,7 @@ def test_canvas_reports_removed_grant_unavailable_and_never_allocates_it(fake_ba
     ("target_id", "runtime"),
     [
         ("delegate", {"kind": "hermes", "mode": "delegate", "profile": "delegate"}),
-        ("mag-one", {"kind": "autogen", "mode": "magentic_one"}),
+        ("mag-one", {"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"}),
     ],
 )
 def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
@@ -203,7 +206,7 @@ def test_one_grounded_staging_path_loads_helper_or_mag_one_without_running(
         },
         {
             "id": "mag-one", "title": "Magentic-One",
-            "runtime": {"kind": "autogen", "mode": "magentic_one"},
+            "runtime": {"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
             "runtimeOptions": {
                 "provider": "openrouter", "modelKey": "orchestrator",
                 "providerModelId": "provider/orchestrator", "tools": [],
@@ -593,7 +596,10 @@ class TestUpsertWire:
     def test_magentic_option_upsert_persists(self, fake_backend, monkeypatch):
         import copy
         deck = copy.deepcopy(DECK)
-        deck['nodes'].append({'id': 'mag', 'runtime': {'kind': 'autogen', 'mode': 'magentic_one'}})
+        deck['nodes'].append({
+            'id': 'mag',
+            'runtime': {'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'mag'},
+        })
         monkeypatch.setattr(cp, '_load_deck', lambda *_: (deck, 'rev1'))
         result = asyncio.run(cp.canvas_upsert_wire({
             "projectId": "p", "deckId": "d", "op": "upsert",
@@ -612,7 +618,9 @@ class TestUpsertWire:
         target = {'id': 'target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
                   'runtimeOptions': {'delegationRole': "off"}}
         if edge_type != 'flow':
-            target['runtime'] = {'kind': 'autogen', 'mode': 'magentic_one'}
+            target['runtime'] = {
+                'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'target',
+            }
         deck = {'nodes': [source, target], 'edges': []}
         cards_before = copy.deepcopy(deck['nodes'])
         saves = []
@@ -647,9 +655,16 @@ class TestUpsertWire:
         assert deck['nodes'] == cards_before
 
     def test_blue_reverse_duplicates_and_invalid_endpoint_pairs(self, monkeypatch):
-        deck = {'nodes': [{'id': key, 'runtime': {'kind': 'autogen', 'mode': mode}}
-                          for key, mode in [('a', 'assistant'), ('b', 'assistant'),
-                                            ('mag', 'magentic_one'), ('other-mag', 'magentic_one')]],
+        deck = {'nodes': [
+                    {'id': 'a', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'a'}},
+                    {'id': 'b', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'b'}},
+                    {'id': 'mag', 'runtime': {
+                        'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'mag',
+                    }},
+                    {'id': 'other-mag', 'runtime': {
+                        'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'other-mag',
+                    }},
+                ],
                 'edges': [{'id': 'existing', 'source': 'a', 'target': 'mag', 'edgeType': 'magentic_option'}]}
         monkeypatch.setattr(cp, '_load_deck', lambda *_: (deck, 'rev1'))
         monkeypatch.setattr(cp, '_save_deck', lambda *_: pytest.fail('Rejected wires must not save or execute'))
@@ -660,7 +675,7 @@ class TestUpsertWire:
                     'wire': {'id': 'new', 'source': source, 'target': target, 'edgeType': 'magentic_option'}}))
 
 
-class TestRunAssistantAgent:
+class TestRunSavedCard:
     def test_rejoins_one_existing_run_without_resubmitting(self, monkeypatch):
         calls = []
 

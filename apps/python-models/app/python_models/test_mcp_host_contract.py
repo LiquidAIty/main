@@ -1854,9 +1854,9 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             "additionalProperties": False,
         }
         # The receiving Card domain checks the exact IDD template binding;
-        # transport must not impose the removed AutoGen-only creation rule.
+        # Transport must not impose a removed runtime-specific creation rule.
         for binding in ({"kind": "hermes", "mode": "delegate"},
-                        {"kind": "autogen", "mode": "assistant"}):
+                        {"kind": "hermes", "mode": "delegate", "profile": "worker"}):
             jsonschema.validate(binding, runtime_schema)
         for binding in ({"kind": "hermes"}, {"kind": "hermes", "mode": ""},
                         {"kind": "hermes", "mode": "delegate", "override": True}):

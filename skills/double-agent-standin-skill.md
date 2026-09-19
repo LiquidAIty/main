@@ -87,7 +87,7 @@ calls; a prompt-only allowed-tool list is not an enforced grant boundary.
 When subagents are separately authorized, enumerate the real participating roles first. One role
 gets one fresh-context stand-in, including real planners, workers and synthesizers. An unused Card,
 transport process or independent evaluator is not another role. Use the actual native topology,
-not an arbitrary two-actor limit or invented private AutoGen ledgers. Report unsupported nesting
+not an arbitrary two-actor limit or invented private task ledgers. Report unsupported nesting
 or concurrency. Dependency-ordered waves preserve roles but do not prove native parallel latency.
 
 Provide only the receiving role's stable instructions, ordinary task and permitted upstream

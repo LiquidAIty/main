@@ -55,7 +55,7 @@ export function buildInitialWorkbenchLandingViewport(
   },
 ): CanvasLandingViewport | null {
   const busNode = document.nodes.find(
-    (node) => node.runtime.kind === 'autogen' && node.runtime.mode === 'magentic_one',
+    (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'magentic_one',
   );
   const workbenchNode = document.nodes.find(
     (node) =>

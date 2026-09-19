@@ -176,20 +176,18 @@ def _card_runtime(card: dict[str, Any]) -> dict[str, str]:
     kind = _required_text(runtime.get("kind"), "runtime_kind")
     mode = _required_text(runtime.get("mode"), "runtime_mode")
     if kind == "hermes":
-        if mode not in {"main", "delegate", "kanban"}:
+        if mode not in {"main", "delegate", "kanban", "magentic_one"}:
             raise CardDomainError(f"hermes_runtime_mode_unsupported:{mode}")
         return {
             "kind": kind,
             "mode": mode,
             "profile": _required_text(runtime.get("profile"), "runtime_profile"),
         }
-    if kind == "autogen":
-        if mode not in {"assistant", "magentic_one"}:
-            raise CardDomainError(f"autogen_runtime_mode_unsupported:{mode}")
-        if runtime.get("profile") is not None:
-            raise CardDomainError("autogen_runtime_profile_forbidden")
-        return {"kind": kind, "mode": mode}
     raise CardDomainError(f"runtime_kind_unsupported:{kind}")
+
+
+def _is_magentic_runtime(runtime: dict[str, Any]) -> bool:
+    return runtime.get("kind") == "hermes" and runtime.get("mode") == "magentic_one"
 
 
 def _resolve_project(cursor: Any, project_id: str) -> dict[str, Any]:
@@ -315,7 +313,7 @@ def _validated_deck_collections(
             raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
         endpoints = (core["source"], core["target"])
         if core["edgeType"] in {"magentic_option", "magentic_control"}:
-            if sum(_card_runtime(cards[key]) == {"kind": "autogen", "mode": "magentic_one"}
+            if sum(_is_magentic_runtime(_card_runtime(cards[key]))
                    for key in endpoints) != 1:
                 raise CardDomainError(f"edge_magentic_endpoint_required:{core['id']}")
             endpoints = tuple(sorted(endpoints))
@@ -1846,11 +1844,9 @@ def delete_card(
 def _runtime_owner(card: dict[str, Any]) -> str:
     """Resolve one transport owner from the one explicit saved runtime union."""
     runtime = _card_runtime(card)
-    if runtime["kind"] == "hermes":
-        return "hermes"
-    if runtime["mode"] == "magentic_one":
+    if _is_magentic_runtime(runtime):
         return "mag_one"
-    return "autogen"
+    return "hermes"
 
 
 def _card_enabled(card: dict[str, Any]) -> bool:
@@ -1866,7 +1862,7 @@ def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
     except CardDomainError:
         return False
     return (
-        runtime != {"kind": "autogen", "mode": "magentic_one"}
+        not _is_magentic_runtime(runtime)
         and _card_enabled(card)
     )
 
@@ -1885,21 +1881,15 @@ def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[s
             raise CardDomainError(f"card_connection_controller_required:{edge['id']}")
 
 
-def _direct_card_targets(
+def _connected_hermes_card_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
+    *,
+    edge_type: str,
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
-    """Project saved Hermes Card peers from enabled FLOW connections."""
-    source = cards.get(card_id)
-    if source is None or source.get("kind") != "agent" or not _card_enabled(source):
-        return []
-    try:
-        source_runtime = _card_runtime(source)
-    except CardDomainError:
-        return []
-    if source_runtime.get("kind") != "hermes":
-        return []
+    """Project exact saved Hermes Card peers from one enabled connection type."""
     profiles = [
         str(runtime.get("profile") or "").strip().lower()
         for card in cards.values()
@@ -1918,39 +1908,86 @@ def _direct_card_targets(
             continue
         target = cards.get(peer_id)
         if (
-            edge.get("edgeType") != "flow"
+            edge.get("edgeType") != edge_type
             or edge.get("enabled") is False
             or peer_id == card_id
             or peer_id in seen
-            or target is None
-            or target.get("kind") != "agent"
-            or not _card_enabled(target)
         ):
+            continue
+        if target is None:
+            if strict:
+                raise CardDomainError(f"magentic_worker_card_missing:{peer_id}")
+            continue
+        if target.get("kind") != "agent":
+            if strict:
+                raise CardDomainError(f"magentic_worker_card_invalid:{peer_id}")
+            continue
+        if not _card_enabled(target):
+            if strict:
+                raise CardDomainError(f"magentic_worker_card_disabled:{peer_id}")
             continue
         try:
             runtime = _card_runtime(target)
         except CardDomainError:
+            if strict:
+                raise
             continue
         if runtime.get("kind") != "hermes":
+            if strict:
+                raise CardDomainError(f"magentic_worker_runtime_invalid:{peer_id}")
             continue
-        if profiles.count(runtime["profile"].strip().lower()) != 1:
+        if _is_magentic_runtime(runtime):
+            if strict:
+                raise CardDomainError(f"magentic_worker_runtime_invalid:{peer_id}")
             continue
+        profile = runtime["profile"].strip().lower()
+        if not _HERMES_PROFILE_ID_RE.fullmatch(profile):
+            if strict:
+                raise CardDomainError(f"runtime_profile_invalid:{profile or 'missing'}")
+            continue
+        if profiles.count(profile) != 1:
+            if strict:
+                raise CardDomainError(f"card_profile_duplicate:{profile}")
+            continue
+        revision_id = str(target.get("_cardRevisionId") or "").strip()
+        if strict and not revision_id:
+            raise CardDomainError(f"magentic_worker_revision_missing:{peer_id}")
         seen.add(peer_id)
         direct.append({
             "cardId": peer_id,
             "title": str(target.get("title") or peer_id),
             "profile": runtime["profile"],
             "description": str(target.get("subtitle") or "")[:1_000],
-            "cardRevisionId": str(target.get("_cardRevisionId") or ""),
+            "cardRevisionId": revision_id,
         })
     return direct
+
+
+def _direct_card_targets(
+    card_id: str,
+    cards: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project saved Hermes Card peers from enabled FLOW connections."""
+    source = cards.get(card_id)
+    if source is None or source.get("kind") != "agent" or not _card_enabled(source):
+        return []
+    try:
+        source_runtime = _card_runtime(source)
+    except CardDomainError:
+        return []
+    if source_runtime.get("kind") != "hermes":
+        return []
+    return _connected_hermes_card_targets(
+        card_id, cards, edges, edge_type="flow",
+    )
 
 
 _HERMES_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
 def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
-    """Compile ordered symmetric orange peers for every enabled Hermes agent Card."""
+    """Compile direct Hermes Card peers from saved flow topology."""
     nodes = deck.get("nodes")
     edges = deck.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):
@@ -1983,9 +2020,14 @@ def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
         runtime = card.get("runtime")
         if not isinstance(runtime, dict) or runtime.get("kind") != "hermes":
             continue
+        if _is_magentic_runtime(runtime):
+            continue
         card_id = str(card.get("id") or "")
         profile = str(runtime.get("profile") or "").strip()
-        bot_enabled = card.get("kind") == "agent" and _card_enabled(card)
+        bot_enabled = (
+            card.get("kind") == "agent"
+            and _card_enabled(card)
+        )
         projections.append({
             "cardId": card_id,
             "cardRevisionId": str(card.get("_cardRevisionId") or ""),
@@ -2305,14 +2347,14 @@ def _prepare_invocation(
         sender = cards.get(sender_id)
         target_runtime = _card_runtime(card)
         sender_runtime = _card_runtime(sender) if sender is not None else None
-        if target_runtime == {"kind": "autogen", "mode": "magentic_one"}:
+        if _is_magentic_runtime(target_runtime):
             authorized = any(
                 {edge["source"], edge["target"]} == {sender_id, card_id}
                 and edge["edgeType"] == "magentic_control"
                 and edge.get("enabled") is not False
                 for edge in loaded["deck"]["edges"]
             )
-        elif sender_runtime == {"kind": "autogen", "mode": "magentic_one"}:
+        elif sender_runtime is not None and _is_magentic_runtime(sender_runtime):
             authorized = any(
                 edge["edgeType"] == "magentic_option"
                 and {edge["source"], edge["target"]} == {sender_id, card_id}
@@ -2926,7 +2968,7 @@ def resolve_magentic_target_card(
     targets = [
         card for card in loaded["deck"]["nodes"]
         if card["id"] in target_ids
-        and _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
+        and _is_magentic_runtime(_card_runtime(card))
     ]
     if len(targets) != 1:
         raise CardDomainError("magentic_control_target_ambiguous")
@@ -2943,7 +2985,7 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
     magentic = [
         card for card in cards.values()
-        if _card_runtime(card) == {"kind": "autogen", "mode": "magentic_one"}
+        if _is_magentic_runtime(_card_runtime(card))
     ]
     if len(magentic) != 1:
         raise CardDomainError("magentic_card_identity_ambiguous")
@@ -2987,18 +3029,6 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
         "deckId": deck_id,
         "orchestratorCardId": orchestrator["id"],
         "connectedAgents": connected,
-    }
-
-
-def _saved_card_participant(card: dict[str, Any]) -> dict[str, Any]:
-    """Project saved identity and capability description, never worker execution config."""
-    if not _is_callable_magentic_worker_card(card):
-        raise CardDomainError("magentic_worker_runtime_invalid")
-    return {
-        "cardId": card["id"],
-        "title": card.get("title") or card["id"],
-        "description": str(card.get("subtitle") or card.get("title") or card["id"]),
-        "runtime": _card_runtime(card),
     }
 
 
@@ -3055,8 +3085,16 @@ def _insert_run(
     runtime = idf["stableSavedCardContext"]["runtime"]
     provider = idf["stableSavedCardContext"]["provider"]
     runtime_options = idf["stableSavedCardContext"].get("runtimeOptions") or {}
+    execution_kind = "hermes" if prepared.get("runtimeOwner") == "mag_one" else runtime["kind"]
     saved_openai_runtime: str | None = None
-    if runtime_options.get("openaiRuntime") == "codex_app_server":
+    if (
+        runtime_options.get("openaiRuntime") == "codex_app_server"
+        or (
+            prepared.get("runtimeOwner") == "mag_one"
+            and provider.get("provider") == "openai"
+            and provider.get("accessMode") == "chatgpt-account"
+        )
+    ):
         saved_openai_runtime = "codex_app_server"
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
@@ -3072,7 +3110,7 @@ def _insert_run(
             """,
             (
                 run_id, prepared["projectId"], prepared["deckId"],
-                prepared["cardRevisionId"], runtime["kind"],
+                prepared["cardRevisionId"], execution_kind,
                 runtime["mode"], provider.get("provider"),
                 provider.get("modelKey"), provider.get("providerModelId"),
                 provider.get("accessMode"), correlation_id, request_fingerprint,
@@ -3355,32 +3393,18 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
     if owner == "hermes" and runtime.get("mode") == "kanban":
         raise CardDomainError("hermes_kanban_card_mode_retired")
-    participants: list[dict[str, Any]] = []
+    magentic_workers: list[dict[str, Any]] = []
     if owner == "mag_one":
         loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
         cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
-        worker_ids: list[str] = []
-        for edge in loaded["deck"]["edges"]:
-            if (
-                edge["edgeType"] != "magentic_option"
-                or edge.get("enabled") is False
-                or card_identity["cardId"] not in {edge["source"], edge["target"]}
-            ):
-                continue
-            worker_id = (
-                edge["target"]
-                if edge["source"] == card_identity["cardId"]
-                else edge["source"]
-            )
-            worker = cards.get(worker_id)
-            if (
-                worker is not None
-                and worker_id not in worker_ids
-                and _is_callable_magentic_worker_card(worker)
-            ):
-                worker_ids.append(worker_id)
-        participants = [_saved_card_participant(cards[worker_id]) for worker_id in worker_ids]
-        if not participants:
+        magentic_workers = _connected_hermes_card_targets(
+            card_identity["cardId"],
+            cards,
+            loaded["deck"]["edges"],
+            edge_type="magentic_option",
+            strict=True,
+        )
+        if not magentic_workers:
             raise CardDomainError("magentic_runtime_no_connected_participants")
     request_fingerprint = None
     resolved_run_id, resolved_correlation_id, created = _insert_run(
@@ -3389,8 +3413,6 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         correlation_id=correlation_id,
         request_fingerprint=request_fingerprint,
     )
-    if not created:
-        raise CardDomainError("run_identity_conflict")
     public, input_files, runtime_input = _retain_required_run_idf(
         prepared,
         run_id=resolved_run_id,
@@ -3398,28 +3420,32 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         created=created,
     )
     prepared.update(public)
-    native_runtime_request = None
-    if owner in {"autogen", "mag_one"}:
-        native_runtime_request = {
-            "session": {
-                "sessionId": f"{prepared['deckId']}:{card_identity['cardId']}:{resolved_run_id}",
-                "projectId": prepared["projectId"],
-                "deckId": prepared["deckId"],
-                "cardId": card_identity["cardId"],
-                "conversationId": str(payload.get("conversationId") or "active"),
-                "turnId": resolved_correlation_id,
-                "runId": resolved_run_id,
-                **(
-                    {"parentRunId": str(payload.get("originatingRunId")).strip()}
-                    if str(payload.get("originatingRunId") or "").strip()
-                    else {}
-                ),
-                "route": "deck_runtime" if owner == "mag_one" else "single_card",
-                "orchestrator": "magentic_one" if owner == "mag_one" else "assistant_agent",
-                "startedAt": _now().isoformat(),
-            },
+    magentic_execution = None
+    if owner == "mag_one":
+        options = _json_object(
+            prepared["idf"]["stableSavedCardContext"].get("runtimeOptions"),
+            "runtime_options",
+        )
+        provider = _json_object(
+            prepared["idf"]["stableSavedCardContext"].get("provider"),
+            "provider",
+        )
+        magentic_execution = {
+            "runId": resolved_run_id,
+            "correlationId": resolved_correlation_id,
+            "projectId": prepared["projectId"],
+            "deckId": prepared["deckId"],
             "inputFile": input_files,
-            "participants": participants,
+            "mission": runtime_input["kanbanMission"],
+            "orchestrator": {
+                "cardId": card_identity["cardId"],
+                "cardRevisionId": prepared["cardRevisionId"],
+                "nativeIdentity": runtime["profile"],
+                "instructions": runtime_input["systemPrompt"],
+                "provider": provider,
+                "runtimeOptions": options,
+            },
+            "workers": magentic_workers,
         }
     telemetry_written = False
     anchor_telemetry_written = False
@@ -3443,7 +3469,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
         "inputFile": input_files,
-        "nativeRuntimeRequest": native_runtime_request,
+        "magenticExecution": magentic_execution,
         "hermesTransport": {
             "request": runtime_input,
             "inputFile": input_files,
@@ -4195,49 +4221,6 @@ def _observe_run_finish(
         return True
     except Exception:
         return False
-
-
-def record_native_run_result(context: Any, result: Any) -> dict[str, Any]:
-    """Retain observable native result evidence in the existing Run artifact catalog.
-
-    No transcript, Task Ledger, Progress Ledger, or hidden reasoning is retained.
-    The already validated IDF location supplies this Run's workspace only.
-    """
-    run_id = _required_text(context.session.runId, "run_id")
-    descriptor = _input_file_descriptor_for_run(run_id)
-    if descriptor is None:
-        raise CardDomainError("run_input_files_missing")
-    from app.python_models.idf import invocation_workspace
-
-    workspace = invocation_workspace(context.session.projectId, context.session.deckId, run_id).resolve()
-    idf_path = Path(descriptor["idfPath"]).resolve(strict=True)
-    if idf_path.parent != workspace:
-        raise CardDomainError("native_result_workspace_mismatch")
-    path = workspace / "native-result.json"
-    encoded = (json.dumps({
-        "runId": run_id,
-        "cardId": context.session.cardId,
-        "ok": result.ok,
-        "error": result.error,
-        "stopReason": result.stopReason,
-        "finalResponseText": result.finalResponseText,
-        "runtimeEvidence": result.runtimeEvidence,
-    }, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    if len(encoded) > 1_000_000:
-        raise CardDomainError("native_result_artifact_too_large")
-    with path.open("xb") as stream:
-        stream.write(encoded)
-    # Native result evidence is an output artifact, never another runtime input.
-    return record_explicit_artifact({
-        "artifactId": f"result:{_sha(run_id)[:24]}:native",
-        "runId": run_id,
-        "artifactKind": "native-runtime-result",
-        "locator": str(path.relative_to(_REPOSITORY_ROOT)) if path.is_relative_to(_REPOSITORY_ROOT) else str(path),
-        "mediaType": "application/json",
-        "contentSha256": sha256(encoded).hexdigest(),
-        "sizeBytes": len(encoded),
-        "provenanceRef": "native-magentic-one",
-    })["artifact"]
 
 
 def record_explicit_artifact(payload: dict[str, Any]) -> dict[str, Any]:

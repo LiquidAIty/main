@@ -86,8 +86,10 @@ def template_runtime(document: dict[str, Any], template_id: str) -> dict[str, st
     definition = document["templates"][template_id]
     if "runtime" in definition:
         binding = definition["runtime"]
-        if (not isinstance(binding, dict) or set(binding) != {"kind", "mode"}
-                or not all(isinstance(value, str) and value for value in binding.values())):
+        fields = set(binding) if isinstance(binding, dict) else set()
+        if (fields not in ({"kind", "mode"}, {"kind", "mode", "profile"})
+                or not all(isinstance(value, str) and value for value in binding.values())
+                or ("profile" in fields and binding["kind"] != "hermes")):
             raise IddValidationError("idd_template_runtime_invalid")
         return dict(binding)
     if definition.get("extends"):

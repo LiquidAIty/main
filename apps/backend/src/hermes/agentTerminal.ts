@@ -17,13 +17,15 @@ import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { agentTerminalExecution } from './agentTerminalExecution';
 import {
+  configureHermesCardInstructions,
+  configureHermesCardModelRuntime,
   configureHermesNativeSubagentModel,
   materializeHermesProfileSelections,
   type HermesProfileSelection,
 } from './profileMaterialization';
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
 import { readSavedSubagentModel } from './subagentModel';
-import { requestPythonRailsJson } from '../services/autogen/pythonRailsClient';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   HERMES_CARD_TOOLS_TOOLSET,
   materializeHermesExternalMcpTools,
@@ -87,7 +89,7 @@ export type AuthenticatedCardToolRequest = {
   cardTools: {
     cardRevisionId: string;
     configurationFingerprint: string;
-    runtimeMode: 'main' | 'delegate' | 'kanban';
+    runtimeMode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
   };
   request: {
     version: 1;
@@ -185,6 +187,7 @@ export type AgentTerminalOpenOptions = {
   workingDirectory?: string;
   attachTui?: boolean;
   botRosterProjection?: HermesBotRosterProjection;
+  materializeTaskProfile?: boolean;
 };
 
 export function agentTerminalPresentationOptions(
@@ -323,12 +326,19 @@ export function prepareAgentTerminal(
   const profileHome = path.join(hermesHome, 'profiles', profile);
   if (!existsSync(path.join(profileHome, 'config.yaml'))) throw new Error('agent_terminal_profile_missing');
   const options = card.runtimeOptions as Record<string, unknown> | undefined;
+  const openaiRuntime = options?.openaiRuntime ?? (
+    card.runtime.mode === 'magentic_one'
+      && String(options?.provider || '').trim().toLowerCase() === 'openai'
+      && String(options?.accessMode || '').trim().toLowerCase() === 'chatgpt-account'
+      ? 'codex_app_server'
+      : undefined
+  );
   const providerSelection = resolveSavedHermesProvider({
     provider: options?.provider,
     accessMode: options?.accessMode,
     modelKey: options?.modelKey,
     providerModelId: options?.providerModelId,
-    openaiRuntime: options?.openaiRuntime,
+    openaiRuntime,
   });
   const cwd = resolveAgentCardWorkingDirectory(owner, card, profile, workingDirectory);
   if (typeof card.prompt !== 'string' || !card.prompt.trim()) {
@@ -567,6 +577,8 @@ export class AgentTerminalManager {
     private readonly materializeCardToolsPlugin: typeof materializeHermesCardToolsPlugin = materializeHermesCardToolsPlugin,
     private readonly materializeExternalMcpTools: typeof materializeHermesExternalMcpTools = materializeHermesExternalMcpTools,
     private readonly resolveBotRoster: typeof resolveHermesBotRosterProjection = resolveHermesBotRosterProjection,
+    private readonly configureCardInstructions: typeof configureHermesCardInstructions = configureHermesCardInstructions,
+    private readonly configureCardModelRuntime: typeof configureHermesCardModelRuntime = configureHermesCardModelRuntime,
   ) {}
 
   async open(
@@ -597,6 +609,9 @@ export class AgentTerminalManager {
       if (session.cardTools.configurationFingerprint !== cardTools.configurationFingerprint) {
         throw new Error('agent_terminal_tool_configuration_changed_stop_required');
       }
+      if (options.materializeTaskProfile) {
+        await this.configureCardInstructions(profile, String(card.prompt || ''));
+      }
       const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
       await this.configureNativeBotProfile(
         (method, params) => session.client.request(method, {
@@ -619,6 +634,9 @@ export class AgentTerminalManager {
         throw new Error('agent_terminal_tool_configuration_changed_stop_required');
       }
       const state = await pending.promise;
+      if (options.materializeTaskProfile) {
+        await this.configureCardInstructions(profile, String(card.prompt || ''));
+      }
       return attachTui
         ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
         : state;
@@ -628,10 +646,15 @@ export class AgentTerminalManager {
         this.sessions.delete(id);
       }
     }
-    const promise = this.start(
-      owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
-      options.botRosterProjection,
-    );
+    const promise = (async () => {
+      if (options.materializeTaskProfile) {
+        await this.configureCardInstructions(profile, String(card.prompt || ''));
+      }
+      return this.start(
+        owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
+        options.botRosterProjection,
+      );
+    })();
     this.pendingStarts.set(profile.toLowerCase(), {
       owner: { ...owner }, fingerprint,
       cardToolsFingerprint: cardTools.configurationFingerprint,
@@ -808,6 +831,13 @@ export class AgentTerminalManager {
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
+    if (launch.providerSelection.apiMode === 'codex_app_server') {
+      await this.configureCardModelRuntime(launch.profile, {
+        provider: launch.providerSelection.provider,
+        model: launch.providerSelection.model,
+        openaiRuntime: launch.providerSelection.profileOpenaiRuntime,
+      });
+    }
     await this.materializeCardToolsPlugin(launch.profileHome, cardTools, { env: launch.env });
     const gatewayToken = randomBytes(32).toString('hex');
     const gatewayKeyId = createHash('sha256').update(gatewayToken, 'utf8').digest('hex');
@@ -845,12 +875,20 @@ export class AgentTerminalManager {
         },
         (profile) => request('profiles.describe', { name: profile }),
         configureHermesNativeSubagentModel,
-        (profile, selection) => request('profiles.configure', {
-          name: profile,
-          provider: selection.provider,
-          model: selection.model,
-          openai_runtime: selection.openaiRuntime,
-        }),
+        async (profile, selection) => {
+          if (selection.apiMode === 'codex_app_server') {
+            await this.configureCardModelRuntime(profile, selection);
+            return { ok: true, applied: { model: true } };
+          }
+          const configured = await request('profiles.configure', {
+            name: profile,
+            provider: selection.provider,
+            model: selection.model,
+            confirm_expensive_model: true,
+          });
+          await this.configureCardModelRuntime(profile, selection);
+          return configured;
+        },
         (profile, disabledSkills) => request('profiles.configure', {
           name: profile,
           disabled_skills: disabledSkills,

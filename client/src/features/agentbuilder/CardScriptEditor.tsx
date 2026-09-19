@@ -443,7 +443,7 @@ function shortHash(script: CardScript): string {
 function changedSourceDraft(
   current: CardScript,
   nextSource: string,
-  runtimeKind: 'hermes' | 'autogen',
+  runtimeKind: 'hermes',
 ): CardScript {
   return {
     ...current,
@@ -476,7 +476,7 @@ export function CardScriptEditor({
   onChange,
 }: {
   cardId: string;
-  runtimeKind: 'hermes' | 'autogen';
+  runtimeKind: 'hermes';
   script: CardScript;
   selectedTools: string[];
   onChange(script: CardScript): void;
