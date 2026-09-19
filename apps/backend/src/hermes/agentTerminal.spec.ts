@@ -464,6 +464,13 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(attached.tuiPid).not.toBeNull();
     expect(f.spawnGateway).toHaveBeenCalledOnce();
     expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.spawnPty.mock.calls[0]?.[1]).toEqual([
+      '-p', 'signal-analyst', '--tui', '--resume', headless.storedSessionId,
+    ]);
+    expect(f.ptys[0].options.env).toMatchObject({
+      HERMES_TUI_INLINE: '1',
+    });
+    expect((f.ptys[0].options.env as Record<string, string>).HERMES_TUI_RESUME).toBeUndefined();
   });
 
   it('allows the native TUI client to close and reattach without killing its Card runtime', async () => {
@@ -675,7 +682,13 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(second.nativeSessionId).not.toBe(first.nativeSessionId);
     expect(f.clients[1].requests.map((request) => request.method)).toContain('session.resume');
     expect(f.clients[1].requests.map((request) => request.method)).not.toContain('session.create');
-    expect((f.ptys[1].options.env as Record<string, string>).HERMES_TUI_RESUME).toBe(first.storedSessionId);
+    expect(f.spawnPty.mock.calls[1]?.[1]).toEqual([
+      '-p', 'signal-analyst', '--tui', '--resume', first.storedSessionId,
+    ]);
+    expect(f.ptys[1].options.env).toMatchObject({
+      HERMES_TUI_INLINE: '1',
+    });
+    expect((f.ptys[1].options.env as Record<string, string>).HERMES_TUI_RESUME).toBeUndefined();
   });
 
   it('fails closed on session enumeration failure and does not create or launch a TUI', async () => {

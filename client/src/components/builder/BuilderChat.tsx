@@ -154,9 +154,6 @@ export default function BuilderChat({
         >
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
-          const identity = isUser
-            ? m.target ? `You → ${m.target.label}` : m.speaker.label
-            : m.speaker.label;
           // Never render an empty/whitespace assistant bubble — only real assistant
           // text appears as a bubble. (Real user messages always render.)
           if (!isUser && !safeText(m.text).trim()) return null;
@@ -169,20 +166,22 @@ export default function BuilderChat({
                 width: "fit-content",
               }}
             >
-              <div
-                data-testid="builder-chat-speaker"
-                style={{
-                  color: m.status === "error" ? "#FF9B9B" : colors.neutral,
-                  fontSize: 10.5,
-                  fontWeight: 700,
-                  letterSpacing: "0.04em",
-                  margin: "0 6px 5px",
-                  textTransform: "uppercase",
-                  textAlign: isUser ? "right" : "left",
-                }}
-              >
-                {identity}
-              </div>
+              {!isUser ? (
+                <div
+                  data-testid="builder-chat-speaker"
+                  style={{
+                    color: m.status === "error" ? "#FF9B9B" : colors.neutral,
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    letterSpacing: "0.04em",
+                    margin: "0 6px 5px",
+                    textTransform: "uppercase",
+                    textAlign: "left",
+                  }}
+                >
+                  {m.speaker.label}
+                </div>
+              ) : null}
               <div
                 style={{
                   padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",

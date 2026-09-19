@@ -185,7 +185,7 @@ describe('BuilderChat', () => {
     expect(input.value).toBe('@builder ');
   });
 
-  it('renders the actual user target and replying Card identity', () => {
+  it('keeps routing metadata out of the user bubble and renders the replying Card identity', () => {
     render(
       <BuilderChat
         messages={[
@@ -205,8 +205,11 @@ describe('BuilderChat', () => {
       />,
     );
 
-    expect(screen.getByText('You → Builder')).not.toBeNull();
-    expect(screen.getByText('Builder')).not.toBeNull();
+    expect(screen.getByText('@builder Reply exactly BUILDER_DIRECT_OK')).not.toBeNull();
+    expect(screen.queryByText('You → Builder')).toBeNull();
+    expect(screen.queryByText('You')).toBeNull();
+    expect(screen.getAllByTestId('builder-chat-speaker')).toHaveLength(1);
+    expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('Builder');
     expect(screen.getByText('BUILDER_DIRECT_OK')).not.toBeNull();
   });
 

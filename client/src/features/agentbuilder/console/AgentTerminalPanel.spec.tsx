@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const terminal = vi.hoisted(() => ({
   onData: null as ((data: string) => void) | null,
+  options: null as Record<string, unknown> | null,
   writes: [] as string[],
   dispose: vi.fn(),
 }));
@@ -15,7 +16,7 @@ vi.mock('@xterm/xterm', () => ({
     cols = 80;
     rows = 24;
     options: Record<string, unknown> = {};
-    constructor(_options: Record<string, unknown>) {}
+    constructor(options: Record<string, unknown>) { terminal.options = options; }
     loadAddon() {}
     open(_container: HTMLElement) {}
     focus() {}
@@ -54,6 +55,7 @@ afterEach(async () => {
   root = null;
   host = null;
   terminal.onData = null;
+  terminal.options = null;
   terminal.writes.length = 0;
   vi.clearAllMocks();
 });
@@ -140,6 +142,8 @@ describe('AgentTerminalPanel', () => {
 
     expect(client.open).toHaveBeenCalledOnce();
     expect(client.open).toHaveBeenCalledWith(identity, { cols: 80, rows: 24 });
+    expect(terminal.options).toMatchObject({ scrollback: 5_000 });
+    expect(terminal.options).not.toHaveProperty('disableStdin');
     expect(host!.querySelector('[data-testid="agent-terminal-panel"]')?.getAttribute('data-session-id'))
       .toBe('session-1');
     expect(host!.querySelector('[data-testid="agent-terminal-panel"]')?.getAttribute('data-profile'))

@@ -744,8 +744,10 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
 
 
 _CARD_SHARED_CHAT_TURN_NOTE = (
-    "[Note: Complete the mission fully. Your final shared-chat reply must be one line and no more than "
-    "140 Unicode characters. Mention that detailed results are available in your terminal or artifact.]"
+    "[Note: Complete the mission fully using your tools, terminal, and artifacts. Your entire final assistant "
+    "response is copied directly into shared chat: output exactly one line of no more than 140 Unicode "
+    "characters. Mention that detailed results are available in your terminal or artifact. Do not include a "
+    "detailed report, headings, lists, wrapper text, XML, or tags in that final response.]"
 )
 
 

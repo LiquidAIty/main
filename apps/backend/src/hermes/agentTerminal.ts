@@ -961,18 +961,22 @@ export class AgentTerminalManager {
       }
       return { ...session.state };
     }
-    const tui = this.spawnPtyProcess(session.launch.file, session.launch.tuiArgs, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: session.launch.cwd,
-      env: {
-        ...session.launch.env,
-        HERMES_TUI_GATEWAY_URL: session.gatewayUrl,
-        HERMES_TUI_RESUME: session.state.storedSessionId,
+    const tui = this.spawnPtyProcess(
+      session.launch.file,
+      [...session.launch.tuiArgs, '--resume', session.state.storedSessionId],
+      {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: session.launch.cwd,
+        env: {
+          ...session.launch.env,
+          HERMES_TUI_GATEWAY_URL: session.gatewayUrl,
+          HERMES_TUI_INLINE: '1',
+        },
+        useConpty: true,
       },
-      useConpty: true,
-    });
+    );
     if (!tui.pid) {
       try { tui.kill(); } catch {}
       throw new Error('agent_terminal_tui_pid_missing');

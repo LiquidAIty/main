@@ -68,7 +68,6 @@ export default function AgentTerminalPanel({
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       cursorBlink: false,
-      disableStdin: true,
       scrollback: 5_000,
       theme: { background: '#0b0f14', foreground: '#d7e0ea' },
     });
