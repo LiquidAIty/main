@@ -83,14 +83,8 @@ class TestTurnRouting:
     def test_app_window_turn_gets_nothing(self):
         assert server._hud_surface_note(_session(client_surface="")) == ""
 
-    def test_card_shared_chat_turn_gets_the_short_reply_contract(self):
-        note = server._hud_surface_note(_session(client_surface="card-shared-chat"))
-
-        assert "entire final assistant response is copied directly into shared chat" in note
-        assert "exactly one line" in note
-        assert "140 Unicode characters" in note
-        assert "terminal or artifact" in note
-        assert "XML, or tags" in note
+    def test_card_shared_chat_turn_gets_no_answer_formatting_note(self):
+        assert server._hud_surface_note(_session(client_surface="card-shared-chat")) == ""
 
     def test_session_that_never_reported_a_surface_gets_nothing(self):
         """Every other client (TUI, dashboard, messaging) omits the field."""

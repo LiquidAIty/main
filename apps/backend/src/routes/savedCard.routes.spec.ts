@@ -2433,13 +2433,21 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('routes an explicit user address to the real saved Builder Run and never prepares Main', async () => {
+    it('preserves a long multiline direct Builder reply unchanged in the native Run and shared chat', async () => {
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const fullReply = [
+        'BUILDER_DIRECT_OK: the native Builder completion is intentionally longer than the retired shared-chat limit so this test proves the complete answer is accepted without a one-line restriction.',
+        '',
+        'Detailed Builder report:',
+        '- The full multiline completion remains unchanged.',
+        '- Shared chat receives these exact same bytes.',
+      ].join('\n');
+      expect(fullReply.length).toBeGreaterThan(140);
       agentTerminalMocks.manager.submit.mockImplementationOnce(async (owner, sessionId, submitted, options) => (
         agentTerminalMocks.finishSubmitted(
-          owner, sessionId, submitted, options, 'BUILDER_DIRECT_OK', {}, true,
+          owner, sessionId, submitted, options, fullReply, {}, true,
         )
       ));
       const { server, baseUrl } = await createApiServer();
@@ -2455,10 +2463,13 @@ describe('saved Card routes', () => {
         expect(response.status).toBe(200);
         expect(body).toContain('BUILDER_DIRECT_OK');
         const runFrame = body.split('\n\n').find((frame) => frame.startsWith('event: run'))!;
-        expect(JSON.parse(runFrame.split('\ndata: ')[1])).toMatchObject({
+        const runEvent = JSON.parse(runFrame.split('\ndata: ')[1]);
+        expect(runEvent).toMatchObject({
           cardId: 'builder', directAddressed: true, turnOwner: 'addressed_card',
           participant: { cardId: 'builder', profile: 'builder', label: 'Builder' },
         });
+        const doneFrame = body.split('\n\n').find((frame) => frame.startsWith('event: done'))!;
+        expect(JSON.parse(doneFrame.split('\ndata: ')[1]).fullText).toBe(fullReply);
         const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
         expect(railsCalls.filter(([endpoint]) => endpoint === '/domain/main/runs/begin')).toHaveLength(0);
         const beginCalls = railsCalls.filter(([endpoint]) => endpoint === '/domain/runs/begin');
@@ -2482,11 +2493,14 @@ describe('saved Card routes', () => {
               target: expect.objectContaining({ cardId: 'builder', profile: 'builder', label: 'Builder' }),
             }),
             expect.objectContaining({
-              role: 'assistant', content: 'BUILDER_DIRECT_OK',
+              role: 'assistant', content: fullReply,
               speaker: expect.objectContaining({ cardId: 'builder', profile: 'builder', label: 'Builder' }),
             }),
           ],
         }));
+        expect(agentTerminalMocks.completed.get(runEvent.runId)).toMatchObject({
+          state: 'completed', finalResult: fullReply, hermesSessionId: 'native:builder',
+        });
       } finally {
         await closeServer(server);
       }
