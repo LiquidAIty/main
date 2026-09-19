@@ -666,6 +666,14 @@ type GatewayCardExecution = {
   text: string;
 };
 
+const SHARED_CARD_REPLY_MAX_CODE_POINTS = 140;
+
+function requireSharedCardReply(text: string): void {
+  if (!text.trim() || /[\r\n]/u.test(text) || Array.from(text).length > SHARED_CARD_REPLY_MAX_CODE_POINTS) {
+    throw new Error('addressed_card_shared_reply_invalid');
+  }
+}
+
 async function executePreparedGatewayCardRun(args: {
   owner: AgentTerminalOwner;
   conversationId: string;
@@ -675,6 +683,7 @@ async function executePreparedGatewayCardRun(args: {
   onBound?: (terminal: { sessionId: string; nativeSessionId: string; profile: string }) => void;
   onSubmitted?: () => void;
   attachTui?: boolean;
+  surface?: 'card-shared-chat';
 }): Promise<GatewayCardExecution> {
   let terminalSessionId = '';
   let staged = false;
@@ -744,7 +753,7 @@ async function executePreparedGatewayCardRun(args: {
       args.owner,
       terminal.sessionId,
       preparedTurn.message,
-      { onEvent: args.onEvent },
+      { onEvent: args.onEvent, ...(args.surface ? { surface: args.surface } : {}) },
     );
     args.onSubmitted?.();
     const result = await pending;
@@ -1533,6 +1542,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       runId: run.runId,
       prepared: run.prepared,
       attachTui: directAddressed,
+      surface: directAddressed ? 'card-shared-chat' : undefined,
       onBound: (terminal) => {
         writeSse('session', {
           sessionId: terminal.nativeSessionId,
@@ -1562,6 +1572,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
     if (!result.text.trim()) {
       throw new Error(directAddressed ? 'addressed_card_empty_response' : 'main_empty_response');
     }
+    if (directAddressed) requireSharedCardReply(result.text);
     const seedMessages = existingMessages.length === 0
       ? await nativeMainHistorySeed(projectId, deckId, authority.main)
       : [];
@@ -1614,8 +1625,9 @@ mainRoutes.post('/session/chat', async (req, res) => {
     const busy = reason === 'agent_terminal_turn_already_running';
     const cancelled = reason === 'hermes_turn_cancelled';
     const persistence = reason === 'shared_conversation_persistence_failed';
+    const invalidSharedReply = reason === 'addressed_card_shared_reply_invalid';
     writeSse('error', {
-      code: busy || cancelled || persistence
+      code: busy || cancelled || persistence || invalidSharedReply
         ? reason
         : directAddressed ? 'addressed_card_turn_failed' : 'main_gateway_turn_failed',
       message: busy
@@ -1624,6 +1636,8 @@ mainRoutes.post('/session/chat', async (req, res) => {
           ? `The ${target.title} turn was cancelled.`
           : persistence
             ? 'The native reply completed but the shared conversation could not be persisted.'
+            : invalidSharedReply
+              ? `The native ${target.title} reply exceeded the shared-chat one-line/140-character contract.`
             : directAddressed
               ? `The native ${target.title} turn failed.`
               : 'The native Main CLI turn failed.',

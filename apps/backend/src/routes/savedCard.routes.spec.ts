@@ -2471,7 +2471,7 @@ describe('saved Card routes', () => {
           { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
           'terminal:builder',
           exactMessage,
-          expect.any(Object),
+          expect.objectContaining({ surface: 'card-shared-chat' }),
         );
         expect(chatSessionMocks.appendSharedConversationTurn).toHaveBeenCalledWith(expect.objectContaining({
           projectId: 'project-1',

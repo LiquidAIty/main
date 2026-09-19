@@ -21,6 +21,7 @@ class ClientSurface(WireEnum):
 
     hud = "hud"
     voice_live = "voice-live"
+    card_shared_chat = "card-shared-chat"
 
 
 class PromptSubmitParams(SessionParams):

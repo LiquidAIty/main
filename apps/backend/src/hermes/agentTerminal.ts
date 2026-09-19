@@ -1322,6 +1322,7 @@ export class AgentTerminalManager {
       signal?: AbortSignal;
       timeoutMs?: number;
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
+      surface?: 'card-shared-chat';
     } = {},
   ): Promise<AgentTerminalTurnResult> {
     if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
@@ -1354,6 +1355,7 @@ export class AgentTerminalManager {
       signal?: AbortSignal;
       timeoutMs?: number;
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
+      surface?: 'card-shared-chat';
     },
   ): Promise<AgentTerminalTurnResult> {
     if (session.state.status !== 'running') throw new Error('agent_terminal_not_running');
@@ -1408,7 +1410,12 @@ export class AgentTerminalManager {
     try {
       await session.client.request(
         'prompt.submit',
-        { session_id: session.state.nativeSessionId, text, profile: session.state.profile },
+        {
+          session_id: session.state.nativeSessionId,
+          text,
+          profile: session.state.profile,
+          ...(options.surface ? { surface: options.surface } : {}),
+        },
         timeoutMs,
         options.signal,
       );

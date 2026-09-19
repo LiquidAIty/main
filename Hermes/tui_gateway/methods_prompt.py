@@ -552,7 +552,7 @@ def _lock_in_submit_turn(
 
 
 # Per-turn client surfaces that carry a model-bound note (session_notifications._surface_note).
-_CLIENT_SURFACES = frozenset({"hud", "voice-live"})
+_CLIENT_SURFACES = frozenset({"hud", "voice-live", "card-shared-chat"})
 
 
 @method("prompt.submit")

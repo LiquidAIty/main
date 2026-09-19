@@ -525,14 +525,19 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const terminalEvents = vi.fn();
     f.manager.subscribe(f.owners[0], state.sessionId, 0, terminalEvents);
     const [first, second] = await Promise.all([
-      f.manager.submit(f.owners[0], state.sessionId, 'first'),
+      f.manager.submit(f.owners[0], state.sessionId, 'first', { surface: 'card-shared-chat' }),
       f.manager.submit(f.owners[0], state.sessionId, 'second'),
     ]);
     expect(first.text).toBe('reply:first');
     expect(second.text).toBe('reply:second');
     const submits = f.clients[0].requests.filter((request) => request.method === 'prompt.submit');
     expect(submits.map((request) => request.params)).toEqual([
-      { session_id: state.nativeSessionId, text: 'first', profile: state.profile },
+      {
+        session_id: state.nativeSessionId,
+        text: 'first',
+        profile: state.profile,
+        surface: 'card-shared-chat',
+      },
       { session_id: state.nativeSessionId, text: 'second', profile: state.profile },
     ]);
     expect(terminalEvents).not.toHaveBeenCalledWith('output', expect.anything());

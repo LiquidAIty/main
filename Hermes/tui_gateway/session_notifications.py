@@ -743,6 +743,12 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
     return stop
 
 
+_CARD_SHARED_CHAT_TURN_NOTE = (
+    "[Note: Complete the mission fully. Your final shared-chat reply must be one line and no more than "
+    "140 Unicode characters. Mention that detailed results are available in your terminal or artifact.]"
+)
+
+
 def _hud_surface_note(session: dict) -> str:
     """The per-surface note for this turn ("" for the plain app window): HUD → the read-the-window-below
     prior; voice-live → the spoken-delegation contract (transcript in, speakable prose out)."""
@@ -753,6 +759,8 @@ def _hud_surface_note(session: dict) -> str:
     if surface == "voice-live":
         from tools.voice_live import voice_live_turn_note
         return voice_live_turn_note(session.get("voice_live_context") or "")
+    if surface == "card-shared-chat":
+        return _CARD_SHARED_CHAT_TURN_NOTE
     return ""
 
 

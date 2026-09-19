@@ -83,6 +83,13 @@ class TestTurnRouting:
     def test_app_window_turn_gets_nothing(self):
         assert server._hud_surface_note(_session(client_surface="")) == ""
 
+    def test_card_shared_chat_turn_gets_the_short_reply_contract(self):
+        note = server._hud_surface_note(_session(client_surface="card-shared-chat"))
+
+        assert "one line" in note
+        assert "140 Unicode characters" in note
+        assert "terminal or artifact" in note
+
     def test_session_that_never_reported_a_surface_gets_nothing(self):
         """Every other client (TUI, dashboard, messaging) omits the field."""
         assert server._hud_surface_note(_session()) == ""
@@ -169,6 +176,11 @@ class TestSurfaceRecording:
         self._submit(surface="hud")
 
         assert busy_session["client_surface"] == "hud"
+
+    def test_card_shared_chat_submit_is_recorded(self, busy_session):
+        self._submit(surface="card-shared-chat")
+
+        assert busy_session["client_surface"] == "card-shared-chat"
 
     def test_the_next_app_window_submit_clears_it(self, busy_session):
         """A stale 'hud' would tell the model the user is still floating."""
