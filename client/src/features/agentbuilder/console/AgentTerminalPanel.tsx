@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -13,7 +13,6 @@ import {
 type AgentTerminalPanelProps = {
   identity: AgentTerminalIdentity;
   client?: AgentTerminalClient;
-  readOnly?: boolean;
 };
 
 const DEFAULT_SIZE = { cols: 80, rows: 24 };
@@ -34,23 +33,23 @@ function isAttached(session: AgentTerminalSession | null): session is AgentTermi
 export default function AgentTerminalPanel({
   identity,
   client = agentTerminalClient,
-  readOnly = false,
 }: AgentTerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const sizeRef = useRef(DEFAULT_SIZE);
   const sessionRef = useRef<AgentTerminalSession | null>(null);
   const lastResizeRef = useRef('');
-  const inputQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingOpenRef = useRef<PendingOpen | null>(null);
   const identityKeyRef = useRef('');
   const [terminalReady, setTerminalReady] = useState(false);
-  const [openAttempt, setOpenAttempt] = useState(0);
   const [session, setSession] = useState<AgentTerminalSession | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [transportInterrupted, setTransportInterrupted] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const identityKey = `${identity.projectId}:${identity.deckId}:${identity.cardId}`;
+  const stableIdentity = useMemo<AgentTerminalIdentity>(() => ({
+    projectId: identity.projectId,
+    deckId: identity.deckId,
+    cardId: identity.cardId,
+  }), [identity.cardId, identity.deckId, identity.projectId]);
+  const identityKey = `${stableIdentity.projectId}:${stableIdentity.deckId}:${stableIdentity.cardId}`;
 
   sessionRef.current = session;
   identityKeyRef.current = identityKey;
@@ -58,8 +57,6 @@ export default function AgentTerminalPanel({
   useEffect(() => {
     setSession(null);
     setError(null);
-    setTransportInterrupted(false);
-    setStopping(false);
     lastResizeRef.current = '';
   }, [identityKey]);
 
@@ -87,11 +84,11 @@ export default function AgentTerminalPanel({
           sizeRef.current = { cols: terminal.cols, rows: terminal.rows };
           const active = sessionRef.current;
           const sizeKey = `${terminal.cols}x${terminal.rows}`;
-          if (isRunning(active) && lastResizeRef.current !== sizeKey) {
+          if (isAttached(active) && lastResizeRef.current !== sizeKey) {
             lastResizeRef.current = sizeKey;
             const resizeIdentityKey = identityKey;
             const resizeSessionId = active.sessionId;
-            void client.resize(identity, active.sessionId, terminal.cols, terminal.rows).catch((cause) => {
+            void client.resize(stableIdentity, active.sessionId, terminal.cols, terminal.rows).catch((cause) => {
               if (lastResizeRef.current === sizeKey) lastResizeRef.current = '';
               if (
                 identityKeyRef.current === resizeIdentityKey
@@ -114,21 +111,6 @@ export default function AgentTerminalPanel({
     terminal.loadAddon(fit);
     terminal.open(container);
     terminalRef.current = terminal;
-    const input = terminal.onData((data) => {
-      if (readOnly) return;
-      const active = sessionRef.current;
-      if (!isAttached(active)) return;
-      const inputIdentityKey = identityKey;
-      const inputSessionId = active.sessionId;
-      inputQueueRef.current = inputQueueRef.current
-        .then(() => client.input(identity, active.sessionId, data))
-        .catch((cause) => {
-          if (
-            identityKeyRef.current === inputIdentityKey
-            && sessionRef.current?.sessionId === inputSessionId
-          ) setError(cause instanceof Error ? cause.message : String(cause));
-        });
-    });
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleResize);
     observer?.observe(container);
     window.addEventListener('resize', scheduleResize);
@@ -139,28 +121,19 @@ export default function AgentTerminalPanel({
       if (frame !== null) window.cancelAnimationFrame(frame);
       observer?.disconnect();
       window.removeEventListener('resize', scheduleResize);
-      input.dispose();
       terminal.dispose();
       terminalRef.current = null;
       setTerminalReady(false);
     };
-  }, [client, identityKey, readOnly]);
+  }, [client, identityKey, stableIdentity]);
 
   useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-    const interactive = isAttached(session) && !readOnly;
-    terminal.options.disableStdin = !interactive;
-    terminal.options.cursorBlink = interactive;
-    if (interactive) terminal.focus();
-  }, [readOnly, session?.status]);
-
-  useEffect(() => {
-    if (!terminalReady || session || error || stopping) return;
-    const key = `${identityKey}:${openAttempt}`;
+    const needsOpen = !session || (isRunning(session) && !session.ptyId);
+    if (!terminalReady || !needsOpen || error) return;
+    const key = `${identityKey}:${session?.sessionId || 'new'}:native-tui`;
     let pending = pendingOpenRef.current;
     if (!pending || pending.key !== key) {
-      pending = { key, promise: client.open(identity, sizeRef.current) };
+      pending = { key, promise: client.open(stableIdentity, sizeRef.current) };
       pendingOpenRef.current = pending;
     }
     let active = true;
@@ -176,67 +149,36 @@ export default function AgentTerminalPanel({
       setError(cause instanceof Error ? cause.message : String(cause));
     });
     return () => { active = false; };
-  }, [client, error, identityKey, openAttempt, session, stopping, terminalReady]);
+  }, [client, error, identityKey, session, stableIdentity, terminalReady]);
 
   useEffect(() => {
     if (!session) return;
     let lastSequence = 0;
     const streamIdentityKey = identityKey;
-    const stream = client.stream(identity, session.sessionId, lastSequence, {
+    const stream = client.stream(
+      stableIdentity,
+      session.sessionId,
+      lastSequence,
+      {
       onOutput: ({ sequence, data }) => {
-        if (identityKeyRef.current !== streamIdentityKey) return;
-        if (sequence <= lastSequence) return;
+        if (identityKeyRef.current !== streamIdentityKey || sequence <= lastSequence) return;
         lastSequence = sequence;
         terminalRef.current?.write(data);
-        setTransportInterrupted(false);
       },
       onState: (next) => {
         if (identityKeyRef.current !== streamIdentityKey) return;
         setSession((current) => current?.sessionId === session.sessionId
           ? { ...current, ...next }
           : current);
-        setStopping(false);
-        setTransportInterrupted(false);
         if (typeof next.error === 'string' && next.error) setError(next.error);
       },
-      onTransportError: () => {
-        if (identityKeyRef.current !== streamIdentityKey) return;
-        setTransportInterrupted(true);
+      onTransportError: () => undefined,
       },
-    });
+    );
     return () => stream.close();
-  }, [client, identityKey, session?.sessionId]);
+  }, [client, identityKey, session?.sessionId, stableIdentity]);
 
-  const start = useCallback(() => {
-    pendingOpenRef.current = null;
-    setError(null);
-    setTransportInterrupted(false);
-    setStopping(false);
-    setSession(null);
-    setOpenAttempt((value) => value + 1);
-  }, []);
-
-  const stop = useCallback(async () => {
-    const active = sessionRef.current;
-    if (!isAttached(active)) return;
-    const stopIdentityKey = identityKey;
-    const stopSessionId = active.sessionId;
-    setStopping(true);
-    setError(null);
-    try {
-      const next = await client.stop(identity, active.sessionId);
-      if (identityKeyRef.current !== stopIdentityKey || sessionRef.current?.sessionId !== stopSessionId) return;
-      setSession((current) => current?.sessionId === active.sessionId
-        ? { ...current, ...next }
-        : current);
-    } catch (cause) {
-      if (identityKeyRef.current !== stopIdentityKey || sessionRef.current?.sessionId !== stopSessionId) return;
-      setStopping(false);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [client, identityKey]);
-
-  const status = session?.status || (error ? 'failed' : 'opening');
+  const runtimeStatus = session?.status || (error ? 'failed' : 'opening');
   return (
     <section
       data-testid="agent-terminal-panel"
@@ -245,20 +187,13 @@ export default function AgentTerminalPanel({
       data-profile={session?.profile || ''}
       data-pid={session?.pid ?? ''}
       data-pty-id={session?.ptyId || ''}
-      data-status={status}
+      data-status={runtimeStatus}
       aria-label="Agent CLI"
-      style={{ display: 'flex', flexDirection: 'column', minHeight: 360, background: '#0b0f14', color: '#d7e0ea' }}
+      style={{
+        display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
+        overflow: 'hidden', background: '#0b0f14', color: '#d7e0ea',
+      }}
     >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 8px', fontSize: 12 }}>
-        <span role="status">{status}</span>
-        {transportInterrupted ? <span role="status">Reconnecting…</span> : null}
-        {!readOnly && isAttached(session) ? <button type="button" data-testid="agent-terminal-stop" onClick={() => { void stop(); }} disabled={stopping}>
-          {stopping ? 'Detaching…' : 'Detach'}
-        </button> : null}
-        {!readOnly && ((isRunning(session) && !isAttached(session)) || (session && !isRunning(session)) || error)
-          ? <button type="button" data-testid="agent-terminal-start" onClick={start}>Attach</button>
-          : null}
-      </div>
       {error ? <div role="alert" style={{ padding: '0 8px 6px', fontSize: 12 }}>{error}</div> : null}
       <div ref={containerRef} data-testid="agent-terminal-xterm" style={{ flex: 1, minHeight: 0, padding: '6px 8px' }} />
     </section>

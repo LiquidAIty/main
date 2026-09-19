@@ -49,10 +49,9 @@ function dependencies() {
     getDeck: vi.fn().mockResolvedValue({ deck }),
     manager: {
       open: vi.fn().mockResolvedValue({ sessionId: 'terminal-1', status: 'running' }),
-      state: vi.fn(), subscribe: vi.fn(), verifyConfiguration: vi.fn(), input: vi.fn(),
+      state: vi.fn(), subscribe: vi.fn(), verifyConfiguration: vi.fn(),
       interrupt: vi.fn(),
       resize: vi.fn().mockReturnValue({ sessionId: 'terminal-1', cols: 120, rows: 30 }),
-      detachTui: vi.fn().mockReturnValue({ sessionId: 'terminal-1', status: 'running', ptyId: null }),
     },
   };
 }
@@ -187,23 +186,6 @@ describe('native Card terminal routes', () => {
     const response = await request(deps, '/project-1/deck_builder/card_signal_analyst/open', json({ cols: 120, rows: 30 }));
     expect(response).toEqual({ status: 400, body: { error: 'deck_backend_unavailable' } });
     expect(deps.manager.open).not.toHaveBeenCalled();
-  });
-
-  it('detaches the visible TUI without stopping the Card-owned Gateway runtime', async () => {
-    const deps = dependencies();
-    const response = await request(
-      deps,
-      '/project-1/deck_builder/card_signal_analyst/terminal-1/stop',
-      json({}),
-    );
-    expect(response).toEqual({
-      status: 200,
-      body: { sessionId: 'terminal-1', status: 'running', ptyId: null },
-    });
-    expect(deps.manager.detachTui).toHaveBeenCalledWith(
-      { userId: 'owner-1', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_signal_analyst' },
-      'terminal-1',
-    );
   });
 
   it('ends an exited native session stream instead of holding server shutdown open', async () => {

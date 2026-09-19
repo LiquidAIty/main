@@ -286,7 +286,10 @@ export function subscribeSessionEvents(args: {
     args.onEvent(value);
   };
   source.addEventListener('gateway', receive);
-  source.onerror = () => args.onError('main_native_event_stream_disconnected');
+  source.onerror = () => {
+    // EventSource reconnects the same native session automatically. A transient
+    // transport break is not a chat failure and must not become transcript UI.
+  };
   return () => {
     source.removeEventListener('gateway', receive);
     source.close();

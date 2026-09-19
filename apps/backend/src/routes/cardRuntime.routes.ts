@@ -674,6 +674,7 @@ async function executePreparedGatewayCardRun(args: {
   onEvent?: (event: AgentTerminalGatewayEvent) => void;
   onBound?: (terminal: { sessionId: string; nativeSessionId: string; profile: string }) => void;
   onSubmitted?: () => void;
+  attachTui?: boolean;
 }): Promise<GatewayCardExecution> {
   let terminalSessionId = '';
   let staged = false;
@@ -682,14 +683,24 @@ async function executePreparedGatewayCardRun(args: {
     const card = deck?.nodes.find((candidate) => candidate.id === args.owner.cardId);
     if (!deck || !card) throw new Error('agent_terminal_card_not_found');
     const profile = requireAgentTerminalCard(card, deck);
-    const terminal = agentTerminalManager.find(args.owner) || await agentTerminalManager.open(
-      args.owner,
-      card,
-      deck,
-      120,
-      36,
-      agentTerminalPresentationOptions(card, false),
-    );
+    const existing = agentTerminalManager.find(args.owner);
+    const terminal = args.attachTui
+      ? await agentTerminalManager.open(
+        args.owner,
+        card,
+        deck,
+        120,
+        36,
+        agentTerminalPresentationOptions(card, true),
+      )
+      : existing || await agentTerminalManager.open(
+        args.owner,
+        card,
+        deck,
+        120,
+        36,
+        agentTerminalPresentationOptions(card, false),
+      );
     agentTerminalManager.verifyConfiguration(args.owner, terminal.sessionId, card, deck);
     terminalSessionId = terminal.sessionId;
     args.onBound?.(terminal);
@@ -1521,6 +1532,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       conversationId,
       runId: run.runId,
       prepared: run.prepared,
+      attachTui: directAddressed,
       onBound: (terminal) => {
         writeSse('session', {
           sessionId: terminal.nativeSessionId,
@@ -1541,7 +1553,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         });
       },
       onEvent: (event) => {
-        if (event.type === 'message.delta' || event.type === 'message.interim') {
+        if (!directAddressed && (event.type === 'message.delta' || event.type === 'message.interim')) {
           const text = String(event.payload?.text || '');
           if (text) writeSse('text', { text });
         }

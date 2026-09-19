@@ -366,6 +366,10 @@ export default function useAgentBuilderMainChat({
     key: string;
     phase: 'idle' | 'connecting' | 'active';
   }>({ key: conversationKey, phase: 'idle' });
+  const [workSurface, setWorkSurface] = useState<{
+    key: string;
+    cardId: string;
+  }>({ key: conversationKey, cardId: '' });
   const activeStreamRef = useRef<{
     key: string;
     controller: AbortController;
@@ -397,6 +401,7 @@ export default function useAgentBuilderMainChat({
   }>({ key: conversationKey, mainCardId: '', agents: [] });
   const addressableAgents = sharedAuthority.key === conversationKey ? sharedAuthority.agents : [];
   const mainCardId = sharedAuthority.key === conversationKey ? sharedAuthority.mainCardId : '';
+  const workSurfaceCardId = workSurface.key === conversationKey ? workSurface.cardId : '';
 
   const subscribeToNativeSession = useCallback((runtimeSessionId: string, nativeSessionId: string) => {
     if (!canvasProjectId || !runtimeSessionId || !nativeSessionId) return;
@@ -474,6 +479,7 @@ export default function useAgentBuilderMainChat({
     }
     setTranscript({ key: conversationKey, messages: [] });
     setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
+    setWorkSurface({ key: conversationKey, cardId: '' });
     setTechnical({ key: conversationKey, events: [], error: null });
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
     setTurnState({ key: conversationKey, phase: 'idle' });
@@ -509,6 +515,17 @@ export default function useAgentBuilderMainChat({
           key: conversationKey,
           mainCardId: history.mainCardId,
           agents: history.addressableAgents,
+        });
+        const lastAddressedCard = [...history.messages].reverse().find((message) => (
+          message.role === 'assistant'
+          && message.speaker.kind === 'card'
+          && Boolean(message.speaker.cardId)
+          && message.speaker.cardId !== history.mainCardId
+          && history.addressableAgents.some((agent) => agent.cardId === message.speaker.cardId)
+        ));
+        setWorkSurface({
+          key: conversationKey,
+          cardId: lastAddressedCard?.speaker.cardId || '',
         });
         subscribeToNativeSession(history.runtimeSessionId, history.nativeSessionId);
         setTechnical({
@@ -662,6 +679,12 @@ export default function useAgentBuilderMainChat({
                 if (userIndex >= 0) copy[userIndex] = { ...copy[userIndex], target: observedParticipant };
                 return { key: conversationKey, messages: copy };
               });
+              if (event.directAddressed === true && observedParticipant.cardId) {
+                setWorkSurface({
+                  key: conversationKey,
+                  cardId: observedParticipant.cardId,
+                });
+              }
             }
             // UI pending state is local; graph/Run identity is issued only by
             // the canonical backend Run, never a second browser-generated ID.
@@ -875,6 +898,7 @@ export default function useAgentBuilderMainChat({
     handleNativeSend,
     messages,
     addressableAgents,
+    workSurfaceCardId,
     mainDriverSource,
     nativeSessionActive,
     nativeSessionConnecting,

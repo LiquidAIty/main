@@ -79,7 +79,7 @@ function deferred<T>() {
 }
 
 describe('AgentTerminalPanel', () => {
-  it('attaches the dedicated under-chat Builder presentation to Builder\'s native Gateway stream', async () => {
+  it('attaches the dedicated under-chat Builder presentation to Builder\'s native PTY stream', async () => {
     const builderIdentity = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' };
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const client: AgentTerminalClient = {
@@ -90,9 +90,7 @@ describe('AgentTerminalPanel', () => {
         handlers = candidate;
         return { close: vi.fn() };
       }),
-      input: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
-      stop: vi.fn(async () => ({})),
     };
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -101,12 +99,11 @@ describe('AgentTerminalPanel', () => {
       root?.render(
         <HarnessChatPanel
           chat={<div data-testid="main-chat">Main Chat</div>}
-          terminal={({ directInput }) => (
-            <div data-testid="under-chat-agent-builder">
+          terminal={(
+            <div data-testid="under-chat-card-work-surface">
               <AgentTerminalPanel
                 identity={builderIdentity}
                 client={client}
-                readOnly={!directInput}
               />
             </div>
           )}
@@ -124,11 +121,12 @@ describe('AgentTerminalPanel', () => {
       await Promise.resolve();
     });
     expect(terminal.writes).toEqual(['\u001b[36mbuilder native tui\u001b[0m\r\n']);
-    expect(host.querySelector('[data-testid="under-chat-agent-builder"]')).not.toBeNull();
-    expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
+    expect(panel?.getAttribute('data-status')).toBe('running');
+    expect(host!.querySelector('[data-testid="under-chat-card-work-surface"]')).not.toBeNull();
+    expect(host!.querySelector('[data-testid="main-chat"]')).not.toBeNull();
   });
 
-  it('opens one saved-card session, writes only raw PTY output, and sends native input bytes', async () => {
+  it('opens one saved-card session and writes only its raw PTY output to xterm', async () => {
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const client: AgentTerminalClient = {
       open: vi.fn(async () => session()),
@@ -136,9 +134,7 @@ describe('AgentTerminalPanel', () => {
         handlers = candidate;
         return { close: vi.fn() };
       }),
-      input: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
-      stop: vi.fn(async () => ({})),
     };
     await render(client);
 
@@ -150,14 +146,14 @@ describe('AgentTerminalPanel', () => {
       .toBe('agent-cli-proof');
     await act(async () => {
       handlers?.onOutput({ sequence: 1, data: '\u001b[32mnative\u001b[0m\r\n' });
-      terminal.onData?.('abc\u007f\r');
       await Promise.resolve();
     });
     expect(terminal.writes).toEqual(['\u001b[32mnative\u001b[0m\r\n']);
-    expect(client.input).toHaveBeenCalledWith(identity, 'session-1', 'abc\u007f\r');
+    expect(host!.querySelector('[data-testid="agent-terminal-start"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="agent-terminal-stop"]')).toBeNull();
   });
 
-  it('keeps the same stream through interruption, stops only the active session, and starts explicitly after exit', async () => {
+  it('keeps the same stream through interruption and automatically rebinds a missing TUI', async () => {
     let handlers: Parameters<AgentTerminalClient['stream']>[3] | null = null;
     const closed = vi.fn();
     const client: AgentTerminalClient = {
@@ -166,30 +162,22 @@ describe('AgentTerminalPanel', () => {
         handlers = candidate;
         return { close: closed };
       }),
-      input: vi.fn(async () => undefined),
       resize: vi.fn(async () => undefined),
-      stop: vi.fn(async () => ({})),
     };
     await render(client);
     await act(async () => {
       handlers?.onTransportError();
       await Promise.resolve();
     });
-    expect(host!.textContent).toContain('Reconnecting…');
+    expect(host!.textContent).not.toContain('Reconnecting…');
     expect(client.stream).toHaveBeenCalledOnce();
     await act(async () => {
-      (host!.querySelector('[data-testid="agent-terminal-stop"]') as HTMLButtonElement).click();
+      handlers?.onState({ status: 'running', ptyId: null, exitCode: 0 });
       await Promise.resolve();
     });
-    expect(client.stop).toHaveBeenCalledWith(identity, 'session-1');
-    await act(async () => {
-      handlers?.onState({ status: 'exited', exitCode: 0 });
-      await Promise.resolve();
-    });
-    const start = host!.querySelector('[data-testid="agent-terminal-start"]') as HTMLButtonElement;
-    expect(start).toBeTruthy();
-    await act(async () => { start.click(); await Promise.resolve(); });
     expect(client.open).toHaveBeenCalledTimes(2);
+    expect(host!.querySelector('[data-testid="agent-terminal-start"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="agent-terminal-stop"]')).toBeNull();
     await act(async () => root?.unmount());
     expect(closed).toHaveBeenCalled();
   });
@@ -199,7 +187,7 @@ describe('AgentTerminalPanel', () => {
     const client: AgentTerminalClient = {
       open: vi.fn(() => pending.promise),
       stream: vi.fn(() => ({ close: vi.fn() })),
-      input: vi.fn(async () => undefined), resize: vi.fn(async () => undefined), stop: vi.fn(async () => ({})),
+      resize: vi.fn(async () => undefined),
     };
     host = document.createElement('div');
     document.body.appendChild(host);
@@ -220,7 +208,7 @@ describe('AgentTerminalPanel', () => {
     const client: AgentTerminalClient = {
       open: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
       stream: vi.fn(() => ({ close: vi.fn() })),
-      input: vi.fn(async () => undefined), resize: vi.fn(async () => undefined), stop: vi.fn(async () => ({})),
+      resize: vi.fn(async () => undefined),
     };
     await render(client);
     await act(async () => {
@@ -239,19 +227,17 @@ describe('AgentTerminalPanel', () => {
     expect(panel?.getAttribute('data-session-id')).toBe('session-2');
   });
 
-  it('offers an explicit restart after an open fails before a session exists', async () => {
+  it('surfaces an automatic-open failure without exposing a manual connection workflow', async () => {
     const client: AgentTerminalClient = {
-      open: vi.fn().mockRejectedValueOnce(new Error('open_failed')).mockResolvedValueOnce(session()),
+      open: vi.fn().mockRejectedValueOnce(new Error('open_failed')),
       stream: vi.fn(() => ({ close: vi.fn() })),
-      input: vi.fn(async () => undefined), resize: vi.fn(async () => undefined), stop: vi.fn(async () => ({})),
+      resize: vi.fn(async () => undefined),
     };
     await render(client);
     await act(async () => { await Promise.resolve(); });
     expect(host!.querySelector('[role="alert"]')?.textContent).toBe('open_failed');
-    const start = host!.querySelector('[data-testid="agent-terminal-start"]') as HTMLButtonElement;
-    expect(start).toBeTruthy();
-    await act(async () => { start.click(); await Promise.resolve(); });
-    expect(client.open).toHaveBeenCalledTimes(2);
-    expect(host!.querySelector('[data-session-id="session-1"]')).toBeTruthy();
+    expect(client.open).toHaveBeenCalledOnce();
+    expect(host!.querySelector('[data-testid="agent-terminal-start"]')).toBeNull();
+    expect(host!.querySelector('[data-testid="agent-terminal-stop"]')).toBeNull();
   });
 });

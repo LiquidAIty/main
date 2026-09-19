@@ -1273,37 +1273,11 @@ export class AgentTerminalManager {
     }
   }
 
-  input(owner: AgentTerminalOwner, id: string, data: string): void {
-    const session = this.running(owner, id);
-    if (!session.pty) throw new Error('agent_terminal_tui_not_attached');
-    session.pty.write(data);
-  }
-
   resize(owner: AgentTerminalOwner, id: string, cols: number, rows: number): AgentTerminalState {
     const session = this.running(owner, id);
     if (!session.pty) throw new Error('agent_terminal_tui_not_attached');
     session.pty.resize(cols, rows);
     Object.assign(session.state, { cols, rows });
-    return { ...session.state };
-  }
-
-  detachTui(owner: AgentTerminalOwner, id: string): AgentTerminalState {
-    const session = this.running(owner, id);
-    const tui = session.pty;
-    if (!tui) return { ...session.state };
-    session.pty = null;
-    session.state.tuiPid = null;
-    session.state.ptyId = null;
-    session.state.exitCode = undefined;
-    try {
-      tui.kill();
-    } catch (error) {
-      session.pty = tui;
-      session.state.tuiPid = tui.pid;
-      session.state.ptyId = session.state.sessionId;
-      throw error;
-    }
-    for (const listener of session.listeners) listener('state', { ...session.state });
     return { ...session.state };
   }
 

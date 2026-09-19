@@ -25,21 +25,22 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
   );
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('keeps Main as one conversation and presents the saved Agent Builder native CLI beneath it', () => {
+  it('keeps one shared conversation and follows the server-resolved Card CLI beneath it', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     expect(source).not.toContain('main-card-cli-location');
     expect(source).not.toContain('onOpenMainChat');
     expect(source).toContain("BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'");
     expect(source).toContain('selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id');
     expect(source).toContain("setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'Results')");
-    expect(source).toContain('data-testid="under-chat-agent-builder"');
-    const underChat = source.slice(source.indexOf('const agentBuilderTerminal ='), source.indexOf('terminal={agentBuilderTerminal}'));
+    expect(source).toContain('data-testid="under-chat-card-work-surface"');
+    const underChat = source.slice(source.indexOf('const cardWorkSurface ='), source.indexOf('terminal={cardWorkSurface()}'));
     expect(underChat).toContain('<AgentTerminalPanel');
-    expect(underChat).toContain('cardId: agentBuilderCard.id');
+    expect(underChat).toContain('cardId: sharedWorkSurfaceCard.id');
+    expect(source).toContain('card.id === workSurfaceCardId');
     expect(underChat).not.toContain('workspaceView');
     expect(underChat).not.toContain('data-testid="agent-builder-output"');
     expect(underChat).not.toContain('builderResult');
-    expect(underChat).toContain('readOnly={!directInput}');
+    expect(underChat).not.toContain('directInput');
     expect(underChat).not.toContain('<CardRunResults');
     expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');

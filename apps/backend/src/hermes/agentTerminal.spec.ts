@@ -452,7 +452,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(headless.ptyId).toBeNull();
     expect(f.spawnGateway).toHaveBeenCalledOnce();
     expect(f.spawnPty).not.toHaveBeenCalled();
-    expect(() => f.manager.input(f.owners[0], headless.sessionId, 'x')).toThrow('tui_not_attached');
+    expect(() => f.manager.resize(f.owners[0], headless.sessionId, 80, 24)).toThrow('tui_not_attached');
 
     const attached = await f.manager.open(
       f.owners[0], f.cards[0], f.deck, 100, 30, { attachTui: true },
@@ -496,19 +496,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.spawnPty).toHaveBeenCalledOnce();
   });
 
-  it('detaches only the native TUI and preserves the Gateway-owned Card session', async () => {
-    const f = fixture();
-    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
-    const detached = f.manager.detachTui(f.owners[0], state.sessionId);
-    expect(detached.status).toBe('running');
-    expect(detached.ptyId).toBeNull();
-    expect(detached.tuiPid).toBeNull();
-    expect(f.ptys[0].kill).toHaveBeenCalledOnce();
-    expect(f.gateways[0].kill).not.toHaveBeenCalled();
-    expect(f.manager.state(f.owners[0], state.sessionId).nativeSessionId).toBe(state.nativeSessionId);
-  });
-
-  it('isolates raw terminal input, output, resize, close, and replay between Cards', async () => {
+  it('isolates automatic terminal output, resize, close, and replay between Cards', async () => {
     const f = fixture();
     const a = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
     const b = await f.manager.open(f.owners[1], f.cards[1], f.deck, 100, 30);
@@ -516,9 +504,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const bEvents = vi.fn();
     const detach = f.manager.subscribe(f.owners[0], a.sessionId, 0, aEvents);
     f.manager.subscribe(f.owners[1], b.sessionId, 0, bEvents);
-    f.manager.input(f.owners[0], a.sessionId, '/help\r');
-    expect(f.ptys[0].write).toHaveBeenCalledWith('/help\r');
-    expect(f.ptys[1].write).not.toHaveBeenCalled();
     f.ptys[0].data('native A');
     expect(aEvents).toHaveBeenCalledWith('output', { sequence: 1, data: 'native A' });
     expect(bEvents).not.toHaveBeenCalledWith('output', expect.anything());
@@ -701,11 +686,10 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const f = fixture();
     const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
     for (const owner of [f.owners[1], { ...f.owners[0], userId: 'foreign' }]) {
-      expect(() => f.manager.input(owner, state.sessionId, 'x')).toThrow('session_not_found');
       expect(() => f.manager.resize(owner, state.sessionId, 2, 2)).toThrow('session_not_found');
       expect(() => f.manager.stop(owner, state.sessionId)).toThrow('session_not_found');
     }
-    expect(f.ptys[0].write).not.toHaveBeenCalled();
+    expect(f.ptys[0].resize).not.toHaveBeenCalled();
     const duplicate = card('other', 'signal-analyst');
     expect(() => requireAgentTerminalCard(duplicate, f.deck)).toThrow('profile_shared');
   });

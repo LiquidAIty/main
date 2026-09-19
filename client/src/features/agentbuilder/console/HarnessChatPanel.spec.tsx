@@ -30,8 +30,8 @@ async function render(activeDriver: MainDriverSource | null = null) {
   return container;
 }
 
-describe('Main Chat and Agent Builder work surface', () => {
-  it('starts with the genuine Agent Builder surface visible directly below Main Chat', async () => {
+describe('shared chat and Card work surface', () => {
+  it('starts with the genuine Card surface visible directly below shared chat', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
@@ -44,7 +44,7 @@ describe('Main Chat and Agent Builder work surface', () => {
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 
-  it('expands Agent Builder and restores the split without remounting it', async () => {
+  it('expands the Card work surface and restores the split without remounting it', async () => {
     const host = await render();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
     const terminal = host.querySelector('[data-testid="agent-builder-instance"]');

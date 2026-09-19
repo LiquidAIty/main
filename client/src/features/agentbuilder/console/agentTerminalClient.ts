@@ -78,9 +78,7 @@ export type AgentTerminalClient = {
     after: number,
     handlers: StreamHandlers,
   ): AgentTerminalStream;
-  input(identity: AgentTerminalIdentity, sessionId: string, data: string): Promise<void>;
   resize(identity: AgentTerminalIdentity, sessionId: string, cols: number, rows: number): Promise<void>;
-  stop(identity: AgentTerminalIdentity, sessionId: string): Promise<Partial<AgentTerminalSession>>;
 };
 
 export const agentTerminalClient: AgentTerminalClient = {
@@ -124,15 +122,7 @@ export const agentTerminalClient: AgentTerminalClient = {
     return { close: () => { closed = true; source.close(); } };
   },
 
-  async input(identity, sessionId, data) {
-    await post(`${endpoint(identity)}/${encodeURIComponent(sessionId)}/input`, { data });
-  },
-
   async resize(identity, sessionId, cols, rows) {
     await post(`${endpoint(identity)}/${encodeURIComponent(sessionId)}/resize`, { cols, rows });
-  },
-
-  async stop(identity, sessionId) {
-    return await post(`${endpoint(identity)}/${encodeURIComponent(sessionId)}/stop`, {});
   },
 };

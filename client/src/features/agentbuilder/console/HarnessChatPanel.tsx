@@ -7,17 +7,19 @@ export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli
 
 type HarnessChatPanelProps = {
   chat: ReactNode;
-  terminal: ReactNode | ((state: { directInput: boolean }) => ReactNode);
+  terminal: ReactNode;
   activeDriver?: Exclude<MainDriverSource, 'native_cli'> | null;
   storageKey?: string;
+  workSurfaceLabel?: string;
 };
 
-/** One Main conversation over one always-mounted Agent Builder work surface. */
+/** One shared multi-participant conversation over the active Card work surface. */
 export default function HarnessChatPanel({
   chat,
   terminal,
   activeDriver = null,
   storageKey = 'liquidaity.main.surface.split.v1',
+  workSurfaceLabel = 'Card',
 }: HarnessChatPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
@@ -162,8 +164,8 @@ export default function HarnessChatPanel({
         data-testid="main-chat-agent-builder-divider"
         aria-expanded={fullCli || height > 0}
         aria-controls="agent-builder-region"
-        aria-label="Resize Main Chat and Agent Builder"
-        title="Resize Main Chat and Agent Builder"
+        aria-label={`Resize shared chat and ${workSurfaceLabel} work surface`}
+        title={`Resize shared chat and ${workSurfaceLabel} work surface`}
         onMouseDown={onDragStart}
         onClick={toggleTerminal}
         style={{
@@ -195,7 +197,7 @@ export default function HarnessChatPanel({
           userSelect: dragging ? 'none' : 'auto',
         }}
       >
-        {typeof terminal === 'function' ? terminal({ directInput: fullCli }) : terminal}
+        {terminal}
       </div>
     </div>
   );

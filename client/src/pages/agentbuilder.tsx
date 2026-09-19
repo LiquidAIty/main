@@ -719,6 +719,7 @@ export default function AgentBuilder(): React.ReactElement {
     nativeSessionActive,
     nativeSessionConnecting,
     mainDriverSource,
+    workSurfaceCardId,
     sessionHistoryLoading,
     stopMainTurn,
     technicalError,
@@ -735,6 +736,12 @@ export default function AgentBuilder(): React.ReactElement {
     onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
+  const sharedWorkSurfaceCard = useMemo(() => {
+    if (!workSurfaceCardId) return agentBuilderCard;
+    return deck.nodes.find((card) => (
+      card.id === workSurfaceCardId && card.runtime.kind === 'hermes'
+    )) || null;
+  }, [agentBuilderCard, deck.nodes, workSurfaceCardId]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -1870,7 +1877,7 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Main stays the conversation; the pull-up always opens the saved Builder's CLI.
+    // Shared chat stays common while the pull-up follows the server-resolved Card.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
@@ -1903,15 +1910,19 @@ export default function AgentBuilder(): React.ReactElement {
         />
       </div>
     );
-    const agentBuilderTerminal = () => (
-      agentBuilderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
-        <div data-testid="under-chat-agent-builder" style={{ height: '100%', minHeight: 0 }}>
+    const cardWorkSurface = () => (
+      sharedWorkSurfaceCard?.runtime.kind === 'hermes' && canvasProjectId ? (
+        <div
+          data-testid="under-chat-card-work-surface"
+          data-card-id={sharedWorkSurfaceCard.id}
+          style={{ height: '100%', minHeight: 0 }}
+        >
           <AgentTerminalPanel
-            key={`${canvasProjectId}:${agentBuilderCard.id}:${agentBuilderCard.runtime.profile}`}
+            key={`${canvasProjectId}:${sharedWorkSurfaceCard.id}:${sharedWorkSurfaceCard.runtime.profile}`}
             identity={{
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
-              cardId: agentBuilderCard.id,
+              cardId: sharedWorkSurfaceCard.id,
             }}
           />
         </div>
@@ -1933,7 +1944,8 @@ export default function AgentBuilder(): React.ReactElement {
                 : null}
             storageKey={`liquidaity.main.agent-builder.split.v1:${projectId}`}
             chat={chat}
-            terminal={agentBuilderTerminal}
+            terminal={cardWorkSurface()}
+            workSurfaceLabel={sharedWorkSurfaceCard?.title || 'Card'}
           />
         )}
       </div>

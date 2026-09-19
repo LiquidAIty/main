@@ -92,27 +92,10 @@ export function createAgentTerminalRouter(deps = {
       if (res.headersSent) res.end(); else fail(res, error);
     }
   });
-  router.post(`${base}/:sessionId/input`, (req, res) => {
-    try {
-      const data = req.body?.data;
-      if (typeof data !== 'string' || !data.length || Buffer.byteLength(data) > 64 * 1024) {
-        throw new Error('agent_terminal_input_invalid');
-      }
-      const { owner, card, deck } = res.locals.agentTerminal;
-      deps.manager.verifyConfiguration(owner, req.params.sessionId, card, deck);
-      deps.manager.input(owner, req.params.sessionId, data);
-      res.json({ ok: true });
-    } catch (error) { fail(res, error); }
-  });
   router.post(`${base}/:sessionId/resize`, (req, res) => {
     try {
       const { cols, rows } = dimensions(req.body);
       res.json(deps.manager.resize(res.locals.agentTerminal.owner, req.params.sessionId, cols, rows));
-    } catch (error) { fail(res, error); }
-  });
-  router.post(`${base}/:sessionId/stop`, (req, res) => {
-    try {
-      res.json(deps.manager.detachTui(res.locals.agentTerminal.owner, req.params.sessionId));
     } catch (error) { fail(res, error); }
   });
   return router;
