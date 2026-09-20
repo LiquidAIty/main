@@ -48,6 +48,9 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '035_remove_provider_api_mode_constraint.sql', applied: true }),
       expect.objectContaining({ filename: '036_remove_obsolete_card_tool_policy.sql', applied: true }),
       expect.objectContaining({ filename: '037_magentic_hermes_execution.sql', applied: true }),
+      expect.objectContaining({ filename: '038_allow_cancelled_native_run_phase.sql', applied: true }),
+      expect.objectContaining({ filename: '039_remove_assistant_agent_capability.sql', applied: true }),
+      expect.objectContaining({ filename: '040_remove_main_script_experiment.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -170,6 +173,61 @@ describe('canonical backend migrations', () => {
     expect(source).toContain('SET current_revision_id = next_revision_id');
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('accepts truthful native cancellation without rewriting retained Runs', async () => {
+    const source = await readFile(
+      migrationPath('038_allow_cancelled_native_run_phase.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("'cancelled'");
+    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_native_phase_check');
+    expect(source).toContain('ADD CONSTRAINT agent_runs_native_phase_check');
+    expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {
+    const source = await readFile(
+      migrationPath('039_remove_assistant_agent_capability.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain('card.current_revision_id');
+    expect(source).toContain("position('card.run_assistant_agent' IN revision.base_prompt) > 0");
+    expect(source).toContain("capability.grant_id = 'card.run_assistant_agent'");
+    expect(source).toContain("replace(\n      source.base_prompt,\n      'card.run_assistant_agent',\n      'message_agent'");
+    expect(source).toContain('next_base_prompt_sha256 := encode(');
+    expect(source).toContain("'basePrompt', cleaned_base_prompt");
+    expect(source).toContain("'grants', copied_grants");
+    expect(source).toContain('next_revision_sha256 := encode(');
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain("grant_id <> 'card.run_assistant_agent'");
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).toContain('UPDATE ag_catalog.agent_decks');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
+  });
+
+  it('removes only the saved Main Script experiment through a new current revision', async () => {
+    const source = await readFile(
+      migrationPath('040_remove_main_script_experiment.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("card.card_id = 'card_main_chat'");
+    expect(source).toContain("revision.runtime_extension_config ? 'script'");
+    expect(source).toContain("source.runtime_extension_config - 'script'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).toContain('UPDATE ag_catalog.agent_decks');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
   });
 
   it('does not open backend readiness when migration application fails', async () => {

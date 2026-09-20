@@ -54,7 +54,8 @@ def test_canonical_catalog_publishes_native_engraphis_schemas_with_owned_scope(m
     tools = [tool for tool in catalog if tool.name.startswith("engraphis_")]
     assert {tool.name for tool in tools} == names
     assert "main.context" in {tool.name for tool in catalog}
-    assert "card.run_assistant_agent" in {tool.name for tool in catalog}
+    assert "card.run_assistant_agent" not in {tool.name for tool in catalog}
+    assert "card.run_agent" not in {tool.name for tool in catalog}
     assert len(tools) == len(names)
     assert not any(tool.name.startswith("constellation.") for tool in catalog)
     for tool in tools:
@@ -542,7 +543,7 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerCardId": "card-main",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "main",
-        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "grantedTools": ["canvas.inspect"],
         "nativeChildId": "native-task-one",
         "nativeRunId": "native-attempt-one",
     }
@@ -582,7 +583,7 @@ def test_internal_mcp_token_binds_card_context_without_auth0_or_provider_calls(m
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "main",
         "principalKind": "card-runtime",
-        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "grantedTools": ["canvas.inspect"],
         "nativeChildId": "native-task-one",
         "nativeRunId": "native-attempt-one",
     }
@@ -651,7 +652,7 @@ def test_replaced_runless_agent_terminal_token_is_rejected(monkeypatch):
         "profile": "liquidaity-hermes-steward",
         "callerRuntimeKind": "hermes",
         "callerRuntimeMode": "delegate",
-        "grantedTools": ["canvas.inspect", "card.run_assistant_agent"],
+        "grantedTools": ["canvas.inspect"],
         "presentedTools": ["canvas.inspect"],
     }
     token = jwt.encode({
@@ -818,105 +819,6 @@ def test_canonical_catalog_is_identical_for_every_mcp_principal(monkeypatch):
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
         "canvas.inspect", "run_mag_one",
     ]
-
-
-def test_card_invocation_injects_caller_identity_and_main_uses_the_external_cli_bridge(monkeypatch):
-    import asyncio
-    import mcp_host
-    from app import control_plane
-
-    context = {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "parentRunId": "parent-run-1",
-        "mainCardId": "card-main",
-        "callerRuntimeKind": "hermes",
-        "callerRuntimeMode": "main",
-        "principalKind": "card-runtime",
-        "grantedTools": ["card.run_assistant_agent"],
-    }
-    calls = []
-    bridge_calls = []
-
-    async def run(args):
-        calls.append(dict(args))
-        return {"ok": True, "result": {"status": "completed", "output": "ok"}}
-
-    async def bridge(path, payload):
-        bridge_calls.append((path, dict(payload)))
-        return [mcp_host.TextContent(
-            type="text",
-            text=json.dumps({"ok": True, "driverSource": "external_plugin"}),
-        )]
-
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: dict(context))
-    monkeypatch.setattr(mcp_host, "_bridge", bridge)
-    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
-    result = asyncio.run(mcp_host._dispatch_tool(
-        "card.run_assistant_agent",
-        {"cardId": "card-helper", "input": "bounded task"},
-    ))
-    assert json.loads(result[0].text)["ok"] is True
-    assert calls[-1] == {
-        "cardId": "card-helper",
-        "input": "bounded task",
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "correlationId": calls[-1]["correlationId"],
-        "originatingAgentId": "card-main",
-        "originatingRunId": "parent-run-1",
-    }
-
-    context["principalKind"] = "system-root"
-    calls.clear()
-    asyncio.run(mcp_host._dispatch_tool(
-        "card.run_assistant_agent",
-        {"cardId": "card-main", "input": "root entry"},
-    ))
-    assert bridge_calls == [("external_main_chat", {
-        "projectId": "project-1",
-        "deckId": "deck_builder",
-        "conversationId": "conversation-1",
-        "mainCardId": "card-main",
-        "message": "root entry",
-    })]
-    assert calls == []
-
-
-def test_background_profile_handoff_binds_parent_from_authenticated_system_context(monkeypatch):
-    import asyncio
-    import mcp_host
-    from app import control_plane
-
-    context = {
-        "projectId": "project-1", "deckId": "deck_builder", "conversationId": "main",
-        "parentRunId": "parent-run", "mainCardId": "card-main",
-        "callerRuntimeKind": "hermes", "callerRuntimeMode": "main",
-        "principalKind": "system-root", "grantedTools": ["card.run_assistant_agent"],
-    }
-    calls = []
-
-    async def run(args):
-        calls.append(dict(args))
-        return {"ok": True, "result": {"state": "running", "runId": "child-run"}}
-
-    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: context)
-    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run)
-    result = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {
-        "cardId": "card-builder", "input": "Prepare a proposal.", "background": True,
-    }))
-    assert json.loads(result[0].text)["ok"] is True
-    assert calls[-1]["originatingAgentId"] == "card-main"
-    assert calls[-1]["originatingRunId"] == "parent-run"
-    assert calls[-1]["background"] is True
-    forged = asyncio.run(mcp_host._dispatch_tool("card.run_assistant_agent", {
-        "cardId": "card-builder", "input": "Prepare a proposal.", "background": True,
-        "originatingRunId": "forged-parent",
-    }))
-    assert "caller_identity_rejected" in json.loads(forged[0].text)["error"]
-    assert len(calls) == 1
 
 
 def test_builder_update_uses_explicit_target_and_revisions_with_saved_grants(monkeypatch):
@@ -1529,7 +1431,6 @@ def test_long_running_native_tools_use_their_owned_timeouts(monkeypatch):
     monkeypatch.setattr(mcp_host, "_NATIVE_CBM_REQUEST_TIMEOUT_SECONDS", 300.0)
 
     assert mcp_host._mcp_tool_timeout_seconds("cbm.index_repository") == 300.0
-    assert mcp_host._mcp_tool_timeout_seconds("card.run_assistant_agent") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("run_mag_one") == 300.0
     assert mcp_host._mcp_tool_timeout_seconds("engraphis_remember") == 190.0
     assert mcp_host._mcp_tool_timeout_seconds("engraphis_ingest") == 190.0
@@ -1805,18 +1706,12 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
     async def check():
         tools = await mcp_host._materialize_complete_catalog()
         by_name = {tool.name: tool for tool in tools}
-        assert by_name["card.run_assistant_agent"].inputSchema["anyOf"] == [
-            {"required": ["cardId", "input"]},
-            {"required": ["runId"]},
-            {"required": ["nativeRootId"]},
-        ]
-        assert (
-            "instructionId"
-            not in by_name["card.run_assistant_agent"].inputSchema["properties"]
-        )
-        assert by_name["run_mag_one"].inputSchema["required"] == [
-            "input", "projectId", "deckId",
-        ]
+        assert "card.run_assistant_agent" not in by_name
+        assert "card.run_agent" not in by_name
+        assert by_name["run_mag_one"].inputSchema["required"] == ["input"]
+        assert set(by_name["run_mag_one"].inputSchema["properties"]) == {
+            "input", "dataAnchors",
+        }
         assert by_name["write_mag_one_instructions"].inputSchema["required"] == [
             "targetCardId", "mission",
         ]
@@ -1909,7 +1804,8 @@ def test_only_externally_permitted_operations_are_in_the_mcp_catalog(monkeypatch
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     names = {tool.name for tool in tools}
     assert names == {item["name"] for item in external_mcp_manifest()}
-    assert "card.run_assistant_agent" in names
+    assert "card.run_assistant_agent" not in names
+    assert "card.run_agent" not in names
     assert "calculator" not in names
     assert "delegate_task" not in names
     assert len(tools) == len(names)
@@ -2014,7 +1910,7 @@ def test_all_clients_receive_the_same_canonical_catalog_without_rewriting_metada
     identities = set()
     for transport in ("streamable-http", "stdio"):
         monkeypatch.setattr(mcp_host, "MCP_TRANSPORT", transport)
-        for principal in (None, {"kind": "catalog-reader"}, {"kind": "system-root"},
+        for principal in (None, {"kind": "catalog-reader"},
                           {"kind": "materializer-read"},
                           {"kind": "card-runtime", "grantedTools": [], "presentedTools": []}):
             monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: principal)
@@ -2391,16 +2287,21 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                     raise RuntimeError("http_health_not_ready")
                 await entered.wait()
                 assert health.json()["catalogState"] == "initializing"
+                catalog_readiness = await client.get("/health/catalog")
+                assert catalog_readiness.status_code == 503
+                assert catalog_readiness.json()["catalogReady"] is False
                 readiness = await client.get("/health/ready")
                 assert readiness.status_code == 503
                 assert readiness.json()["catalogReady"] is False
                 release.set()
                 for _ in range(30):
-                    readiness = await client.get("/health/ready")
-                    if readiness.status_code == 200:
+                    catalog_readiness = await client.get("/health/catalog")
+                    if catalog_readiness.status_code == 200:
                         break
                     await asyncio.sleep(0.1)
-                assert readiness.json()["toolCount"] == catalog_size
+                assert catalog_readiness.json()["toolCount"] == catalog_size
+                readiness = await client.get("/health/ready")
+                assert readiness.status_code == 200
 
             async with streamable_http_client(f"{base_url}/mcp") as streams:
                 async with ClientSession(streams[0], streams[1]) as session:
@@ -3240,7 +3141,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
 ):
     import asyncio
     import mcp_host
-    from app import control_plane
     from mcp.server.auth.provider import AccessToken
 
     context = {
@@ -3332,7 +3232,8 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     tools = asyncio.run(mcp_host.list_tools())
     by_name = {tool.name: tool for tool in tools}
     assert len(tools) == len(by_name)
-    assert "card.run_assistant_agent" in by_name
+    assert "card.run_assistant_agent" not in by_name
+    assert "card.run_agent" not in by_name
     for tool in tools:
         assert "liquidaitySource" in tool.meta
         assert "runtimeExecution" not in tool.meta
@@ -3345,7 +3246,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     assert "main.context" in by_name
     assert "agentgraph.inspect" in by_name
     assert "write_mag_one_instructions" in by_name
-    assert "card.run_assistant_agent" in by_name
     assert not any(name.startswith("mcp__") for name in by_name)
     native_names = {
         f"cbm.{tool.name}" for tool in native_cbm_tools
@@ -3372,18 +3272,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
     }
     assert {"graphiti.get_status", "graphiti.search_nodes"}.issubset(by_name)
     assert "run_mag_one" in by_name
-    card_tool = by_name["card.run_assistant_agent"]
-    assert set(card_tool.inputSchema["properties"]) == {
-        "action", "background", "cardId", "cardRevisionId", "runId", "nativeRootId", "input",
-        "dataAnchors",
-    }
-    assert card_tool.inputSchema["anyOf"] == [
-        {"required": ["cardId", "input"]},
-        {"required": ["runId"]},
-        {"required": ["nativeRootId"]},
-    ]
-    assert "saved runtime adapter" in card_tool.description
-    assert "instructionId" not in card_tool.inputSchema["properties"]
     assert {scheme["scopes"][0] for scheme in by_name["engraphis_recall_context"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["cbm.search_graph"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
     assert {scheme["scopes"][0] for scheme in by_name["graphiti.get_status"].model_dump()["securitySchemes"]} == {"liquidaity.main"}
@@ -3443,11 +3331,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         return [mcp_host.TextContent(type="text", text=json.dumps({"ok": True}))]
     monkeypatch.setattr(mcp_host, "_bridge", bridge)
 
-    async def run_saved_card(payload):
-        calls.append(("card_run_assistant_agent", payload))
-        return {"ok": True}
-    monkeypatch.setattr(control_plane, "card_run_assistant_agent", run_saved_card)
-
     asyncio.run(mcp_host.call_tool("engraphis_recall_context", {"query": "Main", "token_budget": 2000}))
     assert calls[-1] == (
         "engraphis_recall_context",
@@ -3501,22 +3384,6 @@ def test_authenticated_catalog_is_complete_and_dispatch_uses_server_identity(
         "parentRunId": "external-main:grant-1",
         "mainCardId": "card_main_chat",
     }
-
-    card_tool_result = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
-        "cardId": "card_agent",
-        "input": "Use the assigned context.",
-    }))
-    assert json.loads(card_tool_result[0].text)["ok"] is True
-    assert calls[-1][0] == "card_run_assistant_agent"
-
-    denied = asyncio.run(mcp_host.call_tool("card.run_assistant_agent", {
-        "projectId": "spoofed",
-        "cardId": "helper-card",
-        "input": "Approved exact task.",
-    }))
-    assert denied.isError is True
-    assert '"error": "caller_identity_rejected: projectId"' in denied.content[0].text
-
 
 def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     monkeypatch, clear_live_cbm_operations,
@@ -3574,7 +3441,8 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
     canonical = asyncio.run(mcp_host.list_tools())
     canonical_names = {tool.name for tool in canonical}
     assert canonical
-    assert "card.run_assistant_agent" in canonical_names
+    assert "card.run_assistant_agent" not in canonical_names
+    assert "card.run_agent" not in canonical_names
     assert not any(name.startswith("mcp__") for name in canonical_names)
 
     active_scopes[:] = ["main"]
@@ -3632,7 +3500,7 @@ def test_canonical_tunnel_is_transport_only_and_mcp_owns_public_metadata():
 
     dependent_services = package["scripts"]["dev:dependent-services"]
     assert dependent_services.count("npm run dev:mcp") == 1
-    assert "--kill-others-on-fail --success all" in dependent_services
+    assert "--kill-others-on-fail" not in dependent_services
     assert (
         "powershell -NoProfile -ExecutionPolicy Bypass -File "
         "scripts/start-dependent-services.ps1 -WaitForMcpReadiness"

@@ -34,8 +34,10 @@ path remains live.
   skills, plugins/MCP, and profile for the Mag One Card and every worker without opening a visible TUI.
 - Python reloads the retained canonical `in.idf`, requires exact mission equality, and creates one
   idempotent native root assigned to the saved Mag One profile.
-- The native root carries an inherited assignee ceiling containing only that profile and the projected
-  workers. Ordinary Hermes tasks remain unrestricted when the field is absent.
+- The native root carries an assignee scope containing only that profile and the projected workers.
+  Root-created assignments are checked against that blue scope; manually created worker descendants
+  are self-scoped instead of inheriting the whole roster. Ordinary Hermes tasks remain unrestricted
+  when the field is absent.
 - The root model performs decomposition and must create one final dependency sink assigned back to the
   Mag One profile. Structured status returns only the verified native final summary.
 - PostgreSQL retains one product-level invocation/lineage Run. Hermes SQLite exclusively owns native

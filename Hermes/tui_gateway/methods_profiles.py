@@ -544,6 +544,12 @@ def _clean_names(values) -> set:
 
 def _save_toolset_pin(cfg, enabled, save_config) -> None:
     wanted = sorted(_clean_names(enabled))
+    # ``tools.enabled_toolsets`` is the editor/readback pin, while CLI
+    # execution resolves ``platform_toolsets.cli``. Keep both views in one
+    # native profile write so an accepted configuration is also executable.
+    platform_cfg = cfg.get("platform_toolsets") if isinstance(cfg.get("platform_toolsets"), dict) else {}
+    platform_cfg["cli"] = wanted
+    cfg["platform_toolsets"] = platform_cfg
     tools_cfg = cfg.get("tools") if isinstance(cfg.get("tools"), dict) else {}
     if wanted:
         tools_cfg["enabled_toolsets"] = wanted

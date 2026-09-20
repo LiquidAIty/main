@@ -140,6 +140,7 @@ type GatewaySpawner = (
 
 type Session = {
   owner: AgentTerminalOwner;
+  card: AgentCardInstance;
   fingerprint: string;
   state: AgentTerminalState;
   gateway: ChildProcess;
@@ -165,9 +166,24 @@ type Session = {
 type PendingStart = {
   owner: AgentTerminalOwner;
   fingerprint: string;
-  cardToolsFingerprint: string;
   promise: Promise<AgentTerminalState>;
 };
+
+function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTools): boolean {
+  const stableAuthority = (value: HermesCardTools) => JSON.stringify({
+    projectId: value.projectId,
+    deckId: value.deckId,
+    cardId: value.cardId,
+    cardRevisionId: value.cardRevisionId,
+    cardRevisionSha256: value.cardRevisionSha256,
+    runtime: value.runtime,
+    nativeTools: value.nativeTools,
+    toolsets: value.toolsets,
+    mcpConnectionIds: value.mcpConnectionIds,
+    pluginTools: value.pluginTools,
+  });
+  return stableAuthority(left) === stableAuthority(right);
+}
 
 export type DesiredAgentTerminal = {
   owner: AgentTerminalOwner;
@@ -285,6 +301,26 @@ export function requireAgentTerminalCard(card: AgentCardInstance, deck: DeckDocu
     throw new Error('agent_terminal_card_disabled');
   }
   return profile;
+}
+
+function resolveMagenticTaskProviderSelection(
+  card: AgentCardInstance,
+): NativeHermesProviderSelection {
+  if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
+  const options = card.runtimeOptions as Record<string, unknown> | undefined;
+  const usesSavedChatGptAccount = String(options?.provider || '').trim().toLowerCase() === 'openai'
+    && String(options?.accessMode || '').trim().toLowerCase() === 'chatgpt-account';
+  return resolveSavedHermesProvider({
+    provider: options?.provider,
+    accessMode: options?.accessMode,
+    modelKey: options?.modelKey,
+    providerModelId: options?.providerModelId,
+    // Native task workers are detached CLI processes.  Use Codex's own
+    // already-authenticated app-server for the saved ChatGPT-account binding
+    // instead of requiring a cloned profile-local OAuth refresh grant.
+    openaiRuntime: options?.openaiRuntime
+      ?? (usesSavedChatGptAccount ? 'codex_app_server' : undefined),
+  });
 }
 
 function savedProfileSelection(
@@ -581,6 +617,24 @@ export class AgentTerminalManager {
     private readonly configureCardModelRuntime: typeof configureHermesCardModelRuntime = configureHermesCardModelRuntime,
   ) {}
 
+  private async prepareMagenticTaskCard(
+    profile: string,
+    card: AgentCardInstance,
+  ): Promise<void> {
+    await this.configureCardInstructions(profile, String(card.prompt || ''));
+    const selection = resolveMagenticTaskProviderSelection(card);
+    if (selection.apiMode !== 'codex_app_server') return;
+    const options = card.runtimeOptions as Record<string, unknown> | undefined;
+    const runtimeAlreadyProjected = card.runtime.mode === 'magentic_one'
+      || String(options?.openaiRuntime || '').trim().toLowerCase() === 'codex_app_server';
+    if (runtimeAlreadyProjected) return;
+    await this.configureCardModelRuntime(profile, {
+      provider: selection.provider,
+      model: selection.model,
+      openaiRuntime: selection.profileOpenaiRuntime,
+    });
+  }
+
   async open(
     owner: AgentTerminalOwner,
     card: AgentCardInstance,
@@ -607,21 +661,33 @@ export class AgentTerminalManager {
         throw new Error('agent_terminal_configuration_changed_stop_required');
       }
       if (session.cardTools.configurationFingerprint !== cardTools.configurationFingerprint) {
-        throw new Error('agent_terminal_tool_configuration_changed_stop_required');
+        const optionalCatalogTransition = sameSavedCardToolAuthority(session.cardTools, cardTools)
+          && session.cardTools.externalToolCatalogState !== cardTools.externalToolCatalogState;
+        if (!optionalCatalogTransition) {
+          throw new Error('agent_terminal_tool_configuration_changed_stop_required');
+        }
+        if (
+          session.cardTools.externalToolCatalogState === 'unavailable'
+          && cardTools.externalToolCatalogState === 'available'
+        ) {
+          await this.refreshOptionalCardTools(session);
+        }
       }
       if (options.materializeTaskProfile) {
-        await this.configureCardInstructions(profile, String(card.prompt || ''));
+        await this.prepareMagenticTaskCard(profile, card);
       }
-      const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
-      await this.configureNativeBotProfile(
-        (method, params) => session.client.request(method, {
-          ...params,
-          profile: session.launch.profile,
-        }),
-        owner,
-        card,
-        botRosterProjection,
-      );
+      if (card.runtime.kind === 'hermes' && card.runtime.mode !== 'magentic_one') {
+        const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
+        await this.configureNativeBotProfile(
+          (method, params) => session.client.request(method, {
+            ...params,
+            profile: session.launch.profile,
+          }),
+          owner,
+          card,
+          botRosterProjection,
+        );
+      }
       return attachTui ? this.attachTui(session, cols, rows) : { ...session.state };
     }
     const pending = this.pendingStarts.get(profile.toLowerCase());
@@ -630,15 +696,26 @@ export class AgentTerminalManager {
       if (pending.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
       }
-      if (pending.cardToolsFingerprint !== cardTools.configurationFingerprint) {
-        throw new Error('agent_terminal_tool_configuration_changed_stop_required');
-      }
       const state = await pending.promise;
+      const session = this.running(owner, state.sessionId);
+      if (session.cardTools.configurationFingerprint !== cardTools.configurationFingerprint) {
+        const optionalCatalogTransition = sameSavedCardToolAuthority(session.cardTools, cardTools)
+          && session.cardTools.externalToolCatalogState !== cardTools.externalToolCatalogState;
+        if (!optionalCatalogTransition) {
+          throw new Error('agent_terminal_tool_configuration_changed_stop_required');
+        }
+        if (
+          session.cardTools.externalToolCatalogState === 'unavailable'
+          && cardTools.externalToolCatalogState === 'available'
+        ) {
+          await this.refreshOptionalCardTools(session);
+        }
+      }
       if (options.materializeTaskProfile) {
-        await this.configureCardInstructions(profile, String(card.prompt || ''));
+        await this.prepareMagenticTaskCard(profile, card);
       }
       return attachTui
-        ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
+        ? this.attachTui(session, cols, rows)
         : state;
     }
     for (const [id, session] of this.sessions) {
@@ -646,22 +723,19 @@ export class AgentTerminalManager {
         this.sessions.delete(id);
       }
     }
-    const promise = (async () => {
-      if (options.materializeTaskProfile) {
-        await this.configureCardInstructions(profile, String(card.prompt || ''));
-      }
-      return this.start(
-        owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
-        options.botRosterProjection,
-      );
-    })();
+    const promise = this.start(
+      owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
+      options.botRosterProjection,
+    );
     this.pendingStarts.set(profile.toLowerCase(), {
       owner: { ...owner }, fingerprint,
-      cardToolsFingerprint: cardTools.configurationFingerprint,
       promise,
     });
     try {
       const state = await promise;
+      if (options.materializeTaskProfile) {
+        await this.prepareMagenticTaskCard(profile, card);
+      }
       return attachTui
         ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
         : state;
@@ -907,12 +981,14 @@ export class AgentTerminalManager {
         cardTools,
         profileMaterialization.unavailableMcpServerReasons,
       );
-      await this.configureNativeBotProfile(
-        request,
-        owner,
-        card,
-        botRosterProjection ?? await this.resolveBotRoster(owner),
-      );
+      if (card.runtime.mode !== 'magentic_one') {
+        await this.configureNativeBotProfile(
+          request,
+          owner,
+          card,
+          botRosterProjection ?? await this.resolveBotRoster(owner),
+        );
+      }
       const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
       // These stock Gateway methods are session/install scoped and their public
       // contracts deliberately do not accept a profile selector.  The live
@@ -928,6 +1004,7 @@ export class AgentTerminalManager {
 
       const session: Session = {
         owner: { ...owner },
+        card: structuredClone(card),
         fingerprint,
         gateway,
         gatewayUrl,
@@ -1369,10 +1446,100 @@ export class AgentTerminalManager {
   ): Promise<AgentTerminalTurnResult> {
     if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
     const session = this.running(owner, id);
-    const execute = () => this.submitNow(session, text, options);
+    const execute = async () => {
+      await this.refreshOptionalCardTools(session);
+      return this.submitNow(session, text, options);
+    };
     const result = session.turnTail.then(execute, execute);
     session.turnTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async refreshOptionalCardTools(session: Session): Promise<void> {
+    if (session.cardTools.externalToolCatalogState !== 'unavailable') return;
+    try {
+      const resolved = await this.resolveCardTools(session.owner, session.card);
+      if (resolved.externalToolCatalogState !== 'available') return;
+      if (resolved.configurationFingerprint === session.cardTools.configurationFingerprint) {
+        session.cardTools = resolved;
+        return;
+      }
+      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return;
+
+      const request = <T>(method: string, params: Record<string, unknown>) => (
+        session.client.request<T>(method, { ...params, profile: session.launch.profile })
+      );
+      const externalMcpConnectionIds = [...new Set(
+        resolved.externalMcpTools.map((tool) => tool.connectionId),
+      )];
+      const profileMaterialization = await this.materializeProfile(
+        {
+          ...session.launch.profileSelection,
+          nativeTools: resolved.nativeTools,
+          toolsets: resolved.toolsets,
+          requiredToolsets: resolved.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
+          mcpConnectionIds: externalMcpConnectionIds,
+        },
+        (profile) => request('profiles.describe', { name: profile }),
+        configureHermesNativeSubagentModel,
+        async (profile, selection) => {
+          if (selection.apiMode === 'codex_app_server') {
+            await this.configureCardModelRuntime(profile, selection);
+            return { ok: true, applied: { model: true } };
+          }
+          const configured = await request('profiles.configure', {
+            name: profile,
+            provider: selection.provider,
+            model: selection.model,
+            confirm_expensive_model: true,
+          });
+          await this.configureCardModelRuntime(profile, selection);
+          return configured;
+        },
+        (profile, disabledSkills) => request('profiles.configure', {
+          name: profile,
+          disabled_skills: disabledSkills,
+        }),
+        (profile, enabledToolsets) => request('profiles.configure', {
+          name: profile,
+          enabled_toolsets: enabledToolsets,
+        }),
+        (profile, enabledMcpServers) => request('profiles.configure', {
+          name: profile,
+          enabled_mcp_servers: enabledMcpServers,
+        }),
+      );
+      const unavailableExternalMcpToolReasons = await this.materializeExternalMcpTools(
+        request,
+        resolved,
+        profileMaterialization.unavailableMcpServerReasons,
+      );
+      // These methods are session/install scoped. The native Gateway contract
+      // does not accept a profile selector; the live session already carries
+      // the exact saved Card profile identity.
+      const reload = record(await session.client.request('reload.mcp', {
+        session_id: session.state.nativeSessionId,
+        confirm: true,
+      }));
+      if (reload.status !== 'reloaded') throw new Error('hermes_native_mcp_reload_failed');
+      const unavailableToolReasons = requireHermesCardToolsReadback(
+        await session.client.request('tools.show', { session_id: session.state.nativeSessionId }),
+        resolved,
+        profileMaterialization.unavailableNativeToolReasons,
+        unavailableExternalMcpToolReasons,
+      );
+      session.cardTools = resolved;
+      session.state.unavailableToolReasons = unavailableToolReasons;
+      for (const listener of session.listeners) listener('state', { ...session.state });
+    } catch (error) {
+      // External catalog readiness is optional for conversation startup and
+      // submission. Keep the already-running exact Card surface and retry on
+      // a later turn instead of turning a tool outage into an application lock.
+      console.warn(
+        `[agent-terminal] optional Card tool refresh failed card=${session.state.cardId}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 
   subscribeGatewayEvents(

@@ -254,16 +254,26 @@ describe('materializeHermesProfileSelections', () => {
     });
   });
 
-  it('fails closed when stock Hermes cannot represent an empty toolset selection', async () => {
-    await expect(materializeHermesProfileSelections(
-      selection(),
-      vi.fn(async () => nativeProfile({
+  it('pins an explicitly empty Card toolset selection and reads it back', async () => {
+    const readNative = vi.fn()
+      .mockResolvedValueOnce(nativeProfile({
         toolsets: [{ name: 'web', enabled: true }],
-      })),
+      }))
+      .mockResolvedValueOnce(nativeProfile({
+        toolsets: [{ name: 'web', enabled: false }],
+      }));
+    const configureToolsets = vi.fn(async () => ({ ok: true, applied: { toolsets: true } }));
+
+    await materializeHermesProfileSelections(
+      selection(),
+      readNative,
       vi.fn(),
       vi.fn(),
       vi.fn(),
-      vi.fn(),
-    )).rejects.toThrow('hermes_native_empty_toolset_filter_unavailable:builder');
+      configureToolsets,
+    );
+
+    expect(configureToolsets).toHaveBeenCalledExactlyOnceWith('builder', []);
+    expect(readNative).toHaveBeenCalledTimes(2);
   });
 });

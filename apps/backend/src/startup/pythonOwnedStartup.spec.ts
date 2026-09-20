@@ -166,8 +166,18 @@ describe('Python-owned backend startup', () => {
         botEnabled: false, roster: [] },
     ];
     expect([...deriveAutomaticHermesCardIds(deck, botProfiles)]).toEqual([
-      'main-card', 'controller', 'worker', 'builder', 'mag-worker-a', 'mag-worker-b',
+      'main-card', 'controller', 'worker', 'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
     ]);
+    const disabledBusDeck = {
+      ...deck,
+      nodes: deck.nodes.map((node: any) => (
+        node.id === 'mag-one' ? { ...node, runtimeOptions: { enabled: false } } : node
+      )),
+    } as any;
+    const disabledBusDemand = deriveAutomaticHermesCardIds(disabledBusDeck, botProfiles);
+    expect(disabledBusDemand.has('mag-one')).toBe(false);
+    expect(disabledBusDemand.has('mag-worker-a')).toBe(false);
+    expect(disabledBusDemand.has('mag-worker-b')).toBe(false);
   });
 
   it('keeps a Card demanded until its final activating edge is removed', () => {
@@ -209,6 +219,7 @@ describe('Python-owned backend startup', () => {
       nodes: [main, connected, builder, disconnected, magOne], edges: [
         { id: 'active-worker', source: 'main-card', target: 'worker', edgeType: 'flow' },
         { id: 'active-builder', source: 'main-card', target: 'builder', edgeType: 'flow' },
+        { id: 'mag-worker', source: 'mag-one', target: 'worker', edgeType: 'magentic_option' },
       ] } as any;
     const reconcile = vi.fn(async (desired: any[], _dimensions?: unknown, _botProfiles?: unknown[]) => desired.map((entry, index) => ({
       sessionId: `session-${index}`, cardId: entry.card.id, profile: entry.card.runtime.profile,
@@ -236,17 +247,22 @@ describe('Python-owned backend startup', () => {
       builderWorkingDirectory: () => 'C:\\repository',
     });
 
-    expect(states.map((state) => state.cardId)).toEqual(['main-card', 'worker', 'builder']);
+    expect(states.map((state) => state.cardId)).toEqual([
+      'main-card', 'worker', 'builder', 'mag-one',
+    ]);
     const desired = reconcile.mock.calls[0][0];
     expect(desired.map((entry: any) => entry.owner)).toEqual([
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'main-card' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'worker' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'builder' },
+      { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'mag-one' },
     ]);
     expect(desired[0]).toMatchObject({ workingDirectory: 'C:\\neutral-main', attachTui: false });
     expect(desired[1]).toMatchObject({ attachTui: true });
     expect(desired[1]).not.toHaveProperty('workingDirectory');
     expect(desired[2]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
+    expect(desired[3]).toMatchObject({ attachTui: false });
+    expect(desired[3]).not.toHaveProperty('workingDirectory');
     expect(reconcile.mock.calls[0][2]).toHaveLength(4);
   });
 

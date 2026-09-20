@@ -50,10 +50,7 @@ export function resolvePythonAgentMcpHostPath(): string {
 
 let clientPromise: Promise<Client> | null = null;
 
-// Private Card execution can legitimately include one complete downstream
-// model Run. Keep that longer deadline scoped to the system-root doorway;
-// ordinary model-facing MCP calls retain the SDK's bounded default timeout.
-const PYTHON_AGENT_SYSTEM_TOOL_TIMEOUT_MS = 310_000;
+const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
 
 async function connect(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
@@ -68,19 +65,6 @@ async function connect(): Promise<Client> {
     // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
     clientPromise = null;
   };
-  await client.connect(transport);
-  return client;
-}
-
-async function connectAs(principal: InternalMcpPrincipal): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
-    requestInit: {
-      headers: {
-        Authorization: `Bearer ${createInternalMcpBearer(principal)}`,
-      },
-    },
-  });
-  const client = new Client({ name: 'main-harness-system', version: '0.1.0' });
   await client.connect(transport);
   return client;
 }
@@ -165,39 +149,6 @@ export async function callPythonAgentMcpTool(
   return parsed as PythonMcpToolResult;
 }
 
-/** Call one private system tool without publishing it on a Card model surface. */
-export async function callPythonAgentSystemTool(
-  principal: InternalMcpPrincipal,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<PythonMcpToolResult> {
-  if (principal.kind !== 'system-root') throw new Error('python_agent_system_principal_required');
-  const client = await connectAs(principal);
-  try {
-    const result = await client.callTool(
-      { name, arguments: args },
-      undefined,
-      { timeout: PYTHON_AGENT_SYSTEM_TOOL_TIMEOUT_MS },
-    );
-    const content = Array.isArray(result?.content) ? result.content : [];
-    const raw = String((content[0] as { text?: unknown })?.text ?? '').trim();
-    if (!raw) throw new Error(`python_agent_mcp_empty_result: ${name}`);
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw) as unknown;
-    } catch {
-      if (result.isError) return { ok: false, error: raw };
-      throw new Error(`python_agent_mcp_invalid_json_result: ${name}`);
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      throw new Error(`python_agent_mcp_invalid_result: ${name}`);
-    }
-    return parsed as PythonMcpToolResult;
-  } finally {
-    await client.close();
-  }
-}
-
 /** Read factual live MCP contracts for mechanical ingestion by LiquidAIty.idd. */
 export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescriptor[]> {
   const client = await getClient();
@@ -245,14 +196,34 @@ export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescript
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+async function pythonAgentMcpCatalogReady(): Promise<boolean> {
+  const url = new URL(resolveInternalMcpUrl());
+  url.pathname = '/health/catalog';
+  url.search = '';
+  url.hash = '';
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(OPTIONAL_CATALOG_PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) return false;
+    const value = await response.json() as Record<string, unknown>;
+    return value.catalogState === 'ready';
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Read the optional federated catalog without erasing a dependency failure.
+ * Read the optional live external-tool list without erasing a dependency failure.
  *
  * Saved Card preparation passes this state to Python so unavailable external
  * catalog families remain visible as unavailable grants while Card-local
  * conversation and private-runtime tools can continue.
  */
 export async function readPythonAgentMcpCatalog(): Promise<PythonMcpCatalogRead> {
+  if (!await pythonAgentMcpCatalogReady()) {
+    return { state: 'unavailable', tools: [], reason: 'catalog_unavailable' };
+  }
   try {
     return { state: 'available', tools: await listPythonAgentMcpCatalog() };
   } catch {

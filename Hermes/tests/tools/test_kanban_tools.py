@@ -472,6 +472,59 @@ def test_create_happy_path(worker_env):
         conn.close()
 
 
+def test_bounded_worker_can_recurse_to_self_but_cannot_recruit_another_profile(
+    monkeypatch, tmp_path,
+):
+    root_home = tmp_path / ".hermes"
+    root_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(root_home))
+    monkeypatch.setenv("HERMES_PROFILE", "worker-a")
+
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+
+    kb._INITIALIZED_PATHS.clear()
+    kb.init_db()
+    with kbc.connect_closing() as conn:
+        root_id = kb.create_task(
+            conn,
+            title="Bounded root",
+            assignee="orchestrator",
+            tenant="bounded-run",
+            allowed_assignees=["orchestrator", "worker-a", "worker-b"],
+        )
+        worker_id = kb.create_task(
+            conn,
+            title="Worker assignment",
+            assignee="worker-a",
+            tenant="bounded-run",
+            creator_task_id=root_id,
+        )
+        kb.claim_task(conn, worker_id)
+
+    monkeypatch.setenv("HERMES_KANBAN_TASK", worker_id)
+    monkeypatch.setenv("HERMES_TENANT", "bounded-run")
+    from tools import kanban_tools as kt
+
+    self_task = json.loads(kt._handle_create({
+        "title": "Worker self task",
+        "assignee": "worker-a",
+    }))
+    other_task = json.loads(kt._handle_create({
+        "title": "Unauthorized peer task",
+        "assignee": "worker-b",
+    }))
+
+    assert self_task["ok"] is True
+    assert "outside this execution's allowed assignees" in other_task["error"]
+    with kbc.connect_closing() as conn:
+        assert kb.get_task(conn, worker_id).allowed_assignees == ["worker-a"]
+        assert kb.get_task(conn, self_task["task_id"]).assignee == "worker-a"
+        assert conn.execute(
+            "SELECT 1 FROM tasks WHERE title = 'Unauthorized peer task'",
+        ).fetchone() is None
+
+
 @pytest.mark.parametrize("explicit", [{"workspace_kind": "scratch"}, {"project": ""}])
 @pytest.mark.parametrize("target_scoped", [False, True])
 def test_create_explicit_scratch_ignores_ambient_board_project(

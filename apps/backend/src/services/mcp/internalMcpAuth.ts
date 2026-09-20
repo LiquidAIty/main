@@ -10,7 +10,7 @@ export type InternalMcpPrincipal =
       kind: 'catalog-reader';
     }
   | {
-      kind: 'system-root' | 'card-runtime';
+      kind: 'card-runtime';
       projectId: string;
       deckId: string;
       conversationId: string;
@@ -58,7 +58,7 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (!['catalog-reader', 'system-root', 'card-runtime'].includes(principal.kind)) {
+  if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
     throw new Error('internal_mcp_principal_kind_invalid');
   }
   const normalized = principal.kind === 'catalog-reader'

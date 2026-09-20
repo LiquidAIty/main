@@ -772,6 +772,32 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
+  it('opens the saved Main runtime when history arrives during canonical startup', async () => {
+    agentTerminalMocks.manager.findCard.mockReturnValueOnce(null);
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        runtimeSessionId: 'terminal:card_main_chat',
+        mainCardId: 'card_main_chat',
+      });
+      expect(agentTerminalMocks.manager.open).toHaveBeenCalledWith(
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+        expect.objectContaining({ id: 'card_main_chat' }),
+        expect.any(Object),
+        120,
+        36,
+        expect.objectContaining({ attachTui: false }),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('reloads the persisted direct Builder exchange with the original speaker identities', async () => {
     chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
       {
@@ -2192,6 +2218,7 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/magentic/execution/status');
       return {
         ok: true, state: 'completed', nativePhase: 'complete', nativeRootId: 't_mag_root',
+        finalTaskId: 't_mag_final',
         nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
         finalResult: 'Native Hermes Mag One response.',
@@ -2208,8 +2235,8 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/domain/runs/finish');
       const finish = JSON.parse(String(init?.body));
       expect(finish).toMatchObject({
-        runId: 'corr-mag-1', state: 'completed', hermesSessionRef: 'card_magentic',
-        providerThreadRef: 't_mag_root', providerTurnRef: null,
+        runId: 'corr-mag-1', state: 'completed', hermesSessionRef: null,
+        providerThreadRef: 't_mag_root', providerTurnRef: 't_mag_final',
         effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server',
         nativePhase: 'complete',
         finalResult: 'Native Hermes Mag One response.',
@@ -2272,7 +2299,7 @@ describe('saved Card routes', () => {
           runtimeOwner: 'mag_one',
           output: 'Native Hermes Mag One response.',
           transport: {
-            threadId: 't_mag_root', turnId: null, hermesSessionId: 'card_magentic',
+            threadId: 't_mag_root', turnId: 't_mag_final', hermesSessionId: null,
             runtimeSource: 'repository_hermes_magentic',
           },
           receipt: { runId: 'corr-mag-1', state: 'completed' },

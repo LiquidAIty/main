@@ -76,9 +76,13 @@ export function deriveAutomaticHermesCardIds(
     const targetIsBus = isMagenticOne(target);
     if (sourceIsBus === targetIsBus) continue;
     const attachedCard = sourceIsBus ? target : source;
+    const busCard = sourceIsBus ? source : target;
 
     if (edge.edgeType === 'magentic_option') {
-      if (attachedCard.runtime.kind === 'hermes' && isEnabledCard(attachedCard)) {
+      if (isEnabledCard(busCard)
+        && attachedCard.runtime.kind === 'hermes'
+        && isEnabledCard(attachedCard)) {
+        required.add(busCard.id);
         required.add(attachedCard.id);
       }
     } else if (attachedCard.runtime.kind === 'hermes' && attachedCard.runtime.mode === 'main') {
@@ -149,7 +153,7 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
             ? { workingDirectory: dependencies.mainWorkingDirectory(), attachTui: false }
             : dependencies.builderWorkingDirectory && isBuilderPresentation
               ? { workingDirectory: dependencies.builderWorkingDirectory(), attachTui: true }
-              : agentTerminalPresentationOptions(card, true)),
+              : agentTerminalPresentationOptions(card, card.runtime.mode !== 'magentic_one')),
         });
       }
     }

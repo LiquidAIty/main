@@ -24,7 +24,7 @@ describe('internal MCP Card authentication', () => {
       callerCardId: 'card-main',
       callerRuntimeKind: 'hermes',
       callerRuntimeMode: 'main',
-      grantedTools: ['canvas.inspect', 'canvas.inspect', 'card.run_assistant_agent'],
+      grantedTools: ['canvas.inspect', 'canvas.inspect', 'run_mag_one'],
       nativeChildId: 'native-child-1',
       nativeRunId: 'native-run-1',
     }, env, 1000);
@@ -38,7 +38,7 @@ describe('internal MCP Card authentication', () => {
         callerCardId: 'card-main',
         callerRuntimeKind: 'hermes',
         callerRuntimeMode: 'main',
-        grantedTools: ['canvas.inspect', 'card.run_assistant_agent'],
+        grantedTools: ['canvas.inspect', 'run_mag_one'],
         nativeChildId: 'native-child-1',
         nativeRunId: 'native-run-1',
       },

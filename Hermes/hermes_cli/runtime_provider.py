@@ -95,6 +95,7 @@ _HOST_MANDATED_API_MODES = {
 # codex_app_server is opt-in: hand the whole turn to a `codex app-server` subprocess (Codex's own
 # tool runtime), gated on `model.openai_runtime == "codex_app_server"` AND provider in {openai, openai-codex}.
 _VALID_API_MODES = {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server"}
+_CODEX_APP_SERVER_MANAGED_KEY = "codex-app-server-managed"
 
 
 def _detect_api_mode_for_url(base_url: str) -> Optional[str]:
@@ -237,6 +238,37 @@ def _maybe_apply_codex_app_server_runtime(*, provider: str, api_mode: str, model
     if model_cfg and provider in {"openai", "openai-codex"} and str(model_cfg.get("openai_runtime") or "").strip().lower() == "codex_app_server":
         return "codex_app_server"
     return api_mode
+
+
+def _configured_codex_app_server_runtime(
+    requested_provider: str,
+    model_cfg: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return the configured Codex app-server route without profile OAuth.
+
+    The app-server subprocess owns authentication through the Codex installation.
+    Requiring the enclosing Hermes profile to also own an ``openai-codex`` refresh
+    grant makes detached native task workers fail before that subprocess can start,
+    and copying a single-use OAuth grant into each profile is unsafe.  The marker
+    key satisfies the existing resolved-runtime/AIAgent constructor contract but is
+    never sent: ``codex_app_server`` bypasses the OpenAI wire client for the turn.
+    """
+    cfg = model_cfg if isinstance(model_cfg, dict) else _get_model_config()
+    provider = (requested_provider or "").strip().lower()
+    if provider == "auto":
+        provider = _cfg_provider(cfg)
+    if provider not in {"openai", "openai-codex"}:
+        return None
+    if str(cfg.get("openai_runtime") or "").strip().lower() != "codex_app_server":
+        return None
+    return _runtime(
+        "openai-codex",
+        "codex_app_server",
+        DEFAULT_CODEX_BASE_URL,
+        _CODEX_APP_SERVER_MANAGED_KEY,
+        source="codex-app-server",
+        requested_provider=requested_provider,
+    )
 
 
 # ── base_url / credential helpers ──────────────────────────────────────────────────────────
@@ -893,6 +925,7 @@ def _raise_for_credentialless_bare_custom(requested_provider: str, runtime: Dict
 def _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, target_model):
     """Ladder rungs 2-8, yielded lazily so each is evaluated only when the previous one returned
     nothing; the last rung (OpenRouter / bare-custom fallback) always yields a runtime."""
+    yield _configured_codex_app_server_runtime(requested_provider)
     yield _resolve_requested_shortcuts(requested_provider, explicit_api_key, explicit_base_url, target_model)
     yield _tag(_resolve_named_custom_runtime(requested_provider=requested_provider, explicit_api_key=explicit_api_key,
                                              explicit_base_url=explicit_base_url, target_model=target_model), requested_provider)

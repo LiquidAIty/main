@@ -26,6 +26,7 @@ function safeText(value: unknown): string {
 
 export default function BuilderChat({
   messages,
+  mainCardId,
   addressableAgents = [],
   onSend,
   knowledgeProjectId,
@@ -45,6 +46,8 @@ export default function BuilderChat({
     target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
     status?: "pending" | "complete" | "error";
   }[];
+  /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
+  mainCardId?: string;
   addressableAgents?: {
     cardId: string;
     profile: string;
@@ -154,6 +157,9 @@ export default function BuilderChat({
         >
         {messages.map((m, i) => {
           const isUser = m.role !== "assistant";
+          const showSpeaker = !isUser
+            && Boolean(m.speaker.cardId)
+            && m.speaker.cardId !== mainCardId;
           // Never render an empty/whitespace assistant bubble — only real assistant
           // text appears as a bubble. (Real user messages always render.)
           if (!isUser && !safeText(m.text).trim()) return null;
@@ -166,7 +172,7 @@ export default function BuilderChat({
                 width: "fit-content",
               }}
             >
-              {!isUser ? (
+              {showSpeaker ? (
                 <div
                   data-testid="builder-chat-speaker"
                   style={{

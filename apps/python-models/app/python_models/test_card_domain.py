@@ -444,6 +444,47 @@ def test_individual_external_mcp_tool_grant_derives_its_backing_connection(
     assert resolved["unavailableToolReasons"] == {}
 
 
+def test_unavailable_external_catalog_preserves_saved_grant_without_blocking_card_tools(
+    monkeypatch,
+):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["card.create", "cbm.search_graph"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "cardRevisionId": "revision-builder",
+        "discoveredTools": [],
+        "discoveredToolCatalogState": "unavailable",
+    })
+
+    assert resolved["enabledTools"] == ["card.create"]
+    assert resolved["presentedTools"] == ["card.create"]
+    assert resolved["unavailableTools"] == ["cbm.search_graph"]
+    assert resolved["unavailableToolReasons"] == {
+        "cbm.search_graph": "catalog_unavailable",
+    }
+    assert resolved["externalMcpTools"] == []
+    assert resolved["pluginTools"][0]["canonicalName"] == "card.create"
+
+
 def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_grant(
     monkeypatch,
 ):
@@ -803,8 +844,6 @@ def _delegation_invocation(
         **parent["runtimeOptions"],
         "tools": ["calculator"],
     }
-    if parent["runtime"].get("kind") == "hermes":
-        parent["runtimeOptions"]["tools"].append("card.run_assistant_agent")
     child = target or _agent(
         "child",
         runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
@@ -901,7 +940,7 @@ def test_hermes_flow_keeps_formal_run_and_conversation_surfaces_separate(
     )
     assert invocation["runtimeOwner"] == "hermes"
     assert invocation["cardIdentity"] == {"cardId": "parent", "title": "parent"}
-    assert "card.run_assistant_agent" not in invocation["idf"]["selectedToolsAndGrants"]["enabledTools"]
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation["idf"]
 
@@ -1549,6 +1588,77 @@ def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mo
     assert result["state"] == "completed"
 
 
+def test_finish_run_accepts_mag_one_native_root_and_final_task_without_fake_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    receipt = {
+        "run_id": "run-mag-one",
+        "state": "running",
+        "runtime_kind": "hermes",
+        "runtime_mode": "magentic_one",
+        "provider": "openai",
+        "access_mode": "chatgpt-account",
+        "saved_openai_runtime": "codex_app_server",
+        "effective_provider": None,
+        "provider_api_mode": None,
+    }
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+            if "UPDATE ag_catalog.agent_runs SET state" in str(query):
+                self.rowcount = 1
+                receipt["state"] = "completed"
+
+        def fetchone(self):
+            return receipt
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_observe_run_finish", lambda *_args, **_kwargs: True)
+
+    result = card_domain.finish_run({
+        "runId": "run-mag-one",
+        "state": "completed",
+        "finalResult": "Exact native synthesis",
+        "hermesSessionRef": None,
+        "providerThreadRef": "t_mag_root",
+        "providerTurnRef": "t_mag_final",
+        "effectiveProvider": "openai-codex",
+        "providerApiMode": "codex_app_server",
+        "nativePhase": "complete",
+    })
+
+    update_query, update_params = next(
+        statement for statement in statements
+        if "UPDATE ag_catalog.agent_runs SET state" in statement[0]
+    )
+    assert "hermes_session_ref=COALESCE(hermes_session_ref, %s)" in update_query
+    assert update_params[8] is None
+    assert update_params[9] == "t_mag_root"
+    assert update_params[10] == "t_mag_final"
+    assert result["updated"] is True
+    assert result["state"] == "completed"
+
+
 def test_finish_run_reconciles_one_hash_verified_result_without_rewriting_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1831,7 +1941,7 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
             "enabled": False,
         }],
     )
-    assert "card.run_assistant_agent" not in invocation["idf"]["selectedToolsAndGrants"]["enabledTools"]
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation
 
 
@@ -2508,7 +2618,6 @@ def test_explicit_card_mission_is_transient_and_retaskable(
     assert "Retask the same saved Graph Agent Card" in second["idf"]["dynamicContext"]["task"]
     assert "Research the first bounded question" not in second["idf"]["dynamicContext"]["task"]
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in second
-    assert "card.run_assistant_agent" not in second["idf"]["selectedToolsAndGrants"]["enabledTools"]
 
 
 def test_main_and_helper_can_explicitly_retask_one_non_delegating_graph_agent_card(
@@ -2517,8 +2626,6 @@ def test_main_and_helper_can_explicitly_retask_one_non_delegating_graph_agent_ca
     main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     helper = _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"})
     graph_agent = _agent("graph-agent", runtime={"kind": "hermes", "mode": "delegate", "profile": "knowledge"})
-    main["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
-    helper["runtimeOptions"]["tools"] = ["card.run_assistant_agent"]
     graph_agent["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
     for index, card in enumerate((main, helper, graph_agent), start=1):
         card["_cardRevisionId"] = f"revision-{index}"

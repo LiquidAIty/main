@@ -23,11 +23,6 @@ export function redactTrace(value: string): string {
   return String(value ?? '').trim() ? '<redacted>' : '';
 }
 
-function isCardDoorway(toolName: string): boolean {
-  return toolName === 'card.run_assistant_agent'
-    || toolName.endsWith('__card_run_assistant_agent');
-}
-
 /**
  * Format one real Hermes Gateway chat event into a concise trace line, or null when it
  * carries no lifecycle signal worth a line (streamed text chunks, the final `done`
@@ -39,12 +34,11 @@ export function formatHarnessTrace(event: TraceableEvent, correlationId: string)
   switch (event.kind) {
     case 'tool_start': {
       const name = String(event.toolName || 'tool');
-      return isCardDoorway(name) ? `[agent] card doorway started ${corr}` : `[tool] ${name} started ${corr}`;
+      return `[tool] ${name} started ${corr}`;
     }
     case 'tool_result': {
       const name = String(event.toolName || 'tool');
-      const label = isCardDoorway(name) ? '[agent] card doorway' : `[tool] ${name}`;
-      return `${label} ${event.isError ? 'failed' : 'completed'} ${corr}`;
+      return `[tool] ${name} ${event.isError ? 'failed' : 'completed'} ${corr}`;
     }
     case 'permission':
       return `[harness] permission requested ${corr}`;

@@ -24,7 +24,6 @@ operations = [
   { id = "card.update_configuration", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "canvas.upsert_wire", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "web_search", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
-  { id = "card.run_assistant_agent", access = "write", publication = "private-runtime", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "engraphis_answer", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "engraphis", kind = "tool" },
   { id = "engraphis_check_update", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "engraphis", kind = "tool" },
   { id = "engraphis_code_impact", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "engraphis", kind = "tool" },

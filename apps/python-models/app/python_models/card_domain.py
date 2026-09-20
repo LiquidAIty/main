@@ -2449,7 +2449,7 @@ def _prepare_invocation(
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
     unknown_tools = [name for name in ceiling if name not in by_id]
-    if unknown_tools:
+    if unknown_tools and catalog_state == "available":
         raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
     selected_mcp_connections = set(call_config["mcpConnectionIds"])
     connection_granted_tools = [
@@ -2468,7 +2468,9 @@ def _prepare_invocation(
     call_config["enabledTools"] = ceiling
 
     def unavailable_reason(name: str) -> str | None:
-        definition = by_id[name]
+        definition = by_id.get(name)
+        if definition is None:
+            return "catalog_unavailable"
         available_contracts = [
             contract for contract in definition.get("contracts", [])
             if isinstance(contract, dict) and contract.get("available") is not False
@@ -2506,13 +2508,6 @@ def _prepare_invocation(
     ]
     selected_tools = [name for name in effective_tools
                       if name in (readable_tool_ids() | writable_tool_ids())]
-    if runtime.get("kind") == "hermes":
-        # Native message_agent is the model-facing saved-Card conversation.
-        # card.run_assistant_agent remains the internal execution handler and
-        # must not compete in the model-visible tool surface.
-        selected_tools = [
-            name for name in selected_tools if name != "card.run_assistant_agent"
-        ]
     call_config["enabledTools"] = selected_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
@@ -3977,7 +3972,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
-            SELECT runtime_kind, provider, access_mode, saved_openai_runtime,
+            SELECT runtime_kind, runtime_mode, provider, access_mode, saved_openai_runtime,
                    effective_provider, provider_api_mode,
                    hermes_session_ref, provider_thread_ref, provider_turn_ref
             FROM ag_catalog.agent_runs WHERE run_id=%s
@@ -4016,6 +4011,24 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
         supplied_provider_api_mode = str(
             payload.get("providerApiMode") or ""
         ).strip()
+        runtime_mode = str(authority_row.get("runtime_mode") or "").strip()
+        has_native_root = bool(str(payload.get("providerThreadRef") or "").strip())
+        has_native_result = bool(str(payload.get("providerTurnRef") or "").strip())
+        magentic_transport_incomplete = (
+            runtime_mode == "magentic_one"
+            and (not has_native_root or not has_native_result)
+        )
+        codex_transport_incomplete = (
+            expected_provider_api_mode == "codex_app_server"
+            and (
+                not has_native_root
+                or not has_native_result
+                or (
+                    runtime_mode != "magentic_one"
+                    and not str(payload.get("hermesSessionRef") or "").strip()
+                )
+            )
+        )
         if (
             supplied_effective_provider
             and expected_effective_provider
@@ -4038,14 +4051,8 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                     expected_provider_api_mode
                     and not supplied_provider_api_mode
                 )
-                or (
-                    expected_provider_api_mode == "codex_app_server"
-                    and (
-                        not str(payload.get("hermesSessionRef") or "").strip()
-                        or not str(payload.get("providerThreadRef") or "").strip()
-                        or not str(payload.get("providerTurnRef") or "").strip()
-                    )
-                )
+                or magentic_transport_incomplete
+                or codex_transport_incomplete
             )
         ):
             raise CardDomainError("run_native_transport_evidence_incomplete")

@@ -27,6 +27,7 @@ function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTool
       inputSchema: { type: 'object', properties: {} },
     }],
     externalMcpTools: [],
+    externalToolCatalogState: 'available',
     configurationFingerprint: 'b'.repeat(64),
     ...overrides,
   };

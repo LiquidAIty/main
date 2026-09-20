@@ -13,6 +13,7 @@ import pytest
 
 from hermes_cli.runtime_provider import (
     _VALID_API_MODES,
+    _configured_codex_app_server_runtime,
     _maybe_apply_codex_app_server_runtime,
 )
 
@@ -89,6 +90,35 @@ class TestMaybeApplyCodexAppServerRuntime:
         assert got == "anthropic_messages", (
             f"provider={provider!r} should not be rerouted to codex_app_server"
         )
+
+
+class TestConfiguredCodexAppServerRuntime:
+    def test_uses_codex_owned_auth_without_profile_oauth(self) -> None:
+        got = _configured_codex_app_server_runtime(
+            "openai-codex",
+            {"provider": "openai-codex", "openai_runtime": "codex_app_server"},
+        )
+        assert got == {
+            "provider": "openai-codex",
+            "api_mode": "codex_app_server",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "api_key": "codex-app-server-managed",
+            "source": "codex-app-server",
+            "requested_provider": "openai-codex",
+        }
+
+    @pytest.mark.parametrize("provider", ["openrouter", "anthropic", ""])
+    def test_never_changes_non_openai_profiles(self, provider: str) -> None:
+        assert _configured_codex_app_server_runtime(
+            provider,
+            {"provider": provider, "openai_runtime": "codex_app_server"},
+        ) is None
+
+    def test_auto_runtime_keeps_profile_auth_resolution(self) -> None:
+        assert _configured_codex_app_server_runtime(
+            "openai-codex",
+            {"provider": "openai-codex", "openai_runtime": "auto"},
+        ) is None
 
 
 class TestCodexAppServerModule:
@@ -321,6 +351,7 @@ class TestSpawnEnvIsolation:
         danger-full-access. Hermes passes a narrow app-server config override
         for the Kanban root only.
         """
+        import json
         import subprocess
         from agent.transports import codex_app_server as cas
 
@@ -352,9 +383,11 @@ class TestSpawnEnvIsolation:
         monkeypatch.setenv("HOME", "/users/alice")
         monkeypatch.setenv("HERMES_HOME", "/users/alice/.hermes/profiles/backend-worker")
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_smoke")
+        windows_root = r"C:\Users\alice\.hermes\kanban\boards\smoke"
+        monkeypatch.setattr(cas.os.path, "dirname", lambda _path: windows_root)
         monkeypatch.setenv(
             "HERMES_KANBAN_DB",
-            "/users/alice/.hermes/kanban/boards/smoke/kanban.db",
+            windows_root + r"\kanban.db",
         )
 
         client = cas.CodexAppServerClient(codex_bin="codex")
@@ -364,7 +397,7 @@ class TestSpawnEnvIsolation:
         assert cmd[:2] == ["codex", "app-server"]
         assert 'sandbox_mode="workspace-write"' in cmd
         assert (
-            'sandbox_workspace_write.writable_roots=["/users/alice/.hermes/kanban/boards/smoke"]'
+            "sandbox_workspace_write.writable_roots=" + json.dumps([windows_root])
             in cmd
         )
         assert "sandbox_workspace_write.network_access=false" in cmd
@@ -445,4 +478,3 @@ class TestSpawnEnvSecretStripping:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-codex-needs-this")
         env = self._capture_spawn_env(monkeypatch)
         assert env.get("OPENAI_API_KEY") == "sk-codex-needs-this"
-

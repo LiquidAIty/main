@@ -73,10 +73,14 @@ def test_worker_overrides_target_the_migrated_server(launch, tmp_path):
         "HERMES_KANBAN_DB": str(tmp_path / "board" / "kanban.db"),
     })
     assert overrides, "dispatcher-owned worker must scope the managed MCP endpoint"
-    targeted = {arg.split(".env.", 1)[0].removeprefix("mcp_servers.") for arg in overrides}
+    env_overrides = [arg for arg in overrides if ".env." in arg]
+    targeted = {arg.split(".env.", 1)[0].removeprefix("mcp_servers.") for arg in env_overrides}
     migrated = _migrated_server_names(tmp_path)
     assert targeted <= migrated, f"overrides target {targeted - migrated}, which codex has no transport for"
-    assert any(arg.startswith(f"mcp_servers.{next(iter(targeted))}.env.HERMES_KANBAN_TASK=") for arg in overrides)
+    server_prefix = f"mcp_servers.{next(iter(targeted))}"
+    assert any(arg.startswith(f"{server_prefix}.command=") for arg in overrides)
+    assert any(arg.startswith(f"{server_prefix}.args=") for arg in overrides)
+    assert any(arg.startswith(f"{server_prefix}.env.HERMES_KANBAN_TASK=") for arg in overrides)
 
 
 def test_only_dispatcher_owned_workers_get_mcp_overrides(launch):

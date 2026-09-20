@@ -205,35 +205,14 @@ export function toggleSavedToolAssignment(
   if (checked) return savedToolNames.includes(name) ? savedToolNames : [...savedToolNames, name];
   return savedToolNames.filter((savedName) => savedName !== name);
 }
-type AgentType =
-  | 'agent_builder'
-  | 'llm_chat'
-  | 'kg_ingest'
-  | 'knowgraph'
-  | 'neo4j'
-  | 'research_agent';
-
 interface AgentManagerProps {
   cardId?: string;
   cardKind?: string;
   projectId?: string;
   deckId?: string;
-  agentType: AgentType;
   activeTab: string;
   promptPreviewPlanText?: string;
   onGraphRefresh?: () => void;
-  onLastRun?: (lastRun: {
-    agentType: AgentType;
-    request: any;
-    responseOrError: any;
-    elapsedMs: number;
-    provider?: string | null;
-    model?: string | null;
-    endpoint?: string | null;
-    requestId?: string | null;
-    finishReason?: string | null;
-    usage?: any | null;
-  }) => void;
   promptTestInput?: string;
   onChangePromptTestInput?: (value: string) => void;
   onRunCard?: () => void;

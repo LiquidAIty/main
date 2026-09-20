@@ -89,6 +89,7 @@ export type HermesCardTools = {
   mcpConnectionIds: string[];
   pluginTools: HermesCardPluginTool[];
   externalMcpTools: HermesCardExternalMcpTool[];
+  externalToolCatalogState: 'available' | 'unavailable';
   configurationFingerprint: string;
 };
 
@@ -111,7 +112,12 @@ function strings(value: unknown): string[] | null {
   return value.map((item) => item.trim());
 }
 
-function requireCardTools(value: unknown, owner: AgentTerminalOwner, card: AgentCardInstance): HermesCardTools {
+function requireCardTools(
+  value: unknown,
+  owner: AgentTerminalOwner,
+  card: AgentCardInstance,
+  externalToolCatalogState: HermesCardTools['externalToolCatalogState'],
+): HermesCardTools {
   const body = record(value);
   const runtime = record(body.runtime);
   const rawPluginTools = Array.isArray(body.pluginTools) ? body.pluginTools : null;
@@ -199,6 +205,7 @@ function requireCardTools(value: unknown, owner: AgentTerminalOwner, card: Agent
     mcpConnectionIds: listFields.mcpConnectionIds!,
     pluginTools,
     externalMcpTools,
+    externalToolCatalogState,
     configurationFingerprint: String(body.configurationFingerprint),
   };
 }
@@ -230,7 +237,7 @@ export async function resolveHermesCardTools(
       discoveredToolCatalogState: externalToolCatalog.state,
     }),
   });
-  return requireCardTools(resolved, owner, card);
+  return requireCardTools(resolved, owner, card, externalToolCatalog.state);
 }
 
 function inside(root: string, target: string): boolean {

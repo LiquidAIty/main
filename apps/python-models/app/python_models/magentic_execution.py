@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
-import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -13,9 +11,6 @@ from typing import Any, Iterator
 
 class MagenticExecutionError(RuntimeError):
     pass
-
-
-_PROFILE_SCOPE_LOCK = threading.Lock()
 
 
 def _required_text(value: Any, field: str) -> str:
@@ -38,17 +33,14 @@ def _runtime_paths() -> tuple[Path, Path]:
 
 @contextmanager
 def _default_home_scope(hermes_home: Path) -> Iterator[None]:
-    """Give Hermes profile APIs their repository-owned root without leaking it."""
-    with _PROFILE_SCOPE_LOCK:
-        previous = os.environ.get("HERMES_HOME")
-        os.environ["HERMES_HOME"] = str(hermes_home)
-        try:
-            yield
-        finally:
-            if previous is None:
-                os.environ.pop("HERMES_HOME", None)
-            else:
-                os.environ["HERMES_HOME"] = previous
+    """Give Hermes profile APIs their repository root without cross-thread leakage."""
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    token = set_hermes_home_override(hermes_home)
+    try:
+        yield
+    finally:
+        reset_hermes_home_override(token)
 
 
 def _native_model(provider: dict[str, Any], options: dict[str, Any]) -> tuple[str, str, str | None]:
@@ -84,17 +76,29 @@ def _ensure_orchestrator_identity(
     _, hermes_home = _runtime_paths()
 
     with _default_home_scope(hermes_home):
-        from hermes_cli.profiles import get_profile_dir, profile_exists
+        from hermes_cli.profiles import normalize_profile_name, validate_profile_name
+        from hermes_constants import named_profile_is_live
 
-        if not profile_exists(native_identity):
+        def profile_home(name: str) -> Path | None:
+            canonical = normalize_profile_name(name)
+            try:
+                validate_profile_name(canonical)
+            except ValueError:
+                return None
+            candidate = hermes_home if canonical == "default" else hermes_home / "profiles" / canonical
+            if canonical == "default":
+                return candidate if candidate.is_dir() else None
+            return candidate if named_profile_is_live(candidate) else None
+
+        orchestrator_home = profile_home(native_identity)
+        if orchestrator_home is None:
             raise MagenticExecutionError(
                 f"magentic_orchestrator_native_identity_missing:{native_identity}"
             )
-        profile_home = get_profile_dir(native_identity)
         missing = [
             _required_text(worker.get("profile"), "magentic_worker_identity")
             for worker in workers
-            if not profile_exists(_required_text(worker.get("profile"), "magentic_worker_identity"))
+            if profile_home(_required_text(worker.get("profile"), "magentic_worker_identity")) is None
         ]
         if missing:
             raise MagenticExecutionError(
@@ -104,7 +108,7 @@ def _ensure_orchestrator_identity(
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
         from hermes_cli.config import load_config
 
-        token = set_hermes_home_override(profile_home)
+        token = set_hermes_home_override(orchestrator_home)
         try:
             config = load_config() or {}
             model_config = config.get("model") or {}
@@ -137,9 +141,12 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
             raise MagenticExecutionError(f"magentic_worker_identity_duplicate:{identity}")
         seen.add(identity)
         identities.append(identity)
+        title = str(worker.get("title") or card_id).strip()
+        description = str(worker.get("description") or "").strip()
+        capability = f"; {description}" if description else ""
         lines.append(
             f"- {identity}: Card {card_id} revision {revision_id}; "
-            f"{str(worker.get('title') or card_id).strip()}"
+            f"{title}{capability}"
         )
     if not identities:
         raise MagenticExecutionError("magentic_runtime_no_connected_participants")
@@ -149,12 +156,23 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
 def _root_body(mission: str, native_identity: str, worker_text: str) -> str:
     return (
         "Execute this Mag One mission through native tasks and dependencies.\n\n"
-        "Allowed worker Agents (the complete top-level assignment scope):\n"
+        "Available top-level worker Agents (the complete Mag One assignment scope):\n"
         f"{worker_text}\n\n"
-        "Create worker tasks only for those identities. Create exactly one final synthesis "
-        f"task assigned to {native_identity}; make every top-level worker result a dependency "
-        "of that final task. The final task must inspect its parent summaries, synthesize the "
-        "actual answer, create no further tasks, and complete with that answer in its summary. "
+        "Assign only work that helps answer the mission; available workers do not all need a task. "
+        "The list above is the complete persistent profile universe for this Mag One Run: do not "
+        "discover, infer, or substitute any other persistent profile. Decide the useful task graph "
+        "yourself, "
+        "create its tasks and dependencies with the native task tools, and assign top-level work "
+        "only to the listed identities. A worker Agent executes through its exact saved Card "
+        "configuration and returns through its assigned task. Do not turn a worker into a new "
+        "persistent-profile team; only this orchestrator assigns the listed worker profiles. A "
+        "worker may self-assign native follow-up work, but may not recruit another persistent "
+        "profile. Ensure the graph "
+        f"terminates in one result task assigned to {native_identity}, and make every task "
+        "whose result informs the answer reach that "
+        "task through native dependencies. The final task must inspect its dependency "
+        "handoffs, compare the result with the original mission, answer the user directly with "
+        "honest limitations, and complete with that answer in its summary. "
         "When completing this decomposition root, pass every task id you created in "
         "created_cards. Do not perform the worker work or final synthesis in this root.\n\n"
         "Mission and selected context:\n"
@@ -283,22 +301,25 @@ def _final_task_id(task_db: Any, connection: Any, root: Any) -> str:
     direct_created = _creator_children(connection).get(root.id, [])
     if not verified or set(verified) != set(direct_created):
         raise MagenticExecutionError("magentic_created_task_set_invalid")
-    if set(_execution_task_ids(connection, root.id)) != {root.id, *verified}:
-        raise MagenticExecutionError("magentic_task_tree_invalid")
-    tasks = {task_id: task_db.get_task(connection, task_id) for task_id in verified}
+    execution_ids = [
+        task_id for task_id in _execution_task_ids(connection, root.id)
+        if task_id != root.id
+    ]
+    tasks = {task_id: task_db.get_task(connection, task_id) for task_id in execution_ids}
     if any(task is None for task in tasks.values()):
         raise MagenticExecutionError("magentic_created_task_missing")
-    verified_set = set(verified)
+    execution_set = set(execution_ids)
     children = {
-        task_id: [child for child in task_db.child_ids(connection, task_id) if child in verified_set]
-        for task_id in verified
+        task_id: [child for child in task_db.child_ids(connection, task_id) if child in execution_set]
+        for task_id in execution_ids
     }
-    sinks = [task_id for task_id in verified if not children[task_id]]
-    if len(sinks) != 1:
+    final_candidates = [
+        task_id for task_id in execution_ids
+        if not children[task_id] and tasks[task_id].assignee == root.assignee
+    ]
+    if len(final_candidates) != 1:
         raise MagenticExecutionError("magentic_final_task_ambiguous")
-    final_id = sinks[0]
-    if tasks[final_id].assignee != root.assignee:
-        raise MagenticExecutionError("magentic_final_task_identity_invalid")
+    final_id = final_candidates[0]
 
     def reaches_final(start: str) -> bool:
         pending = [start]
@@ -313,7 +334,7 @@ def _final_task_id(task_db: Any, connection: Any, root: Any) -> str:
             pending.extend(children.get(current, []))
         return False
 
-    if any(not reaches_final(task_id) for task_id in verified):
+    if any(not reaches_final(task_id) for task_id in execution_ids):
         raise MagenticExecutionError("magentic_final_task_dependencies_invalid")
     return final_id
 

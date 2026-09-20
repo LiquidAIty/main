@@ -28,7 +28,6 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'canvas.upsert_wire',
       'card.create',
       'card.load_graph_references',
-      'card.run_assistant_agent',
       'card.update_configuration',
       'cbm.search_graph',
       'cbm.index_status',
@@ -53,6 +52,8 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names).not.toContain('knowgraph.ingest');
     expect(names).not.toContain('codegraph.search');
     expect(names).not.toContain('codegraph.status');
+    expect(names).not.toContain('card.run_assistant_agent');
+    expect(names).not.toContain('card.run_agent');
   // A cold host initializes two native catalogs; slower backup/development
   // machines can cross 30s even when the real catalog completes successfully.
   }, 60_000);
@@ -71,11 +72,9 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
   }, 60_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {
-    const result = await callPythonAgentMcpTool('card.run_assistant_agent', {
+    const result = await callPythonAgentMcpTool('run_mag_one', {
       projectId: 'p',
       deckId: 'deck_builder',
-      cardId: 'c',
-      correlationId: 'x',
       input: 'hi',
       prompt: 'evil',
       modelKey: 'evil-model',

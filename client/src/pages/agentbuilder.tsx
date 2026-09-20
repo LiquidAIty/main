@@ -353,7 +353,7 @@ export default function AgentBuilder(): React.ReactElement {
     ))?.id || null,
     [deck.nodes],
   );
-  const agentBuilderCard = useMemo(
+  const builderCard = useMemo(
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes'
       && card.id === BUILDER_CARD_ID
@@ -719,7 +719,6 @@ export default function AgentBuilder(): React.ReactElement {
     nativeSessionActive,
     nativeSessionConnecting,
     mainDriverSource,
-    workSurfaceCardId,
     sessionHistoryLoading,
     stopMainTurn,
     technicalError,
@@ -736,12 +735,6 @@ export default function AgentBuilder(): React.ReactElement {
     onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
-  const sharedWorkSurfaceCard = useMemo(() => {
-    if (!workSurfaceCardId) return agentBuilderCard;
-    return deck.nodes.find((card) => (
-      card.id === workSurfaceCardId && card.runtime.kind === 'hermes'
-    )) || null;
-  }, [agentBuilderCard, deck.nodes, workSurfaceCardId]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -951,7 +944,7 @@ export default function AgentBuilder(): React.ReactElement {
       return [];
     }
     return deck.edges
-      .filter((edge) => edge.edgeType === 'magentic_option')
+      .filter((edge) => edge.enabled !== false && edge.edgeType === 'magentic_option')
       .map((edge) => edge.source === selectedCard.id ? edge.target : edge.target === selectedCard.id ? edge.source : null)
       .filter((cardId): cardId is string => Boolean(cardId))
       .map((cardId) => deck.nodes.find((card) => card.id === cardId))
@@ -1400,7 +1393,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   useEffect(() => {
     if (!canvasProjectId) return;
-    const cards = [agentBuilderCard, selectedCard]
+    const cards = [builderCard, selectedCard]
       .filter((card): card is AgentCardInstance => Boolean(card))
       .filter((card, index, values) => values.findIndex((candidate) => candidate.id === card.id) === index);
     let cancelled = false;
@@ -1413,7 +1406,7 @@ export default function AgentBuilder(): React.ReactElement {
       const hydrationGeneration = (standaloneHydrationGenerationRef.current[card.id] || 0) + 1;
       standaloneHydrationGenerationRef.current[card.id] = hydrationGeneration;
       void readStandaloneRunStatus({ cardId: card.id,
-        ...(card.id === agentBuilderCard?.id && workspaceView !== 'canvas' ? { conversationId } : {}),
+        ...(card.id === builderCard?.id && workspaceView !== 'canvas' ? { conversationId } : {}),
       })
         .then(async (result) => {
           if (cancelled || hydrationGeneration !== standaloneHydrationGenerationRef.current[card.id]) return;
@@ -1448,7 +1441,7 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [agentBuilderCard, canvasProjectId, cardActivity.activeAgentCounts, messages.length, conversationId, workspaceView,
+  }, [builderCard, canvasProjectId, cardActivity.activeAgentCounts, messages.length, conversationId, workspaceView,
     pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setCardRunBusy,
     setDeckStatusMessage, setStandaloneTestResultForCard,
     toStandaloneRunResult, transientCardGraphContext, transientCardInputs]);
@@ -1456,10 +1449,11 @@ export default function AgentBuilder(): React.ReactElement {
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
       ...BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'
-        || (selectedCard.id !== mainCardId && selectedCard.id !== agentBuilderCard?.id)),
+        || (selectedCard.id !== mainCardId && selectedCard.id !== builderCard?.id)),
       ...(selectedCard.runtime.kind === 'hermes'
+        && selectedCard.runtime.mode !== 'magentic_one'
         && selectedCard.id !== mainCardId
-        && selectedCard.id !== agentBuilderCard?.id
+        && selectedCard.id !== builderCard?.id
         ? ['CLI']
         : []),
       ...readCardSubsystemAttachments(selectedCard.runtimeOptions)
@@ -1467,7 +1461,7 @@ export default function AgentBuilder(): React.ReactElement {
         .map((attachment) => attachment.label),
     ];
     return [...BUILDER_PROJECT_TABS];
-  }, [selectedCard, mainCardId, agentBuilderCard?.id]);
+  }, [selectedCard, mainCardId, builderCard?.id]);
   const selectedCardSubsystem = useMemo(
     () => readCardSubsystemAttachments(selectedCard?.runtimeOptions)
       .find((attachment) => attachment.cardTab.enabled && attachment.label === tab) || null,
@@ -1602,7 +1596,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab(cardId === mainCardId || cardId === agentBuilderCard?.id ? 'Prompt' : 'Results');
+        setTab(cardId === mainCardId || cardId === builderCard?.id ? 'Prompt' : 'Results');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1611,7 +1605,7 @@ export default function AgentBuilder(): React.ReactElement {
         }));
       }
     },
-    [deck.nodes, recordUiOnlyAction, tab, mainCardId, agentBuilderCard?.id],
+    [deck.nodes, recordUiOnlyAction, tab, mainCardId, builderCard?.id],
   );
 
   const handleSelectEdge = useCallback(
@@ -1673,8 +1667,9 @@ export default function AgentBuilder(): React.ReactElement {
         if (
           tab === 'CLI'
           && selectedCard.runtime.kind === 'hermes'
+          && selectedCard.runtime.mode !== 'magentic_one'
           && selectedCard.id !== mainCardId
-          && selectedCard.id !== agentBuilderCard?.id
+          && selectedCard.id !== builderCard?.id
         ) {
           return <AgentTerminalPanel
             key={`${canvasProjectId}:${BUILDER_DECK_ID}:${selectedCard.id}:${selectedCard.runtime.profile}`}
@@ -1711,7 +1706,6 @@ export default function AgentBuilder(): React.ReactElement {
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
                     deckId={BUILDER_DECK_ID}
-                    agentType="agent_builder"
                     registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
@@ -1877,11 +1871,13 @@ export default function AgentBuilder(): React.ReactElement {
     compact = false,
     surfaceRole: 'large' | 'companion' = compact ? 'companion' : 'large',
   ) => {
-    // Shared chat stays common while the pull-up follows the server-resolved Card.
+    // Main owns the chat above; the permanent lower work surface belongs only
+    // to the separately saved Builder Card and its own Hermes session.
     const chat = (
       <div style={{ height: '100%', minHeight: 0 }}>
         <BuilderChat
           messages={messages}
+          mainCardId={mainCardId || undefined}
           addressableAgents={addressableAgents}
           onSend={handleNativeSend}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
@@ -1911,18 +1907,18 @@ export default function AgentBuilder(): React.ReactElement {
       </div>
     );
     const cardWorkSurface = () => (
-      sharedWorkSurfaceCard?.runtime.kind === 'hermes' && canvasProjectId ? (
+      builderCard?.runtime.kind === 'hermes' && canvasProjectId ? (
         <div
           data-testid="under-chat-card-work-surface"
-          data-card-id={sharedWorkSurfaceCard.id}
+          data-card-id={builderCard.id}
           style={{ height: '100%', minHeight: 0 }}
         >
           <AgentTerminalPanel
-            key={`${canvasProjectId}:${sharedWorkSurfaceCard.id}:${sharedWorkSurfaceCard.runtime.profile}`}
+            key={`${canvasProjectId}:${builderCard.id}:${builderCard.runtime.profile}`}
             identity={{
               projectId: canvasProjectId,
               deckId: BUILDER_DECK_ID,
-              cardId: sharedWorkSurfaceCard.id,
+              cardId: builderCard.id,
             }}
           />
         </div>
@@ -1945,7 +1941,7 @@ export default function AgentBuilder(): React.ReactElement {
             storageKey={`liquidaity.main.agent-builder.split.v1:${projectId}`}
             chat={chat}
             terminal={cardWorkSurface()}
-            workSurfaceLabel={sharedWorkSurfaceCard?.title || 'Card'}
+            workSurfaceLabel={builderCard?.title || 'Builder'}
           />
         )}
       </div>

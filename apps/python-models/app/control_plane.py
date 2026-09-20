@@ -7,7 +7,6 @@ The minimum user-directed MCP control surface over ACTUAL saved state:
   * card.create                — strict optimistic creation in the saved deck
   * card.update_configuration  — strict allowlist edits of persisted card config
   * canvas.upsert_wire         — flow / magentic_option / magentic_control
-  * card.run_assistant_agent   — run ONE saved enabled card (no overrides possible)
 
 Policy/validation lives HERE (Python). Saved-deck persistence stays with the
 existing backend deck routes on loopback (single deck authority — not replaced).
@@ -963,98 +962,3 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "op": op, "wireId": resolved_id, "edgeType": resolved_type}
 
     return await asyncio.to_thread(_apply)
-
-
-# ---------------------------------------------------------------------------
-# card.run_assistant_agent
-# ---------------------------------------------------------------------------
-
-
-async def card_run_assistant_agent(args: dict[str, Any]) -> dict[str, Any]:
-    # deckId is optional transport: the backend bridge owns the canonical
-    # Agent Canvas default. conversationId is a structural reference to the
-    # real live conversation when one exists — the backend mints card-scoped
-    # authority from it; this layer never authors or invents authority.
-    action = str(args.get("action") or "execute").strip()
-    if action == "status" or args.get("runId") or args.get("nativeRootId"):
-        _require(args, "projectId")
-        selectors = {
-            key: str(args.get(key) or "").strip()
-            for key in ("runId", "nativeRootId", "cardId")
-            if str(args.get(key) or "").strip()
-        }
-        if len(selectors) != 1:
-            raise ControlPlaneError("card_run_status_selector_invalid")
-        payload = {
-            "projectId": str(args["projectId"]).strip(),
-            **({"deckId": str(args["deckId"]).strip()} if args.get("deckId") else {}),
-            "action": "status",
-            **selectors,
-        }
-        response = await asyncio.to_thread(
-            _backend_json,
-            "POST",
-            "/api/cards/run",
-            payload,
-        )
-        if response.get("ok") is False:
-            raise ControlPlaneError(str(response.get("error") or "configured_card_status_failed"))
-        return response
-
-    _require(args, "projectId", "cardId", "correlationId", "input")
-    deck_id = str(args.get("deckId") or "").strip()
-    conversation_id = str(args.get("conversationId") or "").strip()
-    originating_agent_id = str(args.get("originatingAgentId") or "").strip()
-    originating_run_id = str(args.get("originatingRunId") or "").strip()
-    project_id = str(args["projectId"]).strip()
-    card_id = str(args["cardId"]).strip()
-    card_revision_id = str(args.get("cardRevisionId") or "").strip()
-    correlation_id = str(args["correlationId"]).strip()
-    instruction = str(args["input"])
-    background = args.get("background", False)
-    if not isinstance(background, bool):
-        raise ControlPlaneError("card_run_background_must_be_boolean")
-    if background and not originating_agent_id:
-        raise ControlPlaneError("card_run_background_source_required")
-
-    if originating_agent_id:
-        if not conversation_id:
-            raise ControlPlaneError("conversationId_required_for_agent_handoff")
-        if not originating_run_id:
-            raise ControlPlaneError("originatingRunId_required_for_agent_handoff")
-        deck_id = deck_id or "deck_builder"
-
-    payload = {
-        "projectId": project_id,
-        **({"deckId": deck_id} if deck_id else {}),
-        "cardId": card_id,
-        **({"cardRevisionId": card_revision_id} if card_revision_id else {}),
-        "correlationId": correlation_id,
-        **({"conversationId": conversation_id} if conversation_id else {}),
-        **({"senderCardId": originating_agent_id} if originating_agent_id else {}),
-        **({"originatingRunId": originating_run_id} if originating_run_id else {}),
-        "input": instruction,
-        **({"background": True} if background else {}),
-        **(
-            {"dataAnchors": args["dataAnchors"]}
-            if isinstance(args.get("dataAnchors"), list)
-            else {}
-        ),
-    }
-
-    try:
-        response = await asyncio.to_thread(
-            _backend_json,
-            "POST",
-            "/api/cards/run",
-            {
-                **payload,
-                "action": "execute",
-            },
-        )
-    except Exception:
-        raise
-
-    if response.get("ok") is False:
-        raise ControlPlaneError(str(response.get("error") or "configured_card_run_failed"))
-    return response

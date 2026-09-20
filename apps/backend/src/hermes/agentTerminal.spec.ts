@@ -13,6 +13,7 @@ import {
   type AgentTerminalOwner,
 } from './agentTerminal';
 import type { AgentCardInstance, DeckDocument } from '../types';
+import type { HermesCardTools } from './cardToolsPlugin';
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   listPythonAgentMcpCatalog: vi.fn(),
@@ -78,6 +79,7 @@ class FakeGatewayClient {
   closed = false;
   private activeStored = '';
   private activeNative = '';
+  private mcpReloaded = false;
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
   private readonly botRosters = new Map<string, string[]>();
 
@@ -222,10 +224,18 @@ class FakeGatewayClient {
         { name: 'card-tools', version: '0.1.0', enabled: true },
       ] } as T;
     }
+    if (method === 'reload.mcp') {
+      this.mcpReloaded = true;
+      return { status: 'reloaded' } as T;
+    }
     if (method === 'tools.show') return { sections: [
       { name: 'memory', tools: [{ name: 'memory', description: 'Memory' }] },
       { name: 'card-tools', tools: [{ name: 'card__canvas_inspect', description: 'Inspect' }] },
-    ], total: 2 } as T;
+      ...(this.mcpReloaded ? [{
+        name: 'mcp-cbm',
+        tools: [{ name: 'mcp__cbm__search_graph', description: 'Search CodeGraph' }],
+      }] : []),
+    ], total: this.mcpReloaded ? 3 : 2 } as T;
     if (method === 'session.interrupt') return { ok: true } as T;
     throw new Error(`unexpected fake gateway request:${method}`);
   }
@@ -331,12 +341,12 @@ function fixture(extraProfileNames: string[] = []) {
   }));
   const onExit = vi.fn(async () => undefined);
   const materialize = vi.fn(async (..._args: any[]) => ({
-    native: {}, unavailableNativeToolReasons: {},
+    native: {}, unavailableNativeToolReasons: {}, unavailableMcpServerReasons: {},
   }));
   const resolveCardTools = vi.fn(async (
     owner: AgentTerminalOwner,
     selected: AgentCardInstance,
-  ) => ({
+  ): Promise<HermesCardTools> => ({
     projectId: owner.projectId,
     deckId: owner.deckId,
     cardId: owner.cardId,
@@ -359,6 +369,7 @@ function fixture(extraProfileNames: string[] = []) {
       inputSchema: { type: 'object', properties: {} },
     }],
     externalMcpTools: [],
+    externalToolCatalogState: 'available' as const,
     configurationFingerprint: createHash('sha256')
       .update(String(selected._cardRevisionId || ''))
       .digest('hex'),
@@ -445,10 +456,63 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.configureCardInstructions).toHaveBeenCalledWith(
       'signal-analyst', 'Prompt signal',
     );
+    expect(f.configureCardModelRuntime).toHaveBeenCalledExactlyOnceWith(
+      'signal-analyst', {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-sol',
+        openaiRuntime: 'codex_app_server',
+      },
+    );
+  });
+
+  it('reuses the saved ChatGPT account for a running Mag One worker without cloning OAuth', async () => {
+    const f = fixture();
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false });
+    f.configureCardInstructions.mockClear();
+    f.configureCardModelRuntime.mockClear();
+
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+      materializeTaskProfile: true,
+    });
+
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.configureCardInstructions).toHaveBeenCalledExactlyOnceWith(
+      'signal-analyst', 'Prompt signal',
+    );
+    expect(f.configureCardModelRuntime).toHaveBeenCalledExactlyOnceWith(
+      'signal-analyst', {
+        provider: 'openai-codex',
+        model: 'gpt-5.6-sol',
+        openaiRuntime: 'codex_app_server',
+      },
+    );
+  });
+
+  it('does not require the direct-Agent roster when preparing Mag One headlessly', async () => {
+    const f = fixture();
+    f.cards[0].runtime = {
+      kind: 'hermes', mode: 'magentic_one', profile: 'signal-analyst',
+    };
+
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+      materializeTaskProfile: true,
+    });
+
+    expect(f.resolveBotRoster).not.toHaveBeenCalled();
+    expect(f.configureCardInstructions).toHaveBeenCalledExactlyOnceWith(
+      'signal-analyst', 'Prompt signal',
+    );
+    expect(f.configureCardModelRuntime).not.toHaveBeenCalled();
   });
 
   it('projects the saved app-server model without requiring profile-local OAuth', async () => {
     const f = fixture();
+    f.cards[0].runtimeOptions = {
+      ...f.cards[0].runtimeOptions,
+      openaiRuntime: 'codex_app_server',
+    };
     f.materialize.mockImplementationOnce(async (
       _selection: unknown,
       _readNative: unknown,
@@ -466,7 +530,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         apiMode: 'codex_app_server',
         openaiRuntime: 'codex_app_server',
       });
-      return { native: {}, unavailableNativeToolReasons: {} };
+      return {
+        native: {}, unavailableNativeToolReasons: {}, unavailableMcpServerReasons: {},
+      };
     });
 
     await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
@@ -511,6 +577,47 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(first.sessionId).toBe(second.sessionId);
     expect(f.spawnGateway).toHaveBeenCalledOnce();
     expect(f.spawnPty).toHaveBeenCalledOnce();
+  });
+
+  it('joins a pending Card start when the optional external catalog becomes available', async () => {
+    const f = fixture();
+    const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    f.resolveCardTools.mockReset();
+    f.resolveCardTools
+      .mockResolvedValueOnce({
+        ...base,
+        unavailableTools: ['cbm.search_graph'],
+        unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+        presentedTools: ['canvas.inspect'],
+        externalMcpTools: [],
+        externalToolCatalogState: 'unavailable',
+        configurationFingerprint: '1'.repeat(64),
+      })
+      .mockResolvedValue({
+        ...base,
+        enabledTools: ['canvas.inspect', 'cbm.search_graph'],
+        unavailableTools: [],
+        unavailableToolReasons: {},
+        presentedTools: ['canvas.inspect', 'cbm.search_graph'],
+        externalMcpTools: [{
+          canonicalName: 'cbm.search_graph',
+          connectionId: 'cbm',
+          nativeName: 'search_graph',
+        }],
+        externalToolCatalogState: 'available',
+        configurationFingerprint: '2'.repeat(64),
+      });
+
+    const [starting, joining] = await Promise.all([
+      f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false }),
+      f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: true }),
+    ]);
+
+    expect(joining.sessionId).toBe(starting.sessionId);
+    expect(joining.ptyId).not.toBeNull();
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.clients[0].requests.map((request) => request.method)).toContain('reload.mcp');
   });
 
   it('keeps one Gateway-owned runtime when a headless presentation later attaches its native TUI', async () => {
@@ -630,6 +737,139 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       .toEqual({ session_id: state.nativeSessionId });
     expect(f.clients[0].requests.findIndex((request) => request.method === 'plugins.list'))
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
+  });
+
+  it('starts without the optional external catalog and refreshes it before a later turn', async () => {
+    const f = fixture();
+    const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    f.resolveCardTools.mockReset();
+    f.resolveCardTools
+      .mockResolvedValueOnce({
+        ...base,
+        enabledTools: ['canvas.inspect'],
+        unavailableTools: ['cbm.search_graph'],
+        unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+        presentedTools: ['canvas.inspect'],
+        externalMcpTools: [],
+        externalToolCatalogState: 'unavailable',
+        configurationFingerprint: '1'.repeat(64),
+      })
+      .mockResolvedValue({
+        ...base,
+        enabledTools: ['canvas.inspect', 'cbm.search_graph'],
+        unavailableTools: [],
+        unavailableToolReasons: {},
+        presentedTools: ['canvas.inspect', 'cbm.search_graph'],
+        externalMcpTools: [{
+          canonicalName: 'cbm.search_graph',
+          connectionId: 'cbm',
+          nativeName: 'search_graph',
+        }],
+        externalToolCatalogState: 'available',
+        configurationFingerprint: '2'.repeat(64),
+      });
+
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    expect(state.status).toBe('running');
+    expect(state.unavailableToolReasons).toEqual({ 'cbm.search_graph': 'catalog_unavailable' });
+
+    await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
+      .resolves.toMatchObject({ status: 'running' });
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'use code context'))
+      .resolves.toMatchObject({ text: 'reply:use code context' });
+    expect(f.materializeExternalMcpTools).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        externalToolCatalogState: 'available',
+        externalMcpTools: [expect.objectContaining({ connectionId: 'cbm' })],
+      }),
+      {},
+    );
+    const methods = f.clients[0].requests.map((request) => request.method);
+    expect(methods.indexOf('reload.mcp')).toBeGreaterThan(-1);
+    expect(methods.indexOf('reload.mcp')).toBeLessThan(methods.indexOf('prompt.submit'));
+    expect(f.clients[0].requests.find((request) => request.method === 'reload.mcp')?.params)
+      .toEqual({ session_id: state.nativeSessionId, confirm: true });
+    expect(f.clients[0].requests.filter((request) => request.method === 'tools.show').at(-1)?.params)
+      .toEqual({ session_id: state.nativeSessionId });
+    expect(f.manager.state(f.owners[0], state.sessionId).unavailableToolReasons).toEqual({});
+  });
+
+  it('keeps the exact Card running when an optional catalog refresh is not yet installable', async () => {
+    const f = fixture();
+    const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    f.resolveCardTools.mockReset();
+    f.resolveCardTools
+      .mockResolvedValueOnce({
+        ...base,
+        unavailableTools: ['cbm.search_graph'],
+        unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+        presentedTools: ['canvas.inspect'],
+        externalMcpTools: [],
+        externalToolCatalogState: 'unavailable',
+        configurationFingerprint: '1'.repeat(64),
+      })
+      .mockResolvedValue({
+        ...base,
+        enabledTools: ['canvas.inspect', 'cbm.search_graph'],
+        unavailableTools: [],
+        unavailableToolReasons: {},
+        presentedTools: ['canvas.inspect', 'cbm.search_graph'],
+        externalMcpTools: [{
+          canonicalName: 'cbm.search_graph',
+          connectionId: 'cbm',
+          nativeName: 'search_graph',
+        }],
+        externalToolCatalogState: 'available',
+        configurationFingerprint: '2'.repeat(64),
+      });
+
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    f.materializeExternalMcpTools.mockRejectedValueOnce(
+      new Error('hermes_native_mcp_refresh_still_initializing'),
+    );
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
+        .resolves.toMatchObject({
+          sessionId: state.sessionId,
+          status: 'running',
+          ptyId: state.sessionId,
+          unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+        });
+      expect(warning).toHaveBeenCalledWith(
+        '[agent-terminal] optional Card tool refresh failed card=signal',
+        'hermes_native_mcp_refresh_still_initializing',
+      );
+    } finally {
+      warning.mockRestore();
+    }
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.spawnPty).toHaveBeenCalledOnce();
+  });
+
+  it('still rejects a changed saved Card tool authority', async () => {
+    const f = fixture();
+    const initial = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    f.resolveCardTools.mockReset();
+    f.resolveCardTools
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValue({
+        ...initial,
+        pluginTools: [{
+          canonicalName: 'card.create',
+          hermesName: 'card__card_create',
+          description: 'Create a saved Card.',
+          inputSchema: { type: 'object', properties: {} },
+        }],
+        configurationFingerprint: '3'.repeat(64),
+      });
+
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false });
+    await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
+      .rejects.toThrow('agent_terminal_tool_configuration_changed_stop_required');
   });
 
   it('projects exact same-session Gateway events without submitting or owning a turn', async () => {

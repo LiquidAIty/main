@@ -48,6 +48,7 @@ beforeEach(() => {
 
 describe('Main chat live observation callbacks', () => {
   it('surfaces the server-owned active Main input driver', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadMainDriverStatus.mockResolvedValue({
       ready: true,
       activeDriver: 'external_plugin',
@@ -59,6 +60,35 @@ describe('Main chat live observation callbacks', () => {
     }));
 
     await waitFor(() => expect(result.current.mainDriverSource).toBe('external_plugin'));
+  });
+
+  it('waits for the real Main runtime before requesting its history', async () => {
+    let resolveMainReady!: (status: { ready: boolean; activeDriver: null }) => void;
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadMainDriverStatus.mockReturnValue(new Promise((resolve) => {
+      resolveMainReady = resolve;
+    }));
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main',
+      nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat',
+      addressableAgents: [],
+      messages: [],
+      terminalEvents: [],
+    });
+    renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1',
+      deckId: 'deck_builder',
+      conversationId: 'main',
+    }));
+
+    await waitFor(() => expect(mocks.loadMainDriverStatus).toHaveBeenCalledOnce());
+    expect(mocks.loadSessionHistory).not.toHaveBeenCalled();
+    await act(async () => {
+      resolveMainReady({ ready: true, activeDriver: null });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
   });
 
   it('keeps duplicate technical events under the server-issued Run and out of chat', async () => {

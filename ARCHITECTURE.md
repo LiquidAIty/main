@@ -288,8 +288,10 @@ ACP-like host execution layer, callback protocol, session mirror, transcript own
 The existing Mag One Card remains the LiquidAIty bus authority. Saved `magentic_option` topology is
 projected into one exact roster of enabled current Card revisions and Hermes profile bindings. The
 headless adapter submits the reloaded canonical mission to Hermes' existing SQLite task/dependency
-runtime with an inherited root-scoped assignee ceiling, observes only outer execution state, and
-returns the one verified native final-synthesis summary. LiquidAIty does not copy native task, dependency,
+runtime with a root-scoped blue assignee ceiling. Root-created assignments are checked against that
+scope; manually created worker descendants are self-scoped rather than inheriting the complete roster.
+The adapter observes only outer execution state and returns the one verified native final-synthesis
+summary. LiquidAIty does not copy native task, dependency,
 attempt, or event rows into PostgreSQL/AGE; TypeScript does not schedule workers or fabricate a transcript.
 
 ## MCP and Codebase Memory

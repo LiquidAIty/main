@@ -105,10 +105,23 @@ class CodexAppServerClient:
         # the whole executor process ownership.
         owned_task = os.environ.get("HERMES_KANBAN_TASK") and is_dispatcher_owned_worker_context()
         if owned_task:
+            # A saved profile may select the app-server runtime without ever running the
+            # interactive runtime-switch command that persists this entry in config.toml.
+            # Define the existing managed endpoint completely for this process before
+            # adding task scope; an env-only entry is not a valid Codex MCP transport.
+            from hermes_cli.codex_runtime_plugin_migration import _build_hermes_tools_mcp_entry
+
+            server_prefix = f"mcp_servers.{HERMES_TOOLS_MCP_SERVER_NAME}"
+            server_entry = _build_hermes_tools_mcp_entry()
+            for field in ("command", "args", "startup_timeout_sec", "tool_timeout_sec"):
+                if field in server_entry:
+                    cmd += ["-c", f"{server_prefix}.{field}={json.dumps(server_entry[field])}"]
+            for key, value in (server_entry.get("env") or {}).items():
+                cmd += ["-c", f"{server_prefix}.env.{key}={json.dumps(value)}"]
             for key in (*KANBAN_ENV_KEYS, "HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD"):
                 if key in os.environ:
-                    cmd += ["-c", f"mcp_servers.{HERMES_TOOLS_MCP_SERVER_NAME}.env.{key}={json.dumps(os.environ[key])}"]
-            cmd += ["-c", f'mcp_servers.{HERMES_TOOLS_MCP_SERVER_NAME}.env.{DELEGATED_CHILD_ENV_MARKER}=""']
+                    cmd += ["-c", f"{server_prefix}.env.{key}={json.dumps(os.environ[key])}"]
+            cmd += ["-c", f'{server_prefix}.env.{DELEGATED_CHILD_ENV_MARKER}=""']
         spawn_env = delegated_child_subprocess_env(spawn_env)
         # Kanban workers must write handoff/status to the board DB outside the
         # workspace: keep the sandbox on, add the Kanban root as writable.
@@ -118,7 +131,7 @@ class CodexAppServerClient:
             kanban_root = os.path.dirname(kanban_db) if kanban_db else spawn_env.get("HERMES_KANBAN_ROOT", default_root)
             cmd += [
                 "-c", 'sandbox_mode="workspace-write"',
-                "-c", f'sandbox_workspace_write.writable_roots=["{kanban_root}"]',
+                "-c", f"sandbox_workspace_write.writable_roots={json.dumps([kanban_root])}",
                 "-c", "sandbox_workspace_write.network_access=false",
             ]
         # Codex emits tracing to stderr; default WARN keeps it quiet for users.

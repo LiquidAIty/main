@@ -9,11 +9,6 @@ describe('formatHarnessTrace — only real events, concise, with correlation id'
       .toBe(`[tool] engraphis_recall_context started corr=${CORR}`);
   });
 
-  it('maps a card-run tool call to an [agent] doorway line', () => {
-    expect(formatHarnessTrace({ kind: 'tool_start', toolName: 'card.run_assistant_agent' }, CORR))
-      .toBe(`[agent] card doorway started corr=${CORR}`);
-  });
-
   it('distinguishes completed vs failed tool_result', () => {
     expect(formatHarnessTrace({ kind: 'tool_result', toolName: 'run_mag_one', isError: false }, CORR))
       .toBe(`[tool] run_mag_one completed corr=${CORR}`);

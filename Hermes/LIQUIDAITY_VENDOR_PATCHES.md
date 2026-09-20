@@ -1,9 +1,11 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly three LiquidAIty-owned runtime extensions: durable Team delegation,
-profile-scoped native Bot rosters projected from saved Card topology, and a nullable
-root-scoped assignee ceiling used by headless Mag One execution.
+plus exactly five LiquidAIty-owned runtime extensions: durable Team delegation,
+profile-scoped native Bot rosters projected from saved Card topology, a nullable
+root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
+authentication for detached workers whose saved profile selects the native app-server
+runtime, and exact saved-profile toolset pins for native CLI execution.
 This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
@@ -174,14 +176,15 @@ and summaries. LiquidAIty does not add a scheduler, worker registry, or task sto
 EXTERNAL ALTERNATIVE CHECK: upstream direct task submission accepts one root
 assignee but exposes no per-root assignment ceiling. Its install-wide dispatcher
 profile filter is not mission-scoped, and prompt text alone cannot enforce the
-saved topology boundary. A nullable inherited field on the existing task rows is
-the smallest native enforcement point.
+saved topology boundary. A nullable field on the existing task rows is the
+smallest native enforcement point.
 
 FILES AND SYMBOLS:
 
 - `hermes_cli/kanban_db.py`: nullable `Task.allowed_assignees`, canonical ordered
-  normalization, creator-task inheritance, no-widening validation, assignment and
-  review-handoff checks, schema storage, readback, and creation event payload.
+  normalization, creator-scope assignment validation, self-only scope for manually
+  created descendants, operator reassignment and triage checks, schema storage,
+  readback, and creation event payload.
 - `hermes_cli/kanban_db_connect.py`: additive nullable column migration for existing
   Hermes task databases.
 - `hermes_cli/kanban_db_graph.py`: atomic decomposition inherits the same ceiling
@@ -199,10 +202,15 @@ CONTRACTS:
 - omission means unrestricted upstream behavior;
 - an explicit list is canonicalized, order-preserving, and duplicate-free;
 - the root assignee must be present in an explicit ceiling;
-- every task created with a bounded `creator_task_id` inherits the exact list;
-- a child cannot replace, narrow, or widen the inherited list;
-- an assignee outside the inherited list is rejected before task creation,
-  reassignment, or a review handoff changes the row;
+- a manually created direct child must be assigned inside its creator's scope;
+- that child receives a self-only local scope, so it can subdivide its own work but
+  cannot recruit a sibling or another persistent profile;
+- a child cannot replace or widen that derived local scope;
+- an operator reassignment is checked against the creator's scope and moves the
+  task's local self scope to the new assignee;
+- review handoff remains inside the task's current local scope;
+- native automatic triage/decomposition retains its existing bounded shared scope,
+  preserving the separate automatic-Team behavior;
 - the application supplies the field only on the structured Mag One root call.
 
 TESTS:
@@ -215,9 +223,109 @@ FORK COST: one nullable task column and bounded validation in the existing task
 creator. There is no alternate dispatcher, process owner, queue, database, or UI.
 
 ROLLBACK: remove the nullable column from new schema definitions and the later-column
-migration, remove normalization/inheritance/enforcement and focused tests, and stop
-passing the field from the Mag One adapter. Existing rows with `NULL` already behave
-like upstream; SQLite column removal is unnecessary for functional rollback.
+migration, remove normalization/scope enforcement and focused tests, and stop passing
+the field from the Mag One adapter. Existing rows with `NULL` already behave like
+upstream; SQLite column removal is unnecessary for functional rollback.
+
+## 4. Codex app-server route for detached native workers
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: let a detached native task worker start when its exact saved profile selects
+`model.openai_runtime: codex_app_server`. The Codex subprocess owns authentication;
+the enclosing Hermes profile does not also require a copied `openai-codex` OAuth grant.
+The worker process receives a complete process-local `hermes-tools` MCP transport entry,
+including the JSON-encoded allowed writable root for its native task tree. Global Codex
+configuration remains untouched.
+
+EXTERNAL ALTERNATIVE CHECK: copying the already-signed-in Codex CLI refresh grant into
+multiple named profiles forks one single-use OAuth grant and is explicitly prohibited by
+Hermes credential hygiene. Requiring a separate interactive device login for every worker
+duplicates authentication for a runtime that already delegates inference to Codex. A single
+early runtime-provider branch is the smallest coherent repair.
+
+FILES AND SYMBOLS:
+
+- `hermes_cli/runtime_provider.py`: `_configured_codex_app_server_runtime` returns the
+  configured app-server route before profile credential-pool/OAuth resolution. Its non-secret
+  marker key satisfies the existing resolved-runtime constructor contract and is never sent to
+  an inference endpoint because the app-server owns the turn.
+- `agent/transports/codex_app_server.py`: the existing worker-specific MCP override builder
+  supplies the complete native `hermes-tools` command, arguments, base environment, startup
+  and call timeouts before adding the exact task/profile environment.
+
+UPSTREAM BEHAVIOR PRESERVED: profiles using `openai_runtime: auto`, every non-OpenAI
+provider, profile-local credential pools, refresh behavior, fallbacks, and the Codex
+app-server transport itself are unchanged.
+
+CONTRACTS:
+
+- only `openai` and `openai-codex` profiles explicitly configured for
+  `codex_app_server` use the branch;
+- no OAuth credential is copied, linked, persisted, or inherited;
+- the Codex subprocess remains the authentication and inference owner;
+- no global Codex configuration is created or modified;
+- missing Codex installation/sign-in still fails through the existing native transport;
+- an initialize failure or timeout remains a visible native worker failure;
+- ordinary Hermes provider resolution is unchanged when the runtime is `auto`.
+
+TESTS:
+
+- `tests/agent/transports/test_codex_app_server_runtime.py`
+- `tests/agent/transports/test_codex_worker_mcp_overrides.py`
+- loaded Mag One proof through the native dispatcher.
+
+FORK COST: one bounded pre-credential resolution branch, one complete worker-local MCP
+entry, and focused tests. No new provider, credential store, task runner, scheduler, or
+process owner is added.
+
+ROLLBACK: remove `_configured_codex_app_server_runtime`, its first ladder rung, the
+worker-local `hermes-tools` MCP entry, and their focused tests together. Profiles then again
+require profile-local OAuth before a detached app-server task process can start, and workers
+again depend on a separately complete global Codex MCP entry.
+
+## 5. Exact saved-profile toolset pin for native CLI execution
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: make the existing native `profiles.configure` call persist one exact saved Card
+toolset selection both for profile editing/readback and for the CLI execution surface. An
+explicit empty selection remains deny-all instead of falling back to the global default.
+
+EXTERNAL ALTERNATIVE CHECK: the application previously needed a second TypeScript-owned
+config-file writer because the native profile RPC updated only the editor-facing field. That
+duplicated profile-write authority. Extending the existing native RPC to its execution field
+lets the application use one owner and removes the embedded writer.
+
+FILES AND SYMBOLS:
+
+- `tui_gateway/methods_profiles.py`: `_save_toolset_pin` writes both
+  `tools.enabled_toolsets` and `platform_toolsets.cli` from the same ordered selection,
+  including explicit `[]`.
+
+UPSTREAM BEHAVIOR PRESERVED: omission leaves existing profile/global toolset behavior
+unchanged. Profile creation, prompt/model configuration, Gateway ownership, CLI startup,
+tool discovery, and execution remain native Hermes behavior.
+
+CONTRACTS:
+
+- only an explicitly supplied `enabledToolsets` value writes either field;
+- ordering and explicit empty selection are preserved;
+- one native profile RPC owns both saved representations;
+- the application does not edit Hermes configuration files directly.
+
+TESTS:
+
+- `tests/tui_gateway/test_profiles_toolset_pin.py`
+- application coverage in `apps/backend/src/hermes/agentTerminal.spec.ts`.
+
+FORK COST: one bounded write in the existing profile configure owner and focused tests. No
+new route, profile abstraction, runtime, tool registry, or file writer is added.
+
+ROLLBACK: remove `_save_toolset_pin`, restore the former editor-only assignment, and restore
+an external execution-pin writer if exact Card-owned toolset execution is still required.
 
 ## Complete upstream-relative difference manifest
 
@@ -231,11 +339,13 @@ Production files:
 - `hermes_cli/kanban_db_graph.py` — Team and assignee-ceiling inheritance
 - `hermes_cli/kanban_decompose.py` — Team
 - `hermes_cli/kanban_db_dispatch.py` — Team and bounded default-assignee enforcement
+- `hermes_cli/runtime_provider.py` — Codex app-server route without duplicate profile OAuth
+- `agent/transports/codex_app_server.py` — complete process-local worker MCP transport
 - `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
 - `tools/bot_mode_probe.py` — profile-scoped native Bot roster resolver
 - `tools/bot_mode_dm.py` — native local-target validation through the resolver
 - `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` — typed Bot roster RPC field
-- `tui_gateway/methods_profiles.py` — Bot roster configure/describe implementation
+- `tui_gateway/methods_profiles.py` — Bot roster configure/describe and exact CLI toolset pin
 - `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution
 
 Focused tests:
@@ -247,6 +357,9 @@ Focused tests:
 - `tests/tools/test_bot_mode_probe.py` — native Bot roster resolution/prompt
 - `tests/tools/test_bot_mode_dm.py` — native Bot target and unchanged delivery selection
 - `tests/tui_gateway/test_profiles_bot_roster.py` — profile roster write/readback
+- `tests/agent/transports/test_codex_app_server_runtime.py` — detached app-server credential routing
+- `tests/agent/transports/test_codex_worker_mcp_overrides.py` — complete worker MCP transport
+- `tests/tui_gateway/test_profiles_toolset_pin.py` — saved profile and CLI execution toolset pin
 
 Metadata:
 

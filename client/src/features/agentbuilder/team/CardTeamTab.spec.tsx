@@ -18,7 +18,7 @@ describe('Team Card recovery', () => {
     const legacy = { mode: 'auto', maxWorkers: 3, retryLimit: 1 };
     const onSave = vi.fn();
     let leave: (() => Promise<boolean>) | null = null;
-    render(<AgentManager agentType="agent_builder" activeTab="Runtime" cardId="one" projectId="p" deckId="d"
+    render(<AgentManager activeTab="Runtime" cardId="one" projectId="p" deckId="d"
       localConfig={{ runtime: { kind: 'hermes', mode: 'delegate', profile: 'research' },
         provider: 'openai', access_mode: 'chatgpt-account', model_key: 'parent',
         prompt_template: 'Keep these instructions', tools: ['read_file'], skills: [], toolsets: [],

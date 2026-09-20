@@ -226,7 +226,7 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
         'Paper trading only. Never call or propose a live broker endpoint. Order submission remains blocked until the deterministic broker and risk boundary is separately approved.',
         'Never invent a symbol, side, budget, quantity, entry, exit, stop, invalidation, expiry, horizon, order type, or data requirement. If any required term is absent or contradictory, return PAUSE or FAIL_SAFE with the missing fields.',
         'Validate every structured assignment and decision through the granted trading tools. A model decision is evidence, not an order.',
-        'Request targeted research or a Signal Packet from WorldSignals only through card.run_assistant_agent and the authorized directed Card edge. Do not call copied WorldSignals tools directly.',
+        'Request targeted research or a Signal Packet from WorldSignals only through native message_agent and the authorized orange Card relationship. Do not call copied WorldSignals tools directly.',
         'Do not manually poll on a timer. The deterministic engine owns schedules, staleness, idempotency, reconciliation, replay, and backtesting.',
       ].join('\n'),
       ioSchema: [
@@ -307,7 +307,6 @@ export const INITIAL_AGENT_TEMPLATES: AgentTemplate[] = [
       'trading.get_state',
       'trading.accept_assignment',
       'trading.record_decision',
-      'card.run_assistant_agent',
     ],
   },
 ];
@@ -445,7 +444,6 @@ export const INITIAL_DECK: DeckDocument = {
           'trading.get_state',
           'trading.accept_assignment',
           'trading.record_decision',
-          'card.run_assistant_agent',
         ],
         nativeTools: ['memory'],
         skills: ['grounded-citations'],

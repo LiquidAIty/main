@@ -1146,7 +1146,7 @@ def _normalize_allowed_assignees(value: Optional[Iterable[str]]) -> Optional[lis
 def _stored_allowed_assignees(value: Any) -> Optional[list[str]]:
     if value is None:
         return None
-    parsed = _json_or(value)
+    parsed = value if isinstance(value, list) else _json_or(value)
     if not isinstance(parsed, list):
         raise ValueError("task has an invalid allowed_assignees value")
     return _normalize_allowed_assignees(parsed)
@@ -1158,7 +1158,7 @@ def _require_allowed_assignee(value: Any, assignee: Optional[str]) -> None:
         raise ValueError(f"assignee {assignee!r} is outside this execution's allowed assignees")
 
 
-def _inherited_allowed_assignees(
+def _creator_allowed_assignees(
     conn: sqlite3.Connection,
     creator_task_id: Optional[str],
 ) -> Optional[list[str]]:
@@ -1170,6 +1170,22 @@ def _inherited_allowed_assignees(
     if row is None or row["allowed_assignees"] is None:
         return None
     return _stored_allowed_assignees(row["allowed_assignees"])
+
+
+def _creator_task_id(conn: sqlite3.Connection, task_id: str) -> Optional[str]:
+    row = conn.execute(
+        "SELECT payload FROM task_events "
+        "WHERE task_id = ? AND kind = 'created' ORDER BY id LIMIT 1",
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except (TypeError, ValueError):
+        return None
+    creator_task_id = str(payload.get("creator_task_id") or "").strip()
+    return creator_task_id or None
 
 
 def _resolve_project_link(
@@ -1345,14 +1361,16 @@ def create_task(
     current_step_key = str(current_step_key or "").strip() or None
     assignee = _canonical_assignee(assignee)
     requested_allowed_assignees = _normalize_allowed_assignees(allowed_assignees)
-    inherited_allowed_assignees = _inherited_allowed_assignees(conn, creator_task_id)
-    if inherited_allowed_assignees is not None:
+    creator_allowed_assignees = _creator_allowed_assignees(conn, creator_task_id)
+    if creator_allowed_assignees is not None:
+        _require_allowed_assignee(creator_allowed_assignees, assignee)
+        local_allowed_assignees = [assignee] if assignee is not None else []
         if (
             requested_allowed_assignees is not None
-            and requested_allowed_assignees != inherited_allowed_assignees
+            and requested_allowed_assignees != local_allowed_assignees
         ):
-            raise ValueError("child task cannot change its inherited allowed_assignees")
-        requested_allowed_assignees = inherited_allowed_assignees
+            raise ValueError("child task cannot change its local allowed_assignees")
+        requested_allowed_assignees = local_allowed_assignees
     if (
         requested_allowed_assignees is not None
         and assignee not in requested_allowed_assignees
@@ -1635,7 +1653,10 @@ def assign_task(conn: sqlite3.Connection, task_id: str, profile: Optional[str]) 
         ).fetchone()
         if not row:
             return False
-        _require_allowed_assignee(row["allowed_assignees"], profile)
+        creator_scope = _creator_allowed_assignees(conn, _creator_task_id(conn, task_id))
+        _require_allowed_assignee(
+            creator_scope if creator_scope is not None else row["allowed_assignees"], profile,
+        )
         if row["claim_lock"] is not None and row["status"] == "running":
             raise RuntimeError(
                 f"cannot reassign {task_id}: currently running (claimed). "
@@ -1643,10 +1664,17 @@ def assign_task(conn: sqlite3.Connection, task_id: str, profile: Optional[str]) 
             )
         if row["assignee"] != profile:
             # The failure streak is per task/profile; a new profile starts fresh.
-            conn.execute(
-                "UPDATE tasks SET assignee = ?, consecutive_failures = 0, "
-                "last_failure_error = NULL WHERE id = ?", (profile, task_id),
-            )
+            if creator_scope is not None:
+                conn.execute(
+                    "UPDATE tasks SET assignee = ?, allowed_assignees = ?, "
+                    "consecutive_failures = 0, last_failure_error = NULL WHERE id = ?",
+                    (profile, json.dumps([profile]), task_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE tasks SET assignee = ?, consecutive_failures = 0, "
+                    "last_failure_error = NULL WHERE id = ?", (profile, task_id),
+                )
         else:
             conn.execute("UPDATE tasks SET assignee = ? WHERE id = ?", (profile, task_id))
         _append_event(conn, task_id, "assigned", {"assignee": profile})
@@ -3740,8 +3768,14 @@ def specify_triage_task(
         ).fetchone()
         if existing is None:
             return False
+        creator_scope = _creator_allowed_assignees(
+            conn, _creator_task_id(conn, task_id),
+        )
         if assignee is not None:
-            _require_allowed_assignee(existing["allowed_assignees"], assignee)
+            _require_allowed_assignee(
+                creator_scope if creator_scope is not None else existing["allowed_assignees"],
+                assignee,
+            )
         sets: list[str] = ["status = 'todo'"]
         params: list[Any] = []
         changed_fields: list[str] = []
@@ -3757,6 +3791,9 @@ def specify_triage_task(
             sets.append("assignee = ?")
             params.append(assignee)
             changed_fields.append("assignee")
+            if creator_scope is not None:
+                sets.append("allowed_assignees = ?")
+                params.append(json.dumps([assignee]))
         params.append(task_id)
         cur = conn.execute(
             f"UPDATE tasks SET {', '.join(sets)} "

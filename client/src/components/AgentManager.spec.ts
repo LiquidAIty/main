@@ -93,7 +93,7 @@ describe('AgentManager active builder config', () => {
       const [deck, setDeck] = React.useState(initial);
       const editor = useAgentBuilderCardEditor({ deck, setDeck, selectedCardId: card.id,
         persistDeck: persist, recordDeckWriteReason: () => undefined });
-      return React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Runtime',
+      return React.createElement(AgentManager, { activeTab: 'Runtime',
         cardId: card.id, projectId: 'p', deckId: 'd', localConfig: editor.selectedCardConfig,
         onSaveLocalConfig: editor.handleSaveSelectedCardConfig });
     }
@@ -113,7 +113,7 @@ describe('AgentManager active builder config', () => {
     expect(saved.nodes.filter(node => node.id !== card.id)).toEqual(initial.nodes.filter(node => node.id !== card.id));
     view.unmount();
     const onSave = vi.fn();
-    render(React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Runtime',
+    render(React.createElement(AgentManager, { activeTab: 'Runtime',
       localConfig: { ...savedConfig, runtime_options: updated.runtimeOptions,
         provider: targetProvider, model_key: updated.runtimeOptions?.modelKey }, onSaveLocalConfig: onSave }));
     await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model').value).toBe('catalog-choice'));
@@ -124,7 +124,7 @@ describe('AgentManager active builder config', () => {
     mockEditorFetch();
     const onSave = vi.fn();
     const original = '# LIQUIDAITY_PROMPT_V1\r\n[ROLE]\r\nMain role\r\n\r\n[CURRENT PROJECT FRAME - THINKGRAPH FIRST]\r\n  Read the frame.  \r\n\r\n[GOAL]\r\nFirst goal\r\n[GOAL]\r\nSecond goal\r\n[MEMORY_POLICY]\r\nRetain sources\r\n## Research / sources\r\nUse primary sources.\r\n```text\r\n[EXAMPLE]\r\nLiteral example\r\n```\r\n';
-    const props = { agentType: 'agent_builder' as const, cardId: 'card-one', projectId: 'p', deckId: 'd',
+    const props = { cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, prompt_template: original, output_contract: 'Citations' }, onSaveLocalConfig: onSave };
     const view = render(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
     expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Main role');
@@ -150,7 +150,7 @@ describe('AgentManager active builder config', () => {
   it('keeps unsectioned instructions out of Role and does not add an untouched role on save', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
-    render(React.createElement(AgentManager, { agentType: 'agent_builder', activeTab: 'Prompt',
+    render(React.createElement(AgentManager, { activeTab: 'Prompt',
       cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, role: 'Researcher', prompt_template: 'Existing instructions' }, onSaveLocalConfig: onSave }));
     expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Researcher');
@@ -166,7 +166,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
     const onRun = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Results', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Results', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave, onRunCard: onRun,
       showTaskComposer: true, promptTestInput: 'Read the project',
     }));
@@ -202,7 +202,7 @@ describe('AgentManager active builder config', () => {
       return fallback(input);
     });
     const onSave = vi.fn();
-    const props = { agentType: 'agent_builder' as const, cardId: 'card-one', projectId: 'p', deckId: 'd',
+    const props = { cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave };
     const view = render(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
     const soul = await screen.findByLabelText('Soul') as HTMLTextAreaElement;
@@ -231,7 +231,7 @@ describe('AgentManager active builder config', () => {
     mockEditorFetch();
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, runtime }, onSaveLocalConfig: onSave,
     }));
     expect(screen.queryByTestId('agent-runtime-kind')).toBeNull();
@@ -249,7 +249,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const original = '# Existing instructions\r\n\r\n[ROLE]\r\n  Full role text  \r\n\r\n[RESEARCH]\r\nKeep this exact text.\r\n\r\n[GOAL]\r\nFind sources\r\n\r\n[GOAL]\r\nAdditional goal\r\n[MEMORY_POLICY]\r\nKeep sources\r\n';
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, role: 'Old short role', prompt_template: original }, onSaveLocalConfig: onSave,
     }));
     fireEvent.change(screen.getByLabelText('Goal'), { target: { value: 'Find primary sources' } });
@@ -264,7 +264,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const original = '[ROLE]\nResearch\n[MEMORY_POLICY]\nRetain sources';
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, prompt_template: original, output_contract: 'Citations' }, onSaveLocalConfig: onSave,
     }));
     expect((screen.getByLabelText('Output expectations') as HTMLTextAreaElement).value).toBe('Citations');
@@ -287,7 +287,7 @@ describe('AgentManager active builder config', () => {
     });
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Tools', cardId: 'card-one',
+      activeTab: 'Tools', cardId: 'card-one',
       projectId: 'p', deckId: 'd',
       localConfig: savedConfig,
       onSaveLocalConfig: onSave,
@@ -306,7 +306,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const original = '[ROLE]\nResearcher\n\n[GOAL]\nFind sources\n\n[CONSTRAINTS]\nCite evidence\n\n[IO_SCHEMA]\nMarkdown\n\n[MEMORY_POLICY]\nKeep sources';
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Prompt', cardId: 'card-one',
+      activeTab: 'Prompt', cardId: 'card-one',
       projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, role: 'Researcher', prompt_template: original },
       onSaveLocalConfig: onSave,
@@ -331,7 +331,7 @@ describe('AgentManager active builder config', () => {
     mockEditorFetch();
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', cardName: 'Research',
+      activeTab: 'Runtime', cardId: 'card-one', cardName: 'Research',
       projectId: 'p', deckId: 'd', localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     expect(screen.queryByLabelText('Hermes profile')).toBeNull();
@@ -344,7 +344,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const options = enabled === undefined ? {} : { delegationRole: enabled };
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, runtime_options: options }, onSaveLocalConfig: onSave,
     }));
     expect(screen.queryByLabelText('Control connected Cards')).toBeNull();
@@ -361,7 +361,7 @@ describe('AgentManager active builder config', () => {
     mockEditorFetch();
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     const selector = await screen.findByLabelText('Delegate task');
@@ -385,7 +385,7 @@ describe('AgentManager active builder config', () => {
     const onSave = vi.fn();
     const before = JSON.stringify(savedConfig);
     const { container } = render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      activeTab: 'Runtime', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     const provider = screen.getByLabelText('Provider') as HTMLSelectElement;
@@ -417,7 +417,7 @@ describe('AgentManager active builder config', () => {
     const before = JSON.stringify(config);
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Runtime', localConfig: config, onSaveLocalConfig: onSave,
+      activeTab: 'Runtime', localConfig: config, onSaveLocalConfig: onSave,
     }));
     await waitFor(() => expect(screen.queryByText('Loading runtime options… Saved values are unchanged.')).toBeNull());
     const provider = screen.getByLabelText('Provider') as HTMLSelectElement;
@@ -438,7 +438,7 @@ describe('AgentManager active builder config', () => {
     mockEditorFetch(true, false);
     const onSave = vi.fn();
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder', activeTab: 'Tools', localConfig: savedConfig, onSaveLocalConfig: onSave,
+      activeTab: 'Tools', localConfig: savedConfig, onSaveLocalConfig: onSave,
     }));
     expect(screen.getByText('Loading tools…')).not.toBeNull();
     expect((await screen.findByRole('alert')).textContent).toBe('Tool options unavailable. Saved selections are unchanged.');
@@ -628,7 +628,6 @@ describe('AgentManager active builder config', () => {
     vi.stubGlobal('prompt', vi.fn(() => 'research-baseline.idf'));
     const idfText = '{"actualGraphData":{},"stableSavedCardContext":{},"selectedToolsAndGrants":{},"dynamicContext":{}}\n';
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder',
       activeTab: 'Memory',
       cardId: 'card-one',
       localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
@@ -677,7 +676,6 @@ describe('AgentManager active builder config', () => {
       json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
     })));
     render(React.createElement(AgentManager, {
-      agentType: 'agent_builder',
       activeTab: 'Memory',
       cardId: 'card-one',
       localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
@@ -740,8 +738,10 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(chatSource).not.toContain("'nativeEvents'");
-    expect(chatSource).toContain("['write_mag_one_instructions', 'card.run_assistant_agent', 'delegate_task']");
-    expect(chatSource).toContain("['card.load_graph_references', 'card.run_assistant_agent', 'delegate_task']");
+    expect(chatSource).toContain("['write_mag_one_instructions', 'delegate_task']");
+    expect(chatSource).toContain("['card.load_graph_references', 'delegate_task']");
+    expect(chatSource).not.toContain('card.run_assistant_agent');
+    expect(chatSource).toContain('card_tools_unavailable');
     expect(chatSource).toContain('onCardReviewStaged');
     expect(chatSource).toContain('onCardGraphReferenceLoaded');
     expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');

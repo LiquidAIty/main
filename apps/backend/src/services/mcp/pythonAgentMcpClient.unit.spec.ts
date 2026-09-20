@@ -7,6 +7,7 @@ const mcpMocks = vi.hoisted(() => ({
   })),
   close: vi.fn(async () => undefined),
   connect: vi.fn(async () => undefined),
+  listTools: vi.fn(async (): Promise<{ tools: any[] }> => ({ tools: [] })),
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -14,6 +15,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     callTool = mcpMocks.callTool;
     close = mcpMocks.close;
     connect = mcpMocks.connect;
+    listTools = mcpMocks.listTools;
   },
 }));
 
@@ -23,73 +25,81 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 
 import {
   callPythonAgentMcpTool,
-  callPythonAgentSystemTool,
   closePythonAgentMcpClient,
+  readPythonAgentMcpCatalog,
 } from './pythonAgentMcpClient';
 
-describe('Python Agent MCP request deadlines', () => {
+describe('Python Agent MCP client', () => {
   beforeEach(() => {
     process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = '0123456789abcdef0123456789abcdef';
     process.env.LIQUIDAITY_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
     mcpMocks.callTool.mockClear();
     mcpMocks.close.mockClear();
     mcpMocks.connect.mockClear();
+    mcpMocks.listTools.mockClear();
   });
 
   afterEach(async () => {
     await closePythonAgentMcpClient();
+    vi.unstubAllGlobals();
   });
 
-  it('extends only private system-root execution beyond the SDK default', async () => {
+  it('uses the SDK default deadline for an ordinary tool call', async () => {
     await callPythonAgentMcpTool('ordinary.tool', { value: 1 });
-    expect(mcpMocks.callTool).toHaveBeenNthCalledWith(1, {
+    expect(mcpMocks.callTool).toHaveBeenCalledWith({
       name: 'ordinary.tool',
       arguments: { value: 1 },
     });
-
-    await callPythonAgentSystemTool(
-      {
-        kind: 'system-root',
-        projectId: 'project-1',
-        deckId: 'deck-1',
-        conversationId: 'conversation-1',
-        parentRunId: 'run-1',
-        callerCardId: 'card-main',
-        callerRuntimeKind: 'hermes',
-        callerRuntimeMode: 'main',
-        grantedTools: ['card.run_assistant_agent'],
-      },
-      'card.run_assistant_agent',
-      { cardId: 'card-1', input: 'bounded mission' },
-    );
-    expect(mcpMocks.callTool).toHaveBeenNthCalledWith(
-      2,
-      {
-        name: 'card.run_assistant_agent',
-        arguments: { cardId: 'card-1', input: 'bounded mission' },
-      },
-      undefined,
-      { timeout: 310_000 },
-    );
   });
 
-  it('preserves a native MCP validation error instead of JSON-parsing it', async () => {
-    mcpMocks.callTool.mockResolvedValueOnce({
-      isError: true,
-      content: [{ type: 'text', text: 'Input validation error: required is missing' }],
-    });
-    await expect(callPythonAgentSystemTool(
-      {
-        kind: 'system-root', projectId: 'project-1', deckId: 'deck-1',
-        conversationId: 'conversation-1', parentRunId: 'run-1', callerCardId: 'card-main',
-        callerRuntimeKind: 'hermes', callerRuntimeMode: 'main',
-        grantedTools: ['card.run_assistant_agent'],
-      },
-      'card.run_assistant_agent',
-      { cardId: 'card-1', input: 'bounded mission' },
-    )).resolves.toEqual({
+  it('reports the optional catalog unavailable without waiting on tools/list', async () => {
+    const readiness = vi.fn(async () => ({
       ok: false,
-      error: 'Input validation error: required is missing',
+      json: async () => ({ catalogState: 'initializing' }),
+    }));
+    vi.stubGlobal('fetch', readiness);
+
+    await expect(readPythonAgentMcpCatalog()).resolves.toEqual({
+      state: 'unavailable',
+      tools: [],
+      reason: 'catalog_unavailable',
     });
+    expect(readiness).toHaveBeenCalledOnce();
+    expect(String(readiness.mock.calls[0]?.[0])).toBe('http://127.0.0.1:8765/health/catalog');
+    expect(mcpMocks.listTools).not.toHaveBeenCalled();
+  });
+
+  it('reads the complete catalog only after the host reports ready', async () => {
+    const readiness = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ catalogState: 'ready' }),
+    }));
+    vi.stubGlobal('fetch', readiness);
+    mcpMocks.listTools.mockResolvedValueOnce({
+      tools: [{
+        name: 'cbm.search_graph',
+        description: 'Search CodeGraph.',
+        inputSchema: { type: 'object', properties: {} },
+        _meta: {
+          liquidaitySource: {
+            sourceId: 'cbm',
+            namespace: 'cbm',
+            nativeName: 'search_graph',
+            connectionKind: 'external-mcp',
+          },
+        },
+      }],
+    });
+
+    await expect(readPythonAgentMcpCatalog()).resolves.toMatchObject({
+      state: 'available',
+      tools: [{
+        name: 'cbm.search_graph',
+        sourceId: 'cbm',
+        nativeName: 'search_graph',
+      }],
+    });
+    expect(String(readiness.mock.calls[0]?.[0])).toBe('http://127.0.0.1:8765/health/catalog');
+    expect(mcpMocks.listTools).toHaveBeenCalledOnce();
   });
 });

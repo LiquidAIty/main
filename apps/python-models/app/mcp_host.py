@@ -10,9 +10,8 @@ Graphiti MCP registries:
   * mag_one.describe_connected_agents (read connected, bus-eligible Mag One cards)
   * run_mag_one                      (Main-only transient Mag One mission)
   * web_search                       (real Tavily search; Search Agent only by grant)
-  * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire /
-    card.run_assistant_agent         (private canonical saved-Card execution handler;
-                                      handlers live in app.control_plane — Python)
+  * canvas.inspect / card.create / card.update_configuration / canvas.upsert_wire
+                                      (handlers live in app.control_plane — Python)
 
 Bridge tools are thin transport to the backend's Main, Card and Hermes domain routes
 endpoints on loopback — the backend remains the single authority for deck state,
@@ -694,7 +693,7 @@ def _authenticated_main_context() -> dict[str, Any] | None:
         return None
     claims = getattr(access_token, "claims", None)
     internal = claims.get("internal") if isinstance(claims, dict) else None
-    if isinstance(internal, dict) and internal.get("kind") in {"card-runtime", "system-root"}:
+    if isinstance(internal, dict) and internal.get("kind") == "card-runtime":
         context = {
             "projectId": internal.get("projectId"),
             "deckId": internal.get("deckId"),
@@ -751,8 +750,6 @@ def _request_tool_is_allowed(name: str) -> bool:
         return False
     if kind == "materializer-read":
         return access == "read"
-    if kind == "system-root":
-        return name == "card.run_assistant_agent"
     if kind != "card-runtime":
         return False
     grants = principal.get("grantedTools")
@@ -2043,7 +2040,7 @@ class Auth0TokenVerifier:
                 )
                 principal = claims.get("principal")
                 if not isinstance(principal, dict) or principal.get("kind") not in {
-                    "catalog-reader", "materializer-read", "system-root", "card-runtime",
+                    "catalog-reader", "materializer-read", "card-runtime",
                 }:
                     return None
                 if principal.get("kind") == "materializer-read":
@@ -2257,6 +2254,8 @@ def _application_tools() -> list[Tool]:
                 "to the AGE-connected Mag One "
                 "Card and invoke its native Hermes task execution. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
+                "The authenticated Card runtime supplies the saved project, deck, and conversation identity; "
+                "never include or guess those identifiers. "
                 "The backend resolves the live worker roster from blue SIDE connections; never type "
                 "a roster. Use only for the current user-directed mission. This tool executes "
                 "immediately unless optional Card-editor review was explicitly requested first."
@@ -2264,13 +2263,10 @@ def _application_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
                     "input": {"type": "string"},
-                    "conversationId": {"type": "string"},
                     "dataAnchors": _grounded_data_anchors_schema(),
                 },
-                "required": ["input", "projectId", "deckId"],
+                "required": ["input"],
                 "additionalProperties": False,
             },
         ),
@@ -2371,84 +2367,6 @@ def _application_tools() -> list[Tool]:
                 "required": ["projectId", "deckId", "op", "wire"],
             },
         ),
-        Tool(
-            name="card.run_assistant_agent",
-            description=(
-                "Submit or rejoin ONE saved, enabled Card through its saved runtime adapter "
-                "with its saved identity, prompt, provider/model/profile, and tools. "
-                "No prompt/model/tool/card overrides "
-                "exist on this path — extra arguments are rejected structurally. deckId defaults to "
-                "the canonical Agent Canvas deck. On the Harness saved-card doorway path, the "
-                "server injects projectId/correlationId/conversationId; the model supplies the "
-                "bound cardId, one mission, and optional selected native graph references only. "
-                "conversationId is the real live "
-                "conversation this run belongs to, when one exists. Python re-resolves that "
-                "exact bounded graph selection and the receiving Card materializes, retains, "
-                "and reloads one graph-first in.idf before its selected runtime receives it. Native "
-                "Team delegation remains inside that Card Run and is rejoined through its persisted "
-                "Run lineage rather than a separate product Card mode."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "projectId": {"type": "string"},
-                    "deckId": {"type": "string"},
-                    "cardId": {"type": "string"},
-                    "cardRevisionId": {
-                        "type": "string",
-                        "description": "Trusted expected saved Card revision for an internal profile handoff.",
-                    },
-                    "action": {"type": "string", "enum": ["execute", "status"]},
-                    "background": {"type": "boolean"},
-                    "runId": {"type": "string"},
-                    "nativeRootId": {"type": "string"},
-                    "correlationId": {"type": "string"},
-                    "conversationId": {"type": "string"},
-                    "originatingAgentId": {
-                        "type": "string",
-                        "description": "Server-owned saved-card identity for an inter-agent doorway call.",
-                    },
-                    "originatingRunId": {
-                        "type": "string",
-                        "description": "Server-owned parent Harness turn identity for an inter-agent doorway call.",
-                    },
-                    "input": {"type": "string"},
-                    "dataAnchors": {
-                        "type": "array",
-                        "maxItems": 16,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "authority": {
-                                    "type": "string",
-                                    "enum": ["ThinkGraph", "KnowGraph", "CodeGraph"],
-                                },
-                                "nativeId": {"type": "string", "minLength": 1},
-                                "reason": {"type": "string", "minLength": 1},
-                                "priority": {"type": "integer"},
-                                "boundedExpansion": {
-                                    "type": "integer", "minimum": 0, "maximum": 3,
-                                },
-                                "resultLimit": {
-                                    "type": "integer", "minimum": 1, "maximum": 24,
-                                },
-                                "required": {"type": "boolean"},
-                            },
-                            "required": [
-                                "authority", "nativeId", "reason", "priority",
-                                "boundedExpansion", "required",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                "anyOf": [
-                    {"required": ["cardId", "input"]},
-                    {"required": ["runId"]},
-                    {"required": ["nativeRootId"]},
-                ],
-            },
-        ),
     ]
 
 
@@ -2463,7 +2381,6 @@ _APPLICATION_OPERATION_ACCESS = {
     "card.create": "write",
     "card.update_configuration": "write",
     "canvas.upsert_wire": "write",
-    "card.run_assistant_agent": "write",
 }
 
 
@@ -2485,11 +2402,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
             parameters_schema=copy.deepcopy(tool.inputSchema),
             handler=dispatch,
             available=True,
-            publishers=(
-                frozenset({"internal-runtime", "external-mcp"})
-                if tool.name == "card.run_assistant_agent"
-                else frozenset({"internal-plugin", "external-mcp"})
-            ),
+            publishers=frozenset({"internal-plugin", "external-mcp"}),
             access=access,
             namespace="main",
             external_source_id="main_mcp",
@@ -2881,22 +2794,6 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "maxAgeSeconds", "limit", "projectId", "deckId", "_sourceCardId",
         "_sourceRunId",
     },
-    "card.run_assistant_agent": {
-        "action",
-        "background",
-        "projectId",
-        "deckId",
-        "cardId",
-        "cardRevisionId",
-        "runId",
-        "nativeRootId",
-        "correlationId",
-        "conversationId",
-        "originatingAgentId",
-        "originatingRunId",
-        "input",
-        "dataAnchors",
-    },
     "web_search": {"query", "max_results"},
 
 }
@@ -2925,7 +2822,6 @@ _CONTROL_HANDLER_NAMES: dict[str, str] = {
     "card.create": "card_create",
     "card.update_configuration": "card_update_configuration",
     "canvas.upsert_wire": "canvas_upsert_wire",
-    "card.run_assistant_agent": "card_run_assistant_agent",
     "write_mag_one_instructions": "write_mag_one_instructions",
     "card.load_graph_references": "card_load_graph_references",
 }
@@ -3029,10 +2925,6 @@ async def _dispatch_tool(
                 args["senderAgentId"] = str(context["mainCardId"])
             if "correlationId" in allowed:
                 args["correlationId"] = f"external-mcp:{uuid4()}"
-            if name == "card.run_assistant_agent":
-                if context.get("principalKind") != "system-root" or args.get("background") is True:
-                    args["originatingAgentId"] = str(context["mainCardId"])
-                    args["originatingRunId"] = str(context["parentRunId"])
             from app.python_models.tool_registry import required_tool_caller_runtime
 
             if required_tool_caller_runtime(name) is not None:
@@ -3094,27 +2986,6 @@ async def _dispatch_tool(
             content=[TextContent(type="text", text=native_text)],
             structuredContent={"result": native_text},
             isError=result.get("ok") is False or bool(result.get("error")),
-        )
-    if (
-        name == "card.run_assistant_agent"
-        and context is not None
-        and str(args.get("action") or "execute") == "execute"
-        and str(args.get("cardId") or "") == str(context.get("mainCardId") or "")
-    ):
-        return await _bridge(
-            "external_main_chat",
-            {
-                "projectId": str(context["projectId"]),
-                "deckId": str(context["deckId"]),
-                "conversationId": str(context["conversationId"]),
-                "mainCardId": str(context["mainCardId"]),
-                "message": str(args.get("input") or ""),
-                **(
-                    {"dataAnchors": args["dataAnchors"]}
-                    if isinstance(args.get("dataAnchors"), list)
-                    else {}
-                ),
-            },
         )
     if name == "run_mag_one":
         from app.python_models.card_domain import (
@@ -3399,7 +3270,6 @@ def _mcp_tool_timeout_seconds(name: str) -> float:
         return 190.0
     if name in {
         "cbm.index_repository",
-        "card.run_assistant_agent",
         "run_mag_one",
     }:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
@@ -3766,6 +3636,22 @@ async def _run_streamable_http() -> None:
             status_code=200 if ready else 503,
         )
 
+    async def catalog_readiness_endpoint(_request: Any) -> JSONResponse:
+        diagnostics = _catalog_diagnostics()
+        ready = bool(
+            diagnostics["catalogReady"]
+            and int(diagnostics.get("toolCount") or 0) > 0
+            and diagnostics.get("toolCount")
+            == diagnostics.get("uniqueToolCount")
+        )
+        return JSONResponse(
+            {
+                "ok": ready,
+                **diagnostics,
+            },
+            status_code=200 if ready else 503,
+        )
+
     async def card_tool_endpoint(request: Any) -> JSONResponse:
         client_host = str(getattr(getattr(request, "client", None), "host", "") or "")
         if client_host not in {"127.0.0.1", "::1"}:
@@ -3798,6 +3684,7 @@ async def _run_streamable_http() -> None:
 
     health_routes = [
         Route("/health", endpoint=health_endpoint, methods=["GET"]),
+        Route("/health/catalog", endpoint=catalog_readiness_endpoint, methods=["GET"]),
         Route("/health/ready", endpoint=readiness_endpoint, methods=["GET"]),
     ]
     internal_routes = [

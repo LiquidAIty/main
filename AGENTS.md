@@ -382,8 +382,9 @@ bindings; titles, prompts, installed profiles, and global discovery never add wo
 The headless Mag One adapter submits one bounded root mission to Hermes' existing SQLite
 task/dependency runtime. The saved Mag One profile decomposes the mission, assigns work only to the
 projected worker identities, creates exactly one dependency sink assigned back to itself for final
-synthesis, and returns that native summary as the outer Run result. Hermes' inherited native assignee
-ceiling rejects assignments outside the exact root roster without changing unrestricted ordinary tasks.
+synthesis, and returns that native summary as the outer Run result. Hermes' native assignment scope
+rejects root assignments outside the exact blue roster and keeps manually created worker descendants
+self-scoped, without changing unrestricted ordinary tasks.
 
 Hermes owns native tasks, dependencies, attempts, dispatch, retries, worker processes, and final synthesis.
 LiquidAIty stores no copy of those rows and creates no second scheduler, task store, worker identity,
@@ -480,9 +481,10 @@ artifacts and never become a prerequisite, retained input authority, or competin
 Cards remain one product concept. Their explicit Hermes runtime mode/profile binding is saved Card
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; Python validates or rereads that exact bounded selection, and
-the receiving Card owns materialization. A normal `card.run_assistant_agent` handoff executes immediately
-through the receiving Card's canonical Run path. Optional review uses the existing Card Invocation and
-Knowledge editors, then submits that same path once; staged review state is not a retained input or Run.
+the receiving Card owns materialization. Persistent Agent-to-Agent work uses Hermes native
+`message_agent` only where the saved graph authorizes the relationship; there is no generic public tool that
+runs an arbitrary Card as an assistant. Optional review uses the existing Card Invocation and Knowledge
+editors, then submits the existing Card Run path once; staged review state is not a retained input or Run.
 Mag One workers
 receive their dynamic task through the saved-worker Card doorway, so each independently invoked saved worker
 Card gets its own root IDF. A Mag One Card is one root boundary: Hermes owns native task decomposition,

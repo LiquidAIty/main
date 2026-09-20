@@ -18,6 +18,9 @@ const REQUIRED_MIGRATIONS = [
   '035_remove_provider_api_mode_constraint.sql',
   '036_remove_obsolete_card_tool_policy.sql',
   '037_magentic_hermes_execution.sql',
+  '038_allow_cancelled_native_run_phase.sql',
+  '039_remove_assistant_agent_capability.sql',
+  '040_remove_main_script_experiment.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

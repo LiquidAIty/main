@@ -527,6 +527,7 @@ type MagenticExecutionStatus = {
   state: 'ready' | 'running' | 'working' | 'completed' | 'blocked' | 'failed' | 'cancelled';
   nativePhase: string;
   nativeRootId: string;
+  finalTaskId?: string;
   nativeIdentity?: string | null;
   effectiveProvider?: string | null;
   providerApiMode?: string | null;
@@ -667,8 +668,7 @@ async function executePreparedMagenticRun(args: {
   });
   args.onSubmitted();
 
-  const deadline = Date.now() + (2 * 60 * 60_000);
-  while (Date.now() < deadline) {
+  for (;;) {
     const status = await readMagenticExecution(nativeRootId);
     await writeMagenticProgress(args.runId, status);
     if (status.state === 'completed') return status;
@@ -677,7 +677,6 @@ async function executePreparedMagenticRun(args: {
     }
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
-  throw new Error('magentic_execution_observation_timeout');
 }
 
 async function finishMagenticOuterRun(
@@ -700,9 +699,12 @@ async function finishMagenticOuterRun(
     body: JSON.stringify({
       runId,
       state,
-      hermesSessionRef: status.nativeIdentity || null,
+      // Mag One has a native task root and final synthesis task, not a
+      // conversational Hermes SessionDB execution. Keep that distinction
+      // truthful instead of storing the orchestrator profile as a session id.
+      hermesSessionRef: null,
       providerThreadRef: status.nativeRootId,
-      providerTurnRef: null,
+      providerTurnRef: status.finalTaskId || null,
       effectiveProvider: status.effectiveProvider || null,
       providerApiMode: status.providerApiMode || null,
       nativePhase: status.nativePhase,
@@ -1253,8 +1255,8 @@ router.post('/run', async (req, res) => {
         output = String(magenticStatus.finalResult || '');
         transport = {
           threadId: magenticStatus.nativeRootId,
-          turnId: null,
-          hermesSessionId: magenticStatus.nativeIdentity || null,
+          turnId: magenticStatus.finalTaskId || null,
+          hermesSessionId: null,
           effectiveProvider: magenticStatus.effectiveProvider || null,
           providerApiMode: magenticStatus.providerApiMode || null,
           runtimeSource: 'repository_hermes_magentic',
@@ -1535,6 +1537,7 @@ mainRoutes.get('/session/attention', async (req, res) => {
 });
 
 async function resolveMainGatewayRuntime(
+  req: Request,
   projectId: string,
   deckId: string,
 ) {
@@ -1544,8 +1547,19 @@ async function resolveMainGatewayRuntime(
   )) || [];
   if (!deck || cards.length !== 1) throw new Error('persisted_main_chat_mismatch');
   const card = cards[0];
-  const resolved = agentTerminalManager.findCard(projectId, deckId, card.id);
-  if (!resolved) throw new Error('agent_card_runtime_not_started');
+  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id);
+  if (!resolved) {
+    const owner = await resolveCardRuntimeOwner(req, projectId, deckId, card.id);
+    const state = await agentTerminalManager.open(
+      owner,
+      card,
+      deck,
+      120,
+      36,
+      agentTerminalPresentationOptions(card, false),
+    );
+    resolved = { owner, state };
+  }
   agentTerminalManager.verifyConfiguration(resolved.owner, resolved.state.sessionId, card, deck);
   return { ...resolved, card, deck };
 }
@@ -1556,7 +1570,7 @@ mainRoutes.get('/session/driver', async (req, res) => {
   if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
   try {
-    const runtime = await resolveMainGatewayRuntime(projectId, deckId);
+    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
     const runId = agentTerminalExecution.activeRunId(runtime.state.sessionId);
     return res.json({
       ok: true,
@@ -1586,7 +1600,7 @@ mainRoutes.get('/session/events', async (req, res) => {
   let runtime: Awaited<ReturnType<typeof resolveMainGatewayRuntime>>;
   let detach = () => {};
   try {
-    runtime = await resolveMainGatewayRuntime(projectId, deckId);
+    runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
     if (runtime.state.sessionId !== runtimeSessionId) {
       return res.status(409).json({ ok: false, error: 'main_gateway_runtime_identity_mismatch' });
     }
@@ -1932,7 +1946,7 @@ mainRoutes.get('/session/history', async (req, res) => {
   let runtimeSessionId = '';
   try {
     authority = await resolveSharedChatAuthority(projectId, deckId);
-    const runtime = await resolveMainGatewayRuntime(projectId, deckId);
+    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
     history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
     sharedMessages = await getConversationMessages(projectId, conversationId);
     nativeSessionId = runtime.state.nativeSessionId;

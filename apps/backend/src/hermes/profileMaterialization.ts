@@ -93,6 +93,7 @@ const HERMES_CARD_MODEL_RUNTIME_SCRIPT = [
   'expected_model = sys.argv[2]',
   'expected_runtime = sys.argv[3]',
   'cfg = load_config() or {}',
+  'changed = False',
   'model = cfg.get("model")',
   'model = dict(model) if isinstance(model, dict) else {}',
   'if (model.get("provider"), model.get("default"), model.get("openai_runtime")) != (expected_provider, expected_model, expected_runtime):',
@@ -100,11 +101,25 @@ const HERMES_CARD_MODEL_RUNTIME_SCRIPT = [
   '    model["default"] = expected_model',
   '    model["openai_runtime"] = expected_runtime',
   '    cfg["model"] = model',
+  '    changed = True',
+  'tools = cfg.get("tools")',
+  'tools = dict(tools) if isinstance(tools, dict) else {}',
+  'tool_search = tools.get("tool_search")',
+  'tool_search = dict(tool_search) if isinstance(tool_search, dict) else {}',
+  'if tool_search.get("enabled") != "off":',
+  '    tool_search["enabled"] = "off"',
+  '    tools["tool_search"] = tool_search',
+  '    cfg["tools"] = tools',
+  '    changed = True',
+  'if changed:',
   '    save_config(cfg)',
   'readback = load_config() or {}',
   'actual = readback.get("model") or {}',
   'if (actual.get("provider"), actual.get("default"), actual.get("openai_runtime")) != (expected_provider, expected_model, expected_runtime):',
   '    raise SystemExit(3)',
+  'actual_tool_search = ((readback.get("tools") or {}).get("tool_search") or {})',
+  'if actual_tool_search.get("enabled") != "off":',
+  '    raise SystemExit(4)',
 ].join('\n');
 
 const HERMES_CARD_INSTRUCTIONS_SCRIPT = [
@@ -433,42 +448,29 @@ export async function materializeHermesProfileSelections(
     ...nativeToolToolsets,
     ...requiredToolsets.map((name) => availableToolsets.get(name.toLowerCase())!),
   ])].sort();
-  if (desiredToolsets.length) {
+  const enabledToolsets = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+    .filter((toolset: any) => toolset?.enabled === true)
+    .map((toolset: any) => String(toolset?.name || '').trim())
+    .filter(Boolean)
+    .sort();
+  if (JSON.stringify(enabledToolsets) !== JSON.stringify(desiredToolsets)) {
     if (!configureNativeToolsets) throw new Error(`hermes_native_toolset_configurator_missing:${profile}`);
-    const enabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
-      .filter((toolset: any) => toolset?.enabled === true)
-      .map((toolset: any) => String(toolset?.name || '').trim())
-      .filter(Boolean)
-      .sort();
-    if (JSON.stringify(enabled) !== JSON.stringify(desiredToolsets)) {
-      const configured = await configureNativeToolsets(profile, desiredToolsets);
-      const applied = configured?.applied && typeof configured.applied === 'object'
-        ? configured.applied as Record<string, unknown>
-        : {};
-      if (configured?.ok !== true || applied.toolsets !== true) {
-        throw new Error(`hermes_native_toolsets_apply_failed:${profile}`);
-      }
-      native = await readNativeProfile(profile);
+    const configured = await configureNativeToolsets(profile, desiredToolsets);
+    const applied = configured?.applied && typeof configured.applied === 'object'
+      ? configured.applied as Record<string, unknown>
+      : {};
+    if (configured?.ok !== true || applied.toolsets !== true) {
+      throw new Error(`hermes_native_toolsets_apply_failed:${profile}`);
     }
-    const finalEnabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
-      .filter((toolset: any) => toolset?.enabled === true)
-      .map((toolset: any) => String(toolset?.name || '').trim())
-      .filter(Boolean)
-      .sort();
-    if (JSON.stringify(finalEnabled) !== JSON.stringify(desiredToolsets)) {
-      throw new Error(`hermes_native_toolsets_readback_mismatch:${profile}`);
-    }
-  } else {
-    const enabled = (Array.isArray(native?.toolsets) ? native.toolsets : [])
-      .filter((toolset: any) => toolset?.enabled === true)
-      .map((toolset: any) => String(toolset?.name || '').trim())
-      .filter(Boolean);
-    if (enabled.length) {
-      // Stock profiles.configure removes an empty enabled_toolsets key, which
-      // restores Hermes defaults instead of representing an empty surface.
-      // Fail closed rather than silently granting those defaults.
-      throw new Error(`hermes_native_empty_toolset_filter_unavailable:${profile}`);
-    }
+    native = await readNativeProfile(profile);
+  }
+  const finalEnabledToolsets = (Array.isArray(native?.toolsets) ? native.toolsets : [])
+    .filter((toolset: any) => toolset?.enabled === true)
+    .map((toolset: any) => String(toolset?.name || '').trim())
+    .filter(Boolean)
+    .sort();
+  if (JSON.stringify(finalEnabledToolsets) !== JSON.stringify(desiredToolsets)) {
+    throw new Error(`hermes_native_toolsets_readback_mismatch:${profile}`);
   }
   const desiredMcpServers = [...new Set(
     (args.mcpConnectionIds || []).map((name) => String(name).trim()).filter(Boolean),

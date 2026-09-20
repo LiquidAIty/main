@@ -39,7 +39,9 @@ def test_creator_origin_survives_without_dependency_parent(tmp_path, monkeypatch
         assert not kn.list_notify_subs(conn, plain)
 
 
-def test_creator_task_inherits_and_enforces_allowed_assignees(tmp_path, monkeypatch):
+def test_creator_task_ceiling_binds_assignment_and_keeps_children_self_scoped(
+    tmp_path, monkeypatch,
+):
     from hermes_cli import kanban_db as kb, kanban_db_connect as kbc
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -61,9 +63,7 @@ def test_creator_task_inherits_and_enforces_allowed_assignees(tmp_path, monkeypa
             assignee="worker-a",
             creator_task_id=root,
         )
-        assert kb.get_task(conn, child).allowed_assignees == [
-            "orchestrator", "worker-a", "worker-b",
-        ]
+        assert kb.get_task(conn, child).allowed_assignees == ["worker-a"]
 
         with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
             kb.create_task(
@@ -76,25 +76,52 @@ def test_creator_task_inherits_and_enforces_allowed_assignees(tmp_path, monkeypa
             "SELECT 1 FROM tasks WHERE title = 'foreign child'",
         ).fetchone() is None
 
-        with pytest.raises(ValueError, match="cannot change its inherited"):
+        with pytest.raises(ValueError, match="cannot change its local"):
             kb.create_task(
                 conn,
                 title="widened child",
                 assignee="worker-a",
                 creator_task_id=root,
-                allowed_assignees=["orchestrator", "worker-a", "worker-b", "unwired-worker"],
+                allowed_assignees=["worker-a", "worker-b"],
             )
 
         with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
             kb.assign_task(conn, child, "unwired-worker")
         assert kb.get_task(conn, child).assignee == "worker-a"
         assert kb.assign_task(conn, child, "worker-b") is True
-        assert kb.get_task(conn, child).assignee == "worker-b"
+        reassigned = kb.get_task(conn, child)
+        assert reassigned.assignee == "worker-b"
+        assert reassigned.allowed_assignees == ["worker-b"]
 
         with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
             kb.request_review(conn, child, reviewer="unwired-reviewer")
         assert kb.get_task(conn, child).status == "ready"
         assert kb.get_task(conn, child).assignee == "worker-b"
+        assert kb.assign_task(conn, child, "worker-a") is True
+        assert kb.get_task(conn, child).allowed_assignees == ["worker-a"]
+
+        nested = kb.create_task(
+            conn,
+            title="worker-owned self task",
+            assignee="worker-a",
+            creator_task_id=child,
+        )
+        assert kb.get_task(conn, nested).allowed_assignees == ["worker-a"]
+        with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
+            kb.create_task(
+                conn,
+                title="another root worker is not in this worker's local scope",
+                assignee="worker-b",
+                creator_task_id=child,
+            )
+        deeper = kb.create_task(
+            conn,
+            title="deeper self-assigned persistent task",
+            assignee="worker-a",
+            creator_task_id=nested,
+        )
+        assert kb.get_task(conn, deeper).assignee == "worker-a"
+        assert kb.get_task(conn, deeper).allowed_assignees == ["worker-a"]
 
 
 def test_allowed_assignees_null_preserves_existing_behavior(tmp_path, monkeypatch):

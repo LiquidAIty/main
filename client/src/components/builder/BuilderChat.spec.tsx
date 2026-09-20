@@ -190,6 +190,12 @@ describe('BuilderChat', () => {
       <BuilderChat
         messages={[
           {
+            role: 'assistant', text: 'Main answer', status: 'complete',
+            speaker: {
+              kind: 'card', label: 'Main Chat', cardId: 'card_main_chat', profile: 'liquidaity-main',
+            },
+          },
+          {
             role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK', status: 'complete',
             speaker: { kind: 'user', label: 'You' },
             target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
@@ -199,6 +205,7 @@ describe('BuilderChat', () => {
             speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder' },
           },
         ]}
+        mainCardId="card_main_chat"
         onSend={vi.fn()}
         knowledgeProjectId="project-1"
         colors={colors}
@@ -210,6 +217,8 @@ describe('BuilderChat', () => {
     expect(screen.queryByText('You')).toBeNull();
     expect(screen.getAllByTestId('builder-chat-speaker')).toHaveLength(1);
     expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('Builder');
+    expect(screen.queryByText('Main Chat')).toBeNull();
+    expect(screen.getByText('Main answer')).not.toBeNull();
     expect(screen.getByText('BUILDER_DIRECT_OK')).not.toBeNull();
   });
 
