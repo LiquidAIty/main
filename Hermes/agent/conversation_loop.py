@@ -1515,6 +1515,7 @@ def _run_conversation_turn(
             user_message=s.user_message, original_user_message=s.original_user_message,
             messages=s.messages, effective_task_id=s.effective_task_id,
             should_review_memory=s._should_review_memory,
+            active_system_prompt=s.active_system_prompt,
         )
 
     while (s.api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:

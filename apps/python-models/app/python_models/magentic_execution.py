@@ -153,28 +153,27 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
     return identities, "\n".join(lines)
 
 
-def _root_body(mission: str, native_identity: str, worker_text: str) -> str:
+def _root_body(mission: str, worker_text: str) -> str:
     return (
-        "Execute this Mag One mission through native tasks and dependencies.\n\n"
+        "You are the saved Magnetic orchestrator for this Mag One mission. This native task is "
+        "both the orchestration root and the final result task.\n\n"
         "Available top-level worker Agents (the complete Mag One assignment scope):\n"
         f"{worker_text}\n\n"
-        "Assign only work that helps answer the mission; available workers do not all need a task. "
-        "The list above is the complete persistent profile universe for this Mag One Run: do not "
-        "discover, infer, or substitute any other persistent profile. Decide the useful task graph "
-        "yourself, "
-        "create its tasks and dependencies with the native task tools, and assign top-level work "
-        "only to the listed identities. A worker Agent executes through its exact saved Card "
-        "configuration and returns through its assigned task. Do not turn a worker into a new "
-        "persistent-profile team; only this orchestrator assigns the listed worker profiles. A "
-        "worker may self-assign native follow-up work, but may not recruit another persistent "
-        "profile. Ensure the graph "
-        f"terminates in one result task assigned to {native_identity}, and make every task "
-        "whose result informs the answer reach that "
-        "task through native dependencies. The final task must inspect its dependency "
-        "handoffs, compare the result with the original mission, answer the user directly with "
-        "honest limitations, and complete with that answer in its summary. "
-        "When completing this decomposition root, pass every task id you created in "
-        "created_cards. Do not perform the worker work or final synthesis in this root.\n\n"
+        "Use only the listed saved profiles, and only when their work helps answer the mission. "
+        "Do not discover, infer, create, or substitute another worker profile. Do not use "
+        "auto-decomposition, triage, goal mode, delegate_task, or a separate synthesis task.\n\n"
+        "For each useful worker assignment, create one native task with initial_status=\"running\" "
+        "and an assignee from the list above. The task body must contain the bounded work request "
+        "and require that saved worker to return its result directly through kanban_complete. Link "
+        "each result needed for your next decision as a parent of THIS root task with kanban_link. "
+        "Then end this attempt with kanban_block(kind=\"dependency\"); Hermes will keep this same "
+        "root queued and promote it when those parents complete.\n\n"
+        "Whenever Hermes runs this root again, inspect the parent handoffs already included in the "
+        "native worker context. Decide whether another bounded worker round is useful. If so, create "
+        "and link that round and dependency-block this same root again. When the evidence is enough, "
+        "answer the original user directly and call kanban_complete on THIS root with the final answer "
+        "as its summary. Never complete an intermediate decomposition and never create another task "
+        "for final synthesis.\n\n"
         "Mission and selected context:\n"
         f"{mission}"
     )
@@ -187,8 +186,11 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     spec = payload.get("orchestrator")
     workers = payload.get("workers")
     input_file = payload.get("inputFile")
+    notify_session = payload.get("notifySession")
     if not isinstance(spec, dict) or not isinstance(workers, list) or not isinstance(input_file, dict):
         raise MagenticExecutionError("magentic_execution_contract_invalid")
+    if notify_session is not None and not isinstance(notify_session, dict):
+        raise MagenticExecutionError("magentic_notification_session_invalid")
     from app.python_models.idf import load_idf, runtime_projection
 
     materialized = load_idf(
@@ -210,13 +212,21 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     )
     allowed_assignees = [native_identity, *worker_identities]
     tenant = f"mag-one:{run_id}"
+    notify_session_key = (
+        _required_text(notify_session.get("sessionKey"), "magentic_notification_session_key")
+        if isinstance(notify_session, dict) else None
+    )
+    notify_profile = (
+        _required_text(notify_session.get("profile"), "magentic_notification_profile")
+        if isinstance(notify_session, dict) else None
+    )
 
     from hermes_cli import kanban_db as task_db
     from hermes_cli import kanban_db_connect as task_db_connect
 
     db_path = _task_db_path()
     task_db_connect.init_db(db_path)
-    root_body = _root_body(mission, native_identity, worker_text)
+    root_body = _root_body(mission, worker_text)
     with task_db_connect.connect_closing(db_path) as connection:
         native_root_id = task_db.create_task(
             connection,
@@ -231,6 +241,7 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
             model_override=native_model,
             provider_override=native_provider,
             allowed_assignees=allowed_assignees,
+            session_id=notify_session_key,
         )
         root = task_db.get_task(connection, native_root_id)
         if (
@@ -243,6 +254,16 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
             or root.body != root_body
         ):
             raise MagenticExecutionError("magentic_native_root_readback_mismatch")
+        if notify_session_key:
+            from hermes_cli import kanban_db_notify
+
+            kanban_db_notify.add_notify_sub(
+                connection,
+                task_id=native_root_id,
+                platform="tui",
+                chat_id=notify_session_key,
+                notifier_profile=notify_profile,
+            )
     return {
         "ok": True,
         "runId": run_id,
@@ -253,6 +274,7 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
         "model": native_model,
         "tenant": tenant,
         "state": root.status,
+        "nativeNotification": bool(notify_session_key),
     }
 
 
@@ -286,59 +308,6 @@ def _execution_task_ids(connection: Any, root_id: str) -> list[str]:
     return ordered
 
 
-def _verified_root_tasks(task_db: Any, connection: Any, root_id: str) -> list[str]:
-    for event in reversed(task_db.list_events(connection, root_id)):
-        if event.kind != "completed" or not isinstance(event.payload, dict):
-            continue
-        values = event.payload.get("verified_cards")
-        if isinstance(values, list):
-            return [str(value) for value in values if str(value).strip()]
-    return []
-
-
-def _final_task_id(task_db: Any, connection: Any, root: Any) -> str:
-    verified = _verified_root_tasks(task_db, connection, root.id)
-    direct_created = _creator_children(connection).get(root.id, [])
-    if not verified or set(verified) != set(direct_created):
-        raise MagenticExecutionError("magentic_created_task_set_invalid")
-    execution_ids = [
-        task_id for task_id in _execution_task_ids(connection, root.id)
-        if task_id != root.id
-    ]
-    tasks = {task_id: task_db.get_task(connection, task_id) for task_id in execution_ids}
-    if any(task is None for task in tasks.values()):
-        raise MagenticExecutionError("magentic_created_task_missing")
-    execution_set = set(execution_ids)
-    children = {
-        task_id: [child for child in task_db.child_ids(connection, task_id) if child in execution_set]
-        for task_id in execution_ids
-    }
-    final_candidates = [
-        task_id for task_id in execution_ids
-        if not children[task_id] and tasks[task_id].assignee == root.assignee
-    ]
-    if len(final_candidates) != 1:
-        raise MagenticExecutionError("magentic_final_task_ambiguous")
-    final_id = final_candidates[0]
-
-    def reaches_final(start: str) -> bool:
-        pending = [start]
-        visited: set[str] = set()
-        while pending:
-            current = pending.pop()
-            if current == final_id:
-                return True
-            if current in visited:
-                continue
-            visited.add(current)
-            pending.extend(children.get(current, []))
-        return False
-
-    if any(not reaches_final(task_id) for task_id in execution_ids):
-        raise MagenticExecutionError("magentic_final_task_dependencies_invalid")
-    return final_id
-
-
 def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
     from hermes_cli import kanban_db as task_db
@@ -351,18 +320,20 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
         task_ids = _execution_task_ids(connection, root_id)
         tasks = [task_db.get_task(connection, task_id) for task_id in task_ids]
         tasks = [task for task in tasks if task is not None]
-        blocked = [task for task in tasks if task.status == "blocked"]
+        blocked = [task for task in tasks if task.status in {"blocked", "triage"}]
+        latest_root_run = task_db.latest_run(connection, root_id)
         response: dict[str, Any] = {
             "ok": True,
             "nativeRootId": root_id,
             "state": "working",
-            "nativePhase": "decomposing" if root.status != "done" else "working",
+            "nativePhase": "queued" if root.status == "ready" else "working",
             "nativeIdentity": root.assignee,
             "effectiveProvider": root.provider_override,
             "providerApiMode": (
                 "codex_app_server" if root.provider_override == "openai-codex" else None
             ),
             "model": root.model_override,
+            "nativeRunId": latest_root_run.id if latest_root_run else None,
         }
         if any(task.status == "archived" for task in tasks):
             return {**response, "state": "cancelled", "nativePhase": "cancelled"}
@@ -375,25 +346,7 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
             }
         if root.status != "done":
             return response
-        try:
-            final_id = _final_task_id(task_db, connection, root)
-        except MagenticExecutionError as error:
-            return {**response, "state": "failed", "nativePhase": "failed", "error": str(error)}
-        final_task = task_db.get_task(connection, final_id)
-        if final_task is None:
-            return {
-                **response,
-                "state": "failed",
-                "nativePhase": "failed",
-                "error": "magentic_final_task_missing",
-            }
-        response.update({
-            "finalTaskId": final_id,
-            "nativePhase": "synthesizing" if final_task.status != "done" else "complete",
-        })
-        if final_task.status != "done":
-            return response
-        final_result = task_db.latest_summary(connection, final_id) or final_task.result
+        final_result = task_db.latest_summary(connection, root_id) or root.result
         if not str(final_result or "").strip():
             return {
                 **response,

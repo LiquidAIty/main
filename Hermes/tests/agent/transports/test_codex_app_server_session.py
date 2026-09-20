@@ -44,6 +44,7 @@ class FakeClient:
     # API matching CodexAppServerClient
     def initialize(self, **kwargs):
         self._initialized = True
+        self.initialize_kwargs = kwargs
         return {"userAgent": "fake/0.0.0", "codexHome": "/tmp",
                 "platformOs": "linux", "platformFamily": "unix"}
 
@@ -126,6 +127,154 @@ def make_session(client: FakeClient, **kwargs) -> CodexAppServerSession:
         client_factory=lambda **kw: client,
         **kwargs,
     )
+
+
+def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
+    client = FakeClient()
+    calls = []
+    projected_events = []
+    tool = {
+        "type": "function",
+        "name": "selected",
+        "description": "Existing Hermes tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+    }
+
+    def execute(name, arguments, call_id):
+        calls.append((name, arguments, call_id))
+        return {"success": True, "contentItems": [{"type": "inputText", "text": "saved"}]}
+
+    session = make_session(
+        client,
+        dynamic_tools=[tool],
+        tool_executor=execute,
+        model="saved-model",
+        instructions="Saved Card prompt",
+        effort="medium",
+        on_event=projected_events.append,
+    )
+    params = {
+        "threadId": "thread-fake-001",
+        "turnId": "turn-fake-001",
+        "callId": "call-1",
+        "tool": "selected",
+        "arguments": {"value": 7},
+    }
+    client.queue_server_request("item/tool/call", request_id="first", **params)
+    client.queue_server_request("item/tool/call", request_id="retry", **params)
+    client.queue_server_request(
+        "item/tool/call", request_id="conflict", **{**params, "arguments": {"value": 8}},
+    )
+    client.queue_server_request(
+        "item/tool/call", request_id="foreign", **{**params, "threadId": "other-card"},
+    )
+    client.queue_server_request(
+        "item/tool/call", request_id="invalid", **{**params, "arguments": {"value": "bad"}},
+    )
+    client.queue_server_request(
+        "item/tool/call", request_id="unselected", **{**params, "tool": "unselected"},
+    )
+    client.queue_notification(
+        "item/started",
+        threadId="thread-fake-001",
+        turnId="turn-fake-001",
+        item={
+            "type": "dynamicToolCall", "id": "call-1", "tool": "selected",
+            "arguments": {"value": 7}, "status": "inProgress",
+        },
+    )
+    client.queue_notification(
+        "item/completed",
+        threadId="thread-fake-001",
+        turnId="turn-fake-001",
+        item={
+            "type": "dynamicToolCall", "id": "call-1", "tool": "selected",
+            "arguments": {"value": 7}, "status": "completed",
+            "contentItems": [{"type": "inputText", "text": "saved"}], "success": True,
+        },
+    )
+    respond = client.respond
+
+    def reply(request_id, result):
+        respond(request_id, result)
+        if request_id == "unselected":
+            client.queue_notification(
+                "turn/completed", threadId="t", turn={"id": "tu1", "status": "completed"},
+            )
+
+    client.respond = reply
+    result = session.run_turn("Normal user input", turn_timeout=2)
+
+    assert result.error is None
+    assert result.projected_messages == []
+    assert result.tool_iterations == 1
+    assert [event["method"] for event in projected_events] == ["turn/completed"]
+    assert calls == [("selected", {"value": 7}, "call-1")]
+    responses = dict(client.responses)
+    assert responses["first"] == responses["retry"]
+    assert all(responses[key]["success"] is False for key in ("conflict", "foreign", "invalid", "unselected"))
+    assert client.initialize_kwargs["capabilities"] == {"experimentalApi": True}
+    assert client.requests[0] == (
+        "thread/start",
+        {
+            "cwd": "/tmp",
+            "dynamicTools": [tool],
+            "model": "saved-model",
+            "allowProviderModelFallback": False,
+            "baseInstructions": "Saved Card prompt",
+        },
+    )
+    assert client.requests[1][1]["effort"] == "medium"
+    assert [method for method, _ in client.requests] == ["thread/start", "turn/start"]
+
+
+def test_failed_dynamic_call_is_not_reexecuted_after_response_loss():
+    client = FakeClient()
+    calls = []
+
+    def execute(*args):
+        calls.append(args)
+        raise RuntimeError("failure after a possible side effect")
+
+    session = make_session(
+        client,
+        dynamic_tools=[{
+            "type": "function",
+            "name": "selected",
+            "inputSchema": {"type": "object"},
+        }],
+        tool_executor=execute,
+    )
+    for request_id in ("first", "retry"):
+        client.queue_server_request(
+            "item/tool/call",
+            request_id=request_id,
+            threadId="thread-fake-001",
+            turnId="turn-fake-001",
+            callId="call-1",
+            tool="selected",
+            arguments={},
+        )
+    respond = client.respond
+
+    def reply(request_id, result):
+        respond(request_id, result)
+        if request_id == "retry":
+            client.queue_notification(
+                "turn/completed", threadId="t", turn={"id": "tu1", "status": "completed"},
+            )
+
+    client.respond = reply
+    session.run_turn("Do the selected task", turn_timeout=2)
+
+    assert len(calls) == 1
+    assert client.responses[0][1] == client.responses[1][1]
+    assert client.responses[0][1]["success"] is False
 
 
 # ---- choice mapping ----
@@ -925,4 +1074,3 @@ class TestClassifyOAuthFailure:
         assert _classify_oauth_failure() is None
         assert _classify_oauth_failure("") is None
         assert _classify_oauth_failure("", None) is None  # type: ignore[arg-type]
-

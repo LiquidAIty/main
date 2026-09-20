@@ -10,6 +10,8 @@ reader threads feed queues that this adapter polls, like the chat_completions lo
 from __future__ import annotations
 
 import contextlib
+import copy
+import json
 import logging
 import os
 import threading
@@ -156,6 +158,11 @@ class CodexAppServerSession:
         on_event: Optional[Callable[[dict], None]] = None,
         request_routing: Optional[_ServerRequestRouting] = None,
         client_factory: Optional[Callable[..., CodexAppServerClient]] = None,
+        dynamic_tools: Optional[list[dict]] = None,
+        tool_executor: Optional[Callable[[str, dict, str], dict]] = None,
+        model: Optional[str] = None,
+        instructions: Optional[str] = None,
+        effort: Optional[str] = None,
     ) -> None:
         self._cwd = cwd or os.getcwd()
         self._codex_bin = codex_bin
@@ -167,6 +174,26 @@ class CodexAppServerSession:
         self._on_event = on_event  # Display hook (kawaii spinner ticks etc.)
         self._routing = request_routing or _ServerRequestRouting()
         self._client_factory = client_factory or CodexAppServerClient
+        self._dynamic_tools = copy.deepcopy(dynamic_tools)
+        self._tool_executor = tool_executor
+        self._model = model
+        self._instructions = instructions
+        self._effort = effort
+        self._dynamic_schemas: dict[str, Any] = {}
+        self._dynamic_call_responses: dict[tuple[str, str], tuple[dict, dict]] = {}
+        if dynamic_tools is not None:
+            from jsonschema.validators import validator_for
+
+            for tool in self._dynamic_tools:
+                name = tool["name"]
+                if tool.get("type") != "function" or name in self._dynamic_schemas:
+                    raise ValueError("dynamic_tool_definition_invalid")
+                schema = tool["inputSchema"]
+                validator = validator_for(schema)
+                validator.check_schema(schema)
+                self._dynamic_schemas[name] = validator(schema)
+            if self._dynamic_schemas and tool_executor is None:
+                raise ValueError("dynamic_tool_executor_required")
 
         self._client: Optional[CodexAppServerClient] = None
         self._thread_id: Optional[str] = None
@@ -184,10 +211,23 @@ class CodexAppServerSession:
             return self._thread_id
         if self._client is None:
             self._client = self._client_factory(codex_bin=self._codex_bin, codex_home=self._codex_home)
-        self._client.initialize(client_name="hermes", client_title="Hermes Agent", client_version=_get_hermes_version())
+        self._client.initialize(
+            client_name="hermes",
+            client_title="Hermes Agent",
+            client_version=_get_hermes_version(),
+            **({"capabilities": {"experimentalApi": True}} if self._dynamic_tools is not None else {}),
+        )
         # Permissions are NOT sent on thread/start: codex gates ``thread/start.permissions``
         # behind experimentalApi + a matching ``[permissions]`` table in ~/.codex/config.toml.
-        result = self._client.request("thread/start", {"cwd": self._cwd}, timeout=15)
+        params: dict[str, Any] = {"cwd": self._cwd}
+        if self._dynamic_tools is not None:
+            params["dynamicTools"] = self._dynamic_tools
+        if self._model is not None:
+            params["model"] = self._model
+            params["allowProviderModelFallback"] = False
+        if self._instructions is not None:
+            params["baseInstructions"] = self._instructions
+        result = self._client.request("thread/start", params, timeout=15)
         # Different codex versions serialize the id under thread.id / sessionId / threadId.
         thread_obj = result.get("thread") or {}
         thread_id = thread_obj.get("id") or thread_obj.get("sessionId") or result.get("sessionId") or result.get("threadId")
@@ -302,14 +342,24 @@ class CodexAppServerSession:
 
         Returns (projection, aborted); aborted = agent text carried a terminal ``<turn_aborted>`` marker.
         """
-        if self._on_event is not None:
+        item = ((note.get("params") or {}).get("item") or {})
+        owned_dynamic_tool = (
+            item.get("type") == "dynamicToolCall"
+            and item.get("tool") in self._dynamic_schemas
+        )
+        if self._on_event is not None and not owned_dynamic_tool:
             try:
                 self._on_event(note)
             except Exception:  # pragma: no cover - display callback
                 logger.debug("on_event callback raised", exc_info=True)
         _apply_accounting_notification(result, note)
         self._track_pending_file_change(note)
-        projection = projector.project(note)
+        # Hermes already executes, records, and emits lifecycle callbacks for selected dynamic
+        # tools. Projecting the app-server echo would duplicate each transcript row and UI event.
+        projection = (
+            ProjectionResult(is_tool_iteration=note.get("method") == "item/completed")
+            if owned_dynamic_tool else projector.project(note)
+        )
         if projection.messages:
             result.projected_messages.extend(projection.messages)
         if projection.is_tool_iteration:
@@ -346,7 +396,11 @@ class CodexAppServerSession:
                 result.submitted_user_text = _coerce_turn_input_text(user_input)
                 ts = self._request_for(
                     result, "turn/start",
-                    {"threadId": self._thread_id, "input": [{"type": "text", "text": result.submitted_user_text}]},
+                    {
+                        "threadId": self._thread_id,
+                        "input": [{"type": "text", "text": result.submitted_user_text}],
+                        **({"effort": self._effort} if self._effort is not None else {}),
+                    },
                     "turn/start",
                 )
                 if ts is not None:
@@ -563,12 +617,89 @@ class CodexAppServerSession:
         method = req.get("method", "")
         rid = req.get("id")
         params = req.get("params") or {}
+        if method == "item/tool/call":
+            self._handle_dynamic_tool_call(rid, params)
+            return
         handler = self._SERVER_REQUEST_HANDLERS.get(method)
         if handler is None:
             logger.warning("Unknown codex server request: %s", method)
             self._client.respond_error(rid, code=-32601, message=f"Unsupported method: {method}")
             return
         self._client.respond(rid, handler(self, params))
+
+    def _handle_dynamic_tool_call(self, request_id: Any, params: dict) -> None:
+        """Execute one selected app-server dynamic tool through Hermes' existing owner.
+
+        Scope and schema are checked before dispatch. Responses, including failures, are cached by
+        turn/call id so a lost JSON-RPC reply can never repeat a side effect.
+        """
+        assert self._client is not None
+        name = params.get("tool")
+        arguments = params.get("arguments")
+        call_id = params.get("callId")
+        error = None
+        if (
+            not self._active_turn_id
+            or params.get("threadId") != self._thread_id
+            or params.get("turnId") != self._active_turn_id
+        ):
+            error = "dynamic_tool_scope_mismatch"
+        elif self._interrupt_event.is_set():
+            error = "dynamic_tool_cancelled"
+        elif params.get("namespace") is not None or not isinstance(name, str) or name not in self._dynamic_schemas:
+            error = "dynamic_tool_not_selected"
+        elif (
+            not isinstance(arguments, dict)
+            or not isinstance(call_id, str)
+            or not call_id
+            or not self._dynamic_schemas[name].is_valid(arguments)
+        ):
+            error = "dynamic_tool_arguments_invalid"
+        if error is not None:
+            self._client.respond(request_id, {
+                "success": False,
+                "contentItems": [{"type": "inputText", "text": json.dumps({"error": error})}],
+            })
+            return
+
+        call_key = (self._active_turn_id, call_id)
+        original_call = {"tool": name, "arguments": copy.deepcopy(arguments)}
+        previous = self._dynamic_call_responses.get(call_key)
+        if previous is not None:
+            if previous[0] == original_call:
+                self._client.respond(request_id, copy.deepcopy(previous[1]))
+            else:
+                self._client.respond(request_id, {
+                    "success": False,
+                    "contentItems": [{
+                        "type": "inputText",
+                        "text": json.dumps({"error": "dynamic_tool_call_id_conflict"}),
+                    }],
+                })
+            return
+
+        try:
+            response = self._tool_executor(name, arguments, call_id)
+            if (
+                not isinstance(response, dict)
+                or not isinstance(response.get("success"), bool)
+                or not isinstance(response.get("contentItems"), list)
+            ):
+                raise ValueError("dynamic_tool_result_invalid")
+        except Exception as exc:
+            logger.error("Dynamic tool owner failed: %s (%s)", name, type(exc).__name__)
+            response = {
+                "success": False,
+                "contentItems": [{
+                    "type": "inputText",
+                    "text": json.dumps({
+                        "error": "dynamic_tool_execution_failed",
+                        "type": type(exc).__name__,
+                    }),
+                }],
+            }
+        self._dynamic_call_responses[call_key] = (original_call, copy.deepcopy(response))
+        self._client.respond(request_id, response)
 
     def _respond_elicitation(self, params: dict) -> dict:
         """MCP elicitation: auto-accept our own hermes-tools server (opted in by enabling the runtime;

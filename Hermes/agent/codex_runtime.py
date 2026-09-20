@@ -381,9 +381,93 @@ def _consume_user_interrupt(agent, active: bool = True) -> tuple[bool, Any]:
     return interrupted, message
 
 
-def _ensure_codex_session(agent) -> None:
+def _codex_dynamic_tools(agent) -> list[dict]:
+    """Project the Card's effective first-party Hermes tools into app-server dynamic tools."""
+    from tools.registry import registry
+
+    definitions: list[dict] = []
+    seen: set[str] = set()
+    for tool in agent.tools or []:
+        function = tool.get("function", tool)
+        name = function["name"]
+        if name not in agent.valid_tool_names:
+            raise ValueError(f"codex_tool_not_effective: {name}")
+        if name in seen:
+            raise ValueError(f"codex_duplicate_effective_tool: {name}")
+        seen.add(name)
+        toolset = registry.get_toolset_for_tool(name)
+        if toolset and toolset.startswith("mcp-") and toolset != "mcp-liquidaity-card":
+            # External MCP connections remain native Codex MCP connections. Dynamic tools carry
+            # Hermes-owned Card capabilities and must not duplicate an external server surface.
+            logger.info("External MCP tool requires its native Codex connection: %s", name)
+            continue
+        definitions.append({
+            "type": "function",
+            "name": name,
+            "description": function.get("description", ""),
+            "inputSchema": function["parameters"],
+        })
+    return definitions
+
+
+def _codex_tool_executor(agent, messages: list, effective_task_id: str):
+    """Execute app-server dynamic calls through the ordinary Hermes tool owner and transcript."""
+    def execute(name: str, arguments: dict, call_id: str) -> dict:
+        from agent.message_metadata import append_message
+        from agent.tool_executor import execute_tool_calls_sequential
+        from agent.tool_guardrails import classify_tool_failure
+        from agent.transports.codex_event_projector import _deterministic_call_id
+
+        if name not in agent.valid_tool_names:
+            raise ValueError("codex_tool_not_effective")
+        native_call_id = _deterministic_call_id(f"dyn_{name}", call_id)
+        function = {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}
+        call = {"id": native_call_id, "type": "function", "function": function}
+        append_message(messages, {"role": "assistant", "content": None, "tool_calls": [call]})
+        assistant = SimpleNamespace(tool_calls=[SimpleNamespace(
+            id=native_call_id,
+            type="function",
+            function=SimpleNamespace(**function),
+        )])
+        execute_tool_calls_sequential(agent, assistant, messages, effective_task_id, finalize=False)
+        result = next((
+            row for row in reversed(messages)
+            if row.get("role") == "tool" and row.get("tool_call_id") == native_call_id
+        ), None)
+        if result is None:
+            raise RuntimeError("codex_native_tool_result_missing")
+        content = result.get("content", "")
+        classified_content = content if isinstance(content, str) else json.dumps(content)
+        failed, _ = classify_tool_failure(name, classified_content)
+        if isinstance(content, list):
+            items = []
+            for part in content:
+                if part.get("type") == "text":
+                    items.append({"type": "inputText", "text": part["text"]})
+                elif part.get("type") == "image_url":
+                    items.append({"type": "inputImage", "imageUrl": part["image_url"]["url"]})
+                else:
+                    raise ValueError("codex_tool_content_unsupported")
+        else:
+            items = [{
+                "type": "inputText",
+                "text": content if isinstance(content, str) else json.dumps(content),
+            }]
+        return {
+            "success": not failed and not getattr(agent, "_interrupt_requested", False),
+            "contentItems": items,
+        }
+
+    return execute
+
+
+def _ensure_codex_session(
+    agent, *, messages: list, effective_task_id: str, active_system_prompt: str | None,
+) -> None:
     """Lazily spawn one CodexAppServerSession per AIAgent (reused across turns, closed by the _cleanup hook)."""
     if getattr(agent, "_codex_session", None) is not None:
+        # The native thread persists, but the executor must always target this turn's transcript/task.
+        agent._codex_session._tool_executor = _codex_tool_executor(agent, messages, effective_task_id)
         return
     from agent.runtime_cwd import resolve_agent_cwd
     from agent.transports.codex_app_server_session import CodexAppServerSession, _ServerRequestRouting
@@ -409,6 +493,11 @@ def _ensure_codex_session(agent) -> None:
         cwd=getattr(agent, "session_cwd", None) or str(resolve_agent_cwd()), approval_callback=approval_callback,
         request_routing=_ServerRequestRouting(auto_approve_exec=auto_approve_requests, auto_approve_apply_patch=auto_approve_requests),
         on_event=make_codex_app_server_event_bridge(agent),
+        dynamic_tools=_codex_dynamic_tools(agent),
+        tool_executor=_codex_tool_executor(agent, messages, effective_task_id),
+        model=agent.model,
+        instructions=active_system_prompt,
+        effort=(getattr(agent, "reasoning_config", None) or {}).get("effort"),
     )
 
 
@@ -470,7 +559,8 @@ def _finish_codex_turn(agent, turn, messages: List[Dict[str, Any]], *, original_
 
 
 def run_codex_app_server_turn(agent, *, user_message: str, original_user_message: Any, messages: List[Dict[str, Any]],
-                              effective_task_id: str, should_review_memory: bool = False) -> Dict[str, Any]:
+                              effective_task_id: str, should_review_memory: bool = False,
+                              active_system_prompt: str | None = None) -> Dict[str, Any]:
     """Hand the turn to a ``codex app-server`` subprocess and project its events into ``messages``.
     Returns the chat_completions result shape. The user message is ALREADY in ``messages`` — never append it again."""
     # Defense in depth for compression.checkpoint_required: agent init refuses the combination, but
@@ -479,7 +569,12 @@ def run_codex_app_server_turn(agent, *, user_message: str, original_user_message
         from agent.conversation_compression import _checkpoint_blocked
         raise _checkpoint_blocked("codex_app_server owns the authoritative thread and compacts it "
                                   "without a truthful pre-compaction transcript boundary")
-    _ensure_codex_session(agent)
+    _ensure_codex_session(
+        agent,
+        messages=messages,
+        effective_task_id=effective_task_id,
+        active_system_prompt=active_system_prompt,
+    )
     try:
         turn = agent._codex_session.run_turn(user_input=user_message)
     except Exception as exc:

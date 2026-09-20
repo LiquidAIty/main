@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from agent.deadline import kill_process_tree
-from agent.transports.hermes_tools_mcp_server import HERMES_TOOLS_MCP_SERVER_NAME
 from tools.environments.local import hermes_subprocess_env
 
 MIN_CODEX_VERSION = (0, 125, 0)
@@ -95,33 +94,15 @@ class CodexAppServerClient:
             spawn_env["CODEX_HOME"] = codex_home
 
         cmd = [codex_bin, "app-server", *(extra_args or [])]
-        from agent.delegation_context import (
-            DELEGATED_CHILD_ENV_MARKER, KANBAN_ENV_KEYS,
-            delegated_child_subprocess_env, is_dispatcher_owned_worker_context,
-        )
-        # Native shell children remain unowned. Only Hermes' managed MCP tool
-        # endpoint acts for this worker; grant it scope via its existing per-server
-        # environment (the entry the runtime migration registers), never by granting
-        # the whole executor process ownership.
-        owned_task = os.environ.get("HERMES_KANBAN_TASK") and is_dispatcher_owned_worker_context()
-        if owned_task:
-            # A saved profile may select the app-server runtime without ever running the
-            # interactive runtime-switch command that persists this entry in config.toml.
-            # Define the existing managed endpoint completely for this process before
-            # adding task scope; an env-only entry is not a valid Codex MCP transport.
-            from hermes_cli.codex_runtime_plugin_migration import _build_hermes_tools_mcp_entry
+        # Magnetic is an orchestrator, not a coding Card. Its Hermes tools use app-server's
+        # dynamic-tool host, so that host must stay enabled; disable only Codex's native shell.
+        # This process-local feature override leaves Builder and every other profile unchanged.
+        if os.environ.get("HERMES_PROFILE", "").strip() == "card_magentic":
+            cmd += ["--disable", "shell_tool"]
 
-            server_prefix = f"mcp_servers.{HERMES_TOOLS_MCP_SERVER_NAME}"
-            server_entry = _build_hermes_tools_mcp_entry()
-            for field in ("command", "args", "startup_timeout_sec", "tool_timeout_sec"):
-                if field in server_entry:
-                    cmd += ["-c", f"{server_prefix}.{field}={json.dumps(server_entry[field])}"]
-            for key, value in (server_entry.get("env") or {}).items():
-                cmd += ["-c", f"{server_prefix}.env.{key}={json.dumps(value)}"]
-            for key in (*KANBAN_ENV_KEYS, "HERMES_KANBAN_DB", "HERMES_KANBAN_BOARD"):
-                if key in os.environ:
-                    cmd += ["-c", f"{server_prefix}.env.{key}={json.dumps(os.environ[key])}"]
-            cmd += ["-c", f'{server_prefix}.env.{DELEGATED_CHILD_ENV_MARKER}=""']
+        from agent.delegation_context import delegated_child_subprocess_env, is_dispatcher_owned_worker_context
+
+        owned_task = os.environ.get("HERMES_KANBAN_TASK") and is_dispatcher_owned_worker_context()
         spawn_env = delegated_child_subprocess_env(spawn_env)
         # Kanban workers must write handoff/status to the board DB outside the
         # workspace: keep the sandbox on, add the Kanban root as writable.

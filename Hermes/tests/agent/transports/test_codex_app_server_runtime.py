@@ -260,6 +260,48 @@ class TestSpawnEnvIsolation:
     RUST_LOG on top of os.environ.copy().
     """
 
+    def test_only_magnetic_disables_the_codex_shell_tool(self, monkeypatch):
+        """Magnetic keeps the dynamic-tool host without inheriting Codex's native shell;
+        Builder remains the repository-capable coding Card."""
+        import subprocess
+        from agent.transports import codex_app_server as cas
+
+        commands = []
+
+        class FakePopen:
+            def __init__(self, cmd, *args, **kwargs):
+                commands.append(list(cmd))
+                self.stdin = self.stdout = self.stderr = None
+                self.pid = 1
+                self.returncode = None
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(subprocess, "Popen", FakePopen)
+
+        def launch(profile: str) -> list[str]:
+            monkeypatch.setenv("HERMES_PROFILE", profile)
+            client = cas.CodexAppServerClient(codex_bin="codex")
+            client._closed = True
+            return commands.pop()
+
+        magnetic = launch("card_magentic")
+        builder = launch("builder")
+
+        assert magnetic[:2] == ["codex", "app-server"]
+        assert ["--disable", "shell_tool"] == magnetic[2:4]
+        assert "shell_tool" not in builder
+
     def test_spawn_env_preserves_HOME(self, monkeypatch):
         """The spawn env must contain the parent process's HOME unchanged.
         Verifies via a subprocess-monkey-patch."""

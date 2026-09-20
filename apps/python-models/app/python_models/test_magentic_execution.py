@@ -126,6 +126,10 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
 
     captured = _stub_retained_input(monkeypatch)
     payload = _execution_payload()
+    payload["notifySession"] = {
+        "sessionKey": "main-stored-session",
+        "profile": "liquidaity-main",
+    }
     first = magentic_execution.submit_magentic_execution(payload)
     second = magentic_execution.submit_magentic_execution(payload)
 
@@ -146,6 +150,7 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         "model": "gpt-5.6-sol",
         "tenant": "mag-one:run-one",
         "state": "ready",
+        "nativeNotification": True,
     }
     with task_db_connect.connect_closing(native_task_store) as connection:
         root = task_db.get_task(connection, first["nativeRootId"])
@@ -155,20 +160,31 @@ def test_submit_uses_reloaded_idf_and_creates_one_idempotent_bounded_root(
         assert root.tenant == "mag-one:run-one"
         assert root.model_override == "gpt-5.6-sol"
         assert root.provider_override == "openai-codex"
+        assert root.session_id == "main-stored-session"
         assert root.status == "ready"
         assert "Exact mission from the retained IDF." in (root.body or "")
         assert "First saved Card" in (root.body or "")
-        assert "available workers do not all need a task" in (root.body or "")
-        assert "complete persistent profile universe" in (root.body or "")
-        assert "do not discover, infer, or substitute" in (root.body or "")
-        assert "exact saved Card configuration" in (root.body or "")
-        assert "only this orchestrator assigns" in (root.body or "")
-        assert "may not recruit another persistent profile" in (root.body or "")
-        assert "answer the user directly with honest limitations" in (root.body or "")
+        assert "both the orchestration root and the final result task" in (root.body or "")
+        assert "initial_status=\"running\"" in (root.body or "")
+        assert "parent of THIS root task" in (root.body or "")
+        assert "kanban_block(kind=\"dependency\")" in (root.body or "")
+        assert "promote it when those parents complete" in (root.body or "")
+        assert "Never complete an intermediate decomposition" in (root.body or "")
+        assert "never create another task for final synthesis" in (root.body or "")
+        assert "auto-decomposition, triage, goal mode, delegate_task" in (root.body or "")
         assert connection.execute(
             "SELECT COUNT(*) AS count FROM tasks WHERE idempotency_key = ?",
             ("magentic:run-one:root",),
         ).fetchone()["count"] == 1
+        subscription = connection.execute(
+            "SELECT platform, chat_id, notifier_profile FROM kanban_notify_subs WHERE task_id = ?",
+            (first["nativeRootId"],),
+        ).fetchone()
+        assert dict(subscription) == {
+            "platform": "tui",
+            "chat_id": "main-stored-session",
+            "notifier_profile": "liquidaity-main",
+        }
 
 
 def test_submit_rejects_transport_mission_that_differs_from_reloaded_idf(
@@ -190,19 +206,23 @@ def _submit_root(monkeypatch) -> str:
     )["nativeRootId"]
 
 
-def test_status_returns_only_real_final_synthesis_from_native_dependency_graph(
+def test_same_root_waits_on_native_dependencies_then_returns_its_own_final_result(
     native_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
     with task_db_connect.connect_closing(native_task_store) as connection:
+        first_attempt = task_db.claim_task(connection, root_id, claimer="dispatcher:first")
+        assert first_attempt is not None
+        first_run_id = first_attempt.current_run_id
         worker_a = task_db.create_task(
             connection,
             title="Worker A task",
             assignee="worker-a",
             created_by="card_magentic",
             creator_task_id=root_id,
+            initial_status="running",
         )
         worker_b = task_db.create_task(
             connection,
@@ -210,180 +230,84 @@ def test_status_returns_only_real_final_synthesis_from_native_dependency_graph(
             assignee="worker-b",
             created_by="card_magentic",
             creator_task_id=root_id,
+            initial_status="running",
         )
-        final_id = task_db.create_task(
-            connection,
-            title="Final synthesis",
-            assignee="card_magentic",
-            created_by="card_magentic",
-            creator_task_id=root_id,
-            parents=[worker_a, worker_b],
+        assert not task_db.link_tasks(connection, parent_id=worker_a, child_id=root_id)
+        assert not task_db.link_tasks(connection, parent_id=worker_b, child_id=root_id)
+        assert task_db.block_task(
+            connection, root_id, reason="Waiting for the selected workers.",
+            kind="dependency", expected_run_id=first_run_id,
         )
-        task_db.create_task(
-            connection,
-            title="Unrelated native task",
-            assignee="unrelated",
-        )
+        assert task_db.get_task(connection, root_id).status == "todo"
+
+    waiting = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
+    assert waiting["state"] == "working"
+    assert waiting["nativePhase"] == "working"
+    assert waiting["nativeRunId"] == first_run_id
+
+    with task_db_connect.connect_closing(native_task_store) as connection:
         assert task_db.complete_task(
             connection, worker_a, summary="Worker A result", result="Worker A result",
         )
+        assert task_db.get_task(connection, root_id).status == "todo"
         assert task_db.complete_task(
             connection, worker_b, summary="Worker B result", result="Worker B result",
         )
+        assert task_db.get_task(connection, root_id).status == "ready"
+        second_attempt = task_db.claim_task(connection, root_id, claimer="dispatcher:second")
+        assert second_attempt is not None
+        second_run_id = second_attempt.current_run_id
+        context = task_db.build_worker_context(connection, root_id)
+        assert "Worker A result" in context
+        assert "Worker B result" in context
         assert task_db.complete_task(
-            connection, final_id, summary="The real synthesized answer.",
+            connection, root_id, summary="The real synthesized answer.",
             result="The real synthesized answer.",
-        )
-        assert task_db.complete_task(
-            connection,
-            root_id,
-            summary="Decomposition complete.",
-            result="Decomposition complete.",
-            created_cards=[worker_a, worker_b, final_id],
+            expected_run_id=second_run_id,
         )
 
     status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
     assert status["state"] == "completed"
     assert status["nativePhase"] == "complete"
-    assert status["finalTaskId"] == final_id
+    assert status["nativeRootId"] == root_id
+    assert status["nativeRunId"] == second_run_id
     assert status["finalResult"] == "The real synthesized answer."
     assert status["effectiveProvider"] == "openai-codex"
     assert status["model"] == "gpt-5.6-sol"
-    assert "nativeRunId" not in status
+    assert "finalTaskId" not in status
     assert "tasksTotal" not in status
     assert "tasksCompleted" not in status
     assert "activeWorkers" not in status
 
 
-def test_status_fails_closed_when_completed_root_has_no_unique_final_task(
+def test_completed_root_without_its_own_result_fails_closed(
     native_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
     with task_db_connect.connect_closing(native_task_store) as connection:
-        worker_a = task_db.create_task(
-            connection, title="Worker A task", assignee="worker-a",
-            created_by="card_magentic", creator_task_id=root_id,
-        )
-        worker_b = task_db.create_task(
-            connection, title="Worker B task", assignee="worker-b",
-            created_by="card_magentic", creator_task_id=root_id,
-        )
-        assert task_db.complete_task(connection, worker_a, summary="A")
-        assert task_db.complete_task(connection, worker_b, summary="B")
-        assert task_db.complete_task(
-            connection,
-            root_id,
-            summary="Incorrectly complete",
-            created_cards=[worker_a, worker_b],
-        )
+        assert task_db.complete_task(connection, root_id)
 
     status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
     assert status["state"] == "failed"
     assert status["nativePhase"] == "failed"
-    assert status["error"] == "magentic_final_task_ambiguous"
+    assert status["error"] == "magentic_final_result_missing"
 
 
-def test_status_allows_the_orchestrator_to_use_only_needed_eligible_workers(
+def test_native_allowed_assignees_reject_an_unwired_profile(
     native_task_store, monkeypatch,
 ) -> None:
     from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
 
     root_id = _submit_root(monkeypatch)
     with task_db_connect.connect_closing(native_task_store) as connection:
-        worker_a = task_db.create_task(
-            connection,
-            title="Only needed worker task",
-            assignee="worker-a",
-            created_by="card_magentic",
-            creator_task_id=root_id,
-        )
-        final_id = task_db.create_task(
-            connection,
-            title="Final synthesis",
-            assignee="card_magentic",
-            created_by="card_magentic",
-            creator_task_id=root_id,
-            parents=[worker_a],
-        )
-        assert task_db.complete_task(connection, worker_a, summary="Useful result")
-        assert task_db.complete_task(connection, final_id, summary="Direct answer")
-        assert task_db.complete_task(
-            connection,
-            root_id,
-            summary="Decomposed",
-            created_cards=[worker_a, final_id],
-        )
-
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    assert status["state"] == "completed"
-    assert status["finalResult"] == "Direct answer"
-
-
-def test_status_accepts_nested_native_work_that_converges_on_the_final_task(
-    native_task_store, monkeypatch,
-) -> None:
-    from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
-
-    root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
-        worker_id = task_db.create_task(
-            connection, title="Worker task", assignee="worker-a",
-            created_by="card_magentic", creator_task_id=root_id,
-        )
-        nested_id = task_db.create_task(
-            connection, title="Worker-owned nested task", assignee="worker-a",
-            created_by="worker-a", creator_task_id=worker_id, parents=[worker_id],
-        )
-        final_id = task_db.create_task(
-            connection, title="Final synthesis", assignee="card_magentic",
-            created_by="card_magentic", creator_task_id=root_id, parents=[nested_id],
-        )
-        assert task_db.complete_task(connection, worker_id, summary="Worker")
-        assert task_db.complete_task(connection, nested_id, summary="Nested")
-        assert task_db.complete_task(connection, final_id, summary="Final")
-        assert task_db.complete_task(
-            connection, root_id, summary="Decomposed",
-            created_cards=[worker_id, final_id],
-        )
-
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    assert status["state"] == "completed"
-    assert status["finalTaskId"] == final_id
-    assert status["finalResult"] == "Final"
-
-
-def test_status_rejects_nested_native_work_that_bypasses_the_final_task(
-    native_task_store, monkeypatch,
-) -> None:
-    from hermes_cli import kanban_db as task_db, kanban_db_connect as task_db_connect
-
-    root_id = _submit_root(monkeypatch)
-    with task_db_connect.connect_closing(native_task_store) as connection:
-        worker_id = task_db.create_task(
-            connection, title="Worker task", assignee="worker-a",
-            created_by="card_magentic", creator_task_id=root_id,
-        )
-        nested_id = task_db.create_task(
-            connection, title="Orphaned nested task", assignee="worker-a",
-            created_by="worker-a", creator_task_id=worker_id,
-        )
-        final_id = task_db.create_task(
-            connection, title="Final synthesis", assignee="card_magentic",
-            created_by="card_magentic", creator_task_id=root_id, parents=[worker_id],
-        )
-        assert task_db.complete_task(connection, worker_id, summary="Worker")
-        assert task_db.complete_task(connection, nested_id, summary="Nested")
-        assert task_db.complete_task(connection, final_id, summary="Final")
-        assert task_db.complete_task(
-            connection, root_id, summary="Decomposed",
-            created_cards=[worker_id, final_id],
-        )
-
-    status = magentic_execution.read_magentic_execution({"nativeRootId": root_id})
-    assert status["state"] == "failed"
-    assert status["error"] == "magentic_final_task_dependencies_invalid"
+        with pytest.raises(ValueError, match="outside this execution's allowed assignees"):
+            task_db.create_task(
+                connection, title="Ungrantable task", assignee="worker-c",
+                created_by="card_magentic", creator_task_id=root_id,
+                initial_status="running",
+            )
 
 
 def test_stop_archives_only_the_exact_execution_creator_tree(
