@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
   requireHermesCardToolsReadback,
   type HermesCardTools,
@@ -169,5 +170,98 @@ describe('materializeHermesExternalMcpTools', () => {
       name: 'builder',
       enabled_mcp_servers: [],
     });
+  });
+});
+
+describe('materializeHermesApplicationMcpServers', () => {
+  it('writes exact profile-scoped views of the application MCP host', async () => {
+    const selected = configuration({
+      enabledTools: ['cbm.search_graph', 'graphiti.search_nodes'],
+      presentedTools: ['cbm.search_graph', 'graphiti.search_nodes'],
+      pluginTools: [],
+      externalMcpTools: [
+        {
+          canonicalName: 'cbm.search_graph',
+          connectionId: 'cbm',
+          nativeName: 'cbm.search_graph',
+        },
+        {
+          canonicalName: 'graphiti.search_nodes',
+          connectionId: 'graphiti',
+          nativeName: 'graphiti.search_nodes',
+        },
+      ],
+    });
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === 'mcp.servers.list') return { servers: [] };
+      if (method === 'mcp.servers.add') return { ok: true, name: params.name };
+      throw new Error(`unexpected:${method}`);
+    });
+
+    await materializeHermesApplicationMcpServers(request, selected, {
+      type: 'http',
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { Authorization: 'Bearer signed-run-token' },
+    });
+
+    expect(request).toHaveBeenCalledWith('mcp.servers.add', {
+      name: 'cbm',
+      config: {
+        url: 'http://127.0.0.1:8765/mcp',
+        tools: {
+          include: ['cbm.search_graph'],
+          prompts: false,
+          resources: false,
+        },
+      },
+      bearer_token: 'signed-run-token',
+    });
+    expect(request).toHaveBeenCalledWith('mcp.servers.add', {
+      name: 'graphiti',
+      config: {
+        url: 'http://127.0.0.1:8765/mcp',
+        tools: {
+          include: ['graphiti.search_nodes'],
+          prompts: false,
+          resources: false,
+        },
+      },
+      bearer_token: 'signed-run-token',
+    });
+  });
+
+  it('renews an existing exact connection without replacing its filter', async () => {
+    const selected = configuration({
+      enabledTools: ['cbm.search_graph'],
+      presentedTools: ['cbm.search_graph'],
+      pluginTools: [],
+      externalMcpTools: [{
+        canonicalName: 'cbm.search_graph',
+        connectionId: 'cbm',
+        nativeName: 'cbm.search_graph',
+      }],
+    });
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === 'mcp.servers.list') return { servers: [{
+        name: 'cbm',
+        transport: 'http',
+        url: 'http://127.0.0.1:8765/mcp',
+        tools: { include: ['cbm.search_graph'], prompts: false, resources: false },
+      }] };
+      if (method === 'mcp.servers.set_api_key') return { ok: true, name: params.name };
+      throw new Error(`unexpected:${method}`);
+    });
+
+    await materializeHermesApplicationMcpServers(request, selected, {
+      type: 'http',
+      url: 'http://127.0.0.1:8765/mcp',
+      headers: { Authorization: 'Bearer next-run-token' },
+    });
+
+    expect(request).toHaveBeenCalledWith('mcp.servers.set_api_key', {
+      name: 'cbm',
+      value: 'next-run-token',
+    });
+    expect(request).not.toHaveBeenCalledWith('mcp.servers.add', expect.anything());
   });
 });

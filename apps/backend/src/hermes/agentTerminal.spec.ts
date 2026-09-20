@@ -233,7 +233,7 @@ class FakeGatewayClient {
       { name: 'card-tools', tools: [{ name: 'card__canvas_inspect', description: 'Inspect' }] },
       ...(this.mcpReloaded ? [{
         name: 'mcp-cbm',
-        tools: [{ name: 'mcp__cbm__search_graph', description: 'Search CodeGraph' }],
+        tools: [{ name: 'mcp__cbm__cbm_search_graph', description: 'Search CodeGraph' }],
       }] : []),
     ], total: this.mcpReloaded ? 3 : 2 } as T;
     if (method === 'session.interrupt') return { ok: true } as T;
@@ -378,6 +378,16 @@ function fixture(extraProfileNames: string[] = []) {
   const materializeExternalMcpTools = vi.fn(async () => ({}));
   const configureCardInstructions = vi.fn(async () => undefined);
   const configureCardModelRuntime = vi.fn(async () => undefined);
+  const resolveActiveContext = vi.fn(() => ({
+    runId: 'run-one',
+    conversationId: 'conversation-one',
+  }));
+  const resolveMcpServerSpec = vi.fn(() => ({
+    type: 'http' as const,
+    url: 'http://127.0.0.1:8765/mcp',
+    headers: { Authorization: 'Bearer signed-run-token' },
+  }));
+  const materializeApplicationMcpServers = vi.fn(async () => undefined);
   const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
     const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
     return {
@@ -402,6 +412,9 @@ function fixture(extraProfileNames: string[] = []) {
     resolveBotRoster,
     configureCardInstructions,
     configureCardModelRuntime,
+    resolveActiveContext,
+    resolveMcpServerSpec,
+    materializeApplicationMcpServers,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
@@ -411,6 +424,7 @@ function fixture(extraProfileNames: string[] = []) {
     resolveCardTools, materializeCardToolsPlugin, cards, deck, owners,
     materializeExternalMcpTools, resolveBotRoster,
     configureCardInstructions, configureCardModelRuntime,
+    resolveActiveContext, resolveMcpServerSpec, materializeApplicationMcpServers,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -602,7 +616,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         externalMcpTools: [{
           canonicalName: 'cbm.search_graph',
           connectionId: 'cbm',
-          nativeName: 'search_graph',
+          nativeName: 'cbm.search_graph',
         }],
         externalToolCatalogState: 'available',
         configurationFingerprint: '2'.repeat(64),
@@ -763,7 +777,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         externalMcpTools: [{
           canonicalName: 'cbm.search_graph',
           connectionId: 'cbm',
-          nativeName: 'search_graph',
+          nativeName: 'cbm.search_graph',
         }],
         externalToolCatalogState: 'available',
         configurationFingerprint: '2'.repeat(64),
@@ -795,6 +809,62 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.manager.state(f.owners[0], state.sessionId).unavailableToolReasons).toEqual({});
   });
 
+  it('refreshes exact external MCP tools before a turn even when the catalog was already available', async () => {
+    const f = fixture();
+    const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
+    const resolved = {
+      ...base,
+      enabledTools: ['canvas.inspect', 'cbm.search_graph'],
+      unavailableTools: [],
+      unavailableToolReasons: {},
+      presentedTools: ['canvas.inspect', 'cbm.search_graph'],
+      externalMcpTools: [{
+        canonicalName: 'cbm.search_graph',
+        connectionId: 'cbm',
+        nativeName: 'cbm.search_graph',
+      }],
+      externalToolCatalogState: 'available' as const,
+      configurationFingerprint: '3'.repeat(64),
+    };
+    f.resolveCardTools.mockReset();
+    f.resolveCardTools.mockResolvedValue(resolved);
+
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    expect(state.unavailableToolReasons).toEqual({
+      'cbm.search_graph': 'external_mcp_tool_unavailable',
+    });
+
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'use code context'))
+      .resolves.toMatchObject({ text: 'reply:use code context' });
+
+    expect(f.materializeApplicationMcpServers).toHaveBeenCalledWith(
+      expect.any(Function),
+      resolved,
+      {
+        type: 'http',
+        url: 'http://127.0.0.1:8765/mcp',
+        headers: { Authorization: 'Bearer signed-run-token' },
+      },
+    );
+    expect(f.resolveMcpServerSpec).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'card-runtime',
+      parentRunId: 'run-one',
+      conversationId: 'conversation-one',
+      callerCardId: 'signal',
+      grantedTools: ['canvas.inspect', 'cbm.search_graph'],
+    }));
+    const methods = f.clients[0].requests.map((request) => request.method);
+    expect(methods.indexOf('reload.mcp')).toBeGreaterThan(-1);
+    expect(methods.indexOf('reload.mcp')).toBeLessThan(methods.indexOf('prompt.submit'));
+    expect(f.manager.state(f.owners[0], state.sessionId)).toMatchObject({
+      sessionId: state.sessionId,
+      nativeSessionId: state.nativeSessionId,
+      unavailableToolReasons: {},
+    });
+  });
+
   it('keeps the exact Card running when an optional catalog refresh is not yet installable', async () => {
     const f = fixture();
     const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
@@ -818,7 +888,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         externalMcpTools: [{
           canonicalName: 'cbm.search_graph',
           connectionId: 'cbm',
-          nativeName: 'search_graph',
+          nativeName: 'cbm.search_graph',
         }],
         externalToolCatalogState: 'available',
         configurationFingerprint: '2'.repeat(64),

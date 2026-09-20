@@ -21,8 +21,6 @@ from app.python_models.tool_registry import (
     IddValidationError,
     materialize_tool_catalog,
     hermes_plugin_operation_ids,
-    readable_tool_ids,
-    writable_tool_ids,
     tool_access,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -2506,8 +2504,12 @@ def _prepare_invocation(
         name for name in call_config["enabledTools"]
         if unavailable_reason(name) is None
     ]
-    selected_tools = [name for name in effective_tools
-                      if name in (readable_tool_ids() | writable_tool_ids())]
+    # Live discovery is the execution-availability owner for external MCP
+    # operations.  The IDD registry still supplies the capability vocabulary,
+    # effect metadata, and saved-grant validation, but it must not erase a
+    # currently published external tool merely because this Python process did
+    # not register that provider at import time.
+    selected_tools = list(effective_tools)
     call_config["enabledTools"] = selected_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons

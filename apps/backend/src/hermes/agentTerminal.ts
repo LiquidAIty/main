@@ -15,6 +15,7 @@ import type { AgentCardInstance, DeckDocument } from '../types';
 import { BUILDER_CARD_ID } from '../decks/store';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
+import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
 import { agentTerminalExecution } from './agentTerminalExecution';
 import {
   configureHermesCardInstructions,
@@ -28,6 +29,7 @@ import { readSavedSubagentModel } from './subagentModel';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   HERMES_CARD_TOOLS_TOOLSET,
+  materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
   materializeHermesCardToolsPlugin,
   requireHermesCardToolsReadback,
@@ -615,6 +617,9 @@ export class AgentTerminalManager {
     private readonly resolveBotRoster: typeof resolveHermesBotRosterProjection = resolveHermesBotRosterProjection,
     private readonly configureCardInstructions: typeof configureHermesCardInstructions = configureHermesCardInstructions,
     private readonly configureCardModelRuntime: typeof configureHermesCardModelRuntime = configureHermesCardModelRuntime,
+    private readonly resolveActiveContext = (sessionId: string) => agentTerminalExecution.activeContext(sessionId),
+    private readonly resolveMcpServerSpec: typeof resolvePythonAgentMcpServerSpec = resolvePythonAgentMcpServerSpec,
+    private readonly materializeApplicationMcpServers: typeof materializeHermesApplicationMcpServers = materializeHermesApplicationMcpServers,
   ) {}
 
   private async prepareMagenticTaskCard(
@@ -1456,18 +1461,35 @@ export class AgentTerminalManager {
   }
 
   private async refreshOptionalCardTools(session: Session): Promise<void> {
-    if (session.cardTools.externalToolCatalogState !== 'unavailable') return;
     try {
       const resolved = await this.resolveCardTools(session.owner, session.card);
       if (resolved.externalToolCatalogState !== 'available') return;
-      if (resolved.configurationFingerprint === session.cardTools.configurationFingerprint) {
+      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return;
+      if (!resolved.externalMcpTools.length) {
         session.cardTools = resolved;
         return;
       }
-      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return;
+      const active = this.resolveActiveContext(session.state.sessionId);
+      if (!active) return;
 
       const request = <T>(method: string, params: Record<string, unknown>) => (
         session.client.request<T>(method, { ...params, profile: session.launch.profile })
+      );
+      await this.materializeApplicationMcpServers(
+        request,
+        resolved,
+        this.resolveMcpServerSpec({
+          kind: 'card-runtime',
+          projectId: session.owner.projectId,
+          deckId: session.owner.deckId,
+          conversationId: active.conversationId,
+          parentRunId: active.runId,
+          callerCardId: session.owner.cardId,
+          callerRuntimeKind: 'hermes',
+          callerRuntimeMode: resolved.runtime.mode,
+          grantedTools: resolved.enabledTools,
+          presentedTools: resolved.presentedTools,
+        }),
       );
       const externalMcpConnectionIds = [...new Set(
         resolved.externalMcpTools.map((tool) => tool.connectionId),

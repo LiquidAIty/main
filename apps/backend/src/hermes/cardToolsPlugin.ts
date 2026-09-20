@@ -221,7 +221,13 @@ export async function resolveHermesCardTools(
     return tool.connectionKind === 'external-mcp'
       && tool.sourceId !== 'main_mcp'
       && tool.sourceId !== 'python_runtime';
-  });
+  }).map((tool) => ({
+    ...tool,
+    // Hermes connects to the application-owned aggregate MCP endpoint.  Its
+    // callable transport name is the canonical published name; source-native
+    // names remain catalog provenance and are not callable on that endpoint.
+    nativeName: tool.name,
+  }));
   const resolved = await requestPythonRailsJson('/domain/hermes-card-tools/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -378,10 +384,104 @@ type HermesGatewayRequest = (
   params: Record<string, unknown>,
 ) => Promise<unknown>;
 
+export type HermesApplicationMcpServerSpec = {
+  type: 'http';
+  url: string;
+  headers: Record<string, string>;
+};
+
 function sameStrings(left: Iterable<string>, right: Iterable<string>): boolean {
   const a = [...new Set(left)].sort();
   const b = [...new Set(right)].sort();
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Ensure each selected external owner is a profile-scoped view of the one
+ * application MCP host. The signed credential is renewed for the staged Card
+ * Run; each connection's persisted include list remains the exact saved grant.
+ */
+export async function materializeHermesApplicationMcpServers(
+  request: HermesGatewayRequest,
+  configuration: HermesCardTools,
+  serverSpec: HermesApplicationMcpServerSpec,
+): Promise<void> {
+  const byConnection = new Map<string, string[]>();
+  for (const tool of configuration.externalMcpTools) {
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tool.connectionId)) {
+      throw new Error(`hermes_application_mcp_connection_invalid:${tool.connectionId}`);
+    }
+    const names = byConnection.get(tool.connectionId) || [];
+    names.push(tool.nativeName);
+    byConnection.set(tool.connectionId, names);
+  }
+  if (!byConnection.size) return;
+
+  const parsedUrl = new URL(serverSpec.url);
+  if (
+    serverSpec.type !== 'http'
+    || parsedUrl.protocol !== 'http:'
+    || !['127.0.0.1', 'localhost'].includes(parsedUrl.hostname)
+    || parsedUrl.pathname !== '/mcp'
+  ) {
+    throw new Error('hermes_application_mcp_server_spec_invalid');
+  }
+  const authorization = Object.entries(serverSpec.headers).find(
+    ([name]) => name.toLowerCase() === 'authorization',
+  )?.[1];
+  const bearer = /^Bearer\s+(\S+)$/i.exec(String(authorization || '').trim())?.[1];
+  if (!bearer) throw new Error('hermes_application_mcp_bearer_missing');
+
+  const listed = record(await request('mcp.servers.list', {}));
+  if (!Array.isArray(listed.servers)) throw new Error('hermes_native_mcp_server_list_invalid');
+  const configured = new Map<string, Record<string, unknown>>();
+  for (const value of listed.servers) {
+    const server = record(value);
+    const name = String(server.name || '').trim();
+    if (!name || configured.has(name)) throw new Error('hermes_native_mcp_server_list_invalid');
+    configured.set(name, server);
+  }
+
+  for (const [connectionId, names] of byConnection) {
+    const include = [...new Set(names)].sort();
+    const existing = configured.get(connectionId);
+    if (existing) {
+      let existingUrl = '';
+      try {
+        existingUrl = new URL(String(existing.url || '')).toString();
+      } catch {}
+      if (existing.transport !== 'http' || existingUrl !== parsedUrl.toString()) {
+        throw new Error(`hermes_application_mcp_server_conflict:${connectionId}`);
+      }
+      const tools = record(existing.tools);
+      if (
+        Object.prototype.hasOwnProperty.call(tools, 'include')
+        && (!Array.isArray(tools.include) || !sameStrings(tools.include.map(String), include))
+      ) {
+        throw new Error(`hermes_application_mcp_filter_conflict:${connectionId}`);
+      }
+      const updated = record(await request('mcp.servers.set_api_key', {
+        name: connectionId,
+        value: bearer,
+      }));
+      if (updated.ok !== true || updated.name !== connectionId) {
+        throw new Error(`hermes_application_mcp_credential_apply_failed:${connectionId}`);
+      }
+      continue;
+    }
+
+    const added = record(await request('mcp.servers.add', {
+      name: connectionId,
+      config: {
+        url: parsedUrl.toString(),
+        tools: { include, prompts: false, resources: false },
+      },
+      bearer_token: bearer,
+    }));
+    if (added.ok !== true || added.name !== connectionId) {
+      throw new Error(`hermes_application_mcp_server_add_failed:${connectionId}`);
+    }
+  }
 }
 
 /**

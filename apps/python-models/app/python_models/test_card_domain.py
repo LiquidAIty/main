@@ -444,6 +444,57 @@ def test_individual_external_mcp_tool_grant_derives_its_backing_connection(
     assert resolved["unavailableToolReasons"] == {}
 
 
+def test_live_discovered_external_tool_is_not_dropped_by_local_runtime_registry(
+    monkeypatch,
+):
+    card = _agent(
+        "main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "liquidaity-main"},
+    )
+    card.update(
+        _cardRevisionId="revision-main",
+        _cardRevision=54,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["cbm.search_graph"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+    discovered_tools = [{
+        "name": name,
+        "nativeName": name,
+        "kind": "tool",
+        "sourceId": "cbm",
+        "namespace": "cbm",
+        "connectionKind": "external-mcp",
+        "description": name,
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"readOnlyHint": True},
+    } for name in ("cbm.search_graph", "cbm.index_repository")]
+
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "main",
+        "cardRevisionId": "revision-main",
+        "discoveredTools": discovered_tools,
+    })
+
+    assert resolved["enabledTools"] == ["cbm.search_graph"]
+    assert resolved["presentedTools"] == ["cbm.search_graph"]
+    assert resolved["externalMcpTools"] == [{
+        "canonicalName": "cbm.search_graph",
+        "connectionId": "cbm",
+        "nativeName": "cbm.search_graph",
+    }]
+    assert "cbm.index_repository" not in resolved["enabledTools"]
+
+
 def test_unavailable_external_catalog_preserves_saved_grant_without_blocking_card_tools(
     monkeypatch,
 ):
