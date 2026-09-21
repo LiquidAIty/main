@@ -17,7 +17,6 @@ import {
   hasHermesModelDrift,
   parseCardEditorOptions,
   type AgentManagerLocalConfig,
-  selectKnowledgeGraphProjection,
   toggleSavedToolAssignment,
 } from './AgentManager';
 
@@ -53,7 +52,7 @@ const runtimeOptions = {
 };
 
 function mockEditorFetch(optionsAvailable = true, toolsAvailable = true) {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url === '/api/cards/options') {
       return { ok: optionsAvailable, json: async () => optionsAvailable ? runtimeOptions : { ok: false } };
@@ -160,25 +159,18 @@ describe('AgentManager active builder config', () => {
     expect(onSave.mock.calls[0][0].role).toBe('Researcher');
   });
 
-  it('saves current settings before Run and never runs after a failed save', async () => {
+  it('does not expose a Card-local Results or dynamic-input surface', () => {
     mockEditorFetch();
-    let rejectSave: (error: Error) => void = () => {};
-    const onSave = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectSave = reject; }));
-    const onRun = vi.fn();
     render(React.createElement(AgentManager, {
-      activeTab: 'Results', cardId: 'card-one', projectId: 'p', deckId: 'd',
-      localConfig: savedConfig, onSaveLocalConfig: onSave, onRunCard: onRun,
-      showTaskComposer: true, promptTestInput: 'Read the project',
+      activeTab: 'Tools', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: savedConfig, onSaveLocalConfig: vi.fn(),
     }));
-    fireEvent.click(screen.getByTestId('agent-manager-run'));
-    expect(onSave).toHaveBeenCalledOnce();
-    expect(onRun).not.toHaveBeenCalled();
-    await act(async () => { rejectSave(new Error('Could not save Card.')); });
-    expect(onRun).not.toHaveBeenCalled();
-    expect(screen.getByTestId('agent-manager-save-error').textContent).toContain('Could not save Card.');
+    expect(screen.queryByText('Results')).toBeNull();
+    expect(screen.queryByLabelText('Dynamic context / input')).toBeNull();
+    expect(screen.queryByTestId('agent-manager-run')).toBeNull();
   });
 
-  it('stages profile edits across tabs and sends each changed setting only on leaving the Card', async () => {
+  it('saves Card skill grants while keeping effective Hermes skills read-only', async () => {
     const fetchMock = mockEditorFetch();
     const fallback = fetchMock.getMockImplementation()!;
     const native = {
@@ -194,7 +186,6 @@ describe('AgentManager active builder config', () => {
           const change = JSON.parse(String(init.body));
           writes.push(change.params);
           if ('soul' in change.params) native.soul = change.params.soul;
-          if ('disabled_skills' in change.params) native.skills[0].enabled = !change.params.disabled_skills.includes('research');
           if ('background_review' in change.params) native.backgroundReview.enabled = change.params.background_review.enabled;
         }
         return { ok: true, json: async () => ({ ok: true, native: structuredClone(native), binding: { profile: 'saved-profile', mode: 'delegate' } }) };
@@ -209,8 +200,11 @@ describe('AgentManager active builder config', () => {
     expect(soul.value).toBe('Original soul');
     fireEvent.change(soul, { target: { value: 'Updated soul' } });
     expect(soul.value).toBe('Updated soul');
-    view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Memory' }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'research' }));
+    view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Skills' }));
+    const skills = await screen.findByLabelText('Card skill grants');
+    fireEvent.change(skills, { target: { value: 'research' } });
+    expect(screen.queryByRole('checkbox', { name: 'research' })).toBeNull();
+    expect(screen.getByTestId('effective-hermes-skills').textContent).toContain('research · enabled');
     fireEvent.click(screen.getByRole('checkbox', { name: 'Automatic learning' }));
     expect(writes).toEqual([]);
     expect(onSave).not.toHaveBeenCalled();
@@ -218,9 +212,10 @@ describe('AgentManager active builder config', () => {
     await leaveEditor();
     expect(writes).toEqual([
       { background_review: { enabled: false, provider: 'auto', model: '', max_input_tokens: null } },
-      { soul: 'Updated soul' }, { disabled_skills: ['research'] },
+      { soul: 'Updated soul' },
     ]);
     expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].skills).toEqual(['research']);
   });
 
   it.each([
@@ -466,6 +461,7 @@ describe('AgentManager active builder config', () => {
       maxTurns: 12,
       promptTemplate: 'test prompt',
       toolsText: 'web',
+      nativeToolsText: 'memory\nterminal',
       skillsText: 'research\nplanning',
       toolsetsText: 'browser',
       mcpConnectionIdsText: 'github\nproject-research',
@@ -482,6 +478,7 @@ describe('AgentManager active builder config', () => {
       max_turns: 12,
       prompt_template: 'test prompt',
       tools: ['web'],
+      native_tools: ['memory', 'terminal'],
       skills: ['research', 'planning'],
       toolsets: ['browser'],
       mcp_connection_ids: ['github', 'project-research'],
@@ -502,6 +499,7 @@ describe('AgentManager active builder config', () => {
       maxTurns: '',
       promptTemplate: '',
       toolsText: '',
+      nativeToolsText: '',
       skillsText: '',
       toolsetsText: '',
       mcpConnectionIdsText: '',
@@ -519,6 +517,7 @@ describe('AgentManager active builder config', () => {
       maxTurns: '',
       promptTemplate: '',
       toolsText: 'card.update_configuration',
+      nativeToolsText: 'memory',
       skillsText: '',
       toolsetsText: 'file\nterminal',
       mcpConnectionIdsText: '',
@@ -526,10 +525,11 @@ describe('AgentManager active builder config', () => {
     expect(delegate.runtime).toEqual({ kind: 'hermes', mode: 'delegate', profile: 'delegate' });
     expect(delegate.access_mode).toBe('chatgpt-account');
     expect(delegate.tools).toEqual(['card.update_configuration']);
+    expect(delegate.native_tools).toEqual(['memory']);
     expect(delegate.toolsets).toEqual(['file', 'terminal']);
   });
 
-  it('keeps Card Save separate from one-operation native Apply', () => {
+  it('keeps Card Save separate from one-operation Hermes profile changes', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -549,12 +549,12 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('data-testid="native-background-review"');
     expect(source).toContain('aria-label="Memory provider"');
     expect(source).not.toContain('Contextualized GPT-plugin Main turns report Honcho bypassed');
-    expect(source).toContain("runtimeMode === 'main' && nativeHermesState.native.honcho");
+    expect(source).toContain("runtimeMode === 'main' && nativeHermesState?.native.honcho");
     expect(source).not.toContain('CardSubagentsTab');
     expect(source).not.toContain('Use account Luna');
   });
 
-  it('uses CLI while retaining exactly one mission composer', () => {
+  it('keeps the general Card tabs configuration-only and leaves CLI ownership to the page', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -565,141 +565,26 @@ describe('AgentManager active builder config', () => {
     );
 
     expect(pageSource).toContain(
-      "const BUILDER_NODE_TABS = ['Results', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;",
+      "const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;",
     );
     expect(pageSource).toContain('if (BUILDER_NODE_TABS.some((entry) => entry === tab))');
-    expect(source).toContain("activeTab === 'Results' && showTaskComposer");
     expect(source).toContain('agent-manager-prompt-surface');
-    expect(source).toContain('agent-manager-knowledge-surface');
-    expect(source).not.toContain("activeTab === 'Task'");
-    expect(source.match(/aria-label="Dynamic context \/ input"/g)).toHaveLength(1);
-    expect(source.match(/data-testid="agent-manager-run"/g)).toHaveLength(1);
+    expect(source).toContain('agent-manager-memory');
+    expect(source).toContain('agent-manager-skills');
+    expect(source).not.toContain("activeTab === 'Results'");
+    expect(source).not.toContain('Dynamic context / input');
+    expect(source).not.toContain('data-testid="agent-manager-run"');
     expect(source).toContain('await Promise.resolve(onSaveLocalConfig(payload))');
     expect(source).not.toContain('saveRevisionAtStartRef');
     expect(source.match(/setSaveCardStatus\('saved'\)/g)).toHaveLength(1);
     expect(source).not.toContain('A short fallback covers the no-op save');
-    expect(pageSource).toContain("selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main'");
-    expect(pageSource).toContain('showTaskComposer={showStandaloneTestControls}');
+    expect(pageSource).toContain("tab === 'CLI'");
+    expect(pageSource).toContain("selectedCard.runtime.mode !== 'magentic_one'");
+    expect(pageSource).not.toContain('showTaskComposer');
     expect(pageSource).not.toContain("['Invocation', 'Prompt', 'Knowledge', 'Capabilities', 'Runtime']");
   });
 
-  it('keeps stable Card versions separate from transient Card input', () => {
-    const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
-    const source = readFileSync(filePath, 'utf8');
-
-    expect(source).not.toContain("data-testid=\"agent-manager-save\"");
-    expect(source).toContain("data-testid=\"agent-manager-run\"");
-    expect(source).toContain("registerCardLeave?.(saveOnCardLeave)");
-    expect(source).not.toContain('Save Card Version');
-    expect(source).toContain("data-testid=\"agent-manager-clear-invocation\"");
-    expect(source).not.toContain('Prepare / Refresh');
-    expect(source).toContain("{runBusy ? 'Running…' : 'Run'}");
-    expect(source).toContain('Export Run input…');
-    expect(source).not.toContain('Run Test');
-  });
-
-  it('prepares the exact Python materialization without dumping raw transport on the Card', () => {
-    const filePath = path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx');
-    const source = readFileSync(filePath, 'utf8');
-    const pageSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
-      'utf8',
-    );
-
-    expect(source).toContain('Dynamic context / input');
-    expect(source).not.toContain('Python materializes this input with the saved Card');
-    expect(source).not.toContain('Exact in-memory runtime packet');
-    expect(source).not.toContain('Run telemetry receipt');
-    expect(source).not.toContain('aria-label="Exact temporary runtime packet"');
-    expect(pageSource).toContain('invocation: result?.invocation || null');
-  });
-
-  it('shows and exports the selected Run IDF with an explicit estimate breakdown', async () => {
-    const write = vi.fn(async () => undefined);
-    const close = vi.fn(async () => undefined);
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
-    })));
-    const showSaveFilePicker = vi.fn(async () => ({
-      createWritable: async () => ({ write, close }),
-    }));
-    vi.stubGlobal('showSaveFilePicker', showSaveFilePicker);
-    vi.stubGlobal('prompt', vi.fn(() => 'research-baseline.idf'));
-    const idfText = '{"actualGraphData":{},"stableSavedCardContext":{},"selectedToolsAndGrants":{},"dynamicContext":{}}\n';
-    render(React.createElement(AgentManager, {
-      activeTab: 'Memory',
-      cardId: 'card-one',
-      localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
-      onSaveLocalConfig: vi.fn(),
-      showTaskComposer: false,
-      runInputs: {
-        available: true,
-        runId: 'run-one',
-        idfText,
-        inputSummary: {
-          idfBytes: 600,
-          estimatedModelVisibleTokens: 95,
-          estimatedSystemContextTokens: 40,
-          estimatedTaskTokens: 20,
-          estimatedOutputContractTokens: 5,
-          estimatedGraphContextTokens: 30,
-        },
-        idf: {
-          actualGraphData: { recordCounts: { total: 2 }, authorities: ['CodeGraph'] },
-          stableSavedCardContext: {},
-          selectedToolsAndGrants: {},
-          dynamicContext: {},
-        },
-      },
-    }));
-
-    expect(screen.queryByTestId('agent-manager-save')).toBeNull();
-    const inputDetails = screen.getByTestId('selected-run-idf') as HTMLDetailsElement;
-    expect(inputDetails.open).toBe(false);
-    fireEvent.click(screen.getByText('Input', { selector: 'summary' }));
-    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('system 40');
-    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('graph 30');
-    expect(screen.getByTestId('selected-run-token-estimate').textContent).toContain('task 20');
-    expect(screen.getByTestId('selected-run-idf').textContent).not.toMatch(/\bIDD\b|\bIDF\b|Input Data (Dictionary|Definition)/i);
-    fireEvent.click(screen.getByRole('button', { name: 'Export Run input…' }));
-    await waitFor(() => expect(write).toHaveBeenCalledWith(idfText));
-    expect(showSaveFilePicker).toHaveBeenCalledWith(expect.objectContaining({
-      suggestedName: 'research-baseline.idf',
-    }));
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('keeps real Run input inspection collapsed below Memory settings', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ ok: true, fields: [], catalogs: { 'configured-models': [] } }),
-    })));
-    render(React.createElement(AgentManager, {
-      activeTab: 'Memory',
-      cardId: 'card-one',
-      localConfig: { runtime: { kind: 'hermes', mode: 'delegate', profile: 'card-one' } },
-      onSaveLocalConfig: vi.fn(),
-      runInputs: {
-        available: true,
-        runId: 'run-one',
-        idfText: '{}\n',
-        inputSummary: { idfBytes: 190, estimatedGraphContextTokens: 42 },
-        idf: {
-          actualGraphData: { recordCounts: { total: 3 }, authorities: ['ThinkGraph', 'KnowGraph'], records: [] },
-          stableSavedCardContext: {},
-          selectedToolsAndGrants: {},
-          dynamicContext: {},
-        },
-      },
-    }));
-
-    expect(screen.queryByTestId('selected-run-idf-graph')).toBeNull();
-    expect((screen.getByTestId('selected-run-idf') as HTMLDetailsElement).open).toBe(false);
-    expect(screen.queryByText(/sub-worker input/i)).toBeNull();
-  });
-
-  it('uses native learning and tool controls instead of passive or Card-side projections', () => {
+  it('keeps saved grants editable and effective Hermes state read-only', () => {
     const source = readFileSync(
       path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
       'utf8',
@@ -709,98 +594,21 @@ describe('AgentManager active builder config', () => {
       'utf8',
     );
 
-    expect(source).toContain('native-learning-graph');
+    expect(source).toContain('data-testid="agent-manager-skills"');
+    expect(source).toContain('data-testid="effective-hermes-skills"');
     expect(source).toContain('data-testid="main-honcho-status"');
-    expect(source).not.toContain('Secrets are never returned to the Card.');
+    expect(source).toContain('data-testid="effective-hermes-runtime"');
+    expect(source).toContain('Card skill grants');
+    expect(source).toContain('Hermes capabilities');
+    expect(source).toContain('Hermes toolsets');
+    expect(source).toContain('External MCP connection references');
+    expect(source).not.toContain('changes.disabled_skills');
+    expect(source).not.toContain('changes.enabled_toolsets');
+    expect(source).not.toContain('changes.enabled_mcp_servers');
     expect(source).toContain('onOpenNode={(id) => void openNativeLearningNode(id)}');
     expect(source).toContain("change: { method: 'learning.edit', params: { id, content } }");
     expect(nativeClient).toContain("method: 'learning.detail'");
-    expect(source).toContain('data-testid="agent-manager-learn"');
-    expect(source).not.toContain('Built-in tools: {nativeHermesState.binding.nativeTools');
-    expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
-  });
-
-  it('places one staged delegate or Mag One mission and exact graph data in transient Card state', () => {
-    const source = readFileSync(
-      path.resolve(process.cwd(), 'client/src/components/AgentManager.tsx'),
-      'utf8',
-    );
-    const pageSource = readFileSync(
-      path.resolve(process.cwd(), 'client/src/pages/agentbuilder.tsx'),
-      'utf8',
-    );
-    const chatSource = readFileSync(
-      path.resolve(
-        process.cwd(),
-        'client/src/features/agentbuilder/console/useAgentBuilderMainChat.ts',
-      ),
-      'utf8',
-    );
-
-    expect(chatSource).not.toContain("'nativeEvents'");
-    expect(chatSource).toContain("['write_mag_one_instructions', 'delegate_task']");
-    expect(chatSource).toContain("['card.load_graph_references', 'delegate_task']");
-    expect(chatSource).not.toContain('card.run_assistant_agent');
-    expect(chatSource).toContain('card_tools_unavailable');
-    expect(chatSource).toContain('onCardReviewStaged');
-    expect(chatSource).toContain('onCardGraphReferenceLoaded');
-    expect(pageSource).toContain('const [transientCardInputs, setTransientCardInputs]');
-    expect(pageSource).toContain('const [transientCardGraphContext, setTransientCardGraphContext]');
-    expect(pageSource).toContain('[target.id]: loaded.mission');
-    expect(pageSource).toContain("target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate'");
-    expect(pageSource).toContain("target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one'");
-    expect(pageSource).toContain('invocation: null');
-    expect(chatSource).not.toContain('reviewContext.idf');
-    expect(pageSource).toContain('dataAnchors: (transientCardGraphContext[card.id] || [])');
-    const sendOnceGuard = pageSource.search(/standaloneTestRequestRef\.current\[card\.id\]\r?\n      \|\| !canvasProjectId/);
-    const correlationAllocation = pageSource.indexOf('const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;');
-    expect(sendOnceGuard).toBeGreaterThan(-1);
-    expect(correlationAllocation).toBeGreaterThan(sendOnceGuard);
-    expect(pageSource).not.toContain('(transientCardGraphContext[selectedCard.id] || []).length === 0');
-    expect(pageSource).toContain('(item) => item.reference.required && !item.ready');
-    expect(source).toContain("'knowledge-model-bound-projection'");
-    expect(source).toContain('NativeGraphProjectionSurface');
-    expect(source).toContain('loadedGraphProjection');
-    expect(source).not.toContain('Saved Mag One workers');
-    expect(source).toContain('onRemoveGraphReference');
-    expect(source).toContain('onMoveGraphReference');
-    expect(source).not.toContain('Read-only Mag One proposal');
-    expect(pageSource).toContain('onCardReviewStaged: handleCardReviewStaged');
-    expect(pageSource).toContain("String(transientCardInputs[card.id] || '').trim()");
-    expect(pageSource).toContain('if (staged) continue;');
-    expect(pageSource).toContain('standaloneHydrationGenerationRef.current');
-    expect(source).toContain('knowledgeGraphProjection.nodes.length > 0');
-    expect(pageSource).toContain('onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded');
-    expect(pageSource).not.toContain('persistTransientCardInputs');
-    expect(pageSource).not.toContain('proposalHash');
-  });
-
-  it('shows the exact materialized native IDs instead of a stale loaded preview', () => {
-    const loaded = {
-      schemaVersion: 'native-card-context.v1',
-      authority: 'mixed',
-      projectId: 'project-1',
-      nodes: [{ id: 'stale-node', label: 'Stale', mentionCount: 1 }],
-      edges: [],
-      counts: { nodes: 1, edges: 0 },
-    };
-    const materialized = {
-      ...loaded,
-      nodes: [{ id: 'native-node-current', label: 'Current', mentionCount: 1 }],
-      edges: [{
-        id: 'native-edge-current',
-        source: 'native-node-current',
-        target: 'native-node-current',
-        predicate: 'SELF',
-        mentionCount: 1,
-      }],
-      counts: { nodes: 1, edges: 1 },
-    };
-
-    const selected = selectKnowledgeGraphProjection(loaded, materialized);
-    expect(selected.modelBound).toBe(true);
-    expect(selected.projection.nodes.map((node) => node.id)).toEqual(['native-node-current']);
-    expect(selected.projection.edges.map((edge) => edge.id)).toEqual(['native-edge-current']);
+    expect(source).toContain('const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true)');
   });
 
   it('keeps the card identity fields without adding another persistence path', () => {
@@ -808,10 +616,7 @@ describe('AgentManager active builder config', () => {
     const source = readFileSync(filePath, 'utf8');
 
     expect(source).toContain('cardName');
-    expect(source).toContain('cardSubtext');
     expect(source).toContain('onChangeCardName');
-    expect(source).toContain('onChangeCardSubtext');
-    expect(source).toContain('Description');
     expect(source).not.toMatch(/\bCard mode\b/);
     expect(source).not.toContain('Runtime Type');
     expect(source).not.toContain('aria-label="Runtime mode"');
@@ -827,15 +632,17 @@ describe('AgentManager active builder config', () => {
     expect(source).not.toContain('/api/config/models');
     expect(source).not.toContain('<option value="openai">');
     expect(source).toContain('Card skill grants');
-    expect(source).toContain('Card connection references');
+    expect(source).toContain('Hermes capabilities');
+    expect(source).toContain('Hermes toolsets');
+    expect(source).toContain('External MCP connection references');
     expect(source).not.toContain('params: { description: nativeDescriptionDraft }');
     expect(source).toContain('changes.soul = nativeSoulDraft');
     expect(source).not.toContain('nativeProviderDraft');
     expect(source).not.toContain('nativeModelDraft');
-    expect(source).toContain('changes.disabled_skills = nativeDisabledSkills');
-    expect(source).toContain('changes.enabled_toolsets = nativeEnabledToolsets');
-    expect(source).toContain('changes.enabled_mcp_servers = nativeEnabledMcpServers');
-    expect(source).toContain('native-learning-graph');
+    expect(source).not.toContain('changes.disabled_skills');
+    expect(source).not.toContain('changes.enabled_toolsets');
+    expect(source).not.toContain('changes.enabled_mcp_servers');
+    expect(source).toContain('data-testid="effective-hermes-runtime"');
     expect(source).not.toContain('Detailed graph, Learn, and mutation controls are intentionally deferred');
     expect(source).not.toContain('Profile selector');
     expect(source).not.toContain('HERMES_HOME');

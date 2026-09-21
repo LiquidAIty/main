@@ -25,18 +25,13 @@ import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurface
 import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
 import type {
   GraphProjectionNode,
-  GraphProjectionV1,
 } from '../components/knowledge/NativeAuthorityGraphSurface';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
 import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
-import CardRunResults, {
-  reconcileCardTerminal,
-} from '../features/agentbuilder/console/CardRunResults';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
   LoadedCardGraphReference,
-  StagedCardReviewLoaded,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
@@ -48,7 +43,6 @@ import useAgentBuilderProjectReset from '../features/agentbuilder/state/useAgent
 import useAgentBuilderSelection from '../features/agentbuilder/state/useAgentBuilderSelection';
 import useAgentBuilderGraphAttention from '../features/agentbuilder/state/useAgentBuilderGraphAttention';
 import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActiveAgentCounts';
-import { selectLatestRunResult } from '../features/agentbuilder/state/runResult';
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
 import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
@@ -108,10 +102,6 @@ const AgentManager = lazy(async () => {
   return { default: mod.AgentManager };
 });
 void loadAgentManager();
-import type {
-  RetainedRunInputs,
-  StandaloneCardTestResult,
-} from '../components/AgentManager';
 
 import { resolveCbmProjectName } from '../components/codegraph/resolveCodeGraphProjectIdentity';
 
@@ -211,23 +201,13 @@ class CardEditorErrorBoundary extends React.Component<
 }
 
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
-const BUILDER_NODE_TABS = ['Results', 'Prompt', 'Runtime', 'Memory', 'Tools'] as const;
+const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
 type KnowledgeSurfaceKind = KnowledgeGraphKind;
 const PROJECTS_API = '/api/projects';
-
-export function getStandaloneCardUnavailableReason(
-  card: AgentCardInstance | null,
-): string | null {
-  if (!card) return 'Select an agent to test.';
-  if (card.runtime.kind === 'hermes' && card.runtime.mode === 'main') {
-    return 'Use Main chat to test Main.';
-  }
-  return null;
-}
 
 /** Mean synodic month in days (NASA/USNO convention). */
 export default function AgentBuilder(): React.ReactElement {
@@ -298,7 +278,6 @@ export default function AgentBuilder(): React.ReactElement {
     createInitialDeck: buildProjectlessDeckDocument,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
-  const [deckReloadToken, setDeckReloadToken] = useState(0);
   const canonicalDeckReady = Boolean(
     canvasProjectId
       && stateLoaded
@@ -360,20 +339,6 @@ export default function AgentBuilder(): React.ReactElement {
     )) || null,
     [deck.nodes],
   );
-  const standaloneTestPrompt = selectedCardId
-    ? transientCardInputs[selectedCardId] || ''
-    : '';
-  const setStandaloneTestPrompt = useCallback((value: string) => {
-    if (!selectedCardId) return;
-    setTransientCardInputs((current) => {
-      if (!value) {
-        const next = { ...current };
-        delete next[selectedCardId];
-        return next;
-      }
-      return { ...current, [selectedCardId]: value };
-    });
-  }, [selectedCardId]);
   // WorldSignals → canonical Inspector: the companion surface requests a
   // section and provides state adapters; the ONE workspace drawer below
   // renders it. No second inspector, no drawer inside the map region.
@@ -508,182 +473,6 @@ export default function AgentBuilder(): React.ReactElement {
     });
     setDeckStatusMessage(`${authorityName} reference selected for Main; Python will reread it on send.`);
   }, [graphAttention.projections, mainCardId, setDeckStatusMessage]);
-  const [standaloneTestResults, setStandaloneTestResults] =
-    useState<Record<string, StandaloneCardTestResult | null>>({});
-  const [standaloneRunInputs, setStandaloneRunInputs] = useState<RetainedRunInputs | null>(null);
-  const standaloneHydrationGenerationRef = useRef<Record<string, number>>({});
-  const setStandaloneTestResultForCard = useCallback((
-    cardId: string,
-    update: StandaloneCardTestResult | null | ((current: StandaloneCardTestResult | null) => StandaloneCardTestResult | null),
-  ) => {
-    setStandaloneTestResults((current) => {
-      const existing = current[cardId] || null;
-      const nextValue = selectLatestRunResult(existing, typeof update === 'function' ? update(existing) : update);
-      if (nextValue === existing) return current;
-      return { ...current, [cardId]: nextValue };
-    });
-  }, []);
-  const handleCardReviewStaged = useCallback(async (loaded: StagedCardReviewLoaded) => {
-    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
-    const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
-    const graphProjection = loaded.reviewContext?.resolvedGraphProjection;
-    const supportedTarget = target && (
-      (target.runtime.kind === 'hermes' && target.runtime.mode === 'delegate')
-      || (target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one')
-    );
-    if (!target || !supportedTarget) {
-      setDeckStatusMessage('Grounded invocation target is not an active saved delegate or Mag One Card.');
-      return;
-    }
-    const selectedProjection: GraphProjectionV1 = graphProjection || {
-      schemaVersion: 'native-card-context.v1',
-      authority: '',
-      projectId: canvasProjectId,
-      nodes: [],
-      edges: [],
-      counts: { nodes: 0, edges: 0 },
-    };
-    const previewResolved = Boolean(graphProjection);
-    const graphContext: LoadedCardGraphReference[] = loaded.dataAnchors.map((anchor, order) => ({
-      targetCardId: target.id,
-      ...(loaded.sourceCardId ? { sourceCardId: loaded.sourceCardId } : {}),
-      reference: {
-        authority: anchor.authority,
-        nativeId: anchor.nativeId,
-        reason: anchor.reason,
-        order,
-        boundedExpansion: anchor.boundedExpansion,
-        resultLimit: anchor.resultLimit,
-        required: true,
-      },
-      resolvedReferences: loaded.reviewContext?.resolvedNativeReads || [],
-      resolvedContextMarkdown: '',
-      graphProjection: selectedProjection,
-      resolved: previewResolved,
-      ready: true,
-    }));
-    setTransientCardInputs((current) => ({
-      ...current,
-      [target.id]: loaded.mission,
-    }));
-    setTransientCardGraphContext((current) => ({ ...current, [target.id]: graphContext }));
-    standaloneHydrationGenerationRef.current[target.id] =
-      (standaloneHydrationGenerationRef.current[target.id] || 0) + 1;
-    setStandaloneTestResultForCard(target.id, {
-      status: 'ready',
-      output: '',
-      error: null,
-      toolCallCount: 0,
-      tools: Array.isArray(target.runtimeOptions?.tools)
-        ? target.runtimeOptions.tools.map((tool) => String(tool))
-        : [],
-      provider: String(target.runtimeOptions?.provider || ''),
-      model: String(target.runtimeOptions?.modelKey || ''),
-      runtimeLabel: `${target.runtime.kind}/${target.runtime.mode}`,
-      invocation: null,
-      cardId: target.id,
-    });
-    setSelectedCardId(target.id);
-    setTab('Results');
-    setDeckStatusMessage(`${target.title} mission and exact graph references are ready for review. Nothing ran.`);
-  }, [canvasProjectId, deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
-
-  const handleCardGraphReferenceLoaded = useCallback(async (loaded: LoadedCardGraphReference) => {
-    if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
-    const target = deck.nodes.find((card) => card.id === loaded.targetCardId);
-    if (!target) {
-      setDeckStatusMessage('The selected agent is no longer available.');
-      return;
-    }
-    setTransientCardGraphContext((current) => {
-      const existing = current[target.id] || [];
-      const replacementKey = `${loaded.reference.authority}:${loaded.reference.nativeId}`;
-      return {
-        ...current,
-        [target.id]: [
-          ...existing.filter(
-            (item) => `${item.reference.authority}:${item.reference.nativeId}` !== replacementKey,
-          ),
-          loaded,
-        ].sort((left, right) => left.reference.order - right.reference.order),
-      };
-    });
-    // A new native reference invalidates any older completed-Run projection.
-    // Context must never label unresolved editor state as model-bound.
-    setStandaloneTestResultForCard(target.id, null);
-    setSelectedCardId(target.id);
-    setTab('Memory');
-    setDeckStatusMessage(
-      loaded.ready
-        ? `${target.title} graph context is loaded for review.`
-        : `${target.title} graph context is not ready: ${loaded.error || 'required reference unresolved'}.`,
-    );
-  }, [deck.nodes, setDeckStatusMessage, setSelectedCardId, setTab]);
-
-  const clearTransientCardInvocation = useCallback((cardId: string) => {
-    setTransientCardInputs((current) => {
-      const next = { ...current };
-      delete next[cardId];
-      return next;
-    });
-    setTransientCardGraphContext((current) => {
-      const next = { ...current };
-      delete next[cardId];
-      return next;
-    });
-    setStandaloneTestResultForCard(cardId, (current) => (
-      current?.invocation?.cardIdentity.cardId === cardId ? null : current
-    ));
-    setDeckStatusMessage('Transient mission and graph context cleared. Nothing ran.');
-  }, [setDeckStatusMessage]);
-
-  const removeTransientGraphReference = useCallback((
-    cardId: string,
-    authority: string,
-    nativeId: string,
-  ) => {
-    setTransientCardGraphContext((current) => ({
-      ...current,
-      [cardId]: (current[cardId] || [])
-        .filter((item) => !(
-          item.reference.authority === authority
-          && item.reference.nativeId === nativeId
-        ))
-        .map((item, order) => ({
-          ...item,
-          reference: { ...item.reference, order },
-        })),
-    }));
-    setStandaloneTestResultForCard(cardId, null);
-  }, [setStandaloneTestResultForCard]);
-
-  const moveTransientGraphReference = useCallback((
-    cardId: string,
-    authority: string,
-    nativeId: string,
-    direction: -1 | 1,
-  ) => {
-    setTransientCardGraphContext((current) => {
-      const values = [...(current[cardId] || [])];
-      const from = values.findIndex((item) => (
-        item.reference.authority === authority
-        && item.reference.nativeId === nativeId
-      ));
-      const to = from + direction;
-      if (from < 0 || to < 0 || to >= values.length) return current;
-      const [moved] = values.splice(from, 1);
-      values.splice(to, 0, moved);
-      return {
-        ...current,
-        [cardId]: values.map((item, order) => ({
-          ...item,
-          reference: { ...item.reference, order },
-        })),
-      };
-    });
-    setStandaloneTestResultForCard(cardId, null);
-  }, [setStandaloneTestResultForCard]);
-
   // CodeGraph repository identity is resolved from the authoritative CBM index.
   // The canonical ready project wins over stale same-root validation indexes.
   const [codeGraphProjectName, setCodeGraphProjectName] = useState<string>('');
@@ -731,8 +520,6 @@ export default function AgentBuilder(): React.ReactElement {
       : [],
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
-    onCardReviewStaged: handleCardReviewStaged,
-    onCardGraphReferenceLoaded: handleCardGraphReferenceLoaded,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
   useEffect(() => {
@@ -859,7 +646,7 @@ export default function AgentBuilder(): React.ReactElement {
     setDeckLoadError,
     setStateLoaded,
     setDeckStatusMessage,
-    reloadToken: deckReloadToken,
+    reloadToken: 0,
   });
   useAgentBuilderProjectReset({
     canvasProjectId,
@@ -925,7 +712,6 @@ export default function AgentBuilder(): React.ReactElement {
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
     handleRenameSelectedCard,
-    handleUpdateSelectedCardSubtext,
     selectedCard,
     selectedCardConfig,
   } = useAgentBuilderCardEditor({
@@ -939,517 +725,9 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
-  const selectedMagOneWorkers = useMemo(() => {
-    if (!selectedCard || selectedCard.runtime.kind !== 'hermes' || selectedCard.runtime.mode !== 'magentic_one') {
-      return [];
-    }
-    return deck.edges
-      .filter((edge) => edge.enabled !== false && edge.edgeType === 'magentic_option')
-      .map((edge) => edge.source === selectedCard.id ? edge.target : edge.target === selectedCard.id ? edge.source : null)
-      .filter((cardId): cardId is string => Boolean(cardId))
-      .map((cardId) => deck.nodes.find((card) => card.id === cardId))
-      .filter((card): card is AgentCardInstance => Boolean(card))
-      .map((card) => ({
-        cardId: card.id,
-        title: card.title,
-        ready: card.status !== 'error'
-          && (
-            card.runtime.kind === 'hermes' && card.runtime.mode !== 'magentic_one'
-          )
-          && Boolean(card.runtimeOptions?.provider)
-          && Boolean(card.runtimeOptions?.modelKey),
-        provider: card.runtimeOptions?.provider || null,
-        model: card.runtimeOptions?.modelKey || null,
-      }));
-  }, [deck.edges, deck.nodes, selectedCard]);
-  const [standaloneTestBusyByCard, setStandaloneTestBusyByCard] = useState<Record<string, boolean>>({});
-  const standaloneTestRequestRef = useRef<Record<string, string>>({});
-  const standaloneActiveRunRef = useRef<Record<string, {
-    runId: string;
-    correlationId: string;
-    cardId: string;
-  }>>({});
-  const standaloneTestResult = selectedCard
-    ? standaloneTestResults[selectedCard.id] || null
-    : null;
-  const standaloneTestBusy = selectedCard
-    ? standaloneTestBusyByCard[selectedCard.id] === true
-    : false;
-  const setCardRunBusy = useCallback((cardId: string, busy: boolean) => {
-    setStandaloneTestBusyByCard((current) => {
-      if (Boolean(current[cardId]) === busy) return current;
-      return { ...current, [cardId]: busy };
-    });
-  }, []);
-  const standaloneTestUnavailableReason = useMemo(
-    () => getStandaloneCardUnavailableReason(selectedCard),
-    [selectedCard],
-  );
-  // Main's ordinary Chat input + Send control is its only invocation composer.
-  // The Inspector can display Main, but must not expose a second self-test input.
-  const showStandaloneTestControls =
-    Boolean(selectedCard)
-    && !(selectedCard?.runtime.kind === 'hermes' && selectedCard.runtime.mode === 'main');
-  const toStandaloneRunResult = useCallback((result: any, card: AgentCardInstance): StandaloneCardTestResult => ({
-    conversationId: result?.conversationId || null,
-    startedAt: result?.startedAt || null,
-    status: String(result?.status || result?.state || 'unknown'),
-    state: result?.state ? String(result.state) : null,
-    runId: result?.runId ? String(result.runId) : null,
-    correlationId: result?.correlationId ? String(result.correlationId) : null,
-    cardId: result?.cardId ? String(result.cardId) : card.id,
-    nativeRootId: result?.nativeRootId ? String(result.nativeRootId) : null,
-    nativeRunId: typeof result?.nativeRunId === 'number' || typeof result?.nativeRunId === 'string'
-      ? result.nativeRunId
-      : null,
-    tasksCompleted: typeof result?.tasksCompleted === 'number' ? result.tasksCompleted : undefined,
-    tasksTotal: typeof result?.tasksTotal === 'number' ? result.tasksTotal : undefined,
-    activeWorkers: typeof result?.activeWorkers === 'number' ? result.activeWorkers : undefined,
-    resultReady: result?.resultReady === true,
-    inputTokens: typeof result?.inputTokens === 'number' ? result.inputTokens : undefined,
-    outputTokens: typeof result?.outputTokens === 'number' ? result.outputTokens : undefined,
-    cachedTokens: typeof result?.cachedTokens === 'number' ? result.cachedTokens : undefined,
-    reasoningTokens: typeof result?.reasoningTokens === 'number' ? result.reasoningTokens : undefined,
-    costUsd: typeof result?.costUsd === 'number' ? result.costUsd : undefined,
-    output: String(result?.output || ''),
-    terminal: result?.terminal || null,
-    observationError: result?.observationError || null,
-    error: result?.errorSummary
-      ? String(result.errorSummary)
-      : result?.error ? String(result.error) : null,
-    toolCallCount: typeof result?.toolCallCount === 'number' ? result.toolCallCount : null,
-    tools: Array.isArray(result?.invocation?.idf?.selectedToolsAndGrants?.enabledTools)
-      ? result.invocation.idf.selectedToolsAndGrants.enabledTools.map((tool: unknown) => String(tool))
-      : [],
-    provider: card.runtimeOptions?.provider || null,
-    model: card.runtimeOptions?.modelKey || null,
-    runtimeLabel: `${card.runtime.kind}/${card.runtime.mode}`,
-    invocation: result?.invocation || null,
-    receipt: result?.receipt || null,
-  }), []);
-
-  const readStandaloneRunStatus = useCallback(async (selector: { runId?: string; cardId?: string; conversationId?: string }) => {
-    if (!canvasProjectId) throw new Error('card_run_project_required');
-    const response = await fetch('/api/cards/run', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'status',
-        projectId: canvasProjectId,
-        deckId: BUILDER_DECK_ID,
-        ...selector,
-        includeTerminal: true,
-        inspectOnly: true,
-      }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (response.ok && payload?.ok === true && payload?.result == null) {
-      throw new Error('card_run_not_found');
-    }
-    if (!response.ok || !payload?.result) {
-      throw new Error(String(payload?.error || `card_run_status_http_${response.status}`));
-    }
-    return payload.result;
-  }, [canvasProjectId]);
-
-  const readStandaloneRunInputs = useCallback(async (runId: string): Promise<RetainedRunInputs> => {
-    if (!canvasProjectId) throw new Error('card_run_project_required');
-    const response = await fetch('/api/cards/run', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'inputs',
-        projectId: canvasProjectId,
-        deckId: BUILDER_DECK_ID,
-        runId,
-      }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || payload?.ok !== true || !payload?.result) {
-      throw new Error(String(payload?.error || `card_run_inputs_http_${response.status}`));
-    }
-    return payload.result as RetainedRunInputs;
-  }, [canvasProjectId]);
-
-  useEffect(() => {
-    const runId = standaloneTestResult?.cardId === selectedCard?.id
-      ? String(standaloneTestResult?.runId || '').trim()
-      : '';
-    if (!runId) {
-      setStandaloneRunInputs(null);
-      return;
-    }
-    let active = true;
-    setStandaloneRunInputs(null);
-    void readStandaloneRunInputs(runId)
-      .then((inputs) => {
-        if (active) setStandaloneRunInputs(inputs);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        setStandaloneRunInputs({
-          available: false,
-          runId,
-          message: error instanceof Error ? error.message : 'Input files unavailable for this Run',
-        });
-      });
-    return () => {
-      active = false;
-    };
-  }, [readStandaloneRunInputs, selectedCard?.id, standaloneTestResult?.cardId, standaloneTestResult?.runId]);
-
-  const pollStandaloneRun = useCallback(async (
-    card: AgentCardInstance,
-    runId: string,
-    requestToken: string,
-    clearOnComplete: boolean,
-    observeOnly = false,
-    shouldObserve: () => boolean = () => true,
-  ): Promise<void> => {
-    while (standaloneTestRequestRef.current[card.id] === requestToken && shouldObserve()) {
-      // The execute request remains the owner. Its existing status reader is
-      // also the observer while a non-streaming HTTP response is outstanding.
-      if (observeOnly) await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
-      if (standaloneTestRequestRef.current[card.id] !== requestToken || !shouldObserve()) return;
-      let result: any;
-      try { result = await readStandaloneRunStatus({ runId }); }
-      catch (error) {
-        if (observeOnly && error instanceof Error && error.message === 'card_run_not_found') continue;
-        throw error;
-      }
-      if (standaloneTestRequestRef.current[card.id] !== requestToken || !shouldObserve()) return;
-      const mapped = toStandaloneRunResult(result, card);
-      setStandaloneTestResultForCard(card.id, (current) => ({ ...mapped,
-        terminal: reconcileCardTerminal(current?.terminal, mapped.terminal),
-      }));
-      const state = String(result.state || '');
-      if (!['pending', 'running'].includes(state)) {
-        if (observeOnly) return;
-        delete standaloneActiveRunRef.current[card.id];
-        delete standaloneTestRequestRef.current[card.id];
-        setCardRunBusy(card.id, false);
-        setDeckStatusMessage(
-          mapped.error || `${card.title || 'Card'} run ${mapped.status}.`,
-        );
-        if (clearOnComplete && state === 'completed') {
-          setTransientCardInputs((current) => {
-            const next = { ...current };
-            delete next[card.id];
-            return next;
-          });
-          setTransientCardGraphContext((current) => {
-            const next = { ...current };
-            delete next[card.id];
-            return next;
-          });
-        }
-        return;
-      }
-      if (!observeOnly) await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
-    }
-  }, [readStandaloneRunStatus, setCardRunBusy, setDeckStatusMessage,
-    setStandaloneTestResultForCard, toStandaloneRunResult]);
-
-  const executeStandaloneInvocation = useCallback(async (
-    card: AgentCardInstance,
-    input: string,
-  ) => {
-    const unavailableReason = getStandaloneCardUnavailableReason(card);
-    if (
-      standaloneTestRequestRef.current[card.id]
-      || !canvasProjectId
-      || standaloneTestBusyByCard[card.id]
-      || unavailableReason
-    ) return;
-    const correlationId = `card-run-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-    standaloneTestRequestRef.current[card.id] = correlationId;
-    standaloneActiveRunRef.current[card.id] = { runId: correlationId, correlationId, cardId: card.id };
-    setCardRunBusy(card.id, true);
-    setStandaloneTestResultForCard(card.id, null);
-    let observingExecute = true;
-    if (card.kind === 'agent') {
-      void pollStandaloneRun(card, correlationId, correlationId, false, true, () => observingExecute).catch((error: unknown) => {
-        if (standaloneTestRequestRef.current[card.id] !== correlationId) return;
-        setStandaloneTestResultForCard(card.id, (current) => current ? { ...current,
-          observationError: error instanceof Error ? error.message : 'card_run_observation_failed',
-        } : current);
-      });
-    }
-    try {
-      const response = await fetch('/api/cards/run', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'execute',
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          cardId: card.id,
-          correlationId,
-          input,
-          conversationId,
-          dataAnchors: (transientCardGraphContext[card.id] || []).map((item) => ({
-            authority: item.reference.authority,
-            nativeId: item.reference.nativeId,
-            reason: item.reference.reason,
-            priority: -item.reference.order,
-            boundedExpansion: item.reference.boundedExpansion,
-            resultLimit: item.reference.resultLimit,
-            required: item.reference.required,
-          })),
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      observingExecute = false;
-      let result = payload?.result;
-      if (!result || typeof result !== 'object') {
-        throw new Error(String(payload?.error || `standalone_card_test_http_${response.status}`));
-      }
-      if (card.kind === 'agent' && standaloneTestRequestRef.current[card.id] === correlationId && result.runId) {
-        try {
-          const retained = await readStandaloneRunStatus({ runId: String(result.runId) });
-          result = { ...result, terminal: retained.terminal };
-        } catch (error) {
-          result = { ...result, observationError: error instanceof Error ? error.message : 'card_run_observation_failed' };
-        }
-      }
-      if (standaloneTestRequestRef.current[card.id] === correlationId) {
-        const mapped = toStandaloneRunResult(result, card);
-        setStandaloneTestResultForCard(card.id, (current) => ({ ...mapped,
-          terminal: reconcileCardTerminal(current?.terminal, mapped.terminal),
-        }));
-        const runId = String(result.runId || correlationId);
-        standaloneActiveRunRef.current[card.id] = { runId, correlationId, cardId: card.id };
-        const state = String(result.state || (result.status === 'completed' ? 'completed' : ''));
-        if (['pending', 'running'].includes(state)) {
-          await pollStandaloneRun(card, runId, correlationId, true);
-          return;
-        }
-        setDeckStatusMessage(
-          mapped.error || `${card.title} run ${mapped.status}.`,
-        );
-        if (!mapped.error && state === 'completed') {
-          setTransientCardInputs((current) => {
-            const next = { ...current };
-            delete next[card.id];
-            return next;
-          });
-          setTransientCardGraphContext((current) => {
-            const next = { ...current };
-            delete next[card.id];
-            return next;
-          });
-          if (card.runtime.kind === 'hermes'
-            && card.id === BUILDER_CARD_ID) {
-            setDeckReloadToken((current) => current + 1);
-          }
-        }
-        delete standaloneActiveRunRef.current[card.id];
-      }
-    } catch (error) {
-      observingExecute = false;
-      if (standaloneTestRequestRef.current[card.id] === correlationId) {
-        try {
-          await pollStandaloneRun(card, correlationId, correlationId, true);
-          return;
-        } catch {
-          const message = error instanceof Error ? error.message : 'Standalone card run failed.';
-          setStandaloneTestResultForCard(card.id, {
-            status: 'failed', output: '', error: message,
-            runId: correlationId, correlationId,
-            toolCallCount: null, tools: [], provider: card.runtimeOptions?.provider || null,
-            model: card.runtimeOptions?.modelKey || null,
-            runtimeLabel: `${card.runtime.kind}/${card.runtime.mode}`,
-          });
-          setDeckStatusMessage(message);
-        }
-      }
-    } finally {
-      if (standaloneTestRequestRef.current[card.id] === correlationId) {
-        delete standaloneTestRequestRef.current[card.id];
-        delete standaloneActiveRunRef.current[card.id];
-        setCardRunBusy(card.id, false);
-      }
-    }
-  }, [
-    canvasProjectId,
-    readStandaloneRunStatus,
-    conversationId,
-    standaloneTestBusyByCard,
-    transientCardGraphContext,
-    pollStandaloneRun,
-    setCardRunBusy,
-    setStandaloneTestResultForCard,
-    setDeckReloadToken,
-    toStandaloneRunResult,
-  ]);
-
-  const runStandaloneCardTest = useCallback(async () => {
-    if (
-      !selectedCard ||
-      !canvasProjectId ||
-      standaloneTestBusy ||
-      standaloneTestUnavailableReason ||
-      !standaloneTestPrompt.trim()
-    ) {
-      return;
-    }
-    await executeStandaloneInvocation(selectedCard, standaloneTestPrompt.trim());
-  }, [
-    executeStandaloneInvocation,
-    selectedCard,
-    standaloneTestBusy,
-    standaloneTestPrompt,
-    standaloneTestUnavailableReason,
-  ]);
-
-  const learnFromStandaloneCardInput = useCallback(async () => {
-    if (
-      !selectedCard ||
-      selectedCard.runtime.kind !== 'hermes' ||
-      standaloneTestBusy ||
-      standaloneTestUnavailableReason ||
-      !standaloneTestPrompt.trim()
-    ) {
-      return;
-    }
-    await executeStandaloneInvocation(selectedCard, `/learn ${standaloneTestPrompt.trim()}`);
-  }, [
-    executeStandaloneInvocation,
-    selectedCard,
-    standaloneTestBusy,
-    standaloneTestPrompt,
-    standaloneTestUnavailableReason,
-  ]);
-
-  const stopCardRun = useCallback(async (card: AgentCardInstance) => {
-    const active = standaloneActiveRunRef.current[card.id];
-    if (!active || !canvasProjectId) return;
-    try {
-      const response = await fetch('/api/cards/run', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'stop',
-          projectId: canvasProjectId,
-          deckId: BUILDER_DECK_ID,
-          cardId: active.cardId,
-          runId: active.runId,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.result) {
-        throw new Error(String(payload?.error || `card_run_stop_http_${response.status}`));
-      }
-      setStandaloneTestResultForCard(card.id, (current) => {
-        const mapped = toStandaloneRunResult(payload.result, card);
-        return { ...mapped, terminal: mapped.terminal
-          || (current?.runId === active.runId ? current.terminal : null) };
-      });
-      const token = `card-stop-${active.runId}-${crypto.randomUUID().slice(0, 8)}`;
-      standaloneTestRequestRef.current[card.id] = token;
-      standaloneActiveRunRef.current[card.id] = active;
-      setCardRunBusy(card.id, true);
-      setDeckStatusMessage(`${card.title || 'Card'} native stop requested.`);
-      await pollStandaloneRun(card, active.runId, token, false);
-    } catch (error) {
-      setDeckStatusMessage(error instanceof Error ? error.message : 'Card run stop failed.');
-    }
-  }, [canvasProjectId, pollStandaloneRun, setCardRunBusy, setDeckStatusMessage,
-    setStandaloneTestResultForCard, toStandaloneRunResult]);
-
-  const rejoinCardRun = useCallback(async (card: AgentCardInstance) => {
-    const currentResult = standaloneTestResults[card.id] || null;
-    const runId = String(currentResult?.runId || standaloneActiveRunRef.current[card.id]?.runId || '').trim();
-    if (!runId) return;
-    const token = `card-rejoin-${runId}-${crypto.randomUUID().slice(0, 8)}`;
-    standaloneTestRequestRef.current[card.id] = token;
-    standaloneActiveRunRef.current[card.id] = {
-      runId,
-      correlationId: String(currentResult?.correlationId || runId),
-      cardId: card.id,
-    };
-    setCardRunBusy(card.id, true);
-    try {
-      await pollStandaloneRun(card, runId, token, false);
-    } catch (error) {
-      if (standaloneTestRequestRef.current[card.id] === token) {
-        setCardRunBusy(card.id, false);
-        setDeckStatusMessage(error instanceof Error ? error.message : 'Card run rejoin failed.');
-      }
-    }
-  }, [pollStandaloneRun, setCardRunBusy, setDeckStatusMessage, standaloneTestResults]);
-
-  const stopStandaloneCardTest = useCallback(() => {
-    if (selectedCard) void stopCardRun(selectedCard);
-  }, [selectedCard, stopCardRun]);
-
-  const rejoinStandaloneCardRun = useCallback(() => {
-    if (selectedCard) void rejoinCardRun(selectedCard);
-  }, [rejoinCardRun, selectedCard]);
-
-  useEffect(() => {
-    if (!canvasProjectId) return;
-    const cards = [builderCard, selectedCard]
-      .filter((card): card is AgentCardInstance => Boolean(card))
-      .filter((card, index, values) => values.findIndex((candidate) => candidate.id === card.id) === index);
-    let cancelled = false;
-    for (const card of cards) {
-      const staged = Boolean(
-        String(transientCardInputs[card.id] || '').trim()
-        || (transientCardGraphContext[card.id] || []).length > 0
-      );
-      if (staged) continue;
-      const hydrationGeneration = (standaloneHydrationGenerationRef.current[card.id] || 0) + 1;
-      standaloneHydrationGenerationRef.current[card.id] = hydrationGeneration;
-      void readStandaloneRunStatus({ cardId: card.id,
-        ...(card.id === builderCard?.id && workspaceView !== 'canvas' ? { conversationId } : {}),
-      })
-        .then(async (result) => {
-          if (cancelled || hydrationGeneration !== standaloneHydrationGenerationRef.current[card.id]) return;
-          const mapped = toStandaloneRunResult(result, card);
-          setStandaloneTestResultForCard(card.id, (current) => ({ ...mapped,
-            terminal: reconcileCardTerminal(current?.terminal, mapped.terminal),
-          }));
-          const state = String(result.state || '');
-          const runId = String(result.runId || '').trim();
-          if (runId && ['pending', 'running'].includes(state)
-            && !standaloneTestRequestRef.current[card.id]) {
-            const token = `card-hydrate-${card.id}-${crypto.randomUUID().slice(0, 8)}`;
-            standaloneTestRequestRef.current[card.id] = token;
-            standaloneActiveRunRef.current[card.id] = {
-              runId,
-              correlationId: String(result.correlationId || runId),
-              cardId: card.id,
-            };
-            setCardRunBusy(card.id, true);
-            await pollStandaloneRun(card, runId, token, false);
-          }
-        })
-        .catch((error) => {
-          if (
-            cancelled
-            || hydrationGeneration !== standaloneHydrationGenerationRef.current[card.id]
-            || String(error instanceof Error ? error.message : error).includes('card_run_not_found')
-          ) return;
-          setDeckStatusMessage(error instanceof Error ? error.message : 'Card run hydration failed.');
-        });
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [builderCard, canvasProjectId, cardActivity.activeAgentCounts, messages.length, conversationId, workspaceView,
-    pollStandaloneRun, readStandaloneRunStatus, selectedCard, selectedCardId, setCardRunBusy,
-    setDeckStatusMessage, setStandaloneTestResultForCard,
-    toStandaloneRunResult, transientCardGraphContext, transientCardInputs]);
-
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
-      ...BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'
-        || (selectedCard.id !== mainCardId && selectedCard.id !== builderCard?.id)),
+      ...BUILDER_NODE_TABS,
       ...(selectedCard.runtime.kind === 'hermes'
         && selectedCard.runtime.mode !== 'magentic_one'
         && selectedCard.id !== mainCardId
@@ -1554,7 +832,7 @@ export default function AgentBuilder(): React.ReactElement {
     }));
     setInspectorDrawerOpen(true);
     if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Results');
+      setTab('Prompt');
     }
     setDeckStatusMessage(
       `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
@@ -1596,7 +874,7 @@ export default function AgentBuilder(): React.ReactElement {
           nonce: (current?.nonce || 0) + 1,
         }));
         setSelectedEdgeId(null);
-        setTab(cardId === mainCardId || cardId === builderCard?.id ? 'Prompt' : 'Results');
+        setTab('Prompt');
       } else {
         setBuilderCanvasFocusRequest((current) => ({
           kind: 'deck',
@@ -1701,7 +979,6 @@ export default function AgentBuilder(): React.ReactElement {
                   }
                 >
                   <AgentManager
-                    cardKind={selectedCard.kind}
                     key="deck-card-editor"
                     cardId={selectedCard.id}
                     projectId={canvasProjectId}
@@ -1709,57 +986,9 @@ export default function AgentBuilder(): React.ReactElement {
                     registerCardLeave={registerCardLeave}
                     activeTab={tab}
                     cardName={selectedCard.title}
-                    cardSubtext={selectedCard.subtitle || ''}
                     onChangeCardName={handleRenameSelectedCard}
-                    onChangeCardSubtext={handleUpdateSelectedCardSubtext}
                     localConfig={selectedCardConfig}
-                    promptTestInput={standaloneTestPrompt}
-                    onChangePromptTestInput={(value) => {
-                      setStandaloneTestPrompt(value);
-                      setStandaloneTestResultForCard(selectedCard.id, null);
-                    }}
-                    onClearInvocation={() => {
-                      clearTransientCardInvocation(selectedCard.id);
-                    }}
-                    onRemoveGraphReference={(authority, nativeId) => {
-                      removeTransientGraphReference(selectedCard.id, authority, nativeId);
-                    }}
-                    onMoveGraphReference={(authority, nativeId, direction) => {
-                      moveTransientGraphReference(selectedCard.id, authority, nativeId, direction);
-                    }}
-                    onRunCard={() => {
-                      void runStandaloneCardTest();
-                    }}
-                    onLearnCard={selectedCard.runtime.kind === 'hermes'
-                      && selectedCard.runtime.mode !== 'magentic_one'
-                      ? () => { void learnFromStandaloneCardInput(); }
-                      : undefined}
-                    onStopCard={stopStandaloneCardTest}
-                    onRejoinCard={rejoinStandaloneCardRun}
-                    runBusy={standaloneTestBusy}
-                    showTaskComposer={showStandaloneTestControls}
-                    runDisabled={
-                      !showStandaloneTestControls ||
-                      !standaloneTestPrompt.trim() ||
-                      (selectedCard.runtime.kind === 'hermes' &&
-                        selectedCard.runtime.mode === 'magentic_one' &&
-                        (
-                          selectedMagOneWorkers.length === 0 ||
-                          selectedMagOneWorkers.some((worker) => !worker.ready)
-                        )) ||
-                      (transientCardGraphContext[selectedCard.id] || []).some(
-                        (item) => item.reference.required && !item.ready,
-                      )
-                    }
-                    runResult={standaloneTestResult}
-                    runInputs={standaloneRunInputs}
-                    loadedGraphContext={transientCardGraphContext[selectedCard.id] || []}
-                    saveDeckStatusMessage={deckStatusMessage}
-                    openDeckRevision={deckRevision}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
-                    onGraphRefresh={() => {
-                      // no-op
-                    }}
                   />
                 </Suspense>
               </CardEditorErrorBoundary>

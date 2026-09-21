@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import {
-  NativeGraphProjectionSurface,
-  type GraphProjectionV1,
-} from './knowledge/NativeAuthorityGraphSurface';
-
 import type {
   AgentCardRuntimeOptions,
   CardRuntime,
@@ -18,10 +13,6 @@ import {
   testNativeHermesMcp,
   type NativeHermesCardView,
 } from '../features/agentbuilder/nativeHermesCard';
-import CardRunResults, {
-  usesCardRunResults,
-  type CardTerminalObservation,
-} from '../features/agentbuilder/console/CardRunResults';
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
@@ -207,55 +198,11 @@ export function toggleSavedToolAssignment(
 }
 interface AgentManagerProps {
   cardId?: string;
-  cardKind?: string;
   projectId?: string;
   deckId?: string;
   activeTab: string;
-  promptPreviewPlanText?: string;
-  onGraphRefresh?: () => void;
-  promptTestInput?: string;
-  onChangePromptTestInput?: (value: string) => void;
-  onRunCard?: () => void;
-  onLearnCard?: () => void;
-  onStopCard?: () => void;
-  onRejoinCard?: () => void;
-  onClearInvocation?: () => void;
-  terminalContent?: React.ReactNode;
-  onRemoveGraphReference?: (authority: string, nativeId: string) => void;
-  onMoveGraphReference?: (
-    authority: string,
-    nativeId: string,
-    direction: -1 | 1,
-  ) => void;
-  runBusy?: boolean;
-  runDisabled?: boolean;
-  showTaskComposer?: boolean;
-  runResult?: StandaloneCardTestResult | null;
-  runInputs?: RetainedRunInputs | null;
-  loadedGraphContext?: Array<{
-    reference: {
-      authority: string;
-      nativeId: string;
-      reason: string;
-      order: number;
-      boundedExpansion: number;
-      resultLimit: number;
-      required: boolean;
-    };
-    resolvedReferences: Array<Record<string, unknown>>;
-    resolvedContextMarkdown: string;
-    graphProjection: GraphProjectionV1;
-    resolved: boolean;
-    ready: boolean;
-    observedAt?: string;
-    error?: string;
-  }>;
-  saveDeckStatusMessage?: string | null;
-  openDeckRevision?: string | null;
   cardName?: string;
-  cardSubtext?: string;
   onChangeCardName?: (value: string) => void;
-  onChangeCardSubtext?: (value: string) => void;
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
   registerCardLeave?: (save: (() => Promise<boolean>) | null) => void;
@@ -277,83 +224,11 @@ export type AgentManagerLocalConfig = {
   max_turns?: number | null;
   prompt_template?: string | null;
   tools?: unknown[];
+  native_tools?: unknown[];
   skills?: unknown[];
   toolsets?: unknown[];
   mcp_connection_ids?: unknown[];
 };
-
-export type StandaloneCardTestResult = {
-  conversationId?: string | null;
-  startedAt?: string | null;
-  status: string;
-  state?: string | null;
-  runId?: string | null;
-  correlationId?: string | null;
-  cardId?: string | null;
-  nativeRootId?: string | null;
-  nativeRunId?: string | number | null;
-  tasksCompleted?: number;
-  tasksTotal?: number;
-  activeWorkers?: number;
-  resultReady?: boolean;
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedTokens?: number;
-  reasoningTokens?: number;
-  costUsd?: number;
-  output: string;
-  error: string | null;
-  terminal?: CardTerminalObservation | null;
-  observationError?: string | null;
-  toolCallCount?: number | null;
-  tools: string[];
-  provider?: string | null;
-  model?: string | null;
-  runtimeLabel?: string | null;
-  invocation?: {
-    ephemeral: boolean;
-    cardRevisionId: string;
-    cardRevision: number;
-    cardRevisionSha256: string;
-    runtimeOwner: string;
-    resolvedNativeReads?: Array<Record<string, unknown>>;
-    resolvedGraphProjection?: GraphProjectionV1;
-    idf: {
-      actualGraphData: Record<string, any>;
-      stableSavedCardContext: Record<string, any>;
-      selectedToolsAndGrants: Record<string, any>;
-      dynamicContext: Record<string, any>;
-    };
-    inputSummary?: Record<string, any>;
-    inputFile?: Record<string, any>;
-    cardIdentity: { cardId: string; title?: string };
-  } | null;
-  receipt?: Record<string, unknown> | null;
-};
-
-export type RetainedRunInputs = {
-  available: boolean;
-  runId: string;
-  message?: string;
-  idf?: {
-    actualGraphData: Record<string, any>;
-    stableSavedCardContext: Record<string, any>;
-    selectedToolsAndGrants: Record<string, any>;
-    dynamicContext: Record<string, any>;
-  };
-  inputSummary?: Record<string, any>;
-  idfText?: string;
-};
-
-export function selectKnowledgeGraphProjection(
-  loaded: GraphProjectionV1,
-  materialized?: GraphProjectionV1,
-): { projection: GraphProjectionV1; modelBound: boolean } {
-  if (materialized && Array.isArray(materialized.nodes) && Array.isArray(materialized.edges)) {
-    return { projection: materialized, modelBound: true };
-  }
-  return { projection: loaded, modelBound: false };
-}
 
 type SaveCardStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
@@ -459,6 +334,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
   maxTurns: number | '';
   promptTemplate: string;
   toolsText: string;
+  nativeToolsText: string;
   skillsText: string;
   toolsetsText: string;
   mcpConnectionIdsText: string;
@@ -474,6 +350,7 @@ export function buildActiveAgentManagerLocalConfig(input: {
     max_turns: typeof input.maxTurns === 'number' ? input.maxTurns : null,
     prompt_template: input.promptTemplate,
     tools: parseListText(input.toolsText),
+    native_tools: parseListText(input.nativeToolsText),
     skills: parseListText(input.skillsText),
     toolsets: parseListText(input.toolsetsText),
     mcp_connection_ids: parseListText(input.mcpConnectionIdsText),
@@ -491,35 +368,15 @@ export function hasHermesModelDrift(
 
 export function AgentManager({
   cardId = '',
-  cardKind,
   projectId = '',
   deckId = '',
   activeTab,
-  promptTestInput,
-  onChangePromptTestInput,
-  onRunCard,
-  onLearnCard,
-  onStopCard,
-  onRejoinCard,
-  onClearInvocation,
-  onRemoveGraphReference,
-  onMoveGraphReference,
-  runBusy = false,
-  runDisabled = false,
-  showTaskComposer = true,
-  terminalContent,
-  runResult = null,
-  runInputs = null,
-  loadedGraphContext = [],
-  saveDeckStatusMessage = null,
-  openDeckRevision = null,
   cardName = '',
   onChangeCardName,
   localConfig,
   onSaveLocalConfig,
   registerCardLeave,
 }: AgentManagerProps) {
-  const showRunResults = usesCardRunResults(cardKind, localConfig?.runtime);
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
@@ -568,7 +425,7 @@ export function AgentManager({
   const [toolDictionaryQuery, setToolDictionaryQuery] = useState('');
   const [toolDictionaryNamespace, setToolDictionaryNamespace] = useState('');
   const [toolDictionaryOffset, setToolDictionaryOffset] = useState(0);
-  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(false);
+  const [showSelectedToolsOnly, setShowSelectedToolsOnly] = useState(true);
   const [toolDictionaryBusy, setToolDictionaryBusy] = useState(true);
   const [toolOptionsError, setToolOptionsError] = useState(false);
   const [temperature, setTemperature] = useState<number | ''>('');
@@ -586,6 +443,7 @@ export function AgentManager({
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
+  const [nativeToolsText, setNativeToolsText] = useState('');
   const [skillsText, setSkillsText] = useState('');
   const [toolsetsText, setToolsetsText] = useState('');
   const [mcpConnectionIdsText, setMcpConnectionIdsText] = useState('');
@@ -593,9 +451,6 @@ export function AgentManager({
   const [nativeHermesStatus, setNativeHermesStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [nativeHermesError, setNativeHermesError] = useState<string | null>(null);
   const [nativeSoulDraft, setNativeSoulDraft] = useState('');
-  const [nativeDisabledSkills, setNativeDisabledSkills] = useState<string[]>([]);
-  const [nativeEnabledToolsets, setNativeEnabledToolsets] = useState<string[]>([]);
-  const [nativeEnabledMcpServers, setNativeEnabledMcpServers] = useState<string[]>([]);
   const [nativeLearningDetail, setNativeLearningDetail] = useState<{
     kind: 'memory' | 'skill';
     id: string;
@@ -610,82 +465,9 @@ export function AgentManager({
     toolCount: number;
     error: string | null;
   }>>({});
-  const [inputFileTransferError, setInputFileTransferError] = useState<string | null>(null);
   const draftDirtyRef = useRef(false);
-  const loadedGraphProjection = useMemo<GraphProjectionV1>(() => {
-    const nodes = new Map<string, GraphProjectionV1['nodes'][number]>();
-    const edges = new Map<string, GraphProjectionV1['edges'][number]>();
-    for (const context of loadedGraphContext) {
-      for (const node of context.graphProjection.nodes) nodes.set(node.id, node);
-      for (const edge of context.graphProjection.edges) edges.set(edge.id, edge);
-    }
-    return {
-      schemaVersion: 'native-card-context.v1',
-      authority: 'mixed',
-      projectId: loadedGraphContext[0]?.graphProjection.projectId || '',
-      nodes: [...nodes.values()],
-      edges: [...edges.values()].filter(
-        (edge) => nodes.has(edge.source) && nodes.has(edge.target),
-      ),
-      counts: { nodes: nodes.size, edges: edges.size },
-    };
-  }, [loadedGraphContext]);
-  const materializedGraphProjection = runResult?.invocation?.resolvedGraphProjection;
-  const selectedKnowledgeProjection = selectKnowledgeGraphProjection(
-    loadedGraphProjection,
-    materializedGraphProjection,
-  );
-  const knowledgeGraphProjection = selectedKnowledgeProjection.projection;
-  const knowledgeProjectionIsMaterialized = selectedKnowledgeProjection.modelBound;
-
-  const exportRuntimeInput = useCallback(async (
-    extension: '.idf',
-    contents: string,
-  ) => {
-    setInputFileTransferError(null);
-    const requestedName = window.prompt(
-      `Choose the exported ${extension} filename`,
-      '',
-    );
-    if (requestedName == null) return;
-    const filename = requestedName.trim();
-    if (!filename || !filename.toLowerCase().endsWith(extension)) {
-      setInputFileTransferError(`Export filename must end with ${extension}.`);
-      return;
-    }
-    const picker = (window as Window & {
-      showSaveFilePicker?: (options: Record<string, unknown>) => Promise<{
-        createWritable: () => Promise<{
-          write: (value: string) => Promise<void>;
-          close: () => Promise<void>;
-        }>;
-      }>;
-    }).showSaveFilePicker;
-    if (!picker) {
-      setInputFileTransferError('Named export is unavailable in this browser. No fallback copy was created.');
-      return;
-    }
-    try {
-      const handle = await picker({
-        suggestedName: filename,
-        types: [{
-          description: 'Run input',
-          accept: { 'application/json': [extension] },
-        }],
-      });
-      const writable = await handle.createWritable();
-      await writable.write(contents);
-      await writable.close();
-    } catch (error) {
-      if ((error as { name?: string })?.name !== 'AbortError') {
-        setInputFileTransferError(error instanceof Error ? error.message : 'Named export failed.');
-      }
-    }
-  }, []);
-
   useEffect(() => {
     setCardNameDraft(cardName);
-    setInputFileTransferError(null);
   }, [cardId, cardName]);
 
   useEffect(() => {
@@ -782,6 +564,13 @@ export function AgentManager({
             .join('\n')
         : '',
     );
+    setNativeToolsText(
+      Array.isArray(localConfig.native_tools)
+        ? localConfig.native_tools
+            .filter((entry): entry is string => typeof entry === 'string')
+            .join('\n')
+        : '',
+    );
     setSkillsText(
       Array.isArray(localConfig.skills)
         ? localConfig.skills.filter((entry): entry is string => typeof entry === 'string').join('\n')
@@ -807,9 +596,6 @@ export function AgentManager({
     setAutomaticLearningDraft(null);
     if (!state) {
       setNativeSoulDraft('');
-      setNativeDisabledSkills([]);
-      setNativeEnabledToolsets([]);
-      setNativeEnabledMcpServers([]);
       setNativeLearningDetail(null);
       setNativeLearningDraft('');
       setNativeLearningStatus('idle');
@@ -818,15 +604,6 @@ export function AgentManager({
     }
     setMemoryProviderDraft(state.native.honcho ? (state.native.honcho.selected ? 'honcho' : 'builtin') : null);
     setNativeSoulDraft(state.native.soul);
-    setNativeDisabledSkills(
-      state.native.skills.filter((item) => !item.enabled).map((item) => item.name),
-    );
-    setNativeEnabledToolsets(
-      state.native.toolsets.filter((item) => item.enabled).map((item) => item.name),
-    );
-    setNativeEnabledMcpServers(
-      state.native.mcpServers.filter((item) => item.enabled).map((item) => item.name),
-    );
   }, []);
 
   useEffect(() => {
@@ -916,6 +693,7 @@ export function AgentManager({
       maxTurns,
       promptTemplate: serializePromptFields(promptParts, promptText, promptPartsTouched),
       toolsText,
+      nativeToolsText,
       skillsText,
       toolsetsText,
       mcpConnectionIdsText,
@@ -962,6 +740,7 @@ export function AgentManager({
     outputExpectationsTouched,
     promptText,
     toolsText,
+    nativeToolsText,
     skillsText,
     toolsetsText,
     mcpConnectionIdsText,
@@ -994,7 +773,7 @@ export function AgentManager({
       setNativeLearningStatus('ready');
     } catch (error) {
       setNativeLearningStatus('failed');
-      setNativeLearningError(error instanceof Error ? error.message : 'Native learning node unavailable.');
+      setNativeLearningError(error instanceof Error ? error.message : 'Hermes learning node unavailable.');
     }
   }, [projectId, deckId, cardId]);
 
@@ -1032,7 +811,7 @@ export function AgentManager({
       const learningEdits = [...learningEditsRef.current];
       const changes: Record<string, unknown> = {};
       if (nativeDraftDirtyRef.current) {
-        if (!nativeState || !projectId || !deckId || !cardId) throw new Error('Native profile unavailable.');
+        if (!nativeState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
         const profile = nativeState.native;
         if (automaticLearningDraft !== null && profile.backgroundReview
           && automaticLearningDraft !== profile.backgroundReview.enabled) {
@@ -1043,17 +822,7 @@ export function AgentManager({
             max_input_tokens: profile.backgroundReview.maxInputTokens,
           };
         }
-        const sameSet = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
         if (nativeSoulDraft !== profile.soul) changes.soul = nativeSoulDraft;
-        if (!sameSet(nativeDisabledSkills, profile.skills.filter((item) => !item.enabled).map((item) => item.name))) {
-          changes.disabled_skills = nativeDisabledSkills;
-        }
-        if (!sameSet(nativeEnabledToolsets, profile.toolsets.filter((item) => item.enabled).map((item) => item.name))) {
-          changes.enabled_toolsets = nativeEnabledToolsets;
-        }
-        if (!sameSet(nativeEnabledMcpServers, profile.mcpServers.filter((item) => item.enabled).map((item) => item.name))) {
-          changes.enabled_mcp_servers = nativeEnabledMcpServers;
-        }
         if (profile.honcho && memoryProviderDraft !== null
           && memoryProviderDraft !== (profile.honcho.selected ? 'honcho' : 'builtin')) {
           changes.memory_provider = memoryProviderDraft;
@@ -1080,8 +849,7 @@ export function AgentManager({
         }
       }
   }, [runSaveConfig, projectId, deckId, cardId, nativeSoulDraft,
-    nativeDisabledSkills, nativeEnabledToolsets, nativeEnabledMcpServers, memoryProviderDraft,
-    automaticLearningDraft, acceptNativeReadback]);
+    memoryProviderDraft, automaticLearningDraft, acceptNativeReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {
@@ -1231,12 +999,6 @@ export function AgentManager({
   ]);
 
   const renderSectionBody = (sectionTab: string) => {
-    if (sectionTab === 'Results') {
-      // Run input and results are rendered below the shared Card controls. Keep a
-      // concrete section body here so non-Main Cards do not hit the legacy
-      // empty-section guard before their real Run controls are mounted.
-      return <>{terminalContent || null}</>;
-    }
     if (sectionTab === 'Prompt') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1445,50 +1207,41 @@ export function AgentManager({
     if (sectionTab === 'Skills') {
       return (
         <section
-          data-testid="native-learning-graph"
+          data-testid="agent-manager-skills"
           style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-            <div>
-              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills</div>
-            </div>
-
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Card skill grants</div>
+          <div style={{ color: '#91A9B8', fontSize: 11 }}>
+            Saved Card authority. These skill IDs are materialized for the Card at Run start.
           </div>
-          {runtimeKind !== 'hermes' ? (
-            <div role="status" style={{ color: '#91A9B8', fontSize: 11 }}>
-              Skills are unavailable for this agent.
-            </div>
-          ) : nativeHermesStatus === 'failed' ? (
+          <textarea
+            aria-label="Card skill grants"
+            value={skillsText}
+            onChange={(event) => {
+              setSkillsText(event.target.value);
+              markDraftDirty();
+            }}
+            placeholder="One skill ID per line"
+            rows={5}
+          />
+          {runtimeKind !== 'hermes' ? null : nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {nativeHermesError || 'Learning unavailable.'}
+              {nativeHermesError || 'Effective Hermes skill readback unavailable.'}
             </div>
           ) : nativeHermesState ? (
             <>
-              <section aria-label="Skills">
-
+              <details data-testid="effective-hermes-skills">
+                <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
+                  Effective Hermes skills · read-only
+                </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
-                  {nativeHermesState.native.skills.map((skill) => {
-                    const enabled = !nativeDisabledSkills.includes(skill.name);
-                    return (
-                      <label key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
-                        <input
-                          type="checkbox"
-                          checked={enabled}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setNativeDisabledSkills((current) => checked
-                              ? current.filter((name) => name !== skill.name)
-                              : Array.from(new Set([...current, skill.name])));
-                            markNativeDraftDirty();
-                          }}
-                        />{' '}
-                        {skill.name}
-                      </label>
-                    );
-                  })}
-
+                  {nativeHermesState.native.skills.map((skill) => (
+                    <div key={skill.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
+                      {skill.name} · {skill.enabled ? 'enabled' : 'disabled'}
+                    </div>
+                  ))}
                 </div>
-              </section>
+              </details>
               {nativeHermesState.native.backgroundReview ? (
                 <label style={{ color: '#B8C8CD', fontSize: 12 }}>
                   <input type="checkbox" aria-label="Automatic learning"
@@ -1503,39 +1256,7 @@ export function AgentManager({
               <HermesSkillGraph graph={nativeHermesState.native.learning.graph}
                 profile={nativeHermesState.binding.profile}
                 onOpenNode={(id) => void openNativeLearningNode(id)} />
-              {runtimeMode === 'main' && nativeHermesState.native.honcho ? (
-                <section
-                  data-testid="main-honcho-status"
-                  style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
-                >
-                  <div style={{ display: 'grid', gap: 3 }}>
-                    <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Memory</strong>
-                    <span style={{ color: '#80969F', fontSize: 10.5 }}>
-                      {nativeHermesState.native.honcho.configurationStatus === 'not_configured'
-                        ? 'Not configured'
-                        : nativeHermesState.native.honcho.connectionStatus === 'configured_unreachable'
-                          ? 'Configured but unreachable'
-                          : nativeHermesState.native.honcho.connectionStatus === 'connected'
-                            ? 'Connected'
-                            : 'Configured; connection not checked'}
-                    </span>
-
-                  </div>
-                  <select
-                    aria-label="Memory provider"
-                    value={memoryProviderDraft || 'builtin'}
-                    onChange={(event) => {
-                      setMemoryProviderDraft(event.target.value as 'builtin' | 'honcho');
-                      markNativeDraftDirty();
-                    }}
-                  >
-                    <option value="builtin">Built-in only</option>
-                    <option value="honcho">External</option>
-                  </select>
-                </section>
-              ) : null}
-
-              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening native node…</div> : null}
+              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening Hermes learning node…</div> : null}
               {nativeLearningStatus === 'failed' ? (
                 <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
               ) : null}
@@ -1543,7 +1264,7 @@ export function AgentManager({
                 <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
                   <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
                   <textarea
-                    aria-label="Native learning node content"
+                    aria-label="Hermes learning node content"
                     value={nativeLearningDraft}
                     onChange={(event) => {
                       setNativeLearningDraft(event.target.value);
@@ -1557,8 +1278,57 @@ export function AgentManager({
               ) : null}
             </>
           ) : (
-            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading…</div>
+            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading Hermes skill diagnostics…</div>
           )}
+        </section>
+      );
+    }
+
+    if (sectionTab === 'Memory') {
+      return (
+        <section
+          data-testid="agent-manager-memory"
+          style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
+        >
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Memory</div>
+          <div style={{ color: '#91A9B8', fontSize: 11 }}>
+            Memory behavior follows the saved Card prompt and its bound Hermes profile.
+          </div>
+          {runtimeKind === 'hermes' && nativeHermesStatus === 'failed' ? (
+            <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
+              {nativeHermesError || 'Effective Hermes memory readback unavailable.'}
+            </div>
+          ) : null}
+          {runtimeMode === 'main' && nativeHermesState?.native.honcho ? (
+            <section
+              data-testid="main-honcho-status"
+              style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
+            >
+              <div style={{ display: 'grid', gap: 3 }}>
+                <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Main memory provider</strong>
+                <span style={{ color: '#80969F', fontSize: 10.5 }}>
+                  {nativeHermesState.native.honcho.configurationStatus === 'not_configured'
+                    ? 'Not configured'
+                    : nativeHermesState.native.honcho.connectionStatus === 'configured_unreachable'
+                      ? 'Configured but unreachable'
+                      : nativeHermesState.native.honcho.connectionStatus === 'connected'
+                        ? 'Connected'
+                        : 'Configured; connection not checked'}
+                </span>
+              </div>
+              <select
+                aria-label="Memory provider"
+                value={memoryProviderDraft || 'builtin'}
+                onChange={(event) => {
+                  setMemoryProviderDraft(event.target.value as 'builtin' | 'honcho');
+                  markNativeDraftDirty();
+                }}
+              >
+                <option value="builtin">Built-in only</option>
+                <option value="honcho">External</option>
+              </select>
+            </section>
+          ) : null}
         </section>
       );
     }
@@ -1590,121 +1360,6 @@ export function AgentManager({
             </section>
           ) : null}
       </>;
-    }
-
-    if (sectionTab === 'Knowledge') {
-      return (
-        <div data-testid="agent-manager-knowledge" style={{ display: 'grid', gap: 10 }}>
-          {runInputs && (!runInputs.available || Number(runInputs.idf?.actualGraphData?.recordCounts?.total || 0) > 0) ? (
-            <section
-              data-testid="selected-run-idf-graph"
-              style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
-            >
-              <strong style={{ color: '#D5E4E8', fontSize: 12 }}>
-                Graph data
-              </strong>
-              {runInputs.available && runInputs.idf ? (
-                <>
-                  <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                    {Number(runInputs.idf.actualGraphData?.recordCounts?.total || 0)} records · {' '}
-                    {Array.isArray(runInputs.idf.actualGraphData?.authorities) && runInputs.idf.actualGraphData.authorities.length > 0
-                      ? runInputs.idf.actualGraphData.authorities.join(', ')
-                      : 'no graph authority selected'}
-                  </div>
-                  <div data-testid="selected-run-idf-graph-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5 }}>
-                    {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()} estimated tokens
-                  </div>
-                  <details>
-                    <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                      Data
-                    </summary>
-                    <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                      {JSON.stringify(runInputs.idf.actualGraphData, null, 2)}
-                    </pre>
-                  </details>
-                </>
-              ) : (
-                <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
-                  {runInputs.message || 'Input files unavailable for this Run'}
-                </div>
-              )}
-            </section>
-          ) : null}
-          {knowledgeGraphProjection.nodes.length > 0 ? (
-            <div
-              data-testid={knowledgeProjectionIsMaterialized
-                ? 'knowledge-model-bound-projection'
-                : 'knowledge-loaded-projection'}
-              style={{ height: 300, minHeight: 240, border: '1px solid #3A4A4F', borderRadius: 8, overflow: 'hidden' }}
-            >
-              <NativeGraphProjectionSurface
-                projection={knowledgeGraphProjection}
-                status="ready"
-                error={null}
-                authority="knowgraph"
-              />
-            </div>
-          ) : null}
-          {loadedGraphContext.map((item, index) => (
-            <section
-              key={`${item.reference.authority}:${item.reference.nativeId}`}
-              style={{ display: 'grid', gap: 6, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8 }}
-            >
-              <strong style={{ color: item.ready ? '#8FD1B8' : '#FFB6A2' }}>
-                {item.reference.authority}:{item.reference.nativeId} · {item.ready ? 'ready' : 'not ready'}
-              </strong>
-              <div style={{ color: '#B8C8CD', fontSize: 11.5 }}>{item.reference.reason}</div>
-              <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                {item.reference.required ? 'required' : 'optional'} · order {item.reference.order} · depth {item.reference.boundedExpansion} · result limit {item.reference.resultLimit}
-                {item.resolvedReferences.some((reference) => reference.truncated === true) ? ' · truncated' : ''}
-                {item.observedAt ? ` · observed ${item.observedAt}` : ''}
-              </div>
-              {item.error ? <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>{item.error}</div> : null}
-              {item.resolvedReferences.map((reference, index) => (
-                <div key={`${item.reference.nativeId}-resolved-${index}`} style={{ color: '#9FB2B8', fontSize: 10.5 }}>
-                  provenance: {String(reference.provenance || reference.nativeKind || 'native graph')}
-                </div>
-              ))}
-              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  disabled={index === 0}
-                  onClick={() => onMoveGraphReference?.(
-                    item.reference.authority,
-                    item.reference.nativeId,
-                    -1,
-                  )}
-                  aria-label={`Move ${item.reference.nativeId} earlier`}
-                >
-                  Earlier
-                </button>
-                <button
-                  type="button"
-                  disabled={index === loadedGraphContext.length - 1}
-                  onClick={() => onMoveGraphReference?.(
-                    item.reference.authority,
-                    item.reference.nativeId,
-                    1,
-                  )}
-                  aria-label={`Move ${item.reference.nativeId} later`}
-                >
-                  Later
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onRemoveGraphReference?.(
-                    item.reference.authority,
-                    item.reference.nativeId,
-                  )}
-                  aria-label={`Remove ${item.reference.nativeId}`}
-                >
-                  Remove
-                </button>
-              </div>
-            </section>
-          ))}
-        </div>
-      );
     }
 
     if (sectionTab === 'Runtime') {
@@ -1899,7 +1554,7 @@ export function AgentManager({
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
-            Tools
+            Application capabilities
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
@@ -2062,57 +1717,63 @@ export function AgentManager({
               </button>
             </div>
           ) : null}
-          {runtimeKind !== 'hermes' ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 8 }}>
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Card skill grants
-              </label>
+          <section
+            aria-label="Hermes capabilities"
+            style={{ display: 'grid', gap: 8, marginTop: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
+          >
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Hermes capabilities</div>
+            <div style={{ color: '#91A9B8', fontSize: 11 }}>
+              Saved Card capability names are materialized through Hermes toolsets at Run start.
+            </div>
+            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
+              Capability names
               <textarea
-                aria-label="Card skill grants"
-                value={skillsText}
+                aria-label="Hermes capabilities"
+                value={nativeToolsText}
                 onChange={(event) => {
-                  setSkillsText(event.target.value);
+                  setNativeToolsText(event.target.value);
                   markDraftDirty();
                 }}
-                placeholder="One skill ID per line"
+                placeholder="One Hermes capability name per line"
                 rows={4}
               />
-            </div>
-            <div>
-              <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-                Card toolset grants
-              </label>
+            </label>
+            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
+              Hermes toolsets
               <textarea
-                aria-label="Card toolset grants"
+                aria-label="Hermes toolsets"
                 value={toolsetsText}
                 onChange={(event) => {
                   setToolsetsText(event.target.value);
                   markDraftDirty();
                 }}
-                placeholder="One toolset ID per line"
+                placeholder="One Hermes toolset ID per line"
                 rows={4}
               />
-            </div>
-          </div> : null}
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
-              Card connection references
             </label>
-            <textarea
-              aria-label="Card connection references"
-              value={mcpConnectionIdsText}
-              onChange={(event) => {
-                setMcpConnectionIdsText(event.target.value);
-                markDraftDirty();
-              }}
-              placeholder="One configured connection ID per line"
-              rows={4}
-            />
-
-          </div>
+          </section>
+          <section
+            aria-label="External connections"
+            style={{ display: 'grid', gap: 8, padding: '10px 12px', border: '1px solid #3A4A4F', borderRadius: 8 }}
+          >
+            <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>External connections</div>
+            <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
+              External MCP connection references
+              <textarea
+                aria-label="External MCP connection references"
+                value={mcpConnectionIdsText}
+                onChange={(event) => {
+                  setMcpConnectionIdsText(event.target.value);
+                  markDraftDirty();
+                }}
+                placeholder="One configured connection ID per line"
+                rows={4}
+              />
+            </label>
+          </section>
           {runtimeKind === 'hermes' && nativeHermesState ? (
             <section
-              data-testid="agent-native-capabilities"
+              data-testid="effective-hermes-runtime"
               style={{
                 display: 'grid',
                 gap: 8,
@@ -2122,28 +1783,22 @@ export function AgentManager({
                 background: '#202827',
               }}
             >
-
-
+              <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
+                Effective runtime / diagnostics
+              </div>
+              <div style={{ color: '#91A9B8', fontSize: 11 }}>
+                Profile {nativeHermesState.binding.profile} · saved Card authority materializes at Run start. Effective Hermes profile values are read-only here.
+              </div>
               <details>
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Toolsets · {nativeEnabledToolsets.length} enabled
+                  Effective Hermes toolsets · {nativeHermesState.native.toolsets.filter((toolset) => toolset.enabled).length} enabled
                 </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
                   {nativeHermesState.native.toolsets.map((toolset) => (
-                    <label key={toolset.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
-                      <input
-                        type="checkbox"
-                        checked={nativeEnabledToolsets.includes(toolset.name)}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setNativeEnabledToolsets((current) => checked
-                            ? Array.from(new Set([...current, toolset.name]))
-                            : current.filter((name) => name !== toolset.name));
-                          markNativeDraftDirty();
-                        }}
-                      />{' '}
-                      {toolset.label || toolset.name}{typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
-                    </label>
+                    <div key={toolset.name} style={{ color: '#B8C8CD', fontSize: 11 }}>
+                      {toolset.label || toolset.name} · {toolset.enabled ? 'enabled' : 'disabled'}
+                      {typeof toolset.tool_count === 'number' ? ` · ${toolset.tool_count} tools` : ''}
+                    </div>
                   ))}
                 </div>
               </details>
@@ -2161,20 +1816,9 @@ export function AgentManager({
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <label style={{ color: '#D5E4E8', fontSize: 11.5 }}>
-                        <input
-                          type="checkbox"
-                          checked={nativeEnabledMcpServers.includes(server.name)}
-                          onChange={(event) => {
-                            const checked = event.target.checked;
-                            setNativeEnabledMcpServers((current) => checked
-                              ? Array.from(new Set([...current, server.name]))
-                              : current.filter((name) => name !== server.name));
-                            markNativeDraftDirty();
-                          }}
-                        />{' '}
-                        {server.name} · {server.credentialStatus.replace('_', ' ')}
-                      </label>
+                      <div style={{ color: '#D5E4E8', fontSize: 11.5 }}>
+                        {server.name} · {server.enabled ? 'enabled' : 'disabled'} · {server.credentialStatus.replace('_', ' ')}
+                      </div>
                       <button
                         type="button"
                         onClick={() => void checkNativeMcpServer(server.name)}
@@ -2190,7 +1834,7 @@ export function AgentManager({
                     {checked ? (
                       <div style={{ color: checked.status === 'connected' ? '#72D7C7' : checked.status === 'failed' ? '#FFA2A2' : '#80969F', fontSize: 10.5 }}>
                         {checked.status === 'connected'
-                          ? `Connected · ${checked.toolCount} native tools discovered`
+                          ? `Connected · ${checked.toolCount} MCP tools discovered`
                           : checked.status === 'failed'
                             ? checked.error || 'Connection failed.'
                             : 'Checking connection…'}
@@ -2199,7 +1843,7 @@ export function AgentManager({
                   </div>
                 );
               }) : (
-                <div style={{ color: '#80969F', fontSize: 11 }}>No native MCP connections are configured.</div>
+                <div style={{ color: '#80969F', fontSize: 11 }}>No Hermes MCP connections are configured.</div>
               )}
             </section>
           ) : null}
@@ -2210,126 +1854,76 @@ export function AgentManager({
     return null;
   };
 
-  const sectionBody = activeTab === 'Results'
-    ? renderSectionBody('Results')
-    : activeTab === 'Prompt'
+  const sectionBody = activeTab === 'Prompt'
+    ? (
+        <div data-testid="agent-manager-prompt-surface" style={{ display: 'grid', gap: 16 }}>
+          <section aria-label="Prompt configuration">{renderSectionBody('Prompt')}</section>
+          {renderSectionBody('Soul')}
+        </div>
+      )
+    : activeTab === 'Runtime'
       ? (
-          <div data-testid="agent-manager-prompt-surface" style={{ display: 'grid', gap: 16 }}>
-            <section aria-label="Prompt configuration">{renderSectionBody('Prompt')}</section>
-            {renderSectionBody('Soul')}
+          <div data-testid="agent-manager-runtime-surface" style={{ display: 'grid', gap: 16 }}>
+            <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
+            {runtimeKind === 'hermes' ? (
+              <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
+                Subagent model
+                <select
+                  aria-label="Subagent model"
+                  value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}
+                  onChange={(event) => {
+                    const [selectedProvider, selectedKey] = event.target.value.split('\u0000');
+                    const selected = subagentCatalogOptions.find((option) => (
+                      option.provider === selectedProvider && option.key === selectedKey
+                    ));
+                    if (!selected) return;
+                    setSubagentTouched(true);
+                    setSubagentModel({
+                      provider: selectedProvider,
+                      accessMode: subagentAccessMode(selectedProvider),
+                      modelKey: selected.key,
+                      providerModelId: selected.providerModelId,
+                    });
+                    markDraftDirty();
+                  }}
+                >
+                  {!subagentCatalogOptions.some((option) => option.provider === subagentModel.provider
+                    && option.key === subagentModel.modelKey) ? (
+                    <option value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}>
+                      {subagentModel.providerModelId} (unavailable — saved)
+                    </option>
+                  ) : null}
+                  {subagentCatalogOptions.map((option) => (
+                    <option key={`${option.provider}:${option.key}`} value={`${option.provider}\u0000${option.key}`}>
+                      {option.provider} · {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {runtimeKind === 'hermes' ? (
+              <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
+                Delegate task
+                <select aria-label="Delegate task" value={delegationRole}
+                  disabled={!editorField('delegationRole')?.options?.length}
+                  onChange={(event) => {
+                    const next = event.target.value as NonNullable<AgentCardRuntimeOptions['delegationRole']>;
+                    setDelegationRole(next);
+                    setDelegationTouched(true);
+                    markDraftDirty();
+                  }}>
+                  {editorField('delegationRole')?.options?.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
         )
-      : activeTab === 'Runtime'
-        ? (
-            <div data-testid="agent-manager-runtime-surface" style={{ display: 'grid', gap: 16 }}>
-              <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
-              {runtimeKind === 'hermes' ? (
-                <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-                  Subagent model
-                  <select
-                    aria-label="Subagent model"
-                    value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}
-                    onChange={(event) => {
-                      const [selectedProvider, selectedKey] = event.target.value.split('\u0000');
-                      const selected = subagentCatalogOptions.find((option) => (
-                        option.provider === selectedProvider && option.key === selectedKey
-                      ));
-                      if (!selected) return;
-                      setSubagentTouched(true);
-                      setSubagentModel({
-                        provider: selectedProvider,
-                        accessMode: subagentAccessMode(selectedProvider),
-                        modelKey: selected.key,
-                        providerModelId: selected.providerModelId,
-                      });
-                      markDraftDirty();
-                    }}
-                  >
-                    {!subagentCatalogOptions.some((option) => option.provider === subagentModel.provider
-                      && option.key === subagentModel.modelKey) ? (
-                      <option value={`${subagentModel.provider}\u0000${subagentModel.modelKey}`}>
-                        {subagentModel.providerModelId} (unavailable — saved)
-                      </option>
-                    ) : null}
-                    {subagentCatalogOptions.map((option) => (
-                      <option key={`${option.provider}:${option.key}`} value={`${option.provider}\u0000${option.key}`}>
-                        {option.provider} · {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              {runtimeKind === 'hermes' ? (
-                <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-                  Delegate task
-                  <select aria-label="Delegate task" value={delegationRole}
-                    disabled={!editorField('delegationRole')?.options?.length}
-                    onChange={(event) => {
-                      const next = event.target.value as NonNullable<AgentCardRuntimeOptions['delegationRole']>;
-                      setDelegationRole(next);
-                      setDelegationTouched(true);
-                      markDraftDirty();
-                    }}>
-                    {editorField('delegationRole')?.options?.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-            </div>
-          )
-        : activeTab === 'Memory'
-          ? (
-              <div data-testid="agent-manager-knowledge-surface" style={{ display: 'grid', gap: 16 }}>
-                <section aria-label="Skills and memory">{renderSectionBody('Skills')}</section>
-        {activeTab === 'Memory' && runInputs ? (
-          <details
-            data-testid="selected-run-idf"
-            style={{ display: 'grid', gap: 8, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#1D2526' }}
-          >
-            <summary style={{ color: '#D5E4E8', fontSize: 12, cursor: 'pointer' }}>Input</summary>
-            {runInputs.available && runInputs.idf && runInputs.idfText != null ? (
-              <>
-                <div style={{ color: '#80969F', fontSize: 10.5 }}>
-                  {Number(runInputs.inputSummary?.idfBytes || 0).toLocaleString()} UTF-8 bytes · estimated {' '}
-                  {Number(runInputs.inputSummary?.estimatedModelVisibleTokens || 0).toLocaleString()} supplied text tokens
-                </div>
-                <div data-testid="selected-run-token-estimate" style={{ color: '#9FB2B8', fontSize: 10.5, lineHeight: 1.5 }}>
-                  system {Number(runInputs.inputSummary?.estimatedSystemContextTokens || 0).toLocaleString()} · {' '}
-                  task {Number(runInputs.inputSummary?.estimatedTaskTokens || 0).toLocaleString()} · {' '}
-                  output {Number(runInputs.inputSummary?.estimatedOutputContractTokens || 0).toLocaleString()} · {' '}
-                  graph {Number(runInputs.inputSummary?.estimatedGraphContextTokens || 0).toLocaleString()}
-                  <br />
-                  Estimate: UTF-8 bytes ÷ 4, rounded up.
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => void exportRuntimeInput('.idf', runInputs.idfText || '')}>
-                    Export Run input…
-                  </button>
-                </div>
-                {inputFileTransferError ? (
-                  <div role="alert" style={{ color: '#FFA2A2', fontSize: 10.5 }}>
-                    {inputFileTransferError}
-                  </div>
-                ) : null}
-                <details>
-                  <summary style={{ cursor: 'pointer', color: '#B8C8CD', fontSize: 11 }}>
-                    Inspect exact Run input JSON
-                  </summary>
-                  <pre style={{ margin: '8px 0 0', padding: 8, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: '#161A1B', color: '#C7D7DC', fontSize: 10 }}>
-                    {runInputs.idfText}
-                  </pre>
-                </details>
-              </>
-            ) : (
-              <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
-                {runInputs.message || 'Input files unavailable for this Run'}
-              </div>
-            )}
-          </details>
-        ) : null}
-              </div>
-            )
+      : activeTab === 'Memory'
+        ? renderSectionBody('Memory')
+        : activeTab === 'Skills'
+          ? renderSectionBody('Skills')
           : activeTab === 'Tools'
             ? (
                 <div data-testid="agent-manager-tools-surface" style={{ display: 'grid', gap: 16 }}>
@@ -2363,164 +1957,11 @@ export function AgentManager({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, colorScheme: 'dark' }}>
       {sectionBody}
-
-      <div
-        style={{
-          display: activeTab === 'Results' || saveCardStatus === 'failed' ? 'flex' : 'none',
-          flexDirection: 'column',
-          gap: 10,
-          padding: '10px 12px',
-          borderRadius: 8,
-          border: '1px solid #3A4A4F',
-          background: '#222625',
-        }}
-      >
-          {saveCardStatus === 'failed' && saveCardErrorMessage ? (
-            <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
-              {saveCardErrorMessage}
-            </span>
-          ) : null}
-
-        {activeTab === 'Results' && showTaskComposer ? <CardRunResults
-          enabled={showRunResults} projectId={projectId} deckId={deckId} cardId={cardId}
-          runtime={localConfig.runtime} run={runResult} busy={runBusy}
-          onStop={onStopCard} onRejoin={onRejoinCard}
-        ><div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Dynamic context / input</label>
-          <textarea
-            aria-label="Dynamic context / input"
-            value={promptTestInput || ''}
-            onChange={(event) => onChangePromptTestInput?.(event.target.value)}
-            rows={5}
-            style={{
-              width: '100%',
-              padding: 10,
-              background: '#2B2B2B',
-              color: '#FFF',
-              border: '1px solid #3A3A3A',
-              borderRadius: 8,
-              fontFamily: 'monospace',
-              fontSize: 12,
-              resize: 'vertical',
-            }}
-          />
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={onClearInvocation}
-              disabled={runBusy || (!String(promptTestInput || '').trim() && loadedGraphContext.length === 0)}
-              data-testid="agent-manager-clear-invocation"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
-              onClick={async () => { if (await saveOnCardLeave()) onRunCard?.(); }}
-              disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
-              aria-busy={runBusy}
-              data-testid="agent-manager-run"
-              style={{
-                padding: '8px 14px',
-                background: runBusy ? '#3A3A3A' : '#4FA2AD',
-                color: '#FFF',
-                border: '1px solid #3A4A4F',
-                borderRadius: 8,
-                cursor:
-                  runDisabled || runBusy || !String(promptTestInput || '').trim()
-                    ? 'not-allowed'
-                    : 'pointer',
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              {runBusy ? 'Running…' : 'Run'}
-            </button>
-            {onLearnCard ? (
-              <button
-                type="button"
-                onClick={async () => { if (await saveOnCardLeave()) onLearnCard?.(); }}
-                disabled={runDisabled || runBusy || !String(promptTestInput || '').trim()}
-                data-testid="agent-manager-learn"
-              >
-                Learn
-              </button>
-            ) : null}
-            {runBusy && onStopCard ? (
-              <button type="button" onClick={onStopCard} data-testid="agent-manager-stop">
-                Stop
-              </button>
-            ) : null}
-            {!showRunResults && !runBusy && runResult?.runId && onRejoinCard ? (
-              <button type="button" onClick={onRejoinCard} data-testid="agent-manager-rejoin">
-                Rejoin
-              </button>
-            ) : null}
-          </div>
-        </div></CardRunResults> : null}
-
-
-
-        {activeTab === 'Results' && runResult && !showRunResults && cardKind !== 'agent' ? (
-          <div
-            data-testid="agent-manager-run-result"
-            style={{ display: 'grid', gap: 6, fontSize: 11.5 }}
-          >
-            <div style={{ color: '#D5E4E8' }}>
-              Status: {runResult.status || 'completed'}
-            </div>
-            {runResult.runId ? (
-              <div style={{ color: '#80969F' }}>
-                Run: {runResult.runId}
-                {runResult.nativeRootId ? ` · Native root: ${runResult.nativeRootId}` : ''}
-              </div>
-            ) : null}
-            {typeof runResult.tasksTotal === 'number' && runResult.tasksTotal > 0 ? (
-              <div style={{ color: '#80969F' }}>
-                Progress: {runResult.tasksCompleted || 0}/{runResult.tasksTotal} · {runResult.activeWorkers || 0} active
-              </div>
-            ) : null}
-            {(Number(runResult.inputTokens || 0) > 0 || Number(runResult.outputTokens || 0) > 0) ? (
-              <div data-testid="selected-run-provider-usage" style={{ color: '#80969F' }}>
-                Native provider usage: {Number(runResult.inputTokens || 0).toLocaleString()} input · {' '}
-                {Number(runResult.outputTokens || 0).toLocaleString()} output
-                {Number(runResult.cachedTokens || 0) > 0
-                  ? ` · ${Number(runResult.cachedTokens).toLocaleString()} cached`
-                  : ''}
-                {Number(runResult.reasoningTokens || 0) > 0
-                  ? ` · ${Number(runResult.reasoningTokens).toLocaleString()} reasoning`
-                  : ''}
-                {Number(runResult.costUsd || 0) > 0
-                  ? ` · $${Number(runResult.costUsd).toFixed(6)}`
-                  : ''}
-                . This is separate from the pre-run input estimate.
-              </div>
-            ) : null}
-            {runResult.output ? (
-              <pre
-                style={{
-                  margin: 0,
-                  padding: 8,
-                  background: '#1B1B1B',
-                  color: '#D9E4E8',
-                  borderRadius: 6,
-                  whiteSpace: 'pre-wrap',
-                  overflowWrap: 'anywhere',
-                  maxHeight: 240,
-                  overflowY: 'auto',
-                }}
-              >
-                {runResult.output}
-              </pre>
-            ) : null}
-            {runResult.error ? (
-              <div role="alert" style={{ color: '#FFA2A2' }}>
-                {runResult.error}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+      {saveCardStatus === 'failed' && saveCardErrorMessage ? (
+        <span role="alert" data-testid="agent-manager-save-error" style={{ color: '#FFA2A2', fontSize: 11.5 }}>
+          {saveCardErrorMessage}
+        </span>
+      ) : null}
     </div>
   );
 }

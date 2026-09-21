@@ -83,6 +83,7 @@ export default function useAgentBuilderCardEditor({
         : Array.isArray(selectedCard.tools)
           ? selectedCard.tools
           : effectiveAgent?.tools || [],
+      native_tools: normalizeStringList(runtimeOptions.nativeTools),
       skills: normalizeStringList(runtimeOptions.skills),
       toolsets: normalizeStringList(runtimeOptions.toolsets),
       mcp_connection_ids: normalizeStringList(runtimeOptions.mcpConnectionIds),
@@ -142,6 +143,7 @@ export default function useAgentBuilderCardEditor({
           maxTokens: nextMaxTokens,
           maxTurns: nextMaxTurns,
           tools: nextTools,
+          nativeTools: normalizeStringList(nextConfig.native_tools),
           skills: normalizeStringList(nextConfig.skills),
           toolsets: normalizeStringList(nextConfig.toolsets),
           mcpConnectionIds: normalizeStringList(nextConfig.mcp_connection_ids),
@@ -213,37 +215,11 @@ export default function useAgentBuilderCardEditor({
     [recordDeckWriteReason, setDeck],
   );
 
-  const handleUpdateSelectedCardSubtext = useCallback(
-    (nextSubtext: string) => {
-      if (!selectedCard) return;
-      recordDeckWriteReason('card-subtitle-update');
-      setDeck((currentDeck) => ({
-        ...currentDeck,
-        version: currentDeck.version + 1,
-        nodes: currentDeck.nodes.map((node) =>
-          node.id === selectedCard.id
-            ? {
-                ...node,
-                subtitle:
-                  nextSubtext.length > 0 ? nextSubtext : undefined,
-              }
-            : node,
-        ),
-      }));
-    },
-    [
-      recordDeckWriteReason,
-      selectedCard,
-      setDeck,
-    ],
-  );
-
   return {
     effectiveAgent,
     handleRenameSelectedCard,
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
-    handleUpdateSelectedCardSubtext,
     selectedCard,
     selectedCardConfig,
   };

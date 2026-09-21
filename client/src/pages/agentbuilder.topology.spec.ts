@@ -25,12 +25,17 @@ const mainToGraphAgentConnected = (nodes: typeof INITIAL_DECK.nodes, edges: type
   );
 
 describe('Main / Hermes / graph authority topology', () => {
-  it('keeps Main chat above the permanent saved Builder CLI', () => {
+  it('keeps five general Card tabs, ordinary Card CLI, and the permanent Builder CLI', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     expect(source).not.toContain('main-card-cli-location');
     expect(source).not.toContain('onOpenMainChat');
-    expect(source).toContain("BUILDER_NODE_TABS.filter((entry) => entry !== 'Results'");
-    expect(source).toContain('selectedCard.id !== mainCardId && selectedCard.id !== builderCard?.id');
+    expect(source).toContain(
+      "const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;",
+    );
+    expect(source).not.toContain("'Results'");
+    expect(source).not.toContain('Dynamic context / input');
+    expect(source).toContain('selectedCard.id !== mainCardId');
+    expect(source).toContain('selectedCard.id !== builderCard?.id');
     const tabProjection = source.slice(
       source.indexOf('const builderTabs = useMemo'),
       source.indexOf('const selectedCardSubsystem = useMemo'),
@@ -41,7 +46,7 @@ describe('Main / Hermes / graph authority topology', () => {
       source.indexOf('const cardWorkSurface = () =>'),
     );
     expect(tabRenderer).toContain("selectedCard.runtime.mode !== 'magentic_one'");
-    expect(source).toContain("setTab(cardId === mainCardId || cardId === builderCard?.id ? 'Prompt' : 'Results')");
+    expect(source).toContain("setTab('Prompt')");
     expect(source).toContain('data-testid="under-chat-card-work-surface"');
     const underChat = source.slice(source.indexOf('const cardWorkSurface ='), source.indexOf('terminal={cardWorkSurface()}'));
     expect(underChat).toContain('<AgentTerminalPanel');
@@ -53,19 +58,21 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(underChat).not.toContain('data-testid="agent-builder-output"');
     expect(underChat).not.toContain('builderResult');
     expect(underChat).not.toContain('directInput');
-    expect(underChat).not.toContain('<CardRunResults');
+    expect(source).not.toContain('<CardRunResults');
     expect(underChat).not.toContain('Run Agent Builder');
     expect(source).not.toContain('title="Main CLI Terminal"');
     expect(source).not.toContain('data-testid="builder-card-terminal"');
   });
 
-  it('keeps disabled blue wires out of Mag One run readiness', () => {
+  it('keeps Main, Builder, and Mag One out of the ordinary Card CLI projection', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
-    const rosterProjection = source.slice(
-      source.indexOf('const selectedMagOneWorkers = useMemo'),
+    const tabProjection = source.slice(
+      source.indexOf('const builderTabs = useMemo'),
       source.indexOf('const selectedCardSubsystem = useMemo'),
     );
-    expect(rosterProjection).toContain("edge.enabled !== false && edge.edgeType === 'magentic_option'");
+    expect(tabProjection).toContain("selectedCard.runtime.mode !== 'magentic_one'");
+    expect(tabProjection).toContain('selectedCard.id !== mainCardId');
+    expect(tabProjection).toContain('selectedCard.id !== builderCard?.id');
   });
   it('preserves the stable steward identity as the temporary Graph Agent', () => {
     const serialized = JSON.stringify(INITIAL_DECK);

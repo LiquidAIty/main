@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { reconcileTerminalEvents, type CardTerminalEvent } from './CardRunResults';
+import { reconcileTerminalEvents, type CardTerminalEvent } from './runtimeEventProjection';
 
 import { waitForBackendReady } from '../../../components/builder/backendReadiness';
 import type { GraphProjectionV1 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
@@ -26,8 +26,6 @@ type UseAgentBuilderMainChatArgs = {
   dataAnchors?: LoadedCardGraphReference['reference'][];
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
-  onCardReviewStaged?: (review: StagedCardReviewLoaded) => void;
-  onCardGraphReferenceLoaded?: (context: LoadedCardGraphReference) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
 };
 
@@ -45,26 +43,6 @@ export type MainChatTurnEvent = {
   runId: string;
   event: NativeSessionEvent;
   observedAt: string;
-};
-
-export type StagedCardReviewLoaded = {
-  targetCardId: string;
-  targetCardTitle?: string;
-  sourceCardId?: string;
-  mission: string;
-  dataAnchors: Array<{
-    authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
-    nativeId: string;
-    reason: string;
-    priority: number;
-    boundedExpansion: number;
-    resultLimit: number;
-    required: true;
-  }>;
-  reviewContext?: {
-    resolvedNativeReads?: Array<Record<string, unknown>>;
-    resolvedGraphProjection: GraphProjectionV1;
-  };
 };
 
 export type LoadedCardGraphReference = {
@@ -153,192 +131,6 @@ function lastUserMessageIndex(messages: AgentBuilderChatMessage[], text: string)
   return -1;
 }
 
-export function parseStagedCardReviewLoaded(
-  output: unknown,
-  depth = 0,
-): StagedCardReviewLoaded | null {
-  // Main can observe a configured child Card result wrapped by MCP content,
-  // the backend result object, and the child's preserved native tool event.
-  if (depth > 12 || output == null) return null;
-  if (typeof output === 'string') {
-    try {
-      return parseStagedCardReviewLoaded(JSON.parse(output), depth + 1);
-    } catch {
-      return null;
-    }
-  }
-  if (Array.isArray(output)) {
-    for (const item of output) {
-      const loaded = parseStagedCardReviewLoaded(item, depth + 1);
-      if (loaded) return loaded;
-    }
-    return null;
-  }
-  if (typeof output !== 'object') return null;
-  const record = output as Record<string, unknown>;
-  const toolName = typeof record.toolName === 'string' ? record.toolName : '';
-  if (
-    record.kind === 'tool_start'
-    && (toolName === 'write_mag_one_instructions' || toolName.endsWith('__write_mag_one_instructions'))
-    && typeof record.argsJson === 'string'
-  ) {
-    try {
-      const args = JSON.parse(record.argsJson) as Record<string, unknown>;
-      const stagedAnchors = Array.isArray(args.dataAnchors) ? args.dataAnchors : [];
-      if (
-        typeof args.targetCardId === 'string' && args.targetCardId.length > 0
-        && typeof args.mission === 'string' && args.mission.trim().length > 0
-        && stagedAnchors.every((anchor) => {
-          if (!anchor || typeof anchor !== 'object') return false;
-          const value = anchor as Record<string, unknown>;
-          return ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(value.authority))
-            && typeof value.nativeId === 'string' && value.nativeId.length > 0
-            && typeof value.reason === 'string' && value.reason.length > 0
-            && Number.isInteger(value.priority)
-            && Number.isInteger(value.boundedExpansion)
-            && Number.isInteger(value.resultLimit);
-        })
-      ) {
-        return {
-          targetCardId: args.targetCardId,
-          mission: args.mission,
-          dataAnchors: stagedAnchors.map((anchor) => ({
-            ...(anchor as Omit<StagedCardReviewLoaded['dataAnchors'][number], 'required'>),
-            required: true,
-          })),
-        };
-      }
-    } catch {
-      return null;
-    }
-  }
-  const reviewContext = record.reviewContext as Record<string, unknown> | undefined;
-  const projection = reviewContext?.resolvedGraphProjection as Record<string, unknown> | undefined;
-  const anchors = Array.isArray(record.dataAnchors) ? record.dataAnchors : [];
-  if (
-    record.ok === true
-    && record.ready === true
-    && record.persisted === false
-    && record.started === false
-    && typeof record.targetCardId === 'string'
-    && record.targetCardId.length > 0
-    && typeof record.targetCardTitle === 'string'
-    && typeof record.sourceCardId === 'string'
-    && record.sourceCardId.length > 0
-    && typeof record.mission === 'string'
-    && record.mission.trim().length > 0
-    && anchors.every((anchor) => {
-      if (!anchor || typeof anchor !== 'object') return false;
-      const value = anchor as Record<string, unknown>;
-      return ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(value.authority))
-        && typeof value.nativeId === 'string' && value.nativeId.length > 0
-        && typeof value.reason === 'string' && value.reason.length > 0
-        && Number.isInteger(value.priority)
-        && Number.isInteger(value.boundedExpansion)
-        && Number.isInteger(value.resultLimit)
-        && value.required === true;
-    })
-    && reviewContext != null
-    && projection != null
-    && Array.isArray(projection.nodes)
-    && Array.isArray(projection.edges)
-  ) {
-    return {
-      targetCardId: record.targetCardId,
-      targetCardTitle: record.targetCardTitle,
-      sourceCardId: record.sourceCardId,
-      mission: record.mission,
-      dataAnchors: anchors as StagedCardReviewLoaded['dataAnchors'],
-      reviewContext: reviewContext as StagedCardReviewLoaded['reviewContext'],
-    };
-  }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
-    const loaded = parseStagedCardReviewLoaded(record[key], depth + 1);
-    if (loaded) return loaded;
-  }
-  return null;
-}
-
-export function parseLoadedCardGraphReference(
-  output: unknown,
-  depth = 0,
-): LoadedCardGraphReference | null {
-  if (depth > 12 || output == null) return null;
-  if (typeof output === 'string') {
-    try {
-      return parseLoadedCardGraphReference(JSON.parse(output), depth + 1);
-    } catch {
-      return null;
-    }
-  }
-  if (Array.isArray(output)) {
-    for (const item of output) {
-      const loaded = parseLoadedCardGraphReference(item, depth + 1);
-      if (loaded) return loaded;
-    }
-    return null;
-  }
-  if (typeof output !== 'object') return null;
-  const record = output as Record<string, unknown>;
-  const reference = record.reference;
-  const referenceRecord = reference && typeof reference === 'object' && !Array.isArray(reference)
-    ? reference as Record<string, unknown>
-    : null;
-  const graphProjection = record.graphProjection;
-  const graphProjectionRecord = graphProjection
-    && typeof graphProjection === 'object'
-    && !Array.isArray(graphProjection)
-    ? graphProjection as Record<string, unknown>
-    : null;
-  if (
-    typeof record.targetCardId === 'string'
-    && record.targetCardId.length > 0
-    && referenceRecord
-    && ['ThinkGraph', 'KnowGraph', 'CodeGraph'].includes(String(referenceRecord.authority))
-    && typeof referenceRecord.nativeId === 'string'
-    && typeof referenceRecord.reason === 'string'
-    && Number.isInteger(referenceRecord.order)
-    && Number.isInteger(referenceRecord.boundedExpansion)
-    && Number.isInteger(referenceRecord.resultLimit)
-    && typeof referenceRecord.required === 'boolean'
-    && typeof record.ready === 'boolean'
-    && graphProjectionRecord
-    && Array.isArray(graphProjectionRecord.nodes)
-    && Array.isArray(graphProjectionRecord.edges)
-    && typeof graphProjectionRecord.projectId === 'string'
-    && record.persisted === false
-    && record.started === false
-  ) {
-    return {
-      targetCardId: record.targetCardId,
-      ...(typeof record.sourceCardId === 'string' ? { sourceCardId: record.sourceCardId } : {}),
-      ...(typeof record.sourceRunId === 'string' ? { sourceRunId: record.sourceRunId } : {}),
-      reference: referenceRecord as LoadedCardGraphReference['reference'],
-      resolvedReferences: Array.isArray(record.resolvedReferences)
-        ? record.resolvedReferences.filter(
-            (value): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value),
-          )
-        : [],
-      resolvedContextMarkdown: typeof record.resolvedContextMarkdown === 'string'
-        ? record.resolvedContextMarkdown
-        : '',
-      graphProjection: graphProjectionRecord as GraphProjectionV1,
-      resolved: record.resolved === true,
-      ready: record.ready,
-      ...(typeof record.attentionObserved === 'boolean'
-        ? { attentionObserved: record.attentionObserved }
-        : {}),
-      ...(typeof record.observedAt === 'string' ? { observedAt: record.observedAt } : {}),
-      ...(typeof record.error === 'string' ? { error: record.error } : {}),
-    };
-  }
-  for (const key of ['content', 'result', 'structuredContent', 'text', 'output']) {
-    const loaded = parseLoadedCardGraphReference(record[key], depth + 1);
-    if (loaded) return loaded;
-  }
-  return null;
-}
-
 export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
@@ -346,8 +138,6 @@ export default function useAgentBuilderMainChat({
   dataAnchors = [],
   onUserTurnStarted,
   onNativeTurnEvent,
-  onCardReviewStaged,
-  onCardGraphReferenceLoaded,
   onTurnFinished,
 }: UseAgentBuilderMainChatArgs) {
   const conversationKey = `${canvasProjectId}\u0000${conversationId}`;
@@ -708,32 +498,6 @@ export default function useAgentBuilderMainChat({
               event,
               observedAt: new Date().toISOString(),
             });
-            if (
-              ((event.kind === 'tool_result' && event.isError !== true)
-                || (projection
-                  && ['execution.tool', 'execution.command'].includes(projection.category)
-                  && projection.status === 'completed'))
-              && typeof (projection?.toolName || event.toolName) === 'string'
-              && ['write_mag_one_instructions', 'delegate_task'].includes(
-                String(projection?.toolName || event.toolName),
-              )
-            ) {
-              const loaded = parseStagedCardReviewLoaded(projection?.detail || event.output);
-              if (loaded) notifyObserver(onCardReviewStaged, loaded);
-            }
-            if (
-              ((event.kind === 'tool_result' && event.isError !== true)
-                || (projection
-                  && ['execution.tool', 'execution.command'].includes(projection.category)
-                  && projection.status === 'completed'))
-              && typeof (projection?.toolName || event.toolName) === 'string'
-              && ['card.load_graph_references', 'delegate_task'].includes(
-                String(projection?.toolName || event.toolName),
-              )
-            ) {
-              const loaded = parseLoadedCardGraphReference(projection?.detail || event.output);
-              if (loaded) notifyObserver(onCardGraphReferenceLoaded, loaded);
-            }
             if (projection?.category === 'conversation.answer' && projection.status === 'completed') {
               finalizeModelText(projection.text || '');
             } else if (projection?.category === 'conversation.answer') {
@@ -815,8 +579,6 @@ export default function useAgentBuilderMainChat({
       mainCardId,
       nativeSessionPending,
       onNativeTurnEvent,
-      onCardReviewStaged,
-      onCardGraphReferenceLoaded,
       onTurnFinished,
       onUserTurnStarted,
       subscribeToNativeSession,

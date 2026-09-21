@@ -28,9 +28,7 @@ vi.mock('./mainSessionClient', async () => {
   };
 });
 
-import useAgentBuilderMainChat, {
-  parseStagedCardReviewLoaded,
-} from './useAgentBuilderMainChat';
+import useAgentBuilderMainChat from './useAgentBuilderMainChat';
 import { SessionStreamError } from './mainSessionClient';
 
 function messageText(messages: Array<{ role: string; text: string }>) {
@@ -214,57 +212,6 @@ describe('Main chat live observation callbacks', () => {
     }]);
     expect(result.current.technicalError).toBe('addressed_card_turn_failed');
   });
-  it('accepts optional editor review with no selected graph data and no IDF', () => {
-    expect(parseStagedCardReviewLoaded({
-      ok: true,
-      ready: true,
-      persisted: false,
-      started: false,
-      targetCardId: 'card_test_delegate',
-      targetCardTitle: 'Delegate',
-      sourceCardId: 'card_hermes_steward',
-      mission: 'Review this mission.',
-      dataAnchors: [],
-      reviewContext: {
-        resolvedNativeReads: [],
-        resolvedGraphProjection: {
-          schemaVersion: 'native-card-context.v1',
-          authority: '',
-          projectId: 'project-1',
-          nodes: [],
-          edges: [],
-          counts: { nodes: 0, edges: 0 },
-        },
-      },
-    })).toMatchObject({
-      targetCardId: 'card_test_delegate',
-      dataAnchors: [],
-      reviewContext: { resolvedNativeReads: [] },
-    });
-  });
-
-  it('stages exact unresolved references from a delegated native tool start', () => {
-    expect(parseStagedCardReviewLoaded({
-      kind: 'tool_start',
-      toolName: 'mcp__main_runtime_one__write_mag_one_instructions',
-      argsJson: JSON.stringify({
-        targetCardId: 'card_agent_builder',
-        mission: 'Exact unsent mission.',
-        dataAnchors: [{
-          authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
-          priority: 1, boundedExpansion: 0, resultLimit: 1,
-        }],
-      }),
-    })).toEqual({
-      targetCardId: 'card_agent_builder',
-      mission: 'Exact unsent mission.',
-      dataAnchors: [{
-        authority: 'ThinkGraph', nativeId: 'think-one', reason: 'Accepted intent',
-        priority: 1, boundedExpansion: 0, resultLimit: 1, required: true,
-      }],
-    });
-  });
-
   it('keeps rejoin visible until native history replaces the empty transcript', async () => {
     let resolveHistory!: (history: {
       runtimeSessionId: string;
@@ -465,122 +412,6 @@ describe('Main chat live observation callbacks', () => {
       { role: 'user', text: '  Normal human message.  ' },
       { role: 'assistant', text: 'Native answer.' },
     ]);
-  });
-
-  it('loads one staged Delegate mission and exact model-bound graph projection', async () => {
-    const onCardReviewStaged = vi.fn();
-    const onCardGraphReferenceLoaded = vi.fn();
-    mocks.streamSession.mockImplementation(async (args) => {
-      args.onEvent({
-        kind: 'tool_result',
-        toolName: 'delegate_task',
-        isError: false,
-        output: {
-          result: {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                ok: true,
-                ready: true,
-                targetCardId: 'card_test_delegate',
-                targetCardTitle: 'Delegate',
-                sourceCardId: 'card_hermes_steward',
-                mission: '  exact mission\nwith formatting  ',
-                dataAnchors: [{
-                  authority: 'CodeGraph', nativeId: 'symbol:one', reason: 'Current owner',
-                  priority: 0, boundedExpansion: 0, resultLimit: 4, required: true,
-                }],
-                reviewContext: {
-                  cardRevisionId: 'revision-delegate',
-                  cardRevision: 1,
-                  cardRevisionSha256: 'sha-delegate',
-                  runtimeOwner: 'hermes',
-                  cardIdentity: { cardId: 'card_test_delegate', title: 'Delegate' },
-                  resolvedNativeReads: [{ authority: 'CodeGraph', nativeId: 'symbol:one' }],
-                  resolvedGraphProjection: {
-                    schemaVersion: 'native-card-context.v1', authority: 'codegraph',
-                    projectId: 'project-1',
-                    nodes: [{ id: 'symbol:one', label: 'Current owner', authority: 'CodeGraph', mentionCount: 1 }],
-                    edges: [], counts: { nodes: 1, edges: 0 },
-                  },
-                },
-                persisted: false,
-                started: false,
-              }),
-            }],
-          },
-        },
-      });
-      args.onEvent({
-        kind: 'tool_result',
-        toolName: 'card.load_graph_references',
-        isError: false,
-        output: {
-          ok: true,
-          targetCardId: 'card_mag_one',
-          sourceCardId: 'card_hermes_steward',
-          sourceRunId: 'run-helper',
-          reference: {
-            authority: 'KnowGraph', nativeId: 'episode:one', reason: 'Useful sourced fact',
-            order: 0, boundedExpansion: 1, resultLimit: 8, required: true,
-          },
-          resolvedReferences: [{ authority: 'KnowGraph', nativeId: 'episode:one', provenance: 'Graphiti' }],
-          resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
-          graphProjection: {
-            schemaVersion: 'native-card-context.v1',
-            authority: 'knowgraph',
-            projectId: 'project-1',
-            nodes: [{
-              id: 'episode:one', label: 'Sourced episode', authority: 'KnowGraph', mentionCount: 1,
-            }],
-            edges: [],
-            counts: { nodes: 1, edges: 0 },
-          },
-          resolved: true,
-          ready: true,
-          persisted: false,
-          started: false,
-        },
-      });
-      args.onEvent({ kind: 'text', text: 'Card ready.' });
-      return { finalText: 'Card ready.' };
-    });
-    const { result } = renderHook(() => useAgentBuilderMainChat({
-      canvasProjectId: 'project-1',
-      deckId: 'deck_builder',
-      conversationId: 'main',
-      onCardReviewStaged,
-      onCardGraphReferenceLoaded,
-    }));
-
-    await act(async () => {
-      await result.current.requestMainText('Prepare the mission.');
-    });
-
-    expect(onCardReviewStaged).toHaveBeenCalledOnce();
-    expect(onCardReviewStaged).toHaveBeenCalledWith(expect.objectContaining({
-      targetCardId: 'card_test_delegate',
-      sourceCardId: 'card_hermes_steward',
-      mission: '  exact mission\nwith formatting  ',
-      dataAnchors: [expect.objectContaining({ nativeId: 'symbol:one', required: true })],
-      reviewContext: expect.objectContaining({
-        resolvedGraphProjection: expect.objectContaining({
-          nodes: [expect.objectContaining({ id: 'symbol:one' })],
-        }),
-      }),
-    }));
-    expect(onCardGraphReferenceLoaded).toHaveBeenCalledWith(expect.objectContaining({
-      targetCardId: 'card_mag_one',
-      sourceCardId: 'card_hermes_steward',
-      sourceRunId: 'run-helper',
-      ready: true,
-      resolvedContextMarkdown: '# KnowGraph\nActual current graph data',
-      graphProjection: expect.objectContaining({
-        projectId: 'project-1',
-        nodes: [expect.objectContaining({ id: 'episode:one' })],
-      }),
-      reference: expect.objectContaining({ authority: 'KnowGraph', nativeId: 'episode:one' }),
-    }));
   });
 
   it('keys transcript state by conversation and never shows A while B loads', async () => {

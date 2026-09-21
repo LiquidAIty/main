@@ -950,7 +950,7 @@ export function CardScriptEditor({
         </div>
       ) : script.nativeSupport?.available !== true ? (
         <div role="status" className="card-script-ide__notice">
-          Validation and saving are available. Native Script execution is not connected; Runs keep the Card&apos;s selected MCP tools.
+          Card Python Script runtime execution is not currently connected. Editing, validation, and saving remain available; Runs keep the Card&apos;s selected MCP tools.
         </div>
       ) : null}
 
