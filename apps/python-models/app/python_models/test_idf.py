@@ -149,8 +149,14 @@ def test_bounded_graph_identity_provenance_and_model_order_survive() -> None:
     assert "Return one bounded result." not in task
     projected = runtime_projection(load_idf_bytes(materialized.idf_bytes))
     assert projected["message"] == task
-    assert projected["systemPrompt"].endswith("Return one bounded result.")
-    assert projected["outputRequirements"] == "Return one bounded result."
+    assert "systemPrompt" not in projected
+    assert "outputRequirements" not in projected
+    assert materialized.idf.stableSavedCardContext.instructions == (
+        "Use the saved Card contract."
+    )
+    assert materialized.idf.stableSavedCardContext.outputRequirements == (
+        "Return one bounded result."
+    )
     assert projected["enabledTools"] == ["codegraph.search_graph"]
     summary = idf_public(materialized)["inputSummary"]
     assert summary["idfBytes"] == len(materialized.idf_bytes)

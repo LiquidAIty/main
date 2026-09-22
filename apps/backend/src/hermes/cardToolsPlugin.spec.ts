@@ -1,11 +1,62 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+import {
+  HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT,
   materializeHermesApplicationMcpServers,
+  materializeHermesCardToolsPlugin,
   materializeHermesExternalMcpTools,
   removeHermesApplicationMcpServers,
   requireHermesCardToolsReadback,
   type HermesCardTools,
 } from './cardToolsPlugin';
+
+const temporaryRoots: string[] = [];
+const execFileAsync = promisify(execFile);
+const hermesRoot = resolve(__dirname, '../../../../Hermes');
+const hermesPython = [
+  join(hermesRoot, 'venv', 'Scripts', 'python.exe'),
+  join(hermesRoot, 'venv', 'bin', 'python'),
+].find(existsSync);
+
+afterEach(async () => {
+  await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, {
+    recursive: true,
+    force: true,
+  })));
+});
+
+async function materializationFixture(profile: string) {
+  const repoRoot = await mkdtemp(join(tmpdir(), 'hermes-card-tools-'));
+  temporaryRoots.push(repoRoot);
+  const sourceRoot = join(repoRoot, 'packages', 'hermes-card-tools');
+  await mkdir(sourceRoot, { recursive: true });
+  const realSourceRoot = resolve(__dirname, '../../../../packages/hermes-card-tools');
+  for (const name of ['__init__.py', 'plugin.yaml']) {
+    await copyFile(join(realSourceRoot, name), join(sourceRoot, name));
+  }
+  const executable = join(repoRoot, 'Hermes', 'venv', 'Scripts', 'python.exe');
+  await mkdir(resolve(executable, '..'), { recursive: true });
+  await writeFile(executable, '', 'utf8');
+  const profileHome = join(repoRoot, 'Hermes', '.hermes', 'profiles', profile);
+  await mkdir(join(profileHome, 'plugins', 'card-bot-dm'), { recursive: true });
+  await writeFile(join(profileHome, 'plugins', 'card-bot-dm', 'plugin.yaml'), 'name: card-bot-dm\n');
+  await writeFile(join(profileHome, 'config.yaml'), 'plugins: {}\n');
+  return { repoRoot, profileHome };
+}
 
 function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTools {
   return {
@@ -34,6 +85,269 @@ function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTool
     ...overrides,
   };
 }
+
+describe('materializeHermesCardToolsPlugin retired profile residue', () => {
+  it.each(['liquidaity-main', 'builder', 'thinkgraph', 'knowgraph'])(
+    'reconciles only after card-tools enable proof for managed profile %s',
+    async (profile) => {
+      const fixture = await materializationFixture(profile);
+      const order: string[] = [];
+      const runCli = vi.fn(async (_executable: string, args: string[]) => {
+        if (args[0] === '-m') {
+          order.push('enable');
+          expect(await readFile(
+            join(fixture.profileHome, 'plugins', 'card-tools', 'plugin.yaml'),
+            'utf8',
+          )).toContain('name: card-tools');
+          return;
+        }
+        order.push('reconcile');
+        expect(args).toEqual(['-X', 'utf8', '-c', HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT]);
+        await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
+          .resolves.toBeTruthy();
+      });
+
+      await materializeHermesCardToolsPlugin(
+        fixture.profileHome,
+        configuration({ runtime: { kind: 'hermes', mode: 'delegate', profile } }),
+        { repoRoot: fixture.repoRoot, runCli },
+      );
+
+      expect(order).toEqual(['enable', 'reconcile']);
+      await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    },
+  );
+
+  it('does not reconcile or retire any other Card profile', async () => {
+    const fixture = await materializationFixture('signal-analyst');
+    const runCli = vi.fn(async () => undefined);
+
+    await materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration({
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal-analyst' },
+      }),
+      { repoRoot: fixture.repoRoot, runCli },
+    );
+
+    expect(runCli).toHaveBeenCalledOnce();
+    await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
+      .resolves.toBeTruthy();
+  });
+
+  it('rejects a mismatched managed profile before staging or enabling anything', async () => {
+    const fixture = await materializationFixture('not-builder');
+    const runCli = vi.fn(async () => undefined);
+
+    await expect(materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration(),
+      { repoRoot: fixture.repoRoot, runCli },
+    )).rejects.toThrow('hermes_retired_plugin_profile_home_mismatch:builder');
+
+    expect(runCli).not.toHaveBeenCalled();
+    await expect(stat(join(fixture.profileHome, 'plugins', 'card-tools')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
+      .resolves.toBeTruthy();
+  });
+
+  it('is idempotent when the retired profile-local directory is already absent', async () => {
+    const fixture = await materializationFixture('builder');
+    const runCli = vi.fn(async () => undefined);
+
+    await materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration(),
+      { repoRoot: fixture.repoRoot, runCli },
+    );
+    await materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration(),
+      { repoRoot: fixture.repoRoot, runCli },
+    );
+
+    expect(runCli).toHaveBeenCalledTimes(4);
+    await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not remove an unsafe non-directory retired-plugin target', async () => {
+    const fixture = await materializationFixture('builder');
+    await rm(join(fixture.profileHome, 'plugins', 'card-bot-dm'), { recursive: true });
+    await writeFile(join(fixture.profileHome, 'plugins', 'card-bot-dm'), 'not a directory');
+
+    await expect(materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration(),
+      { repoRoot: fixture.repoRoot, runCli: vi.fn(async () => undefined) },
+    )).rejects.toThrow('hermes_retired_plugin_destination_invalid');
+    await expect(readFile(join(fixture.profileHome, 'plugins', 'card-bot-dm'), 'utf8'))
+      .resolves.toBe('not a directory');
+  });
+
+  it('refuses a retired-plugin symlink without touching its external target', async () => {
+    const fixture = await materializationFixture('builder');
+    const target = join(fixture.profileHome, 'plugins', 'card-bot-dm');
+    const external = join(fixture.repoRoot, 'external-plugin-data');
+    await rm(target, { recursive: true });
+    await mkdir(external, { recursive: true });
+    await writeFile(join(external, 'keep.txt'), 'preserved');
+    await symlink(external, target, process.platform === 'win32' ? 'junction' : 'dir');
+
+    await expect(materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      configuration(),
+      { repoRoot: fixture.repoRoot, runCli: vi.fn(async () => undefined) },
+    )).rejects.toThrow('hermes_retired_plugin_destination_invalid');
+    await expect(readFile(join(external, 'keep.txt'), 'utf8')).resolves.toBe('preserved');
+  });
+
+  it('leaves retired residue intact when replacement enable or reconciliation fails', async () => {
+    const enableFailure = await materializationFixture('builder');
+    const enableRun = vi.fn(async () => {
+      throw new Error('enable failed');
+    });
+    await expect(materializeHermesCardToolsPlugin(
+      enableFailure.profileHome,
+      configuration(),
+      { repoRoot: enableFailure.repoRoot, runCli: enableRun },
+    )).rejects.toThrow('enable failed');
+    expect(enableRun).toHaveBeenCalledOnce();
+    await expect(stat(join(enableFailure.profileHome, 'plugins', 'card-bot-dm')))
+      .resolves.toBeTruthy();
+
+    const reconcileFailure = await materializationFixture('builder');
+    const reconcileRun = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('readback failed'));
+    await expect(materializeHermesCardToolsPlugin(
+      reconcileFailure.profileHome,
+      configuration(),
+      { repoRoot: reconcileFailure.repoRoot, runCli: reconcileRun },
+    )).rejects.toThrow('readback failed');
+    expect(reconcileRun).toHaveBeenCalledTimes(2);
+    await expect(stat(join(reconcileFailure.profileHome, 'plugins', 'card-bot-dm')))
+      .resolves.toBeTruthy();
+  });
+
+  it('uses native config ownership, preserves unrelated plugin data, and verifies exact residue absence', () => {
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
+      'from hermes_cli.config import load_config, save_config',
+    );
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain('plugins = dict(raw_plugins)');
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
+      'next_enabled = [name for name in enabled if name not in retired]',
+    );
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
+      'next_entries = {name: value for name, value in entries.items() if name not in retired}',
+    );
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain('save_config(cfg)');
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain('readback = load_config() or {}');
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain('replacement not in actual_enabled');
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
+      'any(name in actual_entries for name in retired)',
+    );
+    expect(HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT).toContain(
+      'retired = ["card-bot-dm","liquidaity-card-mcp"]',
+    );
+  });
+
+  it.skipIf(!hermesPython)(
+    'preserves unrelated native config values through the real Hermes load/save owner',
+    async () => {
+      const profileHome = await mkdtemp(join(tmpdir(), 'hermes-plugin-config-'));
+      temporaryRoots.push(profileHome);
+      await writeFile(join(profileHome, 'config.yaml'), [
+        'plugins:',
+        '  custom-plugin:',
+        '    setting: keep-me',
+        '  enabled:',
+        '    - card-bot-dm',
+        '    - card-tools',
+        '    - liquidaity-card-mcp',
+        '    - custom-plugin',
+        '  disabled:',
+        '    - disabled-plugin',
+        '    - card-bot-dm',
+        '    - liquidaity-card-mcp',
+        '  entries:',
+        '    card-bot-dm:',
+        '      allow_tool_override: false',
+        '    liquidaity-card-mcp:',
+        '      allow_tool_override: false',
+        '    card-tools:',
+        '      allow_tool_override: false',
+        '    custom-plugin:',
+        '      allow_tool_override: true',
+        'unrelated:',
+        '  nested: keep-me-too',
+        '',
+      ].join('\n'), 'utf8');
+      const env = {
+        ...process.env,
+        HERMES_HOME: profileHome,
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
+      };
+
+      await execFileAsync(
+        hermesPython!,
+        ['-X', 'utf8', '-c', HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT],
+        { cwd: hermesRoot, env, windowsHide: true },
+      );
+      const readback = await execFileAsync(
+        hermesPython!,
+        ['-X', 'utf8', '-c', [
+          'import json',
+          'from hermes_cli.config import load_config',
+          'print(json.dumps(load_config()))',
+        ].join('\n')],
+        { cwd: hermesRoot, env, windowsHide: true },
+      );
+      const actual = JSON.parse(readback.stdout);
+
+      expect(actual.plugins.enabled).toEqual(['card-tools', 'custom-plugin']);
+      expect(actual.plugins.disabled).toEqual(['disabled-plugin']);
+      expect(actual.plugins.entries).toEqual({
+        'card-tools': { allow_tool_override: false },
+        'custom-plugin': { allow_tool_override: true },
+      });
+      expect(actual.plugins['custom-plugin']).toEqual({ setting: 'keep-me' });
+      expect(actual.unrelated).toEqual({ nested: 'keep-me-too' });
+    },
+  );
+
+  it('does not broaden the saved Card grants or external MCP surface during retirement', async () => {
+    const fixture = await materializationFixture('builder');
+    const selected = configuration({
+      enabledTools: ['card.create', 'cbm.search_graph'],
+      presentedTools: ['card.create', 'cbm.search_graph'],
+      mcpConnectionIds: ['cbm'],
+      externalMcpTools: [{
+        canonicalName: 'cbm.search_graph',
+        connectionId: 'cbm',
+        nativeName: 'cbm.search_graph',
+      }],
+    });
+    const before = structuredClone(selected);
+
+    await materializeHermesCardToolsPlugin(
+      fixture.profileHome,
+      selected,
+      { repoRoot: fixture.repoRoot, runCli: vi.fn(async () => undefined) },
+    );
+
+    expect(selected).toEqual(before);
+    const toolFile = JSON.parse(await readFile(
+      join(fixture.profileHome, 'plugins', 'card-tools', 'tools.json'),
+      'utf8',
+    ));
+    expect(toolFile.tools).toEqual(selected.pluginTools);
+    expect(JSON.stringify(toolFile)).not.toContain('cbm.search_graph');
+  });
+});
 
 describe('requireHermesCardToolsReadback', () => {
   it('accepts the exact plugin and native surface', () => {

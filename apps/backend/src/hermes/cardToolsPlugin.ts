@@ -24,6 +24,74 @@ import type { AgentTerminalOwner } from './agentTerminal';
 export const HERMES_CARD_TOOLS_PLUGIN_KEY = 'card-tools';
 export const HERMES_CARD_TOOLS_TOOLSET = 'card-tools';
 
+const MANAGED_SYSTEM_CARD_PROFILES = new Set([
+  'liquidaity-main',
+  'builder',
+  'thinkgraph',
+  'knowgraph',
+]);
+const RETIRED_SYSTEM_CARD_PLUGIN_KEYS = ['card-bot-dm', 'liquidaity-card-mcp'] as const;
+const RETIRED_SYSTEM_CARD_PLUGIN_DIRECTORY = 'card-bot-dm';
+
+// Retired plugin state is reconciled through Hermes' config owner. Do not
+// parse or rewrite config.yaml in TypeScript: load_config/save_config preserve
+// every unrelated profile value and their native schema/version behavior.
+export const HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT = [
+  'from hermes_cli.config import load_config, save_config',
+  `retired = ${JSON.stringify([...RETIRED_SYSTEM_CARD_PLUGIN_KEYS])}`,
+  `replacement = ${JSON.stringify(HERMES_CARD_TOOLS_PLUGIN_KEY)}`,
+  'cfg = load_config() or {}',
+  'raw_plugins = cfg.get("plugins")',
+  'if not isinstance(raw_plugins, dict):',
+  '    raise SystemExit(3)',
+  'plugins = dict(raw_plugins)',
+  'raw_enabled = plugins.get("enabled")',
+  'raw_disabled = plugins.get("disabled")',
+  'raw_entries = plugins.get("entries")',
+  'if not isinstance(raw_enabled, list) or any(not isinstance(item, str) for item in raw_enabled):',
+  '    raise SystemExit(3)',
+  'if raw_disabled is not None and (not isinstance(raw_disabled, list) or any(not isinstance(item, str) for item in raw_disabled)):',
+  '    raise SystemExit(3)',
+  'if raw_entries is not None and not isinstance(raw_entries, dict):',
+  '    raise SystemExit(3)',
+  'enabled = list(raw_enabled)',
+  'disabled = list(raw_disabled or [])',
+  'entries = dict(raw_entries or {})',
+  'if replacement not in enabled:',
+  '    raise SystemExit(4)',
+  'next_enabled = [name for name in enabled if name not in retired]',
+  'next_disabled = [name for name in disabled if name not in retired]',
+  'next_entries = {name: value for name, value in entries.items() if name not in retired}',
+  'changed = False',
+  'if next_enabled != enabled:',
+  '    plugins["enabled"] = next_enabled',
+  '    changed = True',
+  'if next_disabled != disabled:',
+  '    plugins["disabled"] = next_disabled',
+  '    changed = True',
+  'if next_entries != entries:',
+  '    plugins["entries"] = next_entries',
+  '    changed = True',
+  'if changed:',
+  '    cfg["plugins"] = plugins',
+  '    save_config(cfg)',
+  'readback = load_config() or {}',
+  'actual_plugins = readback.get("plugins")',
+  'if not isinstance(actual_plugins, dict):',
+  '    raise SystemExit(5)',
+  'actual_enabled = actual_plugins.get("enabled")',
+  'actual_disabled = actual_plugins.get("disabled") or []',
+  'actual_entries = actual_plugins.get("entries") or {}',
+  'if (not isinstance(actual_enabled, list) or not isinstance(actual_disabled, list)',
+  '        or not isinstance(actual_entries, dict) or replacement not in actual_enabled',
+  '        or replacement in actual_disabled or replacement not in actual_entries):',
+  '    raise SystemExit(6)',
+  'if (any(name in actual_enabled for name in retired)',
+  '        or any(name in actual_disabled for name in retired)',
+  '        or any(name in actual_entries for name in retired)):',
+  '    raise SystemExit(7)',
+].join('\n');
+
 const SOURCE_FILES = ['__init__.py', 'plugin.yaml'] as const;
 const MAX_CLI_OUTPUT_BYTES = 16_384;
 
@@ -300,6 +368,37 @@ async function verifyRuntime(root: string, expected: Map<string, string>): Promi
   }
 }
 
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
+}
+
+async function retireContainedLegacyPluginDirectory(pluginsRoot: string): Promise<void> {
+  const target = path.join(pluginsRoot, RETIRED_SYSTEM_CARD_PLUGIN_DIRECTORY);
+  if (!inside(pluginsRoot, target)) throw new Error('hermes_retired_plugin_destination_outside_profile');
+  let info;
+  try {
+    info = await lstat(target);
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    throw new Error('hermes_retired_plugin_destination_unreadable');
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error('hermes_retired_plugin_destination_invalid');
+  }
+  const resolvedTarget = await realpath(target);
+  if (!inside(pluginsRoot, resolvedTarget)) {
+    throw new Error('hermes_retired_plugin_destination_outside_profile');
+  }
+  await rm(target, { recursive: true, force: false });
+  try {
+    await lstat(target);
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    throw new Error('hermes_retired_plugin_retirement_readback_failed');
+  }
+  throw new Error('hermes_retired_plugin_retirement_readback_failed');
+}
+
 export async function materializeHermesCardToolsPlugin(
   profileHome: string,
   configuration: HermesCardTools,
@@ -318,6 +417,13 @@ export async function materializeHermesCardToolsPlugin(
     path.resolve(profileHome),
     'hermes_card_tools_profile_home_invalid',
   );
+  const profile = String(configuration.runtime.profile || '').trim();
+  if (
+    MANAGED_SYSTEM_CARD_PROFILES.has(profile)
+    && path.basename(resolvedProfileHome).toLowerCase() !== profile
+  ) {
+    throw new Error(`hermes_retired_plugin_profile_home_mismatch:${profile}`);
+  }
   try {
     if (!(await stat(path.join(resolvedProfileHome, 'config.yaml'))).isFile()) throw new Error();
   } catch {
@@ -381,6 +487,28 @@ export async function materializeHermesCardToolsPlugin(
       windowsHide: true,
     },
   );
+
+  if (MANAGED_SYSTEM_CARD_PROFILES.has(profile)) {
+    // Reconcile only after the replacement files were hashed/read back and
+    // Hermes successfully enabled card-tools. The script itself rereads the
+    // native config and refuses to retire anything if that replacement is not
+    // still enabled.
+    await (options.runCli ?? runHermesCli)(
+      executable,
+      ['-X', 'utf8', '-c', HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT],
+      {
+        cwd: hermesRoot,
+        env: {
+          ...withoutInternalMcpSecret(options.env ?? process.env),
+          HERMES_HOME: resolvedProfileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+      },
+    );
+    await retireContainedLegacyPluginDirectory(resolvedPluginsRoot);
+  }
 }
 
 export function requireLoadedHermesCardToolsPlugin(value: unknown): void {

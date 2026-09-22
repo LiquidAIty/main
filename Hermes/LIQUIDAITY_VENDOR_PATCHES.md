@@ -1,11 +1,13 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly five LiquidAIty-owned runtime extensions: durable Team delegation,
+plus exactly seven LiquidAIty-owned runtime extensions: durable Team delegation,
 profile-scoped native Bot rosters projected from saved Card topology, a nullable
 root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
 authentication for detached workers whose saved profile selects the native app-server
-runtime, and exact saved-profile toolset pins for native CLI execution.
+runtime, exact saved-profile toolset pins for native CLI execution, saved-SOUL
+refresh on persistent-session resume, and native Codex thread/turn receipts on
+Gateway completion events.
 This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
@@ -330,6 +332,105 @@ new route, profile abstraction, runtime, tool registry, or file writer is added.
 ROLLBACK: remove `_save_toolset_pin`, restore the former editor-only assignment, and restore
 an external execution-pin writer if exact Card-owned toolset execution is still required.
 
+## 6. Saved-SOUL refresh on persistent-session resume
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: make a persistent native Card session adopt the exact current saved profile
+`SOUL.md` after that Card prompt changes, while preserving the existing session and
+conversation history. An unchanged SOUL continues to reuse the stored system prompt
+byte-for-byte.
+
+EXTERNAL ALTERNATIVE CHECK: creating a new application or Hermes session would discard
+the required persistent-session continuity. MCP reload does not own stable Card
+instructions, and prompt markers would pollute model-visible content. Comparing the
+current native identity with the stored prompt before reuse is the smallest coherent
+change in the existing restore owner.
+
+FILES AND SYMBOLS:
+
+- `agent/system_prompt.py`: `resolve_stable_identity` shares the exact profile SOUL or
+  stock-default identity path with fresh prompt construction.
+- `agent/conversation_loop.py`: `_stored_prompt_matches_runtime` requires the stored
+  prompt to begin with the exact current stable identity and canonical blank-line
+  boundary in addition to the existing runtime metadata checks.
+
+UPSTREAM BEHAVIOR PRESERVED: unchanged SOUL, provider, model, working directory, and
+surface reuse the existing stored prompt and history without a write. Fresh prompt
+construction, default identity, context sections, and runtime metadata remain native
+Hermes behavior.
+
+CONTRACTS:
+
+- a byte-identical current identity preserves the stored prompt byte-for-byte;
+- a changed profile SOUL causes one rebuild and persistence through the existing owner;
+- a shorter old identity cannot prefix-match a longer replacement;
+- no marker, version tag, dynamic task, or application prompt copy is added to model
+  instructions;
+- provider, model, working-directory, and surface checks remain required.
+
+TESTS:
+
+- `tests/agent/test_system_prompt.py`
+- `tests/agent/test_system_prompt_restore.py`
+- `tests/agent/transports/test_codex_app_server_session.py`
+
+FORK COST: one shared stable-identity resolver and one bounded resume comparison. There
+is no alternate prompt store, session owner, history lifecycle, or application-side
+prompt assembler.
+
+ROLLBACK: restore the former identity assembly inside `build_system_prompt_parts`, remove
+the leading-identity resume check, and remove the focused tests together. Persistent
+sessions would again retain an old SOUL until another native rebuild condition occurs.
+
+## 7. Native Codex thread and turn receipts on Gateway completion
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: preserve the real Codex App Server thread and turn identities already returned
+by the native transport when the Gateway emits `message.complete`. LiquidAIty can then
+persist a truthful completed Run receipt instead of rejecting an otherwise completed
+Card turn as identity-free.
+
+EXTERNAL ALTERNATIVE CHECK: the application cannot reconstruct provider-native IDs from
+answer text, the Hermes session ID is not a Codex thread/turn pair, and weakening Python
+rails receipt validation would permit false completion. Adding the existing result fields
+to the existing completion event is the smallest truthful transport change.
+
+FILES AND SYMBOLS:
+
+- `tui_gateway/prompt_turn.py`: `_complete_turn_payload` maps non-empty
+  `codex_thread_id` and `codex_turn_id` from the completed native result to
+  `nativeRootId` and `nativeRunId`.
+- `tui_gateway/contracts/events.py`: `MessageCompletePayload` declares the two optional
+  native receipt fields.
+
+UPSTREAM BEHAVIOR PRESERVED: text, usage, status, reasoning, billing, error, rendering,
+history persistence, streaming, and non-Codex completion payloads remain unchanged.
+Ordinary runtimes omit both optional fields.
+
+CONTRACTS:
+
+- only real non-empty transport IDs are emitted;
+- no identifier is inferred from prompt text, session title, or application state;
+- the existing Codex transport remains the sole owner of thread and turn IDs;
+- non-Codex and identity-free results retain their former payload shape;
+- Python rails continues to fail closed when required native evidence is missing.
+
+TESTS:
+
+- `tests/tui_gateway/test_bot_mode_silence_delivery.py`
+- `tests/agent/test_codex_app_server_integration.py`
+- application receipt coverage in `apps/backend/src/hermes/agentTerminalExecution.spec.ts`.
+
+FORK COST: two optional event fields and one bounded projection from existing result
+data. There is no second receipt store, provider call, correlator, or inferred identity.
+
+ROLLBACK: remove the two optional event fields, their projection, and the focused test
+together. Codex-backed application Runs would again fail completion receipt validation.
+
 ## Complete upstream-relative difference manifest
 
 Production files:
@@ -350,6 +451,10 @@ Production files:
 - `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` — typed Bot roster RPC field
 - `tui_gateway/methods_profiles.py` — Bot roster configure/describe and exact CLI toolset pin
 - `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution
+- `agent/system_prompt.py` — shared saved-SOUL identity resolution
+- `agent/conversation_loop.py` — persistent-session saved-SOUL refresh guard
+- `tui_gateway/prompt_turn.py` — native Codex receipt projection on completion
+- `tui_gateway/contracts/events.py` — optional native completion receipt fields
 
 Focused tests:
 
@@ -362,6 +467,11 @@ Focused tests:
 - `tests/agent/transports/test_codex_app_server_runtime.py` — detached app-server credential routing
 - `tests/agent/transports/test_codex_worker_mcp_overrides.py` — complete worker MCP transport
 - `tests/tui_gateway/test_profiles_toolset_pin.py` — saved profile and CLI execution toolset pin
+- `tests/agent/test_system_prompt.py` — changed and unchanged saved-SOUL resume behavior
+- `tests/agent/test_system_prompt_restore.py` — stored-prompt reuse contract
+- `tests/agent/transports/test_codex_app_server_session.py` — exact stable/dynamic prompt split
+- `tests/tui_gateway/test_bot_mode_silence_delivery.py` — native completion receipt projection
+- `tests/agent/test_codex_app_server_integration.py` — Codex result thread/turn identity
 
 Metadata:
 

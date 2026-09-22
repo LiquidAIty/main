@@ -238,15 +238,26 @@ type PromptFields = {
   constraints: string;
   ioSchema: string;
   memoryPolicy: string;
+  outputExpectations: string;
 };
 
 const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
   ROLE: 'role', GOAL: 'goal', CONSTRAINTS: 'constraints',
   IO_SCHEMA: 'ioSchema', INPUT_SCHEMA: 'ioSchema', MEMORY_POLICY: 'memoryPolicy',
+  OUTPUT_EXPECTATIONS: 'outputExpectations', OUTPUT_CONTRACT: 'outputExpectations',
+  OUTPUT_REQUIREMENTS: 'outputExpectations',
 };
 
-function promptFieldRanges(template: string) {
-  // Headings delimit editable blocks; they do not classify the text inside them.
+const CANONICAL_PROMPT_HEADING: Record<keyof PromptFields, string> = {
+  role: 'ROLE',
+  goal: 'GOAL',
+  constraints: 'CONSTRAINTS',
+  ioSchema: 'IO_SCHEMA',
+  memoryPolicy: 'MEMORY_POLICY',
+  outputExpectations: 'OUTPUT_EXPECTATIONS',
+};
+
+function promptHeadings(template: string) {
   const headings: Array<{ label: string; index: number; end: number }> = [];
   let fence: string | null = null;
   for (const line of template.matchAll(/^.*(?:\r?\n|$)/gm)) {
@@ -260,6 +271,25 @@ function promptFieldRanges(template: string) {
     const heading = line[0].match(/^(?:\[([^\]\r\n]+)\][ \t]*|#{1,6}[ \t]+([^\r\n]+))(?:\r?\n|$)/);
     if (heading) headings.push({ label: heading[1] ?? heading[2], index: line.index!, end: line.index! + line[0].length });
   }
+  return headings;
+}
+
+function assertUniqueCanonicalPromptSections(template: string): void {
+  const seen = new Set<keyof PromptFields>();
+  for (const heading of promptHeadings(template)) {
+    const field = PROMPT_HEADINGS[heading.label.toUpperCase()];
+    if (!field) continue;
+    if (seen.has(field)) {
+      const canonical = CANONICAL_PROMPT_HEADING[field];
+      throw new Error(`card_prompt_duplicate_section:${canonical}. Keep exactly one [${canonical}] block before saving.`);
+    }
+    seen.add(field);
+  }
+}
+
+function promptFieldRanges(template: string) {
+  // Headings delimit editable blocks; they do not classify the text inside them.
+  const headings = promptHeadings(template);
   const ranges: Array<{ key: string; label: string; start: number; end: number }> = [];
   const seen = new Set<keyof PromptFields>();
   headings.forEach((heading, index) => {
@@ -281,7 +311,9 @@ function promptFieldRanges(template: string) {
 }
 
 function parsePromptTemplate(template: string): PromptFields & Record<string, string> {
-  const fields: PromptFields & Record<string, string> = { role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '' };
+  const fields: PromptFields & Record<string, string> = {
+    role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '', outputExpectations: '',
+  };
   for (const range of promptFieldRanges(template)) fields[range.key] = template.slice(range.start, range.end);
   return fields;
 }
@@ -296,8 +328,8 @@ function serializePromptFields(fields: PromptFields & Record<string, string>, or
     }
   }
   const newline = original.includes('\r\n') ? '\r\n' : '\n';
-  for (const [heading, key] of Object.entries(PROMPT_HEADINGS)) {
-    if (!edited[key] || heading === 'INPUT_SCHEMA' || ranges.some((range) => range.key === key) || !fields[key]) continue;
+  for (const [key, heading] of Object.entries(CANONICAL_PROMPT_HEADING) as Array<[keyof PromptFields, string]>) {
+    if (!edited[key] || ranges.some((range) => range.key === key) || !fields[key]) continue;
     result += `${result ? newline + newline : ''}[${heading}]${newline}${fields[key]}`;
   }
   return result;
@@ -430,14 +462,13 @@ export function AgentManager({
   const [maxTokens, setMaxTokens] = useState<number | ''>('');
   const [maxTurns, setMaxTurns] = useState<number | ''>('');
   const [promptText, setPromptText] = useState('');
-  const [outputExpectations, setOutputExpectations] = useState('');
-  const [outputExpectationsTouched, setOutputExpectationsTouched] = useState(false);
   const [promptParts, setPromptParts] = useState<PromptFields & Record<string, string>>({
     role: '',
     goal: '',
     constraints: '',
     ioSchema: '',
     memoryPolicy: '',
+    outputExpectations: '',
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
@@ -550,13 +581,15 @@ export function AgentManager({
     setMaxTokens(typeof localConfig.max_tokens === 'number' ? localConfig.max_tokens : '');
     setMaxTurns(typeof localConfig.max_turns === 'number' ? localConfig.max_turns : '');
     setPromptText(localConfig.prompt_template || '');
-    setOutputExpectations(typeof localConfig.output_contract === 'string' ? localConfig.output_contract
-      : localConfig.output_contract == null ? '' : JSON.stringify(localConfig.output_contract, null, 2));
-    setOutputExpectationsTouched(false);
     const parsedPrompt = parsePromptTemplate(localConfig.prompt_template || '');
+    const legacyOutputExpectations = typeof localConfig.output_contract === 'string'
+      ? localConfig.output_contract
+      : localConfig.output_contract == null
+        ? ''
+        : JSON.stringify(localConfig.output_contract, null, 2);
     setPromptParts({
       ...parsedPrompt,
-      role: parsedPrompt.role || String(localConfig.role || ''),
+      outputExpectations: parsedPrompt.outputExpectations || legacyOutputExpectations,
     });
     setPromptPartsTouched({});
     setToolsText(
@@ -680,6 +713,20 @@ export function AgentManager({
 
   const buildCurrentLocalPayload = useCallback((): AgentManagerLocalConfig => {
     if (!localConfig) throw new Error('card_config_missing');
+    const originalPrompt = parsePromptTemplate(promptText);
+    const migrateLegacyOutput = Boolean(
+      localConfig.output_contract != null
+      && !originalPrompt.outputExpectations
+      && promptParts.outputExpectations,
+    );
+    const serializedPrompt = serializePromptFields(
+      promptParts,
+      promptText,
+      migrateLegacyOutput
+        ? { ...promptPartsTouched, outputExpectations: true }
+        : promptPartsTouched,
+    );
+    assertUniqueCanonicalPromptSections(serializedPrompt);
     const editedConfig = buildActiveAgentManagerLocalConfig({
       runtime: localConfig.runtime,
       provider,
@@ -689,7 +736,7 @@ export function AgentManager({
       temperature,
       maxTokens,
       maxTurns,
-      promptTemplate: serializePromptFields(promptParts, promptText, promptPartsTouched),
+      promptTemplate: serializedPrompt,
       toolsText,
       nativeToolsText,
       skillsText,
@@ -716,9 +763,10 @@ export function AgentManager({
             : {}
         ),
       },
-      role: promptParts.role !== (parsePromptTemplate(localConfig.prompt_template || '').role || String(localConfig.role || ''))
-        ? promptParts.role : localConfig.role,
-      output_contract: outputExpectationsTouched ? outputExpectations : localConfig.output_contract,
+      // Card role is presentation metadata. Stable model instructions live only
+      // in prompt_template, including the editable [ROLE] block.
+      role: localConfig.role,
+      output_contract: undefined,
     };
   }, [
     localConfig,
@@ -740,8 +788,6 @@ export function AgentManager({
     maxTurns,
     promptParts,
     promptPartsTouched,
-    outputExpectations,
-    outputExpectationsTouched,
     promptText,
     toolsText,
     nativeToolsText,
@@ -1136,10 +1182,10 @@ export function AgentManager({
             </label>
             <textarea
               aria-label="Output expectations"
-              value={outputExpectations}
+              value={promptParts.outputExpectations}
               onChange={(event) => {
-                setOutputExpectations(event.target.value);
-                setOutputExpectationsTouched(true);
+                setPromptParts((current) => ({ ...current, outputExpectations: event.target.value }));
+                setPromptPartsTouched((current) => ({ ...current, outputExpectations: true }));
                 markDraftDirty();
               }}
               rows={5}
@@ -1158,7 +1204,7 @@ export function AgentManager({
           </div>
 
           {promptFieldRanges(promptText).filter((block) => (
-            !['role', 'goal', 'constraints', 'ioSchema'].includes(block.key)
+            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations'].includes(block.key)
             && (block.start !== block.end || promptPartsTouched[block.key])
           )).map((block) => (
             <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>

@@ -156,7 +156,6 @@ export default function useAgentBuilderCardEditor({
             node.id === selectedCard.id
               ? {
                   ...node,
-                  role: String(nextConfig.role || '').trim() || undefined,
                   prompt: String(nextConfig.prompt_template || ''),
                   outputContract: nextConfig.output_contract ?? undefined,
                   runtime: nextRuntime,

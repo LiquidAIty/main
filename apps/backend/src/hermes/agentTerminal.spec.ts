@@ -1145,6 +1145,20 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
   });
 
+  it('fails before Gateway spawn when Card-plugin replacement or retirement is unverified', async () => {
+    const f = fixture();
+    f.materializeCardToolsPlugin.mockRejectedValueOnce(
+      new Error('hermes_card_tools_plugin_enable_failed'),
+    );
+
+    await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
+      .rejects.toThrow('hermes_card_tools_plugin_enable_failed');
+
+    expect(f.materializeCardToolsPlugin).toHaveBeenCalledOnce();
+    expect(f.spawnGateway).not.toHaveBeenCalled();
+    expect(f.clients).toHaveLength(0);
+  });
+
   it('ignores obsolete Card runtime sessions and owns only canonical Bot Chat', async () => {
     const f = fixture();
     f.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-old');

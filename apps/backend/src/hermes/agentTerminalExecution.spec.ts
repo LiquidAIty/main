@@ -59,6 +59,16 @@ describe('Gateway Card Run receipt binding', () => {
           ...prepared().hermesTransport,
           request: {
             ...prepared().hermesTransport.request,
+            systemPrompt: 'duplicate saved Card prompt',
+            outputRequirements: 'duplicate legacy output contract',
+          },
+        },
+      }), 'prepared_hermes_fields_retired:systemPrompt,outputRequirements'],
+      [owner, prepared({
+        hermesTransport: {
+          ...prepared().hermesTransport,
+          request: {
+            ...prepared().hermesTransport.request,
             provider: { provider: 'openai', accessMode: 'openrouter-api', modelKey: 'saved-model' },
           },
         },
@@ -133,6 +143,32 @@ describe('Gateway Card Run receipt binding', () => {
     await expect(execution.cancelStaged('terminal-signal', 'duplicate')).resolves.toBe(false);
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
       runId: 'prepared-run', state: 'failed', errorSummary: 'gateway_submit_failed',
+    });
+  });
+
+  it('retains staged ownership until a failed completion receipt is settled', async () => {
+    const request = vi.fn()
+      .mockRejectedValueOnce(new Error('run_native_transport_evidence_incomplete'))
+      .mockResolvedValueOnce({ ok: true });
+    const execution = new AgentTerminalExecution(request as never);
+    execution.stage(owner, 'terminal-signal', 'signal', prepared());
+
+    await expect(execution.completeStaged('terminal-signal', 'native-session', {
+      text: 'Provider completed before receipt persistence failed',
+      status: 'complete',
+      event: { type: 'message.complete', payload: {} },
+    })).rejects.toThrow('run_native_transport_evidence_incomplete');
+    expect(execution.activeRunId('terminal-signal')).toBe('prepared-run');
+
+    await expect(execution.cancelStaged(
+      'terminal-signal',
+      'run_native_transport_evidence_incomplete',
+    )).resolves.toBe(true);
+    expect(execution.activeRunId('terminal-signal')).toBeNull();
+    expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({
+      runId: 'prepared-run',
+      state: 'failed',
+      errorSummary: 'run_native_transport_evidence_incomplete',
     });
   });
 

@@ -693,6 +693,16 @@ def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None,
     if _is_bot_mode_session(session):
         raw = _bot_mode_delivery_text(raw, successful=status == "complete")
     payload = {"text": raw, "usage": _get_usage(agent), "status": status}
+    # Codex App Server owns the provider-native thread and turn identities.  They
+    # already ride the turn result; preserve them on the terminal completion so
+    # application callers can persist a truthful native receipt instead of
+    # treating a completed provider turn as an identity-free model response.
+    native_root_id = str(result.get("codex_thread_id") or "").strip()
+    native_run_id = str(result.get("codex_turn_id") or "").strip()
+    if native_root_id:
+        payload["nativeRootId"] = native_root_id
+    if native_run_id:
+        payload["nativeRunId"] = native_run_id
     if last_reasoning:
         payload["reasoning"] = last_reasoning
     if status_note:

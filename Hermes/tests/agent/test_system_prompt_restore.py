@@ -21,7 +21,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.conversation_loop import _restore_or_build_system_prompt
+from agent.prompt_builder import DEFAULT_AGENT_IDENTITY
 from agent.surface_switch import _SURFACE_NAME_END, _SURFACE_SWITCH_NOTE_PREFIX, identity_line_value
+
+
+def _with_current_identity(body: str) -> str:
+    return f"{DEFAULT_AGENT_IDENTITY}\n\n{body}"
 
 
 def _make_agent(session_db=None, prebuilt_prompt: str = "BUILT_PROMPT"):
@@ -32,6 +37,8 @@ def _make_agent(session_db=None, prebuilt_prompt: str = "BUILT_PROMPT"):
     agent.model = "test-model"
     agent.provider = "openrouter"
     agent.platform = "cli"
+    agent.load_soul_identity = False
+    agent.skip_context_files = True
     agent._session_db = session_db
     # MagicMock attributes are truthy by default; the static-prefix
     # reconstruction is gated on _use_prompt_caching, so default it off
@@ -56,7 +63,7 @@ class TestSurfaceSwitch:
 
     @staticmethod
     def _stored(platform: str) -> str:
-        return (
+        return _with_current_identity(
             "SYSTEM PROMPT BODY\n\nConversation started: Monday, January 05, 2026\n"
             "Model: test-model\nProvider: openrouter\n"
             f"Platform: {platform}"
@@ -113,7 +120,7 @@ class TestSurfaceSwitch:
         from agent.prompt_builder import RUNTIME_ENVIRONMENT_END, RUNTIME_ENVIRONMENT_HEADING
 
         decoy = "Host: Example\nPlatform: tui\n"
-        stored = (
+        stored = _with_current_identity(
             "SYSTEM PROMPT BODY\n\nConversation started: Monday, January 05, 2026\n"
             "Model: test-model\nProvider: openrouter\nPlatform: desktop\n\n"
             f"{RUNTIME_ENVIRONMENT_HEADING}\n\n{decoy}\n\n{RUNTIME_ENVIRONMENT_END}"
@@ -217,7 +224,7 @@ class TestSurfaceSwitch:
 class TestStoredPromptReuse:
     def test_present_row_is_reused_verbatim(self, caplog):
         """Continuing session with a stored prompt → reuse byte-for-byte."""
-        stored = "Stored prompt from turn 1 — byte-identical reuse"
+        stored = _with_current_identity("Stored prompt from turn 1 — byte-identical reuse")
         db = MagicMock()
         db.get_session.return_value = {"system_prompt": stored}
         agent = _make_agent(session_db=db)
@@ -233,7 +240,7 @@ class TestStoredPromptReuse:
 
     def test_present_row_with_unicode_preserved(self):
         """Non-ASCII bytes in the stored prompt are not mangled."""
-        stored = "Stored prompt with unicode: ☤ ⚗ ◆ — and emoji 🦊"
+        stored = _with_current_identity("Stored prompt with unicode: ☤ ⚗ ◆ — and emoji 🦊")
         db = MagicMock()
         db.get_session.return_value = {"system_prompt": stored}
         agent = _make_agent(session_db=db)
@@ -249,8 +256,7 @@ class TestStoredPromptReuse:
         blindly restoring it makes the next turn call the new model while the
         model reads old `Model:` metadata ("what model are you?" lies).
         """
-        stored = (
-            "You are Hermes Agent.\n\n"
+        stored = _with_current_identity(
             "Conversation started: Tuesday, June 16, 2026\n"
             "Session ID: test-session-id\n"
             "Model: anthropic/claude-opus-4.8-fast\n"
@@ -280,7 +286,7 @@ class TestStoredPromptReuse:
         db.update_system_prompt.assert_called_once_with(
             agent.session_id, agent._cached_system_prompt
         )
-        assert any("stale runtime identity" in r.getMessage() for r in caplog.records)
+        assert any("stale stable identity or runtime metadata" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +378,7 @@ class TestPromptStabilityInvariant:
         This is the core invariant: any byte-level change at this point
         invalidates KV cache on every prefix-cache backend.
         """
-        stored = (
+        stored = _with_current_identity(
             "You are Hermes Agent.\n"
             "\n"
             "Conversation started: Sunday, May 17, 2026\n"
@@ -407,7 +413,7 @@ class TestStaticPrefixReconstructionOnRestore:
     """
 
     def test_restore_reconstructs_static_prefix_when_it_matches(self):
-        stable = "STATIC IDENTITY AND GUIDANCE"
+        stable = _with_current_identity("STATIC IDENTITY AND GUIDANCE")
         stored = stable + "\n\nper-session context\n\nvolatile tail"
         db = MagicMock()
         db.get_session.return_value = {"system_prompt": stored}
@@ -432,7 +438,7 @@ class TestStaticPrefixReconstructionOnRestore:
     def test_restore_leaves_static_unset_on_prefix_mismatch(self):
         """Stable-tier drift (skills edited since persist) → no static prefix,
         legacy layout, restored bytes still authoritative."""
-        stored = "OLD STATIC HEAD\n\nper-session context"
+        stored = _with_current_identity("OLD STATIC HEAD\n\nper-session context")
         db = MagicMock()
         db.get_session.return_value = {"system_prompt": stored}
         agent = _make_agent(session_db=db)
@@ -455,7 +461,7 @@ class TestStaticPrefixReconstructionOnRestore:
     def test_restore_survives_parts_builder_exception(self):
         """Prefix reconstruction is fail-open: a parts-builder crash must not
         break the byte-identical restore."""
-        stored = "Stored prompt — must survive"
+        stored = _with_current_identity("Stored prompt — must survive")
         db = MagicMock()
         db.get_session.return_value = {"system_prompt": stored}
         agent = _make_agent(session_db=db)
@@ -563,7 +569,7 @@ class TestPerResponseSessionWritePath:
     """
 
     def _agent(self, db, session_id):
-        agent = _make_agent(session_db=db, prebuilt_prompt="GROUP_PROMPT")
+        agent = _make_agent(session_db=db, prebuilt_prompt=_with_current_identity("GROUP_PROMPT"))
         agent.session_id = session_id
         return agent
 
@@ -582,7 +588,7 @@ class TestPerResponseSessionWritePath:
                 [{"role": "user", "content": "hi"}],
             )
 
-            assert db.get_session(session_id)["system_prompt"] == "GROUP_PROMPT"
+            assert db.get_session(session_id)["system_prompt"] == _with_current_identity("GROUP_PROMPT")
 
     def test_warning_is_a_first_turn_artifact_not_a_lost_write(
         self, tmp_path, caplog
@@ -611,7 +617,7 @@ class TestPerResponseSessionWritePath:
             ):
                 _restore_or_build_system_prompt(second, None, history)
 
-            assert second._cached_system_prompt == "GROUP_PROMPT"
+            assert second._cached_system_prompt == _with_current_identity("GROUP_PROMPT")
             second._build_system_prompt.assert_not_called()
             assert "is null" not in caplog.text
 

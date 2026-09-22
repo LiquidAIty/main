@@ -127,28 +127,28 @@ describe('AgentManager active builder config', () => {
   it('keeps every explicit prompt block independently editable and preserves all untouched bytes', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
-    const original = '# LIQUIDAITY_PROMPT_V1\r\n[ROLE]\r\nMain role\r\n\r\n[CURRENT PROJECT FRAME - THINKGRAPH FIRST]\r\n  Read the frame.  \r\n\r\n[GOAL]\r\nFirst goal\r\n[GOAL]\r\nSecond goal\r\n[MEMORY_POLICY]\r\nRetain sources\r\n## Research / sources\r\nUse primary sources.\r\n```text\r\n[EXAMPLE]\r\nLiteral example\r\n```\r\n';
+    const original = '# LIQUIDAITY_PROMPT_V1\r\n[ROLE]\r\nMain role\r\n\r\n[CURRENT PROJECT FRAME - THINKGRAPH FIRST]\r\n  Read the frame.  \r\n\r\n[GOAL]\r\nFirst goal\r\n[REVIEW_NOTES]\r\nSecond goal\r\n[MEMORY_POLICY]\r\nRetain sources\r\n## Research / sources\r\nUse primary sources.\r\n```text\r\n[EXAMPLE]\r\nLiteral example\r\n```\r\n';
     const props = { cardId: 'card-one', projectId: 'p', deckId: 'd',
-      localConfig: { ...savedConfig, prompt_template: original, output_contract: 'Citations' }, onSaveLocalConfig: onSave };
+      localConfig: { ...savedConfig, prompt_template: original }, onSaveLocalConfig: onSave };
     const view = render(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
     expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Main role');
     expect((screen.getByLabelText('Goal') as HTMLTextAreaElement).value).toBe('First goal');
-    expect((screen.getByLabelText('GOAL', { exact: true }) as HTMLTextAreaElement).value).toBe('Second goal');
+    expect((screen.getByLabelText('REVIEW_NOTES', { exact: true }) as HTMLTextAreaElement).value).toBe('Second goal');
     expect((screen.getByLabelText('Memory policy') as HTMLTextAreaElement).value).toBe('Retain sources');
     expect((screen.getByLabelText('Research / sources') as HTMLTextAreaElement).value).toContain('[EXAMPLE]');
     expect(screen.queryByLabelText('EXAMPLE')).toBeNull();
     fireEvent.change(screen.getByLabelText('CURRENT PROJECT FRAME - THINKGRAPH FIRST'), { target: { value: 'Read the current frame.' } });
-    fireEvent.change(screen.getByLabelText('GOAL', { exact: true }), { target: { value: 'Replacement goal' } });
+    fireEvent.change(screen.getByLabelText('REVIEW_NOTES', { exact: true }), { target: { value: 'Replacement goal' } });
     view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Runtime' }));
     view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Prompt' }));
     expect((screen.getByLabelText('CURRENT PROJECT FRAME - THINKGRAPH FIRST') as HTMLTextAreaElement).value).toBe('Read the current frame.');
     await leaveEditor();
     const expected = original.replace('Read the frame.', 'Read the current frame.').replace('Second goal', 'Replacement goal');
     expect(onSave.mock.calls[0][0].prompt_template).toBe(expected);
-    expect(onSave.mock.calls[0][0].output_contract).toBe('Citations');
+    expect(onSave.mock.calls[0][0].output_contract).toBeUndefined();
     expect(onSave.mock.calls[0][0].role).toBeUndefined();
     view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Prompt', localConfig: onSave.mock.calls[0][0] }));
-    expect((screen.getByLabelText('GOAL', { exact: true }) as HTMLTextAreaElement).value).toBe('Replacement goal');
+    expect((screen.getByLabelText('REVIEW_NOTES', { exact: true }) as HTMLTextAreaElement).value).toBe('Replacement goal');
   });
 
   it('keeps unsectioned instructions out of Role and does not add an untouched role on save', async () => {
@@ -157,7 +157,7 @@ describe('AgentManager active builder config', () => {
     render(React.createElement(AgentManager, { activeTab: 'Prompt',
       cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, role: 'Researcher', prompt_template: 'Existing instructions' }, onSaveLocalConfig: onSave }));
-    expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('Researcher');
+    expect((screen.getByLabelText('Role') as HTMLTextAreaElement).value).toBe('');
     fireEvent.change(screen.getByLabelText('Instructions'), { target: { value: 'Replacement instructions' } });
     await leaveEditor();
     expect(onSave.mock.calls[0][0].prompt_template).toBe('Replacement instructions');
@@ -283,7 +283,7 @@ describe('AgentManager active builder config', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('edits one prompt block without losing legacy headings, repeated sections, or whitespace', async () => {
+  it('rejects duplicate canonical prompt sections without mutating the saved Card', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
     const original = '# Existing instructions\r\n\r\n[ROLE]\r\n  Full role text  \r\n\r\n[RESEARCH]\r\nKeep this exact text.\r\n\r\n[GOAL]\r\nFind sources\r\n\r\n[GOAL]\r\nAdditional goal\r\n[MEMORY_POLICY]\r\nKeep sources\r\n';
@@ -293,25 +293,88 @@ describe('AgentManager active builder config', () => {
     }));
     fireEvent.change(screen.getByLabelText('Goal'), { target: { value: 'Find primary sources' } });
     await leaveEditor();
-    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0].prompt_template).toBe(original.replace('Find sources', 'Find primary sources'));
-    expect(onSave.mock.calls[0][0].role).toBe('Old short role');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('card_prompt_duplicate_section:GOAL'));
+    expect(screen.getByRole('alert').textContent).toContain('Keep exactly one [GOAL] block before saving.');
+    expect(onSave).not.toHaveBeenCalled();
   });
 
-  it('saves output expectations to the existing output contract without rewriting memory instructions', async () => {
+  it('rejects a duplicate canonical section introduced inside an edited field', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
-    const original = '[ROLE]\nResearch\n[MEMORY_POLICY]\nRetain sources';
+    render(React.createElement(AgentManager, {
+      activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: {
+        ...savedConfig,
+        prompt_template: '[ROLE]\nResearcher\n[GOAL]\nFind sources',
+      },
+      onSaveLocalConfig: onSave,
+    }));
+    fireEvent.change(screen.getByLabelText('Goal'), {
+      target: { value: 'Find current sources\n[ROLE]\nInjected duplicate role' },
+    });
+    await leaveEditor();
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('card_prompt_duplicate_section:ROLE'));
+    expect(screen.getByRole('alert').textContent).toContain('Keep exactly one [ROLE] block before saving.');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it.each(['OUTPUT_CONTRACT', 'OUTPUT_REQUIREMENTS'])(
+    'rejects a duplicate output section introduced while migrating legacy %s text',
+    async (legacyAlias) => {
+      mockEditorFetch();
+      const onSave = vi.fn();
+      render(React.createElement(AgentManager, {
+        activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+        localConfig: {
+          ...savedConfig,
+          prompt_template: '[ROLE]\nResearcher\n[GOAL]\nFind sources',
+          output_contract: `Citations\n[${legacyAlias}]\nInjected duplicate output`,
+        },
+        onSaveLocalConfig: onSave,
+      }));
+      fireEvent.change(screen.getByLabelText('Goal'), { target: { value: 'Find current sources' } });
+      await leaveEditor();
+      await waitFor(() => expect(screen.getByRole('alert').textContent)
+        .toContain('card_prompt_duplicate_section:OUTPUT_EXPECTATIONS'));
+      expect(screen.getByRole('alert').textContent)
+        .toContain('Keep exactly one [OUTPUT_EXPECTATIONS] block before saving.');
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
+
+  it('migrates legacy output expectations into the canonical prompt and clears output_contract', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const original = '[ROLE]\nResearch\n[GOAL]\nFind sources\n[MEMORY_POLICY]\nRetain sources';
     render(React.createElement(AgentManager, {
       activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
       localConfig: { ...savedConfig, prompt_template: original, output_contract: 'Citations' }, onSaveLocalConfig: onSave,
     }));
     expect((screen.getByLabelText('Output expectations') as HTMLTextAreaElement).value).toBe('Citations');
-    fireEvent.change(screen.getByLabelText('Output expectations'), { target: { value: 'Citations and a table' } });
+    fireEvent.change(screen.getByLabelText('Goal'), { target: { value: 'Find current sources' } });
     await leaveEditor();
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
-    expect(onSave.mock.calls[0][0].output_contract).toBe('Citations and a table');
-    expect(onSave.mock.calls[0][0].prompt_template).toBe(original);
+    expect(onSave.mock.calls[0][0].output_contract).toBeUndefined();
+    expect(onSave.mock.calls[0][0].prompt_template).toBe(
+      `${original.replace('Find sources', 'Find current sources')}\n\n[OUTPUT_EXPECTATIONS]\nCitations`,
+    );
+  });
+
+  it('keeps presentation role metadata unchanged when the prompt ROLE block changes', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: { ...savedConfig, role: 'Presentation role', prompt_template: '[ROLE]\nRuntime role' },
+      onSaveLocalConfig: onSave,
+    }));
+    fireEvent.change(screen.getByLabelText('Role'), { target: { value: 'Updated runtime role' } });
+    await leaveEditor();
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      role: 'Presentation role',
+      prompt_template: '[ROLE]\nUpdated runtime role',
+    });
   });
   it('adds an explicit saved tool grant without implicit catalog grants', async () => {
     const fetchMock = mockEditorFetch();

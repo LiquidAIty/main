@@ -3,7 +3,7 @@
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -210,6 +210,7 @@ def test_shared_project_context_precedes_worktree_bytes(monkeypatch, tmp_path):
 
 def test_stored_prompt_cwd_ignores_project_host_decoys(monkeypatch, tmp_path):
     from agent.conversation_loop import _stored_prompt_matches_runtime
+    from agent.system_prompt import resolve_stable_identity
 
     cwd = tmp_path / "worktree"
     cwd.mkdir()
@@ -229,7 +230,8 @@ def test_stored_prompt_cwd_ignores_project_host_decoys(monkeypatch, tmp_path):
     monkeypatch.setenv("TERMINAL_CWD", str(tmp_path))
     assert not _stored_prompt_matches_runtime(agent, full)
     # Previously persisted host-before-context prompts keep their original anchor.
-    legacy = f"Host: Example\nUser home directory: {tmp_path}\nCurrent working directory: {cwd}\n\n# Project Context\n\n{decoy}\nModel: test-model\nProvider: test-provider\nPlatform: cli"
+    identity, _soul_loaded = resolve_stable_identity(agent)
+    legacy = f"{identity}\n\nHost: Example\nUser home directory: {tmp_path}\nCurrent working directory: {cwd}\n\n# Project Context\n\n{decoy}\nModel: test-model\nProvider: test-provider\nPlatform: cli"
     assert not _stored_prompt_matches_runtime(agent, legacy)
     monkeypatch.setenv("TERMINAL_CWD", str(cwd))
     assert _stored_prompt_matches_runtime(agent, legacy)
@@ -391,6 +393,62 @@ def test_build_system_prompt_records_stable_prefix():
 
     assert prompt.startswith(agent._cached_system_prompt_static)
     assert prompt[len(agent._cached_system_prompt_static):].startswith("\n\ncontext")
+
+
+def test_stored_prompt_reuse_tracks_current_profile_soul(tmp_path):
+    """A continuing session keeps its prompt only while its leading SOUL is current."""
+    from agent.conversation_loop import _restore_or_build_system_prompt
+
+    profile_home = tmp_path / "profile"
+    profile_home.mkdir()
+    soul_path = profile_home / "SOUL.md"
+    db = MagicMock()
+    db.db_path = profile_home / "state.db"
+    agent = _make_agent(
+        load_soul_identity=True,
+        skip_context_files=True,
+        _session_db=db,
+        session_id="persistent-soul-session",
+        model="test-model",
+        provider="test-provider",
+        platform="cli",
+        _use_prompt_caching=False,
+        _persist_disabled=True,
+        _cached_system_prompt=None,
+    )
+    soul_a = "SAVED_SOUL_IDENTITY_A_7f1f62"
+    soul_b = "SAVED_SOUL_IDENTITY_B_29dc04"
+    history = [{"role": "user", "content": "keep the existing session"}]
+
+    with (
+        patch("agent.prompt_builder.build_environment_hints", return_value=""),
+        patch("agent.prompt_builder.build_context_files_prompt", return_value=""),
+        patch("agent.credits_tracker.seed_credits_at_session_start"),
+        patch("tools.mcp_tool_agent.persist_agent_tool_names"),
+    ):
+        soul_path.write_text(soul_a, encoding="utf-8")
+        prompt_a = build_system_prompt(agent)
+        agent._build_system_prompt = lambda system_message: build_system_prompt(
+            agent, system_message=system_message
+        )
+        agent._cached_system_prompt = None
+        db.get_session.return_value = {"system_prompt": prompt_a}
+
+        _restore_or_build_system_prompt(agent, None, history)
+
+        assert agent._cached_system_prompt is prompt_a
+        assert agent._cached_system_prompt.encode("utf-8") == prompt_a.encode("utf-8")
+        db.update_system_prompt.assert_not_called()
+
+        soul_path.write_text(soul_b, encoding="utf-8")
+        agent._cached_system_prompt = None
+
+        _restore_or_build_system_prompt(agent, None, history)
+        prompt_b = agent._cached_system_prompt
+
+    assert prompt_b.count(soul_b) == 1
+    assert soul_a not in prompt_b
+    db.update_system_prompt.assert_called_once_with(agent.session_id, prompt_b)
 
 
 def test_coding_prompt_orders_shared_context_before_workspace(monkeypatch):
@@ -834,4 +892,3 @@ class TestConversationStartedTwoLine:
         vol = self._volatile(agent)
         assert "Conversation started:" not in vol
         assert "as of the last context rebuild" not in vol
-

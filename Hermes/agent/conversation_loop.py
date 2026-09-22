@@ -740,9 +740,9 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
         reconstruct_static_prefix(agent, system_message=system_message)
         return
     if stored_prompt:
-        stored_state = "stale_runtime"
+        stored_state = "stale_identity"
         logger.info(
-            "Stored system prompt for session %s has stale runtime identity; "
+            "Stored system prompt for session %s has stale stable identity or runtime metadata; "
             "rebuilding for model=%s provider=%s.",
             agent.session_id, getattr(agent, "model", "") or "", getattr(agent, "provider", "") or "",
         )
@@ -794,7 +794,17 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
 
 
 def _stored_prompt_matches_runtime(agent, prompt: str) -> bool:
-    """Return False when the persisted runtime-identity lines are stale."""
+    """Return False when the persisted stable identity or runtime metadata is stale."""
+
+    # A persistent gateway session may outlive a saved profile update.  Re-read
+    # the exact identity block used by fresh prompt assembly and require it at
+    # byte zero; the explicit separator prevents a shorter old identity from
+    # matching a longer replacement that happens to share its prefix.
+    from agent.system_prompt import resolve_stable_identity
+
+    current_identity, _soul_loaded = resolve_stable_identity(agent)
+    if prompt != current_identity and not prompt.startswith(current_identity + "\n\n"):
+        return False
 
     _identity, runtime_marker, runtime = split_runtime_boundary(prompt)
 

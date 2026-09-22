@@ -44,6 +44,34 @@ def test_live_bot_chat_completion_empties_marker_only_for_successful_turns(monke
     assert payload["text"] == "NO_REPLY"
 
 
+def test_codex_completion_preserves_native_thread_and_turn_receipt(monkeypatch):
+    monkeypatch.setattr(srv, "_get_usage", lambda _agent: {})
+    monkeypatch.setattr(srv, "render_message", lambda _text, _cols: None)
+    monkeypatch.setattr(srv, "_clear_inflight_turn", lambda _session: None)
+    session = {
+        "pending_title": None,
+        "session_key": "k",
+        "history_lock": contextlib.nullcontext(),
+        "agent": SimpleNamespace(_session_title_hint="Scratch"),
+    }
+
+    result = {
+        "final_response": "done",
+        "codex_thread_id": "thread-native-1",
+        "codex_turn_id": "turn-native-1",
+    }
+    payload, _, status = srv._complete_turn_payload(session, _turn(result), None, 80)
+
+    assert status == "complete"
+    assert payload["nativeRootId"] == "thread-native-1"
+    assert payload["nativeRunId"] == "turn-native-1"
+
+    payload, _, _ = srv._complete_turn_payload(
+        session, _turn({"final_response": "ordinary"}), None, 80)
+    assert "nativeRootId" not in payload
+    assert "nativeRunId" not in payload
+
+
 def test_live_bot_chat_stream_holds_back_partial_silence_marker(monkeypatch):
     """Mirror of stream_consumer's hold-back: a marker never reaches message.delta, prose that
     diverges from every marker is flushed intact once it diverges."""

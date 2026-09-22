@@ -521,6 +521,21 @@ def _identity_parts(agent: Any, ctx_len: Optional[int]) -> Tuple[List[str], bool
     return ([_soul_content], True) if _soul_content else ([DEFAULT_AGENT_IDENTITY], False)
 
 
+def resolve_stable_identity(agent: Any, ctx_len: Optional[int] = None) -> Tuple[str, bool]:
+    """Return the exact leading identity text used by prompt assembly.
+
+    The text is the current profile's ``SOUL.md`` bytes after the same native
+    loading/normalization path used for a fresh prompt, or the stock identity
+    when the profile has no active SOUL.  Session-restore validation uses this
+    helper so an identity change cannot leave an old composed prompt cached.
+    """
+    if ctx_len is None:
+        configured_len = getattr(getattr(agent, "context_compressor", None), "context_length", None)
+        ctx_len = configured_len if isinstance(configured_len, int) and configured_len > 0 else None
+    parts, soul_loaded = _identity_parts(agent, ctx_len)
+    return _join_tier(parts), soul_loaded
+
+
 def _guidance_parts(agent: Any) -> List[str]:
     """Universal + tool-aware + model-gated guidance blocks, each gated by its config.yaml key."""
     parts: List[str] = []
@@ -641,7 +656,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     _cc_len = getattr(getattr(agent, "context_compressor", None), "context_length", None)
     _ctx_len = _cc_len if isinstance(_cc_len, int) and _cc_len > 0 else None
     # ── Stable tier ────────────────────────────────────────────────
-    stable_parts, _soul_loaded = _identity_parts(agent, _ctx_len)
+    stable_identity, _soul_loaded = resolve_stable_identity(agent, _ctx_len)
+    stable_parts = [stable_identity]
     # The skill_view() pointer dangles without skill tools OR without the
     # hermes-agent skill installed, so the variant is chosen after the skills
     # index is built; this slot holds its position.

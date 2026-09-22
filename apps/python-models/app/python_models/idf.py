@@ -546,18 +546,20 @@ def kanban_mission(idf: Idf) -> str:
 
 
 def runtime_projection(materialized: MaterializedIdf) -> dict[str, Any]:
-    """Mechanically project native-runtime fields from reloaded IDF bytes."""
+    """Mechanically project native-runtime fields from reloaded IDF bytes.
+
+    Stable Card instructions remain in the retained IDF and the materialized
+    Hermes ``SOUL.md``.  They are deliberately not projected into the turn
+    request: doing so would create a second, ignored prompt input beside the
+    native profile authority.
+    """
 
     idf = materialized.idf
     stable = idf.stableSavedCardContext
     grants = idf.selectedToolsAndGrants
     return {
-        "systemPrompt": "\n\n".join(part for part in (
-            stable.instructions, stable.outputRequirements,
-        ) if part),
         "task": idf.dynamicContext.task,
         "graphContext": idf.actualGraphData.modelText,
-        "outputRequirements": stable.outputRequirements,
         "message": model_task(idf),
         "kanbanMission": kanban_mission(idf),
         "runtime": dict(stable.runtime),

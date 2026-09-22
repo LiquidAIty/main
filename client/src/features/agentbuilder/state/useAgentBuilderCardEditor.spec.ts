@@ -98,4 +98,37 @@ describe('Card settings and saved Bot wires', () => {
     expect(saved.edges).toEqual(deck.edges);
   });
 
+  it('keeps presentation role metadata separate from prompt authority and clears migrated outputContract', async () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const card = deck.nodes.find(node => node.id === 'card_main_chat')!;
+    card.role = 'Saved presentation role';
+    card.outputContract = 'Legacy output';
+    let saved = deck;
+    const setDeck = vi.fn((update: React.SetStateAction<DeckDocument>) => {
+      saved = typeof update === 'function' ? update(saved) : update;
+    });
+    const persistDeck = vi.fn(async (document: DeckDocument) => { saved = document; });
+    const { result } = renderHook(() => useAgentBuilderCardEditor({
+      deck,
+      selectedCardId: card.id,
+      setDeck,
+      persistDeck,
+      recordDeckWriteReason: vi.fn(),
+    }));
+
+    await act(async () => {
+      await result.current.handleSaveSelectedCardConfig({
+        ...result.current.selectedCardConfig!,
+        role: 'Attempted prompt-driven replacement',
+        prompt_template: '[ROLE]\nRuntime instructions',
+        output_contract: undefined,
+      });
+    });
+
+    const after = saved.nodes.find(node => node.id === card.id)!;
+    expect(after.role).toBe('Saved presentation role');
+    expect(after.prompt).toBe('[ROLE]\nRuntime instructions');
+    expect(after.outputContract).toBeUndefined();
+  });
+
 });

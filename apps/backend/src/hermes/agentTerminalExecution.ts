@@ -69,6 +69,8 @@ function resolveStagedRun(
     throw new Error('agent_terminal_staged_run_invalid');
   }
   const retiredFields = [
+    'systemPrompt',
+    'outputRequirements',
     'builderOperation',
     'agentBuilderOperation',
     'buildTarget',
@@ -145,8 +147,6 @@ export class AgentTerminalExecution {
       await this.cancelStaged(terminalSessionId, 'hermes_turn_cancelled', 'cancelled');
       throw new Error('hermes_turn_cancelled');
     }
-    this.staged.delete(terminalSessionId);
-
     const payload = result.event.payload || {};
     const nativeUsage = payload.usage && typeof payload.usage === 'object'
       ? payload.usage as Record<string, unknown>
@@ -211,6 +211,7 @@ export class AgentTerminalExecution {
         durationMs: Date.now() - staged.started,
       }),
     });
+    this.staged.delete(terminalSessionId);
     return completion;
   }
 
@@ -221,7 +222,6 @@ export class AgentTerminalExecution {
   ): Promise<boolean> {
     const staged = this.staged.get(terminalSessionId);
     if (!staged) return false;
-    this.staged.delete(terminalSessionId);
     await this.request('/domain/runs/finish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -231,6 +231,7 @@ export class AgentTerminalExecution {
         errorSummary: String(errorSummary || 'agent_terminal_staged_turn_cancelled'),
       }),
     });
+    this.staged.delete(terminalSessionId);
     return true;
   }
 

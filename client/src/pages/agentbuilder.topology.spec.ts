@@ -203,12 +203,13 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(knowgraphPrompt).toContain('You are KnowGraph');
     expect(knowgraphPrompt).not.toContain('Team delegation');
     expect(knowgraphPrompt).not.toContain('Team is a capability');
-    expect(knowgraphPrompt).toContain('Before Magnetic');
-    expect(knowgraphPrompt).toContain('After Magnetic');
+    expect(knowgraphPrompt).toContain('Perform sourced research and maintain knowledge and provenance through Graphiti');
+    expect(knowgraphPrompt).toContain('Do not use CBM or become a coding worker');
     expect(byId.get('card_knowgraph')?.title).toBe('KnowGraph');
     expect(knowgraphPrompt).not.toContain('external Hermes agent runtime');
-    expect(knowgraphPrompt).toContain('task ledger entries');
-    expect(knowgraphPrompt).toContain('promote or run existing task ledger entries');
+    expect(knowgraphPrompt).not.toContain('task ledger');
+    expect(knowgraphPrompt).not.toContain('Before Magnetic');
+    expect(knowgraphPrompt).not.toContain('After Magnetic');
     expect(byId.get('card_trading_workbench')?.prompt).not.toContain('optional native Team');
   });
 
@@ -227,6 +228,24 @@ describe('Main / Hermes / graph authority topology', () => {
       targetHandle: 'card-control',
       edgeType: 'flow',
     }));
+  });
+
+  it('seeds each System Card from one concise canonical five-block prompt', () => {
+    const systemCards = new Map([
+      ['card_main_chat', 'prompt_main_chat'],
+      ['builder', 'prompt_builder'],
+      ['card_thinkgraph', 'prompt_thinkgraph'],
+      ['card_knowgraph', 'prompt_knowgraph'],
+    ]);
+    const expectedHeadings = ['ROLE', 'GOAL', 'CONSTRAINTS', 'IO_SCHEMA', 'MEMORY_POLICY'];
+    for (const [cardId, promptTemplateId] of systemCards) {
+      const card = INITIAL_DECK.nodes.find((node) => node.id === cardId)!;
+      const headings = [...card.prompt.matchAll(/^\[([A-Z_]+)\]$/gm)].map((match) => match[1]);
+      expect(headings, cardId).toEqual(expectedHeadings);
+      expect(card.prompt.match(/# LIQUIDAITY_PROMPT_V1/g), cardId).toHaveLength(1);
+      const template = INITIAL_DECK.promptTemplates.find((entry) => entry.id === promptTemplateId);
+      expect(template?.content, cardId).toBe(card.prompt);
+    }
   });
 
   it('keeps broad read discovery separate from explicit write selections', () => {
@@ -257,12 +276,12 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(main?.runtimeOptions?.modelKey).toBe('gpt-5.6-sol');
     expect(main?.runtimeOptions?.providerModelId).toBe('gpt-5.6-sol');
     expect(main?.runtimeOptions?.toolsets ?? []).toEqual([]);
-    expect(main?.prompt).toContain('through message_agent');
-    expect(main?.prompt).toContain('A wire grants outbound authority but never starts work');
-    expect(main?.prompt).toContain('Address the connected Card by its exact saved visible name');
-    expect(main?.prompt).toContain('Do not copy this conversation or Main memory into another Card');
-    expect(main?.prompt).toContain('Use a formal Card Run only when');
-    expect(main?.prompt).toContain('official MCP run_mag_one seam');
+    expect(main?.prompt).toContain('persistent user-facing front door and system orchestrator');
+    expect(main?.prompt).toContain('through message_agent by its exact saved visible name');
+    expect(main?.prompt).toContain('a wire grants outbound authority but never starts work');
+    expect(main?.prompt).toContain('Do not copy the conversation or Main memory into another Card');
+    expect(main?.prompt).toContain('Invoke run_mag_one only once for the exact approved mission');
+    expect(main?.prompt).toContain('Do not use CBM, the full Graphiti catalog, terminal, files, browser, or Kanban');
 
     expect(agentBuilder).toMatchObject({
       title: 'Builder',
@@ -283,9 +302,10 @@ describe('Main / Hermes / graph authority topology', () => {
       modelKey: 'gpt-5.6-sol',
       providerModelId: 'gpt-5.6-sol',
     });
-    expect(agentBuilder?.prompt).toContain('general construction agent');
+    expect(agentBuilder?.prompt).toContain('Build prompts, saved Cards, agent applications');
     expect(agentBuilder?.prompt).toContain('card.create or card.update_configuration with explicit arguments');
-    expect(agentBuilder?.prompt).toContain('Saving a Card and running it are separate actions');
+    expect(agentBuilder?.prompt).toContain('Saving a Card and running a Card are separate actions');
+    expect(agentBuilder?.prompt).toContain('Do not inherit Graphiti or Magnetic orchestration authority');
     expect(agentBuilder?.prompt).not.toMatch(/agentBuilderOperation|agentBuilderGuidance|PLAN\.md|edit mode|create mode/);
 
     expect(thinkgraph).toMatchObject({
@@ -305,7 +325,9 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(thinkgraph?.runtimeOptions?.nativeTools ?? []).toEqual([]);
     expect(thinkgraph?.runtimeOptions?.skills ?? []).toEqual([]);
     expect(thinkgraph?.runtimeOptions?.toolsets ?? []).toEqual([]);
-    expect(thinkgraph?.prompt).toContain('You maintain useful project memory in Engraphis');
+    expect(thinkgraph?.prompt).toContain('Maintain Engraphis project reasoning for focused material from Main');
+    expect(thinkgraph?.prompt).toContain('Do not browse the web, write KnowGraph');
+    expect(thinkgraph?.prompt).toContain('Keep ThinkGraph and KnowGraph separate');
     expect(thinkgraph?.prompt).not.toMatch(/delegate_task|Graph Agent|Steward|Stuart|Team/);
 
     expect(team).toMatchObject({
@@ -358,14 +380,13 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(knowgraph?.runtimeOptions?.skills).toEqual(['grounded-citations']);
     expect(knowgraph?.runtimeOptions?.toolsets ?? []).toEqual(['web']);
     expect(knowgraph?.runtimeOptions?.subagentType).toBe('none');
-    expect(knowgraph?.prompt).toContain('Do not use a repository-writing terminal');
+    expect(knowgraph?.prompt).toContain('Do not use CBM or become a coding worker');
     expect(knowgraph?.prompt).toContain('Do not initiate another saved Card');
-    expect(knowgraph?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only when');
-    expect(knowgraph?.prompt).toContain('Inspect the supplied graph data first');
-    expect(knowgraph?.prompt).toContain('only when Main supplied that graph ID');
+    expect(knowgraph?.prompt).toContain('Use card.load_graph_references and write_mag_one_instructions only to stage');
+    expect(knowgraph?.prompt).toContain('Inspect supplied graph data before researching');
     expect(knowgraph?.prompt).toContain('do not search ThinkGraph');
-    expect(knowgraph?.prompt).toContain('Firecrawl backend');
-    expect(knowgraph?.prompt).toContain('Do not create recursive workers');
+    expect(knowgraph?.prompt).toContain('Preserve sources, URLs, dates, entities, relationships, contradictions, native IDs, and uncertainty');
+    expect(knowgraph?.prompt).toContain('create recursive workers, or execute Magnetic');
 
     expect(magOne).toMatchObject({
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },

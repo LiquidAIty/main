@@ -133,6 +133,9 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
     client = FakeClient()
     calls = []
     projected_events = []
+    soul_marker = "SAVED_SOUL_MARKER_6d3e22"
+    base_instructions = f"{soul_marker}\n\nNative Hermes guidance"
+    dynamic_user_task = "DYNAMIC_USER_TASK_02f74a"
     tool = {
         "type": "function",
         "name": "selected",
@@ -154,7 +157,7 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
         dynamic_tools=[tool],
         tool_executor=execute,
         model="saved-model",
-        instructions="Saved Card prompt",
+        instructions=base_instructions,
         effort="medium",
         on_event=projected_events.append,
     )
@@ -208,7 +211,7 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
             )
 
     client.respond = reply
-    result = session.run_turn("Normal user input", turn_timeout=2)
+    result = session.run_turn(dynamic_user_task, turn_timeout=2)
 
     assert result.error is None
     assert result.projected_messages == []
@@ -226,9 +229,14 @@ def test_dynamic_tool_binding_preserves_card_configuration_and_executes_once():
             "dynamicTools": [tool],
             "model": "saved-model",
             "allowProviderModelFallback": False,
-            "baseInstructions": "Saved Card prompt",
+            "baseInstructions": base_instructions,
         },
     )
+    thread_start = client.requests[0][1]
+    turn_start = client.requests[1][1]
+    assert thread_start["baseInstructions"].count(soul_marker) == 1
+    assert dynamic_user_task not in thread_start["baseInstructions"]
+    assert turn_start["input"] == [{"type": "text", "text": dynamic_user_task}]
     assert client.requests[1][1]["effort"] == "medium"
     assert [method for method, _ in client.requests] == ["thread/start", "turn/start"]
 
