@@ -3887,6 +3887,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
     """Update the existing Run with native aggregate progress only."""
 
     run_id = _required_text(payload.get("runId"), "run_id")
+    native_root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
     native_status = _required_text(payload.get("nativeStatus"), "native_status").lower()
     if native_status not in _HERMES_NATIVE_TASK_STATUSES:
         raise CardDomainError("native_task_status_invalid")
@@ -3910,8 +3911,12 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
     with connect_postgres() as connection, connection.cursor() as cursor:
         cursor.execute(
             """
-            UPDATE ag_catalog.agent_runs SET
-              provider_thread_ref=COALESCE(%s, provider_thread_ref),
+            UPDATE ag_catalog.agent_runs AS run SET
+              provider_thread_ref=CASE
+                WHEN run.runtime_mode='magentic_one'
+                  THEN COALESCE(run.provider_thread_ref, %s)
+                ELSE COALESCE(%s, run.provider_thread_ref)
+              END,
               provider_turn_ref=COALESCE(%s::text, provider_turn_ref),
               native_phase=%s,
               native_task_completed_count=COALESCE(%s, native_task_completed_count),
@@ -3923,22 +3928,39 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
               provider_cached_tokens=COALESCE(%s, provider_cached_tokens),
               provider_reasoning_tokens=COALESCE(%s, provider_reasoning_tokens),
               total_cost_usd=COALESCE(%s, total_cost_usd)
-            WHERE run_id=%s AND state IN ('pending','running')
+            FROM ag_catalog.agent_card_revisions AS revision
+            WHERE run.run_id=%s
+              AND revision.revision_id=run.target_card_revision_id
+              AND run.state IN ('pending','running')
+              AND (
+                run.runtime_mode!='magentic_one'
+                OR (
+                  run.runtime_kind='hermes'
+                  AND revision.card_id='card_magentic'
+                  AND revision.runtime_profile='card_magentic'
+                  AND (run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s)
+                )
+              )
+            RETURNING run.provider_thread_ref
             """,
             (
-                payload.get("nativeRootId"), payload.get("nativeRunId"), native_status,
+                native_root_id, native_root_id,
+                payload.get("nativeRunId"), native_status,
                 counts["tasksCompleted"], counts["tasksTotal"],
                 counts["activeWorkers"], counts["toolCallCount"],
                 counts["providerInputTokens"], counts["providerOutputTokens"],
                 counts["providerCachedTokens"], counts["providerReasoningTokens"],
-                payload.get("totalCostUsd"), run_id,
+                payload.get("totalCostUsd"), run_id, native_root_id,
             ),
         )
-        updated = cursor.rowcount == 1
+        row = cursor.fetchone()
+        effective_native_root_id = row[0] if row is not None else None
+        updated = cursor.rowcount == 1 and effective_native_root_id == native_root_id
     telemetry_written = _observe_run_progress(run_id, native_status, payload) if updated else False
     return {
         "ok": True,
         "runId": run_id,
+        "nativeRootId": effective_native_root_id,
         "updated": updated,
         "telemetryWritten": telemetry_written,
     }

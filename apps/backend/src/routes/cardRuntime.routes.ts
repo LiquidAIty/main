@@ -29,7 +29,10 @@ import {
   requestPythonRailsJson,
 } from '../services/pythonRailsClient';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
-import { internalMcpBridgeSecretAuthorized } from '../services/mcp/internalMcpAuth';
+import {
+  internalMcpBridgeSecretAuthorized,
+  type InternalMcpPrincipal,
+} from '../services/mcp/internalMcpAuth';
 import { listConfiguredModelOptions } from '../llm/models.config';
 import {
   HERMES_KANBAN_TASK_STATUSES,
@@ -77,6 +80,8 @@ type PreparedMainCliRun = {
   cardId: string;
   driverSource: RemoteMainDriverSource;
   prepared: any;
+  savedDeck: any;
+  savedCard: any;
 };
 
 type AddressableAgent = {
@@ -242,6 +247,92 @@ async function nativeMainHistorySeed(
   }
 }
 
+export function materializerReadPrincipalForSavedCard(args: {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  conversationId?: string;
+}, card: {
+  runtimeOptions?: { tools?: unknown; mcpConnectionIds?: unknown } | null;
+} | undefined): InternalMcpPrincipal {
+  const savedTools = Array.isArray(card?.runtimeOptions?.tools)
+    ? card.runtimeOptions.tools
+    : [];
+  const grantedTools = [...new Set(savedTools
+    .filter((name): name is string => typeof name === 'string')
+    .map((name) => name.trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  const savedConnections = Array.isArray(card?.runtimeOptions?.mcpConnectionIds)
+    ? card.runtimeOptions.mcpConnectionIds
+    : [];
+  const grantedConnections = [...new Set(savedConnections
+    .filter((name): name is string => typeof name === 'string')
+    .map((name) => name.trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right));
+  return {
+    kind: 'materializer-read',
+    projectId: args.projectId,
+    deckId: args.deckId,
+    callerCardId: args.cardId,
+    ...(args.conversationId ? { conversationId: args.conversationId } : {}),
+    grantedTools,
+    grantedConnections,
+  };
+}
+
+async function readSavedCardRunCatalog(args: {
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  conversationId?: string;
+}) {
+  const { deck } = await getDeckDocument(args.projectId, args.deckId);
+  const card = deck?.nodes.find((node) => node.id === args.cardId);
+  const catalog = await readPythonAgentMcpCatalog(
+    materializerReadPrincipalForSavedCard(args, card),
+  );
+  return { catalog, deck, card };
+}
+
+function assertPreparedSavedCardSnapshot(prepared: any, savedCard: any): void {
+  const savedRevisionId = String(savedCard?._cardRevisionId || '').trim();
+  const preparedRevisionId = String(prepared?.cardRevisionId || '').trim();
+  if (!savedCard || !savedRevisionId || preparedRevisionId !== savedRevisionId) {
+    throw new Error('card_revision_changed');
+  }
+  const savedRevisionSha256 = String(savedCard?._cardRevisionSha256 || '').trim();
+  const preparedRevisionSha256 = String(prepared?.cardRevisionSha256 || '').trim();
+  if (savedRevisionSha256 && preparedRevisionSha256 !== savedRevisionSha256) {
+    throw new Error('card_revision_changed');
+  }
+}
+
+async function assertPreparedSavedCardSnapshotOrSettle(
+  prepared: any,
+  savedCard: any,
+): Promise<void> {
+  try {
+    assertPreparedSavedCardSnapshot(prepared, savedCard);
+  } catch (error) {
+    const runId = String(prepared?.runId || '').trim();
+    if (runId && prepared?.rejoined !== true) {
+      await requestPythonRailsJson('/domain/runs/finish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId,
+          state: 'failed',
+          errorCode: 'card_revision_changed',
+          errorSummary: 'card_revision_changed',
+        }),
+      }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 async function prepareSavedCardRun(args: {
   projectId: string;
   deckId: string;
@@ -255,9 +346,15 @@ async function prepareSavedCardRun(args: {
   dataAnchors?: unknown[];
   images?: unknown[];
 }): Promise<any> {
-  const discoveredToolCatalog = await readPythonAgentMcpCatalog();
+  const saved = await readSavedCardRunCatalog(args);
+  const snapshotRevisionId = String(saved.card?._cardRevisionId || '').trim();
+  if (!saved.card || !snapshotRevisionId) throw new Error('card_revision_changed');
+  if (args.cardRevisionId && args.cardRevisionId !== snapshotRevisionId) {
+    throw new Error('card_revision_changed');
+  }
+  const discoveredToolCatalog = saved.catalog;
   const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
-  return requestPythonRailsJson('/domain/runs/begin', {
+  const prepared = await requestPythonRailsJson('/domain/runs/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -270,7 +367,7 @@ async function prepareSavedCardRun(args: {
       conversationId: args.conversationId,
       dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
       images: Array.isArray(args.images) ? args.images : [],
-      cardRevisionId: args.cardRevisionId || undefined,
+      cardRevisionId: snapshotRevisionId,
       runId: args.correlationId,
       correlationId: args.correlationId,
       discoveredTools: discoveredToolCatalog.tools,
@@ -279,6 +376,8 @@ async function prepareSavedCardRun(args: {
       configuredModels: listConfiguredModelOptions(openaiDefault),
     }),
   });
+  await assertPreparedSavedCardSnapshotOrSettle(prepared, saved.card);
+  return { prepared, savedDeck: saved.deck, savedCard: saved.card };
 }
 
 function internalMcpBridgeAuthorized(value: unknown): boolean {
@@ -307,6 +406,7 @@ async function resolveCardRuntimeOwner(
 async function prepareMainCliRun(args: {
   projectId: string;
   deckId: string;
+  cardId: string;
   conversationId: string;
   message: string;
   driverSource: RemoteMainDriverSource;
@@ -315,7 +415,10 @@ async function prepareMainCliRun(args: {
   sharedConversation?: Array<Record<string, string>>;
 }): Promise<PreparedMainCliRun> {
   const runId = String(args.runId || `req_${randomUUID().slice(0, 8)}`);
-  const discoveredToolCatalog = await readPythonAgentMcpCatalog();
+  const saved = await readSavedCardRunCatalog(args);
+  const snapshotRevisionId = String(saved.card?._cardRevisionId || '').trim();
+  if (!saved.card || !snapshotRevisionId) throw new Error('card_revision_changed');
+  const discoveredToolCatalog = saved.catalog;
   const prepared: any = await requestPythonRailsJson('/domain/main/runs/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -329,6 +432,7 @@ async function prepareMainCliRun(args: {
       correlationId: runId,
       dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
       sharedConversation: Array.isArray(args.sharedConversation) ? args.sharedConversation : [],
+      cardRevisionId: snapshotRevisionId,
       discoveredTools: discoveredToolCatalog.tools,
       discoveredToolCatalogState: discoveredToolCatalog.state,
       unavailableToolCatalogFamilies: discoveredToolCatalog.unavailableFamilies,
@@ -341,6 +445,7 @@ async function prepareMainCliRun(args: {
   ) {
     throw new Error('main_hermes_card_not_runnable');
   }
+  await assertPreparedSavedCardSnapshotOrSettle(prepared, saved.card);
   const boundPrepared = { ...prepared, runId };
   return {
     projectId: args.projectId,
@@ -350,6 +455,8 @@ async function prepareMainCliRun(args: {
     cardId: String(boundPrepared.hermesTransport.cardIdentity.cardId || ''),
     driverSource: args.driverSource,
     prepared: boundPrepared,
+    savedDeck: saved.deck,
+    savedCard: saved.card,
   };
 }
 
@@ -417,6 +524,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
     const run = await prepareMainCliRun({
       projectId,
       deckId,
+      cardId: mainCardId,
       conversationId,
       message,
       driverSource: 'external_plugin',
@@ -441,6 +549,8 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       conversationId,
       runId: run.runId,
       prepared: run.prepared,
+      savedDeck: run.savedDeck,
+      savedCard: run.savedCard,
     });
     return res.json({
       ok: true,
@@ -538,6 +648,7 @@ type MagenticExecutionStatus = {
   effectiveProvider?: string | null;
   providerApiMode?: string | null;
   model?: string | null;
+  outerRunBound?: boolean;
   finalResult?: string;
   error?: string;
   nativeTasks?: unknown;
@@ -607,6 +718,94 @@ function requireMagenticTaskProjections(
         endedAt: endedAt as string | number | null,
       };
     }
+    const workerSessionId = task.workerSessionId === null
+      ? null
+      : typeof task.workerSessionId === 'string'
+        && task.workerSessionId === task.workerSessionId.trim()
+        && task.workerSessionId.length > 0
+        && task.workerSessionId.length <= 512
+        ? task.workerSessionId
+        : undefined;
+    const handoffSummary = task.handoffSummary === null
+      ? null
+      : typeof task.handoffSummary === 'string'
+        && task.handoffSummary.trim().length > 0
+        && task.handoffSummary.length <= 2_000
+        ? task.handoffSummary
+        : undefined;
+    const rawReceipts = Array.isArray(task.toolReceipts) && task.toolReceipts.length <= 64
+      ? task.toolReceipts
+      : null;
+    const receiptIds = new Set<string>();
+    const toolReceipts = rawReceipts?.map((candidateReceipt) => {
+      if (!candidateReceipt || typeof candidateReceipt !== 'object'
+        || Array.isArray(candidateReceipt)) {
+        throw new Error('magentic_execution_tasks_invalid');
+      }
+      const receipt = candidateReceipt as Record<string, unknown>;
+      const toolCallId = typeof receipt.toolCallId === 'string' ? receipt.toolCallId : '';
+      const toolName = typeof receipt.toolName === 'string' ? receipt.toolName : '';
+      const state = receipt.state;
+      const resultPreview = receipt.resultPreview;
+      const rawExecutionReceipt = receipt.executionReceipt;
+      let executionReceipt: {
+        schema: 'agent-runtime.execution-receipt.v1';
+        tool: string;
+        correlationId: string;
+        state: 'completed' | 'failed';
+      } | null = null;
+      if (rawExecutionReceipt !== null) {
+        if (!rawExecutionReceipt || typeof rawExecutionReceipt !== 'object'
+          || Array.isArray(rawExecutionReceipt)) {
+          throw new Error('magentic_execution_tasks_invalid');
+        }
+        const exactReceipt = rawExecutionReceipt as Record<string, unknown>;
+        const executionTool = typeof exactReceipt.tool === 'string' ? exactReceipt.tool : '';
+        const correlationId = typeof exactReceipt.correlationId === 'string'
+          ? exactReceipt.correlationId : '';
+        if (
+          Object.keys(exactReceipt).sort().join('\0')
+            !== 'correlationId\0schema\0state\0tool'
+          || exactReceipt.schema !== 'agent-runtime.execution-receipt.v1'
+          || !executionTool || executionTool !== executionTool.trim()
+          || executionTool.length > 128
+          || !correlationId || correlationId !== correlationId.trim()
+          || correlationId.length > 512
+          || (exactReceipt.state !== 'completed' && exactReceipt.state !== 'failed')
+        ) throw new Error('magentic_execution_tasks_invalid');
+        executionReceipt = {
+          schema: 'agent-runtime.execution-receipt.v1',
+          tool: executionTool,
+          correlationId,
+          state: exactReceipt.state,
+        };
+      }
+      if (
+        !toolCallId || toolCallId !== toolCallId.trim() || toolCallId.length > 512
+        || !toolName || toolName !== toolName.trim() || toolName.length > 512
+        || receiptIds.has(toolCallId)
+        || (state !== null && state !== 'returned' && state !== 'failed')
+        || typeof resultPreview !== 'string' || resultPreview.length > 1_000
+      ) throw new Error('magentic_execution_tasks_invalid');
+      receiptIds.add(toolCallId);
+      return {
+        toolCallId,
+        toolName,
+        state: state as 'returned' | 'failed' | null,
+        resultPreview,
+        executionReceipt,
+      };
+    });
+    const toolReceiptsComplete = typeof task.toolReceiptsComplete === 'boolean'
+      ? task.toolReceiptsComplete
+      : undefined;
+    if (
+      workerSessionId === undefined
+      || handoffSummary === undefined
+      || !toolReceipts
+      || toolReceiptsComplete === undefined
+      || (workerSessionId === null && (toolReceipts.length > 0 || toolReceiptsComplete))
+    ) throw new Error('magentic_execution_tasks_invalid');
     return {
       taskId,
       title,
@@ -615,6 +814,10 @@ function requireMagenticTaskProjections(
       dependencyIds: dependencyIds as string[],
       latestAttempt,
       resultAvailable: task.resultAvailable,
+      workerSessionId,
+      handoffSummary,
+      toolReceipts,
+      toolReceiptsComplete,
     };
   });
   if (!taskIds.has(nativeRootId)) throw new Error('magentic_execution_tasks_invalid');
@@ -626,18 +829,25 @@ async function ensureMagenticAgents(
   projectId: string,
   deckId: string,
   prepared: any,
-): Promise<void> {
+  savedDeck?: any,
+): Promise<Array<{
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  configurationFingerprint: string;
+}>> {
   const execution = prepared?.magenticExecution;
   const workers = Array.isArray(execution?.workers) ? execution.workers : [];
   if (!execution || workers.length === 0) throw new Error('magentic_execution_workers_missing');
-  const { deck } = await getDeckDocument(projectId, deckId);
+  const loaded = savedDeck ? { deck: savedDeck } : await getDeckDocument(projectId, deckId);
+  const deck = loaded.deck;
   if (!deck) throw new Error('magentic_execution_deck_missing');
 
   const orchestrator = execution.orchestrator;
   const orchestratorCardId = String(orchestrator?.cardId || '').trim();
   const orchestratorRevisionId = String(orchestrator?.cardRevisionId || '').trim();
   const orchestratorIdentity = String(orchestrator?.nativeIdentity || '').trim();
-  const orchestratorCard = deck.nodes.find((candidate) => candidate.id === orchestratorCardId);
+  const orchestratorCard = deck.nodes.find((candidate: any) => candidate.id === orchestratorCardId);
   if (!orchestratorCardId || !orchestratorRevisionId || !orchestratorIdentity
     || !orchestratorCard || orchestratorCard.runtime.kind !== 'hermes'
     || orchestratorCard.runtime.mode !== 'magentic_one') {
@@ -669,6 +879,12 @@ async function ensureMagenticAgents(
   }
 
   const seen = new Set<string>();
+  const authorities: Array<{
+    cardId: string;
+    cardRevisionId: string;
+    profile: string;
+    configurationFingerprint: string;
+  }> = [];
   for (const worker of workers) {
     const cardId = String(worker?.cardId || '').trim();
     const revisionId = String(worker?.cardRevisionId || '').trim();
@@ -680,7 +896,7 @@ async function ensureMagenticAgents(
       throw new Error('magentic_execution_team_identity_invalid');
     }
     seen.add(nativeIdentity);
-    const card = deck.nodes.find((candidate) => candidate.id === cardId);
+    const card = deck.nodes.find((candidate: any) => candidate.id === cardId);
     if (!card || card.runtime.kind !== 'hermes') {
       throw new Error(`magentic_execution_worker_card_invalid:${cardId}`);
     }
@@ -700,12 +916,21 @@ async function ensureMagenticAgents(
         materializeTaskProfile: true,
       },
     );
+    const authority = agentTerminalManager.magenticCardToolAuthority(owner);
+    if (
+      authority.cardId !== cardId
+      || authority.cardRevisionId !== revisionId
+      || authority.profile !== nativeIdentity
+      || !/^[a-f0-9]{64}$/.test(authority.configurationFingerprint)
+    ) throw new Error(`magentic_execution_worker_authority_changed:${cardId}`);
+    authorities.push(authority);
   }
+  return authorities;
 }
 
 async function writeMagenticProgress(runId: string, status: MagenticExecutionStatus): Promise<void> {
   if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status.nativeStatus)) return;
-  await requestPythonRailsJson('/domain/runs/progress', {
+  const result = await requestPythonRailsJson('/domain/runs/progress', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -713,7 +938,10 @@ async function writeMagenticProgress(runId: string, status: MagenticExecutionSta
       nativeRootId: status.nativeRootId,
       nativeStatus: status.nativeStatus,
     }),
-  });
+  }) as Record<string, unknown>;
+  if (result?.ok !== true || result.runId !== runId || result.updated !== true) {
+    throw new Error('magentic_outer_run_progress_not_bound');
+  }
 }
 
 async function readMagenticExecution(nativeRootId: string): Promise<MagenticExecutionStatus> {
@@ -735,11 +963,14 @@ async function executePreparedMagenticRun(args: {
   runId: string;
   senderCardId: string;
   prepared: any;
+  savedDeck?: any;
+  savedCard?: any;
   onAccepted: (status: MagenticExecutionStatus) => void;
   onSubmitted: () => void;
 }): Promise<MagenticExecutionStatus> {
-  await ensureMagenticAgents(
-    args.req, args.projectId, args.deckId, args.prepared,
+  assertPreparedSavedCardSnapshot(args.prepared, args.savedCard);
+  const workerAuthorities = await ensureMagenticAgents(
+    args.req, args.projectId, args.deckId, args.prepared, args.savedDeck,
   );
   const sender = args.senderCardId
     ? agentTerminalManager.findCard(args.projectId, args.deckId, args.senderCardId)
@@ -749,6 +980,7 @@ async function executePreparedMagenticRun(args: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       ...args.prepared.magenticExecution,
+      workerAuthorities,
       ...(sender ? {
         notifySession: {
           sessionKey: sender.state.storedSessionId,
@@ -758,7 +990,9 @@ async function executePreparedMagenticRun(args: {
     }),
   }) as MagenticExecutionStatus;
   const nativeRootId = String(submitted?.nativeRootId || '').trim();
-  if (!submitted?.ok || !nativeRootId) throw new Error('magentic_execution_submit_invalid');
+  if (!submitted?.ok || !nativeRootId || submitted.outerRunBound !== true) {
+    throw new Error('magentic_execution_submit_invalid');
+  }
   const normalizedStatus: MagenticExecutionStatus = {
     ...submitted,
     nativeRootId,
@@ -768,8 +1002,9 @@ async function executePreparedMagenticRun(args: {
   if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(normalizedStatus.nativeStatus)) {
     throw new Error('magentic_execution_native_status_invalid');
   }
-  // Acceptance and outer-Run progress binding are separate facts. Expose the
-  // native root first so a caller can stop it if the progress write fails.
+  // Python stages the native root until the first outer-Run binding succeeds.
+  // This second exact write is a readback/continuity check; expose the root
+  // first so the caller can stop it if that check fails.
   args.onAccepted(normalizedStatus);
   await writeMagenticProgress(args.runId, normalizedStatus);
   args.onSubmitted();
@@ -1044,6 +1279,8 @@ async function executePreparedGatewayCardRun(args: {
   conversationId: string;
   runId: string;
   prepared: any;
+  savedDeck?: any;
+  savedCard?: any;
   onEvent?: (event: AgentTerminalGatewayEvent) => void;
   onBound?: (terminal: { sessionId: string; nativeSessionId: string; profile: string }) => void;
   onSubmitted?: () => void;
@@ -1053,9 +1290,14 @@ async function executePreparedGatewayCardRun(args: {
   let terminalSessionId = '';
   let staged = false;
   try {
-    const { deck } = await getDeckDocument(args.owner.projectId, args.owner.deckId);
-    const card = deck?.nodes.find((candidate) => candidate.id === args.owner.cardId);
+    const loaded = args.savedDeck
+      ? { deck: args.savedDeck }
+      : await getDeckDocument(args.owner.projectId, args.owner.deckId);
+    const deck = loaded.deck;
+    const card = args.savedCard
+      || deck?.nodes.find((candidate: any) => candidate.id === args.owner.cardId);
     if (!deck || !card) throw new Error('agent_terminal_card_not_found');
+    assertPreparedSavedCardSnapshot(args.prepared, card);
     const profile = requireAgentTerminalCard(card, deck);
     const existing = agentTerminalManager.find(args.owner);
     const terminal = args.attachTui
@@ -1331,11 +1573,12 @@ router.post('/run', async (req, res) => {
 
   try {
     const cardRevisionId = String(body.cardRevisionId || '').trim();
-    const prepared = await prepareSavedCardRun({
+    const savedPreparation = await prepareSavedCardRun({
       ...transientRequest,
       cardRevisionId: cardRevisionId || undefined,
       correlationId,
     }) as any;
+    const prepared = savedPreparation.prepared;
 
     const runId = String(prepared.runId || correlationId).trim();
     if (prepared.rejoined) {
@@ -1388,6 +1631,8 @@ router.post('/run', async (req, res) => {
           conversationId,
           runId,
           prepared,
+          savedDeck: savedPreparation.savedDeck,
+          savedCard: savedPreparation.savedCard,
           onSubmitted: acceptBackground,
         });
         output = execution.text;
@@ -1411,6 +1656,8 @@ router.post('/run', async (req, res) => {
           runId,
           senderCardId,
           prepared,
+          savedDeck: savedPreparation.savedDeck,
+          savedCard: savedPreparation.savedCard,
           onAccepted: (status) => {
             magenticAcceptance.status = status;
           },
@@ -1909,7 +2156,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
   let run: PreparedMainCliRun;
   try {
     if (directAddressed) {
-      const prepared = await prepareSavedCardRun({
+      const savedPreparation = await prepareSavedCardRun({
         projectId,
         deckId,
         cardId: target.cardId,
@@ -1921,6 +2168,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
         images: Array.isArray(req.body?.images) ? req.body.images : [],
       });
+      const prepared = savedPreparation.prepared;
       const exactHermesIdentity = prepared.runtimeOwner === 'hermes'
         && String(prepared.hermesTransport?.cardIdentity?.cardId || '') === target.cardId
         && String(prepared.hermesTransport?.request?.runtime?.profile || '') === target.profile
@@ -1944,11 +2192,14 @@ mainRoutes.post('/session/chat', async (req, res) => {
         cardId: target.cardId,
         driverSource: 'internal_chat',
         prepared,
+        savedDeck: savedPreparation.savedDeck,
+        savedCard: savedPreparation.savedCard,
       };
     } else {
       run = await prepareMainCliRun({
         projectId,
         deckId,
+        cardId: authority.main.cardId,
         conversationId,
         message,
         driverSource: 'internal_chat',
@@ -2028,6 +2279,8 @@ mainRoutes.post('/session/chat', async (req, res) => {
         runId: run.runId,
         senderCardId: authority.main.cardId,
         prepared: run.prepared,
+        savedDeck: run.savedDeck,
+        savedCard: run.savedCard,
         onAccepted: (accepted) => {
           magenticAcceptance.status = accepted;
         },
@@ -2062,6 +2315,8 @@ mainRoutes.post('/session/chat', async (req, res) => {
         conversationId,
         runId: run.runId,
         prepared: run.prepared,
+        savedDeck: run.savedDeck,
+        savedCard: run.savedCard,
         attachTui: directAddressed,
         surface: directAddressed ? 'card-shared-chat' : undefined,
         onBound: (terminal) => {

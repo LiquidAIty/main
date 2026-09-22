@@ -25,6 +25,12 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 VISIBLE_CARD_TARGETS_SECTION = "card-tools.visible-card-targets"
 VISIBLE_CARD_TARGETS_MAX_CHARS = 4_000
 _VISIBLE_CARD_TITLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", re.ASCII)
+_WORKER_AUTH_ENV = (
+    "HERMES_KANBAN_TASK",
+    "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_CLAIM_LOCK",
+    "HERMES_PROFILE",
+)
 
 
 def _json(value: Any) -> str:
@@ -114,37 +120,83 @@ def _load_tools(config_path: Path | None = None) -> list[dict[str, Any]]:
     return tools
 
 
+def _signed_envelope(secret: str, payload: str) -> dict[str, str]:
+    secret_bytes = secret.encode("utf-8")
+    return {
+        "keyId": hashlib.sha256(secret_bytes).hexdigest(),
+        "payload": payload,
+        "signature": hmac.new(
+            secret_bytes,
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest(),
+    }
+
+
+def _worker_envelope(
+    hermes_name: str,
+    args: dict[str, Any],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Build the detached native worker envelope, or report its exact env failure.
+
+    A dispatcher claim is an all-or-nothing capability.  Never fall back to the
+    persistent Gateway credential when only part of the native worker identity is
+    present, and never put that Gateway credential or a Bot Chat session id in the
+    worker payload.
+    """
+    values = {name: os.getenv(name, "").strip() for name in _WORKER_AUTH_ENV}
+    present = {name for name, value in values.items() if value}
+    if not present:
+        return None, None
+    if len(present) != len(_WORKER_AUTH_ENV):
+        return None, "card_tool_worker_identity_incomplete"
+    try:
+        source_run_id = int(values["HERMES_KANBAN_RUN_ID"])
+    except ValueError:
+        return None, "card_tool_worker_identity_invalid"
+    if source_run_id <= 0:
+        return None, "card_tool_worker_identity_invalid"
+    payload = _json({
+        "version": 2,
+        "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
+        "nonce": secrets.token_hex(16),
+        "sourceTaskId": values["HERMES_KANBAN_TASK"],
+        "sourceTaskRunId": source_run_id,
+        "sourceProfile": values["HERMES_PROFILE"],
+        "tool": hermes_name,
+        "arguments": args,
+    })
+    return _signed_envelope(values["HERMES_KANBAN_CLAIM_LOCK"], payload), None
+
+
 def _invoke(hermes_name: str, args: Any, *, task_id: str) -> str:
     if os.getenv("CARD_TOOLS_MANAGED") != "1":
         return _failure("managed_card_runtime_required")
     if not isinstance(args, dict):
         return _failure("card_tool_arguments_invalid")
-    token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
     host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
-    if not token:
-        return _failure("card_tool_gateway_credential_missing")
     if not host_url:
         return _failure("card_tool_host_url_missing")
-    if not task_id:
-        return _failure("card_tool_runtime_identity_missing")
-    payload = _json({
-        "version": 1,
-        "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
-        "nonce": secrets.token_hex(16),
-        "sourceStoredSessionId": task_id,
-        "tool": hermes_name,
-        "arguments": args,
-    })
-    token_bytes = token.encode("utf-8")
-    envelope = {
-        "keyId": hashlib.sha256(token_bytes).hexdigest(),
-        "payload": payload,
-        "signature": hmac.new(
-            token_bytes,
-            payload.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest(),
-    }
+    worker_envelope, worker_error = _worker_envelope(hermes_name, args)
+    if worker_error:
+        return _failure(worker_error)
+    if worker_envelope is not None:
+        envelope = worker_envelope
+    else:
+        token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
+        if not token:
+            return _failure("card_tool_gateway_credential_missing")
+        if not task_id:
+            return _failure("card_tool_runtime_identity_missing")
+        payload = _json({
+            "version": 1,
+            "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
+            "nonce": secrets.token_hex(16),
+            "sourceStoredSessionId": task_id,
+            "tool": hermes_name,
+            "arguments": args,
+        })
+        envelope = _signed_envelope(token, payload)
     try:
         status, response = _post_once(host_url, envelope)
     except Exception:

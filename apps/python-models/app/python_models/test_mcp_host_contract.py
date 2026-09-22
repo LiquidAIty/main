@@ -689,6 +689,12 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
             annotations={"readOnlyHint": True},
         ),
         mcp_host.Tool(
+            name="search_graph",
+            description="Search current source.",
+            inputSchema={"type": "object"},
+            annotations={"readOnlyHint": True},
+        ),
+        mcp_host.Tool(
             name="index_repository",
             description="Update the native index.",
             inputSchema={"type": "object"},
@@ -703,6 +709,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
         "projectId": "project-1",
         "deckId": "deck_builder",
         "callerCardId": "card-helper",
+        "grantedTools": ["cbm.get_code_snippet", "cbm.index_repository"],
     }
     token = jwt.encode({
         "iss": "liquidaity-runtime",
@@ -728,6 +735,7 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
     monkeypatch.setattr(mcp_host, "get_access_token", lambda: verified)
     assert mcp_host._authenticated_main_context() is None
     assert mcp_host._request_tool_is_allowed("cbm.get_code_snippet") is True
+    assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
     assert mcp_host._request_tool_is_allowed("cbm.index_repository") is False
     assert mcp_host._request_tool_is_allowed("run_mag_one") is False
 
@@ -747,6 +755,12 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
                 annotations={"readOnlyHint": True},
             ),
             mcp_host.Tool(
+                name="search_graph",
+                description="ungranted read",
+                inputSchema={"type": "object"},
+                annotations={"readOnlyHint": True},
+            ),
+            mcp_host.Tool(
                 name="index_repository",
                 description="write",
                 inputSchema={"type": "object"},
@@ -760,8 +774,95 @@ def test_materializer_principal_can_only_use_live_catalog_reads(
         lambda: asyncio.sleep(0, result=[]),
     )
     assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
-        "canvas.inspect", "cbm.get_code_snippet", "cbm.index_repository",
+        "canvas.inspect", "cbm.get_code_snippet", "cbm.search_graph",
+        "cbm.index_repository",
     ]
+
+    connection_only_principal = {
+        "kind": "materializer-read",
+        "projectId": "project-1",
+        "deckId": "deck_builder",
+        "callerCardId": "card-helper",
+        "grantedTools": [],
+        "grantedConnections": ["cbm"],
+    }
+    connection_only_token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "materializer-read:card-helper",
+        "iat": now,
+        "exp": now + 60,
+        "principal": connection_only_principal,
+    }, secret, algorithm="HS256")
+    connection_only = verifier._verify_sync(connection_only_token)
+    assert connection_only is not None
+    monkeypatch.setattr(mcp_host, "get_access_token", lambda: connection_only)
+    assert mcp_host._requested_native_catalog_families() == ("cbm",)
+    assert [tool.name for tool in asyncio.run(mcp_host.list_tools())] == [
+        "canvas.inspect", "cbm.get_code_snippet", "cbm.search_graph",
+        "cbm.index_repository",
+    ]
+    assert mcp_host._request_tool_is_allowed("cbm.get_code_snippet") is False
+    assert mcp_host._request_tool_is_allowed("cbm.search_graph") is False
+
+    graphiti_principal = {
+        **connection_only_principal,
+        "callerCardId": "card_knowgraph",
+        "grantedConnections": ["graphiti"],
+    }
+    graphiti_token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "materializer-read:card_knowgraph",
+        "iat": now,
+        "exp": now + 60,
+        "principal": graphiti_principal,
+    }, secret, algorithm="HS256")
+    graphiti_connection_only = verifier._verify_sync(graphiti_token)
+    assert graphiti_connection_only is not None
+    monkeypatch.setattr(
+        mcp_host, "get_access_token", lambda: graphiti_connection_only,
+    )
+    assert mcp_host._requested_native_catalog_families() == ("graphiti",)
+    assert mcp_host._request_tool_is_allowed("graphiti.search_nodes") is False
+
+
+@pytest.mark.parametrize("connections", ["cbm", [""], [1], [None]])
+def test_materializer_principal_rejects_malformed_connection_grants(
+    monkeypatch, connections,
+):
+    import jwt
+    import mcp_host
+
+    secret = "0123456789abcdef0123456789abcdef"
+    now = int(time.time())
+    token = jwt.encode({
+        "iss": "liquidaity-runtime",
+        "aud": "liquidaity-internal-mcp",
+        "sub": "materializer-read:builder",
+        "iat": now,
+        "exp": now + 60,
+        "principal": {
+            "kind": "materializer-read",
+            "projectId": "project-1",
+            "deckId": "deck_builder",
+            "callerCardId": "builder",
+            "grantedTools": [],
+            "grantedConnections": connections,
+        },
+    }, secret, algorithm="HS256")
+    monkeypatch.setattr(mcp_host, "INTERNAL_MCP_SECRET", secret)
+    verifier = mcp_host.Auth0TokenVerifier(
+        mcp_host.OAuthConfig(
+            resource_url="https://example.ngrok.dev/mcp",
+            issuer_url="https://auth.example/",
+            audience="https://example.ngrok.dev/mcp",
+            client_id="chatgpt-client",
+            required_scope="liquidaity.main",
+        ),
+        jwk_client=SimpleNamespace(),
+    )
+    assert verifier._verify_sync(token) is None
 
 
 def test_materializer_native_reads_keep_project_scope_without_a_fake_run(monkeypatch):
@@ -1940,7 +2041,18 @@ def test_base_catalog_is_startup_safe_and_authorized_native_catalog_preserves_me
         for principal, expected in (
             (None, base_expected_names),
             ({"kind": "catalog-reader"}, base_expected_names),
-            ({"kind": "materializer-read"}, expected_names),
+            ({"kind": "materializer-read", "callerCardId": "builder",
+              "grantedTools": ["cbm.search_graph"]}, cbm_expected_names),
+            ({"kind": "materializer-read", "callerCardId": "builder",
+              "grantedTools": [], "grantedConnections": ["cbm"]}, cbm_expected_names),
+            ({"kind": "materializer-read", "callerCardId": "card_knowgraph",
+              "grantedTools": ["graphiti.search_nodes"]}, graphiti_expected_names),
+            ({"kind": "materializer-read", "callerCardId": "card_knowgraph",
+              "grantedTools": [], "grantedConnections": ["graphiti"]}, graphiti_expected_names),
+            ({"kind": "materializer-read", "callerCardId": "card_main_chat",
+              "grantedTools": []}, base_expected_names),
+            ({"kind": "materializer-read", "callerCardId": "card_thinkgraph",
+              "grantedTools": ["engraphis_recall_context"]}, base_expected_names),
             ({"kind": "card-runtime", "grantedTools": [], "presentedTools": []}, base_expected_names),
             ({"kind": "card-runtime", "grantedTools": ["cbm.search_graph"],
               "presentedTools": ["cbm.search_graph"]}, cbm_expected_names),

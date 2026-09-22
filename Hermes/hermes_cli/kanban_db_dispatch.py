@@ -2543,6 +2543,11 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     finally:
         if secret_token is not None:
             reset_secret_scope(secret_token)
+    # The persistent Card Gateway bearer is process/session authority, never a
+    # detached worker credential.  Remove it explicitly even outside multiplex,
+    # where build_subprocess_env intentionally preserves the caller's base env.
+    # Workers retain their native task/run/claim capability below.
+    env.pop("HERMES_DASHBOARD_SESSION_TOKEN", None)
     # The dispatcher is detached from every conversation; its worker must never
     # inherit routing mirrored by a previous gateway turn.
     from gateway.session_context import _VAR_MAP

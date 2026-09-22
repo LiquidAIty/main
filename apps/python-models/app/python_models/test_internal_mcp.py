@@ -38,6 +38,7 @@ def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch
         project_id="project-1",
         deck_id="deck_builder",
         card_id="card-helper",
+        granted_tools=["cbm.search_graph", "cbm.search_graph"],
     )
     claims = jwt.decode(
         token,
@@ -51,6 +52,7 @@ def test_materializer_read_token_has_no_fake_run_and_expires_quickly(monkeypatch
         "projectId": "project-1",
         "deckId": "deck_builder",
         "callerCardId": "card-helper",
+        "grantedTools": ["cbm.search_graph"],
     }
     assert claims["exp"] - claims["iat"] == 60
     assert "runId" not in claims["principal"]
@@ -61,11 +63,20 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
         "LIQUIDAITY_INTERNAL_MCP_SECRET",
         "0123456789abcdef0123456789abcdef",
     )
-    observed = {"sessions": 0, "calls": []}
+    observed = {"sessions": 0, "calls": [], "principals": []}
 
     class HttpClient:
         def __init__(self, *, headers, timeout):
-            assert str(headers["Authorization"]).startswith("Bearer ")
+            authorization = str(headers["Authorization"])
+            assert authorization.startswith("Bearer ")
+            claims = jwt.decode(
+                authorization.removeprefix("Bearer "),
+                "0123456789abcdef0123456789abcdef",
+                algorithms=["HS256"],
+                issuer="liquidaity-runtime",
+                audience="liquidaity-internal-mcp",
+            )
+            observed["principals"].append(claims["principal"])
             assert timeout.connect == 30.0
 
         async def __aenter__(self):
@@ -122,6 +133,9 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
     assert [name for name, _args in observed["calls"]] == [
         "cbm.index_status", "cbm.get_code_snippet",
     ]
+    assert observed["principals"][0]["grantedTools"] == [
+        "cbm.get_code_snippet", "cbm.index_status",
+    ]
     try:
         internal_mcp.call_read_tools_via_mcp(
             project_id="project-1",
@@ -134,6 +148,7 @@ def test_materializer_read_client_reuses_one_official_session_and_rejects_writes
     else:
         raise AssertionError("write tool was accepted by the authoritative MCP host")
     assert observed["calls"][-1][0] == "cbm.index_repository"
+    assert observed["principals"][-1]["grantedTools"] == ["cbm.index_repository"]
 
 
 def test_preload_deadline_preserves_successful_reads_and_cancels_slow_source(monkeypatch):

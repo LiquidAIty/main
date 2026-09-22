@@ -24,12 +24,6 @@ import type { AgentTerminalOwner } from './agentTerminal';
 export const HERMES_CARD_TOOLS_PLUGIN_KEY = 'card-tools';
 export const HERMES_CARD_TOOLS_TOOLSET = 'card-tools';
 
-const MANAGED_SYSTEM_CARD_PROFILES = new Set([
-  'liquidaity-main',
-  'builder',
-  'thinkgraph',
-  'knowgraph',
-]);
 const RETIRED_SYSTEM_CARD_PLUGIN_KEYS = ['card-bot-dm', 'liquidaity-card-mcp'] as const;
 const RETIRED_SYSTEM_CARD_PLUGIN_DIRECTORY = 'card-bot-dm';
 
@@ -419,8 +413,8 @@ export async function materializeHermesCardToolsPlugin(
   );
   const profile = String(configuration.runtime.profile || '').trim();
   if (
-    MANAGED_SYSTEM_CARD_PROFILES.has(profile)
-    && path.basename(resolvedProfileHome).toLowerCase() !== profile
+    !profile
+    || path.basename(resolvedProfileHome).toLowerCase() !== profile.toLowerCase()
   ) {
     throw new Error(`hermes_retired_plugin_profile_home_mismatch:${profile}`);
   }
@@ -488,27 +482,25 @@ export async function materializeHermesCardToolsPlugin(
     },
   );
 
-  if (MANAGED_SYSTEM_CARD_PROFILES.has(profile)) {
-    // Reconcile only after the replacement files were hashed/read back and
-    // Hermes successfully enabled card-tools. The script itself rereads the
-    // native config and refuses to retire anything if that replacement is not
-    // still enabled.
-    await (options.runCli ?? runHermesCli)(
-      executable,
-      ['-X', 'utf8', '-c', HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT],
-      {
-        cwd: hermesRoot,
-        env: {
-          ...withoutInternalMcpSecret(options.env ?? process.env),
-          HERMES_HOME: resolvedProfileHome,
-          PYTHONUTF8: '1',
-          PYTHONIOENCODING: 'utf-8',
-        },
-        windowsHide: true,
+  // This function is reached only for an exact saved Card profile. Reconcile
+  // every such profile after the replacement files were hashed/read back and
+  // Hermes successfully enabled card-tools. The native config owner rereads
+  // the file and refuses retirement unless that replacement remains enabled.
+  await (options.runCli ?? runHermesCli)(
+    executable,
+    ['-X', 'utf8', '-c', HERMES_RETIRED_SYSTEM_CARD_PLUGINS_SCRIPT],
+    {
+      cwd: hermesRoot,
+      env: {
+        ...withoutInternalMcpSecret(options.env ?? process.env),
+        HERMES_HOME: resolvedProfileHome,
+        PYTHONUTF8: '1',
+        PYTHONIOENCODING: 'utf-8',
       },
-    );
-    await retireContainedLegacyPluginDirectory(resolvedPluginsRoot);
-  }
+      windowsHide: true,
+    },
+  );
+  await retireContainedLegacyPluginDirectory(resolvedPluginsRoot);
 }
 
 export function requireLoadedHermesCardToolsPlugin(value: unknown): void {

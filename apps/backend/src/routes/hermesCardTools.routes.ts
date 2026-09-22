@@ -143,7 +143,10 @@ export function createHermesCardToolsRouter(
       } catch {
         routeError(401, 'hermes_card_tool_authentication_failed');
       }
-      const active = dependencies.activeContext(authenticated!.state.sessionId);
+      const executionContext = authenticated!.executionContext;
+      const active = executionContext
+        ? null
+        : dependencies.activeContext(authenticated!.state.sessionId);
       const result = await dependencies.execute({
         projectId: authenticated!.owner.projectId,
         deckId: authenticated!.owner.deckId,
@@ -153,8 +156,8 @@ export function createHermesCardToolsRouter(
         runtimeMode: authenticated!.cardTools.runtimeMode,
         toolName: authenticated!.canonicalToolName,
         arguments: authenticated!.request.arguments,
-        conversationId: active?.conversationId || '',
-        parentRunId: active?.runId || '',
+        conversationId: executionContext?.conversationId || active?.conversationId || '',
+        parentRunId: executionContext?.parentRunId || active?.runId || '',
       });
       return res.json(result);
     } catch (error) {

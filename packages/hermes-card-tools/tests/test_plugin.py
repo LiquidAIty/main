@@ -32,6 +32,10 @@ def _clear_environment(monkeypatch):
         "CARD_TOOLS_MANAGED",
         "CARD_TOOLS_HOST_URL",
         "HERMES_DASHBOARD_SESSION_TOKEN",
+        "HERMES_KANBAN_TASK",
+        "HERMES_KANBAN_RUN_ID",
+        "HERMES_KANBAN_CLAIM_LOCK",
+        "HERMES_PROFILE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -291,6 +295,113 @@ def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monk
     assert envelope["signature"] == hmac.new(
         b"gateway-secret", envelope["payload"].encode("utf-8"), hashlib.sha256,
     ).hexdigest()
+
+
+def test_dispatcher_worker_posts_v2_claim_envelope_without_gateway_identity(plugin, monkeypatch):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker")
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", "23")
+    monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", "native-claim")
+    monkeypatch.setenv("HERMES_PROFILE", "saved-worker")
+    monkeypatch.setattr(plugin.secrets, "token_hex", lambda _size: "b" * 32)
+    monkeypatch.setattr(plugin.time, "time", lambda: 2_000)
+    calls = []
+
+    def post_once(url, envelope):
+        calls.append((url, envelope))
+        return 200, {"ok": True, "output": '{"ok":true,"value":"native"}'}
+
+    monkeypatch.setattr(plugin, "_post_once", post_once)
+    result = plugin._handler("graph__read")({"node": "n1"}, task_id="detached-cli-session")
+
+    assert result == '{"ok":true,"value":"native"}'
+    assert len(calls) == 1
+    url, envelope = calls[0]
+    assert url == "http://127.0.0.1:4000/api/hermes-card-tools"
+    payload = json.loads(envelope["payload"])
+    assert payload == {
+        "version": 2,
+        "expiresAt": 2_300,
+        "nonce": "b" * 32,
+        "sourceTaskId": "t_worker",
+        "sourceTaskRunId": 23,
+        "sourceProfile": "saved-worker",
+        "tool": "graph__read",
+        "arguments": {"node": "n1"},
+    }
+    assert "detached-cli-session" not in envelope["payload"]
+    assert "sourceStoredSessionId" not in payload
+    assert "native-claim" not in envelope["payload"]
+    assert envelope["keyId"] == hashlib.sha256(b"native-claim").hexdigest()
+    assert envelope["signature"] == hmac.new(
+        b"native-claim", envelope["payload"].encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
+
+
+def test_complete_worker_identity_wins_over_gateway_v1(plugin, monkeypatch):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "must-not-be-used")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker")
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", "9")
+    monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", "worker-claim")
+    monkeypatch.setenv("HERMES_PROFILE", "worker-profile")
+    captured = {}
+
+    def post_once(_url, envelope):
+        captured.update(envelope)
+        return 200, {"ok": True, "output": "done"}
+
+    monkeypatch.setattr(plugin, "_post_once", post_once)
+    assert plugin._handler("saved__tool")({}, task_id="stored-bot-chat") == "done"
+
+    payload = json.loads(captured["payload"])
+    assert payload["version"] == 2
+    assert "sourceStoredSessionId" not in payload
+    assert "stored-bot-chat" not in captured["payload"]
+    assert "must-not-be-used" not in json.dumps(captured)
+    assert captured["keyId"] == hashlib.sha256(b"worker-claim").hexdigest()
+
+
+@pytest.mark.parametrize("present_name", [
+    "HERMES_KANBAN_TASK",
+    "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_CLAIM_LOCK",
+    "HERMES_PROFILE",
+])
+def test_partial_worker_identity_fails_closed_without_v1_fallback(
+    plugin,
+    monkeypatch,
+    present_name,
+):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "gateway-secret")
+    monkeypatch.setenv(present_name, "7" if present_name == "HERMES_KANBAN_RUN_ID" else "present")
+    monkeypatch.setattr(
+        plugin,
+        "_post_once",
+        lambda *_args: pytest.fail("partial worker identity must not reach the host"),
+    )
+
+    result = json.loads(plugin._handler("saved__tool")({}, task_id="stored-bot-chat"))
+
+    assert result == {"ok": False, "error": "card_tool_worker_identity_incomplete"}
+
+
+@pytest.mark.parametrize("run_id", ["0", "-1", "not-an-integer"])
+def test_invalid_worker_run_identity_fails_closed(plugin, monkeypatch, run_id):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_worker")
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", run_id)
+    monkeypatch.setenv("HERMES_KANBAN_CLAIM_LOCK", "native-claim")
+    monkeypatch.setenv("HERMES_PROFILE", "saved-worker")
+
+    result = json.loads(plugin._handler("saved__tool")({}, task_id="detached-cli-session"))
+
+    assert result == {"ok": False, "error": "card_tool_worker_identity_invalid"}
 
 
 def test_handler_fails_closed_without_managed_runtime(plugin):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 
 def _make_task(kb, *, assignee: str):
     return kb.Task(
@@ -180,6 +182,61 @@ def test_default_spawn_resolves_env_passthrough_under_multiplex(monkeypatch, tmp
     assert pid == 4243
     # The assignee's own scoped value, not the dispatcher's ambient os.environ one.
     assert captured["env"].get("MY_PASSTHROUGH_VAR") == "elias-value"
+
+
+@pytest.mark.parametrize("multiplex_active", [False, True])
+def test_default_spawn_never_exports_gateway_bearer_and_retains_native_claim(
+    monkeypatch,
+    tmp_path,
+    multiplex_active,
+):
+    root = tmp_path / ".hermes"
+    profile = root / "profiles" / "elias"
+    profile.mkdir(parents=True)
+    root.joinpath("config.yaml").write_text("{}\n", encoding="utf-8")
+    profile.joinpath("config.yaml").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "gateway-bearer")
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv(
+        "CARD_TOOLS_HOST_URL",
+        "http://127.0.0.1:4317/api/hermes-card-tools",
+    )
+
+    from agent.secret_scope import set_multiplex_active
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_dispatch as kbd
+
+    monkeypatch.setattr(kbd, "_resolve_hermes_argv", lambda: ["hermes"])
+    captured = {}
+
+    class FakeProc:
+        pid = 4245
+
+    def fake_popen(_cmd, *args, **kwargs):
+        captured["env"] = dict(kwargs.get("env") or {})
+        return FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    set_multiplex_active(multiplex_active)
+    try:
+        pid = kbd._default_spawn(_make_task(kb, assignee="elias"), str(workspace))
+    finally:
+        set_multiplex_active(False)
+
+    assert pid == 4245
+    assert "HERMES_DASHBOARD_SESSION_TOKEN" not in captured["env"]
+    assert captured["env"]["CARD_TOOLS_MANAGED"] == "1"
+    assert captured["env"]["CARD_TOOLS_HOST_URL"] == (
+        "http://127.0.0.1:4317/api/hermes-card-tools"
+    )
+    assert captured["env"]["HERMES_KANBAN_TASK"] == "t_spawn_tools"
+    assert captured["env"]["HERMES_KANBAN_RUN_ID"] == "7"
+    assert captured["env"]["HERMES_KANBAN_CLAIM_LOCK"] == "lock"
+    assert captured["env"]["HERMES_PROFILE"] == "elias"
 
 
 def test_resolve_worker_cli_toolsets_uses_profile_home_not_parent_config(monkeypatch, tmp_path):

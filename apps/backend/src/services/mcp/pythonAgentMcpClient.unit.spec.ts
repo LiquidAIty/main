@@ -197,4 +197,52 @@ describe('Python Agent MCP client', () => {
     await callPythonAgentMcpTool('ordinary.after', {});
     expect(mcpMocks.connect).toHaveBeenCalledTimes(2);
   });
+
+  it('uses a runless materializer principal and reports only its authorized optional family', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        catalogState: 'ready',
+        unavailableCatalogFamilies: ['cbm', 'graphiti'],
+      }),
+    })));
+    mcpMocks.listTools.mockResolvedValueOnce({
+      tools: [{
+        name: 'cbm.search_graph',
+        description: 'Search CodeGraph.',
+        inputSchema: { type: 'object', properties: {} },
+        _meta: {
+          liquidaitySource: {
+            sourceId: 'cbm',
+            namespace: 'cbm',
+            nativeName: 'search_graph',
+            connectionKind: 'external-mcp',
+          },
+        },
+      }],
+    });
+    const principal = {
+      kind: 'materializer-read' as const,
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      callerCardId: 'builder',
+      conversationId: 'main',
+      grantedTools: ['card.create'],
+      grantedConnections: ['cbm'],
+    };
+
+    await expect(readPythonAgentMcpCatalog(principal)).resolves.toMatchObject({
+      state: 'available',
+      unavailableFamilies: ['cbm'],
+      tools: [{ name: 'cbm.search_graph' }],
+    });
+
+    const authorization = String(
+      mcpMocks.transportInits[0]?.requestInit?.headers?.Authorization || '',
+    );
+    const payload = JSON.parse(
+      Buffer.from(authorization.replace(/^Bearer /, '').split('.')[1], 'base64url').toString('utf8'),
+    );
+    expect(payload.principal).toEqual(principal);
+  });
 });

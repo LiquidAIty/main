@@ -40,6 +40,19 @@ type NativeAttempt = {
   endedAt: string | number | null;
 };
 
+export type NativeToolReceipt = {
+  toolCallId: string;
+  toolName: string;
+  state: 'returned' | 'failed' | null;
+  resultPreview: string;
+  executionReceipt: {
+    schema: 'agent-runtime.execution-receipt.v1';
+    tool: string;
+    correlationId: string;
+    state: 'completed' | 'failed';
+  } | null;
+};
+
 export type MagneticNativeTask = {
   taskId: string;
   title: string;
@@ -48,6 +61,10 @@ export type MagneticNativeTask = {
   dependencyIds: string[];
   latestAttempt: NativeAttempt | null;
   resultAvailable: boolean;
+  workerSessionId: string | null;
+  handoffSummary: string | null;
+  toolReceipts: NativeToolReceipt[];
+  toolReceiptsComplete: boolean;
 };
 
 type MagneticRunStatus = {
@@ -62,6 +79,10 @@ const VALID_TASK_STATUSES = new Set<string>(HERMES_TASK_STATUSES);
 const ACTIVE_REFRESH_MS = 2_000;
 const QUIET_REFRESH_MS = 10_000;
 const STATUS_REQUEST_TIMEOUT_MS = 8_000;
+const MAX_HANDOFF_SUMMARY_CHARS = 2_000;
+const MAX_TOOL_RECEIPTS = 64;
+const MAX_TOOL_RESULT_PREVIEW_CHARS = 1_000;
+const MAX_NATIVE_ID_CHARS = 512;
 const TASK_NODE_WIDTH = 142;
 const TASK_NODE_HEIGHT = 72;
 const TASK_COLUMN_GAP = 34;
@@ -69,6 +90,13 @@ const TASK_ROW_GAP = 88;
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function exactBoundedText(value: unknown, limit: number): string | null {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > limit) {
+    return null;
+  }
+  return value;
 }
 
 function nativeStatus(value: unknown): HermesTaskStatus | null {
@@ -112,6 +140,89 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
       const attemptRunId = attempt && (
         typeof attempt.runId === 'string' || typeof attempt.runId === 'number'
       ) ? attempt.runId : null;
+      const workerSessionId = task.workerSessionId === null || task.workerSessionId === undefined
+        ? null
+        : exactBoundedText(task.workerSessionId, MAX_NATIVE_ID_CHARS);
+      const handoffSummary = task.handoffSummary === null || task.handoffSummary === undefined
+        ? null
+        : exactBoundedText(task.handoffSummary, MAX_HANDOFF_SUMMARY_CHARS);
+      let receiptsMalformed = (
+        (task.workerSessionId !== null && task.workerSessionId !== undefined && !workerSessionId)
+        || (task.handoffSummary !== null && task.handoffSummary !== undefined && !handoffSummary)
+        || (task.toolReceipts !== undefined && !Array.isArray(task.toolReceipts))
+      );
+      const seenReceiptIds = new Set<string>();
+      const toolReceipts = Array.isArray(task.toolReceipts)
+        ? task.toolReceipts.slice(0, MAX_TOOL_RECEIPTS).flatMap((rawReceipt): NativeToolReceipt[] => {
+          if (!rawReceipt || typeof rawReceipt !== 'object') {
+            receiptsMalformed = true;
+            return [];
+          }
+          const receipt = rawReceipt as Record<string, unknown>;
+          const toolCallId = exactBoundedText(receipt.toolCallId, MAX_NATIVE_ID_CHARS);
+          const toolName = exactBoundedText(receipt.toolName, MAX_NATIVE_ID_CHARS);
+          const resultPreview = typeof receipt.resultPreview === 'string'
+            && receipt.resultPreview.length <= MAX_TOOL_RESULT_PREVIEW_CHARS
+            ? receipt.resultPreview
+            : null;
+          let executionReceipt: NativeToolReceipt['executionReceipt'] = null;
+          const rawExecutionReceipt = receipt.executionReceipt;
+          if (rawExecutionReceipt !== null) {
+            if (!rawExecutionReceipt || typeof rawExecutionReceipt !== 'object') {
+              receiptsMalformed = true;
+            } else {
+              const exactReceipt = rawExecutionReceipt as Record<string, unknown>;
+              const executionTool = exactBoundedText(exactReceipt.tool, 128);
+              const correlationId = exactBoundedText(
+                exactReceipt.correlationId, MAX_NATIVE_ID_CHARS,
+              );
+              const executionState = exactReceipt.state === 'completed'
+                || exactReceipt.state === 'failed'
+                ? exactReceipt.state
+                : null;
+              if (
+                Object.keys(exactReceipt).sort().join('\0')
+                  !== 'correlationId\0schema\0state\0tool'
+                || exactReceipt.schema !== 'agent-runtime.execution-receipt.v1'
+                || !executionTool || !correlationId || !executionState
+              ) {
+                receiptsMalformed = true;
+              } else {
+                executionReceipt = {
+                  schema: 'agent-runtime.execution-receipt.v1',
+                  tool: executionTool,
+                  correlationId,
+                  state: executionState,
+                };
+              }
+            }
+          }
+          if (!toolCallId || !toolName || resultPreview === null || seenReceiptIds.has(toolCallId)) {
+            receiptsMalformed = true;
+            return [];
+          }
+          seenReceiptIds.add(toolCallId);
+          const state = receipt.state === 'returned' || receipt.state === 'failed'
+            ? receipt.state
+            : null;
+          if (receipt.state !== null && receipt.state !== undefined && state === null) {
+            receiptsMalformed = true;
+          }
+          return [{
+            toolCallId,
+            toolName,
+            state,
+            resultPreview,
+            executionReceipt,
+          }];
+        })
+        : [];
+      if (Array.isArray(task.toolReceipts) && task.toolReceipts.length > MAX_TOOL_RECEIPTS) {
+        receiptsMalformed = true;
+      }
+      if ((toolReceipts.length > 0 || task.toolReceiptsComplete === true) && !workerSessionId) {
+        receiptsMalformed = true;
+      }
       return [{
         taskId,
         title: text(task.title) || taskId,
@@ -133,6 +244,10 @@ export function readMagneticRunStatus(value: unknown): MagneticRunStatus | null 
           }
           : null,
         resultAvailable: task.resultAvailable === true,
+        workerSessionId,
+        handoffSummary,
+        toolReceipts,
+        toolReceiptsComplete: task.toolReceiptsComplete === true && !receiptsMalformed,
       }];
     })
     : [];
@@ -356,6 +471,44 @@ function SelectedTaskDetails({
         </div>
       ) : task.resultAvailable ? (
         <div style={detailStyle}>Result</div>
+      ) : null}
+      {task.workerSessionId ? (
+        <div style={detailStyle}>Worker session · {task.workerSessionId}</div>
+      ) : null}
+      {task.handoffSummary ? (
+        <div style={{ ...detailStyle, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          Handoff · {task.handoffSummary}
+        </div>
+      ) : null}
+      {task.toolReceipts.length > 0 ? (
+        <div aria-label="Tool receipts" style={{ display: 'grid', gap: 6, marginTop: 3 }}>
+          {task.toolReceipts.map((receipt) => (
+            <div
+              key={receipt.toolCallId}
+              style={graphDrawerSectionStyle({ padding: '7px', borderRadius: 6, display: 'grid', gap: 3 })}
+            >
+              <div style={detailStyle}>
+                Tool · {receipt.toolName}{receipt.state ? ` · ${receipt.state}` : ''}
+              </div>
+              <div style={detailStyle}>Call · {receipt.toolCallId}</div>
+              {receipt.executionReceipt ? (
+                <div style={detailStyle}>
+                  Saved Card receipt · {receipt.executionReceipt.tool}
+                  {' · '}{receipt.executionReceipt.state}
+                  {' · '}{receipt.executionReceipt.correlationId}
+                </div>
+              ) : null}
+              {receipt.resultPreview ? (
+                <div style={{ ...detailStyle, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                  Result · {receipt.resultPreview}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {(task.workerSessionId || task.toolReceipts.length > 0) && !task.toolReceiptsComplete ? (
+        <div style={detailStyle}>Tool receipt coverage incomplete</div>
       ) : null}
     </aside>
   );

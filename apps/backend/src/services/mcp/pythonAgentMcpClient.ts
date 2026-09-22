@@ -53,6 +53,19 @@ let clientPromise: Promise<Client> | null = null;
 const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
 const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti']);
 
+function authorizedOptionalCatalogFamilies(principal: InternalMcpPrincipal): Set<string> | null {
+  if (principal.kind === 'catalog-reader') return null;
+  const toolFamilies = principal.grantedTools
+    .map((name) => String(name || '').trim().split('.', 1)[0])
+    .filter((family) => OPTIONAL_CATALOG_FAMILIES.has(family));
+  const connectionFamilies = principal.kind === 'materializer-read'
+    ? (principal.grantedConnections ?? [])
+      .map((name) => String(name || '').trim())
+      .filter((family) => OPTIONAL_CATALOG_FAMILIES.has(family))
+    : [];
+  return new Set([...toolFamilies, ...connectionFamilies]);
+}
+
 async function connect(
   principal: InternalMcpPrincipal,
   sharedLifecycle = false,
@@ -275,7 +288,10 @@ export async function readPythonAgentMcpCatalog(
     const tools = await listPythonAgentMcpCatalog(principal);
     if (principal.kind !== 'catalog-reader') {
       const probe = await readPythonAgentMcpCatalogProbe();
-      unavailableFamilies = probe.unavailableFamilies;
+      const authorizedFamilies = authorizedOptionalCatalogFamilies(principal)!;
+      unavailableFamilies = probe.unavailableFamilies.filter((family) => (
+        authorizedFamilies.has(family)
+      ));
       if (!probe.ready) throw new Error('catalog_unavailable');
     }
     return {

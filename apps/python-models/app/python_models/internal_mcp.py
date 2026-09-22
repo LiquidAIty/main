@@ -43,6 +43,7 @@ def create_materializer_read_token(
     project_id: str,
     deck_id: str,
     card_id: str,
+    granted_tools: list[str],
     conversation_id: str = "",
 ) -> str:
     """Issue a short-lived read-only principal for pre-dispatch graph hydration.
@@ -51,11 +52,16 @@ def create_materializer_read_token(
     no invented Run or conversation identity.  The official MCP host accepts it
     for IDD-declared reads only and rejects every write/effect operation.
     """
+    normalized_grants = sorted({
+        str(name or "").strip() for name in granted_tools
+        if str(name or "").strip()
+    })
     principal = {
         "kind": "materializer-read",
         "projectId": str(project_id or "").strip(),
         "deckId": str(deck_id or "").strip(),
         "callerCardId": str(card_id or "").strip(),
+        "grantedTools": normalized_grants,
         **({"conversationId": conversation_id} if conversation_id else {}),
     }
     if any(not principal[field] for field in ("projectId", "deckId", "callerCardId")):
@@ -113,6 +119,7 @@ async def _call_read_tools_via_mcp_async(
         project_id=project_id,
         deck_id=deck_id,
         card_id=card_id,
+        granted_tools=[name for name, _arguments in calls],
         conversation_id=conversation_id,
     )
     if deadline_seconds is not None and not 0 < deadline_seconds <= 30:

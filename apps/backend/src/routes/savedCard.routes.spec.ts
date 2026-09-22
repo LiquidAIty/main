@@ -2,7 +2,11 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import cardRuntime, { internalMainMcpRoutes, mainRoutes } from './cardRuntime.routes';
+import cardRuntime, {
+  internalMainMcpRoutes,
+  mainRoutes,
+  materializerReadPrincipalForSavedCard,
+} from './cardRuntime.routes';
 import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
 
@@ -87,6 +91,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   const profileFor = (cardId: string) => cardId === 'card_main_chat'
     ? 'default'
     : cardId === 'card_magentic' ? 'card_magentic'
+    : cardId === 'card_team' ? 'team'
     : cardId === 'builder' ? 'builder'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
   const stateFor = (owner: any) => ({
@@ -107,7 +112,15 @@ const agentTerminalMocks = vi.hoisted(() => {
   });
   const find = vi.fn((owner: any): ReturnType<typeof stateFor> | null => stateFor(owner));
   const open = vi.fn(async (owner: any) => stateFor(owner));
-  const findCard = vi.fn((projectId: string, deckId: string, cardId: string) => {
+  const magenticCardToolAuthority = vi.fn((owner: any) => ({
+    cardId: owner.cardId,
+    cardRevisionId: `revision:${owner.cardId}`,
+    profile: profileFor(owner.cardId),
+    configurationFingerprint: 'a'.repeat(64),
+  }));
+  const findCard = vi.fn((
+    projectId: string, deckId: string, cardId: string,
+  ): { owner: any; state: ReturnType<typeof stateFor> } | null => {
     const owner = { userId: 'owner-user', projectId, deckId, cardId };
     return { owner, state: stateFor(owner) };
   });
@@ -277,7 +290,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     profileFor, stateFor, complete, finishSubmitted,
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
-      dispatchLearn, requestProfile, subscribeGatewayEvents,
+      dispatchLearn, requestProfile, subscribeGatewayEvents, magenticCardToolAuthority,
     },
     resolveHermesBotRosterProjections,
     execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
@@ -310,25 +323,31 @@ const kanbanMocks = vi.hoisted(() => ({
 }));
 const mcpClientMocks = vi.hoisted(() => {
   const listPythonAgentMcpCatalog = vi.fn(async (): Promise<any[]> => []);
-  return {
-  callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
-  listPythonAgentMcpCatalog,
-  readPythonAgentMcpCatalog: vi.fn(async () => {
+  const readPythonAgentMcpCatalog = vi.fn(async (): Promise<{
+    state: 'available' | 'unavailable';
+    tools: any[];
+    unavailableFamilies: string[];
+    reason?: 'catalog_unavailable';
+  }> => {
     try {
       return {
-        state: 'available' as const,
+        state: 'available',
         tools: await listPythonAgentMcpCatalog(),
         unavailableFamilies: [],
       };
     } catch {
       return {
-        state: 'unavailable' as const,
+        state: 'unavailable',
         tools: [],
         unavailableFamilies: [],
-        reason: 'catalog_unavailable' as const,
+        reason: 'catalog_unavailable',
       };
     }
-  }),
+  });
+  return {
+  callPythonAgentMcpTool: vi.fn(async () => ({ ok: true })),
+  listPythonAgentMcpCatalog,
+  readPythonAgentMcpCatalog,
   resolvePythonAgentMcpServerSpec: vi.fn(() => ({
     type: 'http',
     url: 'http://127.0.0.1:8765/mcp',
@@ -1408,6 +1427,74 @@ describe('saved Card routes', () => {
     }
   });
 
+  it.each([
+    {
+      cardId: 'builder',
+      savedTools: ['cbm.search_graph', 'card.create', 'cbm.search_graph'],
+      savedConnections: ['cbm', 'cbm'],
+      expectedGrants: ['card.create', 'cbm.search_graph'],
+      expectedConnections: ['cbm'],
+    },
+    {
+      cardId: 'card_knowgraph',
+      savedTools: ['graphiti.search_nodes'],
+      savedConnections: ['graphiti'],
+      expectedGrants: ['graphiti.search_nodes'],
+      expectedConnections: ['graphiti'],
+    },
+    {
+      cardId: 'card_main_chat',
+      savedTools: ['canvas.inspect'],
+      savedConnections: [],
+      expectedGrants: ['canvas.inspect'],
+      expectedConnections: [],
+    },
+    {
+      cardId: 'card_thinkgraph',
+      savedTools: ['engraphis_recall_context'],
+      savedConnections: [],
+      expectedGrants: ['engraphis_recall_context'],
+      expectedConnections: [],
+    },
+  ])('derives the pre-Run catalog principal from $cardId saved grants', async ({
+    cardId, savedTools, savedConnections, expectedGrants, expectedConnections,
+  }) => {
+    expect(materializerReadPrincipalForSavedCard({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      cardId,
+      conversationId: 'main',
+    }, { runtimeOptions: {
+      tools: savedTools,
+      mcpConnectionIds: savedConnections,
+    } })).toEqual({
+      kind: 'materializer-read',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      callerCardId: cardId,
+      conversationId: 'main',
+      grantedTools: expectedGrants,
+      grantedConnections: expectedConnections,
+    });
+  });
+
+  it.each([
+    ['cbm', 'builder'],
+    ['graphiti', 'card_knowgraph'],
+  ] as const)('retains a connection-only %s catalog grant for %s', (connectionId, cardId) => {
+    expect(materializerReadPrincipalForSavedCard({
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      cardId,
+    }, { runtimeOptions: {
+      tools: ['card.create'],
+      mcpConnectionIds: [connectionId],
+    } })).toMatchObject({
+      grantedTools: ['card.create'],
+      grantedConnections: [connectionId],
+    });
+  });
+
   it('executes the one Python materialization for the current Card input', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
     const { server, baseUrl } = await createApiServer();
@@ -1458,6 +1545,117 @@ describe('saved Card routes', () => {
       expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
         ([endpoint]) => endpoint === '/domain/runs/finish',
       )).toBe(false);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('fails closed when Python materializes a different Card revision than the saved snapshot', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    agentTerminalMocks.execution.stage.mockClear();
+    agentTerminalMocks.manager.submit.mockClear();
+    orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
+      runId: 'corr-revision-race',
+      correlationId: 'corr-revision-race',
+      cardRevisionId: 'revision:concurrent-save',
+      runtimeOwner: 'hermes',
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'builder',
+          correlationId: 'corr-revision-race',
+          conversationId: 'main',
+          input: 'Do not run a stale Builder snapshot.',
+          action: 'execute',
+        }),
+      });
+
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        error: 'card_revision_changed',
+      });
+      expect(agentTerminalMocks.execution.stage).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/runs/finish',
+        expect.objectContaining({
+          body: JSON.stringify({
+            runId: 'corr-revision-race',
+            state: 'failed',
+            errorCode: 'card_revision_changed',
+            errorSummary: 'card_revision_changed',
+          }),
+        }),
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('fails and settles a prepared Run that omits the saved Card revision hash', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    agentTerminalMocks.execution.stage.mockClear();
+    agentTerminalMocks.manager.submit.mockClear();
+    deckMocks.getDeckDocument.mockResolvedValueOnce({
+      deck: {
+        workspaceRoot: process.cwd(),
+        nodes: [{
+          id: 'builder',
+          _cardRevisionId: 'revision:builder',
+          _cardRevisionSha256: 'a'.repeat(64),
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
+          runtimeOptions: { tools: [], mcpConnectionIds: [] },
+        }],
+        edges: [],
+      } as any,
+    });
+    orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
+      runId: 'corr-revision-hash-missing',
+      correlationId: 'corr-revision-hash-missing',
+      cardRevisionId: 'revision:builder',
+      runtimeOwner: 'hermes',
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'builder',
+          correlationId: 'corr-revision-hash-missing',
+          conversationId: 'main',
+          input: 'Do not run without the pinned revision hash.',
+          action: 'execute',
+        }),
+      });
+
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        error: 'card_revision_changed',
+      });
+      expect(agentTerminalMocks.execution.stage).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledWith(
+        '/domain/runs/finish',
+        expect.objectContaining({
+          body: JSON.stringify({
+            runId: 'corr-revision-hash-missing',
+            state: 'failed',
+            errorCode: 'card_revision_changed',
+            errorSummary: 'card_revision_changed',
+          }),
+        }),
+      );
     } finally {
       await closeServer(server);
     }
@@ -1591,6 +1789,7 @@ describe('saved Card routes', () => {
         workspaceRoot: process.cwd(),
         nodes: [{
           id: 'card_legacy_kanban',
+          _cardRevisionId: 'revision:card_legacy_kanban',
           runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
           runtimeOptions: {},
         }],
@@ -2228,6 +2427,20 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/magentic/execution/submit');
       expect(JSON.parse(String(init?.body))).toEqual({
         ...magenticExecution,
+        workerAuthorities: [
+          {
+            cardId: 'card_test_delegate',
+            cardRevisionId: 'revision:card_test_delegate',
+            profile: 'delegate',
+            configurationFingerprint: 'a'.repeat(64),
+          },
+          {
+            cardId: 'builder',
+            cardRevisionId: 'revision:builder',
+            profile: 'builder',
+            configurationFingerprint: 'a'.repeat(64),
+          },
+        ],
         notifySession: {
           sessionKey: 'native:default',
           profile: 'default',
@@ -2235,6 +2448,7 @@ describe('saved Card routes', () => {
       });
       return {
         ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_root',
+        outerRunBound: true,
         nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
       };
@@ -2244,7 +2458,7 @@ describe('saved Card routes', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativeStatus: 'ready',
       });
-      return { ok: true };
+      return { ok: true, runId: 'corr-mag-1', updated: true };
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -2464,13 +2678,14 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/magentic/execution/submit');
       return {
         ok: true, state: 'running', nativeStatus: 'triage', nativeRootId: 't_team_root',
+        outerRunBound: true,
         nativeIdentity: 'team', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-terra',
       };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/domain/runs/progress');
-      return { ok: true };
+      return { ok: true, runId: 'corr-team-only', updated: true };
     });
 
     const { server, baseUrl } = await createApiServer();
@@ -2535,6 +2750,21 @@ describe('saved Card routes', () => {
             taskId: 't_magnetic_inspection', title: 'Magnetic mission',
             assignee: 'card_magentic', status: 'ready', dependencyIds: [],
             latestAttempt: null, resultAvailable: false,
+            workerSessionId: 'worker-session-one',
+            handoffSummary: 'Worker returned one bounded saved Card result.',
+            toolReceiptsComplete: true,
+            toolReceipts: [{
+              toolCallId: 'card-tool-call-one',
+              toolName: 'get_paper_account_readiness',
+              state: 'returned',
+              resultPreview: '{"configured":false}',
+              executionReceipt: {
+                schema: 'agent-runtime.execution-receipt.v1',
+                tool: 'get_paper_account_readiness',
+                correlationId: 'card-runtime:receipt-one',
+                state: 'completed',
+              },
+            }],
           }],
         };
       }
@@ -2554,7 +2784,24 @@ describe('saved Card routes', () => {
         ok: true,
         result: {
           runId: 'magnetic-inspection', state: 'running', nativeStatus: 'ready',
-          nativeTasks: [{ taskId: 't_magnetic_inspection', status: 'ready' }],
+          nativeTasks: [{
+            taskId: 't_magnetic_inspection', status: 'ready',
+            workerSessionId: 'worker-session-one',
+            handoffSummary: 'Worker returned one bounded saved Card result.',
+            toolReceiptsComplete: true,
+            toolReceipts: [{
+              toolCallId: 'card-tool-call-one',
+              toolName: 'get_paper_account_readiness',
+              state: 'returned',
+              resultPreview: '{"configured":false}',
+              executionReceipt: {
+                schema: 'agent-runtime.execution-receipt.v1',
+                tool: 'get_paper_account_readiness',
+                correlationId: 'card-runtime:receipt-one',
+                state: 'completed',
+              },
+            }],
+          }],
         },
       });
       expect(kanbanMocks.observeHermesKanbanTaskGraph).not.toHaveBeenCalled();
@@ -2564,6 +2811,76 @@ describe('saved Card routes', () => {
       expect(endpoints).not.toEqual(expect.arrayContaining([
         '/domain/runs/progress', '/domain/runs/finish',
       ]));
+    } finally {
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+      await closeServer(server);
+    }
+  });
+
+  it('fails Magnetic receipt projection closed on malformed or incomplete native evidence', async () => {
+    orchestratorMocks.runRecords.clear();
+    const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+    orchestratorMocks.runRecords.set('magnetic-invalid-receipts', {
+      runId: 'magnetic-invalid-receipts', correlationId: 'magnetic-invalid-receipts',
+      projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+      state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
+      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_invalid_receipts',
+      nativeStatus: 'ready', startedAt: new Date().toISOString(), result: null,
+    });
+    const baseTask = {
+      taskId: 't_magnetic_invalid_receipts', title: 'Magnetic mission',
+      assignee: 'card_magentic', status: 'ready', dependencyIds: [],
+      latestAttempt: null, resultAvailable: false,
+      workerSessionId: 'worker-session-one', handoffSummary: 'Bounded handoff.',
+      toolReceiptsComplete: true,
+      toolReceipts: [{
+        toolCallId: 'call-one', toolName: 'get_paper_account_readiness',
+        state: 'returned', resultPreview: '{"configured":false}',
+        executionReceipt: {
+          schema: 'agent-runtime.execution-receipt.v1',
+          tool: 'get_paper_account_readiness',
+          correlationId: 'card-runtime:receipt-one',
+          state: 'completed',
+        },
+      }],
+    };
+    const invalidTasks = [
+      { ...baseTask, workerSessionId: 7 },
+      { ...baseTask, toolReceipts: [baseTask.toolReceipts[0], baseTask.toolReceipts[0]] },
+      { ...baseTask, toolReceipts: [{ ...baseTask.toolReceipts[0], state: 'invented' }] },
+      { ...baseTask, toolReceipts: Array.from({ length: 65 }, (_, index) => ({
+        ...baseTask.toolReceipts[0], toolCallId: `call-${index}`,
+      })) },
+      { ...baseTask, toolReceipts: [{
+        ...baseTask.toolReceipts[0], resultPreview: 'x'.repeat(1_001),
+      }] },
+      { ...baseTask, workerSessionId: null, toolReceipts: [], toolReceiptsComplete: true },
+    ];
+    const { server, baseUrl } = await createApiServer();
+    try {
+      for (const invalidTask of invalidTasks) {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+          if (endpoint === '/magentic/execution/status') {
+            return {
+              ok: true, state: 'running', nativeStatus: 'ready',
+              nativeRootId: 't_magnetic_invalid_receipts', nativeRunId: null,
+              nativeTasks: [invalidTask],
+            };
+          }
+          return railsImplementation(endpoint, init);
+        });
+        const response = await fetch(`${baseUrl}/cards/run`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'status', inspectOnly: true, projectId: 'project-1',
+            deckId: 'deck_builder', cardId: 'card_magentic',
+          }),
+        });
+        expect(response.status).toBe(502);
+        await expect(response.json()).resolves.toEqual({
+          ok: false, error: 'magentic_execution_tasks_invalid',
+        });
+      }
     } finally {
       orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
       await closeServer(server);
@@ -2614,6 +2931,7 @@ describe('saved Card routes', () => {
       expect(endpoint).toBe('/magentic/execution/submit');
       return {
         ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_unbound',
+        outerRunBound: true,
         nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
       };
@@ -3152,6 +3470,7 @@ describe('saved Card routes', () => {
           });
           return {
             ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_shared_magnetic',
+            outerRunBound: true,
             nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
             providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
           };

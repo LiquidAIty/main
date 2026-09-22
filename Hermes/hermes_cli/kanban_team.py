@@ -211,7 +211,10 @@ def create_team_root(
     Magnetic/Bot callers. Callers provide normal task fields; this helper is
     the sole constructor of the workflow marker and decomposition step.
     Explicit model/provider values must match the saved Team profile so a
-    generic task override cannot silently replace Card authority.
+    generic task override cannot silently replace Card authority. ``blocked``
+    is reserved for callers that must bind external Run authority before the
+    native dispatcher may observe this root; ``activate_staged_team_root`` is
+    the only transition from that staged state into Team triage.
     """
 
     policy = team_profile_policy(assignee, profile_home=profile_home)
@@ -224,8 +227,8 @@ def create_team_root(
         raise ValueError("Team task model must match the saved Team profile")
     if bool(notify_platform) != bool(notify_chat_id):
         raise ValueError("Team task notification requires both platform and chat id")
-    if initial_status != "running":
-        raise ValueError("Team tasks enter Triage directly and cannot use an initial blocked state")
+    if initial_status not in {"running", "blocked"}:
+        raise ValueError("Team tasks require an initial running or staged blocked state")
 
     effective_allowed = kb._normalize_allowed_assignees(allowed_assignees)
     if effective_allowed is None:
@@ -298,6 +301,41 @@ def create_team_root(
             delivery_metadata=notify_delivery_metadata,
         )
     return task
+
+
+def activate_staged_team_root(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Atomically expose one exact staged Team root to native triage."""
+
+    with kb.write_txn(conn):
+        row = conn.execute(
+            "SELECT status, workflow_template_id, current_step_key "
+            "FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+        if (
+            row is None
+            or row["status"] != "blocked"
+            or row["workflow_template_id"] != TEAM_WORKFLOW_ID
+            or row["current_step_key"] != TEAM_DECOMPOSITION_STEP
+        ):
+            return False
+        updated = conn.execute(
+            "UPDATE tasks SET status = 'triage', block_kind = NULL "
+            "WHERE id = ? AND status = 'blocked'",
+            (task_id,),
+        )
+        if updated.rowcount != 1:
+            return False
+        kb._append_event(
+            conn,
+            task_id,
+            "team_root_activated",
+            {
+                "workflow_template_id": TEAM_WORKFLOW_ID,
+                "step_key": TEAM_DECOMPOSITION_STEP,
+            },
+        )
+    return True
 
 
 def record_decomposition_failure(

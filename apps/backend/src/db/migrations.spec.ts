@@ -51,6 +51,7 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '038_allow_cancelled_native_run_phase.sql', applied: true }),
       expect.objectContaining({ filename: '039_remove_assistant_agent_capability.sql', applied: true }),
       expect.objectContaining({ filename: '040_remove_main_script_experiment.sql', applied: true }),
+      expect.objectContaining({ filename: '041_native_hermes_task_status.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([

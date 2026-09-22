@@ -405,6 +405,7 @@ function fixture(extraProfileNames: string[] = []) {
   }));
   const materializeApplicationMcpServers = vi.fn(async () => undefined);
   const removeApplicationMcpServers = vi.fn(async () => undefined);
+  const verifyMagenticWorkerToolRequest = vi.fn(async () => ({}));
   const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
     const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
     return {
@@ -433,6 +434,7 @@ function fixture(extraProfileNames: string[] = []) {
     resolveMcpServerSpec,
     materializeApplicationMcpServers,
     removeApplicationMcpServers,
+    verifyMagenticWorkerToolRequest,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
@@ -443,7 +445,7 @@ function fixture(extraProfileNames: string[] = []) {
     materializeExternalMcpTools, resolveBotRoster,
     configureCardInstructions, configureCardModelRuntime,
     resolveActiveContext, resolveMcpServerSpec, materializeApplicationMcpServers,
-    removeApplicationMcpServers,
+    removeApplicationMcpServers, verifyMagenticWorkerToolRequest,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -1215,6 +1217,116 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       unknownPayload,
       createHmac('sha256', token).update(unknownPayload).digest('hex'),
     )).rejects.toThrow('hermes_card_tool_authentication_failed');
+  });
+
+  it('resolves a verified native Magnetic worker claim to one existing saved Card authority', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const expiresAt = Math.floor(Date.now() / 1000) + 60;
+    f.verifyMagenticWorkerToolRequest.mockResolvedValue({
+      projectId: 'project',
+      deckId: 'deck',
+      outerRunId: 'outer-run-one',
+      nativeRootId: 'native-root-one',
+      sourceTaskId: 'native-worker-one',
+      sourceTaskRunId: 23,
+      sourceProfile: 'run-worker-one',
+      authorityProfile: 'signal-analyst',
+      authorityCardId: 'signal',
+      authorityCardRevisionId: 'revision-signal',
+      authorityConfigurationFingerprint: createHash('sha256')
+        .update('revision-signal').digest('hex'),
+      expiresAt,
+      nonce: '1'.repeat(32),
+      tool: 'card__canvas_inspect',
+      arguments: { depth: 1 },
+    });
+    const activationCount = f.clients[0].requests.filter(
+      (request) => request.method === 'session.activate',
+    ).length;
+
+    const authenticated = await f.manager.authenticateCardToolRequest(
+      '2'.repeat(64),
+      '{"version":2}',
+      '3'.repeat(64),
+    );
+
+    expect(f.verifyMagenticWorkerToolRequest).toHaveBeenCalledExactlyOnceWith({
+      keyId: '2'.repeat(64),
+      payload: '{"version":2}',
+      signature: '3'.repeat(64),
+    });
+    expect(authenticated).toEqual({
+      owner: f.owners[0],
+      state,
+      canonicalToolName: 'canvas.inspect',
+      cardTools: expect.objectContaining({
+        cardRevisionId: 'revision-signal',
+        runtimeMode: 'delegate',
+      }),
+      request: {
+        version: 2,
+        expiresAt,
+        nonce: '1'.repeat(32),
+        sourceTaskId: 'native-worker-one',
+        sourceTaskRunId: 23,
+        sourceProfile: 'run-worker-one',
+        tool: 'card__canvas_inspect',
+        arguments: { depth: 1 },
+      },
+      executionContext: { parentRunId: 'outer-run-one', conversationId: '' },
+    });
+    expect(f.clients[0].requests.filter(
+      (request) => request.method === 'session.activate',
+    )).toHaveLength(activationCount);
+    const gatewayToken = (f.spawnGateway.mock.calls[0][2].env as Record<string, string>)
+      .HERMES_DASHBOARD_SESSION_TOKEN;
+    expect(JSON.stringify(authenticated)).not.toContain(gatewayToken);
+
+    await expect(f.manager.authenticateCardToolRequest(
+      '2'.repeat(64),
+      '{"version":2}',
+      '3'.repeat(64),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    f.verifyMagenticWorkerToolRequest.mockResolvedValueOnce({
+      projectId: 'project', deckId: 'deck', outerRunId: 'outer-run-one',
+      nativeRootId: 'native-root-one', sourceTaskId: 'native-worker-two',
+      sourceTaskRunId: 24, sourceProfile: 'run-worker-two',
+      authorityProfile: 'missing-profile', expiresAt,
+      authorityCardId: 'signal', authorityCardRevisionId: 'revision-signal',
+      authorityConfigurationFingerprint: createHash('sha256')
+        .update('revision-signal').digest('hex'),
+      nonce: '4'.repeat(32), tool: 'card__canvas_inspect', arguments: {},
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      '5'.repeat(64),
+      '{"version":2}',
+      '6'.repeat(64),
+    )).rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    const exactFingerprint = createHash('sha256').update('revision-signal').digest('hex');
+    for (const [index, authorityOverride] of [
+      { authorityCardRevisionId: 'revision-signal-edited' },
+      { authorityConfigurationFingerprint: 'f'.repeat(64) },
+    ].entries()) {
+      f.verifyMagenticWorkerToolRequest.mockResolvedValueOnce({
+        projectId: 'project', deckId: 'deck', outerRunId: 'outer-run-one',
+        nativeRootId: 'native-root-one', sourceTaskId: `native-worker-stale-${index}`,
+        sourceTaskRunId: 30 + index, sourceProfile: `run-worker-stale-${index}`,
+        authorityProfile: 'signal-analyst', authorityCardId: 'signal',
+        authorityCardRevisionId: 'revision-signal',
+        authorityConfigurationFingerprint: exactFingerprint,
+        expiresAt, nonce: String(7 + index).repeat(32),
+        tool: 'card__canvas_inspect', arguments: {},
+        ...authorityOverride,
+      });
+      await expect(f.manager.authenticateCardToolRequest(
+        String(7 + index).repeat(64),
+        '{"version":2}',
+        String(9 + index).repeat(64),
+      )).rejects.toThrow('hermes_card_tool_authentication_failed');
+    }
   });
 
   it('restarts the Gateway and TUI while resuming the exact durable Card session', async () => {

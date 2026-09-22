@@ -87,8 +87,8 @@ function configuration(overrides: Partial<HermesCardTools> = {}): HermesCardTool
 }
 
 describe('materializeHermesCardToolsPlugin retired profile residue', () => {
-  it.each(['liquidaity-main', 'builder', 'thinkgraph', 'knowgraph'])(
-    'reconciles only after card-tools enable proof for managed profile %s',
+  it.each(['liquidaity-main', 'builder', 'thinkgraph', 'knowgraph', 'signal-analyst'])(
+    'reconciles only after card-tools enable proof for saved profile %s',
     async (profile) => {
       const fixture = await materializationFixture(profile);
       const order: string[] = [];
@@ -118,23 +118,6 @@ describe('materializeHermesCardToolsPlugin retired profile residue', () => {
         .rejects.toMatchObject({ code: 'ENOENT' });
     },
   );
-
-  it('does not reconcile or retire any other Card profile', async () => {
-    const fixture = await materializationFixture('signal-analyst');
-    const runCli = vi.fn(async () => undefined);
-
-    await materializeHermesCardToolsPlugin(
-      fixture.profileHome,
-      configuration({
-        runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal-analyst' },
-      }),
-      { repoRoot: fixture.repoRoot, runCli },
-    );
-
-    expect(runCli).toHaveBeenCalledOnce();
-    await expect(stat(join(fixture.profileHome, 'plugins', 'card-bot-dm')))
-      .resolves.toBeTruthy();
-  });
 
   it('rejects a mismatched managed profile before staging or enabling anything', async () => {
     const fixture = await materializationFixture('not-builder');

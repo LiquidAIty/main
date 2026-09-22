@@ -1812,6 +1812,9 @@ def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
         def execute(self, query, params=None):
             statements.append((str(query), params))
 
+        def fetchone(self):
+            return ("t_retained_root",)
+
     class Connection:
         def __enter__(self):
             return self
@@ -1837,8 +1840,57 @@ def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
 
     query, params = statements[0]
     assert "provider_turn_ref=COALESCE(%s::text, provider_turn_ref)" in query
-    assert params[1] == 18
+    assert "run.runtime_mode!='magentic_one'" in query
+    assert "run.provider_thread_ref IS NULL OR run.provider_thread_ref=%s" in query
+    assert params[2] == 18
+    assert result["nativeRootId"] == "t_retained_root"
     assert result["updated"] is True
+
+
+def test_run_progress_refuses_to_rebind_a_magnetic_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _query, _params=None):
+            return None
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_progress",
+        lambda *_args, **_kwargs: pytest.fail("rejected rebind wrote telemetry"),
+    )
+
+    assert card_domain.update_run_progress({
+        "runId": "run-one",
+        "nativeRootId": "t_conflicting_root",
+        "nativeStatus": "running",
+    }) == {
+        "ok": True,
+        "runId": "run-one",
+        "nativeRootId": None,
+        "updated": False,
+        "telemetryWritten": False,
+    }
 
 
 def test_finish_run_accepts_stock_gateway_completion_without_unconfigured_api_mode(

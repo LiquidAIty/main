@@ -79,6 +79,12 @@ describe('MagneticTasksTab', () => {
     expect(result?.nativeTasks[0]?.latestAttempt).toEqual({
       runId: 'native-run-2', status: 'waiting', startedAt: null, endedAt: '2026-09-21T00:00:00Z',
     });
+    expect(result?.nativeTasks[0]).toMatchObject({
+      workerSessionId: null,
+      handoffSummary: null,
+      toolReceipts: [],
+      toolReceiptsComplete: false,
+    });
   });
 
   it('builds deterministic dependency layers and exact dependency edges', () => {
@@ -89,6 +95,7 @@ describe('MagneticTasksTab', () => {
     ): MagneticNativeTask => ({
       taskId, title: taskId, assignee: 'Magnetic', status, dependencyIds,
       latestAttempt: null, resultAvailable: false,
+      workerSessionId: null, handoffSummary: null, toolReceipts: [], toolReceiptsComplete: false,
     });
     const graph = buildMagneticTaskGraph([
       task('root', []),
@@ -132,6 +139,21 @@ describe('MagneticTasksTab', () => {
             taskId: 'task-running', title: 'Collect evidence', assignee: 'liquidaity-signal', status: 'running',
             dependencyIds: [], latestAttempt: { runId: 'attempt-7', status: 'running', startedAt: null, endedAt: null },
             resultAvailable: false,
+            workerSessionId: 'worker-session-one',
+            handoffSummary: 'Worker grounded the handoff in the saved Card result.',
+            toolReceiptsComplete: true,
+            toolReceipts: [{
+              toolCallId: 'codex_dyn_saved_card_read_call-one',
+              toolName: 'saved_card.read',
+              state: 'returned',
+              resultPreview: 'Found exact saved Card evidence.',
+              executionReceipt: {
+                schema: 'agent-runtime.execution-receipt.v1',
+                tool: 'saved_card.read',
+                correlationId: 'card-runtime:receipt-one',
+                state: 'completed',
+              },
+            }],
           },
           {
             taskId: 'task-blocked', title: 'Synthesize', assignee: 'card_magentic', status: 'blocked',
@@ -175,6 +197,17 @@ describe('MagneticTasksTab', () => {
     expect(screen.getByText('Profile · card_magentic')).toBeTruthy();
     expect(screen.getByText('Depends · Collect evidence')).toBeTruthy();
     expect(details.textContent?.toLowerCase()).not.toContain('native');
+    fireEvent.click(screen.getByTestId('flow-node-task-running'));
+    expect(screen.getByText('Worker session · worker-session-one')).toBeTruthy();
+    expect(screen.getByText('Handoff · Worker grounded the handoff in the saved Card result.')).toBeTruthy();
+    expect(screen.getByText('Tool · saved_card.read · returned')).toBeTruthy();
+    expect(screen.getByText('Call · codex_dyn_saved_card_read_call-one')).toBeTruthy();
+    expect(screen.getByText(
+      'Saved Card receipt · saved_card.read · completed · card-runtime:receipt-one',
+    )).toBeTruthy();
+    expect(screen.getByText('Result · Found exact saved Card evidence.')).toBeTruthy();
+    expect(screen.queryByText(/exec_command|apply_patch/)).toBeNull();
+    expect(screen.queryByText('Tool receipt coverage incomplete')).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body || '{}'));
     expect(body).toEqual({
@@ -187,6 +220,39 @@ describe('MagneticTasksTab', () => {
     expect(body.action).not.toBe('execute');
     expect(body.action).not.toBe('stop');
     view.unmount();
+  });
+
+  it('fails receipt completeness closed when receipt metadata is malformed', () => {
+    const result = readMagneticRunStatus({
+      runId: 'run-1',
+      nativeRootId: 'task-1',
+      state: 'completed',
+      nativeStatus: 'done',
+      nativeTasks: [{
+        taskId: 'task-1',
+        title: 'Malformed receipts',
+        assignee: 'signal',
+        status: 'done',
+        dependencyIds: [],
+        latestAttempt: null,
+        resultAvailable: true,
+        workerSessionId: 'worker-session-one',
+        handoffSummary: 'Bounded handoff.',
+        toolReceiptsComplete: true,
+        toolReceipts: [
+          { toolCallId: '', toolName: 'saved_card.read', state: 'returned', resultPreview: 'bad', executionReceipt: null },
+          { toolCallId: 'call-two', toolName: 'saved_card.read', state: 'invented', resultPreview: 'kept', executionReceipt: null },
+        ],
+      }],
+    });
+    expect(result?.nativeTasks[0]?.toolReceipts).toEqual([{
+      toolCallId: 'call-two',
+      toolName: 'saved_card.read',
+      state: null,
+      resultPreview: 'kept',
+      executionReceipt: null,
+    }]);
+    expect(result?.nativeTasks[0]?.toolReceiptsComplete).toBe(false);
   });
 
   it('shows a calm empty state when Magnetic has no current run', async () => {

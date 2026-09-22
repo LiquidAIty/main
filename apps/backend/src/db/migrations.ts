@@ -21,6 +21,7 @@ const REQUIRED_MIGRATIONS = [
   '038_allow_cancelled_native_run_phase.sql',
   '039_remove_assistant_agent_capability.sql',
   '040_remove_main_script_experiment.sql',
+  '041_native_hermes_task_status.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

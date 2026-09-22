@@ -55,6 +55,44 @@ describe('internal MCP Card authentication', () => {
     }, env, 100)).toThrow('internal_mcp_presentation_exceeds_grant');
   });
 
+  it('signs a runless materializer principal with the exact saved Card grants', () => {
+    const token = createInternalMcpBearer({
+      kind: 'materializer-read',
+      projectId: ' project-1 ',
+      deckId: ' deck_builder ',
+      callerCardId: ' builder ',
+      conversationId: ' main ',
+      grantedTools: ['cbm.search_graph', 'card.create', 'cbm.search_graph'],
+      grantedConnections: ['graphiti', 'cbm', 'graphiti'],
+    }, env, 1000);
+    const claims = verifyInternalMcpBearerForTest(token, env);
+    expect(claims).toMatchObject({
+      sub: 'materializer-read:builder',
+      iat: 1000,
+      exp: 1060,
+      principal: {
+        kind: 'materializer-read',
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        callerCardId: 'builder',
+        conversationId: 'main',
+        grantedTools: ['card.create', 'cbm.search_graph'],
+        grantedConnections: ['cbm', 'graphiti'],
+      },
+    });
+    expect(claims.principal).not.toHaveProperty('parentRunId');
+  });
+
+  it('rejects an incomplete runless materializer identity', () => {
+    expect(() => createInternalMcpBearer({
+      kind: 'materializer-read',
+      projectId: 'project-1',
+      deckId: '',
+      callerCardId: 'builder',
+      grantedTools: ['cbm.search_graph'],
+    }, env)).toThrow('internal_mcp_principal_incomplete');
+  });
+
   it('rejects the replaced runless terminal principal', () => {
     expect(() => createInternalMcpBearer({ kind: 'agent-terminal' } as any, env))
       .toThrow('internal_mcp_principal_kind_invalid');

@@ -785,7 +785,10 @@ def _request_tool_is_allowed(name: str) -> bool:
     if kind == "catalog-reader":
         return False
     if kind == "materializer-read":
-        return access == "read"
+        grants = principal.get("grantedTools")
+        return access == "read" and isinstance(grants, list) and name in {
+            str(value).strip() for value in grants if str(value).strip()
+        }
     if kind != "card-runtime":
         return False
     grants = principal.get("grantedTools")
@@ -2085,6 +2088,17 @@ class Auth0TokenVerifier:
                     required = ("projectId", "deckId", "callerCardId")
                     if any(not str(principal.get(field) or "").strip() for field in required):
                         return None
+                    grants = principal.get("grantedTools")
+                    if not isinstance(grants, list) or any(
+                        not isinstance(value, str) or not value.strip() for value in grants
+                    ):
+                        return None
+                    connections = principal.get("grantedConnections", [])
+                    if not isinstance(connections, list) or any(
+                        not isinstance(value, str) or not value.strip()
+                        for value in connections
+                    ):
+                        return None
                 elif principal.get("kind") != "catalog-reader":
                     required = (
                         "projectId", "deckId", "conversationId", "parentRunId",
@@ -2527,18 +2541,21 @@ def _requested_native_catalog_families() -> tuple[str, ...]:
         # startup itself has no request token and never reaches this branch.
         return ("cbm", "graphiti") if get_access_token() is not None else ()
     kind = str(principal.get("kind") or "")
-    if kind == "materializer-read":
-        return ("cbm", "graphiti")
-    if kind != "card-runtime":
+    if kind not in {"materializer-read", "card-runtime"}:
         return ()
     grants = principal.get("grantedTools")
     granted = {
         str(value).strip() for value in grants if str(value).strip()
     } if isinstance(grants, list) else set()
+    connections = principal.get("grantedConnections", [])
+    granted_connections = {
+        str(value).strip() for value in connections if str(value).strip()
+    } if kind == "materializer-read" and isinstance(connections, list) else set()
     return tuple(
         family
         for family, prefix in _NATIVE_PREFIXES.items()
-        if any(name.startswith(prefix) for name in granted)
+        if family in granted_connections
+        or any(name.startswith(prefix) for name in granted)
     )
 
 

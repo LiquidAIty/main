@@ -80,6 +80,13 @@ export type AgentTerminalState = {
   replayTruncated?: boolean;
 };
 
+export type MagenticCardToolAuthority = {
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  configurationFingerprint: string;
+};
+
 export type AgentTerminalGatewayEvent = {
   type: string;
   session_id?: string;
@@ -103,7 +110,38 @@ export type AuthenticatedCardToolRequest = {
     sourceStoredSessionId: string;
     tool: string;
     arguments: Record<string, unknown>;
+  } | {
+    version: 2;
+    expiresAt: number;
+    nonce: string;
+    sourceTaskId: string;
+    sourceTaskRunId: number;
+    sourceProfile: string;
+    tool: string;
+    arguments: Record<string, unknown>;
   };
+  executionContext?: {
+    parentRunId: string;
+    conversationId: string;
+  };
+};
+
+type MagenticWorkerToolProof = {
+  projectId: string;
+  deckId: string;
+  outerRunId: string;
+  nativeRootId: string;
+  sourceTaskId: string;
+  sourceTaskRunId: number;
+  sourceProfile: string;
+  authorityProfile: string;
+  authorityCardId: string;
+  authorityCardRevisionId: string;
+  authorityConfigurationFingerprint: string;
+  expiresAt: number;
+  nonce: string;
+  tool: string;
+  arguments: Record<string, unknown>;
 };
 
 export type AgentTerminalTurnResult = {
@@ -596,6 +634,69 @@ function boundedString(value: unknown, max: number): string {
   return typeof value === 'string' && value.length <= max ? value : '';
 }
 
+function exactBoundedString(value: unknown, max: number): string {
+  const candidate = boundedString(value, max);
+  return candidate && candidate === candidate.trim() ? candidate : '';
+}
+
+function requireMagenticWorkerToolProof(value: unknown): MagenticWorkerToolProof {
+  const proof = record(value);
+  const expectedKeys = [
+    'arguments', 'authorityCardId', 'authorityCardRevisionId',
+    'authorityConfigurationFingerprint', 'authorityProfile', 'deckId', 'expiresAt',
+    'nativeRootId', 'nonce', 'outerRunId', 'projectId', 'sourceProfile', 'sourceTaskId',
+    'sourceTaskRunId', 'tool',
+  ];
+  if (Object.keys(proof).sort().join('\0') !== expectedKeys.join('\0')) {
+    throw new Error('hermes_card_tool_authentication_failed');
+  }
+  const projectId = exactBoundedString(proof.projectId, 512);
+  const deckId = exactBoundedString(proof.deckId, 512);
+  const outerRunId = exactBoundedString(proof.outerRunId, 512);
+  const nativeRootId = exactBoundedString(proof.nativeRootId, 512);
+  const sourceTaskId = exactBoundedString(proof.sourceTaskId, 512);
+  const sourceTaskRunId = proof.sourceTaskRunId;
+  const sourceProfile = exactBoundedString(proof.sourceProfile, 128);
+  const authorityProfile = exactBoundedString(proof.authorityProfile, 128);
+  const authorityCardId = exactBoundedString(proof.authorityCardId, 512);
+  const authorityCardRevisionId = exactBoundedString(proof.authorityCardRevisionId, 512);
+  const authorityConfigurationFingerprint = exactBoundedString(
+    proof.authorityConfigurationFingerprint, 64,
+  );
+  const expiresAt = proof.expiresAt;
+  const nonce = exactBoundedString(proof.nonce, 128);
+  const tool = exactBoundedString(proof.tool, 128);
+  const args = proof.arguments;
+  const now = Math.floor(Date.now() / 1000);
+  if (
+    !projectId || !deckId || !outerRunId || !nativeRootId || !sourceTaskId
+    || !sourceProfile || !authorityProfile || !authorityCardId || !authorityCardRevisionId || !tool
+    || !/^[a-f0-9]{64}$/.test(authorityConfigurationFingerprint)
+    || !Number.isSafeInteger(sourceTaskRunId) || Number(sourceTaskRunId) < 1
+    || !Number.isSafeInteger(expiresAt) || Number(expiresAt) <= now
+    || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
+    || !/^[a-f0-9]{32,128}$/i.test(nonce)
+    || !args || typeof args !== 'object' || Array.isArray(args)
+  ) throw new Error('hermes_card_tool_authentication_failed');
+  return {
+    projectId,
+    deckId,
+    outerRunId,
+    nativeRootId,
+    sourceTaskId,
+    sourceTaskRunId: Number(sourceTaskRunId),
+    sourceProfile,
+    authorityProfile,
+    authorityCardId,
+    authorityCardRevisionId,
+    authorityConfigurationFingerprint,
+    expiresAt: Number(expiresAt),
+    nonce,
+    tool,
+    arguments: args as Record<string, unknown>,
+  };
+}
+
 function requireNativeSession(
   value: unknown,
   error: string,
@@ -632,6 +733,19 @@ export class AgentTerminalManager {
     private readonly resolveMcpServerSpec: typeof resolvePythonAgentMcpServerSpec = resolvePythonAgentMcpServerSpec,
     private readonly materializeApplicationMcpServers: typeof materializeHermesApplicationMcpServers = materializeHermesApplicationMcpServers,
     private readonly removeApplicationMcpServers: typeof removeHermesApplicationMcpServers = removeHermesApplicationMcpServers,
+    private readonly verifyMagenticWorkerToolRequest = (envelope: {
+      keyId: string;
+      payload: string;
+      signature: string;
+    }): Promise<unknown> => requestPythonRailsJson(
+      '/magentic/execution/worker-tool-auth',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(envelope),
+      },
+      { timeoutMs: 15_000 },
+    ),
   ) {}
 
   private async prepareMagenticTaskCard(
@@ -1258,6 +1372,82 @@ export class AgentTerminalManager {
     session.state.storedSessionId = stored;
   }
 
+  private async authenticateMagenticWorkerToolRequest(
+    keyId: string,
+    payload: string,
+    signature: string,
+  ): Promise<AuthenticatedCardToolRequest> {
+    const proof = requireMagenticWorkerToolProof(
+      await this.verifyMagenticWorkerToolRequest({ keyId, payload, signature }),
+    );
+    const candidates = [...this.sessions.values()].filter((session) => (
+      session.state.status === 'running'
+      && session.owner.projectId === proof.projectId
+      && session.owner.deckId === proof.deckId
+      && session.owner.cardId === proof.authorityCardId
+      && session.state.profile === proof.authorityProfile
+      && session.cardTools.cardRevisionId === proof.authorityCardRevisionId
+      && session.cardTools.configurationFingerprint === proof.authorityConfigurationFingerprint
+    ));
+    if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
+    const session = candidates[0];
+    const registered = session.cardTools.pluginTools.find(
+      (candidate) => candidate.hermesName === proof.tool,
+    );
+    if (!registered) throw new Error('hermes_card_tool_authentication_failed');
+    const now = Math.floor(Date.now() / 1000);
+    for (const [usedNonce, expiry] of session.cardToolNonces) {
+      if (expiry <= now) session.cardToolNonces.delete(usedNonce);
+    }
+    if (session.cardToolNonces.has(proof.nonce)) {
+      throw new Error('hermes_card_tool_authentication_failed');
+    }
+    session.cardToolNonces.set(proof.nonce, proof.expiresAt);
+    while (session.cardToolNonces.size > CARD_TOOL_NONCE_LIMIT) {
+      const oldest = session.cardToolNonces.keys().next().value as string | undefined;
+      if (!oldest) break;
+      session.cardToolNonces.delete(oldest);
+    }
+    return {
+      owner: { ...session.owner },
+      state: { ...session.state },
+      canonicalToolName: registered.canonicalName,
+      cardTools: {
+        cardRevisionId: session.cardTools.cardRevisionId,
+        configurationFingerprint: session.cardTools.configurationFingerprint,
+        runtimeMode: session.cardTools.runtime.mode,
+      },
+      request: {
+        version: 2,
+        expiresAt: proof.expiresAt,
+        nonce: proof.nonce,
+        sourceTaskId: proof.sourceTaskId,
+        sourceTaskRunId: proof.sourceTaskRunId,
+        sourceProfile: proof.sourceProfile,
+        tool: proof.tool,
+        arguments: proof.arguments,
+      },
+      executionContext: {
+        parentRunId: proof.outerRunId,
+        conversationId: '',
+      },
+    };
+  }
+
+  magenticCardToolAuthority(owner: AgentTerminalOwner): MagenticCardToolAuthority {
+    const candidates = [...this.sessions.values()].filter((session) => (
+      session.state.status === 'running' && sameOwner(session.owner, owner)
+    ));
+    if (candidates.length !== 1) throw new Error('magentic_card_tool_authority_unavailable');
+    const session = candidates[0];
+    return {
+      cardId: session.owner.cardId,
+      cardRevisionId: session.cardTools.cardRevisionId,
+      profile: session.state.profile,
+      configurationFingerprint: session.cardTools.configurationFingerprint,
+    };
+  }
+
   async authenticateCardToolRequest(
     keyId: string,
     payload: string,
@@ -1271,6 +1461,9 @@ export class AgentTerminalManager {
     const candidates = [...this.sessions.values()].filter((session) => (
       session.state.status === 'running' && equalHex(session.gatewayKeyId, keyId)
     ));
+    if (candidates.length === 0) {
+      return this.authenticateMagenticWorkerToolRequest(keyId, payload, signature);
+    }
     if (candidates.length !== 1) throw new Error('hermes_card_tool_authentication_failed');
     const session = candidates[0];
     const expected = createHmac('sha256', session.gatewayToken).update(payload, 'utf8').digest('hex');

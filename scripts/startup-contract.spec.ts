@@ -17,14 +17,21 @@ describe('canonical Hermes gateway launcher', () => {
     expect(packageJson.scripts?.['dev:dependent-services']).not.toMatch(/--kill-others(?:\s|$)/);
   });
 
-  it('uses the existing upstream gateway command for native task execution', () => {
+  it('uses the Windows-safe upstream gateway module command for native task execution', () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(import.meta.dirname, '..', 'package.json'), 'utf8'),
     ) as { scripts?: Record<string, string> };
     const command = packageJson.scripts?.['dev:gateway'] || '';
 
-    expect(command).toContain("['-p','liquidaity-main','gateway','run'");
+    expect(command).toContain("path.join(root,'venv','Scripts','python.exe')");
+    expect(command).not.toContain("path.join(root,'venv','Scripts','hermes.exe')");
+    expect(command).toContain("['-m','hermes_cli.main','-p','liquidaity-main','gateway','run'");
     expect(command).toContain("'--replace','--external-supervisor'");
     expect(command).toContain("profiles','liquidaity-main'");
+    expect(command).toContain("cwd,env:{...process.env");
+    expect(command).toContain("CARD_TOOLS_MANAGED:'1'");
+    expect(command).toContain("CARD_TOOLS_HOST_URL:'http://127.0.0.1:'+port+'/api/hermes-card-tools'");
+    expect(command).toContain("stdio:'inherit',windowsHide:true");
+    expect(command).not.toContain('shell:true');
   });
 });

@@ -200,11 +200,31 @@ def test_public_helper_rejects_model_override_and_incomplete_notification(team_b
             _new_team_root(conn, model_override="wrong-model")
         with pytest.raises(ValueError, match="both platform and chat id"):
             _new_team_root(conn, notify_platform="tui")
-        with pytest.raises(ValueError, match="enter Triage directly"):
-            _new_team_root(conn, initial_status="blocked")
+        with pytest.raises(ValueError, match="initial running or staged blocked"):
+            _new_team_root(conn, initial_status="scheduled")
         with pytest.raises(ValueError, match="only the saved Team profile"):
             _new_team_root(conn, allowed_assignees=[TEAM_PROFILE, "ordinary"])
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
+
+
+def test_staged_team_root_is_not_dispatchable_until_exact_native_activation(team_board):
+    from hermes_cli.kanban_team import activate_staged_team_root
+
+    with kbc.connect_closing() as conn:
+        root = _new_team_root(
+            conn,
+            tenant="mag-one:run-one",
+            idempotency_key="magentic:run-one:root",
+            initial_status="blocked",
+        )
+        assert root.status == "blocked"
+        assert kb.claim_task(conn, root.id, claimer="must-not-claim") is None
+        assert activate_staged_team_root(conn, root.id) is True
+        activated = kb.get_task(conn, root.id)
+        assert activated is not None and activated.status == "triage"
+        assert activate_staged_team_root(conn, root.id) is False
+        events = [event.kind for event in kb.list_events(conn, root.id)]
+        assert events.count("team_root_activated") == 1
 
 
 def test_kanban_create_uses_structure_without_a_public_workflow_knob(team_board, monkeypatch):

@@ -1098,6 +1098,11 @@ def _claimer_id() -> str:
     return f"{host}:{os.getpid()}"
 
 
+def _new_claim_capability() -> str:
+    """Return one unguessable native capability for exactly one task run."""
+    return f"{_claimer_id()}:{secrets.token_hex(32)}"
+
+
 def _host_prefix() -> str:
     """``"<host>:"`` prefix shared by every claim lock issued from this host."""
     return f"{_claimer_id().split(':', 1)[0]}:"
@@ -2331,7 +2336,7 @@ def claim_task(
     already claimed (or is not in ``ready`` status).
     """
     now = int(time.time())
-    lock = claimer or _claimer_id()
+    lock = claimer or _new_claim_capability()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
         # Single enforcement point: never ready -> running with an undone
@@ -2364,7 +2369,7 @@ def claim_review_task(
     (one may have reopened meanwhile) and a NEW run tracks the reviewer
     separately from the implementer."""
     now = int(time.time())
-    lock = claimer or _claimer_id()
+    lock = claimer or _new_claim_capability()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
         if not _parents_satisfied(conn, task_id):

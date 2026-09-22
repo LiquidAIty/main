@@ -1,7 +1,7 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly seven LiquidAIty-owned runtime extensions: durable Team delegation,
+plus exactly eight LiquidAIty-owned runtime extensions: durable Team delegation,
 profile-scoped native Bot rosters projected from saved Card topology, a nullable
 root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
 authentication for detached workers whose saved profile selects the native app-server
@@ -56,8 +56,9 @@ FILES AND SYMBOLS:
 - `tools/bot_mode_dm.py`: routes an authorized direct orange `message_agent`
   target with the exact marker into the same Team-root creator.
 - `hermes_cli/kanban_team.py`: validates the exact profile marker and saved
-  parent/worker model policy, creates or rejoins one Triage root, and subscribes
-  the durable originating session.
+  parent/worker model policy, creates or rejoins one Triage root, supports one
+  explicitly staged blocked root before external Run binding, performs the exact
+  blocked-to-Triage activation, and subscribes the durable originating session.
 - `hermes_cli/config_defaults.py`: declares only the structural per-profile task
   mode; worker provider/model/reasoning remains the profile's saved delegation config.
 - `hermes_cli/kanban_db.py`: persists workflow/step fields, the depth-one task
@@ -78,6 +79,8 @@ CONTRACTS:
 
 - exact `kanban.task_mode: team` on the assigned saved profile;
 - one non-empty task body and one `auto-team-v1` Triage root;
+- an externally bound Team root may be committed as non-dispatchable `blocked`
+  and becomes Triage only through `activate_staged_team_root` after binding;
 - saved profile parent model plus saved delegation worker model/provider/reasoning;
 - durable notification route before direct Bot submission;
 - native depth-one workers and a separate final synthesis pass;
@@ -431,6 +434,57 @@ data. There is no second receipt store, provider call, correlator, or inferred i
 ROLLBACK: remove the two optional event fields, their projection, and the focused test
 together. Codex-backed application Runs would again fail completion receipt validation.
 
+## 8. Detached worker Gateway-bearer isolation
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: guarantee that a detached native worker cannot inherit the saved Card Gateway
+bearer while retaining the native task, run, claim, profile, and tenant capability that
+the existing dispatcher assigned to that worker. Each default native task claim is an
+unguessable per-task-run capability, so sibling workers owned by the same dispatcher do
+not share Card-tool signing authority.
+
+EXTERNAL ALTERNATIVE CHECK: the application plugin hook runs inside the spawned worker
+and therefore cannot enforce the child process environment. `_default_spawn` is the one
+supported native worker spawn boundary, so an explicit removal there is the smallest
+complete hardening for multiplex and non-multiplex dispatch.
+
+FILES AND SYMBOLS:
+
+- `hermes_cli/kanban_db_dispatch.py`: `_default_spawn` removes
+  `HERMES_DASHBOARD_SESSION_TOKEN` before the detached worker is started.
+- `hermes_cli/kanban_db.py`: default task and review claims extend the existing
+  host/process owner identity with 32 random bytes for one task run; the same exact
+  `claim_lock` continues to own native heartbeat and terminal compare-and-set behavior.
+
+UPSTREAM BEHAVIOR PRESERVED: native task claim, task/run/profile/tenant assignment,
+profile-scoped home and toolsets, process/session ownership, lifecycle, workspace, and
+dispatch behavior remain unchanged. The existing non-secret managed Card-tool loopback
+route remains available to the worker.
+
+CONTRACTS:
+
+- the saved Gateway bearer is absent in both multiplex and non-multiplex worker spawns;
+- `CARD_TOOLS_MANAGED` and `CARD_TOOLS_HOST_URL` remain non-secret route metadata;
+- the exact native task, run, unique claim capability, profile, and tenant assignment
+  remain intact;
+- sibling tasks claimed by one dispatcher receive different capabilities;
+- no process, registry, database, session, callback, scheduler, or shell fallback is added.
+
+TESTS:
+
+- `tests/hermes_cli/test_kanban_worker_spawn_toolsets.py`
+- companion saved Card plugin envelope coverage in
+  `packages/hermes-card-tools/tests/test_plugin.py`.
+
+FORK COST: one explicit environment removal at the existing native spawn boundary and
+focused coverage. No runtime or persistence owner is added.
+
+ROLLBACK: remove the worker-only v2 plugin helper/branch, restore the default claim value
+to the host/process identity, and remove the explicit environment removal together if the
+end-to-end saved Card worker acceptance path is later replaced.
+
 ## Complete upstream-relative difference manifest
 
 Production files:
@@ -438,11 +492,13 @@ Production files:
 - `tools/delegate_tool.py` — Team
 - `hermes_cli/config_defaults.py` — Team and native Bot roster field
 - `hermes_cli/kanban_team.py` — Team
-- `hermes_cli/kanban_db.py` — Team and root-scoped assignee ceiling
+- `hermes_cli/kanban_db.py` — Team, root-scoped assignee ceiling, and unique native
+  per-task-run claim capabilities
 - `hermes_cli/kanban_db_connect.py` — nullable assignee-ceiling migration
 - `hermes_cli/kanban_db_graph.py` — Team and assignee-ceiling inheritance
 - `hermes_cli/kanban_decompose.py` — Team
-- `hermes_cli/kanban_db_dispatch.py` — Team and bounded default-assignee enforcement
+- `hermes_cli/kanban_db_dispatch.py` — Team, bounded default-assignee enforcement, and
+  detached-worker Gateway-bearer isolation
 - `hermes_cli/runtime_provider.py` — Codex app-server route without duplicate profile OAuth
 - `agent/transports/codex_app_server.py` — complete process-local worker MCP transport
 - `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
@@ -472,6 +528,8 @@ Focused tests:
 - `tests/agent/transports/test_codex_app_server_session.py` — exact stable/dynamic prompt split
 - `tests/tui_gateway/test_bot_mode_silence_delivery.py` — native completion receipt projection
 - `tests/agent/test_codex_app_server_integration.py` — Codex result thread/turn identity
+- `tests/hermes_cli/test_kanban_worker_spawn_toolsets.py` — exact worker toolsets and
+  Gateway-bearer isolation
 
 Metadata:
 

@@ -39,6 +39,7 @@ from app.python_models.idd import (
 )
 from app.python_models.magentic_execution import (
     MagenticExecutionError,
+    authenticate_magentic_worker_tool_request,
     read_magentic_execution,
     stop_magentic_execution,
     submit_magentic_execution,
@@ -485,6 +486,14 @@ def magentic_execution_submit(payload: dict[str, Any]):
 def magentic_execution_status(payload: dict[str, Any]):
     try:
         return read_magentic_execution(payload)
+    except MagenticExecutionError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/magentic/execution/worker-tool-auth")
+def magentic_execution_worker_tool_auth(payload: dict[str, Any]):
+    try:
+        return authenticate_magentic_worker_tool_request(payload)
     except MagenticExecutionError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

@@ -4,10 +4,20 @@ const INTERNAL_MCP_ISSUER = 'liquidaity-runtime';
 const INTERNAL_MCP_AUDIENCE = 'liquidaity-internal-mcp';
 const DEFAULT_INTERNAL_MCP_URL = 'http://127.0.0.1:8765/mcp';
 const TOKEN_LIFETIME_SECONDS = 12 * 60 * 60;
+const MATERIALIZER_TOKEN_LIFETIME_SECONDS = 60;
 
 export type InternalMcpPrincipal =
   | {
       kind: 'catalog-reader';
+    }
+  | {
+      kind: 'materializer-read';
+      projectId: string;
+      deckId: string;
+      callerCardId: string;
+      conversationId?: string;
+      grantedTools: string[];
+      grantedConnections?: string[];
     }
   | {
       kind: 'card-runtime';
@@ -58,11 +68,23 @@ export function createInternalMcpBearer(
   nowSeconds = Math.floor(Date.now() / 1000),
 ): string {
   const secret = requiredSecret(env);
-  if (!['catalog-reader', 'card-runtime'].includes(principal.kind)) {
+  if (!['catalog-reader', 'materializer-read', 'card-runtime'].includes(principal.kind)) {
     throw new Error('internal_mcp_principal_kind_invalid');
   }
   const normalized = principal.kind === 'catalog-reader'
     ? principal
+    : principal.kind === 'materializer-read'
+      ? {
+          ...principal,
+          projectId: String(principal.projectId || '').trim(),
+          deckId: String(principal.deckId || '').trim(),
+          callerCardId: String(principal.callerCardId || '').trim(),
+          ...(String(principal.conversationId || '').trim()
+            ? { conversationId: String(principal.conversationId || '').trim() }
+            : {}),
+          grantedTools: uniqueStrings(principal.grantedTools),
+          grantedConnections: uniqueStrings(principal.grantedConnections ?? []),
+        }
     : {
         ...principal,
         projectId: String(principal.projectId || '').trim(),
@@ -75,7 +97,16 @@ export function createInternalMcpBearer(
         grantedTools: uniqueStrings(principal.grantedTools),
         presentedTools: uniqueStrings(principal.presentedTools ?? principal.grantedTools),
       };
-  if (normalized.kind !== 'catalog-reader') {
+  if (normalized.kind === 'materializer-read') {
+    const required = [
+      normalized.projectId,
+      normalized.deckId,
+      normalized.callerCardId,
+    ];
+    if (required.some((value) => !value)) {
+      throw new Error('internal_mcp_principal_incomplete');
+    }
+  } else if (normalized.kind === 'card-runtime') {
     const required = [
       normalized.projectId,
       normalized.deckId,
@@ -100,7 +131,11 @@ export function createInternalMcpBearer(
       ? 'catalog-reader'
       : `${normalized.kind}:${normalized.callerCardId}`,
     iat: nowSeconds,
-    exp: nowSeconds + TOKEN_LIFETIME_SECONDS,
+    exp: nowSeconds + (
+      normalized.kind === 'materializer-read'
+        ? MATERIALIZER_TOKEN_LIFETIME_SECONDS
+        : TOKEN_LIFETIME_SECONDS
+    ),
     scope: 'liquidaity.main',
     principal: normalized,
   });

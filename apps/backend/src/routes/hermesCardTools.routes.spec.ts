@@ -104,6 +104,40 @@ describe('managed Hermes Card-tools host route', () => {
     });
   });
 
+  it('uses the verified outer Magnetic Run without fabricating a Bot Chat context', async () => {
+    const deps = dependencies();
+    Object.assign(deps.authenticated, {
+      executionContext: { parentRunId: 'outer-magnetic-run', conversationId: '' },
+      request: {
+        version: 2,
+        expiresAt: 1_000,
+        nonce: 'c'.repeat(32),
+        sourceTaskId: 'worker-task-one',
+        sourceTaskRunId: 23,
+        sourceProfile: 'builder',
+        tool: 'card__engraphis_stats',
+        arguments: { project: 'project-one' },
+      },
+    });
+
+    await expect(post(deps)).resolves.toEqual({
+      status: 200,
+      body: { ok: true, output: '{"ok":true}' },
+    });
+    expect(deps.activeContext).not.toHaveBeenCalled();
+    expect(deps.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      cardId: 'builder',
+      cardRevisionId: 'revision-one',
+      configurationFingerprint: 'a'.repeat(64),
+      toolName: 'engraphis_stats',
+      arguments: { project: 'project-one' },
+      conversationId: '',
+      parentRunId: 'outer-magnetic-run',
+    }));
+  });
+
   it('maps every authentication rejection to one secret-free response', async () => {
     const deps = dependencies();
     deps.agentTerminalManager.authenticateCardToolRequest.mockRejectedValue(

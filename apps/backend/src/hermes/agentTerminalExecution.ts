@@ -44,6 +44,21 @@ function optionalNonNegativeNumber(...values: unknown[]): number | null {
   return typeof value === 'number' ? value : null;
 }
 
+function resolvePreparedHermesProvider(input: any) {
+  const provider = input?.provider && typeof input.provider === 'object'
+    && !Array.isArray(input.provider)
+    ? input.provider
+    : {};
+  const runtimeOptions = input?.runtimeOptions && typeof input.runtimeOptions === 'object'
+    && !Array.isArray(input.runtimeOptions)
+    ? input.runtimeOptions
+    : {};
+  return resolveSavedHermesProvider({
+    ...provider,
+    openaiRuntime: runtimeOptions.openaiRuntime,
+  });
+}
+
 function resolveStagedRun(
   owner: AgentTerminalOwner,
   profile: string,
@@ -98,7 +113,7 @@ function resolveStagedRun(
     throw new Error('agent_terminal_staged_run_identity_mismatch');
   }
   // Validate the exact saved provider before any text reaches the native session.
-  resolveSavedHermesProvider(input.provider);
+  resolvePreparedHermesProvider(input);
   return { runId, message };
 }
 
@@ -151,8 +166,8 @@ export class AgentTerminalExecution {
     const nativeUsage = payload.usage && typeof payload.usage === 'object'
       ? payload.usage as Record<string, unknown>
       : {};
-    const selectedProvider = resolveSavedHermesProvider(
-      staged.prepared.hermesTransport.request.provider,
+    const selectedProvider = resolvePreparedHermesProvider(
+      staged.prepared.hermesTransport.request,
     );
     const completion: AgentTerminalGatewayCompletion = {
       hermesSessionId: nativeSessionId,
