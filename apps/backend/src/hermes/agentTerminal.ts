@@ -22,6 +22,7 @@ import {
   configureHermesCardModelRuntime,
   configureHermesNativeSubagentModel,
   materializeHermesProfileSelections,
+  readSavedSubagentType,
   type HermesProfileSelection,
 } from './profileMaterialization';
 import { resolveSavedHermesProvider, type NativeHermesProviderSelection } from './providerSelection';
@@ -45,6 +46,7 @@ const BOT_CHAT_TITLE = 'Bot Chat';
 const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
 const PRIOR_SESSION_LIMIT = 8;
 const CARD_TOOL_NONCE_LIMIT = 512;
+const TEAM_CARD_ID = 'card_team';
 
 export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
 export type HermesBotRosterProjection = {
@@ -332,6 +334,7 @@ function savedProfileSelection(
   if (card.runtime.kind !== 'hermes') throw new Error('agent_terminal_requires_hermes');
   const options = card.runtimeOptions as Record<string, unknown> | undefined;
   const subagentModel = readSavedSubagentModel(options?.subagentModel);
+  const subagentType = readSavedSubagentType(options?.subagentType);
   return {
     runtime: card.runtime,
     provider: providerSelection.savedProvider,
@@ -343,6 +346,8 @@ function savedProfileSelection(
     nativeTools: list(options?.nativeTools),
     toolsets: list(options?.toolsets),
     ...(subagentModel ? { subagentModel } : {}),
+    ...(subagentType ? { subagentType } : {}),
+    taskMode: card.id === TEAM_CARD_ID ? 'team' as const : null,
   };
 }
 
@@ -383,6 +388,7 @@ export function prepareAgentTerminal(
     throw new Error('agent_terminal_saved_prompt_missing');
   }
   const env = cleanEnvironment(process.env);
+  delete env.HERMES_EPHEMERAL_SYSTEM_PROMPT;
   Object.assign(env, {
     HERMES_HOME: hermesHome,
     TERMINAL_CWD: cwd,
@@ -390,7 +396,6 @@ export function prepareAgentTerminal(
     PYTHONUTF8: '1',
     PYTHONIOENCODING: 'utf-8',
     TERM: 'xterm-256color',
-    HERMES_EPHEMERAL_SYSTEM_PROMPT: card.prompt,
   });
   const gatewayArgs = [
     '-m', 'hermes_cli.main',
@@ -681,13 +686,10 @@ export class AgentTerminalManager {
       if (options.materializeTaskProfile) {
         await this.prepareMagenticTaskCard(profile, card);
       }
-      if (card.runtime.kind === 'hermes' && card.runtime.mode !== 'magentic_one') {
+      if (card.runtime.kind === 'hermes') {
         const botRosterProjection = options.botRosterProjection ?? await this.resolveBotRoster(owner);
         await this.configureNativeBotProfile(
-          (method, params) => session.client.request(method, {
-            ...params,
-            profile: session.launch.profile,
-          }),
+          (method, params) => session.client.request(method, params),
           owner,
           card,
           botRosterProjection,
@@ -716,9 +718,6 @@ export class AgentTerminalManager {
           await this.refreshOptionalCardTools(session);
         }
       }
-      if (options.materializeTaskProfile) {
-        await this.prepareMagenticTaskCard(profile, card);
-      }
       return attachTui
         ? this.attachTui(session, cols, rows)
         : state;
@@ -738,9 +737,6 @@ export class AgentTerminalManager {
     });
     try {
       const state = await promise;
-      if (options.materializeTaskProfile) {
-        await this.prepareMagenticTaskCard(profile, card);
-      }
       return attachTui
         ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
         : state;
@@ -845,6 +841,7 @@ export class AgentTerminalManager {
     cols: number,
   ): Promise<{ sessionId: string; storedSessionId: string }> {
     const exact = sessionRows(await request('session.list', {
+      profile: launch.profile,
       title: BOT_CHAT_TITLE,
       include_hidden: true,
       limit: 200,
@@ -854,7 +851,10 @@ export class AgentTerminalManager {
     if (exact.length === 1) {
       const stored = storedSessionId(exact[0]);
       if (!stored) throw new Error('agent_terminal_session_enumeration_invalid');
-      const resumed = await request<Record<string, unknown>>('session.resume', { session_id: stored });
+      const resumed = await request<Record<string, unknown>>('session.resume', {
+        session_id: stored,
+        profile: launch.profile,
+      });
       native = requireNativeSession(
         resumed && typeof resumed === 'object'
           ? { ...resumed, stored_session_id: stored }
@@ -863,6 +863,7 @@ export class AgentTerminalManager {
       );
     } else {
       const createParams: Record<string, unknown> = {
+        profile: launch.profile,
         title: BOT_CHAT_TITLE,
         cwd: launch.cwd,
         cols,
@@ -880,12 +881,14 @@ export class AgentTerminalManager {
       );
       const titled = record(await request('session.title', {
         session_id: native.sessionId,
+        profile: launch.profile,
         title: BOT_CHAT_TITLE,
       }));
       if (titled.title !== BOT_CHAT_TITLE) throw new Error('agent_terminal_bot_chat_title_failed');
     }
 
     const readback = sessionRows(await request('session.list', {
+      profile: launch.profile,
       title: BOT_CHAT_TITLE,
       include_hidden: true,
       limit: 200,
@@ -909,6 +912,8 @@ export class AgentTerminalManager {
     botRosterProjection?: HermesBotRosterProjection,
   ): Promise<AgentTerminalState> {
     const sessionId = randomUUID();
+    const profile = requireAgentTerminalCard(card, deck);
+    await this.configureCardInstructions(profile, String(card.prompt || ''));
     const launch = this.prepare(owner, card, deck, sessionId, workingDirectory);
     if (launch.providerSelection.apiMode === 'codex_app_server') {
       await this.configureCardModelRuntime(launch.profile, {
@@ -939,7 +944,7 @@ export class AgentTerminalManager {
       const gatewayUrl = `ws://127.0.0.1:${port}/api/ws?token=${encodeURIComponent(gatewayToken)}`;
       await client.connect(gatewayUrl);
       const request = <T>(method: string, params: Record<string, unknown>) => (
-        client!.request<T>(method, { ...params, profile: launch.profile })
+        client!.request<T>(method, params)
       );
       const externalMcpConnectionIds = [...new Set(
         cardTools.externalMcpTools.map((tool) => tool.connectionId),
@@ -986,14 +991,12 @@ export class AgentTerminalManager {
         cardTools,
         profileMaterialization.unavailableMcpServerReasons,
       );
-      if (card.runtime.mode !== 'magentic_one') {
-        await this.configureNativeBotProfile(
-          request,
-          owner,
-          card,
-          botRosterProjection ?? await this.resolveBotRoster(owner),
-        );
-      }
+      await this.configureNativeBotProfile(
+        request,
+        owner,
+        card,
+        botRosterProjection ?? await this.resolveBotRoster(owner),
+      );
       const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
       // These stock Gateway methods are session/install scoped and their public
       // contracts deliberately do not accept a profile selector.  The live
@@ -1366,7 +1369,7 @@ export class AgentTerminalManager {
     ));
     if (matches.length === 0) throw new Error('agent_terminal_profile_runtime_not_running');
     if (matches.length > 1) throw new Error('agent_terminal_profile_runtime_ambiguous');
-    return matches[0].client.request<T>(method, { ...params, profile: normalized });
+    return matches[0].client.request<T>(method, params);
   }
 
   async dispatchLearn(profile: string, request: string): Promise<string> {
@@ -1473,7 +1476,7 @@ export class AgentTerminalManager {
       if (!active) return;
 
       const request = <T>(method: string, params: Record<string, unknown>) => (
-        session.client.request<T>(method, { ...params, profile: session.launch.profile })
+        session.client.request<T>(method, params)
       );
       await this.materializeApplicationMcpServers(
         request,
@@ -1669,10 +1672,7 @@ export class AgentTerminalManager {
     gatewaySession: Session,
     profiles: DesiredHermesBotProfile[],
   ): Promise<void> {
-    const request: ProfileRequest = (method, params) => gatewaySession.client.request(method, {
-      ...params,
-      profile: gatewaySession.launch.profile,
-    });
+    const request: ProfileRequest = (method, params) => gatewaySession.client.request(method, params);
     for (const target of profiles) {
       await this.configureNativeBotProfile(request, target.owner, target.card, target.projection);
     }
@@ -1708,6 +1708,18 @@ export class AgentTerminalManager {
       }
       projectedByOwner.set(key, target);
       projectedProfiles.add(profile);
+    }
+    // Saving a new Card and wiring it into a Bot roster is one application
+    // operation. Materialize each enabled saved profile before roster
+    // publication so the existing Gateway never observes a roster target
+    // whose profile identity has not been created yet. Disabled Cards are
+    // deliberately excluded so a retired profile cannot be resurrected.
+    for (const target of botProfiles ?? []) {
+      if (!target.projection.botEnabled) continue;
+      await this.configureCardInstructions(
+        target.projection.profile,
+        String(target.card.prompt || ''),
+      );
     }
     const existingGateway = [...this.sessions.values()].find((session) => (
       session.state.status === 'running'

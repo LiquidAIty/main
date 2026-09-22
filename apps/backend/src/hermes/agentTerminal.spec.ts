@@ -89,7 +89,7 @@ class FakeGatewayClient {
     private readonly controls: {
       enumerationFailure: boolean;
     },
-    private readonly profileNames: string[],
+    private readonly profileNames: Set<string>,
   ) {}
 
   seedManagedProfile(name: string, roster: string[]) {
@@ -125,7 +125,7 @@ class FakeGatewayClient {
     const profile = String(params.profile || '');
     const titleKey = (title: string) => `${profile}\u0000${title}`;
     if (method === 'profiles.list') {
-      return { profiles: this.profileNames.map((name) => {
+      return { profiles: [...this.profileNames].map((name) => {
         const meta = this.botMeta.get(name);
         return {
           name,
@@ -298,16 +298,17 @@ function fixture(extraProfileNames: string[] = []) {
   const controls = {
     enumerationFailure: false,
   };
+  const profileNames = new Set([
+    ...cards.map((selected) => selected.runtime.kind === 'hermes' ? selected.runtime.profile : ''),
+    ...extraProfileNames,
+  ]);
   const clients: FakeGatewayClient[] = [];
   const createGatewayClient = vi.fn(async () => {
     const client = new FakeGatewayClient(
       clients.length + 1,
       durableByTitle,
       controls,
-      [
-        ...cards.map((selected) => selected.runtime.kind === 'hermes' ? selected.runtime.profile : ''),
-        ...extraProfileNames,
-      ],
+      profileNames,
     );
     clients.push(client);
     return client;
@@ -376,7 +377,9 @@ function fixture(extraProfileNames: string[] = []) {
   }));
   const materializeCardToolsPlugin = vi.fn(async () => undefined);
   const materializeExternalMcpTools = vi.fn(async () => ({}));
-  const configureCardInstructions = vi.fn(async () => undefined);
+  const configureCardInstructions = vi.fn(async (profile: string) => {
+    profileNames.add(profile);
+  });
   const configureCardModelRuntime = vi.fn(async () => undefined);
   const resolveActiveContext = vi.fn(() => ({
     runId: 'run-one',
@@ -456,11 +459,28 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.spawnGateway).toHaveBeenCalledTimes(2);
     expect(f.spawnPty).toHaveBeenCalledTimes(2);
     expect(f.materialize).toHaveBeenCalledTimes(2);
-    expect(f.configureCardInstructions).not.toHaveBeenCalled();
+    expect(f.configureCardInstructions.mock.calls).toEqual(expect.arrayContaining([
+      ['signal-analyst', 'Prompt signal'],
+      ['quant-analyst', 'Prompt quant'],
+    ]));
     expect(String(f.ptys[0].options.env)).not.toContain('message.complete');
   });
 
-  it('materializes saved instructions only for native task-profile preparation', async () => {
+  it('selects the running profile Gateway without adding a profile parameter to the native RPC', async () => {
+    const f = fixture();
+    await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false });
+
+    await f.manager.requestProfile('SIGNAL-ANALYST', 'profiles.describe', {
+      name: 'signal-analyst',
+    });
+
+    expect(f.clients[0].requests.at(-1)).toEqual({
+      method: 'profiles.describe',
+      params: { name: 'signal-analyst' },
+    });
+  });
+
+  it('materializes saved instructions before the first Gateway profile start', async () => {
     const f = fixture();
     await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
       attachTui: false,
@@ -469,13 +489,6 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.configureCardInstructions).toHaveBeenCalledOnce();
     expect(f.configureCardInstructions).toHaveBeenCalledWith(
       'signal-analyst', 'Prompt signal',
-    );
-    expect(f.configureCardModelRuntime).toHaveBeenCalledExactlyOnceWith(
-      'signal-analyst', {
-        provider: 'openai-codex',
-        model: 'gpt-5.6-sol',
-        openaiRuntime: 'codex_app_server',
-      },
     );
   });
 
@@ -503,7 +516,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     );
   });
 
-  it('does not require the direct-Agent roster when preparing Mag One headlessly', async () => {
+  it('materializes Magnetic Bot metadata while preparing it headlessly', async () => {
     const f = fixture();
     f.cards[0].runtime = {
       kind: 'hermes', mode: 'magentic_one', profile: 'signal-analyst',
@@ -514,7 +527,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       materializeTaskProfile: true,
     });
 
-    expect(f.resolveBotRoster).not.toHaveBeenCalled();
+    expect(f.resolveBotRoster).toHaveBeenCalledExactlyOnceWith(f.owners[0]);
     expect(f.configureCardInstructions).toHaveBeenCalledExactlyOnceWith(
       'signal-analyst', 'Prompt signal',
     );
@@ -573,6 +586,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
       attachTui: false,
     });
+    f.configureCardInstructions.mockClear();
     f.cards[0].prompt = 'Changed prompt';
 
     await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
@@ -1107,8 +1121,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(() => requireAgentTerminalCard(missing, { ...frozenDeck(missing) })).toThrow('profile_missing');
   });
 
-  it('materializes reciprocal native rosters and revokes both profiles before stopping demand', async () => {
+  it('materializes a Main-owned native roster and revokes it before stopping target demand', async () => {
     const f = fixture();
+    f.cards[0].runtime = { kind: 'hermes', mode: 'main', profile: 'signal-analyst' };
     const desired = f.cards.map((selected, index) => ({
       owner: f.owners[index], card: selected, deck: f.deck,
     }));
@@ -1123,7 +1138,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
           profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
           title: selected.title,
           botEnabled: true,
-          roster: [peer.runtime.kind === 'hermes' ? peer.runtime.profile : ''],
+          roster: index === 0 && peer.runtime.kind === 'hermes' ? [peer.runtime.profile] : [],
         },
       };
     });
@@ -1136,7 +1151,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         name: 'signal-analyst', bot_mode_roster: ['quant-analyst'],
       }) }),
       expect.objectContaining({ params: expect.objectContaining({
-        name: 'quant-analyst', bot_mode_roster: ['signal-analyst'],
+        name: 'quant-analyst', bot_mode_roster: [],
       }) }),
     ]));
 
@@ -1145,13 +1160,71 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       projection: { ...target.projection, roster: [] },
     }));
     await f.manager.reconcile([desired[0]], { cols: 120, rows: 36 }, revoked);
-    const quantWrites = f.clients.flatMap((client) => client.requests)
+    const mainWrites = f.clients.flatMap((client) => client.requests)
       .filter((request) => request.method === 'profiles.configure'
-        && request.params.name === 'quant-analyst');
-    expect(quantWrites.some((request) => (
+        && request.params.name === 'signal-analyst');
+    expect(mainWrites.some((request) => (
       JSON.stringify(request.params.bot_mode_roster) === '[]'
     ))).toBe(true);
     expect(f.manager.find(f.owners[1])).toBeNull();
+  });
+
+  it('materializes a newly added saved profile before publishing it in an existing Bot roster', async () => {
+    const f = fixture();
+    const main = f.cards[0];
+    main.runtime = { kind: 'hermes', mode: 'main', profile: 'signal-analyst' };
+    await f.manager.open(f.owners[0], main, f.deck, 120, 36);
+
+    const added = card('card_knowgraph', 'knowgraph');
+    added.title = 'KnowGraph';
+    const addedOwner: AgentTerminalOwner = {
+      userId: 'owner', projectId: 'project', deckId: 'deck', cardId: added.id,
+    };
+    const nextDeck: DeckDocument = {
+      ...f.deck,
+      nodes: [main, added],
+      edges: [{
+        id: 'main-to-knowgraph', source: main.id, target: added.id, edgeType: 'flow',
+      }],
+      version: f.deck.version + 1,
+    };
+    const desired = [
+      { owner: f.owners[0], card: main, deck: nextDeck },
+      { owner: addedOwner, card: added, deck: nextDeck },
+    ];
+    const projected = [
+      {
+        owner: f.owners[0], card: main, projection: {
+          cardId: main.id,
+          cardRevisionId: main._cardRevisionId || '',
+          profile: 'signal-analyst',
+          title: main.title,
+          botEnabled: true,
+          roster: ['knowgraph'],
+        },
+      },
+      {
+        owner: addedOwner, card: added, projection: {
+          cardId: added.id,
+          cardRevisionId: added._cardRevisionId || '',
+          profile: 'knowgraph',
+          title: added.title,
+          botEnabled: true,
+          roster: [],
+        },
+      },
+    ];
+
+    const states = await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
+
+    expect(f.configureCardInstructions).toHaveBeenCalledWith('knowgraph', 'Prompt card_knowgraph');
+    expect(states.some((state) => state.cardId === added.id && state.profile === 'knowgraph')).toBe(true);
+    expect(f.clients[0].requests).toContainEqual(expect.objectContaining({
+      method: 'profiles.configure',
+      params: expect.objectContaining({
+        name: 'signal-analyst', bot_mode_roster: ['knowgraph'],
+      }),
+    }));
   });
 
   it('does not claim or rewrite an unprojected standalone native Bot profile', async () => {

@@ -64,6 +64,7 @@ export function buildQuickAddAssistCard(
     prompt: promptContent,
     runtime: { ...runtime, profile: `agent-${identity}` },
     runtimeOptions: normalizeRuntimeOptions({
+      subagentType: 'none',
       provider: template?.provider || undefined,
       modelKey: template?.model || undefined,
       temperature: template?.temperature ?? undefined,

@@ -62,12 +62,11 @@ class TestDelegateRequirements(unittest.TestCase):
     def test_schema_valid(self):
         self.assertEqual(DELEGATE_TASK_SCHEMA["name"], "delegate_task")
         props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        # Upstream temporary subagents remain tasks[] only. LiquidAIty's two
-        # persistent roles use the explicit top-level mission shape.
+        # The model-facing surface is the stock temporary tasks[] shape.
         self.assertIn("tasks", props)
-        self.assertIn("goal", props)
-        self.assertIn("context", props)
-        self.assertEqual(props["role"]["enum"], ["team"])
+        self.assertNotIn("goal", props)
+        self.assertNotIn("context", props)
+        self.assertNotIn("role", props)
         removed_profile_fields = {"target_" + "profile", "data" + "Anchors"}
         self.assertTrue(removed_profile_fields.isdisjoint(props))
         self.assertNotIn("output_schema", props)
@@ -122,7 +121,7 @@ class TestDelegateRequirements(unittest.TestCase):
     def test_dynamic_limits_moved_to_param_descriptions(self):
         """Concurrency reaches the model through the tasks parameter
         description; the depth ceiling lives in the top-level description's
-        depth-derived recursion rule; persistent roles stay top-level only."""
+        depth-derived recursion rule."""
         from tools.delegate_tool import _build_dynamic_schema_overrides
         from tools.registry import registry
 
@@ -136,7 +135,7 @@ class TestDelegateRequirements(unittest.TestCase):
 
         for parameters in (overrides["parameters"], definition["parameters"]):
             self.assertIn("up to 7", parameters["properties"]["tasks"]["description"])
-            self.assertEqual(parameters["properties"]["role"]["enum"], ["team"])
+            self.assertNotIn("role", parameters["properties"])
             self.assertNotIn("role", parameters["properties"]["tasks"]["items"]["properties"])
         # Depth ceiling now rides the depth-derived recursion rule in the
         # top-level text (only rendered when nesting is available).
@@ -1842,11 +1841,11 @@ class TestOrchestratorRoleSchema(unittest.TestCase):
         child = self._run_with_mock_child("leaf")
         self.assertEqual(child._delegate_role, "orchestrator")
 
-    def test_schema_advertises_only_persistent_top_level_roles(self):
-        """Temporary-child capability remains depth-derived; only Team is explicit."""
+    def test_schema_keeps_temporary_child_capability_depth_derived(self):
+        """No model-facing role selector survives the retired Team doorway."""
         from tools.delegate_tool import DELEGATE_TASK_SCHEMA
         props = DELEGATE_TASK_SCHEMA["parameters"]["properties"]
-        self.assertEqual(props["role"]["enum"], ["team"])
+        self.assertNotIn("role", props)
         self.assertNotIn("role", props["tasks"]["items"]["properties"])
 
     def test_schema_omits_acp_transport_fields(self):

@@ -17,11 +17,12 @@ and existing native Runs; do not create another evidence store or task document.
 ## Establish the actual path
 
 Use `skills/codebasedmemory.md` to resolve the affected owners, then read current source. The current
-seams are `data_anchor.py::prepare_main_context` for bounded Main context,
+seams are `data_anchor.py::resolve_data_anchors` for explicitly selected graph context,
 `idf.py::materialize_idf` for exact input, `engraphis.py` for ThinkGraph,
-`mcp_host.py` for tool publication, and native Hermes `message_agent` for orange-connected saved
-Cards. Automatic completed-pair processing is removed. Main chooses direct writes
-or focused delegated extraction; conversation completion does not launch a graph worker.
+`mcp_host.py` for tool publication, and native Hermes `message_agent` for Main's outbound
+orange-connected saved Cards. Automatic completed-pair processing is removed. Main chooses direct writes
+or focused delegated extraction; conversation completion does not launch a graph worker or perform an
+automatic graph search.
 Verify these pointers before relying on them.
 
 Read saved Card IDs, prompts, parent models, native subagent selections, grants, Scripts, topology,
@@ -56,7 +57,7 @@ tools or understand graphs. Adapt the content; do not reuse a memorized expected
 
 After an actual write or delegation, inspect its correlated tool call, receiving Run when applicable,
 and native IDs before increasing volume. An ordinary reply need not create a ThinkGraph Run.
-Prove the recipient boundary: conversation completion must not invoke Graph Agent, send it the
+Prove the recipient boundary: conversation completion must not invoke KnowGraph, send it the
 conversation, or depend on that Card being present. Research is separately delegated; its useful sourced
 findings are retained in KnowGraph. The removed automatic research stage demonstrated unwanted delivery
 and extra profile activity, not a useful research benefit. A busy response is a failed handoff, not
@@ -94,7 +95,7 @@ capabilities; do not require every conversation to become a Q&A workflow or an a
 ## Verify research and handoff independently
 
 Read the actual granted Graphiti ingestion implementation. A similarly named ingestion helper may not
-be the MCP operation used by the saved Graph Agent. Attribute chunking problems only after comparing
+be the MCP operation used by the saved KnowGraph Card. Attribute chunking problems only after comparing
 the actual source content, submitted ingestion payload, native processing result, and retrieved facts.
 A queued episode is not a completed materialized knowledge graph.
 

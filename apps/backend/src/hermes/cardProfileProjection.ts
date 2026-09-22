@@ -1,42 +1,5 @@
 import type { AgentCardInstance, DeckDocument } from '../types';
-import {
-  readSavedSubagentModel,
-  sameNativeSubagentModel,
-  toNativeSubagentModel,
-  type SavedSubagentModel,
-} from './subagentModel';
-
-function nativeMemoryProvider(value: unknown): string {
-  return String(value || '').trim() || 'builtin';
-}
-
-export type NativeHermesMemoryState = {
-  selected: string;
-  installedProviders: string[];
-  installed: boolean;
-  available: boolean;
-  availabilityReason: string | null;
-  target: string;
-  credentialStatus: 'not_required' | 'not_configured' | 'configured' | 'unknown';
-  credentialSource: string | null;
-  setupAction: string | null;
-  historyDatabasePath: string;
-  curatedMemoryEnabled: boolean;
-  userProfileEnabled: boolean;
-  database: null | { kind: 'sqlite'; path: string; exists: boolean; factCount: number };
-};
-
-export type NativeMainHonchoStatus = {
-  selected: boolean;
-  configurationStatus: 'not_configured' | 'configured';
-  connectionStatus: 'not_configured' | 'not_checked' | 'configured_unreachable' | 'connected';
-  availabilityReason: string | null;
-  target: 'honcho_cloud' | 'honcho_self_hosted' | 'honcho_cloud_or_self_hosted_unresolved';
-  credentialStatus: 'not_configured' | 'configured' | 'unknown';
-  credentialSource: string | null;
-  setupAction: string;
-  statusAction: string;
-};
+import { readSavedSubagentModel, type SavedSubagentModel } from './subagentModel';
 
 export type NativeHermesMcpServer = {
   name: string;
@@ -52,34 +15,32 @@ export type NativeHermesProfileState = {
   description: string;
   soul: string;
   model: { provider: string; default: string };
-  backgroundReview: {
-    enabled: boolean;
-    provider: string;
-    model: string;
-    maxInputTokens: number | null;
-  };
-  subagentModel: { provider: string; model: string };
-  memory: NativeHermesMemoryState;
-  honcho: NativeMainHonchoStatus | null;
   skills: Array<{ name: string; enabled: boolean }>;
   toolsets: Array<{ name: string; label?: string; description?: string; tool_count?: number; enabled: boolean }>;
   toolsetsPinned: boolean;
   mcpServers: NativeHermesMcpServer[];
   learning: {
     count: number;
-    summary: string;
+    summary: string[];
     buckets: Array<{
+      index: number;
       label: string;
       date: string;
-      nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
+      skills: number;
+      memories: number;
+      total: number;
+      category: string | null;
+      color: string | null;
+      nodes: Array<{
+        id: string;
+        glyph: string;
+        label: string;
+        fullLabel: string;
+        meta: string;
+        body: string;
+        style: string;
+      }>;
     }>;
-    graph: {
-      nodes: Array<Record<string, unknown>>;
-      edges: Array<{ source: string; target: string }>;
-      clusters: Array<Record<string, unknown>>;
-      memory: Array<Record<string, unknown>>;
-      stats: Record<string, unknown>;
-    };
   };
 };
 
@@ -92,7 +53,6 @@ export type HermesCardProfileReadback = {
   binding: HermesCardProfileBinding;
   desired: { subagentModel: SavedSubagentModel | null };
   native: NativeHermesProfileState;
-  subagentModelMaterialization: 'not_saved' | 'materialized' | 'diverged';
   nativeApply: 'run_start';
   cardSaveMutatesNative: false;
 };
@@ -154,7 +114,6 @@ function normalizeNative(
   profileValue: unknown,
   mcpValue: unknown,
   learningValue: unknown,
-  learningGraphValue: unknown,
 ): NativeHermesProfileState {
   const profile = profileValue && typeof profileValue === 'object'
     ? profileValue as Record<string, unknown>
@@ -163,27 +122,8 @@ function normalizeNative(
   const model = profile.model && typeof profile.model === 'object'
     ? profile.model as Record<string, unknown>
     : {};
-  const backgroundReview = profile.background_review && typeof profile.background_review === 'object'
-    ? profile.background_review as Record<string, unknown>
-    : {};
-  const subagentModel = profile.subagent_model && typeof profile.subagent_model === 'object'
-    ? profile.subagent_model as Record<string, unknown>
-    : {};
-  const memory = profile.memory && typeof profile.memory === 'object'
-    ? profile.memory as Record<string, unknown>
-    : {};
-  const selectedMemory = nativeMemoryProvider(memory.selected);
-  const honcho = profile.honcho && typeof profile.honcho === 'object'
-    ? profile.honcho as Record<string, unknown>
-    : null;
-  const database = memory.database && typeof memory.database === 'object'
-    ? memory.database as Record<string, unknown>
-    : null;
   const learning = learningValue && typeof learningValue === 'object'
     ? learningValue as Record<string, unknown>
-    : {};
-  const learningGraph = learningGraphValue && typeof learningGraphValue === 'object'
-    ? learningGraphValue as Record<string, unknown>
     : {};
   const mcp = mcpValue && typeof mcpValue === 'object'
     ? mcpValue as Record<string, unknown>
@@ -198,64 +138,6 @@ function normalizeNative(
     description: String(profile.description || ''),
     soul: String(profile.soul || ''),
     model: { provider: String(model.provider || ''), default: String(model.default || '') },
-    backgroundReview: {
-      enabled: backgroundReview.enabled !== false,
-      provider: String(backgroundReview.provider || 'auto'),
-      model: String(backgroundReview.model || ''),
-      maxInputTokens: typeof backgroundReview.max_input_tokens === 'number'
-        ? backgroundReview.max_input_tokens
-        : null,
-    },
-    subagentModel: {
-      provider: String(subagentModel.provider || ''),
-      model: String(subagentModel.model || ''),
-    },
-    memory: {
-      selected: selectedMemory,
-      installedProviders: strings(memory.installed_providers),
-      installed: selectedMemory === 'builtin' || memory.installed === true,
-      available: selectedMemory === 'builtin' || memory.available === true,
-      availabilityReason: String(memory.availability_reason || '').trim() || null,
-      target: String(memory.target || 'unknown'),
-      credentialStatus: ['not_required', 'not_configured', 'configured'].includes(
-        String(memory.credential_status || ''),
-      ) ? memory.credential_status as NativeHermesMemoryState['credentialStatus'] : 'unknown',
-      credentialSource: String(memory.credential_source || '').trim() || null,
-      setupAction: String(memory.setup_action || '').trim() || null,
-      historyDatabasePath: String(memory.history_database_path || ''),
-      curatedMemoryEnabled: memory.curated_memory_enabled !== false,
-      userProfileEnabled: memory.user_profile_enabled !== false,
-      database: database && String(database.kind || '') === 'sqlite'
-        ? {
-            kind: 'sqlite',
-            path: String(database.path || ''),
-            exists: database.exists === true,
-            factCount: Number.isFinite(database.fact_count) ? Number(database.fact_count) : 0,
-          }
-        : null,
-    },
-    honcho: honcho ? {
-      selected: honcho.selected === true,
-      configurationStatus: honcho.configuration_status === 'configured'
-        ? 'configured' : 'not_configured',
-      connectionStatus: [
-        'not_configured', 'not_checked', 'configured_unreachable', 'connected',
-      ].includes(String(honcho.connection_status || ''))
-        ? honcho.connection_status as NativeMainHonchoStatus['connectionStatus']
-        : 'not_checked',
-      availabilityReason: String(honcho.availability_reason || '').trim() || null,
-      target: [
-        'honcho_cloud', 'honcho_self_hosted', 'honcho_cloud_or_self_hosted_unresolved',
-      ].includes(String(honcho.target || ''))
-        ? honcho.target as NativeMainHonchoStatus['target']
-        : 'honcho_cloud_or_self_hosted_unresolved',
-      credentialStatus: ['not_configured', 'configured'].includes(
-        String(honcho.credential_status || ''),
-      ) ? honcho.credential_status as NativeMainHonchoStatus['credentialStatus'] : 'unknown',
-      credentialSource: String(honcho.credential_source || '').trim() || null,
-      setupAction: String(honcho.setup_action || ''),
-      statusAction: String(honcho.status_action || ''),
-    } : null,
     skills: Array.isArray(profile.skills)
       ? profile.skills.map((item: any) => ({ name: String(item?.name || ''), enabled: item?.enabled === true })).filter((item) => item.name)
       : [],
@@ -274,36 +156,28 @@ function normalizeNative(
       .filter((item): item is NativeHermesMcpServer => item !== null),
     learning: {
       count: Number.isFinite(learning.count) ? Number(learning.count) : 0,
-      summary: String(learning.summary || ''),
+      summary: Array.isArray(learning.summary)
+        ? learning.summary.map((item) => String(item || '')).filter(Boolean)
+        : [],
       buckets: Array.isArray(learning.buckets) ? learning.buckets.map((bucket: any) => ({
+        index: Number.isFinite(bucket?.index) ? Number(bucket.index) : 0,
         label: String(bucket?.label || ''),
         date: String(bucket?.date || ''),
+        skills: Number.isFinite(bucket?.skills) ? Number(bucket.skills) : 0,
+        memories: Number.isFinite(bucket?.memories) ? Number(bucket.memories) : 0,
+        total: Number.isFinite(bucket?.total) ? Number(bucket.total) : 0,
+        category: bucket?.category == null ? null : String(bucket.category),
+        color: bucket?.color == null ? null : String(bucket.color),
         nodes: Array.isArray(bucket?.nodes) ? bucket.nodes.map((node: any) => ({
           id: String(node?.id || ''),
+          glyph: String(node?.glyph || ''),
           label: String(node?.label || ''),
           fullLabel: String(node?.fullLabel || ''),
           meta: String(node?.meta || ''),
+          body: String(node?.body || ''),
+          style: String(node?.style || ''),
         })).filter((node: any) => node.id) : [],
       })) : [],
-      graph: {
-        nodes: Array.isArray(learningGraph.nodes)
-          ? learningGraph.nodes.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-          : [],
-        edges: Array.isArray(learningGraph.edges)
-          ? learningGraph.edges.map((item: any) => ({
-            source: String(item?.source || ''), target: String(item?.target || ''),
-          })).filter((item) => item.source && item.target)
-          : [],
-        clusters: Array.isArray(learningGraph.clusters)
-          ? learningGraph.clusters.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-          : [],
-        memory: Array.isArray(learningGraph.memory)
-          ? learningGraph.memory.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-          : [],
-        stats: learningGraph.stats && typeof learningGraph.stats === 'object'
-          ? learningGraph.stats as Record<string, unknown>
-          : {},
-      },
     },
   };
 }
@@ -313,26 +187,18 @@ async function readNativeProfile(
   desiredSubagentModel: SavedSubagentModel | null,
   requestNative: RequestHermesNative,
 ): Promise<HermesCardProfileReadback> {
-  const profile = await requestNative('profiles.describe', {
-    name: binding.profile,
-    ...(binding.mode === 'main' ? { probe_honcho: true } : {}),
-  });
+  const profile = await requestNative('profiles.describe', { name: binding.profile });
   const mcp = await requestNative('mcp.servers.list', { profile: binding.profile });
-  const [learning, learningGraph] = await Promise.all([
-    requestNative('learning.frames', { cols: 60, rows: 18, frames: 2 }, binding.profile),
-    requestNative('learning.graph', {}, binding.profile),
-  ]);
-  const native = normalizeNative(profile, mcp, learning, learningGraph);
+  const learning = await requestNative(
+    'learning.frames',
+    { cols: 60, rows: 18, frames: 2 },
+    binding.profile,
+  );
+  const native = normalizeNative(profile, mcp, learning);
   return {
     binding,
     desired: { subagentModel: desiredSubagentModel },
     native,
-    subagentModelMaterialization: desiredSubagentModel === null
-      ? 'not_saved'
-      : sameNativeSubagentModel(
-        profile?.subagent_model,
-        toNativeSubagentModel(desiredSubagentModel),
-      ) ? 'materialized' : 'diverged',
     nativeApply: 'run_start',
     cardSaveMutatesNative: false,
   };

@@ -66,23 +66,22 @@ export default function MagenticBusNode() {
           pointerEvents: 'none',
         }}
       />
-      {/* Main Chat's approved magentic_control edge enters here. */}
       <Handle
-        id="task-bus-top"
+        id="card-control"
         type="target"
         position={Position.Top}
-        aria-label="Mag One control input — Main Chat submits an approved job"
-        title="Control input: approved Main Chat job"
+        aria-label="Magnetic direct Card connection"
         style={{
           ...handleBaseStyle,
-          width: 16,
-          height: 6,
-          top: -3,
+          width: 12,
+          height: 12,
+          top: -6,
           left: '50%',
           transform: 'translateX(-50%)',
-          opacity: 0.65,
-          background: 'rgba(84, 221, 214, 0.8)',
-          border: '1px solid rgba(191, 255, 250, 0.5)',
+          borderRadius: '999px',
+          opacity: 0.9,
+          background: '#E7A18B',
+          border: '1px solid rgba(255, 220, 205, 0.72)',
         }}
       />
       {leftHandles.map((handle) => (
@@ -92,7 +91,7 @@ export default function MagenticBusNode() {
           type="target"
           position={Position.Left}
           aria-label={handle.id}
-          title="Mag One worker membership port"
+          title="Magnetic worker availability port"
           style={{
             ...leftHandleStyle,
             left: -3,
@@ -107,7 +106,7 @@ export default function MagenticBusNode() {
           type="source"
           position={Position.Right}
           aria-label={handle.id}
-          title="Mag One worker membership port"
+          title="Magnetic worker availability port"
           style={{
             ...rightHandleStyle,
             right: -3,

@@ -39,78 +39,8 @@ function stringList(value: unknown, error: string): string[] {
 
 function parseProfileConfigure(params: Record<string, unknown>): HermesNativeCardOperation {
   const keys = Object.keys(params);
-  const singleString = ['description', 'soul'].find((key) => keys.length === 1 && typeof params[key] === 'string');
+  const singleString = ['description'].find((key) => keys.length === 1 && typeof params[key] === 'string');
   if (singleString) return { method: 'profiles.configure', params };
-  if (keys.length === 1 && keys[0] === 'background_review') {
-    const backgroundReview = objectValue(
-      params.background_review,
-      'hermes_native_background_review_must_be_object',
-    );
-    exactFields(backgroundReview, ['enabled', 'provider', 'model', 'max_input_tokens']);
-    if (typeof backgroundReview.enabled !== 'boolean') {
-      throw new Error('hermes_native_background_review_enabled_must_be_boolean');
-    }
-    const provider = requiredText(
-      backgroundReview.provider,
-      'hermes_native_background_review_provider_required',
-    );
-    const model = String(backgroundReview.model || '').trim();
-    if (provider !== 'auto' && !model) {
-      throw new Error('hermes_native_background_review_model_required');
-    }
-    const maxInputTokens = backgroundReview.max_input_tokens;
-    if (
-      maxInputTokens != null && (!Number.isInteger(maxInputTokens)
-      || Number(maxInputTokens) < 1
-      || Number(maxInputTokens) > 120_000)
-    ) {
-      throw new Error('hermes_native_background_review_max_input_tokens_invalid');
-    }
-    return {
-      method: 'profiles.configure',
-      params: {
-        background_review: {
-          enabled: backgroundReview.enabled,
-          provider,
-          model,
-          max_input_tokens: maxInputTokens == null ? null : Number(maxInputTokens),
-        },
-      },
-    };
-  }
-  if (keys.length === 1 && keys[0] === 'subagent_model') {
-    const subagentModel = objectValue(
-      params.subagent_model,
-      'hermes_native_subagent_model_must_be_object',
-    );
-    exactFields(subagentModel, ['provider', 'model']);
-    return {
-      method: 'profiles.configure',
-      params: {
-        subagent_model: {
-          provider: requiredText(
-            subagentModel.provider,
-            'hermes_native_subagent_model_provider_required',
-          ),
-          model: requiredText(
-            subagentModel.model,
-            'hermes_native_subagent_model_model_required',
-          ),
-        },
-      },
-    };
-  }
-  if (keys.length === 1 && keys[0] === 'memory_provider') {
-    return {
-      method: 'profiles.configure',
-      params: {
-        memory_provider: requiredText(
-          params.memory_provider,
-          'hermes_native_memory_provider_required',
-        ),
-      },
-    };
-  }
   if (keys.length === 2 && keys.includes('provider') && keys.includes('model')) {
     requiredText(params.provider, 'hermes_native_provider_required');
     requiredText(params.model, 'hermes_native_model_required');
@@ -170,20 +100,6 @@ function parseNativeOperation(value: unknown): HermesNativeCardOperation {
     return { method, params: { name: requiredText(params.name, 'mcp_server_name_required') } };
   }
   throw new Error('hermes_native_method_unsupported');
-}
-
-function assertCardOperationScope(
-  card: AgentCardInstance,
-  operation: HermesNativeCardOperation,
-): void {
-  if (operation.method !== 'profiles.configure' || !('memory_provider' in operation.params)) return;
-  if (card.runtime.kind !== 'hermes' || card.runtime.mode !== 'main') {
-    throw new Error('main_honcho_configuration_required');
-  }
-  const provider = String(operation.params.memory_provider || '').trim();
-  if (!['builtin', 'honcho'].includes(provider)) {
-    throw new Error('main_honcho_provider_invalid');
-  }
 }
 
 async function resolveCard(
@@ -274,7 +190,6 @@ export function createHermesProfileRouter(deps: Dependencies = {
         req.params.cardId,
       );
       const operation = parseNativeOperation(req.body);
-      assertCardOperationScope(card, operation);
       const invoked = await invokeHermesNativeOperation(card, deck, operation, deps.requestNative);
       const result = operation.method === 'mcp.servers.test'
         ? safeMcpTestResult(invoked.result)

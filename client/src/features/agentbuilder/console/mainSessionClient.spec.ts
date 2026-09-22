@@ -312,15 +312,15 @@ describe('loadSessionHistory', () => {
         mainCardId: 'card_main_chat',
         addressableAgents: [{
           cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
-          title: 'Builder', address: 'builder', aliases: ['builder'],
+          title: 'Builder', address: 'Builder', aliases: ['builder'],
         }],
         messages: [
           { role: 'user', text: 'Exact user text', speaker: { kind: 'user', label: 'You' },
-            target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
+            target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
           { role: 'tool', text: 'tool event text' },
           { role: 'status', text: 'Working' },
           { role: 'assistant', text: 'Exact model text',
-            speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
+            speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
         ],
         terminalEvents: [{ id: 'answer', category: 'conversation.answer' }, {
           id: 'tool', category: 'execution.tool', projectId: 'project-1', deckId: 'deck_builder',
@@ -341,13 +341,13 @@ describe('loadSessionHistory', () => {
       mainCardId: 'card_main_chat',
       addressableAgents: [{
         cardId: 'builder', cardRevisionId: 'revision:builder', profile: 'builder',
-        title: 'Builder', address: 'builder', aliases: ['builder'],
+        title: 'Builder', address: 'Builder', aliases: ['builder'],
       }],
       messages: [
         { role: 'user', text: 'Exact user text', speaker: { kind: 'user', label: 'You' },
-          target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
+          target: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
         { role: 'assistant', text: 'Exact model text',
-          speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder' } },
+          speaker: { kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder' } },
       ],
       terminalEvents: [expect.objectContaining({ id: 'tool', category: 'execution.tool' })],
     });

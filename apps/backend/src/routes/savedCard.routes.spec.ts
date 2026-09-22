@@ -57,7 +57,7 @@ const deckMocks = vi.hoisted(() => ({
         {
           id: 'card_magentic',
           _cardRevisionId: 'revision:card_magentic',
-          title: 'Mag One',
+          title: 'Magnetic',
           prompt: 'Saved Mag One prompt',
           kind: 'agent',
           templateId: 'template_magentic',
@@ -73,6 +73,7 @@ const deckMocks = vi.hoisted(() => ({
       edges: [
         { id: 'flow-main-delegate', source: 'card_main_chat', target: 'card_test_delegate', edgeType: 'flow' },
         { id: 'flow-main-builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
+        { id: 'flow-main-magnetic', source: 'card_main_chat', target: 'card_magentic', edgeType: 'flow' },
       ],
     } as any,
   })),
@@ -256,15 +257,19 @@ const agentTerminalMocks = vi.hoisted(() => {
     {
       cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
       profile: 'default', title: 'Main', botEnabled: true,
-      roster: ['delegate', 'builder'],
+      roster: ['delegate', 'builder', 'card_magentic'],
     },
     {
       cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
-      profile: 'delegate', title: 'Delegate', botEnabled: true, roster: ['default'],
+      profile: 'delegate', title: 'Delegate', botEnabled: true, roster: [],
     },
     {
       cardId: 'builder', cardRevisionId: 'revision:builder',
-      profile: 'builder', title: 'Builder', botEnabled: true, roster: ['default'],
+      profile: 'builder', title: 'Builder', botEnabled: true, roster: [],
+    },
+    {
+      cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
+      profile: 'card_magentic', title: 'Magnetic', botEnabled: true, roster: [],
     },
   ]));
   return {
@@ -298,6 +303,10 @@ const chatSessionMocks = vi.hoisted(() => {
 
 const kanbanMocks = vi.hoisted(() => ({
   readHermesKanbanCardSnapshots: vi.fn(async () => []),
+  observeHermesKanbanTaskGraph: vi.fn(async (): Promise<any> => ({
+    nativeRootId: 't_root', nativeRunId: null, nativeStatus: 'ready', nativeTasks: [],
+    tasksCompleted: 0, tasksTotal: 1, activeWorkers: 0, workerSessionIds: [],
+  })),
 }));
 const mcpClientMocks = vi.hoisted(() => {
   const listPythonAgentMcpCatalog = vi.fn(async (): Promise<any[]> => []);
@@ -306,9 +315,18 @@ const mcpClientMocks = vi.hoisted(() => {
   listPythonAgentMcpCatalog,
   readPythonAgentMcpCatalog: vi.fn(async () => {
     try {
-      return { state: 'available' as const, tools: await listPythonAgentMcpCatalog() };
+      return {
+        state: 'available' as const,
+        tools: await listPythonAgentMcpCatalog(),
+        unavailableFamilies: [],
+      };
     } catch {
-      return { state: 'unavailable' as const, tools: [], reason: 'catalog_unavailable' as const };
+      return {
+        state: 'unavailable' as const,
+        tools: [],
+        unavailableFamilies: [],
+        reason: 'catalog_unavailable' as const,
+      };
     }
   }),
   resolvePythonAgentMcpServerSpec: vi.fn(() => ({
@@ -682,6 +700,11 @@ vi.mock('../hermes/agentTerminalExecution', () => ({
 }));
 
 vi.mock('./hermesKanban.routes', () => ({
+  HERMES_KANBAN_TASK_STATUSES: [
+    'triage', 'todo', 'scheduled', 'ready', 'running',
+    'blocked', 'review', 'done', 'archived',
+  ],
+  observeHermesKanbanTaskGraph: kanbanMocks.observeHermesKanbanTaskGraph,
   readHermesKanbanCardSnapshots: kanbanMocks.readHermesKanbanCardSnapshots,
 }));
 
@@ -763,7 +786,10 @@ describe('saved Card routes', () => {
         terminalEvents: [],
       });
       expect(payload.addressableAgents).toEqual(expect.arrayContaining([
-        expect.objectContaining({ cardId: 'builder', profile: 'builder', address: 'builder' }),
+        expect.objectContaining({
+          cardId: 'builder', profile: 'builder', title: 'Builder',
+          address: 'Builder', aliases: ['builder'],
+        }),
       ]));
       expect(agentTerminalMocks.manager.history).toHaveBeenCalledWith(
         { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
@@ -805,14 +831,14 @@ describe('saved Card routes', () => {
         visibleActivities: [
           { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
           { kind: 'shared_chat_target', status: 'card', label: 'Builder', cardId: 'builder',
-            profile: 'builder', address: 'builder' },
+            profile: 'builder', address: 'Builder' },
         ],
       },
       {
         role: 'assistant', status: 'complete', content: 'BUILDER_DIRECT_OK',
         visibleActivities: [
           { kind: 'shared_chat_speaker', status: 'card', label: 'Builder', cardId: 'builder',
-            profile: 'builder', address: 'builder' },
+            profile: 'builder', address: 'Builder' },
         ],
       },
     ] as any);
@@ -828,13 +854,13 @@ describe('saved Card routes', () => {
           role: 'user', text: '@builder Reply exactly BUILDER_DIRECT_OK',
           speaker: { kind: 'user', label: 'You' },
           target: {
-            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder',
+            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder',
           },
         },
         {
           role: 'assistant', text: 'BUILDER_DIRECT_OK',
           speaker: {
-            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'builder',
+            kind: 'card', label: 'Builder', cardId: 'builder', profile: 'builder', address: 'Builder',
           },
         },
       ]);
@@ -1609,7 +1635,7 @@ describe('saved Card routes', () => {
       runtimeProfile: 'liquidaity-hermes-steward',
       state: 'failed',
       nativeRootId: 't_retained_root',
-      nativePhase: 'failed',
+      nativeStatus: 'archived',
       finalResult: null,
       startedAt: new Date().toISOString(),
     });
@@ -2208,7 +2234,7 @@ describe('saved Card routes', () => {
         },
       });
       return {
-        ok: true, state: 'ready', nativePhase: 'queued', nativeRootId: 't_mag_root',
+        ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_root',
         nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
       };
@@ -2216,7 +2242,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/domain/runs/progress');
       expect(JSON.parse(String(init?.body))).toEqual({
-        runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativePhase: 'queued',
+        runId: 'corr-mag-1', nativeRootId: 't_mag_root', nativeStatus: 'ready',
       });
       return { ok: true };
     });
@@ -2296,13 +2322,13 @@ describe('saved Card routes', () => {
           runId: 'corr-mag-1', correlationId: 'corr-mag-1', cardId: 'card_magentic',
           state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
           runtimeProfile: 'card_magentic', nativeRootId: 't_mag_root',
-          nativePhase: 'queued', startedAt, result: null,
+          nativeStatus: 'running', startedAt, result: null,
         } };
       });
       orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
         expect(endpoint).toBe('/magentic/execution/status');
         return {
-          ok: true, state: 'completed', nativePhase: 'complete', nativeRootId: 't_mag_root',
+          ok: true, state: 'completed', nativeStatus: 'done', nativeRootId: 't_mag_root',
           nativeRunId: 2, nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
           providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
           finalResult: 'Native Hermes Mag One response.',
@@ -2315,7 +2341,7 @@ describe('saved Card routes', () => {
           runId: 'corr-mag-1', state: 'completed', hermesSessionRef: null,
           providerThreadRef: 't_mag_root', providerTurnRef: 2,
           effectiveProvider: 'openai-codex', providerApiMode: 'codex_app_server',
-          nativePhase: 'complete', finalResult: 'Native Hermes Mag One response.',
+          nativeStatus: 'done', finalResult: 'Native Hermes Mag One response.',
         });
         expect(finish).not.toHaveProperty('tasksCompleted');
         expect(finish).not.toHaveProperty('tasksTotal');
@@ -2328,7 +2354,7 @@ describe('saved Card routes', () => {
           runId: 'corr-mag-1', correlationId: 'corr-mag-1', cardId: 'card_magentic',
           state: 'completed', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
           runtimeProfile: 'card_magentic', nativeRootId: 't_mag_root', nativeRunId: 2,
-          nativePhase: 'complete', effectiveProvider: 'openai-codex',
+          nativeStatus: 'done', effectiveProvider: 'openai-codex',
           providerApiMode: 'codex_app_server', startedAt, finishedAt: new Date().toISOString(),
           result: 'Native Hermes Mag One response.',
         } };
@@ -2348,11 +2374,297 @@ describe('saved Card routes', () => {
       await expect(statusResponse.json()).resolves.toMatchObject({
         ok: true,
         result: {
-          runId: 'corr-mag-1', state: 'completed', status: 'complete',
+          runId: 'corr-mag-1', state: 'completed', status: 'done',
           nativeRootId: 't_mag_root', nativeRunId: 2,
           output: 'Native Hermes Mag One response.',
         },
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('materializes Team but skips the Magnetic model for a Team-only blue roster', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    agentTerminalMocks.manager.open.mockClear();
+    deckMocks.getDeckDocument.mockResolvedValueOnce({
+      deck: {
+        workspaceRoot: process.cwd(),
+        nodes: [
+          {
+            id: 'card_magentic', _cardRevisionId: 'revision:card_magentic',
+            title: 'Magnetic', prompt: 'Saved Magnetic prompt', kind: 'agent',
+            templateId: 'template_magentic',
+            runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
+            runtimeOptions: {
+              provider: 'openai', accessMode: 'chatgpt-account',
+              modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+            },
+          },
+          {
+            id: 'card_team', _cardRevisionId: 'revision:card_team',
+            title: 'Team', prompt: 'Saved Team prompt', kind: 'agent',
+            templateId: 'template_team',
+            runtime: { kind: 'hermes', mode: 'delegate', profile: 'team' },
+            runtimeOptions: {
+              provider: 'openai', accessMode: 'chatgpt-account',
+              modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+              subagentModel: {
+                provider: 'openai', accessMode: 'chatgpt-account',
+                modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+              },
+            },
+          },
+        ],
+        edges: [{
+          id: 'edge_team_magnetic', source: 'card_team', target: 'card_magentic',
+          edgeType: 'magentic_option',
+        }],
+      } as any,
+    });
+    const magenticExecution = {
+      runId: 'corr-team-only', correlationId: 'corr-team-only',
+      projectId: 'project-1', deckId: 'deck_builder',
+      inputFile: {
+        workspace: 'C:\\runtime-inputs\\team-only',
+        idfPath: 'C:\\runtime-inputs\\team-only\\in.idf',
+        idfSha256: 'e'.repeat(64), idfBytes: 500,
+      },
+      mission: 'Use the automatic Team.',
+      orchestrator: {
+        cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
+        nativeIdentity: 'card_magentic', instructions: 'Saved Magnetic prompt',
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+        },
+        runtimeOptions: {},
+      },
+      workers: [{
+        cardId: 'card_team', cardRevisionId: 'revision:card_team', profile: 'team',
+        title: 'Team', description: 'Automatic Team', teamTaskMode: true,
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+        },
+        runtimeOptions: {
+          modelKey: 'gpt-5.6-terra', providerModelId: 'gpt-5.6-terra',
+        },
+      }],
+    };
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/begin');
+      return {
+        runId: 'corr-team-only', correlationId: 'corr-team-only',
+        runtimeOwner: 'mag_one', cardRevisionId: 'revision:card_magentic',
+        magenticExecution,
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/submit');
+      return {
+        ok: true, state: 'running', nativeStatus: 'triage', nativeRootId: 't_team_root',
+        nativeIdentity: 'team', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-terra',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      return { ok: true };
+    });
+
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+          senderCardId: 'card_main_chat', correlationId: 'corr-team-only',
+          conversationId: 'main', input: 'Use the automatic Team.', action: 'execute',
+          cardRevisionId: 'revision:card_magentic',
+        }),
+      });
+
+      expect(response.status).toBe(202);
+      expect(agentTerminalMocks.manager.open).toHaveBeenCalledOnce();
+      expect(agentTerminalMocks.manager.open).toHaveBeenCalledWith(
+        expect.objectContaining({ cardId: 'card_team' }),
+        expect.objectContaining({ id: 'card_team' }),
+        expect.any(Object),
+        120,
+        36,
+        { attachTui: false, materializeTaskProfile: true },
+      );
+      expect(agentTerminalMocks.manager.open).not.toHaveBeenCalledWith(
+        expect.anything(), expect.objectContaining({ id: 'card_magentic' }),
+        expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          status: 'running', state: 'running', runtimeOwner: 'mag_one',
+          transport: {
+            threadId: 't_team_root', runtimeSource: 'repository_hermes_magentic',
+          },
+        },
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('observes exact Magnetic tasks without reconciling or mutating the outer Run', async () => {
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    kanbanMocks.observeHermesKanbanTaskGraph.mockClear();
+    const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+    const startedAt = new Date().toISOString();
+    orchestratorMocks.runRecords.set('magnetic-inspection', {
+      runId: 'magnetic-inspection', correlationId: 'magnetic-inspection',
+      projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+      state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
+      runtimeProfile: 'card_magentic', nativeRootId: 't_magnetic_inspection',
+      nativeStatus: 'ready', startedAt, result: null,
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+      if (endpoint === '/magentic/execution/status') {
+        return {
+          ok: true, state: 'running', nativeStatus: 'ready',
+          nativeRootId: 't_magnetic_inspection', nativeRunId: null,
+          nativeTasks: [{
+            taskId: 't_magnetic_inspection', title: 'Magnetic mission',
+            assignee: 'card_magentic', status: 'ready', dependencyIds: [],
+            latestAttempt: null, resultAvailable: false,
+          }],
+        };
+      }
+      return railsImplementation(endpoint, init);
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'status', inspectOnly: true, projectId: 'project-1',
+          deckId: 'deck_builder', cardId: 'card_magentic',
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runId: 'magnetic-inspection', state: 'running', nativeStatus: 'ready',
+          nativeTasks: [{ taskId: 't_magnetic_inspection', status: 'ready' }],
+        },
+      });
+      expect(kanbanMocks.observeHermesKanbanTaskGraph).not.toHaveBeenCalled();
+      const endpoints = orchestratorMocks.requestPythonRailsJson.mock.calls
+        .map(([endpoint]) => endpoint);
+      expect(endpoints.filter((endpoint) => endpoint === '/magentic/execution/status')).toHaveLength(1);
+      expect(endpoints).not.toEqual(expect.arrayContaining([
+        '/domain/runs/progress', '/domain/runs/finish',
+      ]));
+    } finally {
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+      await closeServer(server);
+    }
+  });
+
+  it('stops an accepted Magnetic root when outer-Run progress binding fails', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const magenticExecution = {
+      runId: 'corr-mag-unbound',
+      correlationId: 'corr-mag-unbound',
+      projectId: 'project-1',
+      deckId: 'deck_builder',
+      inputFile: {
+        workspace: 'C:\\runtime-inputs\\mag-unbound',
+        idfPath: 'C:\\runtime-inputs\\mag-unbound\\in.idf',
+        idfSha256: 'd'.repeat(64),
+        idfBytes: 500,
+      },
+      mission: 'Coordinate the bounded mission.',
+      orchestrator: {
+        cardId: 'card_magentic',
+        cardRevisionId: 'revision:card_magentic',
+        nativeIdentity: 'card_magentic',
+        instructions: 'Saved Mag One prompt',
+        provider: {
+          provider: 'openai', accessMode: 'chatgpt-account',
+          modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+        },
+        runtimeOptions: {},
+      },
+      workers: [{
+        cardId: 'builder', cardRevisionId: 'revision:builder',
+        profile: 'builder', title: 'Builder', description: 'Saved worker',
+      }],
+    };
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/begin');
+      return {
+        runId: 'corr-mag-unbound',
+        correlationId: 'corr-mag-unbound',
+        runtimeOwner: 'mag_one',
+        cardRevisionId: 'revision:card_magentic',
+        magenticExecution,
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/submit');
+      return {
+        ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_mag_unbound',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/progress');
+      throw new Error('outer_run_progress_unavailable');
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/magentic/execution/stop');
+      expect(JSON.parse(String(init?.body))).toEqual({ nativeRootId: 't_mag_unbound' });
+      return {
+        ok: true, state: 'cancelled', nativeStatus: 'archived', nativeRootId: 't_mag_unbound',
+        nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', error: 'cancelled_by_outer_run_bind_failure',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/finish');
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        runId: 'corr-mag-unbound', state: 'cancelled',
+        providerThreadRef: 't_mag_unbound', nativeStatus: 'archived',
+        errorCode: 'magentic_execution_cancelled',
+        errorSummary: 'cancelled_by_outer_run_bind_failure',
+      });
+      return { receipt: { runId: 'corr-mag-unbound', state: 'cancelled' } };
+    });
+
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+          senderCardId: 'card_main_chat', correlationId: 'corr-mag-unbound',
+          conversationId: 'main', input: 'Coordinate the bounded mission.', action: 'execute',
+          cardRevisionId: 'revision:card_magentic',
+        }),
+      });
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toEqual({
+        ok: false, error: 'outer_run_progress_unavailable',
+      });
+      expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([endpoint]) => endpoint)).toEqual([
+        '/domain/runs/begin',
+        '/magentic/execution/submit',
+        '/domain/runs/progress',
+        '/magentic/execution/stop',
+        '/domain/runs/finish',
+      ]);
     } finally {
       await closeServer(server);
     }
@@ -2368,13 +2680,13 @@ describe('saved Card routes', () => {
         runId: 'failed-native-root', correlationId: 'failed-native-root', cardId: 'card_magentic',
         state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
         runtimeProfile: 'card_magentic', nativeRootId: 't_failed_root',
-        nativePhase: 'working', startedAt, result: null,
+        nativeStatus: 'running', startedAt, result: null,
       } };
     });
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
       expect(endpoint).toBe('/magentic/execution/status');
       return {
-        ok: true, state: 'blocked', nativePhase: 'blocked', nativeRootId: 't_failed_root',
+        ok: true, state: 'blocked', nativeStatus: 'blocked', nativeRootId: 't_failed_root',
         nativeRunId: 1,
         nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
@@ -2384,7 +2696,7 @@ describe('saved Card routes', () => {
     orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
       expect(endpoint).toBe('/domain/runs/finish');
       expect(JSON.parse(String(init?.body))).toMatchObject({
-        runId: 'failed-native-root', state: 'blocked', nativePhase: 'blocked',
+        runId: 'failed-native-root', state: 'blocked', nativeStatus: 'blocked',
         providerThreadRef: 't_failed_root', providerTurnRef: 1,
         errorCode: 'magentic_execution_blocked',
         errorSummary: 'magentic_task_blocked:t_worker',
@@ -2398,7 +2710,7 @@ describe('saved Card routes', () => {
         runId: 'failed-native-root', correlationId: 'failed-native-root', cardId: 'card_magentic',
         state: 'blocked', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
         runtimeProfile: 'card_magentic', nativeRootId: 't_failed_root', nativeRunId: 1,
-        nativePhase: 'blocked', effectiveProvider: 'openai-codex',
+        nativeStatus: 'blocked', effectiveProvider: 'openai-codex',
         providerApiMode: 'codex_app_server', errorCode: 'magentic_execution_blocked',
         errorSummary: 'magentic_task_blocked:t_worker', startedAt,
         finishedAt: new Date().toISOString(), result: null,
@@ -2427,6 +2739,75 @@ describe('saved Card routes', () => {
         },
       });
       expect(orchestratorMocks.dispatchConfiguredRuntime).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('terminalizes a completed Magnetic root with no final result as failed', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    const startedAt = new Date().toISOString();
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/read');
+      return { ok: true, run: {
+        runId: 'missing-final-root', correlationId: 'missing-final-root', cardId: 'card_magentic',
+        state: 'running', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
+        runtimeProfile: 'card_magentic', nativeRootId: 't_missing_final',
+        nativeStatus: 'running', startedAt, result: null,
+      } };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/magentic/execution/status');
+      return {
+        ok: true, state: 'completed', nativeStatus: 'done', nativeRootId: 't_missing_final',
+        nativeRunId: 4, nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol', finalResult: '   ',
+      };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string, init?: RequestInit) => {
+      expect(endpoint).toBe('/domain/runs/finish');
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        runId: 'missing-final-root', state: 'failed', nativeStatus: 'done',
+        providerThreadRef: 't_missing_final', providerTurnRef: 4,
+        errorCode: 'magentic_final_result_missing',
+        errorSummary: 'magentic_final_result_missing', finalResult: null,
+      });
+      return { receipt: { runId: 'missing-final-root', state: 'failed' } };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/runs/read');
+      return { ok: true, run: {
+        runId: 'missing-final-root', correlationId: 'missing-final-root', cardId: 'card_magentic',
+        state: 'failed', runtimeKind: 'hermes', runtimeMode: 'magentic_one',
+        runtimeProfile: 'card_magentic', nativeRootId: 't_missing_final', nativeRunId: 4,
+        nativeStatus: 'done', effectiveProvider: 'openai-codex',
+        providerApiMode: 'codex_app_server', errorCode: 'magentic_final_result_missing',
+        errorSummary: 'magentic_final_result_missing', startedAt,
+        finishedAt: new Date().toISOString(), result: null,
+      } };
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint: string) => {
+      expect(endpoint).toBe('/domain/agentgraph/inspect');
+      return { runs: [], attentionEvents: [] };
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', runId: 'missing-final-root', action: 'status',
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runId: 'missing-final-root', state: 'failed', status: 'done',
+          nativeRootId: 't_missing_final', nativeRunId: 4, output: null,
+          errorCode: 'magentic_final_result_missing',
+          errorSummary: 'magentic_final_result_missing',
+        },
+      });
     } finally {
       await closeServer(server);
     }
@@ -2658,7 +3039,7 @@ describe('saved Card routes', () => {
       ));
       const { server, baseUrl } = await createApiServer();
       try {
-        const exactMessage = '@builder Reply exactly BUILDER_DIRECT_OK';
+        const exactMessage = '@bUiLdEr Reply exactly BUILDER_DIRECT_OK';
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2672,7 +3053,9 @@ describe('saved Card routes', () => {
         const runEvent = JSON.parse(runFrame.split('\ndata: ')[1]);
         expect(runEvent).toMatchObject({
           cardId: 'builder', directAddressed: true, turnOwner: 'addressed_card',
-          participant: { cardId: 'builder', profile: 'builder', label: 'Builder' },
+          participant: {
+            cardId: 'builder', profile: 'builder', label: 'Builder', address: 'Builder',
+          },
         });
         const doneFrame = body.split('\n\n').find((frame) => frame.startsWith('event: done'))!;
         expect(JSON.parse(doneFrame.split('\ndata: ')[1]).fullText).toBe(fullReply);
@@ -2708,6 +3091,119 @@ describe('saved Card routes', () => {
           state: 'completed', finalResult: fullReply, hermesSessionId: 'native:builder',
         });
       } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('starts the exact Magnetic outer Run from its public address without using the Gateway', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      agentTerminalMocks.manager.submit.mockClear();
+      agentTerminalMocks.manager.open.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      let preparedRunId = '';
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init?: RequestInit) => {
+        const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        if (endpoint === '/domain/runs/begin' && request.cardId === 'card_magentic') {
+          preparedRunId = request.runId;
+          expect(request).toMatchObject({
+            projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
+            cardRevisionId: 'revision:card_magentic', senderCardId: 'card_main_chat',
+            assignment: '@Magnetic Coordinate the bounded mission.',
+            conversationId: 'direct-magnetic', correlationId: request.runId,
+          });
+          return {
+            runId: request.runId,
+            correlationId: request.correlationId,
+            runtimeOwner: 'mag_one',
+            cardRevisionId: 'revision:card_magentic',
+            magenticExecution: {
+              runId: request.runId,
+              correlationId: request.correlationId,
+              projectId: request.projectId,
+              deckId: request.deckId,
+              mission: request.assignment,
+              inputFile: {
+                workspace: 'C:\\runtime-inputs\\magnetic-shared-chat',
+                idfPath: 'C:\\runtime-inputs\\magnetic-shared-chat\\in.idf',
+                idfSha256: 'c'.repeat(64), idfBytes: 500,
+              },
+              orchestrator: {
+                cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
+                nativeIdentity: 'card_magentic', instructions: 'Saved Mag One prompt',
+                provider: { provider: 'openai', accessMode: 'chatgpt-account',
+                  modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol' },
+                runtimeOptions: {},
+              },
+              workers: [
+                { cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
+                  profile: 'delegate', title: 'Delegate', description: 'Saved worker' },
+                { cardId: 'builder', cardRevisionId: 'revision:builder',
+                  profile: 'builder', title: 'Builder', description: 'Saved worker' },
+              ],
+            },
+          };
+        }
+        if (endpoint === '/magentic/execution/submit') {
+          expect(request).toMatchObject({
+            runId: preparedRunId,
+            orchestrator: { cardId: 'card_magentic', nativeIdentity: 'card_magentic' },
+            notifySession: { sessionKey: 'native:default', profile: 'default' },
+          });
+          return {
+            ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_shared_magnetic',
+            nativeIdentity: 'card_magentic', effectiveProvider: 'openai-codex',
+            providerApiMode: 'codex_app_server', model: 'gpt-5.6-sol',
+          };
+        }
+        return railsImplementation(endpoint, init);
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'direct-magnetic',
+            message: '@Magnetic Coordinate the bounded mission.',
+          }),
+        });
+        const body = await response.text();
+
+        expect(response.status).toBe(200);
+        const frames = body.split('\n\n');
+        expect(frames.some((frame) => frame.startsWith('event: session'))).toBe(false);
+        const runningFrame = frames.filter((frame) => frame.startsWith('event: run'))
+          .map((frame) => JSON.parse(frame.split('\ndata: ')[1]))
+          .find((event) => event.state === 'running');
+        expect(runningFrame).toMatchObject({
+          cardId: 'card_magentic', directAddressed: true, runtimeOwner: 'mag_one',
+          participant: { cardId: 'card_magentic', profile: 'card_magentic',
+            label: 'Magnetic', address: 'Magnetic' },
+        });
+        const doneFrame = frames.find((frame) => frame.startsWith('event: done'))!;
+        const done = JSON.parse(doneFrame.split('\ndata: ')[1]);
+        expect(done).toMatchObject({
+          fullText: `Magnetic accepted this mission. Run ${preparedRunId} is active.`,
+          usage: { usageAvailable: false, usageSource: 'native_magnetic_submission' },
+        });
+        expect(done.fullText).not.toMatch(/complete|finished|final/i);
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+        expect(agentTerminalMocks.manager.open).toHaveBeenCalledTimes(3);
+        expect(chatSessionMocks.appendSharedConversationTurn).toHaveBeenCalledWith(expect.objectContaining({
+          projectId: 'project-1', conversationId: 'direct-magnetic',
+          messages: [
+            expect.objectContaining({ role: 'user', target: expect.objectContaining({
+              cardId: 'card_magentic', label: 'Magnetic', address: 'Magnetic',
+            }) }),
+            expect.objectContaining({
+              role: 'assistant', content: done.fullText,
+              speaker: expect.objectContaining({ cardId: 'card_magentic', label: 'Magnetic' }),
+              providerContinuationRef: 't_shared_magnetic', providerMessageId: preparedRunId,
+            }),
+          ],
+        }));
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         await closeServer(server);
       }
     });
@@ -2782,6 +3278,86 @@ describe('saved Card routes', () => {
       }
     });
 
+    it.each(['internal-profile', 'card_internal_123'])(
+      'does not expose the saved Card %s as a public address alias', async (internalAddress) => {
+        agentTerminalMocks.resolveHermesBotRosterProjections.mockResolvedValueOnce([
+          {
+            cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
+            profile: 'default', title: 'Main', botEnabled: true,
+            roster: ['internal-profile'],
+          },
+          {
+            cardId: 'card_internal_123', cardRevisionId: 'revision:card_internal_123',
+            profile: 'internal-profile', title: 'KnowGraph', botEnabled: true,
+            roster: [],
+          },
+        ]);
+        agentTerminalMocks.manager.submit.mockClear();
+        orchestratorMocks.requestPythonRailsJson.mockClear();
+        chatSessionMocks.appendSharedConversationTurn.mockClear();
+        const { server, baseUrl } = await createApiServer();
+        try {
+          const response = await fetch(`${baseUrl}/main/session/chat`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId: 'project-1', conversationId: 'internal-alias',
+              message: `@${internalAddress} do work`,
+            }),
+          });
+          expect(response.status).toBe(409);
+          await expect(response.json()).resolves.toEqual({
+            ok: false, error: 'addressed_card_unavailable', address: internalAddress,
+          });
+          expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+            ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+          )).toHaveLength(0);
+          expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+          expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+        } finally {
+          await closeServer(server);
+        }
+      },
+    );
+
+    it('rejects a malformed visible Card title before any Card or Main execution', async () => {
+      agentTerminalMocks.resolveHermesBotRosterProjections.mockResolvedValueOnce([
+        {
+          cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
+          profile: 'default', title: 'Main', botEnabled: true,
+          roster: ['internal-profile'],
+        },
+        {
+            cardId: 'card_internal_123', cardRevisionId: 'revision:card_internal_123',
+            profile: 'internal-profile', title: 'Graph Agent', botEnabled: true,
+            roster: [],
+        },
+      ]);
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'invalid-visible-title',
+            message: '@Graph do work',
+          }),
+        });
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toEqual({
+          ok: false, error: 'shared_chat_agent_address_invalid',
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+        )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+        expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it('supplies the completed direct exchange to Main only on the later unaddressed turn', async () => {
       chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
         {
@@ -2789,14 +3365,14 @@ describe('saved Card routes', () => {
           visibleActivities: [
             { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
             { kind: 'shared_chat_target', status: 'card', label: 'Builder', cardId: 'builder',
-              profile: 'builder', address: 'builder' },
+              profile: 'builder', address: 'Builder' },
           ],
         },
         {
           role: 'assistant', status: 'complete', content: 'BUILDER_DIRECT_OK',
           visibleActivities: [
             { kind: 'shared_chat_speaker', status: 'card', label: 'Builder', cardId: 'builder',
-              profile: 'builder', address: 'builder' },
+              profile: 'builder', address: 'Builder' },
           ],
         },
       ] as any);
@@ -2859,6 +3435,41 @@ describe('saved Card routes', () => {
         expect(beginBody).toMatchObject({
           discoveredTools: [],
           discoveredToolCatalogState: 'unavailable',
+          unavailableToolCatalogFamilies: [],
+        });
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('keeps Main available when only the optional CBM catalog family is unavailable', async () => {
+      mcpClientMocks.readPythonAgentMcpCatalog.mockResolvedValueOnce({
+        state: 'available',
+        tools: [],
+        unavailableFamilies: ['cbm'],
+      });
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'cbm-down', message: 'Can you still answer?',
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain('event: done');
+        expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
+        const beginCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        );
+        const beginBody = JSON.parse(String(beginCall?.[1]?.body || '{}'));
+        expect(beginBody).toMatchObject({
+          discoveredTools: [],
+          discoveredToolCatalogState: 'available',
+          unavailableToolCatalogFamilies: ['cbm'],
         });
       } finally {
         await closeServer(server);
@@ -3184,6 +3795,75 @@ describe('saved Card routes', () => {
           'terminal:card_main_chat', 'hermes_turn_cancelled', 'cancelled',
         );
       } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('stops the exact active Magnetic outer Run through native Magnetic control', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const runId = 'req_magnetic_stop';
+      orchestratorMocks.runRecords.set(runId, {
+        runId,
+        correlationId: runId,
+        cardId: 'card_magentic',
+        state: 'running',
+        runtimeKind: 'hermes',
+        runtimeMode: 'magentic_one',
+        runtimeProfile: 'card_magentic',
+        nativeRootId: 't_shared_magnetic_stop',
+        nativeStatus: 'running',
+        startedAt: new Date().toISOString(),
+      });
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      agentTerminalMocks.manager.interrupt.mockClear();
+      agentTerminalMocks.execution.requestCancellation.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint: string, init?: RequestInit) => {
+        const request = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        if (endpoint === '/magentic/execution/status') {
+          expect(request).toEqual({ nativeRootId: 't_shared_magnetic_stop' });
+          return {
+            ok: true, state: 'running', nativeStatus: 'running',
+            nativeRootId: 't_shared_magnetic_stop', nativeIdentity: 'card_magentic',
+          };
+        }
+        if (endpoint === '/magentic/execution/stop') {
+          expect(request).toEqual({ nativeRootId: 't_shared_magnetic_stop' });
+          return {
+            ok: true, state: 'cancelled', nativeStatus: 'archived',
+            nativeRootId: 't_shared_magnetic_stop', nativeIdentity: 'card_magentic',
+            error: 'cancelled_by_user',
+          };
+        }
+        return railsImplementation(endpoint, init);
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/stop`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', deckId: 'deck_builder',
+            expectedRunId: runId, expectedCardId: 'card_magentic',
+          }),
+        });
+        const payload = await response.json();
+
+        expect(response.status, JSON.stringify(payload)).toBe(202);
+        expect(payload).toEqual({ ok: true, runId, state: 'cancelled' });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/magentic/execution/stop',
+        )).toHaveLength(1);
+        const finished = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/runs/finish',
+        );
+        expect(JSON.parse(String(finished?.[1]?.body))).toMatchObject({
+          runId, state: 'cancelled', providerThreadRef: 't_shared_magnetic_stop',
+          errorCode: 'magentic_execution_cancelled', errorSummary: 'cancelled_by_user',
+        });
+        expect(agentTerminalMocks.manager.interrupt).not.toHaveBeenCalled();
+        expect(agentTerminalMocks.execution.requestCancellation).not.toHaveBeenCalled();
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        orchestratorMocks.runRecords.delete(runId);
         await closeServer(server);
       }
     });

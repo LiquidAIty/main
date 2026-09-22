@@ -133,10 +133,33 @@ export type HermesKanbanCardTaskResult = {
   snapshot: HermesKanbanTaskSnapshot;
 };
 
+export const HERMES_KANBAN_TASK_STATUSES = [
+  'triage', 'todo', 'scheduled', 'ready', 'running',
+  'blocked', 'review', 'done', 'archived',
+] as const;
+
+export type HermesKanbanTaskStatus = typeof HERMES_KANBAN_TASK_STATUSES[number];
+
+export type HermesKanbanTaskProjection = {
+  taskId: string;
+  title: string;
+  assignee: string | null;
+  status: HermesKanbanTaskStatus;
+  dependencyIds: string[];
+  latestAttempt: {
+    runId: string | number;
+    status: string;
+    startedAt: string | number | null;
+    endedAt: string | number | null;
+  } | null;
+  resultAvailable: boolean;
+};
+
 export type HermesKanbanProgress = {
   nativeRootId: string;
   nativeRunId: string | number | null;
-  phase: 'queued' | 'decomposing' | 'working' | 'synthesizing' | 'complete' | 'blocked' | 'failed';
+  nativeStatus: HermesKanbanTaskStatus;
+  nativeTasks: HermesKanbanTaskProjection[];
   tasksCompleted: number;
   tasksTotal: number;
   activeWorkers: number;
@@ -175,8 +198,38 @@ function nativeRunId(snapshot: HermesKanbanTaskSnapshot): string | number | null
   return typeof raw === 'string' || typeof raw === 'number' ? raw : null;
 }
 
-function nativeTaskStatus(snapshot: HermesKanbanTaskSnapshot): string {
-  return String(snapshot.task.status || '').trim().toLowerCase();
+function nativeTaskStatus(snapshot: HermesKanbanTaskSnapshot): HermesKanbanTaskStatus {
+  const status = String(snapshot.task.status || '').trim().toLowerCase();
+  if (!(HERMES_KANBAN_TASK_STATUSES as readonly string[]).includes(status)) {
+    throw new Error('hermes_kanban_task_status_invalid');
+  }
+  return status as HermesKanbanTaskStatus;
+}
+
+function taskProjection(snapshot: HermesKanbanTaskSnapshot): HermesKanbanTaskProjection {
+  const latest = snapshot.runs.at(-1);
+  const runId = latest?.id;
+  const latestAttempt = (typeof runId === 'string' || typeof runId === 'number')
+    ? {
+        runId,
+        status: String(latest?.status || ''),
+        startedAt: (typeof latest?.started_at === 'string' || typeof latest?.started_at === 'number')
+          ? latest.started_at : null,
+        endedAt: (typeof latest?.ended_at === 'string' || typeof latest?.ended_at === 'number')
+          ? latest.ended_at : null,
+      }
+    : null;
+  return {
+    taskId: String(snapshot.task.id || ''),
+    title: String(snapshot.task.title || ''),
+    assignee: String(snapshot.task.assignee || '').trim() || null,
+    status: nativeTaskStatus(snapshot),
+    dependencyIds: snapshot.parents.map((value) => String(value)),
+    latestAttempt,
+    resultAvailable: Boolean(
+      String(snapshot.latest_summary || snapshot.task.result || '').trim(),
+    ),
+  };
 }
 
 export function deriveHermesKanbanProgress(
@@ -194,22 +247,11 @@ export function deriveHermesKanbanProgress(
   const workerSessionIds = [...new Set(snapshots.flatMap((snapshot) => (
     snapshot.runs.map((run) => String((run.metadata as any)?.worker_session_id || '').trim())
   )).filter(Boolean))];
-  const rootStatus = nativeTaskStatus(root);
-  const linked = snapshots.filter((snapshot) => snapshot !== root);
-  const hasDecomposition = root.events.some((event) => String(event.kind || '') === 'decomposed')
-    || linked.length > 0;
-  let phase: HermesKanbanProgress['phase'];
-  if (rootStatus === 'done') phase = 'complete';
-  else if (rootStatus === 'blocked') phase = 'blocked';
-  else if (rootStatus === 'archived') phase = 'failed';
-  else if (!hasDecomposition && rootStatus === 'triage') phase = 'decomposing';
-  else if (linked.some((snapshot) => nativeTaskStatus(snapshot) !== 'done')) phase = 'working';
-  else if (hasDecomposition && ['todo', 'ready', 'running', 'review'].includes(rootStatus)) phase = 'synthesizing';
-  else phase = 'queued';
   return {
     nativeRootId: taskId,
     nativeRunId: nativeRunId(root),
-    phase,
+    nativeStatus: nativeTaskStatus(root),
+    nativeTasks: snapshots.map(taskProjection),
     tasksCompleted: complete,
     tasksTotal: snapshots.length,
     activeWorkers,
@@ -313,12 +355,34 @@ function requireNativeTaskSnapshot(
   if (
     String(snapshot?.task?.id || '').trim() !== taskId
     || !Array.isArray(snapshot?.runs)
+    || !Array.isArray(snapshot?.parents)
     || !Array.isArray(snapshot?.children)
     || !Array.isArray(snapshot?.events)
   ) {
     throw new Error('hermes_kanban_card_snapshot_invalid');
   }
   return snapshot;
+}
+
+/**
+ * Observe the exact saved native root through Hermes' read-only CLI. The caller
+ * is responsible for binding task/profile to an authorized saved Run.
+ */
+export async function observeHermesKanbanTaskGraph(args: {
+  nativeRootId: string;
+  runtimeProfile: string;
+}, show: (taskId: string) => Promise<HermesKanbanTaskSnapshot> = (taskId) => (
+  showHermesKanbanTask(args.runtimeProfile, taskId)
+)): Promise<HermesKanbanProgress> {
+  if (!/^t_[A-Za-z0-9_-]+$/.test(args.nativeRootId)) {
+    throw new Error('hermes_kanban_card_task_id_invalid');
+  }
+  const root = requireNativeTaskSnapshot(
+    args.nativeRootId,
+    JSON.stringify(await show(args.nativeRootId)),
+  );
+  const snapshots = await readHermesKanbanTaskGraph(args.nativeRootId, root, show, true);
+  return deriveHermesKanbanProgress(args.nativeRootId, snapshots);
 }
 
 export async function waitForHermesKanbanCardTask(

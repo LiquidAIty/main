@@ -1,4 +1,4 @@
-"""Focused native Auto-Kanban proof for ``delegate_task(role="team")``."""
+"""Focused proof for the structural saved-profile Auto Team workflow."""
 
 from __future__ import annotations
 
@@ -12,6 +12,13 @@ from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 
 
+TEAM_PROFILE = "team"
+PARENT_PROVIDER = "openai-codex"
+PARENT_MODEL = "gpt-5.6-terra"
+WORKER_PROVIDER = "openai-codex"
+WORKER_MODEL = "gpt-5.6-luna"
+
+
 @pytest.fixture
 def team_board(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
@@ -19,156 +26,235 @@ def team_board(tmp_path, monkeypatch):
     db_path = home / "kanban.db"
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("HERMES_KANBAN_DB", str(db_path))
+    monkeypatch.delenv("HERMES_KANBAN_TEAM_WORKER", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     kbc._INITIALIZED_PATHS.clear()
     kbc.init_db(db_path)
+    _write_profile(home, TEAM_PROFILE, team=True)
+    _write_profile(home, "ordinary", team=False)
     return db_path
 
 
-def _policy():
-    return {
-        "root_provider": "openai-codex",
-        "root_model": "gpt-5.6-terra",
-        "worker_provider": "openai-codex",
-        "worker_model": "gpt-5.6-luna",
+def _write_profile(home: Path, name: str, *, team: bool, task_mode: str | None = None) -> Path:
+    profile = home / "profiles" / name
+    profile.mkdir(parents=True, exist_ok=True)
+    mode = "team" if team else (task_mode or "")
+    mode_yaml = f"  task_mode: {mode}\n" if mode else ""
+    (profile / "config.yaml").write_text(
+        "model:\n"
+        f"  provider: {PARENT_PROVIDER}\n"
+        f"  default: {PARENT_MODEL}\n"
+        "delegation:\n"
+        f"  provider: {WORKER_PROVIDER}\n"
+        f"  model: {WORKER_MODEL}\n"
+        "  reasoning_effort: high\n"
+        "kanban:\n"
+        f"{mode_yaml}",
+        encoding="utf-8",
+    )
+    return profile
+
+
+def _new_team_root(conn, **overrides):
+    from hermes_cli.kanban_team import create_team_root
+
+    kwargs = {
+        "assignee": TEAM_PROFILE,
+        "title": "Team mission",
+        "body": "Inspect source and return one bounded report.",
+        "created_by": "test",
+        "allowed_assignees": [TEAM_PROFILE],
+        "session_id": "session-1",
+    }
+    kwargs.update(overrides)
+    return create_team_root(conn, **kwargs)
+
+
+def test_profile_marker_is_exact_and_invalid_values_refuse_assignment(team_board):
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
+    from hermes_cli.kanban_team import is_team_profile, profile_task_mode, team_profile_policy
+
+    home = team_board.parent
+    assert DEFAULT_CONFIG["kanban"]["task_mode"] == ""
+    assert "team_worker_provider" not in DEFAULT_CONFIG["kanban"]
+    assert "team_worker_model" not in DEFAULT_CONFIG["kanban"]
+    assert "team_worker_reasoning_effort" not in DEFAULT_CONFIG["kanban"]
+    assert profile_task_mode(TEAM_PROFILE) == "team"
+    assert is_team_profile(TEAM_PROFILE) is True
+    assert profile_task_mode("ordinary") is None
+    assert is_team_profile("ordinary") is False
+    assert team_profile_policy(TEAM_PROFILE) == {
+        "profile": TEAM_PROFILE,
+        "parent_provider": PARENT_PROVIDER,
+        "parent_model": PARENT_MODEL,
+        "worker_provider": WORKER_PROVIDER,
+        "worker_model": WORKER_MODEL,
         "worker_reasoning": "high",
-        "max_retries": 2,
     }
 
-
-def _policy_config():
-    return {
-        "auxiliary": {
-            "kanban_decomposer": {
-                "provider": "openai-codex",
-                "model": "gpt-5.6-terra",
-            },
-        },
-        "kanban": {
-            "auto_decompose": True,
-            "dispatch_in_gateway": True,
-            "failure_limit": 2,
-            "team_worker_provider": "openai-codex",
-            "team_worker_model": "gpt-5.6-luna",
-            "team_worker_reasoning_effort": "high",
-        },
-    }
+    _write_profile(home, "invalid", team=False, task_mode="swarm")
+    with pytest.raises(ValueError, match="unsupported kanban.task_mode"):
+        profile_task_mode("invalid")
+    with pytest.raises(RuntimeError, match="not configured"):
+        team_profile_policy("ordinary")
 
 
-def test_team_policy_requires_explicit_native_routes():
-    from hermes_cli.kanban_team import team_policy
+def test_profile_resolution_honors_context_local_and_explicit_home(team_board, monkeypatch):
+    from hermes_cli.kanban_team import create_team_root, profile_task_mode, team_profile_policy
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-    with pytest.raises(RuntimeError, match="kanban_decomposer.provider/model"):
-        team_policy({"auxiliary": {}, "kanban": {}})
-    with pytest.raises(RuntimeError, match="team_worker_provider/model"):
-        team_policy({
-            "auxiliary": {"kanban_decomposer": {"provider": "p", "model": "m"}},
-            "kanban": {},
-        })
-    assert team_policy(_policy_config()) == _policy()
+    alternate_root = team_board.parent.parent / "repository-hermes"
+    alternate_root.mkdir()
+    alternate_profile = _write_profile(alternate_root, "context-team", team=True)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
 
+    token = set_hermes_home_override(alternate_root)
+    try:
+        assert profile_task_mode("context-team") == "team"
+        assert team_profile_policy("context-team")["worker_model"] == WORKER_MODEL
+    finally:
+        reset_hermes_home_override(token)
 
-def test_submit_team_commits_nothing_before_dispatcher_readiness(team_board, monkeypatch):
-    from hermes_cli import kanban, kanban_team
-
-    monkeypatch.setattr(kanban_team, "team_policy", lambda: _policy())
-    monkeypatch.setattr(kanban, "_check_dispatcher_presence", lambda _root: (False, "No gateway is running"))
-
-    with pytest.raises(RuntimeError, match="No gateway is running"):
-        kanban_team.submit_team(
-            goal="Do not persist this mission without a dispatcher.",
-            context="The isolated Hermes home has no gateway artifacts.",
-            parent_agent=object(),
+    assert profile_task_mode(
+        "context-team", profile_home=alternate_profile
+    ) == "team"
+    with pytest.raises(ValueError, match="does not match profile"):
+        profile_task_mode("wrong-name", profile_home=alternate_profile)
+    with kbc.connect_closing(team_board) as conn:
+        root = create_team_root(
+            conn,
+            assignee="context-team",
+            profile_home=alternate_profile,
+            title="Context-local Team mission",
         )
+    assert root.assignee == "context-team"
+    assert root.allowed_assignees == ["context-team"]
+
+
+def test_public_helper_creates_one_readback_root_and_full_notification(team_board):
+    from hermes_cli import kanban_db_notify as notify
+    from hermes_cli.kanban_team import TEAM_DECOMPOSITION_STEP, TEAM_WORKFLOW_ID
 
     with kbc.connect_closing() as conn:
+        root = _new_team_root(
+            conn,
+            tenant="tenant-a",
+            idempotency_key="team:mission-1",
+            max_retries=2,
+            skills=["source-review"],
+            notify_platform="api_server",
+            notify_chat_id="chat-1",
+            notify_thread_id="thread-1",
+            notify_user_id="user-1",
+            notify_user_id_alt="alt-1",
+            notify_chat_type="group",
+            notifier_profile="main",
+            notify_delivery_mode="notify+wake",
+            notify_delivery_metadata={"scope_id": "scope-1"},
+        )
+        same = _new_team_root(
+            conn,
+            tenant="tenant-a",
+            idempotency_key="team:mission-1",
+            max_retries=2,
+            skills=["source-review"],
+            notify_platform="api_server",
+            notify_chat_id="chat-1",
+            notify_thread_id="thread-1",
+            notify_user_id="user-1",
+            notify_user_id_alt="alt-1",
+            notify_chat_type="group",
+            notifier_profile="main",
+            notify_delivery_mode="notify+wake",
+            notify_delivery_metadata={"scope_id": "scope-1"},
+        )
+        subscriptions = notify.list_notify_subs(
+            conn, root.id, notifier_profiles=["main"]
+        )
+        count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+
+    assert same.id == root.id
+    assert count == 1
+    assert root.status == "triage"
+    assert root.assignee == TEAM_PROFILE
+    assert root.workflow_template_id == TEAM_WORKFLOW_ID
+    assert root.current_step_key == TEAM_DECOMPOSITION_STEP
+    assert root.provider_override == PARENT_PROVIDER
+    assert root.model_override == PARENT_MODEL
+    assert root.allowed_assignees == [TEAM_PROFILE]
+    assert root.skills == ["source-review"]
+    assert root.session_id == "session-1"
+    assert len(subscriptions) == 1
+    assert subscriptions[0]["platform"] == "api_server"
+    assert subscriptions[0]["chat_id"] == "chat-1"
+    assert subscriptions[0]["thread_id"] == "thread-1"
+    assert subscriptions[0]["user_id_alt"] == "alt-1"
+    assert subscriptions[0]["chat_type"] == "group"
+    assert subscriptions[0]["delivery_mode"] == "notify+wake"
+    assert subscriptions[0]["delivery_metadata"] == {"scope_id": "scope-1"}
+
+
+def test_public_helper_rejects_model_override_and_incomplete_notification(team_board):
+    with kbc.connect_closing() as conn:
+        with pytest.raises(ValueError, match="model must match"):
+            _new_team_root(conn, model_override="wrong-model")
+        with pytest.raises(ValueError, match="both platform and chat id"):
+            _new_team_root(conn, notify_platform="tui")
+        with pytest.raises(ValueError, match="enter Triage directly"):
+            _new_team_root(conn, initial_status="blocked")
+        with pytest.raises(ValueError, match="only the saved Team profile"):
+            _new_team_root(conn, allowed_assignees=[TEAM_PROFILE, "ordinary"])
         assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
 
 
-def test_submit_team_parks_then_activates_one_native_root(team_board, monkeypatch):
-    from hermes_cli import kanban, kanban_team
+def test_kanban_create_uses_structure_without_a_public_workflow_knob(team_board, monkeypatch):
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
     from tools import kanban_tools
+    from tools.kanban_tools_schemas import KANBAN_CREATE_SCHEMA
 
-    monkeypatch.setattr(kanban_team, "team_policy", lambda: _policy())
-    monkeypatch.setattr(kanban_team, "_active_profile_name", lambda: "card-main")
-    monkeypatch.setattr(kanban_team, "_origin_session_id", lambda _parent: "session-1")
-    monkeypatch.setattr(kanban, "_check_dispatcher_presence", lambda _root: (True, "ready"))
-    monkeypatch.setattr(kanban_tools, "_maybe_auto_subscribe", lambda _conn, _tid: True)
+    monkeypatch.setattr(kanban_tools, "_maybe_auto_subscribe", lambda _conn, _tid: False)
+    team_result = json.loads(kanban_tools._handle_create({
+        "title": "Use the saved Team",
+        "body": "One ordinary assignment.",
+        "assignee": TEAM_PROFILE,
+    }))
+    ordinary_result = json.loads(kanban_tools._handle_create({
+        "title": "Use one ordinary profile",
+        "assignee": "ordinary",
+    }))
 
-    observed = {}
-    activate = kb.activate_team_triage_task
-
-    def observe_activation(conn, task_id):
-        task = kb.get_task(conn, task_id)
-        observed.update({
-            "status": task.status,
-            "step": task.current_step_key,
-            "provider": task.provider_override,
-            "model": task.model_override,
-        })
-        return activate(conn, task_id)
-
-    monkeypatch.setattr(kb, "activate_team_triage_task", observe_activation)
-    result = kanban_team.submit_team(
-        goal="Inspect the native execution path and synthesize one report.",
-        context="Use explicit source evidence only.",
-        parent_agent=object(),
-    )
-
-    assert observed == {
-        "status": "blocked",
-        "step": "correlation",
-        "provider": "openai-codex",
-        "model": "gpt-5.6-terra",
-    }
-    assert result["policy"] == {
-        "decomposition_provider": "openai-codex",
-        "decomposition_model": "gpt-5.6-terra",
-        "worker_provider": "openai-codex",
-        "worker_model": "gpt-5.6-luna",
-        "worker_reasoning": "high",
-        "max_depth": 1,
-        "synthesis_provider": "openai-codex",
-        "synthesis_model": "gpt-5.6-terra",
-    }
     with kbc.connect_closing() as conn:
-        root = kb.get_task(conn, result["task_id"])
-        count = conn.execute(
-            "SELECT COUNT(*) AS count FROM tasks WHERE created_by='delegate_task:team'"
-        ).fetchone()["count"]
-    assert count == 1
-    assert root.status == "triage"
-    assert root.workflow_template_id == "delegate-team-v1"
-    assert root.current_step_key == "decomposition"
-    assert root.assignee == "card-main"
+        team = kb.get_task(conn, team_result["task_id"])
+        ordinary = kb.get_task(conn, ordinary_result["task_id"])
+
+    properties = KANBAN_CREATE_SCHEMA["parameters"]["properties"]
+    assert "task_mode" not in properties
+    assert "workflow_template_id" not in properties
+    assert team.status == "triage"
+    assert team.workflow_template_id == TEAM_WORKFLOW_ID
+    assert team.assignee == TEAM_PROFILE
+    assert team.provider_override == PARENT_PROVIDER
+    assert team.model_override == PARENT_MODEL
+    assert ordinary.status == "ready"
+    assert ordinary.workflow_template_id is None
+    assert ordinary.current_step_key is None
 
 
 def _decompose_team_root(team_board, monkeypatch, worker_count=2):
     from hermes_cli import kanban_decompose as decompose
-    from hermes_cli import kanban_team
 
     with kbc.connect_closing() as conn:
-        root_id = kb.create_task(
-            conn,
-            title="Team mission",
-            body="Explicit mission packet",
-            assignee="card-main",
-            created_by="delegate_task:team",
-            triage=True,
-            model_override="gpt-5.6-terra",
-            provider_override="openai-codex",
-            workflow_template_id="delegate-team-v1",
-            current_step_key="decomposition",
+        root = _new_team_root(conn)
+        conn.execute(
+            "UPDATE tasks SET consecutive_failures=1, last_failure_error='prior' WHERE id=?",
+            (root.id,),
         )
-    routing = decompose._Routing(
-        orchestrator="other-orchestrator",
-        default_assignee="auto-worker",
-        auto_promote=True,
-        roster=[{"name": "auto-worker", "description": "Worker", "has_description": True}],
-        valid_names={"auto-worker"},
-    )
-    monkeypatch.setattr(decompose, "_load_routing", lambda: routing)
-    monkeypatch.setattr(kanban_team, "team_policy", lambda: _policy())
+        conn.commit()
+
+    def no_global_routing():
+        raise AssertionError("Team decomposition must not read the global roster")
+
+    monkeypatch.setattr(decompose, "_load_routing", no_global_routing)
     monkeypatch.setattr(
         decompose,
         "_call_aux",
@@ -179,8 +265,8 @@ def _decompose_team_root(team_board, monkeypatch, worker_count=2):
                     {
                         "title": f"Evidence {index}",
                         "body": f"Read source {index}",
-                        "assignee": "auto-worker",
-                        "parents": [],
+                        "assignee": "outside-profile",
+                        "parents": [index - 1] if index else [],
                     }
                     for index in range(worker_count)
                 ],
@@ -188,31 +274,37 @@ def _decompose_team_root(team_board, monkeypatch, worker_count=2):
             "",
         ),
     )
-    outcome = decompose.decompose_task(root_id, author="terra")
+    outcome = decompose.decompose_task(root.id, author="terra")
     assert outcome.ok is True
-    return root_id, outcome.child_ids or []
+    return root.id, outcome.child_ids or []
 
 
-def test_team_decomposition_pins_workers_and_root_synthesis(team_board, monkeypatch):
+def test_team_decomposition_uses_same_profile_and_same_root_synthesis(team_board, monkeypatch):
     from hermes_cli import kanban_db_dispatch as dispatch
-    from tools.environments import local as local_env
+    from hermes_cli.kanban_team import TEAM_SYNTHESIS_STEP, TEAM_WORKER_STEP, TEAM_WORKFLOW_ID
     from tools import process_registry
+    from tools.environments import local as local_env
 
     root_id, child_ids = _decompose_team_root(team_board, monkeypatch)
     assert len(child_ids) == 2
     with kbc.connect_closing() as conn:
         root = kb.get_task(conn, root_id)
         children = [kb.get_task(conn, task_id) for task_id in child_ids]
-    assert root.assignee == "card-main"
-    assert root.current_step_key == "synthesis"
-    assert all(child.workflow_template_id == "delegate-team-v1" for child in children)
-    assert all(child.current_step_key == "worker" for child in children)
-    assert all(child.provider_override == "openai-codex" for child in children)
-    assert all(child.model_override == "gpt-5.6-luna" for child in children)
-    assert all(child.reasoning_effort == "high" for child in children)
+        assert root.status == "todo"
+        assert root.current_step_key == TEAM_SYNTHESIS_STEP
+        assert root.consecutive_failures == 0
+        assert root.last_failure_error is None
+        assert all(child.assignee == TEAM_PROFILE for child in children)
+        assert all(child.workflow_template_id == TEAM_WORKFLOW_ID for child in children)
+        assert all(child.current_step_key == TEAM_WORKER_STEP for child in children)
+        assert all(child.provider_override == WORKER_PROVIDER for child in children)
+        assert all(child.model_override == WORKER_MODEL for child in children)
+        assert all(child.reasoning_effort == "high" for child in children)
+        assert all(child.allowed_assignees == [TEAM_PROFILE] for child in children)
 
-    with kbc.connect_closing() as conn:
         for index, child in enumerate(children, start=1):
+            current = kb.get_task(conn, child.id)
+            assert current.status == "ready"
             claimed = kb.claim_task(conn, child.id)
             assert claimed is not None
             assert kb.complete_task(
@@ -221,12 +313,13 @@ def test_team_decomposition_pins_workers_and_root_synthesis(team_board, monkeypa
                 result=f"Luna report {index}",
                 expected_run_id=claimed.current_run_id,
             )
-        terra_root = kb.get_task(conn, root_id)
-        assert terra_root.status == "ready"
+        synthesis_root = kb.get_task(conn, root_id)
         synthesis_context = kb.build_worker_context(conn, root_id)
         claimed_root = kb.claim_task(conn, root_id)
-        assert claimed_root is not None
 
+    assert synthesis_root.status == "ready"
+    assert claimed_root is not None
+    assert claimed_root.id == root_id
     assert "separate final review/synthesis pass" in synthesis_context
     assert "Luna report 1" in synthesis_context
     assert "Luna report 2" in synthesis_context
@@ -253,34 +346,121 @@ def test_team_decomposition_pins_workers_and_root_synthesis(team_board, monkeypa
 
     dispatch._default_spawn(claimed_root, str(team_board.parent))
     assert captured["env"]["HERMES_KANBAN_TEAM_WORKER"] == "1"
-    assert captured["cmd"][captured["cmd"].index("-m") + 1] == "gpt-5.6-terra"
+    assert captured["cmd"][captured["cmd"].index("-p") + 1] == TEAM_PROFILE
+    assert captured["cmd"][captured["cmd"].index("-m") + 1] == PARENT_MODEL
 
     with kbc.connect_closing() as conn:
         dispatch._set_worker_pid(conn, root_id, FakeProcess.pid)
-        event = conn.execute(
-            "SELECT payload FROM task_events WHERE task_id=? AND kind='spawned' ORDER BY id DESC LIMIT 1",
-            (root_id,),
-        ).fetchone()
-    receipt = json.loads(event["payload"])
-    assert receipt == {
+        spawned = [event for event in kb.list_events(conn, root_id) if event.kind == "spawned"][-1]
+    assert spawned.payload == {
         "pid": 4245,
         "started_at": 123.0,
-        "workflow_template_id": "delegate-team-v1",
-        "step_key": "synthesis",
-        "provider": "openai-codex",
-        "model": "gpt-5.6-terra",
+        "workflow_template_id": TEAM_WORKFLOW_ID,
+        "step_key": TEAM_SYNTHESIS_STEP,
+        "provider": PARENT_PROVIDER,
+        "model": PARENT_MODEL,
     }
 
 
 @pytest.mark.parametrize("worker_count", [1, 5, 9])
-def test_team_decomposition_does_not_add_a_new_task_count_cap(team_board, monkeypatch, worker_count):
-    _root_id, child_ids = _decompose_team_root(team_board, monkeypatch, worker_count=worker_count)
+def test_team_decomposition_preserves_existing_graph_size_policy(
+    team_board, monkeypatch, worker_count
+):
+    _root_id, child_ids = _decompose_team_root(
+        team_board, monkeypatch, worker_count=worker_count
+    )
     assert len(child_ids) == worker_count
 
 
-def test_team_process_marker_blocks_direct_nested_task_creation(team_board, monkeypatch):
+def test_team_workers_auto_promote_when_generic_manual_review_is_enabled(
+    team_board, monkeypatch
+):
+    (team_board.parent / "config.yaml").write_text(
+        "kanban:\n  auto_promote_children: false\n",
+        encoding="utf-8",
+    )
+    _root_id, child_ids = _decompose_team_root(
+        team_board, monkeypatch, worker_count=1
+    )
+    with kbc.connect_closing() as conn:
+        child = kb.get_task(conn, child_ids[0])
+    assert child.status == "ready"
+
+
+def test_team_process_marker_blocks_nested_task_creation(team_board, monkeypatch):
     monkeypatch.setenv("HERMES_KANBAN_TEAM_WORKER", "1")
     with kbc.connect_closing() as conn, pytest.raises(
         RuntimeError, match="cannot create nested Kanban tasks"
     ):
         kb.create_task(conn, title="Nested escape")
+
+    from tools.delegate_tool import delegate_task
+
+    refusal = delegate_task(goal="Nested delegate escape", parent_agent=object())
+    assert "cannot delegate nested" in refusal
+
+
+def test_team_decomposition_failures_block_once_without_retry_spend_loop(
+    team_board, monkeypatch
+):
+    from gateway import kanban_watchers_dispatcher as watcher
+    from hermes_cli import kanban_decompose as decompose
+    from hermes_cli.kanban_decompose import DecomposeOutcome
+    from hermes_cli.kanban_team import record_decomposition_failure
+
+    with kbc.connect_closing() as conn:
+        team = _new_team_root(conn, max_retries=2)
+        ordinary_id = kb.create_task(
+            conn,
+            title="Ordinary triage",
+            assignee="ordinary",
+            triage=True,
+        )
+
+    calls = {team.id: 0, ordinary_id: 0}
+
+    def fail(task_id, **_kwargs):
+        calls[task_id] += 1
+        return DecomposeOutcome(task_id, False, "auxiliary unavailable")
+
+    monkeypatch.setattr(decompose, "decompose_task", fail)
+    settings = watcher._DispatcherSettings(
+        interval=1,
+        max_spawn=None,
+        max_in_progress=None,
+        failure_limit=3,
+        stale_timeout_seconds=0,
+        reconcile_orphans=True,
+        default_assignee=None,
+        max_in_progress_per_profile=None,
+    )
+    dispatcher = watcher._KanbanDispatcher(kb, settings)
+    monkeypatch.setattr(dispatcher, "_board_slugs", lambda: ["default"])
+
+    assert dispatcher.auto_decompose_tick(10) == 0
+    assert dispatcher.auto_decompose_tick(10) == 0
+    assert dispatcher.auto_decompose_tick(10) == 0
+
+    with kbc.connect_closing() as conn:
+        team_after = kb.get_task(conn, team.id)
+        ordinary_after = kb.get_task(conn, ordinary_id)
+        terminal = [
+            event for event in kb.list_events(conn, team.id)
+            if event.kind == "gave_up"
+        ]
+        repeated = record_decomposition_failure(
+            conn, team.id, "must not append", failure_limit=3
+        )
+
+    assert calls == {team.id: 2, ordinary_id: 3}
+    assert team_after.status == "blocked"
+    assert team_after.consecutive_failures == 2
+    assert team_after.last_failure_error == "auxiliary unavailable"
+    assert len(terminal) == 1
+    assert terminal[0].payload["trigger_outcome"] == "decomposition_failed"
+    assert terminal[0].payload["effective_limit"] == 2
+    assert terminal[0].payload["limit_source"] == "task"
+    assert repeated == {"handled": False, "blocked": False}
+    assert ordinary_after.status == "triage"
+    assert ordinary_after.consecutive_failures == 0
+    assert ordinary_after.last_failure_error is None

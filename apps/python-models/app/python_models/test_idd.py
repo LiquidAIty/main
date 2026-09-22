@@ -58,7 +58,7 @@ def test_literal_idd_is_the_only_loaded_builder_data() -> None:
     assert set(dictionary["templates"]) == {
         "template_assist",
         "template_main_chat",
-        "template_hermes_steward",
+        "template_knowgraph",
         "template_magentic",
         "template_worldsignals_agent",
         "template_trading_workbench",
@@ -342,6 +342,14 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1
     assert fields["maxTurns"]["minimum"] == 1
+    assert "orchestrator" not in fields
+    assert fields["subagentType"]["path"] == "runtimeOptions.subagentType"
+    assert fields["subagentType"]["options"] == [
+        {"value": "none", "label": "none"},
+        {"value": "leaf", "label": "leaf"},
+        {"value": "recursive", "label": "recursive"},
+    ]
+    assert fields["subagentType"]["valueSchema"]["default"] == "none"
 
 
 def test_human_and_builder_options_resolve_the_same_idd_without_sending_the_full_palette(monkeypatch):
@@ -527,10 +535,7 @@ def test_typed_objects_and_cardinality_are_declared_data():
 def test_editor_fields_resolve_only_their_referenced_definitions():
     from jsonschema import Draft202012Validator
     fields = {field["name"]: field for field in materialize_card_editor([])["fields"]}
-    assert "$defs" not in fields["delegationRole"]["valueSchema"]
-    assert fields["delegationRole"]["valueSchema"]["enum"] == [
-        "off", "leaf", "orchestrator", "team",
-    ]
+    assert "delegationRole" not in fields
     assert "teamMode" not in fields
     assert not {"teamMaxWorkers", "teamRetryLimit", "teamWorkerModel", "teamLeadModel"} & fields.keys()
     schema = fields["subagentModel"]["valueSchema"]

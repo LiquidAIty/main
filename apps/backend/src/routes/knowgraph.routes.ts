@@ -7,8 +7,6 @@ import axios from 'axios';
 import { Router } from 'express';
 import multer from 'multer';
 import { pool } from '../db/pool';
-import { resolveCardModelStrict } from '../cards/runtime';
-import { BUILDER_DECK_ID, getDeckDocument } from '../decks/store';
 import { isDevTestModeEnabled } from '../services/devTest';
 
 const router = Router();
@@ -599,7 +597,6 @@ function buildMultipartForm(
   projectId: string,
   documentId: string,
   file: UploadedFile,
-  promptTemplate?: string | null,
 ): FormData {
   const form = new FormData();
   form.append('project_id', projectId);
@@ -609,40 +606,7 @@ function buildMultipartForm(
     new Blob([file.buffer], { type: file.mimetype || 'application/pdf' }),
     file.originalname || `${documentId}.pdf`,
   );
-  if (promptTemplate) {
-    form.append('prompt_template', promptTemplate);
-  }
   return form;
-}
-
-async function resolveKnowgraphCardConfig(projectId: string): Promise<{
-  agentId: string;
-  provider: string;
-  modelKey: string;
-  providerModelId: string;
-  systemPrompt: string;
-}> {
-  const { deck } = await getDeckDocument(projectId, BUILDER_DECK_ID);
-  if (!deck) {
-    throw new Error('knowgraph_builder_deck_missing');
-  }
-  const card = deck.nodes.find((node) => node.id === 'card_hermes_steward');
-  if (!card) {
-    throw new Error('knowgraph_hermes_card_missing');
-  }
-  const model = resolveCardModelStrict(card);
-  const modelKey = String(card.runtimeOptions?.modelKey || '').trim();
-  const systemPrompt = String(card.prompt || '').trim();
-  if (!systemPrompt) {
-    throw new Error('knowgraph_hermes_card_prompt_missing');
-  }
-  return {
-    agentId: card.id,
-    provider: model.provider,
-    modelKey,
-    providerModelId: model.providerModelId,
-    systemPrompt,
-  };
 }
 
 async function readResponseDataSafe(response: Response): Promise<any> {
@@ -664,10 +628,8 @@ function pickErrorMessage(payload: any): string {
   return String(candidate || '').trim();
 }
 
-function normalizeKnowgraphIngestError(message: string, provider: string, providerModelId: string): string {
+function normalizeKnowgraphIngestError(message: string): string {
   const raw = String(message || '').trim();
-  const providerLabel = provider || 'unknown';
-  const modelLabel = providerModelId || 'unknown';
   const lower = raw.toLowerCase();
   if (
     lower.includes('ratelimiterror') ||
@@ -675,24 +637,22 @@ function normalizeKnowgraphIngestError(message: string, provider: string, provid
     lower.includes('insufficient_quota') ||
     lower.includes('quota')
   ) {
-    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}): rate limit or quota exceeded. No provider fallback was used.`;
+    return 'KnowGraph ingest failed: rate limit or quota exceeded.';
   }
   if (!raw) {
-    return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). No provider fallback was used.`;
+    return 'KnowGraph ingest failed.';
   }
-  return `KnowGraph ingest failed for configured provider/model (${providerLabel} / ${modelLabel}). ${raw}`;
+  return `KnowGraph ingest failed. ${raw}`;
 }
 
 async function proxyKnowgraphPdfIngest(input: {
   projectId: string;
   documentId: string;
   file?: UploadedFile | null;
-  route?: string;
 }): Promise<{ status: number; data: any }> {
   const projectId = String(input.projectId || '').trim();
   const documentId = String(input.documentId || '').trim();
   const file = input.file || undefined;
-  const route = String(input.route || '/api/knowgraph/ingest').trim() || '/api/knowgraph/ingest';
 
   if (!projectId || !documentId || !file) {
     return {
@@ -717,36 +677,9 @@ async function proxyKnowgraphPdfIngest(input: {
     };
   }
 
-  const resolved = await resolveKnowgraphCardConfig(projectId);
-  console.log(
-    '[RUNTIME_MODEL] route=%s projectId=%s agentType=%s agent_id=%s provider=%s model_key=%s provider_model_id=%s',
-    route,
-    projectId,
-    'knowgraph',
-    resolved.agentId,
-    resolved.provider,
-    resolved.modelKey,
-    resolved.providerModelId,
-  );
-  console.log(
-    '[KNOWGRAPH_INGEST] route=%s projectId=%s documentId=%s agentType=knowgraph agentId=%s provider=%s model=%s',
-    route,
-    projectId,
-    documentId,
-    resolved.agentId,
-    resolved.provider,
-    resolved.providerModelId,
-  );
-
-  const form = buildMultipartForm(projectId, documentId, file, resolved.systemPrompt);
+  const form = buildMultipartForm(projectId, documentId, file);
   const response = await fetch(`${knowgraphBaseUrl()}/ingest`, {
     method: 'POST',
-    headers: {
-      'x-agent-id': resolved.agentId,
-      'x-agent-provider': resolved.provider,
-      'x-agent-model-key': resolved.modelKey,
-      'x-agent-model-id': resolved.providerModelId,
-    },
     body: form,
   });
   const data = await readResponseDataSafe(response);
@@ -761,14 +694,7 @@ async function proxyKnowgraphPdfIngest(input: {
       ok: false,
       error: {
         code: `knowgraph_ingest_upstream_${response.status}`,
-        message: normalizeKnowgraphIngestError(
-          upstreamMessage,
-          resolved.provider,
-          resolved.providerModelId,
-        ),
-        provider: resolved.provider,
-        model_key: resolved.modelKey,
-        provider_model_id: resolved.providerModelId,
+        message: normalizeKnowgraphIngestError(upstreamMessage),
       },
       upstream: data,
     },
@@ -805,7 +731,6 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
       projectId,
       documentId,
       file,
-      route: '/api/knowgraph/ingest',
     });
     return res.status(upstream.status).json(upstream.data);
   } catch (error: any) {

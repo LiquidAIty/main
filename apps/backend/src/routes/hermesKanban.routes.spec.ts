@@ -68,7 +68,16 @@ describe('retained standalone Kanban task projection and recovery', () => {
     expect(deriveHermesKanbanProgress('t_root', [root, done, working])).toEqual({
       nativeRootId: 't_root',
       nativeRunId: null,
-      phase: 'working',
+      nativeStatus: 'running',
+      nativeTasks: [
+        { taskId: 't_root', title: '', assignee: null, status: 'running',
+          dependencyIds: [], latestAttempt: null, resultAvailable: false },
+        { taskId: 't_done', title: '', assignee: null, status: 'done',
+          dependencyIds: [], latestAttempt: null, resultAvailable: true },
+        { taskId: 't_working', title: '', assignee: null, status: 'running',
+          dependencyIds: [], latestAttempt: { runId: 7, status: 'running',
+            startedAt: null, endedAt: null }, resultAvailable: false },
+      ],
       tasksCompleted: 1,
       tasksTotal: 3,
       activeWorkers: 1,
@@ -160,7 +169,7 @@ describe('retained standalone Kanban task projection and recovery', () => {
     })).resolves.toMatchObject({
       finalText: 'Recovered synthesis',
       sessionId: 'root-session',
-      progress: { nativeRootId: 't_root', phase: 'complete' },
+      progress: { nativeRootId: 't_root', nativeStatus: 'done' },
     });
     expect(onProgress).toHaveBeenCalledTimes(1);
   });

@@ -48,41 +48,6 @@ function native() {
     description: 'Native profile description',
     soul: 'Native SOUL instructions',
     model: { provider: 'openai-codex', default: 'gpt-native' },
-    subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' },
-    memory: {
-      selected: 'holographic',
-      installed_providers: ['holographic', 'honcho'],
-      installed: true,
-      available: true,
-      availability_reason: null,
-      target: 'profile_sqlite',
-      credential_status: 'not_required',
-      credential_source: 'not_required',
-      setup_action: null,
-      history_database_path: 'C:/profiles/liquidaity-main/state.db',
-      curated_memory_enabled: true,
-      user_profile_enabled: true,
-      database: {
-        kind: 'sqlite', path: 'C:/profiles/liquidaity-main/memory_store.db', exists: true, fact_count: 3,
-      },
-    },
-    honcho: {
-      selected: false,
-      configuration_status: 'configured',
-      connection_status: 'configured_unreachable',
-      availability_reason: 'honcho_health_unreachable',
-      target: 'honcho_self_hosted',
-      credential_status: 'configured',
-      credential_source: 'self_hosted_base_url',
-      setup_action: 'hermes --profile liquidaity-main memory setup honcho',
-      status_action: 'hermes --profile liquidaity-main honcho status',
-    },
-    background_review: {
-      enabled: true,
-      provider: 'openai-codex',
-      model: 'gpt-5.6-luna',
-      max_input_tokens: 120_000,
-    },
     skills: [{ name: 'native-research', enabled: true }],
     toolsets: [{ name: 'native-web', enabled: true }],
     toolsets_pinned: true,
@@ -92,14 +57,31 @@ function native() {
 
 function nativeRequest() {
   return vi.fn(async (method: string) => {
-    if (method === 'profiles.configure') return { ok: true, applied: { soul: true } };
+    if (method === 'profiles.configure') return { ok: true, applied: { description: true } };
     if (method === 'profiles.describe') return native();
     if (method === 'mcp.servers.list') return { servers: [{ name: 'liquidaity', transport: 'http', auth: 'header' }] };
-    if (method === 'learning.frames') return { count: 1, summary: '1 learned item', buckets: [] };
-    if (method === 'learning.graph') return {
-      nodes: [{ id: 'native-research', label: 'native-research', kind: 'skill' }],
-      edges: [], clusters: [{ category: 'research', count: 1 }], memory: [],
-      stats: { learned_skills: 1 },
+    if (method === 'learning.frames') return {
+      count: 1,
+      summary: ['1 learned item', '1 skill'],
+      buckets: [{
+        index: 0,
+        label: 'Today',
+        date: '2026-09-21',
+        skills: 1,
+        memories: 0,
+        total: 1,
+        category: 'skill',
+        color: '#123456',
+        nodes: [{
+          id: 'skill:native-research',
+          glyph: 'S',
+          label: 'native-research',
+          fullLabel: 'Native Research',
+          meta: 'skill',
+          body: 'Research procedure',
+          style: 'green',
+        }],
+      }],
     };
     throw new Error(`unexpected_native_method:${method}`);
   });
@@ -119,30 +101,40 @@ describe('Hermes Card native profile binding', () => {
     const request = nativeRequest();
     const result = await hydrateHermesCardProfile(card, deck, request as never);
 
-    expect(request).toHaveBeenCalledTimes(4);
-    expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', {
-      name: 'liquidaity-main', probe_honcho: true,
-    });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenNthCalledWith(1, 'profiles.describe', { name: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(2, 'mcp.servers.list', { profile: 'liquidaity-main' });
     expect(request).toHaveBeenNthCalledWith(3, 'learning.frames', { cols: 60, rows: 18, frames: 2 }, 'liquidaity-main');
-    expect(request).toHaveBeenNthCalledWith(4, 'learning.graph', {}, 'liquidaity-main');
     expect(result.nativeApply).toBe('run_start');
     expect(result.cardSaveMutatesNative).toBe(false);
-    expect(result.subagentModelMaterialization).toBe('materialized');
     expect(result.desired.subagentModel?.providerModelId).toBe('gpt-5.6-luna');
     expect(result.native).toMatchObject({
       description: 'Native profile description',
       soul: 'Native SOUL instructions',
       model: { provider: 'openai-codex', default: 'gpt-native' },
-      memory: {
-        selected: 'holographic', available: true, target: 'profile_sqlite',
-        database: { factCount: 3 },
-      },
-      honcho: {
-        selected: false, configurationStatus: 'configured',
-        connectionStatus: 'configured_unreachable',
+      learning: {
+        count: 1,
+        summary: ['1 learned item', '1 skill'],
+        buckets: [{
+          index: 0,
+          label: 'Today',
+          skills: 1,
+          memories: 0,
+          total: 1,
+          nodes: [{
+            id: 'skill:native-research',
+            body: 'Research procedure',
+            style: 'green',
+          }],
+        }],
       },
     });
+    expect(result.native).not.toHaveProperty('backgroundReview');
+    expect(result.native).not.toHaveProperty('subagentModel');
+    expect(result.native).not.toHaveProperty('memory');
+    expect(result.native).not.toHaveProperty('honcho');
+    expect(result.native.learning).not.toHaveProperty('graph');
+    expect(result).not.toHaveProperty('subagentModelMaterialization');
     expect(result).not.toHaveProperty('drift');
     expect(result).not.toHaveProperty('fingerprint');
     expect(result.native.mcpServers[0]).not.toHaveProperty('headers');
@@ -154,14 +146,14 @@ describe('Hermes Card native profile binding', () => {
     const result = await invokeHermesNativeOperation(
       card,
       deck,
-      { method: 'profiles.configure', params: { soul: 'New native Soul' } },
+      { method: 'profiles.configure', params: { description: 'New native description' } },
       request as never,
     );
 
-    expect(request).toHaveBeenCalledTimes(5);
+    expect(request).toHaveBeenCalledTimes(4);
     expect(request).toHaveBeenNthCalledWith(1, 'profiles.configure', {
       name: 'liquidaity-main',
-      soul: 'New native Soul',
+      description: 'New native description',
     });
     expect(result.readback.binding.profile).toBe('liquidaity-main');
     expect(result.readback.cardSaveMutatesNative).toBe(false);
@@ -177,9 +169,7 @@ describe('Hermes Card native profile binding', () => {
     };
     const result = await hydrateHermesCardProfile(changed, deck, request as never);
 
-    expect(request).toHaveBeenCalledWith('profiles.describe', {
-      name: 'liquidaity-main', probe_honcho: true,
-    });
+    expect(request).toHaveBeenCalledWith('profiles.describe', { name: 'liquidaity-main' });
     expect(result.native.description).toBe('Native profile description');
     expect(result.native.soul).toBe('Native SOUL instructions');
   });

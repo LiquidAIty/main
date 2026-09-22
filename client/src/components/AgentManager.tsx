@@ -4,7 +4,6 @@ import type {
   AgentCardRuntimeOptions,
   CardRuntime,
 } from '../types/agentgraph';
-import HermesSkillGraph from '../features/agentbuilder/HermesSkillGraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
 import {
   applyNativeHermesOperation,
@@ -16,6 +15,7 @@ import {
 
 type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
+type SavedSubagentType = NonNullable<AgentCardRuntimeOptions['subagentType']>;
 type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
@@ -57,7 +57,7 @@ export type InputDictionaryEditorField = {
   name: string;
   label: string;
   path: string;
-  control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer' | 'text';
+  control: 'select' | 'catalog-select' | 'catalog-multiselect' | 'number' | 'integer' | 'text' | 'checkbox';
   allowUnset?: boolean;
   catalog?: string;
   filteredBy?: string;
@@ -397,11 +397,9 @@ export function AgentManager({
     key: string; providerModelId?: string | null;
   }>({ key: '' });
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
-  const [delegationRole, setDelegationRole] = useState<NonNullable<AgentCardRuntimeOptions['delegationRole']>>('off');
-  const [delegationTouched, setDelegationTouched] = useState(false);
+  const [subagentType, setSubagentType] = useState<SavedSubagentType>('none');
   const [subagentTouched, setSubagentTouched] = useState(false);
-  const [memoryProviderDraft, setMemoryProviderDraft] = useState<'builtin' | 'honcho' | null>(null);
-  const [automaticLearningDraft, setAutomaticLearningDraft] = useState<boolean | null>(null);
+  const [subagentTypeTouched, setSubagentTypeTouched] = useState(false);
   const learningEditsRef = useRef(new Map<string, string>());
   const [scriptDraft, setScriptDraft] = useState<SavedCardScript>(blankCardScript);
   const scriptDraftCacheRef = useRef<Map<string, SavedCardScript>>(new Map());
@@ -450,7 +448,6 @@ export function AgentManager({
   const [nativeHermesState, setNativeHermesState] = useState<NativeHermesCardView | null>(null);
   const [nativeHermesStatus, setNativeHermesStatus] = useState<'idle' | 'loading' | 'ready' | 'failed'>('idle');
   const [nativeHermesError, setNativeHermesError] = useState<string | null>(null);
-  const [nativeSoulDraft, setNativeSoulDraft] = useState('');
   const [nativeLearningDetail, setNativeLearningDetail] = useState<{
     kind: 'memory' | 'skill';
     id: string;
@@ -505,9 +502,8 @@ export function AgentManager({
     // A response to an earlier save must not replace edits made while it was pending.
     if (draftDirtyRef.current || cardSaveInFlightRef.current) return;
     draftDirtyRef.current = false;
-    setDelegationTouched(false);
-    setDelegationRole(localConfig.runtime_options?.delegationRole || 'off');
     setSubagentTouched(false);
+    setSubagentTypeTouched(false);
     setProvider(localConfig.provider || '');
     setAccessMode(
       localConfig.access_mode === 'chatgpt-account'
@@ -519,6 +515,12 @@ export function AgentManager({
     setModel({ key: localConfig.model_key || '',
       providerModelId: localConfig.runtime_options?.providerModelId });
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
+    const savedSubagentType = localConfig.runtime_options?.subagentType;
+    setSubagentType(
+      savedSubagentType === 'leaf' || savedSubagentType === 'recursive'
+        ? savedSubagentType
+        : 'none',
+    );
     setSubagentModel(
       localConfig.runtime.kind === 'hermes' && savedSubagentModel
         ? savedSubagentModel
@@ -593,17 +595,13 @@ export function AgentManager({
   const acceptNativeReadback = useCallback((state: NativeHermesCardView | null) => {
     nativeReadbackRef.current = state;
     setNativeHermesState(state);
-    setAutomaticLearningDraft(null);
     if (!state) {
-      setNativeSoulDraft('');
       setNativeLearningDetail(null);
       setNativeLearningDraft('');
       setNativeLearningStatus('idle');
       setNativeLearningError(null);
       return;
     }
-    setMemoryProviderDraft(state.native.honcho ? (state.native.honcho.selected ? 'honcho' : 'builtin') : null);
-    setNativeSoulDraft(state.native.soul);
   }, []);
 
   useEffect(() => {
@@ -703,9 +701,15 @@ export function AgentManager({
       ...editedConfig,
       runtime_options: {
         ...(localConfig.runtime_options || {}),
+        ...(
+          runtimeKind === 'hermes' && runtimeMode === 'magentic_one'
+            ? { subagentType: 'none' as const }
+            : subagentTypeTouched
+              ? { subagentType }
+              : {}
+        ),
         ...(providerModelId !== undefined ? { providerModelId } : {}),
         ...(subagentTouched ? { subagentModel } : {}),
-        ...(delegationTouched ? { delegationRole } : {}),
         ...(
           localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
             ? { script: scriptDraft }
@@ -727,8 +731,8 @@ export function AgentManager({
     providerModelId,
     subagentModel,
     subagentTouched,
-    delegationRole,
-    delegationTouched,
+    subagentType,
+    subagentTypeTouched,
     scriptDraft,
     reasoningEffort,
     temperature,
@@ -809,38 +813,17 @@ export function AgentManager({
       const nativeRevision = nativeDraftRevisionRef.current;
       const nativeState = nativeReadbackRef.current;
       const learningEdits = [...learningEditsRef.current];
-      const changes: Record<string, unknown> = {};
       if (nativeDraftDirtyRef.current) {
         if (!nativeState || !projectId || !deckId || !cardId) throw new Error('Hermes profile unavailable.');
-        const profile = nativeState.native;
-        if (automaticLearningDraft !== null && profile.backgroundReview
-          && automaticLearningDraft !== profile.backgroundReview.enabled) {
-          changes.background_review = {
-            enabled: automaticLearningDraft,
-            provider: profile.backgroundReview.provider,
-            model: profile.backgroundReview.model,
-            max_input_tokens: profile.backgroundReview.maxInputTokens,
-          };
-        }
-        if (nativeSoulDraft !== profile.soul) changes.soul = nativeSoulDraft;
-        if (profile.honcho && memoryProviderDraft !== null
-          && memoryProviderDraft !== (profile.honcho.selected ? 'honcho' : 'builtin')) {
-          changes.memory_provider = memoryProviderDraft;
-        }
       }
       await runSaveConfig();
       if (nativeDraftDirtyRef.current) {
         let latestReadback = nativeState;
-        for (const [field, value] of Object.entries(changes)) {
-          const readback = await applyNativeHermesOperation({ projectId, deckId, cardId,
-            change: { method: 'profiles.configure', params: { [field]: value } } });
-          latestReadback = readback;
-          nativeReadbackRef.current = readback;
-          setNativeHermesState(readback);
-        }
         for (const [id, content] of learningEdits) {
-          await applyNativeHermesOperation({ projectId, deckId, cardId,
+          latestReadback = await applyNativeHermesOperation({ projectId, deckId, cardId,
             change: { method: 'learning.edit', params: { id, content } } });
+          nativeReadbackRef.current = latestReadback;
+          setNativeHermesState(latestReadback);
           if (learningEditsRef.current.get(id) === content) learningEditsRef.current.delete(id);
         }
         if (nativeDraftRevisionRef.current === nativeRevision) {
@@ -848,8 +831,7 @@ export function AgentManager({
           if (latestReadback) acceptNativeReadback(latestReadback);
         }
       }
-  }, [runSaveConfig, projectId, deckId, cardId, nativeSoulDraft,
-    memoryProviderDraft, automaticLearningDraft, acceptNativeReadback]);
+  }, [runSaveConfig, projectId, deckId, cardId, acceptNativeReadback]);
 
   const saveLatestDraftRef = useRef(saveCurrentDraft);
   useLayoutEffect(() => {
@@ -900,6 +882,7 @@ export function AgentManager({
 
   const editorField = (name: string) => cardEditorFields.find((field) => field.name === name);
   const providerField = editorField('provider');
+  const subagentTypeField = editorField('subagentType');
   const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
   const reasoningEffortField = editorField('reasoningEffort');
@@ -909,10 +892,17 @@ export function AgentManager({
   const providerOptions = (providerField?.options || []).filter(
     (option) => (modelsByProvider[option.value] || []).length > 0,
   );
+  const legacyTeam = (
+    localConfig?.runtime_options as (AgentCardRuntimeOptions & { team?: { mode?: unknown } }) | null | undefined
+  )?.team;
+  const preservesNativeAutoTeam = runtimeKind === 'hermes'
+    && localConfig?.runtime_options?.subagentType === undefined
+    && legacyTeam?.mode === 'auto';
   const accessModeOptions = accessModeField?.options || [];
   const runtimeDictionaryReady = Boolean(
     runtimeOptionsStatus === 'ready'
     && providerField
+    && subagentTypeField?.control === 'select'
     && accessModeField
     && modelKeyField
     && reasoningEffortField
@@ -1210,10 +1200,7 @@ export function AgentManager({
           data-testid="agent-manager-skills"
           style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
         >
-          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Card skill grants</div>
-          <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            Saved Card authority. These skill IDs are materialized for the Card at Run start.
-          </div>
+          <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Skills</div>
           <textarea
             aria-label="Card skill grants"
             value={skillsText}
@@ -1226,13 +1213,13 @@ export function AgentManager({
           />
           {runtimeKind !== 'hermes' ? null : nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {nativeHermesError || 'Effective Hermes skill readback unavailable.'}
+              {nativeHermesError || 'Skills unavailable.'}
             </div>
           ) : nativeHermesState ? (
             <>
               <details data-testid="effective-hermes-skills">
                 <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 11.5 }}>
-                  Effective Hermes skills · read-only
+                  Loaded
                 </summary>
                 <div style={{ display: 'grid', gap: 5, marginTop: 8 }}>
                   {nativeHermesState.native.skills.map((skill) => (
@@ -1242,21 +1229,45 @@ export function AgentManager({
                   ))}
                 </div>
               </details>
-              {nativeHermesState.native.backgroundReview ? (
-                <label style={{ color: '#B8C8CD', fontSize: 12 }}>
-                  <input type="checkbox" aria-label="Automatic learning"
-                    checked={automaticLearningDraft ?? nativeHermesState.native.backgroundReview.enabled}
-                    onChange={(event) => {
-                      setAutomaticLearningDraft(event.target.checked);
-                      markNativeDraftDirty();
-                    }} />{' '}
-                  Automatic learning
-                </label>
+              {nativeHermesState.native.learning.buckets.some((bucket) => bucket.nodes.length > 0) ? (
+                <section aria-label="Learning" style={{ display: 'grid', gap: 7 }}>
+                  <div style={{ color: '#D5E4E8', fontSize: 11.5, fontWeight: 600 }}>Learning</div>
+                  {nativeHermesState.native.learning.buckets.map((bucket) => (
+                    bucket.nodes.length ? (
+                      <div key={`${bucket.index}:${bucket.date}`} style={{ display: 'grid', gap: 5 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#80969F', fontSize: 10.5 }}>
+                          <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: '50%', background: bucket.color || '#80969F' }} />
+                          <span>{bucket.label || bucket.date}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {bucket.nodes.map((node) => (
+                            <button
+                              key={node.id}
+                              type="button"
+                              aria-label={`Open ${node.fullLabel || node.label}`}
+                              title={node.meta || node.fullLabel || node.label}
+                              onClick={() => void openNativeLearningNode(node.id)}
+                              style={{
+                                minWidth: 0,
+                                padding: '4px 7px',
+                                border: '1px solid #3A4A4F',
+                                borderRadius: 999,
+                                background: '#18201F',
+                                color: '#B8C8CD',
+                                fontSize: 10.5,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {node.glyph ? `${node.glyph} ` : ''}{node.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null
+                  ))}
+                </section>
               ) : null}
-              <HermesSkillGraph graph={nativeHermesState.native.learning.graph}
-                profile={nativeHermesState.binding.profile}
-                onOpenNode={(id) => void openNativeLearningNode(id)} />
-              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening Hermes learning node…</div> : null}
+              {nativeLearningStatus === 'loading' ? <div style={{ color: '#80969F' }}>Opening…</div> : null}
               {nativeLearningStatus === 'failed' ? (
                 <div role="alert" style={{ color: '#FFA2A2' }}>{nativeLearningError}</div>
               ) : null}
@@ -1264,7 +1275,7 @@ export function AgentManager({
                 <section style={{ display: 'grid', gap: 6, padding: 8, border: '1px solid #42565C', borderRadius: 6 }}>
                   <strong>{nativeLearningDetail.kind}: {nativeLearningDetail.label}</strong>
                   <textarea
-                    aria-label="Hermes learning node content"
+                    aria-label="Learning"
                     value={nativeLearningDraft}
                     onChange={(event) => {
                       setNativeLearningDraft(event.target.value);
@@ -1278,7 +1289,7 @@ export function AgentManager({
               ) : null}
             </>
           ) : (
-            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading Hermes skill diagnostics…</div>
+            <div role="status" style={{ color: '#80969F', fontSize: 11 }}>Loading…</div>
           )}
         </section>
       );
@@ -1291,75 +1302,13 @@ export function AgentManager({
           style={{ display: 'grid', gap: 12, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
         >
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>Memory</div>
-          <div style={{ color: '#91A9B8', fontSize: 11 }}>
-            Memory behavior follows the saved Card prompt and its bound Hermes profile.
-          </div>
           {runtimeKind === 'hermes' && nativeHermesStatus === 'failed' ? (
             <div role="alert" style={{ color: '#FFA2A2', fontSize: 11 }}>
-              {nativeHermesError || 'Effective Hermes memory readback unavailable.'}
+              {nativeHermesError || 'Memory unavailable.'}
             </div>
-          ) : null}
-          {runtimeMode === 'main' && nativeHermesState?.native.honcho ? (
-            <section
-              data-testid="main-honcho-status"
-              style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', padding: 8, border: '1px solid #42565C', borderRadius: 6 }}
-            >
-              <div style={{ display: 'grid', gap: 3 }}>
-                <strong style={{ color: '#D5E4E8', fontSize: 11.5 }}>Main memory provider</strong>
-                <span style={{ color: '#80969F', fontSize: 10.5 }}>
-                  {nativeHermesState.native.honcho.configurationStatus === 'not_configured'
-                    ? 'Not configured'
-                    : nativeHermesState.native.honcho.connectionStatus === 'configured_unreachable'
-                      ? 'Configured but unreachable'
-                      : nativeHermesState.native.honcho.connectionStatus === 'connected'
-                        ? 'Connected'
-                        : 'Configured; connection not checked'}
-                </span>
-              </div>
-              <select
-                aria-label="Memory provider"
-                value={memoryProviderDraft || 'builtin'}
-                onChange={(event) => {
-                  setMemoryProviderDraft(event.target.value as 'builtin' | 'honcho');
-                  markNativeDraftDirty();
-                }}
-              >
-                <option value="builtin">Built-in only</option>
-                <option value="honcho">External</option>
-              </select>
-            </section>
           ) : null}
         </section>
       );
-    }
-
-    if (sectionTab === 'Soul') {
-      return <>
-          {runtimeKind === 'hermes' && nativeHermesState ? (
-            <section
-              data-testid="agent-profile-soul"
-              style={{ display: 'grid', gap: 10, padding: 10, border: '1px solid #3A4A4F', borderRadius: 8, background: '#202827' }}
-            >
-
-              <div>
-                <label htmlFor="card-prompt-soul" style={{ color: '#D5E4E8', fontSize: 11.5 }}>Soul</label>
-                <div style={{ display: 'grid', gap: 7, marginTop: 8 }}>
-                  <textarea
-                    id="card-prompt-soul"
-                    aria-label="Soul"
-                    value={nativeSoulDraft}
-                    onChange={(event) => {
-                      setNativeSoulDraft(event.target.value);
-                      markNativeDraftDirty();
-                    }}
-                    rows={10}
-                    style={{ width: '100%', minWidth: 0, padding: 10, background: '#161A1B', color: '#D5E4E8', border: '1px solid #42565C', borderRadius: 6, fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
-                  />
-                </div>
-              </div>
-            </section>
-          ) : null}
-      </>;
     }
 
     if (sectionTab === 'Runtime') {
@@ -1449,6 +1398,44 @@ export function AgentManager({
                     </div>
                   ) : null}
                 </div>
+                {runtimeKind === 'hermes'
+                && runtimeMode !== 'magentic_one'
+                && !preservesNativeAutoTeam
+                && subagentTypeField?.control === 'select' ? (
+                  <div>
+                    <label style={{ display: 'block', marginBottom: 6, color: '#E0DED5', fontSize: 12 }}>
+                      {subagentTypeField.label}
+                    </label>
+                    <select
+                      aria-label={subagentTypeField.label}
+                      disabled={!runtimeDictionaryReady}
+                      value={subagentType}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value !== 'none' && value !== 'leaf' && value !== 'recursive') return;
+                        setSubagentType(value);
+                        setSubagentTypeTouched(true);
+                        markDraftDirty();
+                      }}
+                    >
+                      {(subagentTypeField.options || [])
+                        .filter((option) => (
+                          option.value === 'none'
+                          || option.value === 'leaf'
+                          || option.value === 'recursive'
+                        ))
+                        .map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.value === 'none'
+                              ? 'None'
+                              : option.value === 'leaf'
+                                ? 'Leaf'
+                                : 'Recursive'}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                ) : null}
               </>
 
             {runtimeKind !== 'hermes' ? <div>
@@ -1858,14 +1845,15 @@ export function AgentManager({
     ? (
         <div data-testid="agent-manager-prompt-surface" style={{ display: 'grid', gap: 16 }}>
           <section aria-label="Prompt configuration">{renderSectionBody('Prompt')}</section>
-          {renderSectionBody('Soul')}
         </div>
       )
     : activeTab === 'Runtime'
       ? (
           <div data-testid="agent-manager-runtime-surface" style={{ display: 'grid', gap: 16 }}>
             <section aria-label="Runtime configuration">{renderSectionBody('Runtime')}</section>
-            {runtimeKind === 'hermes' ? (
+            {runtimeKind === 'hermes'
+            && runtimeMode !== 'magentic_one'
+            && (subagentType !== 'none' || preservesNativeAutoTeam) ? (
               <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
                 Subagent model
                 <select
@@ -1897,23 +1885,6 @@ export function AgentManager({
                     <option key={`${option.provider}:${option.key}`} value={`${option.provider}\u0000${option.key}`}>
                       {option.provider} · {option.label}
                     </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            {runtimeKind === 'hermes' ? (
-              <label style={{ display: 'grid', gap: 6, color: '#D5E4E8', fontSize: 12 }}>
-                Delegate task
-                <select aria-label="Delegate task" value={delegationRole}
-                  disabled={!editorField('delegationRole')?.options?.length}
-                  onChange={(event) => {
-                    const next = event.target.value as NonNullable<AgentCardRuntimeOptions['delegationRole']>;
-                    setDelegationRole(next);
-                    setDelegationTouched(true);
-                    markDraftDirty();
-                  }}>
-                  {editorField('delegationRole')?.options?.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </label>

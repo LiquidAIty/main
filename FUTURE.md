@@ -32,7 +32,7 @@ These calls require explicit approval. Structural tests must not be presented as
 ## Hermes memory
 
 - Measure recall quality and profile isolation across longer real Main, Builder, and
-  Graph Agent sessions without copying data between profiles.
+  KnowGraph sessions without copying data between profiles.
 - Test Honcho cloud or self-hosted recall/write only after its intended native setup flow supplies the
   owning profile's real OAuth/API-key or base-URL configuration.
 - Compare the already-installed native external-memory providers only through their native profile
@@ -50,18 +50,19 @@ These calls require explicit approval. Structural tests must not be presented as
 - Preserve current/last Card Run context after workers stop; do not create a Team history database,
   duplicate SQL task table, or user-facing receipt product.
 
-## Graph Agent evolution — unaccepted proposal
+## KnowGraph evolution — unaccepted proposal
 
 No consolidation of graph Cards or change of graph write authority is approved by this proposal.
 
-Keep one ordinary visible `card_hermes_steward` Graph Agent mapped one-to-one to its native
-`liquidaity-hermes-steward` profile so its sessions, memory, Runs, grants, and history remain continuous.
+Keep one ordinary visible `card_knowgraph` KnowGraph Card mapped one-to-one to its fresh native
+`knowgraph` profile. Do not revive the retired Steward/Stuart identity or carry its abandoned Team
+delegation and PDF-ingest coupling forward.
 Do not add capability profiles, prompt overlays, temporary personas, or a second selectable profile store
 inside it. ThinkGraph, CodeGraph, KnowGraph/research, prompt design, and cross-graph synthesis should evolve
 through the ordinary Card's saved prompt, skills, tools, graph selections, Script, grants, and explicit Card
 revisions. If a responsibility later requires genuinely separate identity, memory, authority, or lifecycle,
 evaluate a separate ordinary Card through the normal orange-edge contract instead of hiding another agent
-inside Graph Agent.
+inside KnowGraph.
 
 ## Retired experiments
 

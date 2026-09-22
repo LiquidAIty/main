@@ -153,11 +153,16 @@ _CATALOG_FAILURE: str | None = None
 _CATALOG_FAILURE_CODE: str | None = None
 _CATALOG_FAILURE_SUMMARY: str | None = None
 _CATALOG_COMPLETED_FAMILIES: tuple[str, ...] = ()
+_CATALOG_UNAVAILABLE_FAMILIES: tuple[str, ...] = ()
 _CATALOG_INITIALIZING_FAMILY: str | None = "liquidaity"
 _CATALOG_TOOLS: tuple[Tool, ...] | None = None
 _CATALOG_INITIALIZATION_TASK: asyncio.Task[None] | None = None
 _NATIVE_TOOL_TIMEOUT_SECONDS = 30.0
 _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS = 300.0
+# The installed CBM owns a bounded 30-second cold daemon-start window. Give
+# that one application-owned attempt time to return its own result, then let
+# the catalog-family fail-open path continue startup.
+_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS = 35.0
 _NATIVE_CBM_HEALTH_TIMEOUT_SECONDS = 5.0
 _MCP_CALL_TIMEOUT_SECONDS = 30.0
 _PUBLIC_MCP_NAME = "LiquidAIty"
@@ -304,6 +309,7 @@ def _catalog_diagnostics() -> dict[str, Any]:
         failure_code = _CATALOG_FAILURE_CODE
         failure_summary = _CATALOG_FAILURE_SUMMARY
         completed_families = list(_CATALOG_COMPLETED_FAMILIES)
+        unavailable_families = list(_CATALOG_UNAVAILABLE_FAMILIES)
         initializing_family = _CATALOG_INITIALIZING_FAMILY
     try:
         with open(__file__, "rb") as source_file:
@@ -318,6 +324,7 @@ def _catalog_diagnostics() -> dict[str, Any]:
         **({"failureCode": failure_code} if failure_code else {}),
         **({"failureSummary": failure_summary} if failure_summary else {}),
         "completedCatalogFamilies": completed_families,
+        "unavailableCatalogFamilies": unavailable_families,
         "initializingCatalogFamily": initializing_family,
         **(identity if state == "ready" else {}),
         "processId": _STARTUP_PROCESS_ID,
@@ -410,6 +417,31 @@ def _complete_catalog_family(family: str) -> None:
             _CATALOG_COMPLETED_FAMILIES = (*_CATALOG_COMPLETED_FAMILIES, family)
         _CATALOG_INITIALIZING_FAMILY = None
     _trace("catalog_family_ready", catalog_family=family, completed=True)
+
+
+def _mark_catalog_family_unavailable(
+    family: str,
+    *,
+    failure_code: str,
+    failure_summary: str,
+) -> None:
+    """Record one optional provider family as unavailable without failing the catalog."""
+
+    global _CATALOG_UNAVAILABLE_FAMILIES, _CATALOG_INITIALIZING_FAMILY
+    with _CATALOG_DIAGNOSTIC_LOCK:
+        if family not in _CATALOG_UNAVAILABLE_FAMILIES:
+            _CATALOG_UNAVAILABLE_FAMILIES = (
+                *_CATALOG_UNAVAILABLE_FAMILIES,
+                family,
+            )
+        _CATALOG_INITIALIZING_FAMILY = None
+    _trace(
+        "catalog_family_unavailable",
+        catalog_family=family,
+        failure_code=failure_code,
+        failure_summary=failure_summary,
+        completed=True,
+    )
 
 
 def _typed_failure(value: Any, *, dependency: str = "provider") -> dict[str, Any]:
@@ -1463,7 +1495,7 @@ class _NativeStdioMcpClient:
                         "version": "1.0.0",
                     },
                 },
-                timeout_seconds=None,
+                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
             )
             server_info = initialized.get("serverInfo")
             if not isinstance(server_info, dict):
@@ -1572,7 +1604,11 @@ class _NativeStdioMcpClient:
         seen_cursors: set[str] = set()
         while True:
             params = {"cursor": cursor} if cursor else {}
-            result = self._request("tools/list", params)
+            result = self._request(
+                "tools/list",
+                params,
+                timeout_seconds=_NATIVE_CBM_STARTUP_TIMEOUT_SECONDS,
+            )
             page = result.get("tools")
             if not isinstance(page, list):
                 raise RuntimeError("native_cbm_tools_list_invalid")
@@ -2250,7 +2286,7 @@ def _application_tools() -> list[Tool]:
         Tool(
             name="run_mag_one",
             description=(
-                "Main Chat only: submit one explicit mission and any deliberately selected native graph anchors "
+                "Main only: submit one explicit mission and any deliberately selected native graph anchors "
                 "to the AGE-connected Mag One "
                 "Card and invoke its native Hermes task execution. Python materializes the saved "
                 "Card plus this input exactly once before execution. "
@@ -2338,7 +2374,7 @@ def _application_tools() -> list[Tool]:
             name="canvas.upsert_wire",
             description=(
                 "Create/update/remove ONE saved canvas wire. Supported wire types only: 'flow' and "
-                "'magentic_option', 'magentic_control'. Blue endpoint order has no runtime meaning. "
+                "'magentic_option'. Blue means worker availability to Magnetic and endpoint order has no runtime meaning. "
                 "A wire is persisted visible configuration — it never runs agents."
             ),
             inputSchema={
@@ -2358,7 +2394,7 @@ def _application_tools() -> list[Tool]:
                             "enabled": {"type": "boolean"},
                             "edgeType": {
                                 "type": "string",
-                                "enum": ["flow", "magentic_option", "magentic_control"],
+                                "enum": ["flow", "magentic_option"],
                             },
                         },
                         "additionalProperties": True,
@@ -2439,8 +2475,18 @@ async def _materialize_complete_catalog() -> list[Tool]:
     _complete_catalog_family("liquidaity")
     native_catalogs: dict[str, list[Tool]] = {}
     _set_catalog_initializing_family("cbm")
-    native_catalogs["cbm"] = await _native_cbm_tools()
-    _complete_catalog_family("cbm")
+    try:
+        native_catalogs["cbm"] = await _native_cbm_tools()
+    except Exception as error:
+        await asyncio.to_thread(_close_native_cbm)
+        failure_code, failure_summary = _catalog_failure_details(error)
+        _mark_catalog_family_unavailable(
+            "cbm",
+            failure_code=failure_code,
+            failure_summary=failure_summary,
+        )
+    else:
+        _complete_catalog_family("cbm")
     _set_catalog_initializing_family("graphiti")
     native_catalogs["graphiti"] = await _native_graphiti_tools()
     _complete_catalog_family("graphiti")
@@ -2494,7 +2540,8 @@ async def _materialize_complete_catalog() -> list[Tool]:
 
 async def _initialize_catalog_once() -> None:
     """Freeze the one canonical MCP catalog for all clients."""
-    global _CATALOG_COMPLETED_FAMILIES, _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
+    global _CATALOG_COMPLETED_FAMILIES, _CATALOG_UNAVAILABLE_FAMILIES
+    global _CATALOG_FAILURE, _CATALOG_FAILURE_CODE
     global _CATALOG_FAILURE_SUMMARY, _CATALOG_INITIALIZING_FAMILY, _CATALOG_STATE
     global _CATALOG_TOOLS
     global _LATEST_CATALOG_DIAGNOSTIC
@@ -2504,6 +2551,7 @@ async def _initialize_catalog_once() -> None:
         _CATALOG_FAILURE_CODE = None
         _CATALOG_FAILURE_SUMMARY = None
         _CATALOG_COMPLETED_FAMILIES = ()
+        _CATALOG_UNAVAILABLE_FAMILIES = ()
         _CATALOG_INITIALIZING_FAMILY = "liquidaity"
         _CATALOG_TOOLS = None
         _LATEST_CATALOG_DIAGNOSTIC = None
@@ -3005,7 +3053,6 @@ async def _dispatch_tool(
                 resolve_magentic_target_card,
                 str(args.get("projectId") or ""),
                 str(args.get("deckId") or ""),
-                caller_card_id,
             )
         except CardDomainError as error:
             return [TextContent(
@@ -3619,19 +3666,16 @@ async def _run_streamable_http() -> None:
 
     async def readiness_endpoint(_request: Any) -> JSONResponse:
         diagnostics = _catalog_diagnostics()
-        codegraph = await asyncio.to_thread(_codegraph_diagnostics)
         ready = bool(
             diagnostics["catalogReady"]
             and int(diagnostics.get("toolCount") or 0) > 0
             and diagnostics.get("toolCount")
             == diagnostics.get("uniqueToolCount")
-            and codegraph["codeGraphReady"]
         )
         return JSONResponse(
             {
                 "ok": ready,
                 **diagnostics,
-                **codegraph,
             },
             status_code=200 if ready else 503,
         )

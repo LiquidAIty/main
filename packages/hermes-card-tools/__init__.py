@@ -7,6 +7,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import time
 import urllib.error
@@ -21,6 +22,9 @@ TOOLSET = "card-tools"
 REQUEST_TTL_SECONDS = 300
 MAX_REQUEST_BYTES = 512 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+VISIBLE_CARD_TARGETS_SECTION = "card-tools.visible-card-targets"
+VISIBLE_CARD_TARGETS_MAX_CHARS = 4_000
+_VISIBLE_CARD_TITLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", re.ASCII)
 
 
 def _json(value: Any) -> str:
@@ -162,6 +166,99 @@ def _handler(hermes_name: str) -> Callable[..., str]:
     return invoke
 
 
+def _process_profile_home() -> Path | None:
+    """Return this profile-scoped plugin process's Hermes home, if available."""
+    try:
+        from hermes_constants import get_process_hermes_home
+
+        return Path(get_process_hermes_home())
+    except Exception:
+        return None
+
+
+def _resolve_bot_roster(profile_home: Path) -> list[tuple[str, Path]]:
+    """Call Hermes' one native, profile-scoped Bot authority resolver."""
+    from tools.bot_mode_probe import resolve_bot_roster
+
+    return resolve_bot_roster(profile_home)
+
+
+def _read_profile_meta(target_home: Path) -> dict[str, Any]:
+    """Read one roster target's native profile metadata."""
+    from hermes_cli.profiles import read_profile_meta
+
+    return read_profile_meta(target_home)
+
+
+def _visible_card_targets(profile_home: Path | None) -> list[tuple[str, str]]:
+    """Return ordered ``(visible title, stable profile)`` pairs for this exact roster.
+
+    Visible addressing is only an alias over Hermes' already-authorized Bot roster. Any
+    malformed or case-insensitively duplicate title invalidates the whole projection so
+    a partial alias set cannot misrepresent the saved Card topology.
+    """
+    if profile_home is None:
+        return []
+    try:
+        targets: list[tuple[str, str]] = []
+        seen_titles: set[str] = set()
+        for stable_profile, target_home in _resolve_bot_roster(profile_home):
+            if not isinstance(stable_profile, str) or not stable_profile:
+                return []
+            metadata = _read_profile_meta(Path(target_home))
+            title = metadata.get("bot_title") if isinstance(metadata, dict) else None
+            if not isinstance(title, str) or not _VISIBLE_CARD_TITLE_RE.fullmatch(title):
+                return []
+            folded = title.casefold()
+            if folded in seen_titles:
+                return []
+            seen_titles.add(folded)
+            targets.append((title, stable_profile))
+        return targets
+    except Exception:
+        return []
+
+
+def _rewrite_message_agent_target(
+    profile_home: Path | None,
+    *,
+    tool_name: str = "",
+    args: Any = None,
+    **_context: Any,
+) -> dict[str, Any] | None:
+    """Translate one exact visible Card title while leaving every other target native."""
+    if tool_name != "message_agent" or not isinstance(args, dict):
+        return None
+    raw_target = args.get("target")
+    if not isinstance(raw_target, str):
+        return None
+    visible_target = raw_target.strip()
+    if visible_target.startswith("@"):
+        visible_target = visible_target[1:]
+    if not visible_target:
+        return None
+    by_title = {
+        title.casefold(): stable_profile
+        for title, stable_profile in _visible_card_targets(profile_home)
+    }
+    stable_profile = by_title.get(visible_target.casefold())
+    if stable_profile is None:
+        return None
+    return {"action": "modify", "args": {"target": stable_profile}}
+
+
+def _visible_card_targets_prompt(profile_home: Path | None) -> str:
+    """Render only exact public Card addresses; stable runtime identities stay private."""
+    targets = _visible_card_targets(profile_home)
+    if not targets:
+        return ""
+    prompt = (
+        "Use `message_agent` with one of these exact visible saved-Card addresses:\n"
+        + "\n".join(f"- `@{title}`" for title, _stable_profile in targets)
+    )
+    return prompt if len(prompt) <= VISIBLE_CARD_TARGETS_MAX_CHARS else ""
+
+
 def register(ctx: Any) -> None:
     for tool in _load_tools():
         ctx.register_tool(
@@ -175,3 +272,13 @@ def register(ctx: Any) -> None:
             handler=_handler(tool["hermesName"]),
             description=tool["description"],
         )
+    profile_home = _process_profile_home()
+    ctx.register_hook(
+        "pre_tool_call",
+        lambda **kwargs: _rewrite_message_agent_target(profile_home, **kwargs),
+    )
+    ctx.register_system_prompt_section(
+        VISIBLE_CARD_TARGETS_SECTION,
+        lambda _session_info: _visible_card_targets_prompt(profile_home),
+        max_chars=VISIBLE_CARD_TARGETS_MAX_CHARS,
+    )

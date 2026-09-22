@@ -1797,11 +1797,11 @@ DEFAULT_CONFIG = {
         # Max triage tasks decomposed per tick, bounding the aux-LLM burst from a bulk load. Excess
         # defers to the next tick.
         "auto_decompose_per_tick": 3,
-        # Optional worker route for delegate_task(role="team"). Empty provider/model values keep that
-        # feature fail-closed before a durable root is created.
-        "team_worker_provider": "",
-        "team_worker_model": "",
-        "team_worker_reasoning_effort": None,
+        # Per-profile structural task mode. ``team`` marks the saved profile whose ordinary
+        # Kanban assignments use the bounded ``auto-team-v1`` decomposition/synthesis workflow.
+        # Empty preserves stock task behavior. LiquidAIty materializes this in the target profile;
+        # it is not a model-facing workflow selector.
+        "task_mode": "",
         # Running tasks with no heartbeat (last_heartbeat_at) for this many seconds are reclaimed to
         # ready on the next tick; a still-running local worker is terminated first. 0 = off.
         "dispatch_stale_timeout_seconds": 14400,

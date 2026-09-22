@@ -71,7 +71,7 @@ export function buildDeckEdgeIdentityKey(
 ): string {
   const edgeType = normalizeDeckEdgeType(edge.edgeType);
   const endpoints = [String(edge.source || '').trim(), String(edge.target || '').trim()];
-  if (edgeType === 'magentic_option' || edgeType === 'magentic_control') {
+  if (edgeType === 'magentic_option') {
     return JSON.stringify([edgeType, ...endpoints.sort()]);
   }
   return JSON.stringify([edgeType, ...endpoints]);

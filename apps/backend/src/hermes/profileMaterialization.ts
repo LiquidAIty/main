@@ -28,6 +28,8 @@ export type HermesProfileSelection = {
   requiredToolsets?: string[];
   mcpConnectionIds?: string[];
   subagentModel?: SavedSubagentModel;
+  subagentType?: 'none' | 'leaf' | 'recursive';
+  taskMode?: 'team' | null;
   effectiveSubagentModel?: {
     desired: SavedSubagentModel;
     provider: string;
@@ -71,7 +73,24 @@ type ConfigureNativeSubagentModel = (
   selection: NativeSubagentModel,
 ) => Promise<unknown>;
 
+type ConfigureNativeSubagentType = (
+  profile: string,
+  subagentType: NonNullable<HermesProfileSelection['subagentType']>,
+) => Promise<void>;
+
+type ConfigureTaskMode = (
+  profile: string,
+  taskMode: HermesProfileSelection['taskMode'],
+) => Promise<void>;
+
+type NativeSubagentTypeConfig = {
+  maxSpawnDepth: 1 | 2;
+  orchestratorEnabled: boolean;
+  delegationDisabled: boolean;
+};
+
 const HERMES_SUBAGENT_CONFIG_SCRIPT = [
+  'import os',
   'import sys',
   'from hermes_cli.config import load_config, save_config',
   'cfg = load_config() or {}',
@@ -84,6 +103,97 @@ const HERMES_SUBAGENT_CONFIG_SCRIPT = [
   '    delegation["model"] = model',
   '    cfg["delegation"] = delegation',
   '    save_config(cfg)',
+].join('\n');
+
+const HERMES_SUBAGENT_TYPE_CONFIG_SCRIPT = [
+  'import sys',
+  'from agent.skill_utils import parse_config_string_list',
+  'from hermes_cli.config import load_config, save_config',
+  'if sys.argv[1] not in ("1", "2") or sys.argv[2] not in ("true", "false") or sys.argv[3] not in ("true", "false"):',
+  '    raise SystemExit(2)',
+  'expected_depth = int(sys.argv[1])',
+  'expected_orchestrator = sys.argv[2] == "true"',
+  'delegation_disabled = sys.argv[3] == "true"',
+  'cfg = load_config() or {}',
+  'changed = False',
+  'raw_delegation = cfg.get("delegation")',
+  'if raw_delegation is not None and not isinstance(raw_delegation, dict):',
+  '    raise SystemExit(3)',
+  'delegation = dict(raw_delegation) if isinstance(raw_delegation, dict) else {}',
+  'if type(delegation.get("max_spawn_depth")) is not int or delegation.get("max_spawn_depth") != expected_depth:',
+  '    delegation["max_spawn_depth"] = expected_depth',
+  '    changed = True',
+  'if delegation.get("orchestrator_enabled") is not expected_orchestrator:',
+  '    delegation["orchestrator_enabled"] = expected_orchestrator',
+  '    changed = True',
+  'if changed:',
+  '    cfg["delegation"] = delegation',
+  'raw_agent = cfg.get("agent")',
+  'if raw_agent is not None and not isinstance(raw_agent, dict):',
+  '    raise SystemExit(3)',
+  'agent = dict(raw_agent) if isinstance(raw_agent, dict) else {}',
+  'raw_disabled = agent.get("disabled_toolsets")',
+  'if raw_disabled is None:',
+  '    disabled = []',
+  'elif isinstance(raw_disabled, str):',
+  '    disabled = parse_config_string_list(raw_disabled)',
+  'elif isinstance(raw_disabled, list) and all(isinstance(item, str) for item in raw_disabled):',
+  '    disabled = list(raw_disabled)',
+  'else:',
+  '    raise SystemExit(3)',
+  'if delegation_disabled:',
+  '    expected_disabled = disabled if "delegation" in disabled else [*disabled, "delegation"]',
+  'else:',
+  '    expected_disabled = [name for name in disabled if name != "delegation"]',
+  'if disabled != expected_disabled:',
+  '    agent["disabled_toolsets"] = expected_disabled',
+  '    cfg["agent"] = agent',
+  '    changed = True',
+  'if changed:',
+  '    save_config(cfg)',
+  'readback = load_config() or {}',
+  'actual_delegation = readback.get("delegation") or {}',
+  'if type(actual_delegation.get("max_spawn_depth")) is not int or actual_delegation.get("max_spawn_depth") != expected_depth or actual_delegation.get("orchestrator_enabled") is not expected_orchestrator:',
+  '    raise SystemExit(4)',
+  'actual_agent = readback.get("agent") or {}',
+  'actual_raw_disabled = actual_agent.get("disabled_toolsets")',
+  'if actual_raw_disabled is None:',
+  '    actual_disabled = []',
+  'elif isinstance(actual_raw_disabled, str):',
+  '    actual_disabled = parse_config_string_list(actual_raw_disabled)',
+  'elif isinstance(actual_raw_disabled, list) and all(isinstance(item, str) for item in actual_raw_disabled):',
+  '    actual_disabled = list(actual_raw_disabled)',
+  'else:',
+  '    raise SystemExit(5)',
+  'if actual_disabled != expected_disabled:',
+  '    raise SystemExit(5)',
+].join('\n');
+
+const HERMES_TASK_MODE_CONFIG_SCRIPT = [
+  'import sys',
+  'from hermes_cli.config import read_user_config_raw, save_config',
+  'if sys.argv[1] not in ("team", "none"):',
+  '    raise SystemExit(2)',
+  'expected = sys.argv[1]',
+  'cfg = read_user_config_raw() or {}',
+  'raw_kanban = cfg.get("kanban")',
+  'if raw_kanban is not None and not isinstance(raw_kanban, dict):',
+  '    raise SystemExit(3)',
+  'kanban = dict(raw_kanban) if isinstance(raw_kanban, dict) else {}',
+  'changed = False',
+  'if expected == "team" and kanban.get("task_mode") != "team":',
+  '    kanban["task_mode"] = "team"',
+  '    changed = True',
+  'elif expected == "none" and "task_mode" in kanban:',
+  '    del kanban["task_mode"]',
+  '    changed = True',
+  'if changed:',
+  '    cfg["kanban"] = kanban',
+  '    save_config(cfg)',
+  'readback = read_user_config_raw() or {}',
+  'actual = (readback.get("kanban") or {}).get("task_mode")',
+  'if (expected == "team" and actual != "team") or (expected == "none" and actual is not None):',
+  '    raise SystemExit(4)',
 ].join('\n');
 
 const HERMES_CARD_MODEL_RUNTIME_SCRIPT = [
@@ -123,21 +233,35 @@ const HERMES_CARD_MODEL_RUNTIME_SCRIPT = [
 ].join('\n');
 
 const HERMES_CARD_INSTRUCTIONS_SCRIPT = [
+  'import os',
   'import sys',
+  'from pathlib import Path',
   'from hermes_cli.config import load_config, save_config',
   'instructions = sys.stdin.read()',
   'if not instructions.strip():',
   '    raise SystemExit(2)',
   'cfg = load_config() or {}',
-  'agent = cfg.get("agent")',
-  'agent = dict(agent) if isinstance(agent, dict) else {}',
-  'if agent.get("system_prompt") != instructions:',
-  '    agent["system_prompt"] = instructions',
-  '    cfg["agent"] = agent',
+  'raw_agent = cfg.get("agent")',
+  'if raw_agent is not None and not isinstance(raw_agent, dict):',
+  '    raise SystemExit(3)',
+  'agent = dict(raw_agent) if isinstance(raw_agent, dict) else {}',
+  'if "system_prompt" in agent:',
+  '    del agent["system_prompt"]',
+  '    if agent:',
+  '        cfg["agent"] = agent',
+  '    else:',
+  '        cfg.pop("agent", None)',
   '    save_config(cfg)',
   'readback = load_config() or {}',
-  'if (readback.get("agent") or {}).get("system_prompt") != instructions:',
-  '    raise SystemExit(3)',
+  'if "system_prompt" in (readback.get("agent") or {}):',
+  '    raise SystemExit(4)',
+  // PromptBlocks serialize to the saved Card prompt. That exact Markdown is
+  // the one Hermes identity source; there is no parallel system-prompt path.
+  'soul_path = Path(os.environ["HERMES_HOME"]) / "SOUL.md"',
+  'if not soul_path.is_file() or soul_path.read_bytes() != instructions.encode("utf-8"):',
+  '    soul_path.write_bytes(instructions.encode("utf-8"))',
+  'if soul_path.read_bytes() != instructions.encode("utf-8"):',
+  '    raise SystemExit(5)',
 ].join('\n');
 
 const HERMES_CARD_IDENTITY_SCRIPT = [
@@ -257,6 +381,128 @@ export async function configureHermesNativeSubagentModel(
   });
 }
 
+export function readSavedSubagentType(
+  value: unknown,
+): HermesProfileSelection['subagentType'] {
+  if (value == null) return undefined;
+  if (value === 'none' || value === 'leaf' || value === 'recursive') return value;
+  throw new Error('card_subagent_type_invalid');
+}
+
+export function toNativeSubagentTypeConfig(
+  value: NonNullable<HermesProfileSelection['subagentType']>,
+): NativeSubagentTypeConfig {
+  const subagentType = readSavedSubagentType(value);
+  if (!subagentType) throw new Error('card_subagent_type_invalid');
+  if (subagentType === 'none') {
+    return { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: true };
+  }
+  if (subagentType === 'leaf') {
+    return { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: false };
+  }
+  return { maxSpawnDepth: 2, orchestratorEnabled: true, delegationDisabled: false };
+}
+
+export async function configureHermesNativeSubagentType(
+  profile: string,
+  subagentType: NonNullable<HermesProfileSelection['subagentType']>,
+): Promise<void> {
+  const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
+    throw new Error('hermes_runtime_profile_invalid');
+  }
+  const config = toNativeSubagentTypeConfig(subagentType);
+  const hermesRoot = path.join(resolveRepoRoot(), 'Hermes');
+  const executable = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
+  const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
+  if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
+  if (!existsSync(path.join(profileHome, 'config.yaml'))) {
+    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+  }
+  const childEnv = withoutInternalMcpSecret(process.env);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      executable,
+      [
+        '-X', 'utf8', '-c', HERMES_SUBAGENT_TYPE_CONFIG_SCRIPT,
+        String(config.maxSpawnDepth),
+        String(config.orchestratorEnabled),
+        String(config.delegationDisabled),
+      ],
+      {
+        cwd: hermesRoot,
+        env: {
+          ...childEnv,
+          HERMES_HOME: profileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+        stdio: 'ignore',
+      },
+    );
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolve();
+      } else if (code === 3 && signal === null) {
+        reject(new Error(`hermes_native_subagent_type_config_invalid:${normalizedProfile}`));
+      } else if ((code === 4 || code === 5) && signal === null) {
+        reject(new Error(`hermes_native_subagent_type_readback_mismatch:${normalizedProfile}`));
+      } else {
+        reject(new Error(`hermes_native_subagent_type_config_process_failed:${normalizedProfile}`));
+      }
+    });
+  });
+}
+
+export async function configureHermesTaskMode(
+  profile: string,
+  taskMode: HermesProfileSelection['taskMode'],
+): Promise<void> {
+  const normalizedProfile = String(profile || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(normalizedProfile)) {
+    throw new Error('hermes_runtime_profile_invalid');
+  }
+  if (taskMode !== 'team' && taskMode !== null) throw new Error('hermes_task_mode_invalid');
+  const hermesRoot = path.join(resolveRepoRoot(), 'Hermes');
+  const executable = path.join(hermesRoot, 'venv', 'Scripts', 'python.exe');
+  const profileHome = path.join(hermesRoot, '.hermes', 'profiles', normalizedProfile);
+  if (!existsSync(executable)) throw new Error(`hermes_repo_python_missing:${executable}`);
+  if (!existsSync(path.join(profileHome, 'config.yaml'))) {
+    throw new Error(`hermes_native_profile_not_found:${normalizedProfile}`);
+  }
+  const childEnv = withoutInternalMcpSecret(process.env);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      executable,
+      ['-X', 'utf8', '-c', HERMES_TASK_MODE_CONFIG_SCRIPT, taskMode ?? 'none'],
+      {
+        cwd: hermesRoot,
+        env: {
+          ...childEnv,
+          HERMES_HOME: profileHome,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
+        },
+        windowsHide: true,
+        stdio: 'ignore',
+      },
+    );
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else if (code === 3 && signal === null) {
+        reject(new Error(`hermes_task_mode_config_invalid:${normalizedProfile}`));
+      } else if (code === 4 && signal === null) {
+        reject(new Error(`hermes_task_mode_readback_mismatch:${normalizedProfile}`));
+      } else {
+        reject(new Error(`hermes_task_mode_config_process_failed:${normalizedProfile}`));
+      }
+    });
+  });
+}
+
 export async function configureHermesCardModelRuntime(
   profile: string,
   selection: {
@@ -342,8 +588,15 @@ export async function materializeHermesProfileSelections(
   configureNativeSkills: ConfigureNativeSkills,
   configureNativeToolsets?: ConfigureNativeToolsets,
   configureNativeMcpServers?: ConfigureNativeMcpServers,
+  configureNativeSubagentType: ConfigureNativeSubagentType = configureHermesNativeSubagentType,
+  configureTaskMode: ConfigureTaskMode = configureHermesTaskMode,
 ): Promise<HermesProfileMaterialization> {
   const profile = String(args.runtime.profile || '').trim();
+  const subagentType = readSavedSubagentType(args.subagentType);
+  const taskMode = args.taskMode;
+  if (taskMode !== undefined && taskMode !== null && taskMode !== 'team') {
+    throw new Error('hermes_task_mode_invalid');
+  }
   const expectedParent = toNativeParentModel(args);
   let native: any;
   try {
@@ -427,7 +680,10 @@ export async function materializeHermesProfileSelections(
   );
   const savedToolsets = [...new Set((args.toolsets || []).map((name) => String(name).trim()).filter(Boolean))];
   const requiredToolsets = [...new Set(
-    (args.requiredToolsets || []).map((name) => String(name).trim()).filter(Boolean),
+    [
+      ...(args.requiredToolsets || []),
+      ...(subagentType === 'leaf' || subagentType === 'recursive' ? ['delegation'] : []),
+    ].map((name) => String(name).trim()).filter(Boolean),
   )];
   const missingToolsets = [...savedToolsets, ...requiredToolsets]
     .filter((name) => !availableToolsets.has(name.toLowerCase()));
@@ -471,6 +727,12 @@ export async function materializeHermesProfileSelections(
     .sort();
   if (JSON.stringify(finalEnabledToolsets) !== JSON.stringify(desiredToolsets)) {
     throw new Error(`hermes_native_toolsets_readback_mismatch:${profile}`);
+  }
+  if (subagentType) {
+    await configureNativeSubagentType(profile, subagentType);
+  }
+  if (taskMode !== undefined) {
+    await configureTaskMode(profile, taskMode);
   }
   const desiredMcpServers = [...new Set(
     (args.mcpConnectionIds || []).map((name) => String(name).trim()).filter(Boolean),

@@ -348,6 +348,14 @@ LiquidAIty front door, not the name of a third-party UI. Its default execution m
 Main is not a distinct card type and must not be structurally forbidden from using the same card-owned
 Hermes Kanban/swarm capability when explicitly selected. The adapter preserves saved prompt/profile/
 model/tool authority and real streaming/session/failure behavior.
+Each non-Magnetic Hermes Card has one explicit saved `Orchestrator` setting. When enabled, its outbound
+orange `flow` edges authorize that Card to address those exact saved Bot/Card targets; an edge grants no
+reverse authority. Main is the seeded and currently configured direct orchestrator, while another Card may
+deliberately enable the same setting for a bounded series such as Signal -> WorldSignals. Only an enabled
+orchestrator renders an orange connection dot. The same target may also have a blue `magentic_option` edge,
+which independently makes that saved identity available to Magnetic's Hermes SQLite task ledger. Agent
+Canvas renders Main as a hexagon to expose its front-door role; this is presentation, not a second Card type
+or the source of orchestration authority.
 Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
 selection into the bound native profile and reads it back before inference; actual child provider/model
 and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,
@@ -355,13 +363,15 @@ Mag One worker selection or the ThinkGraph engine. External-memory selection rem
 profile configuration. LiquidAIty exposes Honcho setup/status only for Main and never projects a
 general Card memory-provider field or reconfigures memory at Run start.
 
-### Hermes planning/memory/KnowGraph helper
+### KnowGraph
 
-The stable card currently identified as `card_hermes_steward` is a persistent planning, memory,
-research, and KnowGraph helper. Preserve its saved identity and data, but do not define it as "the
-Kanban card." It is an ordinary Hermes-backed card and may run either `single` or `auto-kanban` without
-changing its identity, profile home, memory, or capability ceiling. Temporary Hermes swarm workers are
-not saved LiquidAIty cards.
+The saved `card_knowgraph` Card, visible as `KnowGraph` and bound one-to-one to Hermes profile
+`knowgraph`, is the persistent sourced-research and KnowGraph helper. It is an ordinary Hermes-backed
+Card in `delegate` mode with `subagentType: none` for the launch baseline. It may read deliberately
+selected ThinkGraph and CodeGraph context, but Neo4j/Graphiti remains its graph authority and writer.
+Main PDF attachment ingestion writes through the Graphiti service directly; it is not a KnowGraph Card
+turn and must never borrow this Card's model or system prompt. The retired Steward/Stuart identities,
+Team delegation residue, and compatibility aliases must not return.
 
 ### Hermes Builder
 
@@ -481,9 +491,11 @@ artifacts and never become a prerequisite, retained input authority, or competin
 Cards remain one product concept. Their explicit Hermes runtime mode/profile binding is saved Card
 configuration, not a separate Card type or a second runtime payload. A sending user or agent supplies
 only dynamic input and selected references; Python validates or rereads that exact bounded selection, and
-the receiving Card owns materialization. Persistent Agent-to-Agent work uses Hermes native
-`message_agent` only where the saved graph authorizes the relationship; there is no generic public tool that
-runs an arbitrary Card as an assistant. Optional review uses the existing Card Invocation and Knowledge
+the receiving Card owns materialization. Persistent orchestrator-to-Card work uses Hermes native
+`message_agent` only for that orchestrator's exact outbound orange target roster. The application-owned Card
+plugin mechanically maps a unique saved visible one-word Card title to the already-authorized stable native
+profile; it never discovers, authorizes, or delivers another target. There is no generic public tool that runs
+an arbitrary Card as an assistant. Optional review uses the existing Card Invocation and Knowledge
 editors, then submits the existing Card Run path once; staged review state is not a retained input or Run.
 Mag One workers
 receive their dynamic task through the saved-worker Card doorway, so each independently invoked saved worker

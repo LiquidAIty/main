@@ -9,13 +9,12 @@ export type CardRuntime = {
   profile: string;
 };
 
-// flow = ORANGE explicit saved Card→Card authority; magentic_option = BLUE side worker
-// slot; magentic_control = BLUE dedicated top control input (submit the
-// finalized prompt to Mag One — never worker membership).
+// flow = ORANGE Main bot-team authority; magentic_option = BLUE Magnetic
+// task-ledger worker availability. Blue never starts or controls Magnetic.
 // 'invalid' is a real persisted classification, not an error case: an edge whose
 // type we do not recognise must stay visible and inert. Folding it into 'flow'
 // (the old default) silently handed invocation authority to malformed data.
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
+export type DeckEdgeType = 'magentic_option' | 'flow' | 'invalid';
 
 export type CardSubsystemCapability =
   | 'state'
@@ -37,6 +36,9 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
+  /** Temporary native Hermes children for one Card turn. This is unrelated to
+   * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
+  subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;

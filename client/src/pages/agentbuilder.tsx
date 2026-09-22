@@ -46,6 +46,7 @@ import useCardActiveAgentCounts from '../features/agentbuilder/state/useCardActi
 import TradingUI from './tradingui';
 import TradingUiInspectorPanel from '../features/trading/TradingUiInspectorPanel';
 import CardSubsystemTab from '../features/agentbuilder/subsystems/CardSubsystemTab';
+import MagneticTasksTab from '../features/agentbuilder/tasks/MagneticTasksTab';
 import {
   GRAPH_THEME,
   graphDrawerButtonStyle,
@@ -203,6 +204,27 @@ class CardEditorErrorBoundary extends React.Component<
 const BUILDER_PROJECT_TABS = ['Plan'] as const;
 const BUILDER_NODE_TABS = ['Prompt', 'Runtime', 'Memory', 'Skills', 'Tools'] as const;
 const AGENT_EDITOR_DEFAULT_WIDTH = 344;
+
+function isMagneticCard(card: AgentCardInstance | null | undefined): boolean {
+  return card?.id === 'card_magentic';
+}
+
+function hasTaskLedger(card: AgentCardInstance | null | undefined): boolean {
+  return card?.id === 'card_magentic' || card?.id === 'card_team';
+}
+
+function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): string {
+  if (card.id !== 'card_team') return card.id;
+  for (const edge of deck.edges) {
+    if (edge.edgeType !== 'magentic_option' || edge.enabled === false) continue;
+    const peerId = edge.source === card.id
+      ? edge.target
+      : edge.target === card.id ? edge.source : null;
+    const peer = peerId ? deck.nodes.find((node) => node.id === peerId) : null;
+    if (peer?.id === 'card_magentic') return peer.id;
+  }
+  return card.id;
+}
 // Hermes owns one project-intelligence canvas. Its three tabs are authorities,
 // not agent-card capabilities: card/bus wiring must never hide project
 // reasoning, external evidence, or repository reality from that canvas.
@@ -339,6 +361,20 @@ export default function AgentBuilder(): React.ReactElement {
     )) || null,
     [deck.nodes],
   );
+  const cardTitlesByProfile = useMemo(() => {
+    const titles = new Map<string, string>();
+    const ambiguous = new Set<string>();
+    for (const card of deck.nodes) {
+      const profile = String(card.runtime.profile || '').trim();
+      const title = String(card.title || '').trim();
+      if (!profile || !title) continue;
+      const previous = titles.get(profile);
+      if (previous && previous !== title) ambiguous.add(profile);
+      else titles.set(profile, title);
+    }
+    for (const profile of ambiguous) titles.delete(profile);
+    return Object.fromEntries(titles);
+  }, [deck.nodes]);
   // WorldSignals → canonical Inspector: the companion surface requests a
   // section and provides state adapters; the ONE workspace drawer below
   // renders it. No second inspector, no drawer inside the map region.
@@ -728,8 +764,9 @@ export default function AgentBuilder(): React.ReactElement {
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
       ...BUILDER_NODE_TABS,
+      ...(hasTaskLedger(selectedCard) ? ['Tasks'] : []),
       ...(selectedCard.runtime.kind === 'hermes'
-        && selectedCard.runtime.mode !== 'magentic_one'
+        && !hasTaskLedger(selectedCard)
         && selectedCard.id !== mainCardId
         && selectedCard.id !== builderCard?.id
         ? ['CLI']
@@ -932,6 +969,18 @@ export default function AgentBuilder(): React.ReactElement {
 
     const renderEditorContent = () => {
       if (selectedCard && selectedCardConfig) {
+        if (
+          tab === 'Tasks'
+          && hasTaskLedger(selectedCard)
+        ) {
+          return <MagneticTasksTab
+            projectId={canvasProjectId}
+            deckId={BUILDER_DECK_ID}
+            cardId={taskLedgerRunCardId(selectedCard, deck)}
+            label={selectedCard.title}
+            cardTitlesByProfile={cardTitlesByProfile}
+          />;
+        }
         if (selectedCardSubsystem) {
           return <CardSubsystemTab
             attachment={selectedCardSubsystem}
@@ -945,7 +994,7 @@ export default function AgentBuilder(): React.ReactElement {
         if (
           tab === 'CLI'
           && selectedCard.runtime.kind === 'hermes'
-          && selectedCard.runtime.mode !== 'magentic_one'
+          && !hasTaskLedger(selectedCard)
           && selectedCard.id !== mainCardId
           && selectedCard.id !== builderCard?.id
         ) {
@@ -1404,7 +1453,7 @@ export default function AgentBuilder(): React.ReactElement {
         openAriaLabel="Open Trading Inspector"
         movable={inspectorDrawerRole !== 'trading'}
         defaultWidth={inspectorDrawerDefaultWidth}
-        resetWidthOnOpen={inspectorDrawerRole === 'agent'}
+        resetWidthOnOpen={false}
         minWidth={300}
         maxWidth={560}
         storageKey={
@@ -1463,9 +1512,12 @@ export default function AgentBuilder(): React.ReactElement {
         ) : null}
         {inspectorDrawerRole === 'agent' && activeTabs.length > 0 ? (
           <div
-            className="flex min-w-0 flex-wrap"
+            className="flex min-w-0"
             style={graphCompanionTabGroupStyle({
-              gap: 6,
+              gap: hasTaskLedger(selectedCard) ? 3 : 6,
+              padding: hasTaskLedger(selectedCard) ? 4 : 6,
+              flexWrap: hasTaskLedger(selectedCard) ? 'nowrap' : 'wrap',
+              overflowX: hasTaskLedger(selectedCard) ? 'auto' : 'visible',
               marginBottom: 10,
             })}
           >
@@ -1481,7 +1533,11 @@ export default function AgentBuilder(): React.ReactElement {
                     handleCompanionTabClick(t);
                   }}
                   className="whitespace-nowrap transition-colors duration-150 ease-out"
-                  style={graphCompanionTabButtonStyle(selected)}
+                  style={graphCompanionTabButtonStyle(selected, hasTaskLedger(selectedCard) ? {
+                    padding: '5px 6px',
+                    fontSize: 10,
+                    flex: '0 0 auto',
+                  } : undefined)}
                 >
                   {t}
                 </button>

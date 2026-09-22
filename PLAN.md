@@ -20,8 +20,14 @@ four graph authorities remain separate.
 
 ### Requested Delta
 
-Keep the existing `card_magentic` product identity, Canvas node, blue `magentic_control` and
-`magentic_option` connections, canonical `in.idf`, saved Card authorities, and ordinary outer Run.
+Keep the existing `card_magentic` product identity, Canvas node, blue `magentic_option` worker
+connections, canonical `in.idf`, saved Card authorities, and ordinary outer Run. Blue topology means
+only that a saved Card is available to Magnetic. An ordinary orange relationship from a non-Magnetic Card
+whose saved `Orchestrator` setting is enabled makes Magnetic callable from that source; the explicit
+invocation starts the approved run and no wire itself starts or controls Magnetic. A saved Card may be both
+orange-connected to an orchestrator and blue-connected to
+Magnetic: the orange path invokes it directly, while the blue path makes the same saved Card available
+to Hermes' SQLite task ledger as a Magnetic worker. Neither path creates a duplicate Card identity.
 Replace only the live Microsoft executor beneath that bus with headless Hermes orchestration and its
 existing SQLite task/dependency machinery. No legacy executor fallback or historical-Run compatibility
 path remains live.
@@ -118,8 +124,12 @@ uncommitted working tree and has not been loaded into the running application.
 ### Requested Delta
 
 Keep saved Hermes Card execution on the existing native Gateway/TUI path. Native `message_agent`,
-authorized between both endpoints of an enabled orange `flow` connection, is the only Card-to-Card
-conversational path. Preserve the one intended Hermes extension: native `delegate_task(role="team")`.
+authorized only from a non-Magnetic Card with its saved `Orchestrator` setting enabled to the exact target
+of one of its outbound orange `flow` connections, is the direct saved-Card conversational path. The target
+gets no reverse authority from that edge; it may become an orchestrator only through its own saved setting
+and outbound edges. Preserve the one intended Hermes extension: the explicitly saved `Team` Card's
+structural `kanban.task_mode: team` route into Hermes' existing SQLite task ledger. Do not restore a
+model-facing `delegate_task(role="team")` option.
 
 ### Preservation Set
 
@@ -128,7 +138,7 @@ conversational path. Preserve the one intended Hermes extension: native `delegat
 - Main, Builder, ordinary Hermes Cards, native Gateway/TUI, and honest Run completion;
 - upstream Hermes ACP as dormant vendor functionality, not a LiquidAIty execution route;
 - native Hermes Bot Mode source, desktop UI, Gateway methods, profile/session state, routines, and peer relay;
-- upstream `leaf`/`orchestrator`, retained native Team, and native Bot Mode;
+- upstream `leaf`/`orchestrator`, the saved structural Team workflow, and native Bot Mode;
 - Card-owned Python Script source, compiler, validation, editor, saved configuration, IDF presentation,
   and historical Run receipt data;
 - the existing Mag One Card, Canvas topology, blue worker connections, and outer Run/IDF boundary;
@@ -168,7 +178,7 @@ not the fabricated standalone tool initially suspected.
 | Gateway consolidation | Backend source and focused terminal/Run contracts | Canonical reload; real input, stream, persisted completion, reconnect, and Stop |
 | Profile materialization | Extracted current owner plus focused tests/typecheck | Real saved parent/skills/child selections and actual child receipt |
 | Native Team | Contained vendor source, retained tests, and compilation | Real Gateway Team creation, workers, synthesis, rejoin, and same saved Run |
-| Native Card Bot Mode | Python projects ordered symmetric orange peers into each managed profile's explicit `bot_mode.roster`; explicit `[]` denies all while a truly absent key preserves stock standalone discovery; prompt and stock `message_agent` share one resolver; duplicate host/plugin authorization is removed | Canonical reload, ordinary Main, real attributed orange-peer reply, unwired-profile refusal, and no-alternate-machinery inspection |
+| Native Card Bot Mode | Python projects each enabled non-Magnetic orchestrator's ordered outbound orange targets into its explicit `bot_mode.roster`; unconfigured targets receive `[]`; the Card plugin maps unique visible titles only inside that roster before stock `message_agent` validation/delivery | Canonical reload, ordinary Main, real attributed target reply, configured series, reverse/unwired-profile refusal, and no-alternate-machinery inspection |
 | Shared-chat direct Card addressing | Canonical saved-roster resolution, target saved-Card Run/Gateway route, exact-message preservation, participant persistence, autocomplete, failure attribution, and focused backend/client/Python tests | Canonical reload; real Builder exact reply, identity persistence, later Main context, and preserved independent Main-to-Builder native delegation |
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
@@ -181,8 +191,9 @@ not the fabricated standalone tool initially suspected.
   `/idd/script-tools` and `/cards/script/validate` are restored, the Python compiler and Card editor are
   present again, saved Script data remains readable, and ordinary Runs retain their exact model-visible
   tool presentation while native execution reports `card_script_native_bridge_unavailable`.
-- The focused Python Card-domain suite covers reciprocal ordered orange projection, blue-edge isolation,
-  disabled/unwired exclusion, two-sided revocation, and profile-ambiguity failure. Native `message_agent`
+- The focused Python Card-domain suite covers explicit source-owned orange projection, a configured
+  orchestrator series, blue-edge isolation, disabled/unwired exclusion, target revocation, reverse refusal,
+  and profile-ambiguity failure. Native `message_agent`
   remains the conversational doorway; no application Bot host/authentication route survives.
 - Client production typecheck passes. Client spec typecheck has unrelated existing errors in Agent
   Manager mocks, Testing Library role options, graph/team specs, and imported Hermes desktop aliases/types;
@@ -227,7 +238,8 @@ acceptance:
 
 - prove ordinary Main returns a real Hermes response;
 - inspect existing saved topology without creating Cards or edges;
-- send one harmless message between two existing enabled orange-connected Hermes Cards;
+- have Main send one harmless message to an existing enabled outbound orange-connected Hermes Card by its
+  exact visible one-word name;
 - prove the source roster excludes an existing unwired live profile and stock `message_agent` rejects it;
 - prove the receiving canonical `Bot Chat`, sender attribution, native acknowledgement/completion, and
   attributed reply notification; and
@@ -236,4 +248,4 @@ acceptance:
 
 Do not force live/offline branches by changing state, restore the deleted Bot host/plugin, expose a Gateway
 credential, add a delivery adapter, or begin Builder/AutoBot work. If existing saved state lacks two valid
-orange-connected Cards, stop at that exact product-proof blocker.
+valid outbound Main target, stop at that exact product-proof blocker.

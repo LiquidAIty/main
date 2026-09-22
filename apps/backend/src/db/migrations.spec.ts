@@ -188,6 +188,24 @@ describe('canonical backend migrations', () => {
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
   });
 
+  it('accepts exact Hermes task statuses without rewriting legacy Run rows', async () => {
+    const source = await readFile(
+      migrationPath('041_native_hermes_task_status.sql'),
+      'utf8',
+    );
+
+    for (const status of [
+      'triage', 'todo', 'scheduled', 'ready', 'running',
+      'blocked', 'review', 'done', 'archived',
+    ]) {
+      expect(source).toContain(`'${status}'`);
+    }
+    expect(source).toContain('DROP CONSTRAINT IF EXISTS agent_runs_native_phase_check');
+    expect(source).toContain('ADD CONSTRAINT agent_runs_native_phase_check');
+    expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\.agent_runs\b/i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
   it('retires the obsolete Card-as-assistant capability through new current revisions', async () => {
     const source = await readFile(
       migrationPath('039_remove_assistant_agent_capability.sql'),

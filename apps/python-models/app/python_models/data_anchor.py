@@ -52,8 +52,17 @@ def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
     # official machine-readable representation here instead of changing the
     # native CBM catalog or the default behavior of ordinary cbm.* calls.
     arguments["format"] = "json"
-    result = call_read_tools_via_mcp(project_id=deck["projectId"], deck_id=deck_id,
-        card_id=card_id, calls=[("cbm." + name, arguments)])[0]
+    try:
+        result = call_read_tools_via_mcp(
+            project_id=deck["projectId"],
+            deck_id=deck_id,
+            card_id=card_id,
+            calls=[("cbm." + name, arguments)],
+        )[0]
+    except (RuntimeError, BaseExceptionGroup) as error:
+        # CBM is an optional graph capability. Its absent catalog or transport
+        # is a typed unavailable read, never an unhandled Python-rails failure.
+        raise DataAnchorError("codegraph_unavailable") from error
     if result.get("error") or result.get("ok") is False:
         raise DataAnchorError(str(result.get("error") or "codegraph_read_failed"))
     return result
@@ -829,104 +838,6 @@ def search_knowgraph_hybrid(
             "maxCombinedResults": _KNOWGRAPH_RESULT_LIMIT,
         },
     }
-
-
-def prepare_main_context(
-    project_id: str, deck_id: str, card_id: str, conversation_id: str,
-    message: str, granted_tools: list[str],
-    *, mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
-) -> dict[str, Any]:
-    """Optional native reads under one deadline, before the existing Main IDF.
-
-    Native result order supplies ranking. No model, graph write, copied store,
-    or cross-graph semantic ranking participates in this path.
-    """
-    sources = [
-        ("ThinkGraph", "engraphis_recall_context", {"query": message[:500], "token_budget": 600, "k": 6}),
-        ("KnowGraph", "graphiti.search_memory_facts", {"query": message[:2000], "max_facts": 4}),
-        ("AgentGraph", "agentgraph.inspect", {"limit": 4}),
-    ]
-    sources = [source for source in sources if source[1] in granted_tools
-               and (source[0] != "AgentGraph" or conversation_id)]
-    empty = {"text": "", "references": [], "reads": []}
-    if not message.strip() or not sources:
-        return empty
-    try:
-        results = mcp_reader(
-            project_id=project_id, deck_id=deck_id, card_id=card_id,
-            conversation_id=conversation_id,
-            calls=[(name, arguments) for _, name, arguments in sources],
-            concurrent=True, deadline_seconds=2.0,
-        )
-    except Exception:
-        return {**empty, "reads": [{"state": "unavailable"}]}
-
-    fields = {
-        "ThinkGraph": ("id", "title", "content", "summary", "provenance"),
-        "KnowGraph": ("uuid", "fact", "name", "source_node_uuid", "target_node_uuid", "episodes", "valid_at", "invalid_at", "expired_at", "created_at"),
-        "AgentGraph": ("runId", "cardId", "state", "startedAt", "lastAttentionAt", "parentRunIds", "childRunIds", "nativeReferences"),
-    }
-    records, references, reads = [], [], []
-    seen = set()
-    observed_at = _now_iso()
-    for (authority, operation, _arguments), result in zip(sources, results):
-        if not isinstance(result, dict):
-            continue
-        state = result.get("error") if result.get("ok") is False else "completed"
-        reads.append({"authority": authority, "state": state, "durationMs": result.get("_readDurationMs")})
-        if state != "completed":
-            continue
-        rows = _payload_records(result, "facts" if authority == "KnowGraph" else "runs" if authority == "AgentGraph" else "sources")
-        if authority == "ThinkGraph" and rows and isinstance(result.get("context"), str):
-            # Keep the native packed context once, with its exact ordered sources.
-            packed = {"authority": authority, "context": result["context"],
-                      "sources": rows, "truncated": bool((result.get("usage") or {}).get("omitted_count"))}
-            packed_references = []
-            packed_ids = set()
-            for row in rows:
-                native_id = str(row.get("id") or "")
-                if not native_id or native_id in packed_ids:
-                    continue
-                packed_ids.add(native_id)
-                packed_references.append({"authority": authority, "nativeId": native_id,
-                    "nativeKind": "node", "readOperation": operation, "asOf": observed_at,
-                    "required": False, "reason": "native retrieval", "truncated": packed["truncated"]})
-            # Keep context and its references together. Dropping only references
-            # leaves Main unable to pass on some of the sources it was given.
-            if (len(json.dumps(packed, ensure_ascii=False).encode("utf-8")) <= 6000
-                    and len(json.dumps([packed, packed_references], ensure_ascii=False).encode("utf-8")) <= 8000):
-                records.append(packed)
-                references.extend(packed_references)
-                seen.update((authority, native_id) for native_id in packed_ids)
-                continue
-        source_bytes = 0
-        for row in rows[:4]:
-            native_id = str(row.get("uuid") or row.get("id") or row.get("runId") or "")
-            if not native_id or (authority, native_id) in seen:
-                continue
-            data = {key: _json_safe(row[key]) for key in fields[authority] if key in row}
-            truncated = False
-            for key, value in data.items():
-                # Bound content, never truncate native identity fields.
-                if key in {"l0", "l1", "l2", "content", "fact"} and isinstance(value, str) and len(value) > 500:
-                    data[key] = value[:500]
-                    truncated = True
-            record = {"authority": authority, "nativeId": native_id, "data": data, "truncated": truncated}
-            reference = {"authority": authority, "nativeId": native_id,
-                "nativeKind": "edge" if authority == "KnowGraph" else "run" if authority == "AgentGraph" else "node",
-                "readOperation": operation, "asOf": observed_at, "required": False,
-                "reason": "native retrieval", "truncated": truncated}
-            encoded_size = len(json.dumps([record, reference], ensure_ascii=False).encode("utf-8"))
-            # A conservative UTF-8 byte budget also bounds byte-token input.
-            # Whole records retain IDs and provenance; no invalid JSON slicing.
-            if source_bytes + encoded_size > 2000:
-                continue
-            source_bytes += encoded_size
-            records.append(record)
-            references.append(reference)
-            seen.add((authority, native_id))
-    return {"text": json.dumps(records, ensure_ascii=False) if records else "",
-            "references": references, "reads": reads}
 
 
 def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:

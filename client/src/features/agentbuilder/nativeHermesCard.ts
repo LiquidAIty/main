@@ -1,5 +1,3 @@
-import type { StarmapGraph } from '../../../../Hermes/apps/desktop/src/types/hermes';
-
 export type NativeHermesMcpServerView = {
   name: string;
   transport: string;
@@ -15,70 +13,34 @@ export type NativeHermesCardView = {
     description: string;
     soul: string;
     model: { provider: string; default: string };
-    backgroundReview: {
-      enabled: boolean;
-      provider: string;
-      model: string;
-      maxInputTokens: number | null;
-    };
-    subagentModel: { provider: string; model: string };
-    memory: {
-      selected: string;
-      installedProviders: string[];
-      installed: boolean;
-      available: boolean;
-      availabilityReason: string | null;
-      target: string;
-      credentialStatus: 'not_required' | 'not_configured' | 'configured' | 'unknown';
-      credentialSource: string | null;
-      setupAction: string | null;
-      historyDatabasePath: string;
-      curatedMemoryEnabled: boolean;
-      userProfileEnabled: boolean;
-      database: null | {
-        kind: 'sqlite';
-        path: string;
-        exists: boolean;
-        factCount: number;
-      };
-    };
-    honcho: null | {
-      selected: boolean;
-      configurationStatus: 'not_configured' | 'configured';
-      connectionStatus: 'not_configured' | 'not_checked' | 'configured_unreachable' | 'connected';
-      availabilityReason: string | null;
-      target: 'honcho_cloud' | 'honcho_self_hosted' | 'honcho_cloud_or_self_hosted_unresolved';
-      credentialStatus: 'not_configured' | 'configured' | 'unknown';
-      credentialSource: string | null;
-      setupAction: string;
-      statusAction: string;
-    };
     skills: Array<{ name: string; enabled: boolean }>;
     toolsets: Array<{ name: string; label?: string; enabled: boolean; tool_count?: number }>;
     toolsetsPinned: boolean;
     mcpServers: NativeHermesMcpServerView[];
     learning: {
       count: number;
-      summary: string;
+      summary: string[];
       buckets: Array<{
+        index: number;
         label: string;
         date: string;
-        nodes: Array<{ id: string; label: string; fullLabel: string; meta: string }>;
+        skills: number;
+        memories: number;
+        total: number;
+        category: string | null;
+        color: string | null;
+        nodes: Array<{
+          id: string;
+          glyph: string;
+          label: string;
+          fullLabel: string;
+          meta: string;
+          body: string;
+          style: string;
+        }>;
       }>;
-      graph: StarmapGraph;
     };
   };
-  desired: {
-    subagentModel: {
-      provider: string;
-      accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
-      modelKey: string;
-      providerModelId: string;
-    } | null;
-  };
-  subagentModelMaterialization: 'not_saved' | 'materialized' | 'diverged';
-  nativeApply: 'run_start';
-  cardSaveMutatesNative: false;
   binding: {
     profile: string;
     mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
@@ -86,7 +48,6 @@ export type NativeHermesCardView = {
 };
 
 export type NativeHermesOperation =
-  | { method: 'profiles.configure'; params: Record<string, unknown> }
   | { method: 'learning.detail'; params: { id: string } }
   | { method: 'learning.edit'; params: { id: string; content: string } }
   | { method: 'skills.manage'; params: Record<string, unknown> }

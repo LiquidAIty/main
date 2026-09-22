@@ -69,6 +69,10 @@ def _agent(card_id: str, **overrides):
     return card
 
 
+def _main_bot(card_id: str, **overrides):
+    return _agent(card_id, **overrides)
+
+
 _REMOVED_PROFILE_TARGET_PROJECTION = "delegation" + "Targets"
 
 
@@ -84,17 +88,10 @@ def _expected_bot_target(card_id: str = "child") -> dict:
 
 
 
-def test_delegation_setting_excludes_removed_profile_role_and_profiles_stay_unique():
+def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
     controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
-    controller["runtimeOptions"]["delegationRole"] = "team"
     stable = card_domain._stable_card(controller)
-    assert stable["runtimeExtensions"]["delegationRole"] == "team"
     assert stable["grants"]["tools"] == controller["runtimeOptions"]["tools"]
-    controller["runtimeOptions"]["delegationRole"] = "pro" + "file"
-    with pytest.raises(card_domain.CardDomainError, match="card_delegation_role_invalid"):
-        card_domain._stable_card(controller)
-    controller["runtimeOptions"]["delegationRole"] = "off"
-    assert card_domain._stable_card(controller)["runtimeExtensions"]["delegationRole"] == "off"
     duplicate = _agent("separate", runtime={"kind": "hermes", "mode": "delegate", "profile": "MAIN"})
     with pytest.raises(card_domain.CardDomainError, match="card_profile_duplicate"):
         card_domain._validated_deck_collections({
@@ -102,25 +99,160 @@ def test_delegation_setting_excludes_removed_profile_role_and_profiles_stay_uniq
         }, "d")
 
 
-def test_one_flow_connection_is_symmetric_authority_without_a_separate_source_setting():
-    cards = [_agent(key, runtime={"kind": "hermes", "mode": "delegate", "profile": key})
-             for key in ('a', 'b')]
+def test_one_flow_connection_grants_only_outbound_main_bot_authority():
+    cards = [
+        _main_bot('main', runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
+        _agent('helper', runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"}),
+    ]
     cards.append(_agent(
         'mag', runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"}
     ))
     edges = [{'id': key, 'source': source, 'target': target, 'edgeType': kind}
-             for key, source, target, kind in [('connected', 'a', 'b', 'flow'),
-                                               ('blue', 'a', 'mag', 'magentic_option')]]
+             for key, source, target, kind in [('connected', 'main', 'helper', 'flow')]]
     card_domain._validate_changed_flow_edges(cards, edges, [])
-    cards[0]['runtimeOptions']['delegationRole'] = "off"
     card_domain._validate_changed_flow_edges(cards, edges, list(edges))
-    assert [target['cardId'] for target in card_domain._direct_card_targets('a', {card['id']: card for card in cards}, edges)] == ['b']
-    assert [target['cardId'] for target in card_domain._direct_card_targets('b', {card['id']: card for card in cards}, edges)] == ['a']
+    indexed = {card['id']: card for card in cards}
+    assert [target['cardId'] for target in card_domain._direct_card_targets('main', indexed, edges)] == ['helper']
+    assert card_domain._direct_card_targets('helper', indexed, edges) == []
+    with pytest.raises(card_domain.CardDomainError, match='card_connection_controller_required:reverse'):
+        card_domain._validate_changed_flow_edges(cards, [{
+            'id': 'reverse', 'source': 'helper', 'target': 'main', 'edgeType': 'flow',
+        }], edges)
 
 
-def test_hermes_bot_roster_projection_is_symmetric_ordered_and_blue_independent():
+def test_one_card_cannot_have_both_main_and_magnetic_as_master():
+    main = _main_bot(
+        "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    team = _agent(
+        "card_team", runtime={"kind": "hermes", "mode": "delegate", "profile": "team"},
+    )
+    orange = {"id": "orange", "source": "main", "target": "card_team", "edgeType": "flow"}
+    blue = {
+        "id": "blue", "source": "card_team", "target": "magnetic",
+        "edgeType": "magentic_option",
+    }
+
+    card_domain._validate_changed_flow_edges([main, magnetic, team], [orange], [])
+    card_domain._validate_changed_flow_edges([main, magnetic, team], [blue], [])
+    with pytest.raises(card_domain.CardDomainError, match="card_master_conflict:card_team"):
+        card_domain._validate_changed_flow_edges(
+            [main, magnetic, team], [orange, blue], [],
+        )
+
+
+def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    team = _agent(
+        "card_team",
+        title="Renamed",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "team"},
+    )
+    team["runtimeOptions"].update({
+        "provider": "openai",
+        "accessMode": "chatgpt-account",
+        "modelKey": "gpt-5.6-sol",
+        "providerModelId": "gpt-5.6-sol",
+        "reasoningEffort": "high",
+    })
+    for card in (magnetic, team):
+        card["_cardRevisionId"] = f"revision-{card['id']}"
+    cards = {card["id"]: card for card in (magnetic, team)}
+
+    assert card_domain._connected_hermes_card_targets(
+        "magnetic",
+        cards,
+        [{"source": "card_team", "target": "magnetic", "edgeType": "magentic_option"}],
+        edge_type="magentic_option",
+        strict=True,
+    ) == [{
+        "cardId": "card_team",
+        "title": "Renamed",
+        "profile": "team",
+        "description": "",
+        "cardRevisionId": "revision-card_team",
+        "teamTaskMode": True,
+        "provider": {
+            "provider": "openai",
+            "accessMode": "chatgpt-account",
+            "modelKey": "gpt-5.6-sol",
+            "providerModelId": "gpt-5.6-sol",
+        },
+        "runtimeOptions": {
+            "modelKey": "gpt-5.6-sol",
+            "providerModelId": "gpt-5.6-sol",
+            "reasoningEffort": "high",
+        },
+    }]
+
+
+def test_orchestrator_flag_cannot_grant_non_main_outbound_bot_authority():
+    main = _main_bot(
+        "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    signal = _agent(
+        "signal", runtime={"kind": "hermes", "mode": "delegate", "profile": "signal"},
+    )
+    signal["runtimeOptions"]["orchestrator"] = True
+    worldsignals = _agent(
+        "worldsignals",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "worldsignals"},
+    )
+    cards = [main, signal, worldsignals]
+    edges = [
+        {"id": "main-signal", "source": "main", "target": "signal", "edgeType": "flow"},
+        {"id": "signal-world", "source": "signal", "target": "worldsignals", "edgeType": "flow"},
+    ]
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_connection_controller_required:signal-world",
+    ):
+        card_domain._validate_changed_flow_edges(cards, edges, [])
+    rosters = {
+        row["cardId"]: row["roster"]
+        for row in card_domain._project_hermes_bot_rosters({
+            "nodes": cards,
+            "edges": [edges[0]],
+        })
+    }
+
+    assert rosters == {
+        "main": ["signal"],
+        "signal": [],
+        "worldsignals": [],
+    }
+
+
+def test_magnetic_cannot_gain_outbound_orange_bot_authority():
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    magnetic["runtimeOptions"]["orchestrator"] = True
+    helper = _agent("helper")
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_connection_controller_required:magnetic-helper",
+    ):
+        card_domain._validate_changed_flow_edges(
+            [magnetic, helper],
+            [{"id": "magnetic-helper", "source": "magnetic", "target": "helper",
+              "edgeType": "flow"}],
+            [],
+        )
+
+
+def test_hermes_bot_roster_projection_includes_magnetic_and_is_blue_independent():
     cards = [
-        _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
+        _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
         _agent("builder", runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"}),
         _agent("graph", runtime={"kind": "hermes", "mode": "delegate", "profile": "graph"}),
         _agent("disconnected", runtime={"kind": "hermes", "mode": "delegate", "profile": "disconnected"}),
@@ -132,8 +264,9 @@ def test_hermes_bot_roster_projection_is_symmetric_ordered_and_blue_independent(
     cards[4]["runtimeOptions"]["enabled"] = False
     edges = [
         {"source": "main", "target": "graph", "edgeType": "flow"},
-        {"source": "main", "target": "mag", "edgeType": "magentic_option"},
-        {"source": "builder", "target": "main", "edgeType": "flow"},
+        {"source": "main", "target": "mag", "edgeType": "flow"},
+        {"source": "builder", "target": "mag", "edgeType": "magentic_option"},
+        {"source": "main", "target": "builder", "edgeType": "flow"},
         {"source": "main", "target": "disabled", "edgeType": "flow"},
         {"source": "main", "target": "disconnected", "edgeType": "flow", "enabled": False},
     ]
@@ -144,29 +277,30 @@ def test_hermes_bot_roster_projection_is_symmetric_ordered_and_blue_independent(
     }
 
     assert list(projected) == [
-        "main", "builder", "graph", "disconnected", "disabled",
+        "main", "builder", "graph", "disconnected", "disabled", "mag",
     ]
     assert projected == {
-        "main": ["graph", "builder"],
-        "builder": ["main"],
-        "graph": ["main"],
+        "main": ["graph", "mag", "builder"],
+        "builder": [],
+        "graph": [],
         "disconnected": [],
         "disabled": [],
+        "mag": [],
     }
 
 
-def test_hermes_bot_roster_projection_revokes_both_ends_when_edge_is_deleted():
+def test_hermes_bot_roster_projection_revokes_main_target_when_edge_is_deleted():
     cards = [
-        _agent("a", runtime={"kind": "hermes", "mode": "delegate", "profile": "a"}),
-        _agent("b", runtime={"kind": "hermes", "mode": "delegate", "profile": "b"}),
+        _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
+        _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"}),
     ]
     connected = card_domain._project_hermes_bot_rosters({
         "nodes": cards,
-        "edges": [{"source": "a", "target": "b", "edgeType": "flow"}],
+        "edges": [{"source": "main", "target": "helper", "edgeType": "flow"}],
     })
     revoked = card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": []})
 
-    assert [row["roster"] for row in connected] == [["b"], ["a"]]
+    assert [row["roster"] for row in connected] == [["helper"], []]
     assert [row["roster"] for row in revoked] == [[], []]
 
 
@@ -181,7 +315,7 @@ def test_hermes_bot_roster_projection_fails_closed_on_profile_ambiguity():
 
 
 def test_hermes_bot_roster_resolution_accepts_saved_deck_without_revision_metadata(monkeypatch):
-    card = _agent(
+    card = _main_bot(
         "main",
         runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
@@ -204,15 +338,14 @@ def test_hermes_bot_roster_resolution_accepts_saved_deck_without_revision_metada
     }
 
 
-@pytest.mark.parametrize('edge_type', ['magentic_control', 'magentic_option'])
-def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles(edge_type):
+def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles():
     cards = [
         _agent('a'),
         _agent('b'),
         _agent('mag', runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"}),
     ]
     forward = {'id': 'one', 'source': 'a', 'target': 'mag', 'sourceHandle': 'out',
-               'targetHandle': 'bus-in-1', 'edgeType': edge_type, 'enabled': True}
+               'targetHandle': 'bus-in-1', 'edgeType': 'magentic_option', 'enabled': True}
     reverse = {**forward, 'id': 'two', 'source': 'mag', 'target': 'a',
                'sourceHandle': 'bus-in-1', 'targetHandle': 'out'}
     document = {'id': 'd', 'nodes': cards, 'edges': [reverse], 'promptTemplates': []}
@@ -228,8 +361,41 @@ def test_wire_blue_save_identity_is_unordered_and_preserves_endpoint_handles(edg
             card_domain._validated_deck_collections(document, 'd')
 
 
-def test_flow_creation_reconnection_and_symmetric_authority(monkeypatch):
-    controller = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+def test_flow_endpoints_require_unique_exact_one_word_public_addresses():
+    main = _main_bot(
+        'main', title='Main',
+        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    helper = _agent('helper', title='KnowGraph')
+    magnetic = _agent(
+        'magnetic',
+        title='Magnetic',
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    worker = _agent('worker', title='Trading Agent')
+    document = {
+        'id': 'd',
+        'nodes': [main, helper, magnetic, worker],
+        'edges': [
+            {'id': 'orange', 'source': 'main', 'target': 'helper', 'edgeType': 'flow'},
+            {'id': 'blue', 'source': 'magnetic', 'target': 'worker', 'edgeType': 'magentic_option'},
+        ],
+        'promptTemplates': [],
+    }
+    card_domain._validated_deck_collections(document, 'd')
+    card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+
+    helper['title'] = 'Graph Agent'
+    with pytest.raises(card_domain.CardDomainError, match='card_address_invalid:helper'):
+        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+
+    helper['title'] = 'MAIN'
+    with pytest.raises(card_domain.CardDomainError, match='card_address_duplicate:main'):
+        card_domain._validate_changed_flow_edges(document['nodes'], document['edges'], [])
+
+
+def test_flow_creation_reconnection_and_main_bot_authority(monkeypatch):
+    controller = _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     receivers = [_agent(name, runtime={"kind": "hermes", "mode": "delegate", "profile": name})
                  for name in ("builder", "graph", "disconnected")]
     nodes = [controller, *receivers]
@@ -241,7 +407,7 @@ def test_flow_creation_reconnection_and_symmetric_authority(monkeypatch):
     before = json.dumps(nodes, sort_keys=True)
     card_domain._validate_changed_flow_edges(nodes, edges, [])
     assert [target["cardId"] for target in card_domain._direct_card_targets("main", cards, edges)] == ["builder", "graph"]
-    assert [target["cardId"] for target in card_domain._direct_card_targets("builder", cards, edges)] == ["main"]
+    assert card_domain._direct_card_targets("builder", cards, edges) == []
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
         "projectId": "p", "deck": {"nodes": nodes, "edges": edges},
     })
@@ -256,7 +422,6 @@ def test_flow_creation_reconnection_and_symmetric_authority(monkeypatch):
         invalid = [{**edges[0], **mutation}]
         with pytest.raises(card_domain.CardDomainError, match="controller_required"):
             card_domain._validate_changed_flow_edges(nodes, invalid, edges)
-    controller["runtimeOptions"]["delegationRole"] = "off"
     assert [target["cardId"] for target in card_domain._direct_card_targets("main", cards, edges)] == [
         "builder", "graph",
     ]
@@ -266,6 +431,11 @@ def test_flow_creation_reconnection_and_symmetric_authority(monkeypatch):
     assert card_domain._prepare_invocation({
         "projectId": "p", "deckId": "d", "cardId": "builder", "senderCardId": "main", "assignment": "Allowed",
     })["cardIdentity"]["cardId"] == "builder"
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain._prepare_invocation({
+            "projectId": "p", "deckId": "d", "cardId": "main",
+            "senderCardId": "builder", "assignment": "Reverse is not authorized",
+        })
 
 
 def test_no_script_preserves_saved_presentation_without_narrowing_effective_grants(
@@ -536,6 +706,99 @@ def test_unavailable_external_catalog_preserves_saved_grant_without_blocking_car
     assert resolved["pluginTools"][0]["canonicalName"] == "card.create"
 
 
+def test_unavailable_catalog_family_does_not_poison_the_available_catalog(
+    monkeypatch,
+):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["card.create", "cbm.search_graph"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+
+    resolved = card_domain.resolve_hermes_card_tools({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "cardRevisionId": "revision-builder",
+        "discoveredTools": [],
+        "discoveredToolCatalogState": "available",
+        "unavailableToolCatalogFamilies": ["cbm"],
+    })
+
+    assert resolved["enabledTools"] == ["card.create"]
+    assert resolved["presentedTools"] == ["card.create"]
+    assert resolved["unavailableTools"] == ["cbm.search_graph"]
+    assert resolved["unavailableToolReasons"] == {
+        "cbm.search_graph": "catalog_unavailable",
+    }
+    assert resolved["externalMcpTools"] == []
+    assert resolved["pluginTools"][0]["canonicalName"] == "card.create"
+
+
+def test_available_catalog_still_rejects_unknown_tools_outside_unavailable_family(
+    monkeypatch,
+):
+    card = _agent(
+        "builder",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "builder"},
+    )
+    card.update(
+        _cardRevisionId="revision-builder",
+        _cardRevision=1,
+        _cardRevisionSha256="a" * 64,
+    )
+    card["runtimeOptions"].update(
+        tools=["graphiti.not_real"],
+        mcpConnectionIds=[],
+    )
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one",
+        "deck": {"id": "deck-one", "nodes": [card], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="configured_tool_unknown:graphiti.not_real",
+    ):
+        card_domain.resolve_hermes_card_tools({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "builder",
+            "cardRevisionId": "revision-builder",
+            "discoveredTools": [],
+            "discoveredToolCatalogState": "available",
+            "unavailableToolCatalogFamilies": ["cbm"],
+        })
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="unavailable_tool_catalog_family_invalid",
+    ):
+        card_domain.resolve_hermes_card_tools({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "builder",
+            "cardRevisionId": "revision-builder",
+            "discoveredTools": [],
+            "discoveredToolCatalogState": "available",
+            "unavailableToolCatalogFamilies": ["card"],
+        })
+
+
 def test_saved_mcp_connection_grants_its_catalog_without_an_individual_tool_grant(
     monkeypatch,
 ):
@@ -719,9 +982,19 @@ def test_explicit_card_deletion_requires_intent_and_rejects_protected_cards() ->
             expected_card_revision_id="card-revision",
             deletion_intent="delete-card",
         )
+    with pytest.raises(card_domain.CardDomainError, match="card_deletion_protected:card_knowgraph"):
+        card_domain.delete_card(
+            "project-one", "deck-one", "card_knowgraph",
+            expected_deck_revision="deck-revision",
+            expected_card_revision_id="card-revision",
+            deletion_intent="delete-card",
+        )
 
 
-@pytest.mark.parametrize("card_id", ["accidental", "card_helper", "card_delegate"])
+@pytest.mark.parametrize(
+    "card_id",
+    ["accidental", "card_helper", "card_delegate", "card_hermes_steward"],
+)
 def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     monkeypatch: pytest.MonkeyPatch,
     card_id: str,
@@ -811,6 +1084,7 @@ def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     assert deleted_cards == [card_id]
     assert connection.committed is True
     assert result["meta"]["deckRevision"] == "new-revision"
+    assert not any("agent_assignments" in query for query, _ in statements)
     assert any("FROM ag_catalog.trading_jobs" in query for query, _ in statements)
     assert any("FROM ag_catalog.trading_lifecycle_runs" in query for query, _ in statements)
     mutation_params = [params for query, params in statements if "DELETE FROM" in query]
@@ -840,10 +1114,10 @@ def test_card_deletion_telemetry_check_uses_typed_agentgraph_endpoints(
     assert all(":Run" in statement or ":Card" in statement for statement in statements)
 
 
-def test_direct_card_targets_allow_presentation_attached_hermes_workers() -> None:
+def test_direct_card_targets_allow_saved_hermes_cards_including_magnetic() -> None:
     cards = {
-        "parent": _agent("parent", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
-                         runtimeOptions={}),
+        "parent": _main_bot("parent", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+                            runtimeOptions={"orchestrator": False}),
         "enabled": _agent(
             "enabled",
             runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
@@ -877,6 +1151,13 @@ def test_direct_card_targets_allow_presentation_attached_hermes_workers() -> Non
             "cardId": "presentation-attached",
             "title": "presentation-attached",
             "profile": "trading",
+            "description": "",
+            "cardRevisionId": "",
+        },
+        {
+            "cardId": "orchestrator",
+            "title": "orchestrator",
+            "profile": "orchestrator",
             "description": "",
             "cardRevisionId": "",
         },
@@ -926,44 +1207,28 @@ def _delegation_invocation(
     })
 
 
-def test_prepared_main_context_enters_the_same_idf_without_changing_the_mission(monkeypatch):
-    calls = []
-    def preload(*args):
-        calls.append(args)
-        return {"text": "native project decision", "references": [{"authority": "ThinkGraph", "nativeId": "decision-1"}],
-                "reads": [{"authority": "ThinkGraph", "state": "completed", "durationMs": 8}]}
-    monkeypatch.setattr(card_domain, "prepare_main_context", preload)
+def test_main_without_selected_graph_data_keeps_the_idf_graph_context_empty(monkeypatch):
     result = _delegation_invocation(monkeypatch, edges=[])
-    assert len(calls) == 1
-    assert result["idf"]["actualGraphData"]["modelText"] == "native project decision"
-    assert result["idf"]["actualGraphData"]["selectedNativeReferences"][0]["nativeId"] == "decision-1"
-    assert calls[0][4] == "delegate only across the saved FLOW relationship"
-    assert result["resolvedNativeReads"][0]["nativeId"] == "decision-1"
-    assert result["preparedContextReads"][0]["durationMs"] == 8
-    calls.clear()
-    _delegation_invocation(monkeypatch, edges=[], parent_runtime={"kind": "hermes", "mode": "delegate", "profile": "parent"})
-    assert calls == []
+    assert result["idf"]["actualGraphData"]["modelText"] == ""
+    assert result["idf"]["actualGraphData"]["selectedNativeReferences"] == []
+    assert result["resolvedNativeReads"] == []
+    assert "preparedContextReads" not in result
 
 
-def test_main_context_preview_uses_only_live_saved_grants_without_starting_a_run(monkeypatch):
+def test_main_preview_exposes_saved_authority_without_starting_a_run(monkeypatch):
     main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     main.update({"_cardRevisionId": "main-revision", "_cardRevision": 1, "_cardRevisionSha256": "main-sha"})
     main["runtimeOptions"]["tools"] = ["canvas.inspect"]
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
         "projectId": "00000000-0000-0000-0000-000000000001", "deck": {"nodes": [main], "edges": []},
     })
-    calls = []
-    context = {"text": "", "references": [], "reads": [{"state": "read_timeout"}]}
-    monkeypatch.setattr(card_domain, "prepare_main_context", lambda *args: calls.append(args) or context)
     monkeypatch.setattr(card_domain, "materialize_idf", lambda **_: pytest.fail("preview created an IDF"))
     monkeypatch.setattr(card_domain, "_insert_run", lambda *_, **__: pytest.fail("preview started a Run"))
     payload = {"projectId": "project-one", "deckId": "deck-one", "conversationId": "conversation-one"}
     assert "preparedContext" not in card_domain.prepare_main_chat(payload)
-    assert calls == []
     result = card_domain.prepare_main_chat({**payload, "message": "source validity"})
-    assert result["preparedContext"] == context
-    assert calls == [("00000000-0000-0000-0000-000000000001", "deck-one", "main",
-                      "conversation-one", "source validity", ["canvas.inspect"])]
+    assert result["message"] == "source validity"
+    assert "preparedContext" not in result
     assert result["sessionProfile"]["unavailableTools"] == []
     assert "idf" not in result and "runId" not in result
 
@@ -1277,7 +1542,6 @@ def test_new_run_fails_closed_when_root_input_files_cannot_persist(
     assert terminal == [{
         "runId": "run-one",
         "state": "failed",
-        "nativePhase": "failed",
         "errorCode": "input_files_materialization_failed",
         "errorSummary": "input_files_write_failed",
     }]
@@ -1380,6 +1644,7 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
     prepared = _prepared_grounded_runtime({
         "kind": "hermes", "mode": "magentic_one", "profile": "card-one",
     })
+    prepared["idf"]["stableSavedCardContext"]["outputRequirements"] = "Separate output contract"
     workers = [_agent(f"worker-{i}", subtitle=f"Saved capability {i}",
                       runtime={"kind": "hermes", "mode": "delegate", "profile": f"profile-{i}"})
                for i in range(6)]
@@ -1516,6 +1781,7 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
         "provider_model_id": "gpt-5.6-luna",
         "access_mode": "chatgpt-account",
         "state": "failed",
+        "native_phase": "ready",
     })
 
     assert projected["runId"] == "run-one"
@@ -1524,6 +1790,9 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
     assert projected["provider"] == "openai-codex"
     assert projected["model"] == "gpt-5.6-luna"
     assert projected["accessMode"] == "chatgpt-account"
+    assert projected["nativeStatus"] == "ready"
+    legacy = card_domain._run_projection({"run_id": "old", "native_phase": "queued"})
+    assert legacy["nativeStatus"] is None
 
 
 def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
@@ -1560,7 +1829,7 @@ def test_run_progress_casts_numeric_native_run_id_to_persisted_text(
         "runId": "run-one",
         "nativeRootId": "t_retained_root",
         "nativeRunId": 18,
-        "nativePhase": "working",
+        "nativeStatus": "running",
         "tasksCompleted": 2,
         "tasksTotal": 5,
         "activeWorkers": 1,
@@ -1695,7 +1964,7 @@ def test_finish_run_accepts_mag_one_native_root_and_final_task_without_fake_sess
         "providerTurnRef": "t_mag_final",
         "effectiveProvider": "openai-codex",
         "providerApiMode": "codex_app_server",
-        "nativePhase": "complete",
+        "nativeStatus": "done",
     })
 
     update_query, update_params = next(
@@ -1873,6 +2142,11 @@ def test_magentic_card_may_invoke_only_a_saved_magentic_option_worker(
 def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    main = _main_bot(
+        "main",
+        title="Main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
     mag_one = _agent(
         "mag-one",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
@@ -1895,19 +2169,26 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
         "toolsets": ["computer_use"],
         "mcpConnectionIds": ["main-runtime"],
     }
-    for number, card in enumerate((mag_one, helper), start=1):
+    for number, card in enumerate((main, mag_one, helper), start=1):
         card["_cardRevisionId"] = f"revision-{number}"
         card["_cardRevision"] = 1
         card["_cardRevisionSha256"] = f"sha-{number}"
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
         "projectId": "00000000-0000-0000-0000-000000000001",
         "deck": {
-            "nodes": [mag_one, helper],
-            "edges": [{
-                "source": "mag-one",
-                "target": "helper",
-                "edgeType": "magentic_option",
-            }],
+            "nodes": [main, mag_one, helper],
+            "edges": [
+                {
+                    "source": "main",
+                    "target": "helper",
+                    "edgeType": "flow",
+                },
+                {
+                    "source": "mag-one",
+                    "target": "helper",
+                    "edgeType": "magentic_option",
+                },
+            ],
         },
     })
 
@@ -1916,6 +2197,7 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
         "deckId": "deck-one",
         "runId": "run-direct",
         "cardId": "helper",
+        "senderCardId": "main",
         "assignment": "direct mission",
     })
     bus_worker = card_domain.materialize_invocation({
@@ -1928,7 +2210,7 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
     })
 
     assert direct["cardIdentity"] == bus_worker["cardIdentity"]
-    assert direct["cardRevisionId"] == bus_worker["cardRevisionId"] == "revision-2"
+    assert direct["cardRevisionId"] == bus_worker["cardRevisionId"] == "revision-3"
     assert direct["runtimeOwner"] == bus_worker["runtimeOwner"] == "hermes"
     assert direct["idf"]["stableSavedCardContext"] == bus_worker["idf"]["stableSavedCardContext"]
     assert direct["idf"]["selectedToolsAndGrants"] == bus_worker["idf"]["selectedToolsAndGrants"]
@@ -1936,10 +2218,8 @@ def test_same_hermes_card_direct_and_mag_one_materialize_the_same_saved_identity
     assert bus_worker["idf"]["dynamicContext"]["task"] == "bus mission"
 
 
-@pytest.mark.parametrize('reverse', [False, True])
-def test_saved_magentic_control_edge_is_required_to_resolve_mag_one(
+def test_one_enabled_saved_magnetic_card_resolves_without_a_control_wire(
     monkeypatch: pytest.MonkeyPatch,
-    reverse: bool,
 ) -> None:
     main = _agent(
         "main",
@@ -1957,27 +2237,77 @@ def test_saved_magentic_control_edge_is_required_to_resolve_mag_one(
         "projectId": "00000000-0000-0000-0000-000000000001",
         "deck": {
             "nodes": [main, mag_one],
-            "edges": [{
-                "source": "main",
-                "target": "mag-one",
-                "edgeType": "magentic_control",
-            }],
+            "edges": [],
         },
     }
-    if reverse:
-        edge = loaded['deck']['edges'][0]
-        edge['source'], edge['target'] = edge['target'], edge['source']
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
     assert card_domain.resolve_magentic_target_card(
-        "project-one", "deck-one", "main"
+        "project-one", "deck-one"
     ) == {
         "projectId": "00000000-0000-0000-0000-000000000001",
         "deckId": "deck-one",
         "cardId": "mag-one",
     }
+    mag_one["runtimeOptions"]["enabled"] = False
+    with pytest.raises(card_domain.CardDomainError, match="magentic_card_identity_ambiguous"):
+        card_domain.resolve_magentic_target_card("project-one", "deck-one")
+    mag_one["runtimeOptions"].pop("enabled")
+    loaded["deck"]["nodes"].append(_agent(
+        "other-mag",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "other-mag"},
+    ))
+    with pytest.raises(card_domain.CardDomainError, match="magentic_card_identity_ambiguous"):
+        card_domain.resolve_magentic_target_card("project-one", "deck-one")
+
+
+def test_main_mode_invokes_magnetic_across_orange_bot_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    main = _main_bot(
+        "main",
+        runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    main["runtimeOptions"]["orchestrator"] = False
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    for number, card in enumerate((main, magnetic), start=1):
+        card["_cardRevisionId"] = f"revision-{number}"
+        card["_cardRevision"] = 1
+        card["_cardRevisionSha256"] = f"sha-{number}"
+    loaded = {
+        "projectId": "00000000-0000-0000-0000-000000000001",
+        "deck": {"nodes": [main, magnetic], "edges": [{
+            "id": "main-magnetic",
+            "source": "main",
+            "target": "magnetic",
+            "edgeType": "flow",
+        }]},
+    }
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: loaded)
+    payload = {
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "runId": "run-magnetic",
+        "cardId": "magnetic",
+        "senderCardId": "main",
+        "assignment": "approved Magnetic mission",
+    }
+    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
     loaded["deck"]["edges"] = []
-    with pytest.raises(card_domain.CardDomainError, match="magentic_control_target_ambiguous"):
-        card_domain.resolve_magentic_target_card("project-one", "deck-one", "main")
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain.materialize_invocation(payload)
+    loaded["deck"]["edges"] = [{
+        "id": "main-magnetic",
+        "source": "main",
+        "target": "magnetic",
+        "edgeType": "flow",
+    }]
+    main["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "main"}
+    main["runtimeOptions"]["orchestrator"] = True
+    with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
+        card_domain.materialize_invocation(payload)
 
 
 def test_disabled_flow_edge_materializes_no_delegation_transport(
@@ -1996,9 +2326,9 @@ def test_disabled_flow_edge_materializes_no_delegation_transport(
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in invocation
 
 
-def test_disabled_missing_or_invalid_flow_target_is_not_an_available_bot() -> None:
+def test_disabled_missing_or_magnetic_flow_target_projection_is_exact() -> None:
     edge = [{"source": "parent", "target": "child", "edgeType": "flow"}]
-    parent = _agent(
+    parent = _main_bot(
         "parent", runtime={"kind": "hermes", "mode": "main", "profile": "main"}
     )
     disabled = _agent(
@@ -2009,13 +2339,19 @@ def test_disabled_missing_or_invalid_flow_target_is_not_an_available_bot() -> No
         "parent", {"parent": parent, "child": disabled}, edge
     ) == []
 
-    invalid = _agent(
+    magnetic = _agent(
         "child",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "child"},
     )
     assert card_domain._direct_card_targets(
-        "parent", {"parent": parent, "child": invalid}, edge
-    ) == []
+        "parent", {"parent": parent, "child": magnetic}, edge
+    ) == [{
+        "cardId": "child",
+        "title": "child",
+        "profile": "child",
+        "description": "",
+        "cardRevisionId": "",
+    }]
     assert card_domain._direct_card_targets(
         "parent",
         {"parent": parent},
@@ -2056,10 +2392,13 @@ def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
 
 
 def test_enabled_callable_saved_cards_are_magentic_workers() -> None:
-    for mode in ("main", "delegate", "kanban"):
+    for mode in ("delegate", "kanban"):
         assert card_domain._is_callable_magentic_worker_card(_agent(
             mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
         )) is True
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}
+    )) is False
     assert card_domain._is_callable_magentic_worker_card(_agent(
         "mag-one",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
@@ -2172,8 +2511,77 @@ def test_wire_magentic_roster_deduplicates_both_orders_and_ignores_disabled_edge
     assert [card['cardId'] for card in card_domain.describe_magentic_agents('p', 'd')['connectedAgents']] == ['a', 'b']
 
 
+def test_magentic_roster_uses_live_tool_catalog_without_making_it_a_startup_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag = _agent(
+        "mag",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"},
+    )
+    worker = _agent("worker")
+    worker["runtimeOptions"]["tools"] = ["cbm.search_graph"]
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
+        "projectId": "p",
+        "deck": {
+            "nodes": [mag, worker],
+            "edges": [{
+                "source": "worker",
+                "target": "mag",
+                "edgeType": "magentic_option",
+            }],
+        },
+    })
+
+    live = card_domain.describe_magentic_agents(
+        "p",
+        "d",
+        discovered_tool_names=["cbm.search_graph"],
+        discovered_tool_catalog_state="available",
+    )
+    assert live["connectedAgents"][0]["executionReady"] is True
+
+    partial = card_domain.describe_magentic_agents(
+        "p",
+        "d",
+        discovered_tool_catalog_state="available",
+        unavailable_tool_catalog_families=["cbm"],
+    )
+    assert partial["connectedAgents"][0]["executionReady"] is True
+
+    unknown = card_domain.describe_magentic_agents(
+        "p",
+        "d",
+        discovered_tool_catalog_state="available",
+    )
+    assert unknown["connectedAgents"][0]["readinessReason"] == (
+        "configured_tool_unknown:cbm.search_graph"
+    )
+
+    worker["runtimeOptions"]["tools"] = ["graphiti.not_real"]
+    non_cbm_unknown = card_domain.describe_magentic_agents(
+        "p",
+        "d",
+        discovered_tool_catalog_state="available",
+        unavailable_tool_catalog_families=["cbm"],
+    )
+    assert non_cbm_unknown["connectedAgents"][0]["readinessReason"] == (
+        "configured_tool_unknown:graphiti.not_real"
+    )
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="unavailable_tool_catalog_family_invalid",
+    ):
+        card_domain.describe_magentic_agents(
+            "p",
+            "d",
+            discovered_tool_catalog_state="available",
+            unavailable_tool_catalog_families=["graphiti"],
+        )
+
+
 def _destination_fixture(monkeypatch: pytest.MonkeyPatch) -> dict:
-    sender = _agent("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
+    sender = _main_bot("sender", runtime={"kind": "hermes", "mode": "main", "profile": "sender"})
     hermes = _agent(
         "hermes",
         prompt="Hermes saved prompt",
@@ -2217,7 +2625,7 @@ def test_saved_parent_selection_reaches_execution_without_changing_card_authorit
     card = loaded["deck"]["nodes"][1]
     card["runtimeOptions"].update(
         provider="openai", accessMode="chatgpt-account", modelKey=model_key,
-        providerModelId="gpt-5.6-sol", delegationRole="team",
+        providerModelId="gpt-5.6-sol",
         subagentModel={"provider": "openai", "accessMode": "chatgpt-account",
                        "modelKey": "gpt-5.6-luna", "providerModelId": "gpt-5.6-luna"},
     )
@@ -2229,7 +2637,6 @@ def test_saved_parent_selection_reaches_execution_without_changing_card_authorit
     assert prepared["_callConfig"]["provider"] == expected
     assert invocation["idf"]["stableSavedCardContext"]["provider"] == expected
     assert prepared["_callConfig"]["runtimeOptions"]["subagentModel"] == card["runtimeOptions"]["subagentModel"]
-    assert "delegationRole" not in prepared["_callConfig"]["runtimeOptions"]
     assert json.dumps(loaded, sort_keys=True) == before
 
 
@@ -2249,6 +2656,39 @@ def test_saved_hermes_subagent_model_survives_canonical_idf_materialization(monk
     assert invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["subagentModel"] == selection
     assert invocation["idf"]["stableSavedCardContext"]["provider"]["providerModelId"] != "gpt-5.6-luna"
     assert card_domain._stable_card(card)["runtimeExtensions"]["subagentModel"] == selection
+
+
+@pytest.mark.parametrize("selection", ["none", "leaf", "recursive"])
+def test_saved_hermes_subagent_type_survives_canonical_idf_materialization(
+    monkeypatch, selection,
+):
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    card["runtimeOptions"]["subagentType"] = selection
+
+    prepared = card_domain._prepare_invocation(_destination_payload("hermes"))
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+
+    assert prepared["_callConfig"]["runtimeOptions"]["subagentType"] == selection
+    assert invocation["idf"]["stableSavedCardContext"]["runtimeOptions"]["subagentType"] == selection
+    assert card_domain._stable_card(card)["runtimeExtensions"]["subagentType"] == selection
+
+
+def test_missing_hermes_subagent_type_stays_absent(monkeypatch):
+    _destination_fixture(monkeypatch)
+
+    prepared = card_domain._prepare_invocation(_destination_payload("hermes"))
+
+    assert "subagentType" not in prepared["_callConfig"]["runtimeOptions"]
+
+
+def test_invalid_saved_hermes_subagent_type_is_rejected(monkeypatch):
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    card["runtimeOptions"]["subagentType"] = "team"
+
+    with pytest.raises(card_domain.CardDomainError, match="card_subagent_type_invalid"):
+        card_domain._prepare_invocation(_destination_payload("hermes"))
 
 
 @pytest.mark.parametrize("runtime", [
@@ -2671,10 +3111,10 @@ def test_explicit_card_mission_is_transient_and_retaskable(
     assert _REMOVED_PROFILE_TARGET_PROJECTION not in second
 
 
-def test_main_and_helper_can_explicitly_retask_one_non_delegating_graph_agent_card(
+def test_only_main_mode_can_retask_one_connected_graph_card(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    main = _agent("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
+    main = _main_bot("main", runtime={"kind": "hermes", "mode": "main", "profile": "main"})
     helper = _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"})
     graph_agent = _agent("graph-agent", runtime={"kind": "hermes", "mode": "delegate", "profile": "knowledge"})
     graph_agent["runtimeOptions"]["tools"] = ["graphiti.add_memory"]
@@ -2688,7 +3128,6 @@ def test_main_and_helper_can_explicitly_retask_one_non_delegating_graph_agent_ca
             "nodes": [main, helper, graph_agent],
             "edges": [
                 {"source": "main", "target": "graph-agent", "edgeType": "flow"},
-                {"source": "helper", "target": "graph-agent", "edgeType": "flow"},
             ],
         },
     }
@@ -2703,12 +3142,8 @@ def test_main_and_helper_can_explicitly_retask_one_non_delegating_graph_agent_ca
         })
 
     assert invoke("main", "Research the current question.")["cardIdentity"]["cardId"] == "graph-agent"
-    assert _REMOVED_PROFILE_TARGET_PROJECTION not in invoke("helper", "Retask the missing evidence.")
-    helper["runtimeOptions"]["delegationRole"] = "off"
-    assert invoke("helper", "The wire alone authorizes this formal run.")["cardIdentity"]["cardId"] == "graph-agent"
-    loaded["deck"]["edges"] = loaded["deck"]["edges"][:1]
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
-        invoke("helper", "This wire no longer authorizes the retask.")
+        invoke("helper", "An ordinary Card cannot orchestrate another Card.")
 
 def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,

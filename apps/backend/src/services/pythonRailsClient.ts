@@ -79,7 +79,13 @@ export type DescribeConnectedAgentsResult = {
 
 /** Thin read transport for the Python-owned Mag One roster. */
 export async function describeConnectedAgents(
-  args: { projectId: string; deckId: string },
+  args: {
+    projectId: string;
+    deckId: string;
+    discoveredToolNames: string[];
+    discoveredToolCatalogState: 'available' | 'unavailable';
+    unavailableToolCatalogFamilies: string[];
+  },
   request: typeof requestPythonRailsJson = requestPythonRailsJson,
 ): Promise<DescribeConnectedAgentsResult> {
   const projectId = String(args.projectId || '').trim();
@@ -87,7 +93,15 @@ export async function describeConnectedAgents(
   if (!projectId || !deckId) throw new Error('projectId_and_deckId_required');
   const result = await request(
     `/domain/mag-one/${encodeURIComponent(projectId)}/${encodeURIComponent(deckId)}/agents`,
-    { method: 'GET' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        discoveredToolNames: args.discoveredToolNames,
+        discoveredToolCatalogState: args.discoveredToolCatalogState,
+        unavailableToolCatalogFamilies: args.unavailableToolCatalogFamilies,
+      }),
+    },
   ) as Partial<DescribeConnectedAgentsResult> & { ok?: boolean };
   if (
     result.ok !== true

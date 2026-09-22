@@ -3,14 +3,15 @@
 Lets a Bot Mode agent message a teammate (a profile on this install, an agent on
 a registered peer gateway, or one on another Desktop-connected machine): the
 target is validated against the live roster, the attribution prefix is applied
-server-side, and the reply arrives later via the background-process completion
-notification (fire-and-forget). Containment: the schema is injected ONLY into a
+server-side, and the reply or result arrives later via a completion notification
+(fire-and-forget). Containment: the schema is injected ONLY into a
 bot's canonical "Bot Chat" session on a Bot-Mode-managed install (same gate as
 ``tools/bot_mode_probe.py``; never in the registry or any toolset), and dispatch
-re-checks that gate so a forged call returns a structured error. Transports:
-local → ``hermes -p <name> chat --in ~ -c "Bot Chat" --create-if-missing -Q
---query-file <tmp>``; peer → ``hermes peer dm <peer>[/<name>] < <tmp>``; both via
-``terminal_tool(background=True, notify_on_complete=True)``.
+re-checks that gate so a forged call returns a structured error. Ordinary local
+and peer targets use the existing Bot Chat transports. A local roster target
+whose saved profile is structurally marked ``kanban.task_mode: team`` instead
+receives one root in the existing Kanban ledger and reports through that same
+session's durable notification route.
 """
 
 from __future__ import annotations
@@ -67,11 +68,11 @@ def message_agent_tool_schema() -> dict:
                 "Send a message to ANOTHER agent (teammate) on this install, or to an "
                 "agent on a registered peer gateway. This is FIRE-AND-FORGET and "
                 "asynchronous, like texting: it validates the target against the live "
-                "roster, delivers your message into that agent's own Bot Chat with your "
+                "roster, delivers your message through that agent's authorized route with your "
                 "attribution automatically prefixed, and returns immediately with a "
                 "delivery acknowledgement. It does NOT return their reply and you must "
                 "not wait or poll for one — send it, finish your turn, and the reply "
-                "arrives later as a background-process completion notification that "
+                "or result arrives later as a completion notification that "
                 "wakes you. COMPOSE the message yourself: write what YOU want to say to "
                 "that agent (lead with the point; include the concrete ask or result). "
                 "Never paste the user's words verbatim — paraphrase the actionable "
@@ -174,8 +175,14 @@ def _err(message: str, *, roster: list[str] | None = None, peers: list[str] | No
     return json.dumps(payload)
 
 
-def message_agent_tool(target: str = "", message: str = "", task_id: Optional[str] = None, agent: Any = None) -> str:
-    """Deliver ``message`` to ``target``'s Bot Chat. Returns a JSON ack/error.
+def message_agent_tool(
+    target: str = "",
+    message: str = "",
+    task_id: Optional[str] = None,
+    agent: Any = None,
+    tool_call_id: Optional[str] = None,
+) -> str:
+    """Deliver ``message`` through ``target``'s authorized route. Returns a JSON ack/error.
     ``agent`` is the calling AIAgent — used for the Bot Chat gate and sender identity."""
     home = _agent_home(agent)
     try:
@@ -259,8 +266,120 @@ def message_agent_tool(target: str = "", message: str = "", task_id: Optional[st
         return _roster_err(f"No teammate named '{raw_target}' on this install, on a connected "
                            "machine, or on a registered peer. Pick a name from the roster "
                            "(roles are listed in your system prompt).")
+    try:
+        from hermes_cli.kanban_team import TEAM_TASK_MODE, profile_task_mode
+
+        task_mode = profile_task_mode(resolved, profile_home=str(roster_homes[resolved]))
+    except Exception as exc:
+        return _err(
+            f"Delivery to @{_handle(resolved)} was refused because its saved task mode is invalid: "
+            f"{exc}. Nothing was submitted."
+        )
+    if task_mode == TEAM_TASK_MODE:
+        return _start_team_task(
+            target_profile=resolved,
+            target_home=roster_homes[resolved],
+            target_label=f"@{_handle(resolved)}",
+            source_profile=me,
+            body=body,
+            content=content,
+            tool_call_id=tool_call_id,
+            agent=agent,
+        )
     return _start_delivery([_hermes_cli(), "-p", resolved, *BOT_CHAT_TURN_ARGS], content, f"@{_handle(resolved)}",
                            stdin_file=False, profile_home=roster_homes[resolved], author=author, **delivery)
+
+
+def _start_team_task(
+    *,
+    target_profile: str,
+    target_home: Path,
+    target_label: str,
+    source_profile: str,
+    body: str,
+    content: str,
+    tool_call_id: Optional[str],
+    agent: Any,
+) -> str:
+    """Submit one structurally marked local Team target to the existing Kanban ledger.
+
+    Roster resolution and the structural marker check happen before this helper. A
+    durable completion route is mandatory because no Bot Chat background process is
+    started for Team tasks.
+    """
+    source_session = str(getattr(agent, "session_id", "") or "").strip()
+    call_id = str(tool_call_id or "").strip()
+    if not source_session:
+        return _err(
+            f"Delivery to {target_label} requires the calling Hermes session. "
+            "Nothing was submitted."
+        )
+    if not call_id:
+        return _err(
+            f"Delivery to {target_label} requires a unique tool-call id. "
+            "Nothing was submitted."
+        )
+
+    try:
+        from tools.kanban_tools import _resolve_notify_target
+
+        notify = _resolve_notify_target()
+    except Exception as exc:
+        return _err(
+            f"Delivery to {target_label} could not resolve its completion route: {exc}. "
+            "Nothing was submitted."
+        )
+    if not notify or not str(notify.get("platform") or "").strip() or not str(notify.get("chat_id") or "").strip():
+        return _err(
+            f"Delivery to {target_label} requires a durable completion route. "
+            "Nothing was submitted."
+        )
+
+    title = next((line.strip() for line in body.splitlines() if line.strip()), body)[:200]
+    idempotency_key = "message-agent-team:" + hashlib.sha256(
+        f"{source_session}\0{call_id}".encode("utf-8")
+    ).hexdigest()
+    try:
+        from hermes_cli import kanban_db_connect as kbc
+        from hermes_cli.kanban_team import create_team_root
+
+        with kbc.connect_closing() as conn:
+            task = create_team_root(
+                conn,
+                assignee=target_profile,
+                profile_home=str(target_home),
+                title=title,
+                body=content,
+                created_by=f"message_agent:{source_profile}",
+                idempotency_key=idempotency_key,
+                session_id=source_session,
+                notify_platform=notify["platform"],
+                notify_chat_id=notify["chat_id"],
+                notify_thread_id=notify.get("thread_id"),
+                notify_user_id=notify.get("user_id"),
+                notify_user_id_alt=notify.get("user_id_alt"),
+                notify_chat_type=notify.get("chat_type"),
+                notifier_profile=notify.get("notifier_profile"),
+                notify_delivery_mode=notify.get("delivery_mode"),
+                notify_delivery_metadata=notify.get("delivery_metadata"),
+            )
+    except Exception as exc:
+        logger.error("message_agent Team submission could not be confirmed: %s", exc, exc_info=True)
+        return _err(
+            f"Delivery to {target_label} could not be confirmed: {exc}. "
+            "Do not retry blindly."
+        )
+
+    return json.dumps({
+        "status": "sent",
+        "to": target_label,
+        "task_id": task.id,
+        "detail": (
+            f"Task dispatched to {target_label} as {task.id}. This is asynchronous — do NOT wait "
+            "or poll. Finish your turn now; its completion notification carries the result."
+        ),
+        "sent_at": int(time.time()),
+    })
 
 
 def _try_relay_delivery(root: Path, raw_target: str, content: str, me: str, *,

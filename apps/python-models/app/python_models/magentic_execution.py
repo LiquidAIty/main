@@ -13,6 +13,9 @@ class MagenticExecutionError(RuntimeError):
     pass
 
 
+_TEAM_CARD_ID = "card_team"
+
+
 def _required_text(value: Any, field: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -69,7 +72,9 @@ def _ensure_orchestrator_identity(
     spec: dict[str, Any], workers: list[dict[str, Any]],
 ) -> tuple[str, str, str, str | None]:
     native_identity = _required_text(spec.get("nativeIdentity"), "magentic_native_identity").lower()
-    instructions = _required_text(spec.get("instructions"), "magentic_instructions")
+    instructions = spec.get("instructions")
+    if not isinstance(instructions, str) or not instructions.strip():
+        raise MagenticExecutionError("magentic_instructions_required")
     provider = spec.get("provider") if isinstance(spec.get("provider"), dict) else {}
     options = spec.get("runtimeOptions") if isinstance(spec.get("runtimeOptions"), dict) else {}
     native_provider, model, openai_runtime = _native_model(provider, options)
@@ -113,10 +118,16 @@ def _ensure_orchestrator_identity(
             config = load_config() or {}
             model_config = config.get("model") or {}
             agent_config = config.get("agent") or {}
+            soul_path = orchestrator_home / "SOUL.md"
+            try:
+                soul = soul_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                soul = None
             if (
                 model_config.get("provider") != native_provider
                 or model_config.get("default") != model
-                or agent_config.get("system_prompt") != instructions
+                or "system_prompt" in agent_config
+                or soul != instructions
             ):
                 raise MagenticExecutionError("magentic_orchestrator_materialization_mismatch")
         finally:
@@ -127,6 +138,15 @@ def _ensure_orchestrator_identity(
 def _task_db_path() -> Path:
     _, hermes_home = _runtime_paths()
     return hermes_home / "kanban.db"
+
+
+def _task_store() -> tuple[Path, Any, Any]:
+    """Resolve the repository Hermes path before importing its task modules."""
+    db_path = _task_db_path()
+    from hermes_cli import kanban_db as task_db
+    from hermes_cli import kanban_db_connect as task_db_connect
+
+    return db_path, task_db, task_db_connect
 
 
 def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
@@ -153,10 +173,25 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
     return identities, "\n".join(lines)
 
 
+def _direct_team_worker(workers: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the sole Team worker, while rejecting a mismatched structural marker."""
+
+    for worker in workers:
+        card_id = _required_text(worker.get("cardId"), "magentic_worker_card")
+        marked_team = worker.get("teamTaskMode") is True
+        if marked_team != (card_id == _TEAM_CARD_ID):
+            raise MagenticExecutionError(f"magentic_team_identity_invalid:{card_id}")
+    if len(workers) == 1 and workers[0].get("cardId") == _TEAM_CARD_ID:
+        return workers[0]
+    return None
+
+
 def _root_body(mission: str, worker_text: str) -> str:
     return (
         "You are the saved Magnetic orchestrator for this Mag One mission. This native task is "
         "both the orchestration root and the final result task.\n\n"
+        "Main and the user already approved this mission after upstream context engineering. "
+        "Execute this mission as given; do not invent a replacement mission or another approval step.\n\n"
         "Available top-level worker Agents (the complete Mag One assignment scope):\n"
         f"{worker_text}\n\n"
         "Use only the listed saved profiles, and only when their work helps answer the mission. "
@@ -164,10 +199,13 @@ def _root_body(mission: str, worker_text: str) -> str:
         "auto-decomposition, triage, goal mode, delegate_task, or a separate synthesis task.\n\n"
         "For each useful worker assignment, create one native task with initial_status=\"running\" "
         "and an assignee from the list above. The task body must contain the bounded work request "
-        "and require that saved worker to return its result directly through kanban_complete. Link "
+        "and require that saved worker to return its result directly through kanban_complete. "
+        "Launch useful worker tasks independently; never make one worker wait for another. "
+        "Hermes stores that new task as ready until its dispatcher claims it; do not describe it as "
+        "running before that claim. Link "
         "each result needed for your next decision as a parent of THIS root task with kanban_link. "
         "Then end this attempt with kanban_block(kind=\"dependency\"); Hermes will keep this same "
-        "root queued and promote it when those parents complete.\n\n"
+        "root in todo while those parents are unfinished, then promote it to ready.\n\n"
         "Whenever Hermes runs this root again, inspect the parent handoffs already included in the "
         "native worker context. Decide whether another bounded worker round is useful. If so, create "
         "and link that round and dependency-block this same root again. When the evidence is enough, "
@@ -207,10 +245,7 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     if payload.get("mission") != mission:
         raise MagenticExecutionError("magentic_mission_input_mismatch")
     worker_identities, worker_text = _worker_scope(workers)
-    native_identity, native_provider, native_model, openai_runtime = (
-        _ensure_orchestrator_identity(spec, workers)
-    )
-    allowed_assignees = [native_identity, *worker_identities]
+    direct_team = _direct_team_worker(workers)
     tenant = f"mag-one:{run_id}"
     notify_session_key = (
         _required_text(notify_session.get("sessionKey"), "magentic_notification_session_key")
@@ -221,49 +256,95 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(notify_session, dict) else None
     )
 
-    from hermes_cli import kanban_db as task_db
-    from hermes_cli import kanban_db_connect as task_db_connect
-
-    db_path = _task_db_path()
+    db_path, task_db, task_db_connect = _task_store()
     task_db_connect.init_db(db_path)
-    root_body = _root_body(mission, worker_text)
+    _, hermes_home = _runtime_paths()
     with task_db_connect.connect_closing(db_path) as connection:
-        native_root_id = task_db.create_task(
-            connection,
-            title=f"Mag One {run_id}"[:200],
-            body=root_body,
-            assignee=native_identity,
-            created_by=native_identity,
-            tenant=tenant,
-            workspace_kind="scratch",
-            project_id="",
-            idempotency_key=f"magentic:{run_id}:root",
-            model_override=native_model,
-            provider_override=native_provider,
-            allowed_assignees=allowed_assignees,
-            session_id=notify_session_key,
-        )
-        root = task_db.get_task(connection, native_root_id)
-        if (
-            root is None
-            or root.allowed_assignees != allowed_assignees
-            or root.assignee != native_identity
-            or root.tenant != tenant
-            or root.model_override != native_model
-            or root.provider_override != native_provider
-            or root.body != root_body
-        ):
-            raise MagenticExecutionError("magentic_native_root_readback_mismatch")
-        if notify_session_key:
-            from hermes_cli import kanban_db_notify
-
-            kanban_db_notify.add_notify_sub(
-                connection,
-                task_id=native_root_id,
-                platform="tui",
-                chat_id=notify_session_key,
-                notifier_profile=notify_profile,
+        if direct_team is not None:
+            team_provider = (
+                direct_team.get("provider")
+                if isinstance(direct_team.get("provider"), dict) else {}
             )
+            team_options = (
+                direct_team.get("runtimeOptions")
+                if isinstance(direct_team.get("runtimeOptions"), dict) else {}
+            )
+            native_identity = worker_identities[0]
+            native_provider, native_model, openai_runtime = _native_model(
+                team_provider, team_options,
+            )
+            try:
+                with _default_home_scope(hermes_home):
+                    from hermes_cli.kanban_team import create_team_root
+
+                    root = create_team_root(
+                        connection,
+                        title=f"Team {run_id}"[:200],
+                        body=mission,
+                        assignee=native_identity,
+                        profile_home=hermes_home / "profiles" / native_identity,
+                        created_by=_required_text(
+                            spec.get("nativeIdentity"), "magentic_native_identity",
+                        ).lower(),
+                        tenant=tenant,
+                        workspace_kind="scratch",
+                        project_id="",
+                        idempotency_key=f"magentic:{run_id}:root",
+                        model_override=native_model,
+                        provider_override=native_provider,
+                        allowed_assignees=[native_identity],
+                        session_id=notify_session_key,
+                        notify_platform="tui" if notify_session_key else None,
+                        notify_chat_id=notify_session_key,
+                        notifier_profile=notify_profile,
+                    )
+            except (RuntimeError, ValueError) as error:
+                raise MagenticExecutionError(
+                    f"magentic_team_root_invalid:{error}"
+                ) from error
+            native_root_id = root.id
+        else:
+            native_identity, native_provider, native_model, openai_runtime = (
+                _ensure_orchestrator_identity(spec, workers)
+            )
+            allowed_assignees = [native_identity, *worker_identities]
+            root_body = _root_body(mission, worker_text)
+            native_root_id = task_db.create_task(
+                connection,
+                title=f"Mag One {run_id}"[:200],
+                body=root_body,
+                assignee=native_identity,
+                created_by=native_identity,
+                tenant=tenant,
+                workspace_kind="scratch",
+                project_id="",
+                idempotency_key=f"magentic:{run_id}:root",
+                model_override=native_model,
+                provider_override=native_provider,
+                allowed_assignees=allowed_assignees,
+                session_id=notify_session_key,
+            )
+            root = task_db.get_task(connection, native_root_id)
+            if (
+                root is None
+                or root.allowed_assignees != allowed_assignees
+                or root.assignee != native_identity
+                or root.tenant != tenant
+                or root.model_override != native_model
+                or root.provider_override != native_provider
+                or root.body != root_body
+            ):
+                raise MagenticExecutionError("magentic_native_root_readback_mismatch")
+            if notify_session_key:
+                from hermes_cli import kanban_db_notify
+
+                kanban_db_notify.add_notify_sub(
+                    connection,
+                    task_id=native_root_id,
+                    platform="tui",
+                    chat_id=notify_session_key,
+                    notifier_profile=notify_profile,
+                )
     return {
         "ok": True,
         "runId": run_id,
@@ -273,7 +354,8 @@ def submit_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
         "providerApiMode": openai_runtime,
         "model": native_model,
         "tenant": tenant,
-        "state": root.status,
+        "state": "running",
+        "nativeStatus": root.status,
         "nativeNotification": bool(notify_session_key),
     }
 
@@ -310,23 +392,41 @@ def _execution_task_ids(connection: Any, root_id: str) -> list[str]:
 
 def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
-    from hermes_cli import kanban_db as task_db
-    from hermes_cli import kanban_db_connect as task_db_connect
+    db_path, task_db, task_db_connect = _task_store()
 
-    with task_db_connect.connect_closing(_task_db_path()) as connection:
+    with task_db_connect.connect_closing(db_path) as connection:
         root = task_db.get_task(connection, root_id)
         if root is None:
             raise MagenticExecutionError("magentic_native_root_not_found")
         task_ids = _execution_task_ids(connection, root_id)
         tasks = [task_db.get_task(connection, task_id) for task_id in task_ids]
         tasks = [task for task in tasks if task is not None]
-        blocked = [task for task in tasks if task.status in {"blocked", "triage"}]
+        blocked = [task for task in tasks if task.status == "blocked"]
         latest_root_run = task_db.latest_run(connection, root_id)
+        native_tasks = []
+        for task in tasks:
+            latest_attempt = task_db.latest_run(connection, task.id)
+            native_tasks.append({
+                "taskId": task.id,
+                "title": task.title,
+                "assignee": task.assignee,
+                "status": task.status,
+                "dependencyIds": task_db.parent_ids(connection, task.id),
+                "latestAttempt": ({
+                    "runId": latest_attempt.id,
+                    "status": latest_attempt.status,
+                    "startedAt": latest_attempt.started_at,
+                    "endedAt": latest_attempt.ended_at,
+                } if latest_attempt is not None else None),
+                "resultAvailable": bool(
+                    str(task_db.latest_summary(connection, task.id) or task.result or "").strip()
+                ),
+            })
         response: dict[str, Any] = {
             "ok": True,
             "nativeRootId": root_id,
-            "state": "working",
-            "nativePhase": "queued" if root.status == "ready" else "working",
+            "state": "running",
+            "nativeStatus": root.status,
             "nativeIdentity": root.assignee,
             "effectiveProvider": root.provider_override,
             "providerApiMode": (
@@ -334,14 +434,14 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
             ),
             "model": root.model_override,
             "nativeRunId": latest_root_run.id if latest_root_run else None,
+            "nativeTasks": native_tasks,
         }
         if any(task.status == "archived" for task in tasks):
-            return {**response, "state": "cancelled", "nativePhase": "cancelled"}
+            return {**response, "state": "cancelled"}
         if blocked:
             return {
                 **response,
                 "state": "blocked",
-                "nativePhase": "blocked",
                 "error": f"magentic_task_blocked:{blocked[0].id}",
             }
         if root.status != "done":
@@ -351,31 +451,29 @@ def read_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 **response,
                 "state": "failed",
-                "nativePhase": "failed",
                 "error": "magentic_final_result_missing",
             }
         return {
             **response,
             "state": "completed",
-            "nativePhase": "complete",
             "finalResult": str(final_result),
         }
 
 
 def stop_magentic_execution(payload: dict[str, Any]) -> dict[str, Any]:
     root_id = _required_text(payload.get("nativeRootId"), "native_root_id")
-    from hermes_cli import kanban_db as task_db
-    from hermes_cli import kanban_db_connect as task_db_connect
+    db_path, task_db, task_db_connect = _task_store()
 
-    with task_db_connect.connect_closing(_task_db_path()) as connection:
+    with task_db_connect.connect_closing(db_path) as connection:
         if task_db.get_task(connection, root_id) is None:
             raise MagenticExecutionError("magentic_native_root_not_found")
         task_ids = _execution_task_ids(connection, root_id)
         for task_id in reversed(task_ids):
             task_db.archive_task(connection, task_id)
-    return {
-        "ok": True,
-        "nativeRootId": root_id,
-        "state": "cancelled",
-        "nativePhase": "cancelled",
-    }
+        root = task_db.get_task(connection, root_id)
+        return {
+            "ok": True,
+            "nativeRootId": root_id,
+            "state": "cancelled",
+            "nativeStatus": root.status if root is not None else "archived",
+        }

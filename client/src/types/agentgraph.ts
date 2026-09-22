@@ -9,12 +9,12 @@ export type CardRuntime = {
   profile: string;
 };
 
-// flow = ORANGE symmetric direct-Agent availability between saved Hermes Cards; magentic_option = BLUE side worker
-// slot; magentic_control = BLUE dedicated top control input (submit the
-// finalized prompt to Mag One — never worker membership).
+// flow = ORANGE Main bot-team authority; magentic_option = BLUE Magnetic
+// task-ledger worker availability, independent of endpoint order. Blue
+// topology never starts or controls Magnetic.
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
 // stays inert/visible, never silently promoted to a direct-Agent connection.
-export type DeckEdgeType = 'magentic_option' | 'magentic_control' | 'flow' | 'invalid';
+export type DeckEdgeType = 'magentic_option' | 'flow' | 'invalid';
 
 export type CardSubsystemCapability =
   | 'state'
@@ -39,7 +39,9 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
-  delegationRole?: 'off' | 'leaf' | 'orchestrator' | 'team';
+  /** Temporary native Hermes children for one Card turn. This is unrelated to
+   * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
+  subagentType?: 'none' | 'leaf' | 'recursive';
   /** Product-neutral, Card-owned structured settings consumed by the bound
    * runtime/domain adapter. The receiving Card's IDF carries this exact value. */
   configuration?: Record<string, unknown> | null;

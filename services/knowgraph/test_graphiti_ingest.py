@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -86,6 +87,51 @@ def _run(graphiti: FakeGraphiti):
 
 
 class GraphitiIngestTests(unittest.TestCase):
+    def test_service_owned_openrouter_model_precedence(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OPENROUTER_API_KEY": "not-used",
+                "OPENROUTER_DEFAULT_KG_MODEL_KEY": "vendor/kg-model",
+                "OPENROUTER_DEFAULT_MODEL": "vendor/general-model",
+            },
+            clear=True,
+        ):
+            runtime = ingest._resolve_runtime_model_config(
+                provider=None,
+                model_key=None,
+                model_id=None,
+            )
+            self.assertEqual(runtime.provider, "openrouter")
+            self.assertEqual(runtime.model_id, "vendor/kg-model")
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENROUTER_API_KEY": "not-used",
+                "OPENROUTER_DEFAULT_MODEL": "vendor/general-model",
+            },
+            clear=True,
+        ):
+            runtime = ingest._resolve_runtime_model_config(
+                provider=None,
+                model_key=None,
+                model_id=None,
+            )
+            self.assertEqual(runtime.model_id, "vendor/general-model")
+
+        with patch.dict(
+            os.environ,
+            {"OPENROUTER_API_KEY": "not-used"},
+            clear=True,
+        ):
+            runtime = ingest._resolve_runtime_model_config(
+                provider=None,
+                model_key=None,
+                model_id=None,
+            )
+            self.assertEqual(runtime.model_id, "z-ai/glm-5.2")
+
     def test_episode_identity_is_content_versioned_and_deterministic(self) -> None:
         first = ingest._episode_identity("p", "d", "same")
         second = ingest._episode_identity("p", "d", "same")

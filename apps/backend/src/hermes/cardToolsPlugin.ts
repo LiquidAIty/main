@@ -241,6 +241,7 @@ export async function resolveHermesCardTools(
       // here for external-connection availability and native-name resolution.
       discoveredTools: externalOwnerTools,
       discoveredToolCatalogState: externalToolCatalog.state,
+      unavailableToolCatalogFamilies: externalToolCatalog.unavailableFamilies,
     }),
   });
   return requireCardTools(resolved, owner, card, externalToolCatalog.state);

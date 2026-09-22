@@ -42,17 +42,17 @@ function isMagenticOne(card: AgentCardInstance | undefined): boolean {
 }
 
 /**
- * Resolve automatic Hermes runtime demand from Python-owned Bot roster projections
- * and the existing Mag One wire contract. FLOW authority is not reimplemented here.
- * The two Magentic-One edge types identify the bus structurally and remain
- * endpoint-order independent; handles are preserved presentation metadata once
- * the saved edgeType has been established.
+ * Resolve automatic Hermes runtime demand from Python-owned, saved-orchestrator
+ * Bot roster projections and the existing Magnetic worker-membership contract.
+ * FLOW authority is not reimplemented here. Blue membership is endpoint-order
+ * independent; handles remain presentation metadata once edgeType is saved.
  */
 export function deriveAutomaticHermesCardIds(
   deck: DeckDocument,
   botProfiles: HermesBotRosterProjection[],
 ): Set<string> {
   const cards = new Map(deck.nodes.map((card) => [card.id, card] as const));
+  const profiles = new Map(botProfiles.map((projection) => [projection.profile, projection] as const));
   const required = new Set<string>();
 
   for (const card of deck.nodes) {
@@ -60,7 +60,12 @@ export function deriveAutomaticHermesCardIds(
   }
 
   for (const projection of botProfiles) {
-    if (projection.botEnabled && projection.roster.length) required.add(projection.cardId);
+    if (!projection.botEnabled || !projection.roster.length) continue;
+    required.add(projection.cardId);
+    for (const profile of projection.roster) {
+      const target = profiles.get(profile);
+      if (target?.botEnabled) required.add(target.cardId);
+    }
   }
 
   for (const edge of deck.edges) {
@@ -71,21 +76,17 @@ export function deriveAutomaticHermesCardIds(
 
     if (edge.edgeType === 'flow') continue;
 
-    if (edge.edgeType !== 'magentic_option' && edge.edgeType !== 'magentic_control') continue;
+    if (edge.edgeType !== 'magentic_option') continue;
     const sourceIsBus = isMagenticOne(source);
     const targetIsBus = isMagenticOne(target);
     if (sourceIsBus === targetIsBus) continue;
     const attachedCard = sourceIsBus ? target : source;
     const busCard = sourceIsBus ? source : target;
 
-    if (edge.edgeType === 'magentic_option') {
-      if (isEnabledCard(busCard)
-        && attachedCard.runtime.kind === 'hermes'
-        && isEnabledCard(attachedCard)) {
-        required.add(busCard.id);
-        required.add(attachedCard.id);
-      }
-    } else if (attachedCard.runtime.kind === 'hermes' && attachedCard.runtime.mode === 'main') {
+    if (isEnabledCard(busCard)
+      && attachedCard.runtime.kind === 'hermes'
+      && isEnabledCard(attachedCard)) {
+      required.add(busCard.id);
       required.add(attachedCard.id);
     }
   }

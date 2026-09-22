@@ -2,22 +2,30 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildQuickAddAssistCard } from './deckDocument';
-import { INITIAL_DECK } from './newProjectDeck';
+import { INITIAL_AGENT_TEMPLATES, INITIAL_DECK } from './newProjectDeck';
 
 describe('requested initial Card topology', () => {
-  it('keeps unique profiles, one orange connection per system-agent peer, and existing Mag One edges', () => {
+  it('keeps unique profiles, system names, orange peers, and Magnetic worker availability', () => {
     const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
-    expect(main.runtimeOptions?.delegationRole).toBe('off');
     expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
+    expect(main.runtime).toMatchObject({ kind: 'hermes', mode: 'main' });
+    expect(INITIAL_DECK.nodes.every(card => !('orchestrator' in (card.runtimeOptions || {}))))
+      .toBe(true);
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'flow')).toEqual([
-      { id: 'edge_main_chat_hermes', source: main.id, target: 'card_hermes_steward', edgeType: 'flow' },
+      { id: 'edge_main_chat_hermes', source: main.id, target: 'card_knowgraph', edgeType: 'flow' },
       { id: 'edge_main_chat_agent_builder', source: main.id, target: 'builder', edgeType: 'flow' },
+      { id: 'edge_main_chat_thinkgraph', source: main.id, target: 'card_thinkgraph', edgeType: 'flow' },
+      {
+        id: 'edge_main_chat_magnetic', source: main.id, target: 'card_magentic',
+        sourceHandle: 'card-control', targetHandle: 'card-control', edgeType: 'flow',
+      },
     ]);
-    expect(INITIAL_DECK.edges.find(edge => edge.edgeType === 'magentic_control')).toMatchObject({
-      source: main.id, target: 'card_magentic', targetHandle: 'task-bus-top',
-    });
     expect(INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option').map(edge => edge.id))
-      .toEqual(['edge_worldsignals_magentic_bus', 'edge_trading_magentic_bus']);
+      .toEqual([
+        'edge_worldsignals_magentic_bus',
+        'edge_trading_magentic_bus',
+        'edge_team_magentic_bus',
+      ]);
     for (const edge of INITIAL_DECK.edges.filter(edge => edge.edgeType === 'magentic_option')) {
       const busHandle = edge.source === 'card_magentic' ? edge.sourceHandle : edge.targetHandle;
       const cardHandle = edge.source === 'card_magentic' ? edge.targetHandle : edge.sourceHandle;
@@ -28,13 +36,76 @@ describe('requested initial Card topology', () => {
     expect(new Set(profiles).size).toBe(profiles.length);
     expect(profiles).not.toContain('liquidaity-agent-builder');
     expect(INITIAL_DECK.nodes.find(card => card.id === 'builder')).toMatchObject({ title: 'Builder', runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' } });
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')?.title).toBe('Main');
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'card_knowgraph')?.title).toBe('KnowGraph');
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'card_thinkgraph')).toMatchObject({
+      title: 'ThinkGraph',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' },
+      runtimeOptions: { subagentType: 'none' },
+    });
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'card_magentic')?.title).toBe('Magnetic');
+    expect(INITIAL_DECK.nodes.find(card => card.id === 'card_team')).toMatchObject({
+      title: 'Team',
+      templateId: 'template_team',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'team' },
+      runtimeOptions: {
+        modelKey: 'gpt-5.6-terra',
+        providerModelId: 'gpt-5.6-terra',
+        subagentModel: {
+          modelKey: 'gpt-5.6-luna',
+          providerModelId: 'gpt-5.6-luna',
+        },
+      },
+    });
+    expect(INITIAL_AGENT_TEMPLATES.find(template => template.id === 'template_team')?.model)
+      .toBe('gpt-5.6-terra');
+    expect(INITIAL_AGENT_TEMPLATES.filter(template => [
+      'template_main_chat', 'template_thinkgraph', 'template_knowgraph', 'template_magentic', 'template_team',
+    ].includes(template.id)).map(template => [template.id, template.name])).toEqual([
+      ['template_magentic', 'Magnetic'],
+      ['template_main_chat', 'Main'],
+      ['template_team', 'Team'],
+      ['template_thinkgraph', 'ThinkGraph'],
+      ['template_knowgraph', 'KnowGraph'],
+    ]);
     for (const edge of INITIAL_DECK.edges) {
       expect(INITIAL_DECK.nodes.some(card => card.id === edge.source)).toBe(true);
       expect(INITIAL_DECK.nodes.some(card => card.id === edge.target)).toBe(true);
     }
-    for (const id of ['card_main_chat', 'builder', 'card_hermes_steward']) {
+    for (const id of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph', 'card_team']) {
       expect(INITIAL_DECK.nodes.find(card => card.id === id)?.parentGraphId).toBeNull();
     }
+    expect(INITIAL_DECK.version).toBe(10);
+  });
+
+  it('seeds Team as a bounded wildcard without saved-system mutation grants', () => {
+    const team = INITIAL_DECK.nodes.find((card) => card.id === 'card_team');
+    expect(team?.runtimeOptions).not.toHaveProperty('subagentType');
+    expect(team?.runtimeOptions?.tools).toEqual([
+      'canvas.inspect',
+      'engraphis_recall_context',
+      'engraphis_get_memory',
+      'graphiti.search_nodes',
+      'graphiti.search_memory_facts',
+      'graphiti.get_episodes',
+      'cbm.search_graph',
+      'cbm.trace_path',
+      'cbm.get_code_snippet',
+      'cbm.check_index_coverage',
+      'cbm.detect_changes',
+      'cbm.search_code',
+      'cbm.query_graph',
+    ]);
+    expect(team?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
+      'card.create', 'card.update_configuration', 'canvas.upsert_wire',
+    ]));
+    expect(team?.runtimeOptions?.toolsets).toEqual([
+      'web', 'terminal', 'file', 'browser', 'vision', 'code_execution',
+    ]);
+    expect(team?.prompt).toContain('general-purpose wildcard and capacity fallback');
+    expect(team?.prompt).toContain('runtime-owned automatic parallel worker, review, and synthesis');
+    expect(team?.prompt).toContain('Optional Agent candidate:');
+    expect(team?.prompt).toContain('repeatable missing specialty');
   });
 });
 
@@ -62,6 +133,7 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
     expect(nextNode.templateId).toBe('template_assist');
     expect(nextNode.runtimeOptions?.provider).toBeTruthy();
     expect(nextNode.runtimeOptions?.modelKey).toBeTruthy();
+    expect(nextNode.runtimeOptions?.subagentType).toBe('none');
     expect(Array.isArray(nextNode.runtimeOptions?.tools)).toBe(true);
     expect(nextNode.runtimeOptions?.skills).toEqual([]);
     expect(nextNode.runtimeOptions?.toolsets).toEqual([]);
@@ -101,7 +173,22 @@ describe('buildQuickAddAssistCard (hex-plus add agent)', () => {
   });
 });
 
-describe('initial Magentic-One account binding', () => {
+describe('initial Card subagents', () => {
+  it('keeps explicit none selections and does not add subagentType to delegate Cards', () => {
+    for (const id of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_magentic', 'card_worldsignals_agent']) {
+      expect(INITIAL_DECK.nodes.find((card) => card.id === id)?.runtimeOptions?.subagentType)
+        .toBe('none');
+    }
+    expect(INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph')?.runtimeOptions?.subagentType)
+      .toBe('none');
+    for (const id of ['card_trading_workbench', 'card_team']) {
+      expect(INITIAL_DECK.nodes.find((card) => card.id === id)?.runtimeOptions)
+        .not.toHaveProperty('subagentType');
+    }
+  });
+});
+
+describe('initial Magnetic account binding', () => {
   it('uses the official ChatGPT account model without changing other Cards', () => {
     const magentic = INITIAL_DECK.nodes.find((node) => node.id === 'card_magentic');
     expect(magentic?.runtime).toEqual({

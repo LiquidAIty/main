@@ -51,6 +51,7 @@ export function resolvePythonAgentMcpHostPath(): string {
 let clientPromise: Promise<Client> | null = null;
 
 const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
+const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm']);
 
 async function connect(): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
@@ -105,8 +106,17 @@ export type PythonMcpToolDescriptor = {
 };
 
 export type PythonMcpCatalogRead =
-  | { state: 'available'; tools: PythonMcpToolDescriptor[] }
-  | { state: 'unavailable'; tools: []; reason: 'catalog_unavailable' };
+  | {
+    state: 'available';
+    tools: PythonMcpToolDescriptor[];
+    unavailableFamilies: string[];
+  }
+  | {
+    state: 'unavailable';
+    tools: [];
+    unavailableFamilies: string[];
+    reason: 'catalog_unavailable';
+  };
 
 /** The one supervised official Python MCP host used by every saved-Card adapter. */
 export function resolvePythonAgentMcpServerSpec(
@@ -196,7 +206,10 @@ export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescript
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function pythonAgentMcpCatalogReady(): Promise<boolean> {
+async function readPythonAgentMcpCatalogProbe(): Promise<{
+  ready: boolean;
+  unavailableFamilies: string[];
+}> {
   const url = new URL(resolveInternalMcpUrl());
   url.pathname = '/health/catalog';
   url.search = '';
@@ -205,11 +218,28 @@ async function pythonAgentMcpCatalogReady(): Promise<boolean> {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(OPTIONAL_CATALOG_PROBE_TIMEOUT_MS),
     });
-    if (!response.ok) return false;
+    if (!response.ok) return { ready: false, unavailableFamilies: [] };
     const value = await response.json() as Record<string, unknown>;
-    return value.catalogState === 'ready';
+    const rawFamilies = value.unavailableCatalogFamilies;
+    if (
+      rawFamilies !== undefined
+      && (
+        !Array.isArray(rawFamilies)
+        || rawFamilies.some((family) => (
+          typeof family !== 'string'
+          || !/^[a-z][a-z0-9_-]*$/.test(family)
+          || !OPTIONAL_CATALOG_FAMILIES.has(family)
+        ))
+      )
+    ) {
+      return { ready: false, unavailableFamilies: [] };
+    }
+    return {
+      ready: value.catalogState === 'ready',
+      unavailableFamilies: [...new Set((rawFamilies || []) as string[])],
+    };
   } catch {
-    return false;
+    return { ready: false, unavailableFamilies: [] };
   }
 }
 
@@ -221,13 +251,28 @@ async function pythonAgentMcpCatalogReady(): Promise<boolean> {
  * conversation and private-runtime tools can continue.
  */
 export async function readPythonAgentMcpCatalog(): Promise<PythonMcpCatalogRead> {
-  if (!await pythonAgentMcpCatalogReady()) {
-    return { state: 'unavailable', tools: [], reason: 'catalog_unavailable' };
+  const probe = await readPythonAgentMcpCatalogProbe();
+  if (!probe.ready) {
+    return {
+      state: 'unavailable',
+      tools: [],
+      unavailableFamilies: probe.unavailableFamilies,
+      reason: 'catalog_unavailable',
+    };
   }
   try {
-    return { state: 'available', tools: await listPythonAgentMcpCatalog() };
+    return {
+      state: 'available',
+      tools: await listPythonAgentMcpCatalog(),
+      unavailableFamilies: probe.unavailableFamilies,
+    };
   } catch {
-    return { state: 'unavailable', tools: [], reason: 'catalog_unavailable' };
+    return {
+      state: 'unavailable',
+      tools: [],
+      unavailableFamilies: probe.unavailableFamilies,
+      reason: 'catalog_unavailable',
+    };
   }
 }
 

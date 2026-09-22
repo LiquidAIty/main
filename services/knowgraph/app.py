@@ -63,7 +63,6 @@ def _sanitize_filename(name: str) -> str:
 
 @app.post("/ingest")
 async def ingest(
-    request: Request,
     project_id: str = Form(...),
     document_id: str = Form(...),
     file: UploadFile = File(...),
@@ -81,20 +80,11 @@ async def ingest(
         with saved_path.open("wb") as out:
             shutil.copyfileobj(file.file, out)
 
-        agent_id = (request.headers.get("x-agent-id") or "").strip() or None
-        agent_provider = (request.headers.get("x-agent-provider") or "").strip() or None
-        agent_model_key = (request.headers.get("x-agent-model-key") or "").strip() or None
-        agent_model_id = (request.headers.get("x-agent-model-id") or "").strip() or None
-
         result = await ingest_pdf(
             str(saved_path),
             project_id,
             document_id,
             source_name=filename,
-            provider=agent_provider,
-            model_key=agent_model_key,
-            model_id=agent_model_id,
-            agent_id=agent_id,
             prompt_template=prompt_template,
             organizing_principle=organizing_principle,
             entity_taxonomy_json=entity_taxonomy_json,

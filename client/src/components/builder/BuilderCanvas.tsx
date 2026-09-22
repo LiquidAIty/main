@@ -30,7 +30,7 @@ import type {
 import {
   buildDeckEdgeIdentityKey,
 } from './deckValidation';
-import { isCardController, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
+import { hasMainBotAuthority, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 import {
   GRAPH_THEME,
   graphControlButtonStyle,
@@ -253,16 +253,14 @@ type FlowEdgeData = {
   isReturnEdge?: boolean;
 };
 
-// The dedicated saved top control input on the Mag One bus card. An edge into
-// this handle is the Control plug; every other bus connection is a Worker plug
-// (eligibility only, never invocation).
-const MAG_ONE_CONTROL_HANDLE = 'task-bus-top';
+const MAGNETIC_DIRECT_HANDLE = 'card-control';
+const CARD_CONTROL_TARGET_HANDLE = 'card-control-target';
 
-/** Classify a user-drawn connection into the REAL runtime edge types:
- * bus top handle → 'magentic_control'; any other bus connection →
- * 'magentic_option'; ordinary Hermes Bot availability → 'flow'
- * (one connection authorizes either endpoint to initiate). The browser only labels
- * what the user drew — authority is resolved server-side from the persisted type. */
+/** Classify a user-drawn connection into the two runtime edge types:
+ * Main's orange handle to a saved Card → 'flow'; a Magnetic side-bus handle
+ * → 'magentic_option'. Orange authority is outbound and never implies reverse
+ * control. The browser only labels what the user drew; the server resolves
+ * authority from the persisted type and Main's fixed runtime identity. */
 function resolveCanvasConnectionEdgeType(
   document: DeckDocument,
   connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
@@ -281,18 +279,34 @@ function resolveCanvasConnectionEdgeType(
   if (sourceIsBus && targetIsBus) return null;
 
   if (sourceIsBus || targetIsBus) {
-    const busHandle = String(
+    const magneticHandle = String(
       (sourceIsBus ? connection.sourceHandle : connection.targetHandle) || '',
     ).trim();
-    return busHandle === MAG_ONE_CONTROL_HANDLE ? 'magentic_control' : 'magentic_option';
+    const cardHandle = String(
+      (sourceIsBus ? connection.targetHandle : connection.sourceHandle) || '',
+    ).trim();
+    if (magneticHandle === MAGNETIC_DIRECT_HANDLE) {
+      return targetIsBus
+        && hasMainBotAuthority(sourceNode)
+        && connection.sourceHandle === MAGNETIC_DIRECT_HANDLE
+        ? 'flow'
+        : null;
+    }
+    if (cardHandle === MAGNETIC_DIRECT_HANDLE || cardHandle === CARD_CONTROL_TARGET_HANDLE) {
+      return null;
+    }
+    return 'magentic_option';
   }
 
   const targetOptions = targetNode.runtimeOptions as { enabled?: boolean } | null;
   const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
-  if (!isCardController(sourceNode)
+  if (!hasMainBotAuthority(sourceNode)
+    || connection.sourceHandle !== MAGNETIC_DIRECT_HANDLE
+    || connection.targetHandle !== CARD_CONTROL_TARGET_HANDLE
     || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
     || targetOptions?.enabled === false
     || targetNode.runtime.kind !== 'hermes'
+    || targetNode.runtime.mode === 'magentic_one'
     || !targetProfile
     || document.nodes.filter((card) => card.runtime.kind === 'hermes'
       && card.runtime.profile.trim().toLowerCase() === targetProfile).length !== 1
@@ -378,14 +392,19 @@ export function toFlowEdges(
     const sourceNode = nodeById.get(edge.source) as AgentCardInstance | undefined;
     const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
     if (!sourceNode || !targetNode) return [];
+    const sourceCanOrchestrate = hasMainBotAuthority(sourceNode);
+    const targetIsMagnetic = targetNode.runtime.kind === 'hermes'
+      && targetNode.runtime.mode === 'magentic_one';
     return {
       id: edge.id,
-      hidden: edgeType === 'flow' && (!isCardController(sourceNode) || edge.enabled === false),
+      hidden: edgeType === 'flow' && (!sourceCanOrchestrate || edge.enabled === false),
       source: edge.source,
-      sourceHandle: edgeType === 'flow' && isCardController(sourceNode)
+      sourceHandle: edgeType === 'flow' && sourceCanOrchestrate
         ? 'card-control' : edge.sourceHandle ?? undefined,
       target: edge.target,
-      targetHandle: edge.targetHandle ?? undefined,
+      targetHandle: edgeType === 'flow' && sourceCanOrchestrate
+        ? targetIsMagnetic ? MAGNETIC_DIRECT_HANDLE : CARD_CONTROL_TARGET_HANDLE
+        : edge.targetHandle ?? undefined,
       data: {
         edgeType,
         enabled: edge.enabled !== false,
@@ -401,11 +420,9 @@ export function toFlowEdges(
         isSelected ? 'edge-selected' : null,
         edgeType === 'magentic_option'
           ? 'edge-magentic-option'
-          : edgeType === 'magentic_control'
-            ? 'edge-magentic-control'
-            : edgeType === 'invalid'
-              ? 'edge-invalid'
-              : 'edge-flow',
+          : edgeType === 'invalid'
+            ? 'edge-invalid'
+            : 'edge-flow',
       ]
         .filter(Boolean)
         .join(' '),
@@ -489,7 +506,10 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
           && normalizeDeckEdgeType(edge.edgeType) === 'flow'
           ? edge.sourceHandle ?? null : nextEdge.sourceHandle ?? null,
         target: nextEdge.target,
-        targetHandle: nextEdge.targetHandle ?? null,
+        targetHandle: nextEdge.target === edge.target
+          && nextEdge.targetHandle === CARD_CONTROL_TARGET_HANDLE
+          && normalizeDeckEdgeType(edge.edgeType) === 'flow'
+          ? edge.targetHandle ?? null : nextEdge.targetHandle ?? null,
         edgeType:
           ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
           edge.edgeType ??
@@ -524,6 +544,49 @@ export function isPlainConnectionAllowedForDocument(
   if (connection.source === connection.target) return false;
   const edgeType = resolveCanvasConnectionEdgeType(document, connection);
   if (!edgeType) return false;
+
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node] as const));
+  const masterAssignment = (
+    sourceId: string,
+    targetId: string,
+    type: DeckEdgeType,
+  ): { workerId: string; masterId: string } | null | false => {
+    const source = nodeById.get(sourceId);
+    const target = nodeById.get(targetId);
+    if (!source || !target) return false;
+    if (type === 'flow') {
+      if (!hasMainBotAuthority(source)) return false;
+      if (target.runtime.kind === 'hermes' && target.runtime.mode === 'magentic_one') return null;
+      return { workerId: targetId, masterId: sourceId };
+    }
+    if (type !== 'magentic_option') return null;
+    const sourceIsMagnetic = source.runtime.kind === 'hermes'
+      && source.runtime.mode === 'magentic_one';
+    const targetIsMagnetic = target.runtime.kind === 'hermes'
+      && target.runtime.mode === 'magentic_one';
+    if (sourceIsMagnetic === targetIsMagnetic) return false;
+    const worker = sourceIsMagnetic ? target : source;
+    if (worker.runtime.kind === 'hermes' && worker.runtime.mode === 'main') return false;
+    return {
+      workerId: sourceIsMagnetic ? targetId : sourceId,
+      masterId: sourceIsMagnetic ? sourceId : targetId,
+    };
+  };
+  const candidateMaster = masterAssignment(connection.source, connection.target, edgeType);
+  if (candidateMaster === false) return false;
+  if (candidateMaster && currentEdges.some((edge) => {
+    if (edge.id === ignoreEdgeId || !edge.source || !edge.target) return false;
+    if ((edge.data as FlowEdgeData | undefined)?.enabled === false) return false;
+    const existingType = (
+      (edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType ?? 'flow'
+    ) as DeckEdgeType;
+    const existingMaster = masterAssignment(edge.source, edge.target, existingType);
+    return Boolean(
+      existingMaster
+      && existingMaster.workerId === candidateMaster.workerId
+      && existingMaster.masterId !== candidateMaster.masterId,
+    );
+  })) return false;
 
   const nextEdgeKey = buildDeckEdgeIdentityKey({
     source: connection.source,
@@ -953,6 +1016,12 @@ export default function BuilderCanvas({
           box-shadow:
             0 0 0 2px ${GRAPH_THEME.accent.primarySoft},
             0 0 0 5px ${GRAPH_THEME.accent.solarSoft};
+        }
+        .builder-flow .react-flow__handle.card-control-target.connectionindicator {
+          opacity: 0.34 !important;
+          border: 1px solid ${GRAPH_THEME.accent.solar} !important;
+          background: ${GRAPH_THEME.accent.solarSoft} !important;
+          box-shadow: 0 0 0 3px ${GRAPH_THEME.accent.solarSoft} !important;
         }
         .builder-flow .react-flow__connection-path {
           stroke: ${GRAPH_THEME.accent.primary};

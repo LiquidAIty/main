@@ -38,24 +38,50 @@ describe('pythonRailsClient', () => {
     }));
 
     const result = await describeConnectedAgents(
-      { projectId: 'project-1', deckId: 'deck-1' },
+      {
+        projectId: 'project-1',
+        deckId: 'deck-1',
+        discoveredToolNames: ['cbm.search_graph'],
+        discoveredToolCatalogState: 'available',
+        unavailableToolCatalogFamilies: [],
+      },
       request as any,
     );
 
     expect(request).toHaveBeenCalledWith(
       '/domain/mag-one/project-1/deck-1/agents',
-      { method: 'GET' },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          discoveredToolNames: ['cbm.search_graph'],
+          discoveredToolCatalogState: 'available',
+          unavailableToolCatalogFamilies: [],
+        }),
+      },
     );
     expect(result.connectedAgents.map((agent) => agent.cardId)).toEqual(['card_worker']);
   });
 
   it('rejects missing Mag One roster identity and malformed Python responses', async () => {
     await expect(
-      describeConnectedAgents({ projectId: '', deckId: 'deck-1' }, vi.fn() as any),
+      describeConnectedAgents({
+        projectId: '',
+        deckId: 'deck-1',
+        discoveredToolNames: [],
+        discoveredToolCatalogState: 'unavailable',
+        unavailableToolCatalogFamilies: [],
+      }, vi.fn() as any),
     ).rejects.toThrow('projectId_and_deckId_required');
     await expect(
       describeConnectedAgents(
-        { projectId: 'project-1', deckId: 'deck-1' },
+        {
+          projectId: 'project-1',
+          deckId: 'deck-1',
+          discoveredToolNames: [],
+          discoveredToolCatalogState: 'unavailable',
+          unavailableToolCatalogFamilies: [],
+        },
         vi.fn(async () => ({ ok: true, connectedAgents: [] })) as any,
       ),
     ).rejects.toThrow('mag_one_connected_agents_response_invalid');

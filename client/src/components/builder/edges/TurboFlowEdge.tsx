@@ -67,7 +67,6 @@ export default function TurboFlowEdge(props: EdgeProps) {
   const isSelected = Boolean(edgeData.isSelected || selected);
   const isActive = Boolean(edgeData.motion === "active" || edgeData.isActive);
   const isMagenticWorker = edgeData.edgeType === "magentic_option";
-  const isMagenticControl = edgeData.edgeType === "magentic_control";
   // An unrecognised persisted edge authorises nothing at runtime — render it
   // visibly inert (muted), never as a Call.
   const isInvalid = edgeData.edgeType === "invalid" || edgeData.enabled === false;
@@ -78,11 +77,9 @@ export default function TurboFlowEdge(props: EdgeProps) {
       ? GRAPH_THEME.accent.primary
       : isActive
         ? GRAPH_THEME.accent.solar
-        : isMagenticControl
-          ? "#52DCEB"
-          : isMagenticWorker
-            ? "#22B8C7"
-            : "#E7A18B";
+        : isMagenticWorker
+          ? "#22B8C7"
+          : "#E7A18B";
   const edgeOpacity = isSelected
     ? Math.max(0.95, Math.min(1, opacity))
     : isActive

@@ -23,8 +23,8 @@ const deck: DeckDocument = {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' }, position: { x: 0, y: 0 },
     },
     {
-      id: 'card_hermes_steward', templateId: 'template_hermes_steward', title: 'Graph Agent',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' }, position: { x: 100, y: 0 },
+      id: 'card_knowgraph', templateId: 'template_knowgraph', title: 'KnowGraph',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' }, position: { x: 100, y: 0 },
     },
   ],
   edges: [],
@@ -54,7 +54,7 @@ describe('useCardActiveAgentCounts', () => {
       const body = JSON.parse(String(init?.body || '{}'));
       return new Response(JSON.stringify({
         ok: true,
-        result: body.cardId === 'card_hermes_steward'
+        result: body.cardId === 'card_knowgraph'
           ? { cardId: body.cardId, state: 'running', activeWorkers: 2 }
           : { cardId: body.cardId, state: 'running', activeWorkers: 0 },
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -66,10 +66,10 @@ describe('useCardActiveAgentCounts', () => {
 
     await waitFor(() => expect(result.current.activeAgentCounts).toEqual({
       card_test_delegate: 1,
-      card_hermes_steward: 3,
+      card_knowgraph: 3,
     }));
     expect(new Set(result.current.activeCardIds)).toEqual(new Set([
-      'card_test_delegate', 'card_hermes_steward',
+      'card_test_delegate', 'card_knowgraph',
     ]));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const call of fetchMock.mock.calls) {

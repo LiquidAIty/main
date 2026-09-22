@@ -269,7 +269,7 @@ def _apply_fanout(
     routing: _Routing,
     author: str,
     *,
-    team_worker_policy: Optional[dict] = None,
+    team_policy: Optional[dict] = None,
 ) -> DecomposeOutcome:
     raw_tasks = parsed.get("tasks") or []
     if not isinstance(raw_tasks, list) or not raw_tasks:
@@ -277,13 +277,15 @@ def _apply_fanout(
     children, reason = _clean_children(task_id, raw_tasks, routing)
     if reason:
         return DecomposeOutcome(task_id, False, reason)
-    if team_worker_policy is not None:
+    if team_policy is not None:
         for child in children:
             child.update({
-                "max_retries": team_worker_policy["max_retries"],
-                "model_override": team_worker_policy["worker_model"],
-                "provider_override": team_worker_policy["worker_provider"],
-                "reasoning_effort": team_worker_policy["worker_reasoning"],
+                # The decomposer may describe specialties, but every temporary
+                # worker executes through the exact saved Team profile.
+                "assignee": team_policy["profile"],
+                "model_override": team_policy["worker_model"],
+                "provider_override": team_policy["worker_provider"],
+                "reasoning_effort": team_policy["worker_reasoning"],
             })
     try:
         with kbc.connect_closing() as conn:
@@ -320,29 +322,40 @@ def decompose_task(
     if task is None:
         return DecomposeOutcome(task_id, False, reason)
 
-    routing = _load_routing()
-    is_team = task.workflow_template_id == "delegate-team-v1"
-    team_worker_policy = None
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+    is_team = task.workflow_template_id == TEAM_WORKFLOW_ID
+    team_policy = None
     system_prompt = _SYSTEM_PROMPT
     if is_team:
-        from hermes_cli.kanban_team import team_policy
+        from hermes_cli.kanban_team import team_profile_policy
 
         try:
-            team_worker_policy = team_policy()
+            team_policy = team_profile_policy(task.assignee or "")
         except Exception as exc:
             return DecomposeOutcome(task_id, False, f"Team policy unavailable: {exc}")
+        profile = str(team_policy["profile"])
         routing = _Routing(
-            orchestrator=task.assignee or routing.orchestrator,
-            default_assignee=routing.default_assignee,
-            auto_promote=routing.auto_promote,
-            roster=routing.roster,
-            valid_names=routing.valid_names,
+            orchestrator=profile,
+            default_assignee=profile,
+            # Saved Team is one automatic decompose/work/synthesize unit. The
+            # generic manual-review setting remains authoritative only for
+            # ordinary Triage graphs.
+            auto_promote=True,
+            roster=[{
+                "name": profile,
+                "description": "Temporary worker for this saved Team profile",
+                "has_description": True,
+            }],
+            valid_names={profile},
         )
         system_prompt += (
-            "\n\nThis Triage item is a bounded delegate Team mission. "
+            "\n\nThis Triage item is a bounded saved Team mission. "
             "The worker graph is depth one: workers may depend on siblings but must not create or "
             "delegate further work. The root performs final review and synthesis after every child finishes."
         )
+    else:
+        routing = _load_routing()
     raw, reason = _call_aux(
         "decompose", task_id, aux_task="kanban_decomposer", system=system_prompt,
         user=_USER_TEMPLATE.format(
@@ -369,7 +382,7 @@ def decompose_task(
         parsed,
         routing,
         audit_author,
-        team_worker_policy=team_worker_policy,
+        team_policy=team_policy,
     )
 
 

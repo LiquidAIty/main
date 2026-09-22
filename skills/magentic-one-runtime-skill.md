@@ -6,22 +6,26 @@ bus whose execution engine is Hermes.
 ## Invariants
 
 1. The saved Mag One Card owns orchestrator identity, prompt, provider/model, grants, and Hermes profile.
-2. The saved `magentic_control` edge owns who may start the bus.
-3. Enabled saved `magentic_option` edges own the complete worker roster.
-4. Resolve exact current Card revisions and Hermes bindings; never infer membership from titles, prompts,
+2. An ordinary orange relationship from a non-Magnetic Card with its saved `Orchestrator` setting enabled
+   authorizes that source to call Magnetic. The explicit invocation starts an approved run; the wire itself
+   never starts or controls Magnetic.
+3. Enabled saved `magentic_option` edges own the complete worker roster and mean only that those Cards are available to Magnetic.
+4. One saved Card may be orange-connected to an orchestrator and blue-connected to Magnetic at the same time. Orange
+   invokes that Card directly; blue makes the same identity available through Hermes' SQLite task ledger.
+5. Resolve exact current Card revisions and Hermes bindings; never infer membership from titles, prompts,
    installed profiles, or global discovery.
-5. The transient Mag One input and selected native references pass through the one canonical reloaded
+6. The transient Mag One input and selected native references pass through the one canonical reloaded
    `in.idf`; `run_mag_one` and the Canvas share the existing `/api/cards/run` doorway.
-6. Hermes SQLite owns native tasks, dependencies, attempts, assignment, retries, dispatch, and summaries.
+7. Hermes SQLite owns native tasks, dependencies, attempts, assignment, retries, dispatch, and summaries.
    PostgreSQL keeps only the one outer product Run and final result; do not copy native task rows.
-7. The root task carries an inherited assignee ceiling containing only the saved Mag One profile and the
+8. The root task carries an inherited assignee ceiling containing only the saved Mag One profile and the
    exact projected workers. A native child cannot widen or replace that ceiling.
-8. The saved Mag One profile performs model-driven decomposition and creates exactly one final dependency
+9. The saved Mag One profile performs model-driven decomposition and creates exactly one final dependency
    sink assigned back to itself. Return only that verified native summary as the final result.
-9. Keep the bus headless. Do not add a terminal, transcript, task feed, board UI, fabricated artifacts,
+10. Keep the bus headless. Do not add a terminal, transcript, task feed, board UI, fabricated artifacts,
    replacement scheduler, worker registry, temporary global workers, or fallback executor.
-10. Each worker runs its exact saved profile configuration, tools, skills, plugins/MCP, model/provider,
-    context authority, and native session. Contained subagents remain inside that Card's runtime.
+11. Each worker runs its exact saved profile configuration, tools, skills, plugins/MCP, model/provider,
+     context authority, and native session. Contained subagents remain inside that Card's runtime.
 
 ## Discovery
 

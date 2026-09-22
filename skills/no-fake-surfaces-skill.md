@@ -23,4 +23,4 @@ assistant prose for task objects, hide invalid evidence with a lexical filter, o
 from answer text. Repair the actual owner after establishing the earliest mismatch.
 
 PlanFlow execution remains governed by its current wiring and `AGENTS.md`; restoring this skill
-does not enable task execution or private Magentic-One ledger inspection.
+does not enable task execution or private Magnetic ledger inspection.

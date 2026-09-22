@@ -5,6 +5,8 @@ canonical Bot Chat session on a Bot-Mode-managed install, and must refuse to
 deliver from anywhere else even if a schema leaks.
 """
 
+import contextlib
+import hashlib
 import json
 import os
 import shlex
@@ -59,6 +61,19 @@ def _managed_home(tmp_path, *, teammates=("researcher",), peers=()) -> Path:
         }
     (home / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     return home
+
+
+def _set_team_mode(home: Path, profile: str, mode: str = "team") -> None:
+    config_path = home / "profiles" / profile / "config.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config["kanban"] = {"task_mode": mode}
+    config["model"] = {"provider": "test-parent", "default": "parent-model"}
+    config["delegation"] = {
+        "provider": "test-worker",
+        "model": "worker-model",
+        "reasoning_effort": "low",
+    }
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
 class _FakeDB:
@@ -219,6 +234,239 @@ def test_unregistered_peer_rejected(tmp_path):
     )
     assert "error" in result
     assert result["peers"] == ["spark"]
+
+
+# ── structurally marked Team route ──────────────────────────────────────────
+
+
+def test_team_target_creates_one_root_with_full_notification_route(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("team",))
+    _set_team_mode(home, "team")
+    agent = _FakeAgent(home, title="Bot Chat")
+    route = {
+        "platform": "api_server",
+        "chat_id": "chat-1",
+        "thread_id": "thread-1",
+        "user_id": "user-1",
+        "user_id_alt": "alt-1",
+        "chat_type": "direct",
+        "notifier_profile": "default",
+        "delivery_mode": "notify+wake",
+        "delivery_metadata": {"scope_id": "scope-1", "parent_chat_id": "parent-1"},
+    }
+    calls = []
+    connection = object()
+
+    from hermes_cli import kanban_db_connect, kanban_team
+    from tools import kanban_tools
+
+    monkeypatch.setattr(kanban_tools, "_resolve_notify_target", lambda: route)
+    monkeypatch.setattr(
+        kanban_db_connect,
+        "connect_closing",
+        lambda: contextlib.nullcontext(connection),
+    )
+
+    class Task:
+        id = "t_team123"
+
+    def create_team_root(conn, **kwargs):
+        calls.append((conn, kwargs))
+        return Task()
+
+    monkeypatch.setattr(kanban_team, "create_team_root", create_team_root)
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_delivery",
+        lambda *args, **kwargs: pytest.fail("Team must not use Bot Chat delivery"),
+    )
+
+    result = json.loads(
+        bot_mode_dm.message_agent_tool(
+            target="@team",
+            message="Investigate the signal\nand return evidence.",
+            tool_call_id="call-7",
+            agent=agent,
+        )
+    )
+
+    assert result["status"] == "sent"
+    assert result["to"] == "@team"
+    assert result["task_id"] == "t_team123"
+    assert "process_id" not in result
+    assert len(calls) == 1
+    conn, submitted = calls[0]
+    assert conn is connection
+    assert submitted["assignee"] == "team"
+    assert submitted["profile_home"] == str(home / "profiles" / "team")
+    assert submitted["title"] == "Investigate the signal"
+    assert submitted["body"] == (
+        "Message from 🤖 hermes (@hermes): Investigate the signal\nand return evidence."
+    )
+    assert submitted["created_by"] == "message_agent:default"
+    assert submitted["session_id"] == "sess-1"
+    assert submitted["idempotency_key"] == "message-agent-team:" + hashlib.sha256(
+        b"sess-1\0call-7"
+    ).hexdigest()
+    assert {
+        "platform": submitted["notify_platform"],
+        "chat_id": submitted["notify_chat_id"],
+        "thread_id": submitted["notify_thread_id"],
+        "user_id": submitted["notify_user_id"],
+        "user_id_alt": submitted["notify_user_id_alt"],
+        "chat_type": submitted["notify_chat_type"],
+        "notifier_profile": submitted["notifier_profile"],
+        "delivery_mode": submitted["notify_delivery_mode"],
+        "delivery_metadata": submitted["notify_delivery_metadata"],
+    } == route
+
+
+def test_team_target_requires_unique_tool_call_id_before_submission(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("team",))
+    _set_team_mode(home, "team")
+    agent = _FakeAgent(home, title="Bot Chat")
+
+    from tools import kanban_tools
+
+    monkeypatch.setattr(
+        kanban_tools,
+        "_resolve_notify_target",
+        lambda: pytest.fail("notification lookup must follow unique call validation"),
+    )
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_delivery",
+        lambda *args, **kwargs: pytest.fail("Team must not fall back to Bot Chat delivery"),
+    )
+
+    result = json.loads(
+        bot_mode_dm.message_agent_tool(target="team", message="mission", agent=agent)
+    )
+
+    assert "error" in result
+    assert "unique tool-call id" in result["error"]
+    assert "Nothing was submitted" in result["error"]
+
+
+def test_team_target_requires_durable_route_without_fallback(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("team",))
+    _set_team_mode(home, "team")
+    agent = _FakeAgent(home, title="Bot Chat")
+
+    from hermes_cli import kanban_team
+    from tools import kanban_tools
+
+    monkeypatch.setattr(kanban_tools, "_resolve_notify_target", lambda: None)
+    monkeypatch.setattr(
+        kanban_team,
+        "create_team_root",
+        lambda *args, **kwargs: pytest.fail("missing route must prevent root creation"),
+    )
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_delivery",
+        lambda *args, **kwargs: pytest.fail("Team must not fall back to Bot Chat delivery"),
+    )
+
+    result = json.loads(
+        bot_mode_dm.message_agent_tool(
+            target="team", message="mission", tool_call_id="call-8", agent=agent
+        )
+    )
+
+    assert "error" in result
+    assert "durable completion route" in result["error"]
+    assert "Nothing was submitted" in result["error"]
+
+
+def test_invalid_saved_task_mode_fails_without_bot_delivery(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("team",))
+    _set_team_mode(home, "team", mode="delegate")
+    agent = _FakeAgent(home, title="Bot Chat")
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_start_delivery",
+        lambda *args, **kwargs: pytest.fail("invalid task mode must not fall back"),
+    )
+
+    result = json.loads(
+        bot_mode_dm.message_agent_tool(
+            target="team", message="mission", tool_call_id="call-9", agent=agent
+        )
+    )
+
+    assert "error" in result
+    assert "saved task mode is invalid" in result["error"]
+    assert "unsupported kanban.task_mode" in result["error"]
+    assert "Nothing was submitted" in result["error"]
+
+
+def test_peer_relay_self_and_unknown_targets_never_inspect_team_mode(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path, teammates=("researcher",), peers=("spark",))
+    agent = _FakeAgent(home, title="Bot Chat")
+
+    from hermes_cli import kanban_team
+
+    monkeypatch.setattr(
+        kanban_team,
+        "profile_task_mode",
+        lambda *args, **kwargs: pytest.fail("non-local targets must not inspect Team config"),
+    )
+    calls = _capture_spawn(monkeypatch)
+    monkeypatch.setattr(bot_relay, "_hermes_cli", lambda: "hermes")
+
+    peer = json.loads(
+        bot_mode_dm.message_agent_tool(target="spark", message="peer", agent=agent)
+    )
+    assert peer["status"] == "sent"
+    assert len(calls) == 1
+
+    monkeypatch.setattr(
+        bot_mode_dm,
+        "_try_relay_delivery",
+        lambda *args, **kwargs: json.dumps({"status": "queued", "to": "@remote on desktop"}),
+    )
+    relay = json.loads(
+        bot_mode_dm.message_agent_tool(target="remote@desktop", message="relay", agent=agent)
+    )
+    assert relay["status"] == "queued"
+
+    monkeypatch.setattr(bot_mode_dm, "_try_relay_delivery", lambda *args, **kwargs: None)
+    self_result = json.loads(
+        bot_mode_dm.message_agent_tool(target="hermes", message="self", agent=agent)
+    )
+    unknown = json.loads(
+        bot_mode_dm.message_agent_tool(target="ghost", message="unknown", agent=agent)
+    )
+    assert "yourself" in self_result["error"]
+    assert "No teammate" in unknown["error"]
+
+
+def test_message_agent_inline_executor_forwards_tool_call_identity(monkeypatch):
+    from agent.inline_tool_executors import INLINE_TOOL_EXECUTORS, InlineToolContext
+
+    seen = {}
+    agent = object()
+
+    def capture(**kwargs):
+        seen.update(kwargs)
+        return "captured"
+
+    monkeypatch.setattr(bot_mode_dm, "message_agent_tool", capture)
+    result = INLINE_TOOL_EXECUTORS["message_agent"](
+        agent,
+        {"target": "team", "message": "mission"},
+        InlineToolContext(effective_task_id="task-1", tool_call_id="call-10"),
+    )
+
+    assert result == "captured"
+    assert seen == {
+        "target": "team",
+        "message": "mission",
+        "task_id": "task-1",
+        "agent": agent,
+        "tool_call_id": "call-10",
+    }
 
 
 # ── delivery command shape ───────────────────────────────────────────────────

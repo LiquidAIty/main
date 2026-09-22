@@ -6,8 +6,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import AgentCardNode from './AgentCardNode';
 
 vi.mock('@xyflow/react', () => ({
-  Handle: ({ 'aria-label': ariaLabel }: { 'aria-label'?: string }) => (
-    <span aria-label={ariaLabel} />
+  Handle: ({
+    'aria-label': ariaLabel,
+    id,
+    className,
+    style,
+    type,
+  }: {
+    'aria-label'?: string;
+    id?: string;
+    className?: string;
+    style?: React.CSSProperties;
+    type?: string;
+  }) => (
+    <span aria-label={ariaLabel} className={className} data-handle-id={id} data-handle-type={type} style={style} />
   ),
   Position: { Left: 'left', Right: 'right' },
 }));
@@ -24,34 +36,69 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
-  it('shows Card control output for every enabled Hermes Agent source and retains worker output', () => {
+  it('shows an orange source only on Main while every Card keeps an orange input', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
     const { rerender } = render(<AgentCardNode data={card} />);
-    expect(screen.getByLabelText('Test Agent Card control output')).not.toBeNull();
-    expect(screen.getByLabelText('Test Agent Mag One worker output')).not.toBeNull();
-    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { delegationRole: 'off' } }} />);
-    expect(screen.getByLabelText('Test Agent Card control output')).not.toBeNull();
-    rerender(<AgentCardNode data={{ ...card, runtimeOptions: { enabled: false } }} />);
-    expect(screen.queryByLabelText('Test Agent Card control output')).toBeNull();
+    expect(screen.queryByLabelText('Test Agent bot output')).toBeNull();
+    expect(screen.getByLabelText('Test Agent Magnetic worker output')).not.toBeNull();
+    const directInput = screen.getByLabelText('Test Agent bot input');
+    expect(directInput.getAttribute('data-handle-id')).toBe('card-control-target');
+    expect(directInput.style.opacity).toBe('0');
+    rerender(<AgentCardNode data={{
+      ...card,
+      title: 'Main',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+    }} />);
+    const directHandle = screen.getByLabelText('Main bot output');
+    expect(directHandle.getAttribute('data-handle-id')).toBe('card-control');
+    expect(directHandle.getAttribute('data-handle-type')).toBe('source');
+    rerender(<AgentCardNode data={{
+      ...card,
+      title: 'Main',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+      runtimeOptions: { enabled: false } as any,
+    }} />);
+    expect(screen.queryByLabelText('Main bot output')).toBeNull();
   });
-  it('keeps the same compact geometry across Hermes Card runtime modes', () => {
+
+  it('renders Main as a hexagon while ordinary Cards keep the compact rounded geometry', () => {
     const { container, rerender } = render(
       <AgentCardNode
-        data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'main', profile: 'main' } }}
+        data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' } }}
       />,
     );
     const card = container.firstElementChild as HTMLElement;
     expect(card.style.width).toBe('124px');
     expect(card.style.minHeight).toBe('90px');
-    expect(card.style.aspectRatio).toBe('');
+    expect(card.dataset.cardShape).toBe('rounded');
+    expect(screen.queryByTestId('main-card-hexagon')).toBeNull();
 
     rerender(<AgentCardNode data={{
       ...baseCard,
+      title: 'Main',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
+    }} />);
+    expect(card.style.width).toBe('136px');
+    expect(card.style.minHeight).toBe('104px');
+    expect(card.dataset.cardShape).toBe('hexagon');
+    expect(screen.getByTestId('main-card-hexagon').style.clipPath).toContain('polygon');
+    expect(screen.getByLabelText('Main bot output')).not.toBeNull();
+  });
+
+  it('keeps ordinary Cards rounded and never enables Magnetic orange output', () => {
+    const { container, rerender } = render(<AgentCardNode data={{
+      ...baseCard,
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal' },
+    }} />);
+    expect((container.firstElementChild as HTMLElement).dataset.cardShape).toBe('rounded');
+    expect(screen.queryByLabelText('Test Agent bot output')).toBeNull();
+
+    rerender(<AgentCardNode data={{
+      ...baseCard,
+      title: 'Magnetic',
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
     }} />);
-    expect(card.style.width).toBe('124px');
-    expect(card.style.minHeight).toBe('90px');
-    expect(card.style.aspectRatio).toBe('');
+    expect(screen.queryByLabelText('Magnetic bot output')).toBeNull();
   });
 
   it('shows only the live numeric agent count beside the Card name', () => {

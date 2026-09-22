@@ -5,7 +5,6 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 RequiredRuntimeString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-CardDelegationRole = Literal["off", "leaf", "orchestrator", "team"]
 
 
 class ToolSpec(BaseModel):
@@ -58,11 +57,15 @@ class CardSubagentModel(BaseModel):
     providerModelId: str = Field(min_length=1, max_length=256)
 
 
+CardSubagentType = Literal["none", "leaf", "recursive"]
+
+
 class CardConfiguration(BaseModel):
     """Executable field shapes referenced by the Card dictionary."""
     runtimeKind: str
     runtimeMode: str
     runtimeProfile: str = ""
+    subagentType: CardSubagentType = "none"
     provider: str = ""
     accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str = ""
@@ -73,7 +76,6 @@ class CardConfiguration(BaseModel):
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
     subagentModel: CardSubagentModel | None = None
-    delegationRole: CardDelegationRole = "off"
 
 
 class DataAnchorReference(BaseModel):

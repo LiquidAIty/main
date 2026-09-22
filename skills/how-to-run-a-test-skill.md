@@ -8,7 +8,7 @@
 
 Use to choose and execute a meaningful test for the requested behavior. Recovered from
 `2ddadeeb^` and refreshed September 9, 2026. Main is Hermes; the old instruction to treat
-ordinary Main chat as a Magentic-One test is obsolete. Builder/CLI tests require an actual
+ordinary Main chat as a Magnetic test is obsolete. Builder/CLI tests require an actual
 Builder/CLI task and authorization, not merely available controls.
 
 1. Name the behavior, affected preservation invariants, and what result could disprove success.

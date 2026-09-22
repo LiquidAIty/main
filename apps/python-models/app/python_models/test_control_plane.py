@@ -350,6 +350,7 @@ class TestCardCreate:
         assert fake_backend["expectedRevision"] == "rev1"
         card = result["card"]
         assert card["runtime"] == args["runtime"]
+        assert card["runtimeOptions"]["subagentType"] == "none"
         for key in ("nativeTools", "skills", "toolsets"):
             assert card["runtimeOptions"][key] == args[key]
         assert card["position"] == args["position"]
@@ -362,6 +363,23 @@ class TestCardCreate:
         monkeypatch.setitem(DECK["nodes"][2]["runtimeOptions"], "tools", [])
         with pytest.raises(cp.ControlPlaneError, match="card_create_not_granted"):
             asyncio.run(cp.card_create(create_args(), caller_card_id="builder-card"))
+        assert fake_backend == {}
+
+    @pytest.mark.parametrize("selection", ["none", "leaf", "recursive"])
+    def test_create_saves_one_exact_subagent_type(self, fake_backend, selection):
+        result = asyncio.run(cp.card_create(
+            create_args(subagentType=selection),
+            caller_card_id="builder-card",
+        ))
+
+        assert result["card"]["runtimeOptions"]["subagentType"] == selection
+
+    def test_create_rejects_retired_team_as_a_subagent_type(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_create_subagent_type_invalid"):
+            asyncio.run(cp.card_create(
+                create_args(subagentType="team"),
+                caller_card_id="builder-card",
+            ))
         assert fake_backend == {}
 
     @pytest.mark.parametrize(("change", "error"), [
@@ -430,6 +448,31 @@ class TestCardUpdateConfiguration:
         card = next(n for n in fake_backend["deck"]["nodes"] if n["id"] == "signals-card")
         assert card["prompt"] == "new prompt"
         assert card["runtimeOptions"]["tools"] == ["web_search"]
+
+    @pytest.mark.parametrize("selection", ["none", "leaf", "recursive"])
+    def test_subagent_type_update_persists_with_revision(self, fake_backend, selection):
+        result = asyncio.run(cp.card_update_configuration({
+            "expectedRevision": "rev1",
+            "expectedCardRevisionId": "revision:signals-card",
+            "projectId": "p",
+            "deckId": "d",
+            "cardId": "signals-card",
+            "updates": {"subagentType": selection},
+        }, caller_card_id="builder-card"))
+
+        assert result["card"]["runtimeOptions"]["subagentType"] == selection
+
+    def test_subagent_type_update_rejects_retired_team(self, fake_backend):
+        with pytest.raises(cp.ControlPlaneError, match="card_update_subagent_type_invalid"):
+            asyncio.run(cp.card_update_configuration({
+                "expectedRevision": "rev1",
+                "expectedCardRevisionId": "revision:signals-card",
+                "projectId": "p",
+                "deckId": "d",
+                "cardId": "signals-card",
+                "updates": {"subagentType": "team"},
+            }, caller_card_id="builder-card"))
+        assert fake_backend == {}
 
     def test_card_script_update_preserves_source_and_records_unavailable_native_owner(
         self, fake_backend,
@@ -596,6 +639,9 @@ class TestUpsertWire:
     def test_magentic_option_upsert_persists(self, fake_backend, monkeypatch):
         import copy
         deck = copy.deepcopy(DECK)
+        # This case exercises a clean blue membership edit; the shared fixture's
+        # unrelated legacy worker-to-worker flow is not a valid Main assignment.
+        deck['edges'] = []
         deck['nodes'].append({
             'id': 'mag',
             'runtime': {'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'mag'},
@@ -609,14 +655,64 @@ class TestUpsertWire:
         edges = fake_backend["deck"]["edges"]
         assert any(e["edgeType"] == "magentic_option" for e in edges)
 
-    @pytest.mark.parametrize('edge_type', ['flow', 'magentic_option', 'magentic_control'])
+    def test_wire_upsert_refuses_two_masters_but_allows_exact_rewire(self, monkeypatch):
+        import copy
+
+        main = {
+            'id': 'main', 'kind': 'agent', 'title': 'Main',
+            'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'main'},
+            'runtimeOptions': {},
+        }
+        team = {
+            'id': 'card_team', 'kind': 'agent', 'title': 'Team',
+            'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'team'},
+            'runtimeOptions': {},
+        }
+        magnetic = {
+            'id': 'magnetic', 'kind': 'agent', 'title': 'Magnetic',
+            'runtime': {'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'magnetic'},
+            'runtimeOptions': {},
+        }
+        blue = {
+            'id': 'team-master', 'source': 'card_team', 'target': 'magnetic',
+            'edgeType': 'magentic_option',
+        }
+        deck = {'nodes': [main, team, magnetic], 'edges': [blue]}
+        saved = []
+        monkeypatch.setattr(cp, '_load_deck', lambda *_: (copy.deepcopy(deck), 'rev1'))
+        monkeypatch.setattr(cp, '_save_deck', lambda *_args: saved.append(copy.deepcopy(_args[2])))
+
+        with pytest.raises(cp.ControlPlaneError, match='card_master_conflict:card_team'):
+            asyncio.run(cp.canvas_upsert_wire({
+                'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
+                'wire': {
+                    'id': 'second-master', 'source': 'main', 'target': 'card_team',
+                    'edgeType': 'flow',
+                },
+            }))
+        assert saved == []
+
+        result = asyncio.run(cp.canvas_upsert_wire({
+            'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
+            'wire': {
+                'id': 'team-master', 'source': 'main', 'target': 'card_team',
+                'edgeType': 'flow',
+            },
+        }))
+        assert result['ok'] is True
+        assert saved[-1]['edges'] == [{
+            'id': 'team-master', 'source': 'main', 'target': 'card_team',
+            'edgeType': 'flow',
+        }]
+
+    @pytest.mark.parametrize('edge_type', ['flow', 'magentic_option'])
     def test_wire_round_trip_and_identical_upsert_preserve_every_field(self, monkeypatch, edge_type):
         import copy
         from app.python_models import card_domain
-        source = {'id': 'source', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'source'},
+        source = {'id': 'source', 'title': 'Source', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'source'},
                   'runtimeOptions': {'tools': ['canvas.inspect']}}
-        target = {'id': 'target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
-                  'runtimeOptions': {'delegationRole': "off"}}
+        target = {'id': 'target', 'title': 'Target', 'kind': 'agent', 'runtime': {'kind': 'hermes', 'mode': 'delegate', 'profile': 'target'},
+                  'runtimeOptions': {}}
         if edge_type != 'flow':
             target['runtime'] = {
                 'kind': 'hermes', 'mode': 'magentic_one', 'profile': 'target',

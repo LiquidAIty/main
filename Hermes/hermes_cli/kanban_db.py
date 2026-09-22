@@ -1346,8 +1346,8 @@ def create_task(
     in the active profile's projects.db — see ``_resolve_project_link``.
     ``workspace_kind=None`` (omitted) inherits a project-scoped board's project;
     an explicit ``"scratch"`` or ``project_id=""`` is a request for no project.
-    ``workflow_template_id`` and ``current_step_key`` are reserved here for the
-    bounded delegate-Team root marker; ordinary tasks leave them unset.
+    ``workflow_template_id`` and ``current_step_key`` are reserved here for
+    bounded marked workflows such as Auto Team; ordinary tasks leave them unset.
     """
     from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
     from hermes_cli.kanban_pr_acceptance import validate_contract
@@ -3728,27 +3728,6 @@ def invalidate_descendants_for_parent_reopen(
     return {"invalidated": invalidated, "terminations": terminations}
 
 
-def activate_team_triage_task(conn: sqlite3.Connection, task_id: str) -> bool:
-    """Move one fully validated delegate-Team root from its parked state into native Triage."""
-    with write_txn(conn):
-        cur = conn.execute(
-            "UPDATE tasks SET status='triage', block_kind=NULL, "
-            "current_step_key='decomposition' "
-            "WHERE id=? AND status='blocked' "
-            "AND workflow_template_id='delegate-team-v1'",
-            (task_id,),
-        )
-        if cur.rowcount != 1:
-            return False
-        _append_event(
-            conn,
-            task_id,
-            "team_activated",
-            {"workflow_template_id": "delegate-team-v1"},
-        )
-    return True
-
-
 def specify_triage_task(
     conn: sqlite3.Connection, task_id: str, *, title: Optional[str] = None,
     body: Optional[str] = None, assignee: Optional[str] = None, author: Optional[str] = None,
@@ -3937,7 +3916,9 @@ def build_worker_context(conn: sqlite3.Connection, task_id: str) -> str:
     now = int(time.time())
     lines: list[str] = []
     _ctx_header(lines, task)
-    if task.workflow_template_id == "delegate-team-v1" and task.current_step_key == "synthesis":
+    from hermes_cli.kanban_team import TEAM_SYNTHESIS_STEP, TEAM_WORKFLOW_ID
+
+    if task.workflow_template_id == TEAM_WORKFLOW_ID and task.current_step_key == TEAM_SYNTHESIS_STEP:
         lines.extend([
             "## Team review and synthesis contract",
             "This is the separate final review/synthesis pass. Review every completed worker report below "

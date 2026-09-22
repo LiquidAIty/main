@@ -10,7 +10,8 @@ function progress(overrides: Partial<HermesKanbanProgress> = {}): HermesKanbanPr
   return {
     nativeRootId: 't_existing_root',
     nativeRunId: 10,
-    phase: 'complete',
+    nativeStatus: 'done',
+    nativeTasks: [],
     tasksCompleted: 4,
     tasksTotal: 4,
     activeWorkers: 0,
@@ -47,7 +48,7 @@ describe('retained standalone Kanban Run recovery', () => {
     });
     const rejoin = vi.fn(async (args: any) => {
       await args.onProgress(progress({
-        nativeRunId: 9, phase: 'working', tasksCompleted: 2, activeWorkers: 1,
+        nativeRunId: 9, nativeStatus: 'running', tasksCompleted: 2, activeWorkers: 1,
       }));
       await completed;
       return {
@@ -129,7 +130,6 @@ describe('retained standalone Kanban Run recovery', () => {
     expect(writes[0]).toMatchObject({
       runId: 'run-durable-1',
       state: 'blocked',
-      nativePhase: 'blocked',
       errorSummary: 'hermes_kanban_card_blocked',
     });
   });

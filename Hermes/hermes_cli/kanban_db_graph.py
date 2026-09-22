@@ -103,6 +103,7 @@ def decompose_triage_task(
         _canonical_assignee, _link, _append_event, _insert_comment,
         _require_allowed_assignee, write_txn, recompute_ready,
     )
+    from hermes_cli.kanban_team import TEAM_SYNTHESIS_STEP, TEAM_WORKFLOW_ID
 
     if not children:
         return None
@@ -151,8 +152,13 @@ def decompose_triage_task(
         # Flip the root triage -> todo, assignee -> orchestrator.
         sets = ["status = 'todo'"]
         params: list[Any] = []
-        if root_row["workflow_template_id"] == "delegate-team-v1":
-            sets.append("current_step_key = 'synthesis'")
+        if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID:
+            sets.extend([
+                "current_step_key = ?",
+                "consecutive_failures = 0",
+                "last_failure_error = NULL",
+            ])
+            params.append(TEAM_SYNTHESIS_STEP)
         if root_assignee is not None:
             sets.append("assignee = ?")
             params.append(root_assignee)
@@ -193,6 +199,7 @@ def _insert_decomposed_child(
         _new_task_id, _canonical_assignee, _append_event, _stored_allowed_assignees,
         normalize_reasoning_effort,
     )
+    from hermes_cli.kanban_team import TEAM_WORKER_STEP, TEAM_WORKFLOW_ID
 
     root_ws_kind = root_row["workspace_kind"] or "scratch"
     child_ws_kind = child.get("workspace_kind") or root_ws_kind
@@ -217,8 +224,8 @@ def _insert_decomposed_child(
             new_id, child["title"].strip(), body if isinstance(body, str) else None,
             _canonical_assignee(child.get("assignee")), child_ws_kind, child_ws_path,
             root_row["tenant"], now, (author or "decomposer"),
-            "delegate-team-v1" if root_row["workflow_template_id"] == "delegate-team-v1" else None,
-            "worker" if root_row["workflow_template_id"] == "delegate-team-v1" else None,
+            TEAM_WORKFLOW_ID if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID else None,
+            TEAM_WORKER_STEP if root_row["workflow_template_id"] == TEAM_WORKFLOW_ID else None,
             child.get("max_retries", root_row["max_retries"]),
             child.get("model_override"), child.get("provider_override"),
             normalize_reasoning_effort(child.get("reasoning_effort")),

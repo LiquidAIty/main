@@ -62,6 +62,7 @@ describe('Python Agent MCP client', () => {
     await expect(readPythonAgentMcpCatalog()).resolves.toEqual({
       state: 'unavailable',
       tools: [],
+      unavailableFamilies: [],
       reason: 'catalog_unavailable',
     });
     expect(readiness).toHaveBeenCalledOnce();
@@ -72,19 +73,22 @@ describe('Python Agent MCP client', () => {
   it('reads the complete catalog only after the host reports ready', async () => {
     const readiness = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ catalogState: 'ready' }),
+      json: async () => ({
+        catalogState: 'ready',
+        unavailableCatalogFamilies: ['cbm'],
+      }),
     }));
     vi.stubGlobal('fetch', readiness);
     mcpMocks.listTools.mockResolvedValueOnce({
       tools: [{
-        name: 'cbm.search_graph',
-        description: 'Search CodeGraph.',
+        name: 'graphiti.search_nodes',
+        description: 'Search KnowGraph.',
         inputSchema: { type: 'object', properties: {} },
         _meta: {
           liquidaitySource: {
-            sourceId: 'cbm',
-            namespace: 'cbm',
-            nativeName: 'search_graph',
+            sourceId: 'graphiti',
+            namespace: 'graphiti',
+            nativeName: 'search_nodes',
             connectionKind: 'external-mcp',
           },
         },
@@ -93,13 +97,33 @@ describe('Python Agent MCP client', () => {
 
     await expect(readPythonAgentMcpCatalog()).resolves.toMatchObject({
       state: 'available',
+      unavailableFamilies: ['cbm'],
       tools: [{
-        name: 'cbm.search_graph',
-        sourceId: 'cbm',
-        nativeName: 'search_graph',
+        name: 'graphiti.search_nodes',
+        sourceId: 'graphiti',
+        nativeName: 'search_nodes',
       }],
     });
     expect(String(readiness.mock.calls[0]?.[0])).toBe('http://127.0.0.1:8765/health/catalog');
     expect(mcpMocks.listTools).toHaveBeenCalledOnce();
+  });
+
+  it('fails the probe closed when unavailable-family diagnostics are malformed', async () => {
+    const readiness = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        catalogState: 'ready',
+        unavailableCatalogFamilies: ['card'],
+      }),
+    }));
+    vi.stubGlobal('fetch', readiness);
+
+    await expect(readPythonAgentMcpCatalog()).resolves.toEqual({
+      state: 'unavailable',
+      tools: [],
+      unavailableFamilies: [],
+      reason: 'catalog_unavailable',
+    });
+    expect(mcpMocks.listTools).not.toHaveBeenCalled();
   });
 });

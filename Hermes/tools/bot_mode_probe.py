@@ -292,7 +292,7 @@ def _build_section(home: Path) -> str:
         "tool to DM any of them. It is FIRE-AND-FORGET: it delivers your message "
         "with your attribution prefixed automatically and returns an acknowledgement "
         "immediately — it never returns the reply. Send it, finish your turn, and "
-        "the reply arrives later as a background-process completion notification "
+        "the reply or result arrives later as a completion notification "
         "that wakes you; relay it to the user then, attributed to that agent. "
         "COMPOSE every message yourself — say what YOU need from that agent; never "
         "forward the user's words verbatim, and never reveal private 1:1 chat "

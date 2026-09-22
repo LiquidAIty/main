@@ -61,10 +61,10 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
                         )
                     },
                     headers={
-                        "x-agent-id": "hermes",
-                        "x-agent-provider": "openrouter",
-                        "x-agent-model-key": "deepseek",
-                        "x-agent-model-id": "deepseek/deepseek-chat",
+                        "x-agent-id": "retired-card",
+                        "x-agent-provider": "openai",
+                        "x-agent-model-key": "retired-model",
+                        "x-agent-model-id": "retired/model",
                     },
                 )
 
@@ -89,10 +89,10 @@ class KnowGraphUploadRouteTests(unittest.TestCase):
         args, kwargs = ingest_pdf.await_args
         self.assertEqual(args[1:3], ("project-1", "pdf:document:1"))
         self.assertEqual(Path(args[0]).name, "pdf_document_1_source.pdf")
-        self.assertEqual(kwargs["provider"], "openrouter")
-        self.assertEqual(kwargs["model_key"], "deepseek")
-        self.assertEqual(kwargs["model_id"], "deepseek/deepseek-chat")
-        self.assertEqual(kwargs["agent_id"], "hermes")
+        self.assertNotIn("provider", kwargs)
+        self.assertNotIn("model_key", kwargs)
+        self.assertNotIn("model_id", kwargs)
+        self.assertNotIn("agent_id", kwargs)
         self.assertEqual(kwargs["source_name"], "source.pdf")
         self.assertEqual(
             kwargs["prompt_template"], "Extract only source-backed claims."

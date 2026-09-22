@@ -24,6 +24,7 @@ load_runtime_environment()
 GRAPHITI_VERSION = "0.29.3"
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
 DEFAULT_NEO4J_DATABASE = "neo4j"
+DEFAULT_OPENROUTER_KG_MODEL = "z-ai/glm-5.2"
 
 
 @dataclass(frozen=True)
@@ -97,9 +98,7 @@ def _serialize_metadata_json(value: Any) -> str | None:
 
 
 def _normalize_provider(provider: str | None) -> str:
-    normalized = (provider or "").strip().lower()
-    if not normalized:
-        raise RuntimeError("KnowGraph card provider is required")
+    normalized = (provider or "").strip().lower() or "openrouter"
     if normalized in ("openai", "openrouter"):
         return normalized
     raise RuntimeError(f"Unsupported provider: {provider}")
@@ -164,7 +163,14 @@ def _resolve_runtime_model_config(
     requested_model_key = (model_key or "").strip() or None
     resolved_model_id = (model_id or "").strip()
     if not resolved_model_id:
-        raise RuntimeError("KnowGraph card model is required")
+        if normalized_provider == "openrouter":
+            resolved_model_id = (
+                _optional_env("OPENROUTER_DEFAULT_KG_MODEL_KEY")
+                or _optional_env("OPENROUTER_DEFAULT_MODEL")
+                or DEFAULT_OPENROUTER_KG_MODEL
+            )
+        else:
+            raise RuntimeError("OpenAI model is required")
     global_backend = _normalize_embedding_backend(
         _optional_env("KNOWGRAPH_EMBEDDING_BACKEND"),
         default="openai_compatible",
@@ -666,10 +672,6 @@ async def ingest_pdf(
     document_id: str,
     *,
     source_name: str | None = None,
-    provider: str | None = None,
-    model_key: str | None = None,
-    model_id: str | None = None,
-    agent_id: str | None = None,
     prompt_template: str | None = None,
     organizing_principle: Any = None,
     entity_taxonomy_json: Any = None,
@@ -726,10 +728,10 @@ async def ingest_pdf(
                     "section_index": index,
                     "section_count": len(sections),
                 },
-                provider=provider,
-                model_key=model_key,
-                model_id=model_id,
-                agent_id=agent_id,
+                provider=None,
+                model_key=None,
+                model_id=None,
+                agent_id=None,
                 guidance=guidance,
                 reference_time=reference_time,
             )
@@ -751,7 +753,7 @@ async def ingest_pdf(
         "provider": first["provider"],
         "model_key": first["model_key"],
         "model": first["model"],
-        "agent_id": agent_id,
+        "agent_id": None,
         "source_url": None,
         "source_name": base_source_name,
         "content_fingerprint": document_fingerprint,

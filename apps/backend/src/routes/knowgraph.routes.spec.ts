@@ -6,21 +6,10 @@ import router, { boundedKnowGraphProperties } from './knowgraph.routes';
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
-  getDeckDocument: vi.fn(),
-  resolveCardModelStrict: vi.fn(),
 }));
 
 vi.mock('../db/pool', () => ({
   pool: { query: mocks.poolQuery },
-}));
-
-vi.mock('../decks/store', () => ({
-  BUILDER_DECK_ID: 'deck_builder',
-  getDeckDocument: mocks.getDeckDocument,
-}));
-
-vi.mock('../cards/runtime', () => ({
-  resolveCardModelStrict: mocks.resolveCardModelStrict,
 }));
 
 async function createApiServer(userId?: string): Promise<{ server: Server; baseUrl: string }> {
@@ -56,8 +45,6 @@ function uploadBody(projectId: string): FormData {
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.poolQuery.mockReset();
-  mocks.getDeckDocument.mockReset();
-  mocks.resolveCardModelStrict.mockReset();
   delete process.env.KNOWGRAPH_URL;
 });
 
@@ -80,19 +67,6 @@ describe('KnowGraph PDF upload project authority', () => {
   it('resolves the authenticated project selector to its canonical id before Graphiti ingest', async () => {
     process.env.KNOWGRAPH_URL = 'http://knowgraph.test';
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ id: 'project-canonical' }] });
-    mocks.getDeckDocument.mockResolvedValueOnce({
-      deck: {
-        nodes: [{
-          id: 'card_hermes_steward',
-          prompt: 'Preserve source provenance.',
-          runtimeOptions: { provider: 'openrouter', modelKey: 'deepseek' },
-        }],
-      },
-    });
-    mocks.resolveCardModelStrict.mockReturnValueOnce({
-      provider: 'openrouter',
-      providerModelId: 'deepseek/deepseek-chat',
-    });
     const realFetch = globalThis.fetch.bind(globalThis);
     const upstreamFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
       if (String(input).startsWith('http://knowgraph.test/')) {
@@ -114,31 +88,35 @@ describe('KnowGraph PDF upload project authority', () => {
 
     const { server, baseUrl } = await createApiServer('user-1');
     try {
+      const body = uploadBody('project-alias');
+      body.append('prompt_template', 'This retired Card prompt must not reach Graphiti.');
       const response = await fetch(`${baseUrl}/ingest`, {
         method: 'POST',
-        body: uploadBody('project-alias'),
+        body,
       });
       expect(response.status).toBe(200);
       expect(mocks.poolQuery).toHaveBeenCalledWith(expect.stringContaining('owner_user_id'), [
         'user-1',
         'project-alias',
       ]);
-      expect(mocks.getDeckDocument).toHaveBeenCalledWith('project-canonical', 'deck_builder');
-      expect(mocks.resolveCardModelStrict).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'card_hermes_steward' }),
-      );
       const forwardedCall = upstreamFetch.mock.calls.find(([input]) =>
         String(input).startsWith('http://knowgraph.test/'),
       );
       const forwardedBody = forwardedCall?.[1]?.body as FormData;
       expect(forwardedBody.get('project_id')).toBe('project-canonical');
       expect(forwardedBody.get('document_id')).toBe('document-1');
+      expect(forwardedBody.get('prompt_template')).toBeNull();
+      const forwardedHeaders = new Headers(forwardedCall?.[1]?.headers);
+      expect(forwardedHeaders.get('x-agent-id')).toBeNull();
+      expect(forwardedHeaders.get('x-agent-provider')).toBeNull();
+      expect(forwardedHeaders.get('x-agent-model-key')).toBeNull();
+      expect(forwardedHeaders.get('x-agent-model-id')).toBeNull();
     } finally {
       await closeServer(server);
     }
   });
 
-  it('rejects a project outside the authenticated user before model configuration or ingest', async () => {
+  it('rejects a project outside the authenticated user before Graphiti ingest', async () => {
     mocks.poolQuery.mockResolvedValueOnce({ rows: [] });
     const upstreamFetch = vi.spyOn(globalThis, 'fetch');
     const { server, baseUrl } = await createApiServer('user-1');
@@ -148,8 +126,6 @@ describe('KnowGraph PDF upload project authority', () => {
         body: uploadBody('someone-elses-project'),
       });
       expect(response.status).toBe(404);
-      expect(mocks.getDeckDocument).not.toHaveBeenCalled();
-      expect(mocks.resolveCardModelStrict).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
     } finally {
       await closeServer(server);
@@ -166,8 +142,6 @@ describe('KnowGraph PDF upload project authority', () => {
       });
       expect(response.status).toBe(401);
       expect(mocks.poolQuery).not.toHaveBeenCalled();
-      expect(mocks.getDeckDocument).not.toHaveBeenCalled();
-      expect(mocks.resolveCardModelStrict).not.toHaveBeenCalled();
       expect(upstreamFetch).toHaveBeenCalledTimes(1);
     } finally {
       await closeServer(server);

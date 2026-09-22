@@ -103,7 +103,7 @@ describe('Python-owned backend startup', () => {
     expect(recoverKanban).toHaveBeenCalledOnce();
   });
 
-  it('derives automatic Hermes demand from symmetric Bot connections and Mag One wire authority', () => {
+  it('derives automatic Hermes demand from Main-owned Bot targets and Magnetic worker authority', () => {
     const main = { id: 'main-card', templateId: 'template_main_chat', title: 'Main',
       kind: 'agent', runtime: { kind: 'hermes', mode: 'main', profile: 'main-profile' },
       runtimeOptions: {}, position: { x: 0, y: 0 } };
@@ -138,8 +138,6 @@ describe('Python-owned backend startup', () => {
           targetHandle: 'bus-in-1', edgeType: 'magentic_option' },
         { id: 'bus-before-worker', source: 'mag-one', sourceHandle: 'bus-in-2',
           target: 'mag-worker-b', edgeType: 'magentic_option' },
-        { id: 'main-control', source: 'mag-one', sourceHandle: 'task-bus-top',
-          target: 'main-card', edgeType: 'magentic_control' },
         { id: 'disabled-target', source: 'controller', target: 'disabled', edgeType: 'flow' },
         { id: 'disabled-edge', source: 'controller', target: 'idle', edgeType: 'flow', enabled: false },
         { id: 'unrelated-visual', source: 'chart', target: 'idle', edgeType: 'invalid' },
@@ -151,11 +149,11 @@ describe('Python-owned backend startup', () => {
       { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
         botEnabled: true, roster: ['builder-profile'] },
       { cardId: 'controller', cardRevisionId: '', profile: 'controller-profile', title: 'Controller',
-        botEnabled: true, roster: ['worker-profile'] },
+        botEnabled: true, roster: [] },
       { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
-        botEnabled: true, roster: ['controller-profile'] },
+        botEnabled: true, roster: [] },
       { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
-        botEnabled: true, roster: ['main-profile'] },
+        botEnabled: true, roster: [] },
       { cardId: 'mag-worker-a', cardRevisionId: '', profile: 'mag-worker-a-profile', title: 'Mag worker A',
         botEnabled: true, roster: [] },
       { cardId: 'mag-worker-b', cardRevisionId: '', profile: 'mag-worker-b-profile', title: 'Mag worker B',
@@ -166,7 +164,7 @@ describe('Python-owned backend startup', () => {
         botEnabled: false, roster: [] },
     ];
     expect([...deriveAutomaticHermesCardIds(deck, botProfiles)]).toEqual([
-      'main-card', 'controller', 'worker', 'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
+      'main-card', 'builder', 'mag-one', 'mag-worker-a', 'mag-worker-b',
     ]);
     const disabledBusDeck = {
       ...deck,
@@ -180,25 +178,23 @@ describe('Python-owned backend startup', () => {
     expect(disabledBusDemand.has('mag-worker-b')).toBe(false);
   });
 
-  it('keeps a Card demanded until its final activating edge is removed', () => {
-    const controllerA = { id: 'controller-a', templateId: 'controller', title: 'A', kind: 'agent',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-a' },
+  it('keeps a direct target demanded only while Main projects it in the roster', () => {
+    const main = { id: 'main-card', templateId: 'controller', title: 'Main', kind: 'agent',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'main-profile' },
       runtimeOptions: {}, position: { x: 0, y: 0 } };
-    const controllerB = { ...controllerA, id: 'controller-b', title: 'B',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'controller-b' } };
     const target = { id: 'target', templateId: 'worker', title: 'Target', kind: 'agent',
-      runtime: { kind: 'hermes', mode: 'delegate', profile: 'target' }, position: { x: 1, y: 1 } };
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'target-profile' }, position: { x: 1, y: 1 } };
     const base = { id: 'deck', name: 'Deck', version: 1, promptTemplates: [],
-      nodes: [controllerA, controllerB, target] } as any;
-    const first = { id: 'one', source: 'controller-a', target: 'target', edgeType: 'flow' };
-    const second = { id: 'two', source: 'controller-b', target: 'target', edgeType: 'flow' };
+      nodes: [main, target], edges: [] } as any;
 
-    const projection = (roster: string[]) => [{
-      cardId: 'target', cardRevisionId: '', profile: 'target', title: 'Target', botEnabled: true, roster,
-    }];
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [first, second] }, projection(['controller-a', 'controller-b'])).has('target')).toBe(true);
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [second] }, projection(['controller-b'])).has('target')).toBe(true);
-    expect(deriveAutomaticHermesCardIds({ ...base, edges: [] }, projection([])).has('target')).toBe(false);
+    const projection = (roster: string[]) => [
+      { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
+        botEnabled: true, roster },
+      { cardId: 'target', cardRevisionId: '', profile: 'target-profile', title: 'Target',
+        botEnabled: true, roster: [] },
+    ];
+    expect(deriveAutomaticHermesCardIds(base, projection(['target-profile'])).has('target')).toBe(true);
+    expect(deriveAutomaticHermesCardIds(base, projection([])).has('target')).toBe(false);
   });
 
   it('passes exact Card identities and structural presentation workspaces to the existing manager', async () => {
@@ -236,9 +232,9 @@ describe('Python-owned backend startup', () => {
         { cardId: 'main-card', cardRevisionId: '', profile: 'main-profile', title: 'Main',
           botEnabled: true, roster: ['worker-profile', 'builder-profile'] },
         { cardId: 'worker', cardRevisionId: '', profile: 'worker-profile', title: 'Worker',
-          botEnabled: true, roster: ['main-profile'] },
+          botEnabled: true, roster: [] },
         { cardId: 'builder', cardRevisionId: '', profile: 'builder-profile', title: 'Builder',
-          botEnabled: true, roster: ['main-profile'] },
+          botEnabled: true, roster: [] },
         { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
           botEnabled: true, roster: [] },
       ],

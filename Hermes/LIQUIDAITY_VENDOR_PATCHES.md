@@ -32,15 +32,16 @@ ACP, credential, completion-correlation, queue, or lifecycle patch is retained.
 Any production difference outside the entries below is unexplained residue
 and blocks publication.
 
-## 1. Durable Team through `delegate_task(role="team")`
+## 1. Saved Team profile on the existing task ledger
 
 VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
 `73521a8e375a867fae14ec0579f2dfb47aa0017e`.
 
-PURPOSE: add one explicit top-level `team` role to Hermes' existing
-`delegate_task` tool. It creates and activates one durable native Auto-Kanban
-root, then native Kanban owners retain decomposition, dispatch, worker execution,
-retry, final synthesis, notification, Stop, and rejoin.
+PURPOSE: let one explicitly saved profile marked `kanban.task_mode: team` create
+one durable root in Hermes' existing task ledger. The existing Kanban owners retain
+decomposition, dispatch, worker execution, retry, final synthesis, notification,
+Stop, and rejoin. `delegate_task` keeps its ordinary upstream `tasks[]` contract
+and exposes no Team role.
 
 EXTERNAL ALTERNATIVE CHECK: upstream temporary subagents do not create a durable
 task graph. A LiquidAIty scheduler, queue, worker process owner, task database, or
@@ -48,17 +49,17 @@ TypeScript planner would duplicate native owners and is rejected.
 
 FILES AND SYMBOLS:
 
-- `tools/delegate_tool.py`: top-level Team schema/validation, depth-one worker
-  guard, and dispatch to `hermes_cli.kanban_team.submit_team` before temporary
-  child credential/runtime construction.
-- `hermes_cli/kanban_team.py`: validates decomposer/worker policy and native
-  dispatcher readiness, creates one parked root, activates Triage, and subscribes
+- `tools/kanban_tools.py`: routes an ordinary task assigned to the exact marked
+  profile into the shared Team-root creator after normal task authorization.
+- `tools/bot_mode_dm.py`: routes an authorized direct orange `message_agent`
+  target with the exact marker into the same Team-root creator.
+- `hermes_cli/kanban_team.py`: validates the exact profile marker and saved
+  parent/worker model policy, creates or rejoins one Triage root, and subscribes
   the durable originating session.
-- `hermes_cli/config_defaults.py`: optional Team worker provider/model/reasoning
-  selections; empty provider/model leaves Team fail-closed.
-- `hermes_cli/kanban_db.py`: atomic workflow/step fields on task creation,
-  `activate_team_triage_task`, nested task-creation guard, and final-synthesis
-  worker context.
+- `hermes_cli/config_defaults.py`: declares only the structural per-profile task
+  mode; worker provider/model/reasoning remains the profile's saved delegation config.
+- `hermes_cli/kanban_db.py`: persists workflow/step fields, the depth-one task
+  guard, and final-synthesis worker context.
 - `hermes_cli/kanban_db_graph.py`: propagates the Team workflow, depth-one worker
   route, retry limit, and root synthesis step through native decomposition.
 - `hermes_cli/kanban_decompose.py`: applies the configured Team worker policy to
@@ -73,27 +74,28 @@ LiquidAIty Run, scheduler, or queue to Hermes.
 
 CONTRACTS:
 
-- one non-empty goal and optional string context;
-- no Team `tasks[]`, `output_schema`, images, or nested delegation;
-- explicit decomposer and Team worker provider/model before any root write;
-- live native dispatcher and durable source session before any root write;
-- one parked root before activation into native Triage;
+- exact `kanban.task_mode: team` on the assigned saved profile;
+- one non-empty task body and one `auto-team-v1` Triage root;
+- saved profile parent model plus saved delegation worker model/provider/reasoning;
+- durable notification route before direct Bot submission;
 - native depth-one workers and a separate final synthesis pass;
-- no artificial Team task-count cap beyond native policy.
+- bounded decomposition failure exits Triage once instead of retrying forever;
+- no nested Team task or `delegate_task` from a Team worker.
 
 TESTS:
 
-- `tests/tools/test_delegate_team.py`
 - `tests/hermes_cli/test_kanban_team.py`
+- `tests/tools/test_bot_mode_dm.py`
 - affected upstream coverage in `tests/tools/test_delegate.py`
 
-FORK COST: one small adapter module and bounded branches in seven existing
-delegation/Kanban owners. There is no second scheduler, process owner, queue,
+FORK COST: one small Team policy module and bounded branches in the existing
+Kanban/Bot owners. There is no second scheduler, process owner, queue,
 Gateway, or callback runtime.
 
-ROLLBACK: remove the Team schema/branch, `kanban_team.py`, Team-only defaults,
-workflow propagation/activation/worker marker/synthesis hunks, and corresponding
-tests together. Leave upstream temporary delegation and ordinary Kanban intact.
+ROLLBACK: remove the structural Team marker, `kanban_team.py`, workflow
+propagation/worker marker/synthesis hunks, Bot/task entry branches, and
+corresponding tests together. Leave upstream temporary delegation and ordinary
+Kanban intact.
 
 ## 2. Profile-scoped native Bot roster
 
@@ -101,8 +103,9 @@ VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
 `73521a8e375a867fae14ec0579f2dfb47aa0017e`.
 
 PURPOSE: make one profile's explicit `bot_mode.roster` the sole local
-`message_agent` target authority. LiquidAIty projects saved, enabled, symmetric
-orange Card relationships into this field while Hermes continues to own Bot Chat
+`message_agent` target authority. LiquidAIty projects each saved, enabled,
+non-Magnetic orchestrator Card's ordered outbound orange targets into this field;
+targets receive no reverse roster unless their own saved setting and outbound edges grant one. Hermes owns Bot Chat
 sessions, live-owner/offline selection, delivery, receipts, replies, retries, and
 notifications.
 
@@ -351,7 +354,6 @@ Production files:
 Focused tests:
 
 - `tests/tools/test_delegate.py` — adjusted public-schema assertions only
-- `tests/tools/test_delegate_team.py` — Team
 - `tests/hermes_cli/test_kanban_team.py` — Team
 - `tests/hermes_cli/test_kanban_creator_origin.py` — assignee-ceiling inheritance and unrestricted behavior
 - `tests/tools/test_bot_mode_probe.py` — native Bot roster resolution/prompt

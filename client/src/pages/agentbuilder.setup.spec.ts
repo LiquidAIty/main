@@ -59,32 +59,40 @@ describe('agentbuilder authoring flow', () => {
 
   it('seeds Builder and keeps the remaining Card bindings and topology explicit', () => {
     expect(INITIAL_DECK.nodes.map(node => [node.id, node.title, node.runtime])).toEqual([
-      ['card_main_chat', 'Main Chat', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }],
+      ['card_main_chat', 'Main', { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' }],
       ['builder', 'Builder', { kind: 'hermes', mode: 'delegate', profile: 'builder' }],
-      ['card_magentic', 'Magentic-One', {
+      ['card_thinkgraph', 'ThinkGraph', { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' }],
+      ['card_magentic', 'Magnetic', {
         kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic',
       }],
-      ['card_hermes_steward', 'Graph Agent', { kind: 'hermes', mode: 'delegate', profile: 'liquidaity-hermes-steward' }],
-      ['card_trading_workbench', 'Trading Agent', { kind: 'hermes', mode: 'delegate', profile: 'trading' }],
-      ['card_worldsignals_agent', 'WorldSignals Agent', {
+      ['card_team', 'Team', { kind: 'hermes', mode: 'delegate', profile: 'team' }],
+      ['card_knowgraph', 'KnowGraph', { kind: 'hermes', mode: 'delegate', profile: 'knowgraph' }],
+      ['card_trading_workbench', 'Trading', { kind: 'hermes', mode: 'delegate', profile: 'trading' }],
+      ['card_worldsignals_agent', 'WorldSignals', {
         kind: 'hermes', mode: 'delegate', profile: 'worldsignals',
       }],
     ]);
     expect(INITIAL_DECK.nodes.map(node => node.templateId)).toEqual([
-      'template_main_chat', 'template_assist', 'template_magentic',
-      'template_hermes_steward', 'template_trading_workbench', 'template_worldsignals_agent',
+      'template_main_chat', 'template_assist', 'template_thinkgraph', 'template_magentic',
+      'template_team', 'template_knowgraph', 'template_trading_workbench',
+      'template_worldsignals_agent',
     ]);
     expect(INITIAL_DECK.edges.map(({ source, target, edgeType }) => ({ source, target, edgeType }))).toEqual([
-      { source: 'card_main_chat', target: 'card_hermes_steward', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_knowgraph', edgeType: 'flow' },
       { source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
-      { source: 'card_main_chat', target: 'card_magentic', edgeType: 'magentic_control' },
+      { source: 'card_main_chat', target: 'card_thinkgraph', edgeType: 'flow' },
+      { source: 'card_main_chat', target: 'card_magentic', edgeType: 'flow' },
       { source: 'card_worldsignals_agent', target: 'card_magentic', edgeType: 'magentic_option' },
       { source: 'card_magentic', target: 'card_trading_workbench', edgeType: 'magentic_option' },
+      { source: 'card_team', target: 'card_magentic', edgeType: 'magentic_option' },
     ]);
     const builder = INITIAL_DECK.nodes.find(node => node.id === 'builder');
+    const main = INITIAL_DECK.nodes.find(node => node.id === 'card_main_chat');
+    expect(main?.runtime).toMatchObject({ kind: 'hermes', mode: 'main' });
+    expect(main?.runtimeOptions).not.toHaveProperty('orchestrator');
     expect(builder?.runtimeOptions).toMatchObject({
-      modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol', delegationRole: 'off',
-      skills: ['hermes-agent', 'agent-builder-inspection'],
+      modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+      skills: ['agent-builder-inspection'],
       toolsets: ['web', 'terminal', 'file', 'browser', 'vision', 'code_execution'],
       tools: ['canvas.inspect', 'card.create', 'card.update_configuration', 'cbm.search_graph',
         'cbm.trace_path', 'cbm.get_code_snippet', 'cbm.check_index_coverage', 'cbm.detect_changes',
@@ -270,8 +278,8 @@ describe('agentbuilder authoring flow', () => {
     stale.version = 77;
     const main = stale.nodes.find((node) => node.id === 'card_main_chat');
     const builder = stale.nodes.find((node) => node.id === 'builder');
-    const hermes = stale.nodes.find((node) => node.id === 'card_hermes_steward');
-    if (!main || !builder || !hermes) throw new Error('system_cards_missing');
+    const knowgraph = stale.nodes.find((node) => node.id === 'card_knowgraph');
+    if (!main || !builder || !knowgraph) throw new Error('system_cards_missing');
     main.prompt = 'Saved Main prompt';
     main.position = { x: 111, y: 222 };
     main.runtimeOptions = {
@@ -286,8 +294,8 @@ describe('agentbuilder authoring flow', () => {
       modelKey: 'saved-builder-model',
       tools: ['cbm.delete_project'],
     };
-    hermes.runtimeOptions = {
-      ...hermes.runtimeOptions,
+    knowgraph.runtimeOptions = {
+      ...knowgraph.runtimeOptions,
       provider: 'openrouter',
       modelKey: 'saved-hermes-model',
       tools: ['clear_graph'],
@@ -297,12 +305,12 @@ describe('agentbuilder authoring flow', () => {
     const hydrated = readDeckDocument(stale);
     const hydratedMain = hydrated.nodes.find((node) => node.id === 'card_main_chat');
     const hydratedBuilder = hydrated.nodes.find((node) => node.id === 'builder');
-    const hydratedHermes = hydrated.nodes.find((node) => node.id === 'card_hermes_steward');
+    const hydratedKnowgraph = hydrated.nodes.find((node) => node.id === 'card_knowgraph');
 
     expect(hydrated.version).toBe(77);
     expect(hydratedMain?.runtimeOptions?.tools).toEqual(['engraphis_remember']);
     expect(hydratedBuilder?.runtimeOptions?.tools).toEqual(['cbm.delete_project']);
-    expect(hydratedHermes?.runtimeOptions?.tools).toEqual(['clear_graph']);
+    expect(hydratedKnowgraph?.runtimeOptions?.tools).toEqual(['clear_graph']);
     expect(hydratedMain).toMatchObject({
       prompt: 'Saved Main prompt',
       position: { x: 111, y: 222 },
@@ -315,7 +323,7 @@ describe('agentbuilder authoring flow', () => {
       provider: 'openrouter',
       modelKey: 'saved-builder-model',
     });
-    expect(hydratedHermes?.runtimeOptions).toMatchObject({
+    expect(hydratedKnowgraph?.runtimeOptions).toMatchObject({
       provider: 'openrouter',
       modelKey: 'saved-hermes-model',
     });

@@ -6,7 +6,7 @@ The minimum user-directed MCP control surface over ACTUAL saved state:
   * canvas.inspect             — bounded saved deck view
   * card.create                — strict optimistic creation in the saved deck
   * card.update_configuration  — strict allowlist edits of persisted card config
-  * canvas.upsert_wire         — flow / magentic_option / magentic_control
+  * canvas.upsert_wire         — flow / magentic_option
 
 Policy/validation lives HERE (Python). Saved-deck persistence stays with the
 existing backend deck routes on loopback (single deck authority — not replaced).
@@ -29,7 +29,7 @@ from urllib.parse import urlencode
 
 _BACKEND = os.environ.get("MAIN_BACKEND_URL", "http://127.0.0.1:4000").rstrip("/")
 
-SUPPORTED_WIRE_TYPES = ("flow", "magentic_option", "magentic_control")
+SUPPORTED_WIRE_TYPES = ("flow", "magentic_option")
 _SUPPORTED_CARD_RUNTIME_MODES = {
     "hermes": {"main", "delegate", "magentic_one"},
 }
@@ -44,6 +44,7 @@ _CARD_CREATE_KEYS = {
     "runtime",
     "model",
     "openaiRuntime",
+    "subagentType",
     "subagentModel",
     "tools",
     "nativeTools",
@@ -70,6 +71,7 @@ _UPDATABLE_RUNTIME_OPTION_FIELDS = {
     "provider",
     "providerModelId",
     "openaiRuntime",
+    "subagentType",
     "subagentModel",
     "reasoningEffort",
     "temperature",
@@ -87,6 +89,7 @@ _CAPABILITY_LIST_FIELDS = {
 }
 _REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
 _ACCESS_MODES = {"chatgpt-account", "openai-api", "openrouter-api"}
+_SUBAGENT_TYPES = {"none", "leaf", "recursive"}
 _SUBAGENT_MODEL_FIELDS = {
     "provider", "accessMode", "modelKey", "providerModelId",
 }
@@ -124,7 +127,8 @@ def card_tool_schema(name: str) -> dict[str, Any]:
             "runtime": {"type": "object", "additionalProperties": False,
                         "properties": {key: text for key in sorted(_CARD_CREATE_RUNTIME_KEYS)},
                         "required": ["kind", "mode"]},
-            "model": model, "subagentModel": subagent,
+            "model": model, "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
+            "subagentModel": subagent,
             "openaiRuntime": {"type": ["string", "null"], "enum": [None, "codex_app_server"]},
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
             "position": {"type": "object", "additionalProperties": False,
@@ -137,6 +141,7 @@ def card_tool_schema(name: str) -> dict[str, Any]:
             **{key: names for key in sorted(_CAPABILITY_LIST_FIELDS)},
             **{key: text for key in ("accessMode", "modelKey", "provider", "providerModelId")},
             "subagentModel": subagent,
+            "subagentType": {"type": "string", "enum": sorted(_SUBAGENT_TYPES)},
             "openaiRuntime": {"type": ["string", "null"], "enum": [None, "codex_app_server"]},
             "reasoningEffort": {"type": ["string", "null"], "enum": [None, *sorted(_REASONING_EFFORTS)]},
             "temperature": {"type": ["number", "null"]},
@@ -577,6 +582,11 @@ async def card_create(
         else dict(_DEFAULT_HERMES_SUBAGENT_MODEL) if runtime_kind == "hermes"
         else None
     )
+    raw_subagent_type = args.get("subagentType", "none" if runtime_kind == "hermes" else None)
+    if raw_subagent_type is not None and runtime_kind != "hermes":
+        raise ControlPlaneError("card_create_subagent_type_requires_hermes")
+    if raw_subagent_type is not None and raw_subagent_type not in _SUBAGENT_TYPES:
+        raise ControlPlaneError("card_create_subagent_type_invalid")
     normalized_selections: dict[str, list[str]] = {}
     for field in _CAPABILITY_LIST_FIELDS:
         values = args.get(field) or []
@@ -658,6 +668,8 @@ async def card_create(
                 runtime_options["openaiRuntime"] = authority["openaiRuntime"]
         if subagent_model is not None:
             runtime_options["subagentModel"] = subagent_model
+        if raw_subagent_type is not None:
+            runtime_options["subagentType"] = raw_subagent_type
         for key in ("providerModelId", "reasoningEffort"):
             if model.get(key) is not None:
                 runtime_options[key] = model[key]
@@ -791,6 +803,8 @@ async def card_update_configuration(
             **updates,
             "subagentModel": _subagent_model_selection(updates["subagentModel"]),
         }
+    if "subagentType" in updates and updates["subagentType"] not in _SUBAGENT_TYPES:
+        raise ControlPlaneError("card_update_subagent_type_invalid")
     project_id = str(args["projectId"]).strip()
     deck_id = str(args["deckId"]).strip()
     card_id = str(args["cardId"]).strip()
@@ -826,6 +840,8 @@ async def card_update_configuration(
             raise ControlPlaneError("card_revision_conflict")
         if "subagentModel" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
             raise ControlPlaneError("card_update_subagent_model_requires_hermes")
+        if "subagentType" in updates and (card.get("runtime") or {}).get("kind") != "hermes":
+            raise ControlPlaneError("card_update_subagent_type_requires_hermes")
         current_options = card.get("runtimeOptions")
         if not isinstance(current_options, dict):
             current_options = {}
@@ -911,7 +927,7 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
                 raise ControlPlaneError(f"wire_endpoints_not_in_deck: {source}->{target}")
             candidate = {**(prior or {}), **wire, "id": resolved_id, "source": source,
                          "target": target, "edgeType": resolved_type}
-            blue = resolved_type in {"magentic_option", "magentic_control"}
+            blue = resolved_type == "magentic_option"
             if blue and prior and (prior['source'], prior['target']) == (target, source):
                 for field, old_field in (('sourceHandle', 'targetHandle'), ('targetHandle', 'sourceHandle')):
                     if field not in wire:
@@ -933,8 +949,16 @@ async def canvas_upsert_wire(args: dict[str, Any]) -> dict[str, Any]:
                     raise ControlPlaneError("wire_connection_duplicate")
             try:
                 _edge_core(candidate)
-                # A wire edit cannot implicitly remove a connection because its source is off.
-                _validate_changed_flow_edges(list(cards.values()), [candidate], [])
+                prospective_edges = (
+                    [candidate if edge.get("id") == resolved_id else edge for edge in edges]
+                    if prior is not None
+                    else [*edges, candidate]
+                )
+                # A wire edit validates the whole resulting topology and never
+                # silently removes another connection to make the request fit.
+                _validate_changed_flow_edges(
+                    list(cards.values()), prospective_edges, edges,
+                )
             except CardDomainError as error:
                 raise ControlPlaneError(str(error)) from error
             comparable = dict(candidate)

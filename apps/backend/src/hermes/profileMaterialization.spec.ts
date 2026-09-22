@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   materializeHermesProfileSelections,
+  toNativeSubagentTypeConfig,
   type HermesProfileSelection,
 } from './profileMaterialization';
 
@@ -38,6 +40,24 @@ function nativeProfile(overrides: Record<string, unknown> = {}) {
 }
 
 describe('materializeHermesProfileSelections', () => {
+  it('compiles the exact saved Card prompt into the sole Hermes SOUL authority', () => {
+    const source = readFileSync(new URL('./profileMaterialization.ts', import.meta.url), 'utf8');
+    expect(source).toContain('del agent["system_prompt"]');
+    expect(source).toContain('soul_path.write_bytes(instructions.encode("utf-8"))');
+    expect(source).toContain('soul_path.read_bytes() != instructions.encode("utf-8")');
+    expect(source).not.toContain('agent["system_prompt"] = instructions');
+    expect(source).not.toContain('DEFAULT_SOUL_MD');
+    expect(source).not.toContain('is_legacy_template_soul');
+  });
+
+  it.each([
+    ['none', { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: true }],
+    ['leaf', { maxSpawnDepth: 1, orchestratorEnabled: false, delegationDisabled: false }],
+    ['recursive', { maxSpawnDepth: 2, orchestratorEnabled: true, delegationDisabled: false }],
+  ] as const)('maps %s to the exact native delegation gate', (subagentType, expected) => {
+    expect(toNativeSubagentTypeConfig(subagentType)).toEqual(expected);
+  });
+
   it('preserves native background review while applying the saved subagent selection', async () => {
     const profile = nativeProfile({
       subagent_model: { provider: '', model: '' },
@@ -275,5 +295,137 @@ describe('materializeHermesProfileSelections', () => {
 
     expect(configureToolsets).toHaveBeenCalledExactlyOnceWith('builder', []);
     expect(readNative).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves delegation config untouched when the saved subagent type is absent', async () => {
+    const configureSubagentType = vi.fn(async () => undefined);
+
+    await materializeHermesProfileSelections(
+      selection(),
+      vi.fn(async () => nativeProfile()),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureSubagentType,
+    );
+
+    expect(configureSubagentType).not.toHaveBeenCalled();
+  });
+
+  it('materializes the structural Team task mode only when the saved Card supplies it', async () => {
+    const configureTaskMode = vi.fn(async () => undefined);
+
+    await materializeHermesProfileSelections(
+      selection({ taskMode: 'team' }),
+      vi.fn(async () => nativeProfile()),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureTaskMode,
+    );
+
+    expect(configureTaskMode).toHaveBeenCalledExactlyOnceWith('builder', 'team');
+  });
+
+  it('removes only the structural Team marker when saved Card authority says ordinary', async () => {
+    const configureTaskMode = vi.fn(async () => undefined);
+
+    await materializeHermesProfileSelections(
+      selection({ taskMode: null }),
+      vi.fn(async () => nativeProfile()),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureTaskMode,
+    );
+
+    expect(configureTaskMode).toHaveBeenCalledExactlyOnceWith('builder', null);
+  });
+
+  it.each(['leaf', 'recursive'] as const)(
+    'requires delegation through ordinary toolset materialization before applying %s depth',
+    async (subagentType) => {
+      const calls: string[] = [];
+      const available = [
+        { name: 'memory', enabled: true },
+        { name: 'delegation', enabled: false },
+      ];
+      const readNative = vi.fn()
+        .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
+        .mockResolvedValueOnce(nativeProfile({
+          toolsets: available.map((toolset) => ({ ...toolset, enabled: true })),
+        }));
+      const configureToolsets = vi.fn(async () => {
+        calls.push('toolsets');
+        return { ok: true, applied: { toolsets: true } };
+      });
+      const configureSubagentType = vi.fn(async () => {
+        calls.push('subagentType');
+      });
+
+      await materializeHermesProfileSelections(
+        selection({ subagentType, toolsets: ['memory'] }),
+        readNative,
+        vi.fn(),
+        vi.fn(),
+        vi.fn(),
+        configureToolsets,
+        vi.fn(),
+        configureSubagentType,
+      );
+
+      expect(configureToolsets).toHaveBeenCalledExactlyOnceWith(
+        'builder',
+        ['delegation', 'memory'],
+      );
+      expect(configureSubagentType).toHaveBeenCalledExactlyOnceWith('builder', subagentType);
+      expect(calls).toEqual(['toolsets', 'subagentType']);
+    },
+  );
+
+  it('applies explicit none after ordinary toolset materialization without requiring delegation', async () => {
+    const calls: string[] = [];
+    const available = [
+      { name: 'memory', enabled: true },
+      { name: 'delegation', enabled: true },
+    ];
+    const readNative = vi.fn()
+      .mockResolvedValueOnce(nativeProfile({ toolsets: available }))
+      .mockResolvedValueOnce(nativeProfile({
+        toolsets: available.map((toolset) => ({
+          ...toolset,
+          enabled: toolset.name === 'memory',
+        })),
+      }));
+    const configureToolsets = vi.fn(async () => {
+      calls.push('toolsets');
+      return { ok: true, applied: { toolsets: true } };
+    });
+    const configureSubagentType = vi.fn(async () => {
+      calls.push('subagentType');
+    });
+
+    await materializeHermesProfileSelections(
+      selection({ subagentType: 'none', toolsets: ['memory'] }),
+      readNative,
+      vi.fn(),
+      vi.fn(),
+      vi.fn(),
+      configureToolsets,
+      vi.fn(),
+      configureSubagentType,
+    );
+
+    expect(configureToolsets).toHaveBeenCalledExactlyOnceWith('builder', ['memory']);
+    expect(configureSubagentType).toHaveBeenCalledExactlyOnceWith('builder', 'none');
+    expect(calls).toEqual(['toolsets', 'subagentType']);
   });
 });

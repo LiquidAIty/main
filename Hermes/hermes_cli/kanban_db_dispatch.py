@@ -1350,7 +1350,9 @@ def _set_worker_pid(conn: sqlite3.Connection, task_id: str, pid: int) -> None:
             "FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
-        if receipt and receipt["workflow_template_id"] == "delegate-team-v1":
+        from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+        if receipt and receipt["workflow_template_id"] == TEAM_WORKFLOW_ID:
             payload.update({
                 "workflow_template_id": receipt["workflow_template_id"],
                 "step_key": receipt["current_step_key"],
@@ -2603,7 +2605,9 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
     # kanban_comment reads HERMES_PROFILE for its default author; `-p` alone
     # doesn't set the env var.
     env["HERMES_PROFILE"] = profile_arg
-    if task.workflow_template_id == "delegate-team-v1":
+    from hermes_cli.kanban_team import TEAM_WORKFLOW_ID
+
+    if task.workflow_template_id == TEAM_WORKFLOW_ID:
         env["HERMES_KANBAN_TEAM_WORKER"] = "1"
     # This is the grant boundary: the dispatcher assigned this new worker's task.
     from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER

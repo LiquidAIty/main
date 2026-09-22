@@ -36,6 +36,44 @@ def _clear_environment(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+class RegistrationContext:
+    def __init__(self):
+        self.tools = []
+        self.hooks = []
+        self.prompt_sections = []
+
+    def register_tool(self, **kwargs):
+        self.tools.append(kwargs)
+
+    def register_hook(self, name, callback):
+        self.hooks.append((name, callback))
+
+    def register_system_prompt_section(self, name, content, **kwargs):
+        self.prompt_sections.append((name, content, kwargs))
+
+
+def _configure_roster(plugin, monkeypatch, entries):
+    profile_home = Path("profiles") / "orchestrator"
+    roster = []
+    titles = {}
+    for stable_profile, title in entries:
+        target_home = Path("profiles") / stable_profile
+        roster.append((stable_profile, target_home))
+        titles[target_home] = title
+    monkeypatch.setattr(plugin, "_process_profile_home", lambda: profile_home)
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_bot_roster",
+        lambda actual_home: roster if actual_home == profile_home else [],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_read_profile_meta",
+        lambda target_home: {"bot_title": titles[target_home]},
+    )
+    return profile_home, titles
+
+
 def test_registers_exact_materialized_tools(plugin, monkeypatch):
     tools = [{
         "canonicalName": "card.create",
@@ -44,15 +82,13 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}},
     }]
     monkeypatch.setattr(plugin, "_load_tools", lambda: tools)
-    calls = []
+    _configure_roster(plugin, monkeypatch, [("builder_profile", "Builder")])
+    context = RegistrationContext()
 
-    class Context:
-        def register_tool(self, **kwargs):
-            calls.append(kwargs)
+    plugin.register(context)
 
-    plugin.register(Context())
-    assert len(calls) == 1
-    assert {key: value for key, value in calls[0].items() if key != "handler"} == {
+    assert len(context.tools) == 1
+    assert {key: value for key, value in context.tools[0].items() if key != "handler"} == {
         "name": "card__card_create",
         "toolset": "card-tools",
         "schema": {
@@ -62,6 +98,163 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         },
         "description": "Create a saved Card.",
     }
+    assert [name for name, _callback in context.hooks] == ["pre_tool_call"]
+    assert context.hooks[0][1](
+        tool_name="message_agent",
+        args={"target": "@builder", "message": "Inspect this."},
+    ) == {"action": "modify", "args": {"target": "builder_profile"}}
+    assert len(context.prompt_sections) == 1
+    section_name, render, options = context.prompt_sections[0]
+    assert section_name == "card-tools.visible-card-targets"
+    assert options == {"max_chars": 4_000}
+    assert render({}) == (
+        "Use `message_agent` with one of these exact visible saved-Card addresses:\n"
+        "- `@Builder`"
+    )
+
+
+def test_visible_titles_translate_case_insensitively_with_optional_at(plugin, monkeypatch):
+    profile_home, _titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("profile_builder_7", "Builder"), ("profile_signal_9", "Signal")],
+    )
+
+    for target in ("Builder", "builder", "@BUILDER", "  @Builder  "):
+        assert plugin._rewrite_message_agent_target(
+            profile_home,
+            tool_name="message_agent",
+            args={"target": target, "message": "Inspect this."},
+        ) == {"action": "modify", "args": {"target": "profile_builder_7"}}
+
+
+def test_visible_title_hook_is_bounded_to_message_agent_and_exact_roster(plugin, monkeypatch):
+    profile_home, _titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("profile_builder_7", "Builder")],
+    )
+
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="card__card_create",
+        args={"target": "Builder"},
+    ) is None
+    for target in (
+        "profile_builder_7",
+        "Unknown",
+        "@Unknown",
+        "peer/agent",
+        "Builder@another-machine",
+        "@@Builder",
+    ):
+        assert plugin._rewrite_message_agent_target(
+            profile_home,
+            tool_name="message_agent",
+            args={"target": target, "message": "Hello"},
+        ) is None
+
+
+@pytest.mark.parametrize("bad_title", [
+    "",
+    "World Signals",
+    "Signal!",
+    "@Signal",
+    "Sígnal",
+    "a" * 65,
+])
+def test_malformed_visible_title_fails_closed_for_the_whole_projection(
+    plugin,
+    monkeypatch,
+    bad_title,
+):
+    profile_home, _titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("valid_profile", "Valid"), ("invalid_profile", bad_title)],
+    )
+
+    assert plugin._visible_card_targets(profile_home) == []
+    assert plugin._visible_card_targets_prompt(profile_home) == ""
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="message_agent",
+        args={"target": "@Valid", "message": "Hello"},
+    ) is None
+
+
+def test_duplicate_visible_titles_fail_closed_case_insensitively(plugin, monkeypatch):
+    profile_home, _titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("profile_one", "Signal"), ("profile_two", "sIgNaL")],
+    )
+
+    assert plugin._visible_card_targets(profile_home) == []
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="message_agent",
+        args={"target": "Signal", "message": "Hello"},
+    ) is None
+
+
+def test_prompt_lists_only_exact_visible_titles_and_no_internal_ids(plugin, monkeypatch):
+    profile_home, _titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("profile_builder_7", "Builder"), ("profile_world_9", "WorldSignals")],
+    )
+
+    prompt = plugin._visible_card_targets_prompt(profile_home)
+
+    assert "@Builder" in prompt
+    assert "@WorldSignals" in prompt
+    assert "profile_builder_7" not in prompt
+    assert "profile_world_9" not in prompt
+
+
+def test_title_changes_are_read_live_by_prompt_and_translation(plugin, monkeypatch):
+    profile_home, titles = _configure_roster(
+        plugin,
+        monkeypatch,
+        [("stable_profile", "Signal")],
+    )
+    target_home = Path("profiles") / "stable_profile"
+
+    assert "@Signal" in plugin._visible_card_targets_prompt(profile_home)
+    titles[target_home] = "WorldSignals"
+
+    prompt = plugin._visible_card_targets_prompt(profile_home)
+    assert "@WorldSignals" in prompt
+    assert "@Signal`" not in prompt
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="message_agent",
+        args={"target": "Signal", "message": "Hello"},
+    ) is None
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="message_agent",
+        args={"target": "@worldsignals", "message": "Hello"},
+    ) == {"action": "modify", "args": {"target": "stable_profile"}}
+
+
+def test_empty_or_unreadable_roster_has_no_aliases_or_prompt(plugin, monkeypatch):
+    profile_home, _titles = _configure_roster(plugin, monkeypatch, [])
+
+    assert plugin._visible_card_targets(profile_home) == []
+    assert plugin._visible_card_targets_prompt(profile_home) == ""
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_bot_roster",
+        lambda _profile_home: (_ for _ in ()).throw(RuntimeError("unavailable")),
+    )
+    assert plugin._visible_card_targets(profile_home) == []
+    assert plugin._rewrite_message_agent_target(
+        profile_home,
+        tool_name="message_agent",
+        args={"target": "Builder", "message": "Hello"},
+    ) is None
 
 
 def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monkeypatch):

@@ -6,13 +6,11 @@
 relationships = [
   { name = "FLOW", canvasValue = "flow", authority = "AGE", direction = "source-to-target" },
   { name = "MAGENTIC_OPTION", canvasValue = "magentic_option", authority = "AGE", direction = "source-to-target" },
-  { name = "MAGENTIC_CONTROL", canvasValue = "magentic_control", authority = "AGE", direction = "source-to-target" },
 ]
 
 # LiquidAIty publication/effect annotations only. These are not installed-tool declarations
 # or grants. The existing host consumes this small projection at startup.
 operations = [
-  { id = "delegate_task", access = "write", publication = "private-runtime", sourceIds = ["hermes"], namespace = "hermes", kind = "tool", allowedRoles = ["team"], defaultRole = "team" },
   { id = "main.context", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "agentgraph.inspect", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "mag_one.describe_connected_agents", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
@@ -193,14 +191,14 @@ label = "Custom assistant"
 runtime = { kind = "hermes", mode = "delegate" }
 objects = ["mission", "agent", "instructions", "context", "files", "images", "output"]
 [templates.template_main_chat]
-label = "Main Chat"
+label = "Main"
 runtime = { kind = "hermes", mode = "main" }
 extends = "template_assist"
-[templates.template_hermes_steward]
-label = "Hermes helper"
+[templates.template_knowgraph]
+label = "KnowGraph"
 extends = "template_assist"
 [templates.template_magentic]
-label = "Magentic-One"
+label = "Magnetic"
 runtime = { kind = "hermes", mode = "magentic_one", profile = "card_magentic" }
 extends = "template_assist"
 [templates.template_worldsignals_agent]
@@ -214,7 +212,7 @@ extends = "template_assist"
 tabs = ["Results", "Prompt", "Runtime", "Memory", "Tools"]
 fields = [
   { name = "provider", label = "Provider", section = "Runtime", path = "runtimeOptions.provider", source = "CardConfiguration.provider", catalog = "configured-models", catalogProperty = "provider" },
-  { name = "delegationRole", label = "Delegate task", section = "Runtime", path = "runtimeOptions.delegationRole", source = "CardConfiguration.delegationRole", allowUnset = false },
+  { name = "subagentType", label = "Subagents", section = "Runtime", path = "runtimeOptions.subagentType", source = "CardConfiguration.subagentType", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "accessMode", label = "Access", section = "Runtime", path = "runtimeOptions.accessMode", source = "CardConfiguration.accessMode", allowUnset = false },
   { name = "modelKey", label = "Model", section = "Runtime", path = "runtimeOptions.modelKey", source = "CardConfiguration.modelKey", catalog = "configured-models", control = "catalog-select", filteredBy = "provider" },
   { name = "reasoningEffort", label = "Reasoning", section = "Runtime", path = "runtimeOptions.reasoningEffort", source = "CardConfiguration.reasoningEffort" },

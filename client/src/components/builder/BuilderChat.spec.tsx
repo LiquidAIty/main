@@ -164,11 +164,11 @@ describe('BuilderChat', () => {
         addressableAgents={[
           {
             cardId: 'builder', profile: 'builder', title: 'Builder',
-            address: 'builder', aliases: ['builder'],
+            address: 'Builder', aliases: ['builder'],
           },
           {
             cardId: 'trading', profile: 'trading', title: 'Trading',
-            address: 'trading', aliases: ['trading'],
+            address: 'Trading', aliases: ['trading'],
           },
         ]}
         onSend={vi.fn()}
@@ -179,10 +179,10 @@ describe('BuilderChat', () => {
 
     const input = screen.getByTestId('builder-chat-input') as HTMLInputElement;
     fireEvent.change(input, { target: { value: '@b' } });
-    expect(screen.getByTestId('builder-chat-address-builder').textContent).toContain('@builder');
-    expect(screen.queryByTestId('builder-chat-address-trading')).toBeNull();
+    expect(screen.getByTestId('builder-chat-address-Builder').textContent).toContain('@Builder');
+    expect(screen.queryByTestId('builder-chat-address-Trading')).toBeNull();
     fireEvent.keyDown(input, { key: 'Tab' });
-    expect(input.value).toBe('@builder ');
+    expect(input.value).toBe('@Builder ');
   });
 
   it('keeps routing metadata out of the user bubble and renders the replying Card identity', () => {

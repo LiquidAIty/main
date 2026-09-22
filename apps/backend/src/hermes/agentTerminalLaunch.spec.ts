@@ -49,6 +49,7 @@ function savedDeck(card: AgentCardInstance, overrides: Partial<DeckDocument> = {
 
 const inheritedNames = ['HERMES_MAIN_MODEL', 'HERMES_BUILDER_PROFILE', 'CODEX_HOME', 'OPENAI_API_KEY'] as const;
 const inheritedBefore = new Map<string, string | undefined>();
+let ephemeralPromptBefore: string | undefined;
 
 beforeEach(() => {
   nativeFs.existsSync.mockImplementation(() => true);
@@ -58,6 +59,8 @@ beforeEach(() => {
     inheritedBefore.set(name, process.env[name]);
     process.env[name] = `must-not-inherit-${name}`;
   }
+  ephemeralPromptBefore = process.env.HERMES_EPHEMERAL_SYSTEM_PROMPT;
+  process.env.HERMES_EPHEMERAL_SYSTEM_PROMPT = 'stale-parent-prompt';
 });
 
 afterEach(() => {
@@ -67,6 +70,9 @@ afterEach(() => {
     else process.env[name] = value;
   }
   inheritedBefore.clear();
+  if (ephemeralPromptBefore === undefined) delete process.env.HERMES_EPHEMERAL_SYSTEM_PROMPT;
+  else process.env.HERMES_EPHEMERAL_SYSTEM_PROMPT = ephemeralPromptBefore;
+  ephemeralPromptBefore = undefined;
 });
 
 describe('prepareAgentTerminal saved-card launch contract', () => {
@@ -93,7 +99,7 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     expect(launch.env.HERMES_TUI_DIR).toBe('C:\\repo\\Hermes\\ui-tui');
     expect(launch.env.TERMINAL_CWD).toBe(launch.cwd);
     expect(workspaceRoot.resolveProductChatWorkingDirectory).not.toHaveBeenCalled();
-    expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBe(card.prompt);
+    expect(launch.env.HERMES_EPHEMERAL_SYSTEM_PROMPT).toBeUndefined();
     expect(launch.env.HERMES_AGENT_TERMINAL_CONFIG).toBeUndefined();
     expect(launch.env.HERMES_REQUIRE_CLI_HOST).toBeUndefined();
     expect(launch.env.HERMES_MCP_SERVERS).toBeUndefined();
@@ -142,6 +148,45 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
     } });
     expect(prepareAgentTerminal(owner, card, savedDeck(card), 'session-1').tuiArgs)
       .toContain('saved-model-key');
+  });
+
+  it('forwards only an explicitly saved native subagent type to profile materialization', () => {
+    const legacy = savedCard();
+    expect(prepareAgentTerminal(owner, legacy, savedDeck(legacy), 'session-legacy').profileSelection)
+      .not.toHaveProperty('subagentType');
+
+    const recursive = savedCard({ runtimeOptions: {
+      ...savedCard().runtimeOptions,
+      subagentType: 'recursive',
+    } });
+    expect(prepareAgentTerminal(
+      owner,
+      recursive,
+      savedDeck(recursive),
+      'session-recursive',
+    ).profileSelection).toMatchObject({ subagentType: 'recursive' });
+  });
+
+  it('derives Team task behavior from the stable Team Card identity', () => {
+    const team = savedCard({
+      id: 'card_team',
+      title: 'Renamed by the user',
+      runtime: { kind: 'hermes', mode: 'delegate', profile: 'team' },
+    });
+    const teamOwner = { ...owner, cardId: 'card_team' };
+    expect(prepareAgentTerminal(
+      teamOwner,
+      team,
+      savedDeck(team),
+      'session-team',
+    ).profileSelection).toMatchObject({ taskMode: 'team' });
+
+    expect(prepareAgentTerminal(
+      owner,
+      savedCard({ title: 'Team' }),
+      savedDeck(savedCard({ title: 'Team' })),
+      'session-title-only',
+    ).profileSelection).toMatchObject({ taskMode: null });
   });
 
   it('uses the canonical app-server transport for the existing Mag One account binding', () => {

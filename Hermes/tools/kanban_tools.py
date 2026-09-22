@@ -885,23 +885,41 @@ def _handle_create(args: dict, **kw) -> str:
         if project_id is None and workspace_kind is None and workspace_path is None:
             if self_task is not None and self_task.project_id:
                 project_id, project_source_task_id = self_task.project_id, self_task.id
-        new_tid = kb.create_task(
-            conn, title=str(title).strip(), body=args.get("body"), assignee=str(assignee),
-            parents=tuple(parents), tenant=args.get("tenant") or os.environ.get("HERMES_TENANT"),
-            priority=_opt_int(args.get("priority"), 0),
-            workspace_kind=workspace_kind, workspace_path=workspace_path, project_id=project_id,
+        create_kwargs = {
+            "title": str(title).strip(),
+            "body": args.get("body"),
+            "assignee": str(assignee),
+            "parents": tuple(parents),
+            "tenant": args.get("tenant") or os.environ.get("HERMES_TENANT"),
+            "priority": _opt_int(args.get("priority"), 0),
+            "workspace_kind": workspace_kind,
+            "workspace_path": workspace_path,
+            "project_id": project_id,
             # Board-project inheritance must read the board this call opened, not the
             # session's current board.
-            board=args.get("board"),
-            project_source_task_id=project_source_task_id, triage=triage,
-            creator_task_id=self_tid,
-            idempotency_key=args.get("idempotency_key"),
-            max_runtime_seconds=_opt_int(args.get("max_runtime_seconds")), skills=skills,
-            model_override=model_override, provider_override=provider_override,
-            goal_mode=goal_mode, goal_max_turns=_opt_int(args.get("goal_max_turns")),
-            completion_contract=args.get("completion_contract"),
-            initial_status=str(args.get("initial_status") or "running"),
-            created_by=os.environ.get("HERMES_PROFILE") or "worker", session_id=session_id)
+            "board": args.get("board"),
+            "project_source_task_id": project_source_task_id,
+            "creator_task_id": self_tid,
+            "idempotency_key": args.get("idempotency_key"),
+            "max_runtime_seconds": _opt_int(args.get("max_runtime_seconds")),
+            "skills": skills,
+            "model_override": model_override,
+            "provider_override": provider_override,
+            "goal_mode": goal_mode,
+            "goal_max_turns": _opt_int(args.get("goal_max_turns")),
+            "completion_contract": args.get("completion_contract"),
+            "initial_status": str(args.get("initial_status") or "running"),
+            "created_by": os.environ.get("HERMES_PROFILE") or "worker",
+            "session_id": session_id,
+        }
+        from hermes_cli import kanban_team
+
+        if kanban_team.is_team_profile(str(assignee)):
+            # Team is structural profile authority. The model selects only the exact
+            # assignee; no workflow field is present in the public tool schema.
+            new_tid = kanban_team.create_team_root(conn, **create_kwargs).id
+        else:
+            new_tid = kb.create_task(conn, triage=triage, **create_kwargs)
         landed = _fields(kb.get_task(conn, new_tid), _CREATED_FIELDS)
         wait = [e for e in kb.list_events(conn, new_tid) if e.kind == "dependency_wait"]
         gate = {"gated": True, "gated_by": wait[-1].payload["parent"]} if wait else {"gated": False}

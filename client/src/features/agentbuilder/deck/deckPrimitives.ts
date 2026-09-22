@@ -33,6 +33,7 @@ export function cleanOptionalText(value: unknown): string | null {
 // for a new card; it is not a role-to-model preset or a hidden runtime choice.
 export const DEFAULT_CARD_MODEL_KEY = 'gpt-5.6-luna';
 export const DEFAULT_CARD_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
+export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
 export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
@@ -62,7 +63,24 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'engraphis_remember',
   'run_mag_one',
 ] as const;
+export const THINKGRAPH_CARD_TOOLS = [
+  'engraphis_recall_context',
+  'engraphis_get_memory',
+  'engraphis_remember',
+  'engraphis_update_memory',
+  'engraphis_correct',
+  'engraphis_link',
+  'engraphis_ingest',
+] as const;
 export const HERMES_CARD_TOOLS = [
+  'canvas.inspect',
+  'engraphis_get_memory',
+  'graphiti.get_entity_edge',
+  'graphiti.get_episode_entities',
+  'graphiti.get_episodes',
+  'graphiti.get_status',
+  'graphiti.search_memory_facts',
+  'graphiti.search_nodes',
   'graphiti.add_memory',
   'graphiti.add_triplet',
   'write_mag_one_instructions',
@@ -89,18 +107,20 @@ export function normalizeRuntimeOptions(
   return cloneDeckDocument(value as AgentCardRuntimeOptions);
 }
 
-export function isCardController(card: AgentCardInstance): boolean {
+/** Orange flow authority belongs only to the fixed Main runtime. */
+export function hasMainBotAuthority(card: AgentCardInstance): boolean {
   const record = card as AgentCardInstance & { enabled?: boolean };
   const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
+    && card.runtime.mode === 'main'
     && Boolean(card.runtime.profile.trim())
     && record.enabled !== false
     && options?.enabled !== false;
 }
 
 
-/** Recognise ONLY the three real edge types — mirrors the backend contract
+/** Recognise ONLY the two real edge types — mirrors the backend contract
  * (decks/store.ts). Anything else is 'invalid': visible on the canvas but
  * authorising nothing. The old default returned 'flow' (invocation authority)
  * for typos and corrupt data, which is how Main→Hermes delegation silently
@@ -108,7 +128,6 @@ export function isCardController(card: AgentCardInstance): boolean {
 export function normalizeDeckEdgeType(value: unknown): DeckEdgeType {
   const type = safeText(value).trim().toLowerCase();
   if (type === 'magentic_option') return 'magentic_option';
-  if (type === 'magentic_control') return 'magentic_control';
   if (type === 'flow') return 'flow';
   return 'invalid';
 }

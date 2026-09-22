@@ -25,7 +25,7 @@ from app.python_models.tool_registry import (
 )
 from pydantic import TypeAdapter, ValidationError
 from app.python_models.orchestration_contracts import (
-    CardDelegationRole,
+    CardSubagentType,
     DataAnchorReference,
     GraphHook,
 )
@@ -46,7 +46,6 @@ from app.python_models.idf import (
 from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
-    prepare_main_context,
     resolve_data_anchors,
 )
 from app.python_models.postgres import connect_postgres
@@ -92,7 +91,7 @@ KNOWN_CARD_FIELDS = {
 
 PROTECTED_CARD_IDS = frozenset({
     "card_main_chat",
-    "card_hermes_steward",
+    "card_knowgraph",
     "card_magentic",
     "card_trading_workbench",
     "card_worldsignals_agent",
@@ -110,10 +109,17 @@ CARD_TELEMETRY_CARD_EDGE_PATTERNS = (
     "(source:Card)-[edge:DELEGATED_TO]->(card)",
 )
 
+_HERMES_NATIVE_TASK_STATUSES = {
+    "triage", "todo", "scheduled", "ready", "running",
+    "blocked", "review", "done", "archived",
+}
+_TEAM_CARD_ID = "card_team"
+_OPTIONAL_TOOL_CATALOG_FAMILIES = frozenset({"cbm"})
+
 
 def _edge_labels() -> dict[str, str]:
     """Exact AGE transport labels; builder relationship descriptions grant nothing."""
-    return {"flow": "FLOW", "magentic_option": "MAGENTIC_OPTION", "magentic_control": "MAGENTIC_CONTROL"}
+    return {"flow": "FLOW", "magentic_option": "MAGENTIC_OPTION"}
 
 
 def _now() -> datetime:
@@ -310,7 +316,7 @@ def _validated_deck_collections(
         if core["source"] not in node_ids or core["target"] not in node_ids:
             raise CardDomainError(f"edge_endpoint_missing:{core['id']}")
         endpoints = (core["source"], core["target"])
-        if core["edgeType"] in {"magentic_option", "magentic_control"}:
+        if core["edgeType"] == "magentic_option":
             if sum(_is_magentic_runtime(_card_runtime(cards[key]))
                    for key in endpoints) != 1:
                 raise CardDomainError(f"edge_magentic_endpoint_required:{core['id']}")
@@ -540,15 +546,17 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
     # Preserve legacy or partially restored authority fields verbatim here.
     # The authenticated Card API must be able to read and repair them. The
     # invocation boundary below validates the exact current Hermes contract.
-    if "delegationRole" in extensions:
-        try:
-            extensions["delegationRole"] = TypeAdapter(CardDelegationRole).validate_python(extensions["delegationRole"])
-        except ValidationError as error:
-            raise CardDomainError("card_delegation_role_invalid") from error
     if "subagentModel" in extensions:
         extensions["subagentModel"] = _json_object(
             extensions["subagentModel"], "card_subagent_model"
         )
+    if "subagentType" in extensions:
+        try:
+            extensions["subagentType"] = TypeAdapter(CardSubagentType).validate_python(
+                extensions["subagentType"]
+            )
+        except ValidationError as error:
+            raise CardDomainError("card_subagent_type_invalid") from error
     if "script" in extensions:
         try:
             extensions["script"] = saved_script(
@@ -620,6 +628,20 @@ def _subagent_model_selection(value: Any) -> dict[str, str] | None:
     return normalized
 
 
+def _subagent_type_selection(value: Any) -> CardSubagentType | None:
+    """Validate an explicitly saved temporary-subagent topology choice.
+
+    Missing remains missing so legacy native Team profiles are not rewritten by
+    an unrelated Card read or save.
+    """
+    if value is None:
+        return None
+    try:
+        return TypeAdapter(CardSubagentType).validate_python(value)
+    except ValidationError as error:
+        raise CardDomainError("card_subagent_type_invalid") from error
+
+
 def _validate_new_card_revision(card: dict[str, Any]) -> None:
     """Validate a proposed revision while leaving old bad revisions readable."""
 
@@ -643,6 +665,9 @@ def _validate_new_card_revision(card: dict[str, Any]) -> None:
         if not is_hermes:
             raise CardDomainError("card_subagent_model_requires_hermes")
         _subagent_model_selection(subagent)
+    subagent_type = _subagent_type_selection(options.get("subagentType"))
+    if subagent_type is not None and not is_hermes:
+        raise CardDomainError("card_subagent_type_requires_hermes")
 
 
 def _insert_revision(
@@ -1745,17 +1770,6 @@ def delete_card(
 
             cursor.execute(
                 """
-                SELECT 1 FROM ag_catalog.agent_assignments
-                WHERE project_id=%s AND deck_id=%s
-                  AND (sender_card_id=%s OR receiver_card_id=%s)
-                LIMIT 1
-                """,
-                (project_id, deck_id, card_id, card_id),
-            )
-            if cursor.fetchone() is not None:
-                raise CardDomainError("card_deletion_references_present:assignments")
-            cursor.execute(
-                """
                 SELECT 1 FROM ag_catalog.trading_jobs
                 WHERE project_id=%s AND deck_id=%s AND card_id=%s
                 LIMIT 1
@@ -1853,22 +1867,96 @@ def _card_enabled(card: dict[str, Any]) -> bool:
     return card.get("enabled") is not False and option_enabled is not False
 
 
+def _card_has_main_bot_authority(card: dict[str, Any]) -> bool:
+    """Return outbound orange Bot authority for the Hermes Main mode only."""
+    if card.get("kind") != "agent" or not _card_enabled(card):
+        return False
+    try:
+        runtime = _card_runtime(card)
+    except CardDomainError:
+        return False
+    return runtime.get("kind") == "hermes" and runtime.get("mode") == "main"
+
+
 def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
-    """Accept enabled saved Cards with a callable non-orchestrator runtime."""
+    """Accept enabled saved Cards with a callable non-Magnetic runtime."""
     try:
         runtime = _card_runtime(card)
     except CardDomainError:
         return False
     return (
         not _is_magentic_runtime(runtime)
+        and not _card_has_main_bot_authority(card)
         and _card_enabled(card)
     )
+
+
+def _validate_single_master_topology(
+    cards: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> None:
+    """Keep each ordinary Card under Main (orange) or Magnetic (blue), never both."""
+
+    masters: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.get("enabled") is False:
+            continue
+        edge_type = edge.get("edgeType")
+        source_id = str(edge.get("source") or "")
+        target_id = str(edge.get("target") or "")
+        if edge_type == "flow":
+            source = cards.get(source_id)
+            target = cards.get(target_id)
+            if (
+                source is not None
+                and target is not None
+                and _card_has_main_bot_authority(source)
+                and not _is_magentic_runtime(_card_runtime(target))
+            ):
+                masters.setdefault(target_id, set()).add(source_id)
+        elif edge_type == "magentic_option":
+            source = cards.get(source_id)
+            target = cards.get(target_id)
+            if source is None or target is None:
+                continue
+            source_is_magnetic = _is_magentic_runtime(_card_runtime(source))
+            target_is_magnetic = _is_magentic_runtime(_card_runtime(target))
+            if source_is_magnetic == target_is_magnetic:
+                continue
+            master_id = source_id if source_is_magnetic else target_id
+            worker_id = target_id if source_is_magnetic else source_id
+            if _card_has_main_bot_authority(cards[worker_id]):
+                raise CardDomainError(f"card_master_conflict:{worker_id}")
+            masters.setdefault(worker_id, set()).add(master_id)
+    for card_id, master_ids in masters.items():
+        if len(master_ids) > 1:
+            raise CardDomainError(f"card_master_conflict:{card_id}")
 
 
 def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
                                  previous: list[dict[str, Any]]) -> None:
     cards = {card["id"]: card for card in nodes}
     del previous
+    _validate_single_master_topology(cards, edges)
+    addressable_ids = {
+        endpoint
+        for edge in edges
+        if edge.get("edgeType") == "flow" and edge.get("enabled") is not False
+        for endpoint in (edge["source"], edge["target"])
+    }
+    addresses: dict[str, str] = {}
+    for card_id in sorted(addressable_ids):
+        card = cards.get(card_id)
+        if card is None:
+            continue
+        title = _required_text(card.get("title"), "card_title")
+        if not _PUBLIC_CARD_ADDRESS_RE.fullmatch(title):
+            raise CardDomainError(f"card_address_invalid:{card_id}")
+        folded = title.casefold()
+        prior = addresses.get(folded)
+        if prior is not None and prior != card_id:
+            raise CardDomainError(f"card_address_duplicate:{folded}")
+        addresses[folded] = card_id
     for edge in edges:
         if edge.get("edgeType") != "flow":
             continue
@@ -1934,7 +2022,7 @@ def _connected_hermes_card_targets(
             if strict:
                 raise CardDomainError(f"magentic_worker_runtime_invalid:{peer_id}")
             continue
-        if _is_magentic_runtime(runtime):
+        if _is_magentic_runtime(runtime) and edge_type != "flow":
             if strict:
                 raise CardDomainError(f"magentic_worker_runtime_invalid:{peer_id}")
             continue
@@ -1950,6 +2038,7 @@ def _connected_hermes_card_targets(
         revision_id = str(target.get("_cardRevisionId") or "").strip()
         if strict and not revision_id:
             raise CardDomainError(f"magentic_worker_revision_missing:{peer_id}")
+        options = _json_object(target.get("runtimeOptions"), "runtime_options")
         seen.add(peer_id)
         direct.append({
             "cardId": peer_id,
@@ -1957,6 +2046,28 @@ def _connected_hermes_card_targets(
             "profile": runtime["profile"],
             "description": str(target.get("subtitle") or "")[:1_000],
             "cardRevisionId": revision_id,
+            **({
+                "teamTaskMode": True,
+                "provider": {
+                    "provider": options.get("provider") or target.get("provider"),
+                    "accessMode": options.get("accessMode"),
+                    "modelKey": options.get("modelKey"),
+                    "providerModelId": (
+                        options.get("providerModelId")
+                        or target.get("providerModelId")
+                        or options.get("modelKey")
+                    ),
+                },
+                "runtimeOptions": {
+                    "modelKey": options.get("modelKey"),
+                    "providerModelId": (
+                        options.get("providerModelId")
+                        or target.get("providerModelId")
+                        or options.get("modelKey")
+                    ),
+                    "reasoningEffort": options.get("reasoningEffort"),
+                },
+            } if peer_id == _TEAM_CARD_ID else {}),
         })
     return direct
 
@@ -1966,26 +2077,24 @@ def _direct_card_targets(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project saved Hermes Card peers from enabled FLOW connections."""
+    """Project one Main Card's Bots from its outbound FLOW edges."""
     source = cards.get(card_id)
-    if source is None or source.get("kind") != "agent" or not _card_enabled(source):
-        return []
-    try:
-        source_runtime = _card_runtime(source)
-    except CardDomainError:
-        return []
-    if source_runtime.get("kind") != "hermes":
+    if source is None or not _card_has_main_bot_authority(source):
         return []
     return _connected_hermes_card_targets(
-        card_id, cards, edges, edge_type="flow",
+        card_id,
+        cards,
+        [edge for edge in edges if edge.get("source") == card_id],
+        edge_type="flow",
     )
 
 
 _HERMES_PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_PUBLIC_CARD_ADDRESS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
-    """Compile direct Hermes Card peers from saved flow topology."""
+    """Compile Main's outbound Bot roster from saved orange topology."""
     nodes = deck.get("nodes")
     edges = deck.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):
@@ -2017,8 +2126,6 @@ def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         runtime = card.get("runtime")
         if not isinstance(runtime, dict) or runtime.get("kind") != "hermes":
-            continue
-        if _is_magentic_runtime(runtime):
             continue
         card_id = str(card.get("id") or "")
         profile = str(runtime.get("profile") or "").strip()
@@ -2346,11 +2453,19 @@ def _prepare_invocation(
         target_runtime = _card_runtime(card)
         sender_runtime = _card_runtime(sender) if sender is not None else None
         if _is_magentic_runtime(target_runtime):
-            authorized = any(
-                {edge["source"], edge["target"]} == {sender_id, card_id}
-                and edge["edgeType"] == "magentic_control"
-                and edge.get("enabled") is not False
-                for edge in loaded["deck"]["edges"]
+            # Magnetic invocation uses the same explicit outbound orange Bot
+            # authority as any other target. Blue topology owns only the
+            # worker roster; no blue wire starts or controls the orchestrator.
+            authorized = (
+                sender_runtime is not None
+                and sender_runtime.get("kind") == "hermes"
+                and _card_has_main_bot_authority(sender)
+                and any(
+                    target["cardId"] == card_id
+                    for target in _direct_card_targets(
+                        sender_id, cards, loaded["deck"]["edges"]
+                    )
+                )
             )
         elif sender_runtime is not None and _is_magentic_runtime(sender_runtime):
             authorized = any(
@@ -2402,6 +2517,11 @@ def _prepare_invocation(
     subagent_model = _subagent_model_selection(options.get("subagentModel"))
     if subagent_model is not None:
         runtime_options["subagentModel"] = subagent_model
+    subagent_type = _subagent_type_selection(options.get("subagentType"))
+    if subagent_type is not None:
+        if runtime.get("kind") != "hermes":
+            raise CardDomainError("card_subagent_type_requires_hermes")
+        runtime_options["subagentType"] = subagent_type
     # Preserve the pre-existing optional Card value for callers that already
     # saved it. It remains Card data passed to Hermes; it is not required and
     # does not become a second approval, sandbox, network, or workspace owner.
@@ -2433,6 +2553,12 @@ def _prepare_invocation(
     ).strip()
     if catalog_state not in {"available", "unavailable"}:
         raise CardDomainError("discovered_tool_catalog_state_invalid")
+    unavailable_catalog_families = set(_string_list(
+        payload.get("unavailableToolCatalogFamilies"),
+        "unavailable_tool_catalog_families",
+    ))
+    if not unavailable_catalog_families <= _OPTIONAL_TOOL_CATALOG_FAMILIES:
+        raise CardDomainError("unavailable_tool_catalog_family_invalid")
     try:
         discovered_tools = payload.get("discoveredTools") or []
         if not isinstance(discovered_tools, list):
@@ -2447,8 +2573,20 @@ def _prepare_invocation(
         raise CardDomainError(str(error)) from error
     by_id = {item["canonicalId"]: item for item in catalog}
     unknown_tools = [name for name in ceiling if name not in by_id]
-    if unknown_tools and catalog_state == "available":
-        raise CardDomainError(f"configured_tool_unknown:{unknown_tools[0]}")
+    unexpected_unknown_tools = [
+        name for name in unknown_tools
+        if (
+            catalog_state == "available"
+            and (
+                "." not in name
+                or name.split(".", 1)[0] not in unavailable_catalog_families
+            )
+        )
+    ]
+    if unexpected_unknown_tools:
+        raise CardDomainError(
+            f"configured_tool_unknown:{unexpected_unknown_tools[0]}"
+        )
     selected_mcp_connections = set(call_config["mcpConnectionIds"])
     connection_granted_tools = [
         item["canonicalId"] for item in catalog
@@ -2468,7 +2606,15 @@ def _prepare_invocation(
     def unavailable_reason(name: str) -> str | None:
         definition = by_id.get(name)
         if definition is None:
-            return "catalog_unavailable"
+            family = name.split(".", 1)[0] if "." in name else ""
+            return (
+                "catalog_unavailable"
+                if (
+                    catalog_state == "unavailable"
+                    or family in unavailable_catalog_families
+                )
+                else "capability_unavailable"
+            )
         available_contracts = [
             contract for contract in definition.get("contracts", [])
             if isinstance(contract, dict) and contract.get("available") is not False
@@ -2604,6 +2750,9 @@ def resolve_hermes_card_tools(payload: dict[str, Any]) -> dict[str, Any]:
             "discoveredTools": payload.get("discoveredTools"),
             "discoveredToolCatalogState": payload.get(
                 "discoveredToolCatalogState"
+            ),
+            "unavailableToolCatalogFamilies": payload.get(
+                "unavailableToolCatalogFamilies"
             ),
         },
         require_assignment=False,
@@ -2849,19 +2998,6 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     anchor_references = resolved["resolvedNativeReads"]
     graph_projection = resolved["resolvedGraphProjection"]
     images = resolved["images"]
-    context_reads = []
-    if call_config["runtime"].get("kind") == "hermes" and call_config["runtime"].get("mode") == "main":
-        context = prepare_main_context(
-            prepared["projectId"], prepared["deckId"], prepared["cardIdentity"]["cardId"],
-            str(payload.get("conversationId") or ""), assignment, call_config["enabledTools"],
-        )
-        if context["text"]:
-            graph_seed = "\n\n".join(filter(None, (graph_seed, context["text"])))
-        selected = {(ref["authority"], ref["nativeId"]) for ref in references}
-        additional = [ref for ref in context["references"] if (ref["authority"], ref["nativeId"]) not in selected]
-        references = [*references, *additional]
-        anchor_references = [*anchor_references, *additional]
-        context_reads = context["reads"]
     try:
         materialized = materialize_idf(
             stable={
@@ -2906,12 +3042,11 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         "resolvedGraphProjection": graph_projection,
         **idf_public(materialized),
         "_materializedIdf": materialized,
-        "preparedContextReads": context_reads,
     }
 
 
 def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
-    """Preview saved Main authority and optional context without starting a Run."""
+    """Preview saved Main authority without starting a Run."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
     deck_id = _required_text(payload.get("deckId"), "deck_id")
     loaded = _load_deck_internal(project_ref, deck_id)
@@ -2937,10 +3072,6 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         **prepared,
         **({"message": message} if message else {}),
-        **({"preparedContext": prepare_main_context(
-            prepared["projectId"], deck_id, main_cards[0]["id"],
-            str(payload.get("conversationId") or ""), message, call_config["enabledTools"],
-        )} if message.strip() else {}),
         "sessionProfile": call_config,
     }
 
@@ -2948,27 +3079,19 @@ def prepare_main_chat(payload: dict[str, Any]) -> dict[str, Any]:
 def resolve_magentic_target_card(
     project_ref: str,
     deck_id: str,
-    sender_id: str,
 ) -> dict[str, str]:
     """Resolve the one saved Mag One Card without materializing model input."""
 
     project_ref = _required_text(project_ref, "project_id")
     deck_id = _required_text(deck_id, "deck_id")
-    sender_id = _required_text(sender_id, "sender_card_id")
     loaded = _load_deck_internal(project_ref, deck_id)
-    target_ids = {
-        edge["target"] if edge["source"] == sender_id else edge["source"]
-        for edge in loaded["deck"]["edges"]
-        if sender_id in {edge["source"], edge["target"]}
-        and edge["edgeType"] == "magentic_control" and edge.get("enabled") is not False
-    }
     targets = [
         card for card in loaded["deck"]["nodes"]
-        if card["id"] in target_ids
+        if _card_enabled(card)
         and _is_magentic_runtime(_card_runtime(card))
     ]
     if len(targets) != 1:
-        raise CardDomainError("magentic_control_target_ambiguous")
+        raise CardDomainError("magentic_card_identity_ambiguous")
     return {
         "projectId": loaded["projectId"],
         "deckId": deck_id,
@@ -2976,7 +3099,14 @@ def resolve_magentic_target_card(
     }
 
 
-def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
+def describe_magentic_agents(
+    project_ref: str,
+    deck_id: str,
+    *,
+    discovered_tool_names: list[str] | None = None,
+    discovered_tool_catalog_state: str = "unavailable",
+    unavailable_tool_catalog_families: list[str] | None = None,
+) -> dict[str, Any]:
     """Read the AGE-authored worker roster without executing any runtime."""
     loaded = _load_deck_internal(project_ref, deck_id)
     cards = {card["id"]: card for card in loaded["deck"]["nodes"]}
@@ -2989,7 +3119,22 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
     orchestrator = magentic[0]
     connected: list[dict[str, Any]] = []
     seen: set[str] = set()
-    known_tools = {item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())}
+    catalog_state = str(discovered_tool_catalog_state or "unavailable").strip()
+    if catalog_state not in {"available", "unavailable"}:
+        raise CardDomainError("discovered_tool_catalog_state_invalid")
+    discovered_names = set(_string_list(
+        discovered_tool_names or [],
+        "discovered_tool_names",
+    ))
+    unavailable_families = set(_string_list(
+        unavailable_tool_catalog_families or [],
+        "unavailable_tool_catalog_families",
+    ))
+    if not unavailable_families <= _OPTIONAL_TOOL_CATALOG_FAMILIES:
+        raise CardDomainError("unavailable_tool_catalog_family_invalid")
+    known_tools = {
+        item["canonicalId"] for item in materialize_tool_catalog(tool_manifest())
+    } | discovered_names
     for edge in loaded["deck"]["edges"]:
         if (edge["edgeType"] != "magentic_option" or edge.get("enabled") is False
                 or orchestrator["id"] not in {edge["source"], edge["target"]}):
@@ -3004,10 +3149,20 @@ def describe_magentic_agents(project_ref: str, deck_id: str) -> dict[str, Any]:
         options = _json_object(card.get("runtimeOptions"), "runtime_options")
         tools = _string_list(options.get("tools"), "tools")
         unknown = [tool for tool in tools if tool not in known_tools]
+        unexpected_unknown = [
+            tool for tool in unknown
+            if (
+                catalog_state == "available"
+                and (
+                    "." not in tool
+                    or tool.split(".", 1)[0] not in unavailable_families
+                )
+            )
+        ]
         provider = str(options.get("provider") or "").strip()
         model = str(options.get("providerModelId") or options.get("modelKey") or "").strip()
         reason = (
-            f"configured_tool_unknown:{unknown[0]}" if unknown
+            f"configured_tool_unknown:{unexpected_unknown[0]}" if unexpected_unknown
             else "card_model_configuration_incomplete" if not provider or not model
             else None
         )
@@ -3263,7 +3418,6 @@ def _retain_required_run_idf(
                 finish_run({
                     "runId": run_id,
                     "state": "failed",
-                    "nativePhase": "failed",
                     "errorCode": "input_files_materialization_failed",
                     "errorSummary": message,
                 })
@@ -3438,7 +3592,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
                 "cardId": card_identity["cardId"],
                 "cardRevisionId": prepared["cardRevisionId"],
                 "nativeIdentity": runtime["profile"],
-                "instructions": runtime_input["systemPrompt"],
+                "instructions": prepared["idf"]["stableSavedCardContext"]["instructions"],
                 "provider": provider,
                 "runtimeOptions": options,
             },
@@ -3481,6 +3635,7 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         return value.isoformat() if isinstance(value, datetime) else None
 
     cost = row.get("total_cost_usd")
+    persisted_native_status = str(row.get("native_phase") or "").strip().lower()
     return {
         "runId": str(row.get("run_id") or ""),
         "correlationId": str(row.get("correlation_id") or ""),
@@ -3499,7 +3654,11 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "providerApiMode": str(row.get("provider_api_mode") or "") or None,
         "executionAuthorityFingerprint": str(row.get("execution_authority_sha256") or "") or None,
         "state": str(row.get("state") or ""),
-        "nativePhase": str(row.get("native_phase") or "") or None,
+        "nativeStatus": (
+            persisted_native_status
+            if persisted_native_status in _HERMES_NATIVE_TASK_STATUSES
+            else None
+        ),
         "nativeRootId": str(row.get("provider_thread_ref") or "") or None,
         "nativeRunId": str(row.get("provider_turn_ref") or "") or None,
         "hermesSessionId": str(row.get("hermes_session_ref") or "") or None,
@@ -3728,12 +3887,9 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
     """Update the existing Run with native aggregate progress only."""
 
     run_id = _required_text(payload.get("runId"), "run_id")
-    phase = _required_text(payload.get("nativePhase"), "native_phase")
-    if phase not in {
-        "queued", "decomposing", "working", "synthesizing",
-        "complete", "blocked", "failed",
-    }:
-        raise CardDomainError("native_run_phase_invalid")
+    native_status = _required_text(payload.get("nativeStatus"), "native_status").lower()
+    if native_status not in _HERMES_NATIVE_TASK_STATUSES:
+        raise CardDomainError("native_task_status_invalid")
 
     def count(name: str) -> int | None:
         value = payload.get(name)
@@ -3770,7 +3926,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
             WHERE run_id=%s AND state IN ('pending','running')
             """,
             (
-                payload.get("nativeRootId"), payload.get("nativeRunId"), phase,
+                payload.get("nativeRootId"), payload.get("nativeRunId"), native_status,
                 counts["tasksCompleted"], counts["tasksTotal"],
                 counts["activeWorkers"], counts["toolCallCount"],
                 counts["providerInputTokens"], counts["providerOutputTokens"],
@@ -3779,7 +3935,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
             ),
         )
         updated = cursor.rowcount == 1
-    telemetry_written = _observe_run_progress(run_id, phase, payload) if updated else False
+    telemetry_written = _observe_run_progress(run_id, native_status, payload) if updated else False
     return {
         "ok": True,
         "runId": run_id,
@@ -3788,7 +3944,7 @@ def update_run_progress(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _observe_run_progress(run_id: str, phase: str, payload: dict[str, Any]) -> bool:
+def _observe_run_progress(run_id: str, native_status: str, payload: dict[str, Any]) -> bool:
     try:
         with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
             _age_rows(
@@ -3797,7 +3953,7 @@ def _observe_run_progress(run_id: str, phase: str, payload: dict[str, Any]) -> b
                 MATCH (run:Run {runId: $runId})
                 SET run.nativeRootId=$nativeRootId,
                     run.nativeRunId=$nativeRunId,
-                    run.nativePhase=$nativePhase,
+                    run.nativeStatus=$nativeStatus,
                     run.nativeTaskCompletedCount=$tasksCompleted,
                     run.nativeTaskTotalCount=$tasksTotal,
                     run.nativeActiveWorkerCount=$activeWorkers,
@@ -3810,7 +3966,7 @@ def _observe_run_progress(run_id: str, phase: str, payload: dict[str, Any]) -> b
                     "runId": run_id,
                     "nativeRootId": payload.get("nativeRootId"),
                     "nativeRunId": payload.get("nativeRunId"),
-                    "nativePhase": phase,
+                    "nativeStatus": native_status,
                     "tasksCompleted": payload.get("tasksCompleted"),
                     "tasksTotal": payload.get("tasksTotal"),
                     "activeWorkers": payload.get("activeWorkers"),
@@ -3931,6 +4087,9 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
     state = _required_text(payload.get("state"), "state")
     if state not in {"completed", "blocked", "failed", "cancelled"}:
         raise CardDomainError("run_terminal_state_invalid")
+    native_status = str(payload.get("nativeStatus") or "").strip().lower() or None
+    if native_status is not None and native_status not in _HERMES_NATIVE_TASK_STATUSES:
+        raise CardDomainError("native_task_status_invalid")
     reconcile_persisted_result = payload.get("reconcilePersistedResult", False)
     if not isinstance(reconcile_persisted_result, bool):
         raise CardDomainError("run_result_reconciliation_invalid")
@@ -4101,7 +4260,7 @@ def finish_run(payload: dict[str, Any]) -> dict[str, Any]:
                     payload.get("providerInputTokens"), payload.get("providerOutputTokens"),
                     payload.get("providerCachedTokens"), payload.get("providerReasoningTokens"),
                     payload.get("toolCallCount"), payload.get("totalCostUsd"),
-                    payload.get("nativePhase"), payload.get("tasksCompleted"),
+                    native_status, payload.get("tasksCompleted"),
                     payload.get("tasksTotal"), payload.get("activeWorkers"),
                     payload.get("finalResult"),
                     (
@@ -4197,7 +4356,7 @@ def _observe_run_finish(
                     run.model=$model,
                     run.modelFallbackOccurred=$modelFallbackOccurred,
                     run.modelFallbackReason=$modelFallbackReason,
-                    run.nativePhase=$nativePhase,
+                    run.nativeStatus=$nativeStatus,
                     run.nativeTaskCompletedCount=$tasksCompleted,
                     run.nativeTaskTotalCount=$tasksTotal,
                     run.nativeActiveWorkerCount=$activeWorkers,
@@ -4219,7 +4378,7 @@ def _observe_run_finish(
                     "model": (payload or {}).get("model"),
                     "modelFallbackOccurred": (payload or {}).get("modelFallbackOccurred", False),
                     "modelFallbackReason": (payload or {}).get("modelFallbackReason"),
-                    "nativePhase": (payload or {}).get("nativePhase"),
+                    "nativeStatus": (payload or {}).get("nativeStatus"),
                     "tasksCompleted": (payload or {}).get("tasksCompleted"),
                     "tasksTotal": (payload or {}).get("tasksTotal"),
                     "activeWorkers": (payload or {}).get("activeWorkers"),

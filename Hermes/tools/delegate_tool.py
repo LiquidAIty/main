@@ -59,7 +59,6 @@ from tools.delegate_tool_results import (  # noqa: F401
 )
 
 _ROLES = frozenset({"leaf", "orchestrator"})
-_TOP_LEVEL_ROLES = frozenset({*_ROLES, "team"})
 
 # Nested delegation is granted by depth/role in _build_child_agent, never by the
 # model naming toolsets (there is no model-facing toolsets argument).
@@ -73,12 +72,8 @@ def _normalize_role(r: Optional[str]) -> str:
 
 
 def _normalize_top_level_role(r: Optional[str]) -> str:
-    """Top-level delegation shape; persistent roles are never valid inside ``tasks[]``."""
-    r_norm = str(r).strip().lower() if r else "leaf"
-    if r_norm not in _TOP_LEVEL_ROLES:
-        logger.warning("Unknown delegate_task role=%r, coercing to 'leaf'", r)
-        return "leaf"
-    return r_norm
+    """Legacy internal role input; temporary-child capability remains depth-derived."""
+    return _normalize_role(r)
 
 DEFAULT_MAX_ITERATIONS = 250
 _HEARTBEAT_INTERVAL = 30  # seconds between parent activity heartbeats during delegation
@@ -433,12 +428,7 @@ def delegate_task(
     subagent_id: Optional[str] = None, message: Optional[str] = None, parent_agent=None,
     credentials_cfg: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Spawn temporary children or submit one durable Team mission.
-
-    ``action`` list/steer/stop controls temporary children synchronously. ``tasks[]`` retains upstream's
-    depth-derived temporary-child behavior; explicit top-level ``team`` branches before temporary-child
-    credential or runtime construction.
-    """
+    """Spawn or control temporary depth-derived children."""
     if parent_agent is None:
         return tool_error("delegate_task requires a parent agent context.")
 
@@ -485,30 +475,6 @@ def delegate_task(
             "delegate_task: ignoring caller-supplied max_iterations=%s; using delegation.max_iterations=%s from config",
             max_iterations, default_max_iter,
         )
-
-    if top_role == "team":
-        if tasks is not None:
-            return tool_error(
-                "role='team' accepts exactly one goal/context mission; tasks[] "
-                "batches remain available only for leaf/orchestrator."
-            )
-        if not isinstance(goal, str) or not goal.strip():
-            return tool_error("role='team' requires one non-empty goal.")
-        if context is not None and not isinstance(context, str):
-            return tool_error("role='team' context must be a string when provided.")
-        if output_schema is not None:
-            return tool_error("role='team' does not accept output_schema.")
-        if images is not None:
-            return tool_error("role='team' does not accept images.")
-        try:
-            from hermes_cli.kanban_team import submit_team
-
-            return json.dumps(
-                submit_team(goal=goal, context=context, parent_agent=parent_agent),
-                ensure_ascii=False,
-            )
-        except Exception as exc:
-            return tool_error(f"Team dispatch failed: {exc}")
 
     # credentials_cfg (internal callers only, e.g. /review → auxiliary.review) is
     # a per-call routing owner shaped like the delegation config section. Keep
@@ -663,22 +629,6 @@ DELEGATE_TASK_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "goal": _p(
-                "string",
-                "One self-contained mission for role='team'.",
-            ),
-            "context": _p(
-                "string",
-                "Optional explicit context for the top-level Team mission.",
-            ),
-            "role": _p(
-                "string",
-                "Use team for one durable Auto-Kanban mission; ordinary temporary subagents use tasks[].",
-                enum=["team"],
-            ),
-            # Temporary subagents retain upstream's tasks[] shape. The top-level
-            # goal/context fields above are only for Team; output_schema
-            # remains available per temporary task and handler-only for old wires.
             "tasks": {
                 "type": "array",
                 "minItems": 1,

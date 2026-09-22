@@ -182,14 +182,14 @@ def test_canvas_wire_catalog_preserves_supported_fields_without_native_discovery
     tools = asyncio.run(mcp_host._materialize_complete_catalog())
     schema = next(tool.inputSchema for tool in tools if tool.name == 'canvas.upsert_wire')
     assert 'main.context' in {tool.name for tool in tools}
-    for edge_type in ('flow', 'magentic_option', 'magentic_control'):
+    for edge_type in ('flow', 'magentic_option'):
         jsonschema.validate({'projectId': 'p', 'deckId': 'd', 'op': 'upsert', 'wire': {
             'id': 'wire', 'source': 'a', 'target': 'b', 'edgeType': edge_type,
             'sourceHandle': None, 'targetHandle': 'port', 'enabled': False,
             'label': 'Existing presentation',
         }}, schema)
     assert schema['properties']['wire']['properties']['edgeType']['enum'] == [
-        'flow', 'magentic_option', 'magentic_control',
+        'flow', 'magentic_option',
     ]
 
 
@@ -1249,7 +1249,7 @@ def test_agentgraph_and_direct_magentic_input_dispatch_without_running(
     monkeypatch.setattr(
         card_domain,
         "resolve_magentic_target_card",
-        lambda project_id, deck_id, _sender_id: {
+        lambda project_id, deck_id: {
             "projectId": project_id,
             "deckId": deck_id,
             "cardId": "card_mag_one",
@@ -1735,7 +1735,8 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert set(by_name["card.create"].inputSchema["properties"]) == {
             "projectId", "deckId", "expectedRevision", "templateId", "title",
             "role", "prompt", "runtime", "model", "tools", "nativeTools", "skills",
-            "toolsets", "mcpConnectionIds", "subagentModel", "openaiRuntime", "position",
+            "toolsets", "mcpConnectionIds", "subagentType", "subagentModel",
+            "openaiRuntime", "position",
         }
         runtime_schema = by_name["card.create"].inputSchema["properties"]["runtime"]
         assert runtime_schema == {
@@ -1763,7 +1764,7 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
         assert set(update_properties) == {
             "configuration", "prompt", "title", "script", "subsystems", "tools",
             "nativeTools", "skills", "toolsets", "mcpConnectionIds", "modelKey", "provider",
-            "providerModelId", "accessMode", "subagentModel", "openaiRuntime",
+            "providerModelId", "accessMode", "subagentType", "subagentModel", "openaiRuntime",
             "reasoningEffort", "temperature", "maxTokens",
         }
         assert by_name["card.update_configuration"].inputSchema["required"] == [
@@ -2199,6 +2200,7 @@ def test_catalog_progress_names_completed_and_active_families(monkeypatch):
     monkeypatch.setattr(mcp_host, "_native_graphiti_tools", graphiti_catalog)
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_COMPLETED_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
     monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
 
     asyncio.run(mcp_host._materialize_complete_catalog())
@@ -2217,6 +2219,56 @@ def test_catalog_progress_names_completed_and_active_families(monkeypatch):
         "graphiti",
     )
     assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
+
+
+def test_cbm_catalog_failure_is_reported_without_blocking_application_catalog(
+    monkeypatch,
+):
+    import asyncio
+    import mcp_host
+
+    traces = []
+    closed = []
+
+    async def unavailable_cbm():
+        raise RuntimeError("native_cbm_process_not_running")
+
+    monkeypatch.setattr(mcp_host, "_configured_tool_allowlist", lambda: None)
+    monkeypatch.setattr(mcp_host, "_native_cbm_tools", unavailable_cbm)
+    monkeypatch.setattr(
+        mcp_host,
+        "_native_graphiti_tools",
+        lambda: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(mcp_host, "_close_native_cbm", lambda: closed.append(True))
+    monkeypatch.setattr(
+        mcp_host,
+        "_trace",
+        lambda event, **fields: traces.append((event, fields)),
+    )
+    monkeypatch.setattr(mcp_host, "_CATALOG_COMPLETED_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_CATALOG_UNAVAILABLE_FAMILIES", ())
+    monkeypatch.setattr(mcp_host, "_CATALOG_INITIALIZING_FAMILY", "liquidaity")
+
+    tools = asyncio.run(mcp_host._materialize_complete_catalog())
+
+    assert tools
+    assert not any(tool.name.startswith("cbm.") for tool in tools)
+    assert closed == [True]
+    assert mcp_host._CATALOG_COMPLETED_FAMILIES == (
+        "liquidaity",
+        "graphiti",
+    )
+    assert mcp_host._CATALOG_INITIALIZING_FAMILY is None
+    assert mcp_host._catalog_diagnostics()["unavailableCatalogFamilies"] == [
+        "cbm"
+    ]
+    assert any(
+        event == "catalog_family_unavailable"
+        and fields["catalog_family"] == "cbm"
+        and fields["failure_code"] == "native_cbm_process_not_running"
+        for event, fields in traces
+    )
 
 
 def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
@@ -2263,7 +2315,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
     monkeypatch.setattr(
         mcp_host,
         "_codegraph_diagnostics",
-        lambda: {"codeGraphReady": True},
+        lambda: {"codeGraphReady": False},
     )
     monkeypatch.setattr(mcp_host, "_CATALOG_STATE", "initializing")
     monkeypatch.setattr(mcp_host, "_CATALOG_FAILURE", None)
@@ -2302,6 +2354,7 @@ def test_http_listener_and_health_are_live_while_catalog_is_slow(monkeypatch):
                 assert catalog_readiness.json()["toolCount"] == catalog_size
                 readiness = await client.get("/health/ready")
                 assert readiness.status_code == 200
+                assert "codeGraphReady" not in readiness.json()
 
             async with streamable_http_client(f"{base_url}/mcp") as streams:
                 async with ClientSession(streams[0], streams[1]) as session:
@@ -2566,6 +2619,11 @@ def test_dev_fresh_resolves_current_official_cbm_from_path_without_a_pin():
     source = open(script, encoding="utf-8").read()
     assert "MCP_CBM_BINARY" in source
     assert "Get-Command codebase-memory-mcp" in source
+    assert "Native CBM startup failed" not in source
+    assert "continuing LiquidAIty startup" in source
+    assert source.index("& npm.cmd run dev:services") > source.index(
+        "continuing LiquidAIty startup"
+    )
     assert "USERPROFILE" not in source
     assert ".local\\bin\\codebase-memory-mcp.exe" not in source
     assert "--version" not in source
@@ -3462,6 +3520,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
             "cbm",
             "graphiti",
         ],
+        "unavailableCatalogFamilies": [],
         "initializingCatalogFamily": None,
         "toolCount": expected_count,
         "uniqueToolCount": len({tool.name for tool in authenticated}),

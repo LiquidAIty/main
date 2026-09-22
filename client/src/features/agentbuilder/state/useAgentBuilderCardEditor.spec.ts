@@ -35,13 +35,13 @@ describe('Card settings and saved Bot wires', () => {
     }));
     const config = result.current.selectedCardConfig!;
     await act(async () => { await result.current.handleSaveSelectedCardConfig({
-      ...config, runtime_options: { ...config.runtime_options, delegationRole: 'off' },
+      ...config, reasoning_effort: 'medium',
     }); });
     expect(saved.edges).toEqual(deck.edges);
     expect(saved.edges).toContainEqual(deck.edges.find(edge => edge.id === 'incoming'));
     expect(saved.nodes.filter(card => card.id !== main.id)).toEqual(deck.nodes.filter(card => card.id !== main.id));
     const after = saved.nodes.find(card => card.id === main.id)!;
-    expect(after.runtimeOptions?.delegationRole).toBe('off');
+    expect(after.runtimeOptions?.reasoningEffort).toBe('medium');
     expect(after.runtime).toEqual(main.runtime);
     expect(after.prompt).toBe(main.prompt);
     expect(after.position).toEqual(main.position);
@@ -97,4 +97,5 @@ describe('Card settings and saved Bot wires', () => {
     expect(after.position).toEqual(card.position);
     expect(saved.edges).toEqual(deck.edges);
   });
+
 });

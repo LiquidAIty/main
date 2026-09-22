@@ -2,7 +2,7 @@ import { Handle, Position } from '@xyflow/react';
 import type { AgentCardInstance } from '../../../types/agentgraph';
 import { GRAPH_THEME, graphGlassCardStyle } from '../../graph/graphVisualTokens';
 import { GRAPH_TEXT } from '../../graph/graphWorkspaceContract';
-import { isCardController } from '../../../features/agentbuilder/deck/deckPrimitives';
+import { hasMainBotAuthority } from '../../../features/agentbuilder/deck/deckPrimitives';
 
 type AgentCardNodeData = AgentCardInstance & {
   busX?: number;
@@ -25,7 +25,10 @@ export default function AgentCardNode({
 }) {
   const canReceiveConnection = true;
   const canStartConnection = true;
-  const controller = isCardController(data);
+  const mainBotSource = hasMainBotAuthority(data);
+  const isMainCard = data.kind === 'agent'
+    && data.runtime.kind === 'hermes'
+    && data.runtime.mode === 'main';
   const busOnRight = data.busX === undefined || data.position.x < data.busX;
   const bluePosition = busOnRight ? Position.Right : Position.Left;
   const orangePosition = busOnRight ? Position.Left : Position.Right;
@@ -39,31 +42,84 @@ export default function AgentCardNode({
   const subtext = String(data?.subtitle || '').replace(/\s+/g, ' ').trim() || 'Operational agent';
   const compactSubtext =
     subtext.length > 88 ? `${subtext.slice(0, 88).trimEnd()}…` : subtext;
+  const shellBorderColor = shellActive
+    ? 'rgba(55,173,170,0.6)'
+    : selected
+      ? GRAPH_THEME.accent.primaryBorder
+      : GRAPH_THEME.card.glassBorder;
+  const shellShadow = shellActive
+    ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
+    : selected
+      ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
+      : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`;
 
   return (
     <div
-      className="rounded-xl border bg-zinc-900 text-white"
+      className={isMainCard ? 'text-white' : 'rounded-xl border bg-zinc-900 text-white'}
+      data-card-shape={isMainCard ? 'hexagon' : 'rounded'}
       style={
         graphGlassCardStyle({
           position: 'relative',
-          padding: '8px 9px',
-          width: 124,
-          minHeight: 90,
-          borderWidth: 1,
-          borderColor: shellActive
-            ? 'rgba(55,173,170,0.6)'
-            : selected
-              ? GRAPH_THEME.accent.primaryBorder
-              : GRAPH_THEME.card.glassBorder,
-          background: GRAPH_THEME.card.glassBackground,
-          boxShadow: shellActive
-            ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
-            : selected
-              ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
-              : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`,
+          padding: isMainCard ? '13px 22px' : '8px 9px',
+          width: isMainCard ? 136 : 124,
+          minHeight: isMainCard ? 104 : 90,
+          borderWidth: isMainCard ? 0 : 1,
+          borderColor: shellBorderColor,
+          borderRadius: isMainCard ? 0 : 14,
+          background: isMainCard ? 'transparent' : GRAPH_THEME.card.glassBackground,
+          boxShadow: isMainCard ? 'none' : shellShadow,
+          backdropFilter: isMainCard ? 'none' : 'blur(14px) saturate(120%)',
+          WebkitBackdropFilter: isMainCard ? 'none' : 'blur(14px) saturate(120%)',
         })
       }
     >
+      {isMainCard ? (
+        <div
+          aria-hidden="true"
+          data-testid="main-card-hexagon"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            clipPath: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)',
+            background: shellBorderColor,
+            filter: shellActive
+              ? 'drop-shadow(0 14px 24px rgba(55,173,170,0.24))'
+              : 'drop-shadow(0 12px 20px rgba(0,0,0,0.28))',
+            pointerEvents: 'none',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              inset: 1,
+              clipPath: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)',
+              background: GRAPH_THEME.card.glassBackground,
+              boxShadow: shellShadow,
+              backdropFilter: 'blur(14px) saturate(120%)',
+              WebkitBackdropFilter: 'blur(14px) saturate(120%)',
+            }}
+          />
+        </div>
+      ) : null}
+      <Handle
+        id="card-control-target"
+        className="card-control-target"
+        type="target"
+        position={orangePosition}
+        aria-label={`${name} bot input`}
+        isConnectable={canReceiveConnection}
+        style={{
+          width: 10,
+          height: 30,
+          ...orangeSide,
+          border: 'none',
+          borderRadius: 5,
+          background: 'transparent',
+          boxShadow: 'none',
+          opacity: 0,
+          pointerEvents: 'all',
+        }}
+      />
       <Handle
         type="target"
         position={bluePosition}
@@ -85,7 +141,7 @@ export default function AgentCardNode({
       <Handle
         type="source"
         position={bluePosition}
-        aria-label={`${name} Mag One worker output`}
+        aria-label={`${name} Magnetic worker output`}
         isConnectable={canStartConnection}
         style={{
           width: 12,
@@ -102,12 +158,12 @@ export default function AgentCardNode({
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
-      {controller ? (
+      {mainBotSource ? (
         <Handle
           id="card-control"
           type="source"
           position={orangePosition}
-          aria-label={`${name} Card control output`}
+          aria-label={`${name} bot output`}
           style={{
             width: 12,
             height: 12,

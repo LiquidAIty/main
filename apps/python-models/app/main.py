@@ -299,7 +299,7 @@ def card_script_header(payload: dict[str, Any]):
 def domain_hermes_card_tools_resolve(payload: dict[str, Any]):
     expected_fields = {
         "projectId", "deckId", "cardId", "cardRevisionId", "discoveredTools",
-        "discoveredToolCatalogState",
+        "discoveredToolCatalogState", "unavailableToolCatalogFamilies",
     }
     try:
         if set(payload) != expected_fields:
@@ -399,10 +399,20 @@ def domain_main_prepare(payload: dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(err)) from err
 
 
-@app.get("/domain/mag-one/{project_id}/{deck_id}/agents")
-def domain_mag_one_agents(project_id: str, deck_id: str):
+@app.post("/domain/mag-one/{project_id}/{deck_id}/agents")
+def domain_mag_one_agents(project_id: str, deck_id: str, payload: dict[str, Any]):
     try:
-        return {"ok": True, **describe_magentic_agents(project_id, deck_id)}
+        return {"ok": True, **describe_magentic_agents(
+            project_id,
+            deck_id,
+            discovered_tool_names=payload.get("discoveredToolNames"),
+            discovered_tool_catalog_state=str(
+                payload.get("discoveredToolCatalogState") or "unavailable"
+            ),
+            unavailable_tool_catalog_families=payload.get(
+                "unavailableToolCatalogFamilies"
+            ),
+        )}
     except (CardDomainError, IddValidationError) as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

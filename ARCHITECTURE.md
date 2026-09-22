@@ -168,17 +168,20 @@ Native Hermes delegation remains model-selected within the Card's native capabil
 - retained `team` creates one durable native Auto-Kanban root and lets Hermes own decomposition,
   dispatch, workers, retry, review, synthesis, notification, and rejoin.
 
-Saved-Card conversation is not delegation. One enabled orange `flow` connection between two enabled
-Hermes agent Cards authorizes either endpoint to contact the other saved profile through native
-`message_agent`; Hermes owns the receiving profile's canonical `Bot Chat` and the conversation.
+Saved-Card conversation is not delegation. A non-Magnetic Hermes Card gains direct Bot/Card orchestration
+only from its explicit saved `Orchestrator` setting. Each enabled outbound orange `flow` connection then
+authorizes that source Card to contact the exact saved target through native `message_agent`; the target
+receives no reverse roster from that edge. Main is the seeded and currently configured orchestrator, but a
+deliberately configured target may own its own outbound roster, allowing a bounded series without symmetric
+peer authority. Hermes owns the receiving profile's canonical `Bot Chat` and conversation.
 
 Direct user addressing in shared chat is a separate entrance. A leading saved-roster address such as
 `@builder` resolves before inference, prepares the addressed saved Card's ordinary canonical Run/IDF,
 and submits the exact user text to that Card's own profile-scoped Gateway session. Main is not invoked,
 does not acknowledge the turn, and does not inspect the result. Only the actual addressed Card response
 is rendered and persisted with that Card's identity. An unaddressed turn invokes Main; only then may its
-IDF include the bounded preceding shared conversation. Main's independent native `message_agent` route
-remains unchanged for model-chosen Card-to-Card communication.
+  IDF include the bounded preceding shared conversation. Main's independent native `message_agent` route
+  remains the model-chosen Main-to-Card communication path.
 
 LiquidAIty has no TypeScript participant classifier, task-count router, callback scheduler, copied
 Kanban database, or Team receipt product. `apps/backend/src/hermes/kanbanRunRecovery.ts` monitors only
@@ -199,30 +202,35 @@ LiquidAIty cleanup.
 The current working tree projects saved Bot authority through one native chain:
 
 ```text
-saved enabled Hermes Cards + enabled orange flow edges
-  -> Python Card-domain ordered symmetric profile projection
+one saved non-Magnetic Orchestrator Card + its enabled outbound orange targets
+  -> Python Card-domain ordered source-owned target projection
   -> existing Hermes profile materialization owner
   -> profile-scoped bot_mode.roster write and exact readback
   -> native resolve_bot_roster
-  -> canonical Bot Chat prompt and stock message_agent target validation
+  -> application Card plugin maps unique visible titles within that exact roster
+  -> canonical Bot Chat prompt and stock message_agent profile validation
   -> unchanged stock live-owner or quiet-CLI delivery
 ```
 
 Missing or empty roster configuration grants no local target. The resolver preserves configured order,
 deduplicates without sorting, excludes self, and filters malformed, unknown, deleted, or tombstoned
-profiles. The default profile is available only when explicitly listed. Blue Mag One topology does
-not enter this projection.
+profiles. The default profile is available only when explicitly listed. A target Card receives an explicit
+empty roster unless its own saved Orchestrator setting and outbound orange edges grant its separate roster,
+so no edge grants reverse authority. Blue Magnetic topology does not enter this projection; a Card may
+independently be both an orange orchestrator target and a blue Magnetic worker.
 
-The former Card Bot-DM plugin, backend host/authentication route, and Python per-message target resolver
-are removed. No application component intercepts Card-to-Card `message_agent`, forwards a Gateway
-credential, chooses live versus offline delivery, waits for its reply, reconstructs its transcript, or
-creates a Card Run for that native Card-to-Card conversation. Hermes owns the canonical Bot Chat,
+The former Card Bot-DM delivery plugin, backend host/authentication route, and Python per-message target
+resolver are removed. The existing application Card-tools plugin performs only a bounded visible-title to
+stable-profile argument mapping inside the exact native roster; it does not forward a Gateway credential,
+choose live versus offline delivery, wait for a reply, reconstruct a transcript, or create a Card Run for
+that native Card-to-Card conversation. Hermes owns the canonical Bot Chat,
 acknowledgement, delivery choice, queueing, ordering, completion, receipts, attributed replies, silence,
 retries, and background notification. The direct user-addressed shared-chat entrance above uses the
 existing ordinary saved-Card Run/Gateway path; it does not replace or proxy `message_agent`.
 
-`delegate_task` remains native in-Card subagent/Team work; it is not a profile-to-profile Card
-conversation entrance. Loaded ordinary-Main and real Card-to-Card attributed-reply acceptance remain a
+`delegate_task` remains ordinary native in-Card subagent work; it is not a profile-to-profile Card
+conversation entrance and exposes no Team role. The saved Team profile enters the existing task ledger
+only through its structural task-mode marker. Loaded ordinary-Main and real Main-to-Card attributed-reply acceptance remain a
 separate proof tier until the canonical stack is started from this source.
 
 ## Profile materialization and memory

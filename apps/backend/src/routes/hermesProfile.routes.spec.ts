@@ -59,15 +59,12 @@ function nativeRequest() {
   return vi.fn<NativeRequest>(async (method: string) => {
     if (method === 'profiles.describe') return native();
     if (method === 'mcp.servers.list') return { servers: [] };
-    if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
-    if (method === 'learning.graph') return {
-      profile: 'liquidaity-main',
-      generated_at: '2026-08-29T00:00:00Z',
-      counts: { nodes: 0, edges: 0, memories: 0 },
-      nodes: [],
-      edges: [],
-    };
+    if (method === 'learning.frames') return { count: 0, summary: [], buckets: [] };
     if (method === 'profiles.configure') return { ok: true, applied: { description: true } };
+    if (method === 'learning.detail') return {
+      ok: true, id: 'skill:research', kind: 'skill', label: 'Research', content: 'Current content',
+    };
+    if (method === 'learning.edit') return { ok: true, message: 'updated' };
     throw new Error(`unexpected_native_method:${method}`);
   });
 }
@@ -103,9 +100,9 @@ describe('Hermes profile Card routes', () => {
     expect(body.cardSaveMutatesNative).toBe(false);
     expect(body.binding).toMatchObject({ profile: 'liquidaity-main', mode: 'main' });
     expect(body.native).toMatchObject({ description: 'Native description', soul: 'Native SOUL' });
-    expect(requestNative).toHaveBeenCalledTimes(4);
+    expect(requestNative).toHaveBeenCalledTimes(3);
     expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.describe', {
-      name: 'liquidaity-main', probe_honcho: true,
+      name: 'liquidaity-main',
     });
     expect(JSON.stringify(body)).not.toMatch(/api.?key|access.?token|refresh.?token|client.?secret|bearer\s+[a-z0-9]/i);
   });
@@ -127,7 +124,7 @@ describe('Hermes profile Card routes', () => {
     expect(response.status).toBe(200);
     expect(body.method).toBe('profiles.configure');
     expect(body.cardSaveMutatesNative).toBe(false);
-    expect(requestNative).toHaveBeenCalledTimes(5);
+    expect(requestNative).toHaveBeenCalledTimes(4);
     expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
       name: 'liquidaity-main',
       description: 'Native role only',
@@ -137,152 +134,52 @@ describe('Hermes profile Card routes', () => {
     expect(deck.nodes[0].prompt).toBe('Card contract');
   });
 
-  it('applies the bounded account Luna background-review selector and reads it back', async () => {
-    const requestNative = vi.fn(async (
-      method: string,
-      params: Record<string, unknown> = {},
-    ): Promise<unknown> => {
-      if (method === 'profiles.configure') return { ok: true, applied: { background_review: true } };
-      if (method === 'profiles.describe') return {
-        ...native(),
-        background_review: {
-          enabled: true,
-          provider: 'openai-codex',
-          model: 'gpt-5.6-luna',
-          max_input_tokens: 120_000,
-        },
-      };
-      if (method === 'mcp.servers.list') return { servers: [] };
-      if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
-      if (method === 'learning.graph') return { nodes: [], edges: [], clusters: [], memory: [], stats: {} };
-      throw new Error(`unexpected_native_method:${method}:${JSON.stringify(params)}`);
-    });
-    const { base } = await start(requestNative);
-    const response = await fetch(`${base}/cards/card_main/native`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'p1',
-        deckId: 'deck_builder',
-        method: 'profiles.configure',
-        params: {
-          background_review: {
-            enabled: true,
-            provider: 'openai-codex',
-            model: 'gpt-5.6-luna',
-            max_input_tokens: 120_000,
-          },
-        },
-      }),
-    });
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
-      name: 'liquidaity-main',
-      background_review: {
-        enabled: true,
-        provider: 'openai-codex',
-        model: 'gpt-5.6-luna',
-        max_input_tokens: 120_000,
-      },
-    });
-    expect(body.native.backgroundReview).toEqual({
-      enabled: true,
-      provider: 'openai-codex',
-      model: 'gpt-5.6-luna',
-      maxInputTokens: 120_000,
-    });
-  });
-
-  it('applies Main Honcho through the native profile boundary', async () => {
-    const requestNative = nativeRequest();
-    requestNative.mockImplementation(async (method: string): Promise<unknown> => {
-      if (method === 'profiles.configure') return { ok: true, applied: { memory_provider: true } };
-      if (method === 'profiles.describe') return {
-        ...native(),
-        memory: {
-          selected: 'honcho', installed_providers: ['holographic', 'honcho'],
-          installed: true, available: false, target: 'honcho_self_hosted',
-          credential_status: 'configured', history_database_path: 'profile/state.db',
-        },
-      };
-      if (method === 'mcp.servers.list') return { servers: [] };
-      if (method === 'learning.frames') return { count: 0, summary: '', buckets: [] };
-      if (method === 'learning.graph') return { nodes: [], edges: [] };
-      throw new Error(`unexpected_native_method:${method}`);
-    });
-    const { base } = await start(requestNative);
-    const response = await fetch(`${base}/cards/card_main/native`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
-        params: { memory_provider: 'honcho' },
-      }),
-    });
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
-      name: 'liquidaity-main', memory_provider: 'honcho',
-    });
-    expect(body.native.memory).toMatchObject({
-      selected: 'honcho', available: false, target: 'honcho_self_hosted',
-    });
-  });
-
-  it('rejects Honcho configuration for another Hermes Card', async () => {
+  it.each([
+    {
+      method: 'learning.detail',
+      params: { id: 'skill:research' },
+    },
+    {
+      method: 'learning.edit',
+      params: { id: 'skill:research', content: 'Updated content' },
+    },
+  ])('preserves the native $method operation on the bound profile', async ({ method, params }) => {
     const { base, requestNative } = await start();
-    const response = await fetch(`${base}/cards/card_delegate/native`, {
+    const response = await fetch(`${base}/cards/card_main/native`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
-        params: { memory_provider: 'honcho' },
+        projectId: 'p1', deckId: 'deck_builder', method, params,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestNative).toHaveBeenNthCalledWith(1, method, params, 'liquidaity-main');
+    expect(requestNative).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([
+    { memory_provider: 'honcho' },
+    { subagent_model: { provider: 'openai-codex', model: 'gpt-5.6-luna' } },
+  ])('rejects unsupported profile configuration before Hermes: %j', async (params) => {
+    const { base, requestNative } = await start();
+    const response = await fetch(`${base}/cards/card_main/native`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure', params,
       }),
     });
 
     expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      ok: false, error: 'main_honcho_configuration_required',
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: 'hermes_native_profile_operation_invalid',
     });
     expect(requestNative).not.toHaveBeenCalled();
   });
 
-  it('does not expose another profile-local provider through Main Honcho control', async () => {
-    const { base, requestNative } = await start();
-    const response = await fetch(`${base}/cards/card_main/native`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        projectId: 'p1', deckId: 'deck_builder', method: 'profiles.configure',
-        params: { memory_provider: 'holographic' },
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      ok: false, error: 'main_honcho_provider_invalid',
-    });
-    expect(requestNative).not.toHaveBeenCalled();
-  });
-
-  it('preserves the native unset review budget when changing enabled state', async () => {
-    const { base, requestNative } = await start();
-    const background_review = { enabled: false, provider: 'auto', model: '', max_input_tokens: null };
-    const response = await fetch(`${base}/cards/card_main/native`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId: 'p1', deckId: 'deck_builder',
-        method: 'profiles.configure', params: { background_review } }),
-    });
-    expect(response.status).toBe(200);
-    expect(requestNative).toHaveBeenNthCalledWith(1, 'profiles.configure', {
-      name: 'liquidaity-main', background_review,
-    });
-  });
-
-  it('rejects unbounded or malformed background-review selectors before Hermes', async () => {
+  it('rejects unsupported background-review configuration before Hermes', async () => {
     const { base, requestNative } = await start();
     const response = await fetch(`${base}/cards/card_main/native`, {
       method: 'POST',
@@ -303,10 +200,14 @@ describe('Hermes profile Card routes', () => {
     });
 
     expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: 'hermes_native_profile_operation_invalid',
+    });
     expect(requestNative).not.toHaveBeenCalled();
   });
 
-  it('rejects broad or extra-field synchronization payloads before Hermes', async () => {
+  it('rejects a second profile-local Soul write path before Hermes', async () => {
     const { base, requestNative } = await start();
     const response = await fetch(`${base}/cards/card_main/native`, {
       method: 'POST',
@@ -316,7 +217,6 @@ describe('Hermes profile Card routes', () => {
         deckId: 'deck_builder',
         method: 'profiles.configure',
         params: { soul: 'Soul' },
-        prompt: 'must not synchronize',
       }),
     });
 
