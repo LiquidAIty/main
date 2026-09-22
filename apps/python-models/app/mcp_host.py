@@ -412,9 +412,13 @@ def _set_catalog_initializing_family(family: str) -> None:
 
 def _complete_catalog_family(family: str) -> None:
     global _CATALOG_COMPLETED_FAMILIES, _CATALOG_INITIALIZING_FAMILY
+    global _CATALOG_UNAVAILABLE_FAMILIES
     with _CATALOG_DIAGNOSTIC_LOCK:
         if family not in _CATALOG_COMPLETED_FAMILIES:
             _CATALOG_COMPLETED_FAMILIES = (*_CATALOG_COMPLETED_FAMILIES, family)
+        _CATALOG_UNAVAILABLE_FAMILIES = tuple(
+            value for value in _CATALOG_UNAVAILABLE_FAMILIES if value != family
+        )
         _CATALOG_INITIALIZING_FAMILY = None
     _trace("catalog_family_ready", catalog_family=family, completed=True)
 
@@ -815,10 +819,6 @@ _NATIVE_CBM_INDEX_LOCK = threading.Lock()
 _NATIVE_CBM_INDEX_IN_FLIGHT: tuple[str, Future[CallToolResult]] | None = None
 _NATIVE_CBM_HOST_REPO_ROOT = os.path.normpath(_REPO_ROOT)
 _NATIVE_CBM_PROJECT = "C-Projects-LiquidAIty-main"
-_NATIVE_CBM_COMMAND = (
-    os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
-)
-_NATIVE_CBM_BINARY = shutil.which(_NATIVE_CBM_COMMAND) or _NATIVE_CBM_COMMAND
 _NATIVE_GRAPHITI_MODULE: Any | None = None
 _NATIVE_GRAPHITI_TOOLS: tuple[Tool, ...] | None = None
 _NATIVE_GRAPHITI_NAMES: frozenset[str] = frozenset()
@@ -1651,7 +1651,9 @@ class _NativeStdioMcpClient:
 
 def _native_cbm_config() -> tuple[str, list[str], str]:
     """Open the one current official user-installed CBM frontend owned by this host."""
-    return (_NATIVE_CBM_BINARY, [], _NATIVE_CBM_HOST_REPO_ROOT)
+    command = os.environ.get("MCP_CBM_BINARY", "").strip() or "codebase-memory-mcp"
+    binary = shutil.which(command) or command
+    return (binary, [], _NATIVE_CBM_HOST_REPO_ROOT)
 
 
 def _normalize_native_cbm_index_arguments(
@@ -1810,7 +1812,7 @@ def _native_result_payload(result: CallToolResult) -> dict[str, Any]:
 
 
 def _host_codegraph_runtime() -> dict[str, Any]:
-    binary_path = _NATIVE_CBM_BINARY
+    binary_path, _, _ = _native_cbm_config()
     binary_exists = os.path.isfile(binary_path)
     binary_ready = binary_exists
     return {
@@ -1841,7 +1843,7 @@ def _codegraph_diagnostics() -> dict[str, Any]:
         "binaryReady": False,
         "binaryState": "unavailable",
         "binaryVersion": "",
-        "binaryPath": _NATIVE_CBM_BINARY,
+        "binaryPath": _native_cbm_config()[0],
         "daemonAttached": False,
         "daemonState": "unattached",
         "nativeFrontendAttached": False,
@@ -2473,28 +2475,6 @@ async def _materialize_complete_catalog() -> list[Tool]:
                 f"mcp_tool_dispatch_keys_missing:{tool.name}:{','.join(missing)}"
             )
     _complete_catalog_family("liquidaity")
-    native_catalogs: dict[str, list[Tool]] = {}
-    _set_catalog_initializing_family("cbm")
-    try:
-        native_catalogs["cbm"] = await _native_cbm_tools()
-    except Exception as error:
-        await asyncio.to_thread(_close_native_cbm)
-        failure_code, failure_summary = _catalog_failure_details(error)
-        _mark_catalog_family_unavailable(
-            "cbm",
-            failure_code=failure_code,
-            failure_summary=failure_summary,
-        )
-    else:
-        _complete_catalog_family("cbm")
-    _set_catalog_initializing_family("graphiti")
-    native_catalogs["graphiti"] = await _native_graphiti_tools()
-    _complete_catalog_family("graphiti")
-    for provider, native_tools in native_catalogs.items():
-        namespaced_tools = _namespace_native_tools(provider, native_tools)
-        if provider == "cbm":
-            _register_native_cbm_catalog(namespaced_tools)
-        tools.extend(namespaced_tools)
     from app.python_models.question_evidence import QuestionEvidence
     question_schema = QuestionEvidence.model_json_schema()
     reference_schema = question_schema["$defs"]["GraphReference"]
@@ -2536,6 +2516,78 @@ async def _materialize_complete_catalog() -> list[Tool]:
         **_oauth_trace_fields(),
     )
     return catalog
+
+
+def _requested_native_catalog_families() -> tuple[str, ...]:
+    """Resolve external families only from an authorized live MCP request."""
+    principal = _internal_mcp_principal()
+    if principal is None:
+        # A public authenticated MCP client explicitly listing this product's
+        # tools is allowed to discover the complete external surface. Process
+        # startup itself has no request token and never reaches this branch.
+        return ("cbm", "graphiti") if get_access_token() is not None else ()
+    kind = str(principal.get("kind") or "")
+    if kind == "materializer-read":
+        return ("cbm", "graphiti")
+    if kind != "card-runtime":
+        return ()
+    grants = principal.get("grantedTools")
+    granted = {
+        str(value).strip() for value in grants if str(value).strip()
+    } if isinstance(grants, list) else set()
+    return tuple(
+        family
+        for family, prefix in _NATIVE_PREFIXES.items()
+        if any(name.startswith(prefix) for name in granted)
+    )
+
+
+async def _materialize_requested_native_catalog(
+    families: tuple[str, ...],
+) -> list[Tool]:
+    """Late-bind only the native families selected by the authorized request."""
+    tools: list[Tool] = []
+    for provider in families:
+        _set_catalog_initializing_family(provider)
+        try:
+            native_tools = (
+                await _native_cbm_tools()
+                if provider == "cbm"
+                else await _native_graphiti_tools()
+            )
+        except Exception as error:
+            if provider == "cbm":
+                await asyncio.to_thread(_close_native_cbm)
+            failure_code, failure_summary = _catalog_failure_details(error)
+            _mark_catalog_family_unavailable(
+                provider,
+                failure_code=failure_code,
+                failure_summary=failure_summary,
+            )
+            continue
+        _complete_catalog_family(provider)
+        namespaced = _namespace_native_tools(provider, native_tools)
+        if provider == "cbm":
+            _register_native_cbm_catalog(namespaced)
+        tools.extend(namespaced)
+
+    from app.python_models.question_evidence import QuestionEvidence
+    question_schema = QuestionEvidence.model_json_schema()
+    reference_schema = question_schema["$defs"]["GraphReference"]
+    reference_schema["properties"].pop("projectId")
+    reference_schema["required"].remove("projectId")
+    for tool in tools:
+        if tool.name == "graphiti.add_memory":
+            tool.inputSchema.setdefault("$defs", {}).update(question_schema.get("$defs", {}))
+            tool.inputSchema["properties"]["questionEvidence"] = {
+                key: value for key, value in question_schema.items() if key != "$defs"
+            }
+    tools = [_bind_operation_access(tool) for tool in tools]
+    return (
+        _bind_authenticated_catalog(tools)
+        if OAUTH_ENFORCED or _authenticated_main_context() is not None
+        else tools
+    )
 
 
 async def _initialize_catalog_once() -> None:
@@ -2696,7 +2748,7 @@ def _catalog_or_error() -> list[Tool]:
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    """Return the one frozen catalog unchanged for every MCP client."""
+    """Return the base catalog plus authorized request-scoped external families."""
     with _CATALOG_DIAGNOSTIC_LOCK:
         initializing = _CATALOG_STATE == "initializing"
     if initializing:
@@ -2706,7 +2758,21 @@ async def list_tools() -> list[Tool]:
         # missing saved grants. Shield the one process-wide initializer from a
         # client cancellation, then return only its frozen terminal catalog.
         await asyncio.shield(_start_catalog_initialization())
-    return _catalog_or_error()
+    tools = _catalog_or_error()
+    families = _requested_native_catalog_families()
+    if families:
+        existing_names = {tool.name for tool in tools}
+        tools.extend(
+            tool
+            for tool in await _materialize_requested_native_catalog(families)
+            if tool.name not in existing_names
+        )
+    names = [tool.name for tool in tools]
+    if len(names) != len(set(names)):
+        raise RuntimeError("federated_duplicate_tool_name:" + ",".join(sorted({
+            name for name in names if names.count(name) > 1
+        })))
+    return tools
 
 
 _SERVER_OWNED_ARGUMENTS = {
@@ -3654,12 +3720,10 @@ async def _run_streamable_http() -> None:
 
     async def health_endpoint(_request: Any) -> JSONResponse:
         diagnostics = _catalog_diagnostics()
-        codegraph = await asyncio.to_thread(_codegraph_diagnostics)
         return JSONResponse(
             {
                 "ok": diagnostics["catalogState"] != "failed",
                 **diagnostics,
-                **codegraph,
             },
             status_code=200,
         )

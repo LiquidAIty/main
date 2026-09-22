@@ -7,7 +7,6 @@ import type {
 } from '../../../types/agentgraph';
 import {
   cloneDeckDocument,
-  CODEBASE_MEMORY_TOOLS,
   DEFAULT_CARD_MODEL_KEY,
   DEFAULT_CARD_PROVIDER,
   MAIN_CHAT_MODEL_KEY,
@@ -40,9 +39,6 @@ const TEAM_CARD_TOOLS = [
   'graphiti.search_nodes',
   'graphiti.search_memory_facts',
   'graphiti.get_episodes',
-  ...CODEBASE_MEMORY_TOOLS,
-  'cbm.search_code',
-  'cbm.query_graph',
 ] as const;
 
 function buildPromptTemplate(parts: {

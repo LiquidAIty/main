@@ -51,28 +51,33 @@ export function resolvePythonAgentMcpHostPath(): string {
 let clientPromise: Promise<Client> | null = null;
 
 const OPTIONAL_CATALOG_PROBE_TIMEOUT_MS = 500;
-const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm']);
+const OPTIONAL_CATALOG_FAMILIES = new Set(['cbm', 'graphiti']);
 
-async function connect(): Promise<Client> {
+async function connect(
+  principal: InternalMcpPrincipal,
+  sharedLifecycle = false,
+): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(resolveInternalMcpUrl()), {
     requestInit: {
       headers: {
-        Authorization: `Bearer ${createInternalMcpBearer({ kind: 'catalog-reader' })}`,
+        Authorization: `Bearer ${createInternalMcpBearer(principal)}`,
       },
     },
   });
   const client = new Client({ name: 'main-harness', version: '0.1.0' });
-  client.onclose = () => {
-    // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
-    clientPromise = null;
-  };
+  if (sharedLifecycle) {
+    client.onclose = () => {
+      // Honest teardown: the NEXT call re-connects lazily; no in-flight retry.
+      clientPromise = null;
+    };
+  }
   await client.connect(transport);
   return client;
 }
 
 function getClient(): Promise<Client> {
   if (!clientPromise) {
-    clientPromise = connect().catch((error) => {
+    clientPromise = connect({ kind: 'catalog-reader' }, true).catch((error) => {
       clientPromise = null;
       throw error;
     });
@@ -160,10 +165,14 @@ export async function callPythonAgentMcpTool(
 }
 
 /** Read factual live MCP contracts for mechanical ingestion by LiquidAIty.idd. */
-export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescriptor[]> {
-  const client = await getClient();
-  const result = await client.listTools();
-  return (result.tools || [])
+export async function listPythonAgentMcpCatalog(
+  principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
+): Promise<PythonMcpToolDescriptor[]> {
+  const shared = principal.kind === 'catalog-reader';
+  const client = shared ? await getClient() : await connect(principal);
+  try {
+    const result = await client.listTools();
+    return (result.tools || [])
     .map((tool) => {
       const metadata = (tool._meta || {}) as Record<string, unknown>;
       const source = metadata.liquidaitySource;
@@ -203,7 +212,10 @@ export async function listPythonAgentMcpCatalog(): Promise<PythonMcpToolDescript
           : {}),
       };
     })
-    .sort((left, right) => left.name.localeCompare(right.name));
+      .sort((left, right) => left.name.localeCompare(right.name));
+  } finally {
+    if (!shared) await client.close();
+  }
 }
 
 async function readPythonAgentMcpCatalogProbe(): Promise<{
@@ -250,27 +262,32 @@ async function readPythonAgentMcpCatalogProbe(): Promise<{
  * catalog families remain visible as unavailable grants while Card-local
  * conversation and private-runtime tools can continue.
  */
-export async function readPythonAgentMcpCatalog(): Promise<PythonMcpCatalogRead> {
-  const probe = await readPythonAgentMcpCatalogProbe();
-  if (!probe.ready) {
-    return {
-      state: 'unavailable',
-      tools: [],
-      unavailableFamilies: probe.unavailableFamilies,
-      reason: 'catalog_unavailable',
-    };
-  }
+export async function readPythonAgentMcpCatalog(
+  principal: InternalMcpPrincipal = { kind: 'catalog-reader' },
+): Promise<PythonMcpCatalogRead> {
+  let unavailableFamilies: string[] = [];
   try {
+    if (principal.kind === 'catalog-reader') {
+      const initialProbe = await readPythonAgentMcpCatalogProbe();
+      unavailableFamilies = initialProbe.unavailableFamilies;
+      if (!initialProbe.ready) throw new Error('catalog_unavailable');
+    }
+    const tools = await listPythonAgentMcpCatalog(principal);
+    if (principal.kind !== 'catalog-reader') {
+      const probe = await readPythonAgentMcpCatalogProbe();
+      unavailableFamilies = probe.unavailableFamilies;
+      if (!probe.ready) throw new Error('catalog_unavailable');
+    }
     return {
       state: 'available',
-      tools: await listPythonAgentMcpCatalog(),
-      unavailableFamilies: probe.unavailableFamilies,
+      tools,
+      unavailableFamilies,
     };
   } catch {
     return {
       state: 'unavailable',
       tools: [],
-      unavailableFamilies: probe.unavailableFamilies,
+      unavailableFamilies,
       reason: 'catalog_unavailable',
     };
   }

@@ -20,7 +20,7 @@ const canonicalHostAvailable = Boolean(
 );
 
 describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated HTTP discovery + calls', () => {
-  it('publishes bounded Engraphis tools with the native CBM and Graphiti catalogs', async () => {
+  it('keeps the idle catalog application-owned and free of native external providers', async () => {
     const names = await listPythonAgentMcpTools();
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(expect.arrayContaining([
@@ -29,13 +29,9 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       'card.create',
       'card.load_graph_references',
       'card.update_configuration',
-      'cbm.search_graph',
-      'cbm.index_status',
       'engraphis_recall_context',
       'engraphis_get_memory',
       'engraphis_remember',
-      'graphiti.search_nodes',
-      'graphiti.get_status',
       'agentgraph.inspect',
       'mag_one.describe_connected_agents',
       'main.context',
@@ -54,12 +50,23 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
     expect(names).not.toContain('codegraph.status');
     expect(names).not.toContain('card.run_assistant_agent');
     expect(names).not.toContain('card.run_agent');
-  // A cold host initializes two native catalogs; slower backup/development
-  // machines can cross 30s even when the real catalog completes successfully.
-  }, 60_000);
+    expect(names.some((name) => name.startsWith('cbm.'))).toBe(false);
+    expect(names.some((name) => name.startsWith('graphiti.'))).toBe(false);
+  }, 30_000);
 
-  it('returns factual native contracts without runtime capability classifiers', async () => {
-    const catalog = await listPythonAgentMcpCatalog();
+  it('late-binds only the native family granted to an authorized Builder turn', async () => {
+    const catalog = await listPythonAgentMcpCatalog({
+      kind: 'card-runtime',
+      projectId: 'project-one',
+      deckId: 'deck_builder',
+      conversationId: 'conversation-one',
+      parentRunId: 'run-one',
+      callerCardId: 'builder',
+      callerRuntimeKind: 'hermes',
+      callerRuntimeMode: 'delegate',
+      grantedTools: ['cbm.search_graph'],
+      presentedTools: ['cbm.search_graph'],
+    });
     const search = catalog.find((tool) => tool.name === 'cbm.search_graph');
     expect(search).toMatchObject({
       sourceId: 'cbm',
@@ -69,6 +76,7 @@ describe.runIf(canonicalHostAvailable)('Python Agent MCP host — authenticated 
       inputSchema: expect.any(Object),
     });
     expect(search).not.toHaveProperty('capability');
+    expect(catalog.some((tool) => tool.name.startsWith('graphiti.'))).toBe(false);
   }, 60_000);
 
   it('rejects smuggled prompt/model/tool arguments at the MCP boundary', async () => {

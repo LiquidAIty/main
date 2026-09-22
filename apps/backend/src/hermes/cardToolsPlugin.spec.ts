@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
+  removeHermesApplicationMcpServers,
   requireHermesCardToolsReadback,
   type HermesCardTools,
 } from './cardToolsPlugin';
@@ -263,5 +264,38 @@ describe('materializeHermesApplicationMcpServers', () => {
       value: 'next-run-token',
     });
     expect(request).not.toHaveBeenCalledWith('mcp.servers.add', expect.anything());
+  });
+});
+
+describe('removeHermesApplicationMcpServers', () => {
+  it('removes only the exact transient external connections selected for the turn', async () => {
+    const selected = configuration({
+      enabledTools: ['cbm.search_graph'],
+      presentedTools: ['cbm.search_graph'],
+      pluginTools: [],
+      externalMcpTools: [{
+        canonicalName: 'cbm.search_graph',
+        connectionId: 'cbm',
+        nativeName: 'cbm.search_graph',
+      }],
+    });
+    const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === 'mcp.servers.list') return {
+        servers: [{ name: 'cbm' }, { name: 'unrelated' }],
+      };
+      if (method === 'mcp.servers.remove') return { ok: true, removed: true };
+      throw new Error(`unexpected:${method}`);
+    });
+
+    await removeHermesApplicationMcpServers(request, selected);
+
+    expect(request).toHaveBeenCalledWith('mcp.servers.remove', {
+      profile: 'builder',
+      name: 'cbm',
+    });
+    expect(request).not.toHaveBeenCalledWith('mcp.servers.remove', {
+      profile: 'builder',
+      name: 'unrelated',
+    });
   });
 });

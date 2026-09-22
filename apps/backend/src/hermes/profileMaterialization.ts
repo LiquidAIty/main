@@ -245,6 +245,12 @@ const HERMES_CARD_INSTRUCTIONS_SCRIPT = [
   'if raw_agent is not None and not isinstance(raw_agent, dict):',
   '    raise SystemExit(3)',
   'agent = dict(raw_agent) if isinstance(raw_agent, dict) else {}',
+  // External MCP definitions are transient authorized-turn material. Clear
+  // residue before a persistent Card Gateway starts so idle/session open can
+  // never reconnect a prior Run credential or provider.
+  'if "mcp_servers" in cfg:',
+  '    del cfg["mcp_servers"]',
+  '    save_config(cfg)',
   'if "system_prompt" in agent:',
   '    del agent["system_prompt"]',
   '    if agent:',

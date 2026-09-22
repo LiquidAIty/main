@@ -177,7 +177,7 @@ export function NativeCodeGraphSurface({
   );
 }
 
-type NativeLayout = 'compact' | 'original' | 'communities' | 'radial';
+type NativeLayout = 'compact' | 'original' | 'communities' | 'radial' | 'galaxy';
 type NativeStyle = 'classic' | 'cyber' | 'galaxy' | 'solar';
 type EngraphisRenderer = {
   setPreset: (name: NativeLayout) => Record<string, number | boolean | string>;
@@ -427,6 +427,7 @@ export function NativeGraphProjectionSurface({
             }}>
               <option value="compact">Compact</option><option value="original">Original</option>
               <option value="communities">Communities</option><option value="radial">Radial</option>
+              <option value="galaxy">Galaxy gravity</option>
             </select></label>
             <label>Style<select aria-label="Style" value={style} onChange={event => {
               const next = event.target.value as NativeStyle;

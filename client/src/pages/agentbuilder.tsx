@@ -515,7 +515,14 @@ export default function AgentBuilder(): React.ReactElement {
   const [codeGraphProjectError, setCodeGraphProjectError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    if (!canvasProjectId || !mainCardId) return;
+    // CodeGraph is an explicitly opened product surface. Agent Canvas and the
+    // other graph tabs must not probe CBM merely because the workspace mounted.
+    if (
+      workspaceView !== 'knowledge'
+      || knowledgeGraphKind !== 'codegraph'
+      || !canvasProjectId
+      || !mainCardId
+    ) return;
     void resolveCbmProjectName(DEFAULT_WORKSPACE_ROOT, {
       context: { projectId: canvasProjectId, deckId: BUILDER_DECK_ID, cardId: mainCardId },
     })
@@ -536,7 +543,7 @@ export default function AgentBuilder(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [canvasProjectId, mainCardId]);
+  }, [canvasProjectId, knowledgeGraphKind, mainCardId, workspaceView]);
   const {
     handleNativeSend,
     messages,

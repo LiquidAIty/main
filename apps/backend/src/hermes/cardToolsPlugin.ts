@@ -16,6 +16,7 @@ import path from 'node:path';
 import type { AgentCardInstance } from '../types';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { readPythonAgentMcpCatalog } from '../services/mcp/pythonAgentMcpClient';
+import type { InternalMcpPrincipal } from '../services/mcp/internalMcpAuth';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolveRepoRoot } from '../services/workspaceRoot';
 import type { AgentTerminalOwner } from './agentTerminal';
@@ -213,9 +214,20 @@ function requireCardTools(
 export async function resolveHermesCardTools(
   owner: AgentTerminalOwner,
   card: AgentCardInstance,
+  options: { externalCatalogPrincipal?: InternalMcpPrincipal } = {},
 ): Promise<HermesCardTools> {
   if (card.runtime.kind !== 'hermes') throw new Error('hermes_card_tools_runtime_required');
-  const externalToolCatalog = await readPythonAgentMcpCatalog();
+  // Merely opening a persistent Card session has no Run-scoped authority and
+  // must not touch an external catalog. The authorized pre-turn seam supplies
+  // the exact Card-runtime principal when external tools may be discovered.
+  const externalToolCatalog = options.externalCatalogPrincipal
+    ? await readPythonAgentMcpCatalog(options.externalCatalogPrincipal)
+    : {
+        state: 'unavailable' as const,
+        tools: [],
+        unavailableFamilies: [],
+        reason: 'catalog_unavailable' as const,
+      };
   const externalOwnerTools = externalToolCatalog.tools.filter((value) => {
     const tool = record(value);
     return tool.connectionKind === 'external-mcp'
@@ -481,6 +493,31 @@ export async function materializeHermesApplicationMcpServers(
     }));
     if (added.ok !== true || added.name !== connectionId) {
       throw new Error(`hermes_application_mcp_server_add_failed:${connectionId}`);
+    }
+  }
+}
+
+/** Remove the transient Run-scoped external MCP definitions after the turn. */
+export async function removeHermesApplicationMcpServers(
+  request: HermesGatewayRequest,
+  configuration: HermesCardTools,
+): Promise<void> {
+  const connectionIds = [...new Set(
+    configuration.externalMcpTools.map((tool) => tool.connectionId),
+  )].sort();
+  if (!connectionIds.length) return;
+
+  const listed = record(await request('mcp.servers.list', {}));
+  if (!Array.isArray(listed.servers)) throw new Error('hermes_native_mcp_server_list_invalid');
+  const configured = new Set(listed.servers.map((value) => String(record(value).name || '').trim()));
+  for (const name of connectionIds) {
+    if (!configured.has(name)) continue;
+    const removed = record(await request('mcp.servers.remove', {
+      profile: configuration.runtime.profile,
+      name,
+    }));
+    if (removed.ok !== true || removed.removed !== true) {
+      throw new Error(`hermes_application_mcp_server_remove_failed:${name}`);
     }
   }
 }

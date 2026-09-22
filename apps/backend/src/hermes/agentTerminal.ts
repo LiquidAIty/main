@@ -33,6 +33,7 @@ import {
   materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
   materializeHermesCardToolsPlugin,
+  removeHermesApplicationMcpServers,
   requireHermesCardToolsReadback,
   requireLoadedHermesCardToolsPlugin,
   resolveHermesCardTools,
@@ -132,6 +133,7 @@ type GatewayClient = {
   close(): void;
   request<T>(method: string, params?: Record<string, unknown>, timeoutMs?: number, signal?: AbortSignal): Promise<T>;
   onEvent(handler: (event: AgentTerminalGatewayEvent) => void): () => void;
+  onState(handler: (state: string) => void): () => void;
 };
 
 type GatewayClientFactory = () => Promise<GatewayClient>;
@@ -151,6 +153,7 @@ type Session = {
   gatewayUrl: string;
   client: GatewayClient;
   detachGatewayEvents: () => void;
+  detachGatewayState: () => void;
   gatewayToken: string;
   gatewayKeyId: string;
   priorStoredSessionIds: Map<string, number>;
@@ -181,9 +184,12 @@ function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTool
     cardRevisionId: value.cardRevisionId,
     cardRevisionSha256: value.cardRevisionSha256,
     runtime: value.runtime,
+    selectedTools: [...new Set([
+      ...value.enabledTools,
+      ...value.unavailableTools,
+    ])].sort(),
     nativeTools: value.nativeTools,
     toolsets: value.toolsets,
-    mcpConnectionIds: value.mcpConnectionIds,
     pluginTools: value.pluginTools,
   });
   return stableAuthority(left) === stableAuthority(right);
@@ -625,6 +631,7 @@ export class AgentTerminalManager {
     private readonly resolveActiveContext = (sessionId: string) => agentTerminalExecution.activeContext(sessionId),
     private readonly resolveMcpServerSpec: typeof resolvePythonAgentMcpServerSpec = resolvePythonAgentMcpServerSpec,
     private readonly materializeApplicationMcpServers: typeof materializeHermesApplicationMcpServers = materializeHermesApplicationMcpServers,
+    private readonly removeApplicationMcpServers: typeof removeHermesApplicationMcpServers = removeHermesApplicationMcpServers,
   ) {}
 
   private async prepareMagenticTaskCard(
@@ -676,12 +683,6 @@ export class AgentTerminalManager {
         if (!optionalCatalogTransition) {
           throw new Error('agent_terminal_tool_configuration_changed_stop_required');
         }
-        if (
-          session.cardTools.externalToolCatalogState === 'unavailable'
-          && cardTools.externalToolCatalogState === 'available'
-        ) {
-          await this.refreshOptionalCardTools(session);
-        }
       }
       if (options.materializeTaskProfile) {
         await this.prepareMagenticTaskCard(profile, card);
@@ -710,12 +711,6 @@ export class AgentTerminalManager {
           && session.cardTools.externalToolCatalogState !== cardTools.externalToolCatalogState;
         if (!optionalCatalogTransition) {
           throw new Error('agent_terminal_tool_configuration_changed_stop_required');
-        }
-        if (
-          session.cardTools.externalToolCatalogState === 'unavailable'
-          && cardTools.externalToolCatalogState === 'available'
-        ) {
-          await this.refreshOptionalCardTools(session);
         }
       }
       return attachTui
@@ -946,16 +941,17 @@ export class AgentTerminalManager {
       const request = <T>(method: string, params: Record<string, unknown>) => (
         client!.request<T>(method, params)
       );
-      const externalMcpConnectionIds = [...new Set(
-        cardTools.externalMcpTools.map((tool) => tool.connectionId),
-      )];
       const profileMaterialization = await this.materializeProfile(
         {
           ...launch.profileSelection,
           nativeTools: cardTools.nativeTools,
           toolsets: cardTools.toolsets,
           requiredToolsets: cardTools.pluginTools.length ? [HERMES_CARD_TOOLS_TOOLSET] : [],
-          mcpConnectionIds: externalMcpConnectionIds,
+          // External MCP credentials are scoped to an active Card Run. Keep
+          // those connections disabled while merely opening the persistent
+          // Gateway/TUI; refreshOptionalCardTools binds and verifies them
+          // immediately before the authorized turn.
+          mcpConnectionIds: [],
         },
         (profile) => request('profiles.describe', { name: profile }),
         configureHermesNativeSubagentModel,
@@ -986,11 +982,6 @@ export class AgentTerminalManager {
           enabled_mcp_servers: enabledMcpServers,
         }),
       );
-      const unavailableExternalMcpToolReasons = await this.materializeExternalMcpTools(
-        request,
-        cardTools,
-        profileMaterialization.unavailableMcpServerReasons,
-      );
       await this.configureNativeBotProfile(
         request,
         owner,
@@ -1007,7 +998,6 @@ export class AgentTerminalManager {
         await client!.request('tools.show', { session_id: native.sessionId }),
         cardTools,
         profileMaterialization.unavailableNativeToolReasons,
-        unavailableExternalMcpToolReasons,
       );
 
       const session: Session = {
@@ -1018,6 +1008,7 @@ export class AgentTerminalManager {
         gatewayUrl,
         client,
         detachGatewayEvents: () => {},
+        detachGatewayState: () => {},
         gatewayToken,
         gatewayKeyId,
         priorStoredSessionIds: new Map(),
@@ -1062,6 +1053,12 @@ export class AgentTerminalManager {
       this.sessions.set(sessionId, session);
       gateway.once('exit', (exitCode) => this.onProcessExit(session, 'gateway', exitCode));
       gateway.once('error', () => this.onProcessExit(session, 'gateway', null));
+      session.detachGatewayState = client.onState((state) => {
+        if (state !== 'open') this.onGatewayTransportClosed(session);
+      });
+      if (session.state.status !== 'running') {
+        throw new Error(session.state.error || 'agent_terminal_gateway_disconnected');
+      }
       if (gateway.exitCode !== null) {
         this.onProcessExit(session, 'gateway', gateway.exitCode);
         throw new Error(`agent_terminal_gateway_exited_after_ready:${gateway.exitCode}`);
@@ -1156,6 +1153,7 @@ export class AgentTerminalManager {
       : 'failed';
     session.state.exitCode = exitCode ?? undefined;
     if (!session.stopping) session.state.error = `agent_terminal_${source}_exited:${exitCode ?? 'null'}`;
+    session.detachGatewayState();
     session.detachGatewayEvents();
     session.gatewayEventListeners.clear();
     session.priorStoredSessionIds.clear();
@@ -1165,6 +1163,27 @@ export class AgentTerminalManager {
     session.pty = null;
     session.state.tuiPid = null;
     session.state.ptyId = null;
+    void this.onExit(session.state.sessionId).catch((error) => {
+      session.state.error = String(error);
+      for (const listener of session.listeners) listener('state', { ...session.state });
+    });
+    for (const listener of session.listeners) listener('state', { ...session.state });
+  }
+
+  private onGatewayTransportClosed(session: Session): void {
+    if (session.state.status !== 'running' || session.stopping) return;
+    session.state.status = 'failed';
+    session.state.error = 'agent_terminal_gateway_disconnected';
+    session.detachGatewayState();
+    session.detachGatewayEvents();
+    session.gatewayEventListeners.clear();
+    session.priorStoredSessionIds.clear();
+    session.cardToolNonces.clear();
+    try { session.pty?.kill(); } catch {}
+    session.pty = null;
+    session.state.tuiPid = null;
+    session.state.ptyId = null;
+    if (session.gateway.exitCode === null && !session.gateway.killed) session.gateway.kill();
     void this.onExit(session.state.sessionId).catch((error) => {
       session.state.error = String(error);
       for (const listener of session.listeners) listener('state', { ...session.state });
@@ -1424,6 +1443,7 @@ export class AgentTerminalManager {
     if (session.state.status !== 'running') return;
     session.stopping = true;
     session.state.status = 'exited';
+    session.detachGatewayState();
     session.detachGatewayEvents();
     session.gatewayEventListeners.clear();
     session.priorStoredSessionIds.clear();
@@ -1455,25 +1475,51 @@ export class AgentTerminalManager {
     if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
     const session = this.running(owner, id);
     const execute = async () => {
-      await this.refreshOptionalCardTools(session);
-      return this.submitNow(session, text, options);
+      const externalConfiguration = await this.refreshOptionalCardTools(session);
+      try {
+        return await this.submitNow(session, text, options);
+      } finally {
+        if (externalConfiguration) {
+          await this.releaseOptionalCardTools(session, externalConfiguration);
+        }
+      }
     };
     const result = session.turnTail.then(execute, execute);
     session.turnTail = result.then(() => undefined, () => undefined);
     return result;
   }
 
-  private async refreshOptionalCardTools(session: Session): Promise<void> {
+  private async refreshOptionalCardTools(session: Session): Promise<HermesCardTools | null> {
+    let cleanupConfiguration: HermesCardTools | null = null;
     try {
-      const resolved = await this.resolveCardTools(session.owner, session.card);
-      if (resolved.externalToolCatalogState !== 'available') return;
-      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return;
+      const active = this.resolveActiveContext(session.state.sessionId);
+      if (!active) return null;
+      const savedGrantedTools = [...new Set([
+        ...session.cardTools.enabledTools,
+        ...session.cardTools.unavailableTools,
+      ])];
+      const catalogPrincipal = {
+        kind: 'card-runtime' as const,
+        projectId: session.owner.projectId,
+        deckId: session.owner.deckId,
+        conversationId: active.conversationId,
+        parentRunId: active.runId,
+        callerCardId: session.owner.cardId,
+        callerRuntimeKind: 'hermes' as const,
+        callerRuntimeMode: session.cardTools.runtime.mode,
+        grantedTools: savedGrantedTools,
+        presentedTools: session.cardTools.presentedTools,
+      };
+      const resolved = await this.resolveCardTools(session.owner, session.card, {
+        externalCatalogPrincipal: catalogPrincipal,
+      });
+      if (resolved.externalToolCatalogState !== 'available') return null;
+      if (!sameSavedCardToolAuthority(resolved, session.cardTools)) return null;
       if (!resolved.externalMcpTools.length) {
         session.cardTools = resolved;
-        return;
+        return null;
       }
-      const active = this.resolveActiveContext(session.state.sessionId);
-      if (!active) return;
+      cleanupConfiguration = resolved;
 
       const request = <T>(method: string, params: Record<string, unknown>) => (
         session.client.request<T>(method, params)
@@ -1482,13 +1528,7 @@ export class AgentTerminalManager {
         request,
         resolved,
         this.resolveMcpServerSpec({
-          kind: 'card-runtime',
-          projectId: session.owner.projectId,
-          deckId: session.owner.deckId,
-          conversationId: active.conversationId,
-          parentRunId: active.runId,
-          callerCardId: session.owner.cardId,
-          callerRuntimeKind: 'hermes',
+          ...catalogPrincipal,
           callerRuntimeMode: resolved.runtime.mode,
           grantedTools: resolved.enabledTools,
           presentedTools: resolved.presentedTools,
@@ -1556,12 +1596,42 @@ export class AgentTerminalManager {
       session.cardTools = resolved;
       session.state.unavailableToolReasons = unavailableToolReasons;
       for (const listener of session.listeners) listener('state', { ...session.state });
+      return resolved;
     } catch (error) {
+      if (cleanupConfiguration) {
+        await this.releaseOptionalCardTools(session, cleanupConfiguration);
+      }
       // External catalog readiness is optional for conversation startup and
       // submission. Keep the already-running exact Card surface and retry on
       // a later turn instead of turning a tool outage into an application lock.
       console.warn(
         `[agent-terminal] optional Card tool refresh failed card=${session.state.cardId}`,
+        error instanceof Error ? error.message : String(error),
+      );
+      return null;
+    }
+  }
+
+  private async releaseOptionalCardTools(
+    session: Session,
+    configuration: HermesCardTools,
+  ): Promise<void> {
+    try {
+      const request = <T>(method: string, params: Record<string, unknown>) => (
+        session.client.request<T>(method, params)
+      );
+      await this.removeApplicationMcpServers(request, configuration);
+      const reload = record(await session.client.request('reload.mcp', {
+        session_id: session.state.nativeSessionId,
+        confirm: true,
+      }));
+      if (reload.status !== 'reloaded') throw new Error('hermes_native_mcp_reload_failed');
+    } catch (error) {
+      // Cleanup failure cannot erase an otherwise valid model response or
+      // invalidate the Gateway. The next explicit open also clears persisted
+      // transient server definitions before starting its Gateway.
+      console.warn(
+        `[agent-terminal] optional Card tool cleanup failed card=${session.state.cardId}`,
         error instanceof Error ? error.message : String(error),
       );
     }

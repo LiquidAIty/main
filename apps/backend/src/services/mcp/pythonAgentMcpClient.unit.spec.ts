@@ -8,19 +8,29 @@ const mcpMocks = vi.hoisted(() => ({
   close: vi.fn(async () => undefined),
   connect: vi.fn(async () => undefined),
   listTools: vi.fn(async (): Promise<{ tools: any[] }> => ({ tools: [] })),
+  transportInits: [] as Array<Record<string, any>>,
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class MockClient {
+    onclose: (() => void) | undefined;
     callTool = mcpMocks.callTool;
-    close = mcpMocks.close;
     connect = mcpMocks.connect;
     listTools = mcpMocks.listTools;
+
+    async close() {
+      await mcpMocks.close();
+      this.onclose?.();
+    }
   },
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
-  StreamableHTTPClientTransport: class MockStreamableHTTPClientTransport {},
+  StreamableHTTPClientTransport: class MockStreamableHTTPClientTransport {
+    constructor(_url: URL, options: Record<string, any>) {
+      mcpMocks.transportInits.push(options);
+    }
+  },
 }));
 
 import {
@@ -37,6 +47,7 @@ describe('Python Agent MCP client', () => {
     mcpMocks.close.mockClear();
     mcpMocks.connect.mockClear();
     mcpMocks.listTools.mockClear();
+    mcpMocks.transportInits.length = 0;
   });
 
   afterEach(async () => {
@@ -53,7 +64,7 @@ describe('Python Agent MCP client', () => {
   });
 
   it('reports the optional catalog unavailable without waiting on tools/list', async () => {
-    const readiness = vi.fn(async () => ({
+    const readiness = vi.fn(async (_input: string | URL | Request) => ({
       ok: false,
       json: async () => ({ catalogState: 'initializing' }),
     }));
@@ -71,7 +82,7 @@ describe('Python Agent MCP client', () => {
   });
 
   it('reads the complete catalog only after the host reports ready', async () => {
-    const readiness = vi.fn(async () => ({
+    const readiness = vi.fn(async (_input: string | URL | Request) => ({
       ok: true,
       json: async () => ({
         catalogState: 'ready',
@@ -125,5 +136,65 @@ describe('Python Agent MCP client', () => {
       reason: 'catalog_unavailable',
     });
     expect(mcpMocks.listTools).not.toHaveBeenCalled();
+  });
+
+  it('late-binds the exact authorized Card-runtime catalog before probing its result', async () => {
+    const readiness = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        catalogState: 'ready',
+        unavailableCatalogFamilies: [],
+      }),
+    }));
+    vi.stubGlobal('fetch', readiness);
+    mcpMocks.listTools.mockResolvedValueOnce({
+      tools: [{
+        name: 'cbm.search_graph',
+        description: 'Search CodeGraph.',
+        inputSchema: { type: 'object', properties: {} },
+        _meta: {
+          liquidaitySource: {
+            sourceId: 'cbm',
+            namespace: 'cbm',
+            nativeName: 'search_graph',
+            connectionKind: 'external-mcp',
+          },
+        },
+      }],
+    });
+    const principal = {
+      kind: 'card-runtime' as const,
+      projectId: 'project-one',
+      deckId: 'deck-one',
+      conversationId: 'conversation-one',
+      parentRunId: 'run-one',
+      callerCardId: 'builder',
+      callerRuntimeKind: 'hermes' as const,
+      callerRuntimeMode: 'delegate' as const,
+      grantedTools: ['cbm.search_graph'],
+      presentedTools: ['cbm.search_graph'],
+    };
+
+    await callPythonAgentMcpTool('ordinary.before', {});
+    await expect(readPythonAgentMcpCatalog(principal)).resolves.toMatchObject({
+      state: 'available',
+      unavailableFamilies: [],
+      tools: [{ name: 'cbm.search_graph', sourceId: 'cbm' }],
+    });
+
+    expect(mcpMocks.listTools).toHaveBeenCalledOnce();
+    expect(readiness).toHaveBeenCalledOnce();
+    expect(mcpMocks.listTools.mock.invocationCallOrder[0])
+      .toBeLessThan(readiness.mock.invocationCallOrder[0]);
+    expect(mcpMocks.close).toHaveBeenCalledOnce();
+    const authorization = String(
+      mcpMocks.transportInits[1]?.requestInit?.headers?.Authorization || '',
+    );
+    const payload = JSON.parse(
+      Buffer.from(authorization.replace(/^Bearer /, '').split('.')[1], 'base64url').toString('utf8'),
+    );
+    expect(payload.principal).toEqual(principal);
+    await callPythonAgentMcpTool('ordinary.after', {});
+    expect(mcpMocks.connect).toHaveBeenCalledTimes(2);
   });
 });

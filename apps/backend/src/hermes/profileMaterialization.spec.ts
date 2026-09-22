@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   materializeHermesProfileSelections,
   toNativeSubagentTypeConfig,
@@ -41,8 +42,9 @@ function nativeProfile(overrides: Record<string, unknown> = {}) {
 
 describe('materializeHermesProfileSelections', () => {
   it('compiles the exact saved Card prompt into the sole Hermes SOUL authority', () => {
-    const source = readFileSync(new URL('./profileMaterialization.ts', import.meta.url), 'utf8');
+    const source = readFileSync(resolve(__dirname, 'profileMaterialization.ts'), 'utf8');
     expect(source).toContain('del agent["system_prompt"]');
+    expect(source).toContain('del cfg["mcp_servers"]');
     expect(source).toContain('soul_path.write_bytes(instructions.encode("utf-8"))');
     expect(source).toContain('soul_path.read_bytes() != instructions.encode("utf-8")');
     expect(source).not.toContain('agent["system_prompt"] = instructions');

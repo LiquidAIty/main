@@ -75,6 +75,7 @@ class FakeGatewayClient {
   connectionState = 'idle';
   readonly requests: Array<{ method: string; params: Record<string, unknown> }> = [];
   readonly handlers = new Set<(event: AgentTerminalGatewayEvent) => void>();
+  readonly stateHandlers = new Set<(state: string) => void>();
   url = '';
   closed = false;
   private activeStored = '';
@@ -99,17 +100,29 @@ class FakeGatewayClient {
 
   async connect(url: string) {
     this.url = url;
-    this.connectionState = 'open';
+    this.emitState('open');
   }
 
   close() {
     this.closed = true;
-    this.connectionState = 'closed';
+    this.emitState('closed');
   }
 
   onEvent(handler: (event: AgentTerminalGatewayEvent) => void) {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
+  }
+
+  onState(handler: (state: string) => void) {
+    this.stateHandlers.add(handler);
+    handler(this.connectionState);
+    return () => this.stateHandlers.delete(handler);
+  }
+
+  emitState(state: string) {
+    if (state === this.connectionState) return;
+    this.connectionState = state;
+    for (const handler of this.stateHandlers) handler(state);
   }
 
   emitEvent(event: AgentTerminalGatewayEvent) {
@@ -391,6 +404,7 @@ function fixture(extraProfileNames: string[] = []) {
     headers: { Authorization: 'Bearer signed-run-token' },
   }));
   const materializeApplicationMcpServers = vi.fn(async () => undefined);
+  const removeApplicationMcpServers = vi.fn(async () => undefined);
   const resolveBotRoster = vi.fn(async (owner: AgentTerminalOwner) => {
     const selected = cards.find((candidate) => candidate.id === owner.cardId)!;
     return {
@@ -418,6 +432,7 @@ function fixture(extraProfileNames: string[] = []) {
     resolveActiveContext,
     resolveMcpServerSpec,
     materializeApplicationMcpServers,
+    removeApplicationMcpServers,
   );
   const owners = cards.map((selected): AgentTerminalOwner => ({
     userId: 'owner', projectId: 'project', deckId: 'deck', cardId: selected.id,
@@ -428,6 +443,7 @@ function fixture(extraProfileNames: string[] = []) {
     materializeExternalMcpTools, resolveBotRoster,
     configureCardInstructions, configureCardModelRuntime,
     resolveActiveContext, resolveMcpServerSpec, materializeApplicationMcpServers,
+    removeApplicationMcpServers,
     ptys, gateways, clients, durableByTitle, controls, onExit,
   };
 }
@@ -607,7 +623,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.spawnPty).toHaveBeenCalledOnce();
   });
 
-  it('joins a pending Card start when the optional external catalog becomes available', async () => {
+  it('joins a pending Card start without binding optional external MCP before a turn', async () => {
     const f = fixture();
     const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
     f.resolveCardTools.mockReset();
@@ -645,7 +661,38 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(joining.ptyId).not.toBeNull();
     expect(f.spawnGateway).toHaveBeenCalledOnce();
     expect(f.spawnPty).toHaveBeenCalledOnce();
-    expect(f.clients[0].requests.map((request) => request.method)).toContain('reload.mcp');
+    expect(f.materializeExternalMcpTools).not.toHaveBeenCalled();
+    expect(f.materializeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.clients[0].requests.map((request) => request.method)).not.toContain('reload.mcp');
+  });
+
+  it.each([
+    { label: 'Main', id: 'main', mode: 'main' as const, profile: 'liquidaity-main' },
+    { label: 'Builder', id: 'builder', mode: 'delegate' as const, profile: 'builder' },
+    { label: 'KnowGraph', id: 'knowgraph', mode: 'delegate' as const, profile: 'knowgraph' },
+    { label: 'ordinary Card', id: 'signal', mode: 'delegate' as const, profile: 'signal-analyst' },
+  ])('opens $label with zero external-MCP work', async ({ id, mode, profile }) => {
+    const f = fixture();
+    f.cards[0].id = id;
+    f.cards[0].title = id;
+    f.cards[0].runtime = { kind: 'hermes', mode, profile };
+    f.cards[0].runtimeOptions = {
+      ...f.cards[0].runtimeOptions,
+      tools: ['canvas.inspect', 'cbm.search_graph', 'graphiti.search_nodes'],
+    };
+    f.owners[0].cardId = id;
+
+    const opened = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+
+    expect(opened.status).toBe('running');
+    expect(f.resolveCardTools.mock.calls.every((call) => call.length === 2)).toBe(true);
+    expect(f.materializeExternalMcpTools).not.toHaveBeenCalled();
+    expect(f.materializeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.removeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.resolveMcpServerSpec).not.toHaveBeenCalled();
+    expect(f.clients[0].requests.map((request) => request.method)).not.toContain('reload.mcp');
   });
 
   it('keeps one Gateway-owned runtime when a headless presentation later attaches its native TUI', async () => {
@@ -700,6 +747,33 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(reopened.gatewayPid).toBe(first.gatewayPid);
     expect(reopened.nativeSessionId).toBe(first.nativeSessionId);
     expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.spawnPty).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['closed', 'error'])('retires a %s Gateway once and starts a clean runtime on the next open', async (transportState) => {
+    const f = fixture();
+    const first = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+
+    f.clients[0].emitState(transportState);
+
+    expect(f.manager.state(f.owners[0], first.sessionId)).toMatchObject({
+      sessionId: first.sessionId,
+      status: 'failed',
+      error: 'agent_terminal_gateway_disconnected',
+      tuiPid: null,
+      ptyId: null,
+    });
+    expect(f.manager.findCard('project', 'deck', 'signal')).toBeNull();
+    expect(f.manager.listRunning()).toEqual([]);
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.gateways[0].kill).toHaveBeenCalledOnce();
+    expect(f.ptys[0].kill).toHaveBeenCalledOnce();
+    expect(f.onExit).toHaveBeenCalledOnce();
+
+    const reopened = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    expect(reopened.sessionId).not.toBe(first.sessionId);
+    expect(reopened.status).toBe('running');
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
     expect(f.spawnPty).toHaveBeenCalledTimes(2);
   });
 
@@ -849,6 +923,17 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(state.unavailableToolReasons).toEqual({
       'cbm.search_graph': 'external_mcp_tool_unavailable',
     });
+    expect(f.materializeExternalMcpTools).not.toHaveBeenCalled();
+    expect(f.materializeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.materialize).toHaveBeenCalledWith(
+      expect.objectContaining({ mcpConnectionIds: [] }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+    );
 
     await expect(f.manager.submit(f.owners[0], state.sessionId, 'use code context'))
       .resolves.toMatchObject({ text: 'reply:use code context' });
@@ -862,6 +947,19 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         headers: { Authorization: 'Bearer signed-run-token' },
       },
     );
+    expect(f.resolveCardTools).toHaveBeenLastCalledWith(
+      f.owners[0],
+      f.cards[0],
+      { externalCatalogPrincipal: expect.objectContaining({
+        kind: 'card-runtime',
+        projectId: 'project',
+        deckId: 'deck',
+        parentRunId: 'run-one',
+        conversationId: 'conversation-one',
+        callerCardId: 'signal',
+        grantedTools: ['canvas.inspect', 'cbm.search_graph'],
+      }) },
+    );
     expect(f.resolveMcpServerSpec).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'card-runtime',
       parentRunId: 'run-one',
@@ -872,6 +970,11 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const methods = f.clients[0].requests.map((request) => request.method);
     expect(methods.indexOf('reload.mcp')).toBeGreaterThan(-1);
     expect(methods.indexOf('reload.mcp')).toBeLessThan(methods.indexOf('prompt.submit'));
+    expect(methods.lastIndexOf('reload.mcp')).toBeGreaterThan(methods.indexOf('prompt.submit'));
+    expect(f.removeApplicationMcpServers).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Function),
+      resolved,
+    );
     expect(f.manager.state(f.owners[0], state.sessionId)).toMatchObject({
       sessionId: state.sessionId,
       nativeSessionId: state.nativeSessionId,
@@ -879,7 +982,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     });
   });
 
-  it('keeps the exact Card running when an optional catalog refresh is not yet installable', async () => {
+  it('keeps the exact Card turn running when an optional catalog refresh is not yet installable', async () => {
     const f = fixture();
     const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
     f.resolveCardTools.mockReset();
@@ -916,13 +1019,8 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     );
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      await expect(f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24))
-        .resolves.toMatchObject({
-          sessionId: state.sessionId,
-          status: 'running',
-          ptyId: state.sessionId,
-          unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
-        });
+      await expect(f.manager.submit(f.owners[0], state.sessionId, 'continue without code context'))
+        .resolves.toMatchObject({ text: 'reply:continue without code context' });
       expect(warning).toHaveBeenCalledWith(
         '[agent-terminal] optional Card tool refresh failed card=signal',
         'hermes_native_mcp_refresh_still_initializing',
@@ -930,8 +1028,44 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     } finally {
       warning.mockRestore();
     }
+    expect(f.manager.state(f.owners[0], state.sessionId)).toMatchObject({
+      sessionId: state.sessionId,
+      status: 'running',
+      unavailableToolReasons: { 'cbm.search_graph': 'catalog_unavailable' },
+    });
+    expect(f.removeApplicationMcpServers).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Function),
+      expect.objectContaining({
+        externalMcpTools: [expect.objectContaining({ connectionId: 'cbm' })],
+      }),
+    );
     expect(f.spawnGateway).toHaveBeenCalledOnce();
-    expect(f.spawnPty).toHaveBeenCalledOnce();
+    expect(f.spawnPty).not.toHaveBeenCalled();
+  });
+
+  it('does not bind an ungranted external MCP during an authorized turn', async () => {
+    const f = fixture();
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'ordinary turn'))
+      .resolves.toMatchObject({ text: 'reply:ordinary turn' });
+
+    expect(f.resolveCardTools).toHaveBeenLastCalledWith(
+      f.owners[0],
+      f.cards[0],
+      { externalCatalogPrincipal: expect.objectContaining({
+        kind: 'card-runtime',
+        grantedTools: ['canvas.inspect'],
+      }) },
+    );
+    expect(f.materializeExternalMcpTools).not.toHaveBeenCalled();
+    expect(f.materializeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.removeApplicationMcpServers).not.toHaveBeenCalled();
+    expect(f.resolveMcpServerSpec).not.toHaveBeenCalled();
+    expect(f.clients[0].requests.map((request) => request.method)).not.toContain('reload.mcp');
+    expect(f.manager.state(f.owners[0], state.sessionId).status).toBe('running');
   });
 
   it('still rejects a changed saved Card tool authority', async () => {

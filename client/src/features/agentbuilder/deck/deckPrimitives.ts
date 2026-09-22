@@ -37,9 +37,8 @@ export const MAIN_CHAT_MODEL_KEY = 'gpt-5.6-sol';
 export const AGENT_BUILDER_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_MODEL_KEY = 'gpt-5.6-sol';
 export const MAGENTIC_ONE_DEFAULT_PROVIDER: NonNullable<AgentCardRuntimeOptions['provider']> = 'openai';
-// Shared non-administrative CodeGraph corridor for repository-owning Cards.
-// Indexing, trace ingestion, ADR mutation, and project deletion stay outside
-// ordinary Card grants.
+// Builder's non-administrative CodeGraph corridor. Indexing, trace ingestion,
+// ADR mutation, and project deletion stay outside ordinary Card grants.
 export const CODEBASE_MEMORY_TOOLS = [
   'cbm.search_graph',
   'cbm.trace_path',

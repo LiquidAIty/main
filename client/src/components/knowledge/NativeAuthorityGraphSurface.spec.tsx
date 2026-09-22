@@ -86,7 +86,7 @@ describe('native authority graph surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect(screen.getByRole('combobox', { name: 'Layout' }).getAttribute('aria-label')).toBe('Layout');
     expect(graph.setCollapse).toHaveBeenCalledWith(false);
-    for (const value of ['original', 'communities', 'radial', 'compact']) {
+    for (const value of ['original', 'communities', 'radial', 'galaxy', 'compact']) {
       fireEvent.change(screen.getByRole('combobox', { name: 'Layout' }), { target: { value } });
       expect(graph.setPreset).toHaveBeenLastCalledWith(value);
       expect(graph.data.nodes).toEqual([]);

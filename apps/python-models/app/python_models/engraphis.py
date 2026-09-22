@@ -57,17 +57,44 @@ def close_engine():
 atexit.register(close_engine)
 
 
-async def _tool_catalog():
+def _registered_tool_catalog():
+    """Project FastMCP's static registrations without entering an event loop.
+
+    FastMCP.list_tools() is an async wrapper around the synchronous registered
+    ToolManager.  Operation metadata is also needed by synchronous authorization
+    code that may already be running inside an MCP event loop, so nesting
+    asyncio.run() there is invalid.  Build the same public MCP Tool models from
+    the pinned FastMCP registrations instead.
+    """
+
     from engraphis.mcp_server import classic_mcp, smart_mcp
-    catalog = {tool.name: (smart_mcp, tool) for tool in await smart_mcp.list_tools()}
+    from mcp.types import Tool as McpTool
+
+    def public_tools(server):
+        return [McpTool(
+            name=tool.name,
+            title=tool.title,
+            description=tool.description,
+            inputSchema=tool.parameters,
+            outputSchema=tool.output_schema,
+            annotations=tool.annotations,
+            icons=tool.icons,
+            _meta=tool.meta,
+        ) for tool in server._tool_manager.list_tools()]
+
+    catalog = {tool.name: (smart_mcp, tool) for tool in public_tools(smart_mcp)}
     # The individually named interface keeps the full argument set for shared names.
-    catalog.update({tool.name: (classic_mcp, tool) for tool in await classic_mcp.list_tools()})
+    catalog.update({tool.name: (classic_mcp, tool) for tool in public_tools(classic_mcp)})
     return catalog
 
 
-async def native_tools() -> list[dict]:
+async def _tool_catalog():
+    return _registered_tool_catalog()
+
+
+def _native_tools_from_registrations() -> list[dict]:
     result = []
-    for _, tool in (await _tool_catalog()).values():
+    for _, tool in _registered_tool_catalog().values():
         item = tool.model_dump(exclude_none=True)
         schema = item["inputSchema"]
         schema.get("properties", {}).pop("workspace", None)
@@ -78,6 +105,10 @@ async def native_tools() -> list[dict]:
             item["annotations"].update(readOnlyHint=True, idempotentHint=True)
         result.append(item)
     return result
+
+
+async def native_tools() -> list[dict]:
+    return _native_tools_from_registrations()
 
 
 _OPERATION_DEFINITIONS: tuple[Any, ...] | None = None
@@ -94,7 +125,7 @@ def operation_definitions() -> list[Any]:
         if _OPERATION_DEFINITIONS is not None:
             return list(_OPERATION_DEFINITIONS)
         try:
-            native_contracts = asyncio.run(native_tools())
+            native_contracts = _native_tools_from_registrations()
         except BaseException as error:
             raise RuntimeError("engraphis_operation_definitions_unavailable") from error
 

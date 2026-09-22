@@ -81,6 +81,23 @@ def test_catalog_matches_both_installed_interfaces_without_added_graph_fields():
     assert adapter.READ_TOOLS | adapter.WRITE_TOOLS == original.keys()
 
 
+def test_operation_definitions_can_initialize_inside_an_active_event_loop():
+    previous = adapter._OPERATION_DEFINITIONS
+    adapter._OPERATION_DEFINITIONS = None
+
+    async def initialize():
+        return adapter.operation_definitions()
+
+    try:
+        definitions = asyncio.run(initialize())
+    finally:
+        adapter._OPERATION_DEFINITIONS = previous
+
+    assert {definition.canonical_id for definition in definitions} == (
+        adapter.READ_TOOLS | adapter.WRITE_TOOLS
+    )
+
+
 def test_readonly_paraphrase_and_scope(native):
     saved = call(native, "engraphis_remember", content="I enjoy learning how satellites are built and who supplies their components.", title="Satellite suppliers")
     service = native.get_service()

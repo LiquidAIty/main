@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 import type { AgentCardInstance, CardRuntime, DeckDocument } from '../types/agentgraph';
 // Deck logic moved out of the page in the 2026-07-08 decomposition; the spec
 // tests the real modules directly.
-import { INITIAL_DECK } from '../features/agentbuilder/deck/newProjectDeck';
+import {
+  INITIAL_AGENT_TEMPLATES,
+  INITIAL_DECK,
+} from '../features/agentbuilder/deck/newProjectDeck';
 import {
   readDeckDocument,
   resolveProjectDeckLoadResult,
@@ -99,6 +102,12 @@ describe('agentbuilder authoring flow', () => {
         'cbm.search_code', 'cbm.query_graph'],
     });
     expect(builder?.runtimeOptions).not.toHaveProperty('team');
+    expect(INITIAL_DECK.nodes
+      .filter((node) => node.id !== 'builder')
+      .every((node) => (node.runtimeOptions?.tools || [])
+        .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
+    expect(INITIAL_AGENT_TEMPLATES.every((template) => (template.tools || [])
+      .every((tool) => !tool.startsWith('cbm.')))).toBe(true);
     expect(INITIAL_DECK.nodes.some(node => node.id === 'card_agent_builder')).toBe(false);
   });
 

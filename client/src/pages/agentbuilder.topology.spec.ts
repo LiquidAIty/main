@@ -332,9 +332,8 @@ describe('Main / Hermes / graph authority topology', () => {
       'graphiti.search_nodes',
       'graphiti.search_memory_facts',
       'graphiti.get_episodes',
-      'cbm.search_graph',
-      'cbm.search_code',
     ]));
+    expect(team?.runtimeOptions?.tools?.every((tool) => !tool.startsWith('cbm.'))).toBe(true);
     expect(team?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'card.create', 'card.update_configuration', 'canvas.upsert_wire',
     ]));
@@ -374,6 +373,16 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(INITIAL_DECK.nodes.filter(
       (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',
     )).toEqual([]);
+  });
+
+  it('resolves CodeGraph identity only after the user opens the CodeGraph surface', () => {
+    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const call = source.indexOf('void resolveCbmProjectName');
+    const effect = source.slice(source.lastIndexOf('useEffect(() => {', call), call);
+    expect(effect).toContain("workspaceView !== 'knowledge'");
+    expect(effect).toContain("knowledgeGraphKind !== 'codegraph'");
+    expect(source).toContain("useState<KnowledgeSurfaceKind>('knowgraph')");
+    expect(source).toContain("setKnowledgeGraphKind('knowgraph')");
   });
 
 });

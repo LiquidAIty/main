@@ -88,14 +88,10 @@ describe('requested initial Card topology', () => {
       'graphiti.search_nodes',
       'graphiti.search_memory_facts',
       'graphiti.get_episodes',
-      'cbm.search_graph',
-      'cbm.trace_path',
-      'cbm.get_code_snippet',
-      'cbm.check_index_coverage',
-      'cbm.detect_changes',
-      'cbm.search_code',
-      'cbm.query_graph',
     ]);
+    expect(team?.runtimeOptions?.tools?.every((tool) => !tool.startsWith('cbm.'))).toBe(true);
+    expect(INITIAL_AGENT_TEMPLATES.find((template) => template.id === 'template_team')
+      ?.tools.every((tool) => !tool.startsWith('cbm.'))).toBe(true);
     expect(team?.runtimeOptions?.tools).not.toEqual(expect.arrayContaining([
       'card.create', 'card.update_configuration', 'canvas.upsert_wire',
     ]));
