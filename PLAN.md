@@ -155,7 +155,9 @@ model-facing `delegate_task(role="team")` option.
 - Python `hermes_acp_bridge` and its HTTP/MCP execution-context routes;
 - LiquidAIty-specific Hermes plugin/callback/private-host execution hooks and synthetic Team result injection;
 - browser transcript/snapshot/native-event/Team-receipt projections owned by the abandoned path;
-- automatic ThinkGraph completed-pair proxy/extraction that had been coupled to that route;
+- the old automatic ThinkGraph completed-pair proxy/replay extraction that had been coupled to that
+  route; this historical removal is distinct from the later approved Engraphis-native, novelty-gated
+  User/Main pair lifecycle;
 - the orphan ACP MCP-connection materializer and its self-contained spec after `mainAdapter` lost its
   last production caller;
 - the abandoned deck-workspace resolver and its self-contained spec after the old Agent Builder
@@ -183,6 +185,7 @@ not the fabricated standalone tool initially suspected.
 | CodeGraph UI read | Direct route-to-Python-to-`cbm.*` source trace and existing tests | Loaded browser hydration when UI acceptance is authorized |
 | Card Python Script | Python compiler/header/validation, restored Card editor, IDF projection, saved-data normalization, route tests, and honest `card_script_native_bridge_unavailable` fallback | A separate approved Hermes-native/plugin execution design; no ACP bridge restoration |
 | Hermes Card tools | Canonical Python `OperationDefinition` registry, publisher-separated views, stable per-Card plugin materialization/readback, focused tests, and loaded Main `engraphis_recall_context` execution | Prove selected external CBM/Graphiti execution and unavailable reasons through their actual configured servers; Bot reply proof remains separate |
+| ThinkGraph hybrid intake | Python rails uses Engraphis native resolution, regex extraction/feed through a non-persisting adapter, graph-aware Jev admission, the exact saved ThinkGraph Card/`llm_structured` path, native Notes, temporal edge supersession, one-hop reopening, and event-driven projection refresh; focused Python/backend/client tests and production typechecks pass | Canonical reload, one real natural Main pair, real Jev decisions, exact saved ThinkGraph Card completion, fast and settled graph revisions, persisted native Notes/edges, and Jeremiah's visual acceptance |
 | Production boundaries | Backend and client production typechecks | Loaded build/source hashes and full product acceptance |
 
 ## Known baseline failures and environment limits

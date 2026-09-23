@@ -229,6 +229,24 @@ function sourceDocument(node: GraphProjectionNode) {
   return { links: [...links.values()], summary: typeof body.summary === 'string' ? body.summary : null };
 }
 
+function nativeEntryTime(value: unknown): { dateTime: string; label: string } | null {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  const milliseconds = Number.isFinite(numeric)
+    ? numeric * (Math.abs(numeric) < 10_000_000_000 ? 1_000 : 1)
+    : Date.parse(String(value));
+  if (!Number.isFinite(milliseconds)) return null;
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) return null;
+  return { dateTime: date.toISOString(), label: date.toLocaleString() };
+}
+
+function probabilityLabel(value: unknown): string | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return `${(Math.max(0, Math.min(1, numeric)) * 100).toFixed(1)}%`;
+}
+
 export function NativeGraphProjectionSurface({
   projection,
   status,
@@ -375,12 +393,28 @@ export function NativeGraphProjectionSurface({
   }
   const evidence = (projection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
-  const notes = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
+  const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
+  const notes = authority === 'thinkgraph' && selected && !selectedEdge
+    ? evidenceRecords.filter(item => item.metadata !== null
+      && typeof item.metadata === 'object'
+      && item.metadata.thinkgraph_note !== null
+      && typeof item.metadata.thinkgraph_note === 'object')
+    : evidenceRecords;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => projection?.nodes.find(node => node.id === id)?.label || id;
   const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
     typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
+  const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
+  const labelConfidence = probabilityLabel(selectedEdge?.properties?.label_confidence);
+  const jevDistribution = selectedEdge?.properties?.jev
+    && typeof selectedEdge.properties.jev === 'object'
+    && !Array.isArray(selectedEdge.properties.jev)
+    && (selectedEdge.properties.jev as Record<string, unknown>).distribution
+    && typeof (selectedEdge.properties.jev as Record<string, any>).distribution === 'object'
+    ? Object.entries((selectedEdge.properties.jev as Record<string, any>).distribution)
+      .filter((entry): entry is [string, number] => Number.isFinite(Number(entry[1])))
+    : [];
   return (
     <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
       onKeyDown={event => { if (event.key === 'Escape' && (inspectorOpen || controlsOpen)) { event.stopPropagation(); closePanel(); } }}>
@@ -486,11 +520,32 @@ export function NativeGraphProjectionSurface({
           <dt>Source graph</dt><dd>{authority === 'thinkgraph' ? 'ThinkGraph / Engraphis' : 'KnowGraph / Graphiti'}</dd>
           <dt>Native ID</dt><dd>{selected?.id || selectedEdge?.id}</dd>
           {selectedEdge ? <><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Predicate</dt><dd>{selectedEdge.predicate}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd>
-            <dt>Direction</dt><dd>{selectedEdge.properties?.directed === false ? 'Undirected' : selectedEdge.properties?.directed === true ? 'Source → target' : 'Not supplied'}</dd></> : null}
+            <dt>Direction</dt><dd>{selectedEdge.properties?.directed === false ? 'Undirected' : selectedEdge.properties?.directed === true ? 'Source → target' : 'Not supplied'}</dd>
+            {relationshipStrength ? <><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></> : null}
+            {labelConfidence ? <><dt>Label confidence</dt><dd>{labelConfidence}</dd></> : null}</> : null}
         </dl>
-        {notes.map(item => <section className="graph-note" key={item.id} data-memory-id={item.id}>
+        {jevDistribution.length ? <details className="graph-jev-distribution" open>
+          <summary>Jev relationship probabilities</summary>
+          <dl>{jevDistribution.map(([choice, probability]) => {
+            const probabilityText = probabilityLabel(probability) || '0.0%';
+            return <div key={choice} data-winner={choice === selectedEdge?.predicate}>
+              <dt>{choice}</dt><dd>
+                <span className="graph-jev-probability-track" aria-hidden="true">
+                  <span className="graph-jev-probability-fill" style={{ width: probabilityText }} />
+                </span>
+                <span>{probabilityText}</span>
+              </dd>
+            </div>;
+          })}</dl>
+        </details> : null}
+        {notes.length && authority === 'thinkgraph'
+          ? <h4>Thought history · newest first</h4> : null}
+        {notes.map(item => {
+          const entryTime = nativeEntryTime(item.ingestedAt);
+          return <section className="graph-note" key={item.id} data-memory-id={item.id}>
           <details>
             <summary>{item.title || 'Supporting note'}</summary>
+            {entryTime ? <time dateTime={entryTime.dateTime}>Learned {entryTime.label}</time> : null}
             <p>{item.content || item.summary}</p>
             <code>{item.id}</code>
             {item.provenance && typeof item.provenance === 'object' ? <dl>{fields(item.provenance).map(([key, value]) =>
@@ -502,7 +557,8 @@ export function NativeGraphProjectionSurface({
               finally { setRemovingId(null); }
             }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
           </details>
-        </section>)}
+        </section>;
+        })}
         {removeError ? <p role="alert">{removeError}</p> : null}
         {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
           <details key={node.id}>

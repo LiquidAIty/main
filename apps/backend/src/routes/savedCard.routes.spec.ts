@@ -6,6 +6,7 @@ import cardRuntime, {
   internalMainMcpRoutes,
   mainRoutes,
   materializerReadPrincipalForSavedCard,
+  waitForCompletedPairThinkGraphLifecycles,
 } from './cardRuntime.routes';
 import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
@@ -59,6 +60,19 @@ const deckMocks = vi.hoisted(() => ({
           },
         },
         {
+          id: 'card_thinkgraph',
+          _cardRevisionId: 'revision:card_thinkgraph',
+          title: 'ThinkGraph',
+          prompt: 'Saved ThinkGraph prompt',
+          kind: 'agent',
+          templateId: 'template_assist',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'thinkgraph' },
+          runtimeOptions: {
+            provider: 'openai',
+            modelKey: 'gpt-5.6-luna',
+          },
+        },
+        {
           id: 'card_magentic',
           _cardRevisionId: 'revision:card_magentic',
           title: 'Magnetic',
@@ -77,6 +91,7 @@ const deckMocks = vi.hoisted(() => ({
       edges: [
         { id: 'flow-main-delegate', source: 'card_main_chat', target: 'card_test_delegate', edgeType: 'flow' },
         { id: 'flow-main-builder', source: 'card_main_chat', target: 'builder', edgeType: 'flow' },
+        { id: 'flow-main-thinkgraph', source: 'card_main_chat', target: 'card_thinkgraph', edgeType: 'flow' },
         { id: 'flow-main-magnetic', source: 'card_main_chat', target: 'card_magentic', edgeType: 'flow' },
       ],
     } as any,
@@ -93,6 +108,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     : cardId === 'card_magentic' ? 'card_magentic'
     : cardId === 'card_team' ? 'team'
     : cardId === 'builder' ? 'builder'
+      : cardId === 'card_thinkgraph' ? 'thinkgraph'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
   const stateFor = (owner: any) => ({
     sessionId: `terminal:${owner.cardId}`,
@@ -270,7 +286,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     {
       cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
       profile: 'default', title: 'Main', botEnabled: true,
-      roster: ['delegate', 'builder', 'card_magentic'],
+      roster: ['delegate', 'builder', 'thinkgraph', 'card_magentic'],
     },
     {
       cardId: 'card_test_delegate', cardRevisionId: 'revision:card_test_delegate',
@@ -279,6 +295,10 @@ const agentTerminalMocks = vi.hoisted(() => {
     {
       cardId: 'builder', cardRevisionId: 'revision:builder',
       profile: 'builder', title: 'Builder', botEnabled: true, roster: [],
+    },
+    {
+      cardId: 'card_thinkgraph', cardRevisionId: 'revision:card_thinkgraph',
+      profile: 'thinkgraph', title: 'ThinkGraph', botEnabled: true, roster: [],
     },
     {
       cardId: 'card_magentic', cardRevisionId: 'revision:card_magentic',
@@ -425,6 +445,35 @@ const orchestratorMocks = vi.hoisted(() => {
         catalogs: { 'configured-models': body.models },
       };
     }
+    if (endpoint === '/thinkgraph/completed-pair/fast') {
+      return {
+        ok: true,
+        pairMemoryId: 'mem_pair_one',
+        intakeOperation: 'noop',
+        enrichmentRequired: false,
+        revision: 3,
+        revisionChanged: false,
+        fast: {
+          status: 'duplicate_noop',
+          opportunityCount: 0,
+          relationships: [], failures: [],
+          changedNodeIds: [], changedEdgeIds: [],
+          turnHeat: {}, topActiveNodes: [],
+        },
+      };
+    }
+    if (endpoint === '/thinkgraph/completed-pair/settle') {
+      return {
+        ok: true,
+        revision: 5,
+        revisionChanged: true,
+        changedNodeIds: ['think-rich-a'],
+        changedEdgeIds: ['think-rich-edge'],
+        affectedNodeIds: ['think-rich-a', 'think-fast-a'],
+        turnHeat: { 'think-rich-a': 1.7 },
+        topActiveNodes: [{ nativeId: 'think-rich-a', turnHeat: 1.7 }],
+      };
+    }
     if (endpoint === '/domain/main/prepare') {
       const cardId = 'card_main_chat';
       const runtime = { kind: 'hermes', mode: 'main', profile: 'default' };
@@ -481,6 +530,7 @@ const orchestratorMocks = vi.hoisted(() => {
       const cardId = mainChat ? 'card_main_chat' : body.cardId;
       const graphAgent = cardId === 'card_hermes_steward';
       const agentBuilder = cardId === 'builder';
+      const thinkGraph = cardId === 'card_thinkgraph';
       const legacyKanban = cardId === 'card_legacy_kanban';
       const graphConfigured = graphAgent || legacyKanban;
       const delegateCard = cardId === 'card_test_delegate';
@@ -497,6 +547,7 @@ const orchestratorMocks = vi.hoisted(() => {
            runtimeKind: 'hermes',
            runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
            runtimeProfile: mainChat ? 'default' : agentBuilder ? 'builder'
+             : thinkGraph ? 'thinkgraph'
              : graphConfigured ? 'liquidaity-hermes-steward' : 'delegate',
            startedAt: new Date().toISOString(),
         });
@@ -532,7 +583,8 @@ const orchestratorMocks = vi.hoisted(() => {
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : delegateCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'delegate' }
-                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate', profile: 'liquidaity-hermes-steward' },
+                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
+                    profile: thinkGraph ? 'thinkgraph' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -584,7 +636,8 @@ const orchestratorMocks = vi.hoisted(() => {
               : delegateCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'delegate' }
                 : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
-                    profile: agentBuilder ? 'builder' : 'liquidaity-hermes-steward' },
+                    profile: agentBuilder ? 'builder'
+                      : thinkGraph ? 'thinkgraph' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
               modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
@@ -603,7 +656,8 @@ const orchestratorMocks = vi.hoisted(() => {
           },
           cardIdentity: {
             cardId,
-            title: cardId === 'card_main_chat' ? 'Main' : agentBuilder ? 'Builder' : delegateCard ? 'Delegate'
+            title: cardId === 'card_main_chat' ? 'Main' : agentBuilder ? 'Builder'
+              : thinkGraph ? 'ThinkGraph' : delegateCard ? 'Delegate'
               : graphAgent ? 'Graph Agent' : 'Retired Kanban history',
           },
         },
@@ -758,6 +812,11 @@ async function createApiServer(userId: string | null = 'owner-user'): Promise<{ 
 }
 
 async function closeServer(server: Server): Promise<void> {
+  // Main ends its SSE response before scheduling the saved ThinkGraph Card lifecycle.
+  // Let it enqueue, then drain that already-authorized background turn so its
+  // native session and mocks cannot bleed into the next test.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await waitForCompletedPairThinkGraphLifecycles();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
@@ -3826,18 +3885,152 @@ describe('saved Card routes', () => {
       } finally { await closeServer(server); }
     });
 
-    it('completes Main without automatic graph extraction', async () => {
+    it('returns Main normally and starts one exact completed-pair ThinkGraph intake', async () => {
+      const defaultRailsImplementation = orchestratorMocks.requestPythonRailsJson
+        .getMockImplementation()!;
+      const defaultSubmitImplementation = agentTerminalMocks.manager.submit
+        .getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockReset();
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+        if (endpoint === '/thinkgraph/completed-pair/fast') return {
+          ok: true,
+          pairMemoryId: 'mem_pair_one',
+          intakeOperation: 'add',
+          enrichmentRequired: true,
+          revision: 4,
+          revisionChanged: true,
+          fast: {
+            changedNodeIds: ['think-fast-a', 'think-fast-b'],
+            changedEdgeIds: ['think-fast-edge'],
+            turnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
+            topActiveNodes: [
+              { nativeId: 'think-fast-a', turnHeat: 0.75 },
+              { nativeId: 'think-fast-b', turnHeat: 0.75 },
+            ],
+          },
+          enrichmentSchema: {
+            type: 'object',
+            properties: { facts: { type: 'array' } },
+            required: ['facts'],
+          },
+          enrichmentPrompt: 'Native Engraphis llm_structured prompt.',
+        };
+        return defaultRailsImplementation(endpoint, init);
+      });
+      agentTerminalMocks.manager.submit.mockReset();
+      agentTerminalMocks.manager.submit.mockImplementation(defaultSubmitImplementation);
+      agentTerminalMocks.execution.stage.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const exactMessage = 'complete with hybrid ThinkGraph intake';
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'project-1', conversationId: 'chat', message: exactMessage }),
+        });
+        expect(await response.text()).toContain('event: done');
+        await vi.waitFor(() => {
+          const diagnostic = JSON.stringify({
+            rails: orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route),
+            submissions: agentTerminalMocks.manager.submit.mock.calls.map(
+              ([owner, sessionId, message]) => ({ cardId: owner.cardId, sessionId, message }),
+            ),
+            staged: agentTerminalMocks.execution.stage.mock.calls.map(
+              ([owner, sessionId, profile]) => ({ cardId: owner.cardId, sessionId, profile }),
+            ),
+          });
+          expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
+            ([route]) => route === '/thinkgraph/completed-pair/settle',
+          ), diagnostic).toBe(true);
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
+          '/domain/main/runs/begin',
+          '/thinkgraph/completed-pair/fast',
+          '/domain/runs/begin',
+          '/thinkgraph/completed-pair/settle',
+        ]);
+        const fastCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([route]) => route === '/thinkgraph/completed-pair/fast',
+        );
+        expect(fastCall?.[1]).toMatchObject({ method: 'POST' });
+        const completedPair = {
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'chat',
+          runId: expect.stringMatching(/^req_/),
+          cardId: 'card_main_chat',
+          nativeSessionRef: 'native:default',
+          completedAt: expect.any(String),
+          userMessage: exactMessage,
+          mainResponse: 'Real assistant reply.',
+        };
+        expect(JSON.parse(String(fastCall?.[1]?.body))).toEqual(completedPair);
+
+        const cardBegin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([route]) => route === '/domain/runs/begin',
+        );
+        const cardBeginBody = JSON.parse(String(cardBegin?.[1]?.body));
+        expect(cardBeginBody).toMatchObject({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          cardId: 'card_thinkgraph',
+          cardRevisionId: 'revision:card_thinkgraph',
+          senderCardId: 'card_main_chat',
+          originatingRunId: completedPair.runId,
+          conversationId: 'chat',
+          runId: expect.stringMatching(/^req_/),
+          correlationId: expect.stringMatching(/^req_/),
+        });
+        expect(cardBeginBody.assignment).toContain('free-form semantic language');
+        expect(cardBeginBody.assignment).toContain('Jev alone classifies any durable graph edge');
+
+        const settleCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([route]) => route === '/thinkgraph/completed-pair/settle',
+        );
+        expect(JSON.parse(String(settleCall?.[1]?.body))).toEqual({
+          ...completedPair,
+          pairMemoryId: 'mem_pair_one',
+          fastTurnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
+          structuredOutput: 'Real assistant reply.',
+          cardRun: {
+            runId: cardBeginBody.runId,
+            cardId: 'card_thinkgraph',
+            revisionId: 'revision:card_thinkgraph',
+            profile: 'thinkgraph',
+            nativeSessionRef: 'native:thinkgraph',
+            resolvedModel: 'gpt-5.6-luna',
+          },
+        });
+      } finally {
+        await closeServer(server);
+        orchestratorMocks.requestPythonRailsJson.mockReset();
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(defaultRailsImplementation);
+        agentTerminalMocks.manager.submit.mockReset();
+        agentTerminalMocks.manager.submit.mockImplementation(defaultSubmitImplementation);
+      }
+    });
+
+    it('stops after a native Engraphis noop without running the saved ThinkGraph Card', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
+      agentTerminalMocks.manager.submit.mockClear();
       const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'chat', message: 'complete without extraction' }),
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'repeat-pair',
+            message: 'This completed pair is already known to Engraphis.',
+          }),
         });
         expect(await response.text()).toContain('event: done');
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await waitForCompletedPairThinkGraphLifecycles();
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
           '/domain/main/runs/begin',
+          '/thinkgraph/completed-pair/fast',
         ]);
+        expect(agentTerminalMocks.manager.submit.mock.calls.map(
+          ([owner]) => owner.cardId,
+        )).toEqual(['card_main_chat']);
       } finally { await closeServer(server); }
     });
 
@@ -3937,7 +4130,7 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('uses one Python materialization and keeps telemetry out of the model input', async () => {
+    it('uses one Main materialization and keeps telemetry out of the Main model input', async () => {
       orchestratorMocks.requestPythonRailsJson.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       mcpClientMocks.callPythonAgentMcpTool.mockClear();
@@ -3972,12 +4165,12 @@ describe('saved Card routes', () => {
         expect(modelInput).not.toContain('stableSavedCardContext');
         expect(modelInput).not.toContain('runId');
         expect(modelInput).not.toContain('correlationId');
-        const railsCalls = orchestratorMocks.requestPythonRailsJson.mock.calls;
-        expect(railsCalls.map(([endpoint]) => endpoint)).toEqual([
-          '/domain/main/runs/begin',
-        ]);
-        expect(railsCalls[0]?.[1]?.body).toContain('"message":"materialize exactly once"');
-        expect(JSON.parse(String(railsCalls[0]?.[1]?.body))).toMatchObject({
+        const mainBeginCalls = orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        );
+        expect(mainBeginCalls).toHaveLength(1);
+        expect(mainBeginCalls[0]?.[1]?.body).toContain('"message":"materialize exactly once"');
+        expect(JSON.parse(String(mainBeginCalls[0]?.[1]?.body))).toMatchObject({
           driverSource: 'internal_chat',
           dataAnchors: [{
             authority: 'CodeGraph', nativeId: 'pkg.materialize_idf',

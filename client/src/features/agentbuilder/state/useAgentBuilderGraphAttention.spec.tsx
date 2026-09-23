@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import useAgentBuilderGraphAttention, {
   mergeAttentionProjection,
   overlayAuthoritativeGraphAttention,
+  overlayThinkGraphTurnActivity,
   type NativeAttentionEdge,
   type NativeAttentionEvent,
+  type ThinkGraphRevisionEvent,
 } from './useAgentBuilderGraphAttention';
 
 const turn = {
@@ -73,7 +75,7 @@ function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relations
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
-  it('refreshes the stored projection after Main completes even without attention delivery', async () => {
+  it('refreshes exactly once per pushed fast/settled ThinkGraph revision', async () => {
     let response = thinkgraphResponse();
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? response : knowledgeResponse());
@@ -83,18 +85,81 @@ describe('attention-activated native graph projection', () => {
     }));
     await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
     expect(result.current.projections.thinkgraph.nodes).toEqual([]);
-    const records = [{ id: 'stored-entity', label: 'Stored entity' }];
+    const initialThinkGraphReads = fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/'),
+    ).length;
+    const records = [{
+      id: 'stored-entity', label: 'Stored entity', member_ids: ['native-entity'],
+      properties: {},
+    }];
     response = thinkgraphResponse(records);
-    await act(async () => result.current.finishAttentionScope({ ...turn, status: 'completed' }));
-    await waitFor(() => expect(result.current.projections.thinkgraph.nodes).toEqual(records));
-    const count = fetchMock.mock.calls.length;
-    await act(async () => result.current.finishAttentionScope({
-      ...turn, projectId: 'another-project', status: 'completed',
+    const fast: ThinkGraphRevisionEvent = {
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      originatingRunId: 'run-1', stage: 'fast', revision: '4',
+      changedNodeIds: ['native-entity'], changedEdgeIds: ['edge-fast'],
+      affectedNodeIds: ['native-entity'], turnHeat: { 'native-entity': 0.75 },
+      topActiveNodes: [{ nativeId: 'native-entity', turnHeat: 0.75 }],
+    };
+    act(() => {
+      result.current.observeThinkGraphRevision(fast);
+      result.current.observeThinkGraphRevision(fast);
+    });
+    await waitFor(() => expect(
+      result.current.projections.thinkgraph.nodes.map((node) => node.id),
+    ).toEqual(['stored-entity']));
+    const heated = result.current.projections.thinkgraph.nodes[0] as any;
+    expect(heated).toMatchObject({
+      turn_heat: 0.75, turn_heat_active: true, local_resettle: true,
+    });
+    expect(heated.properties).toMatchObject({
+      turnHeat: 0.75, turnHeatActive: true, localResettle: true,
+    });
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/'),
+    )).toHaveLength(initialThinkGraphReads + 1);
+
+    act(() => result.current.finishAttentionScope({ ...turn, status: 'completed' }));
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/'),
+    )).toHaveLength(initialThinkGraphReads + 1);
+
+    act(() => result.current.observeThinkGraphRevision({
+      ...fast, stage: 'settled', revision: '5', changedEdgeIds: ['edge-rich'],
+      turnHeat: { 'native-entity': 1.75 },
+      topActiveNodes: [{ nativeId: 'native-entity', turnHeat: 1.75 }],
     }));
-    expect(fetchMock).toHaveBeenCalledTimes(count);
-    response = thinkgraphResponse();
-    await act(async () => result.current.refreshThinkGraph());
-    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+    await waitFor(() => expect(
+      (result.current.projections.thinkgraph.nodes[0] as any).turn_heat,
+    ).toBe(1.75));
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/'),
+    )).toHaveLength(initialThinkGraphReads + 2);
+  });
+
+  it('derives transient top-five heat for both projection and scene nodes', () => {
+    const authoritative: any = {
+      schemaVersion: 'thinkgraph.engraphis.v1', authority: 'engraphis',
+      projectId: 'project-1',
+      nodes: [{ id: 'cluster', member_ids: ['native-a', 'native-b'], properties: {} }],
+      edges: [],
+      scene: {
+        nodes: [{ id: 'cluster', member_ids: ['native-a', 'native-b'], properties: {} }],
+        edges: [], communities: [], meta: {},
+      },
+    };
+    const event: ThinkGraphRevisionEvent = {
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      originatingRunId: 'run-1', stage: 'settled', revision: '5',
+      changedNodeIds: ['native-a'], changedEdgeIds: ['edge-a'],
+      affectedNodeIds: ['native-b'], turnHeat: { 'native-a': 0.5, 'native-b': 1.25 },
+      topActiveNodes: [{ nativeId: 'native-a', turnHeat: 0.5 }],
+    };
+    const overlaid = overlayThinkGraphTurnActivity(authoritative, event) as any;
+    for (const node of [overlaid.nodes[0], overlaid.scene.nodes[0]]) {
+      expect(node).toMatchObject({
+        turn_heat: 1.75, turn_heat_active: true, local_resettle: true,
+      });
+    }
   });
   it('loads CodeGraph records from the saved-workspace reader and preserves stored edge identity', async () => {
     const prefix = 'C-Projects-LiquidAIty-main.client.src.features.agentbuilder.state.useAgentBuilderGraphAttention.';

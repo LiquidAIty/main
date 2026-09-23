@@ -66,10 +66,14 @@ owns source boundaries. A historical report is evidence, never permission to act
 Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; native CBM owns CodeGraph; AGE owns
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
-Main currently reads context and chooses explicit writes or focused delegation. The proposed native
-pending-candidate/next-submit acceptance path is deferred and unproven. It does not authorize
-automatic extraction, approval, replay, removal or database work during another task. KnowGraph
-retains actual sourced research through its existing owner.
+Main reads context and retains explicit writes and focused delegation. One additional current path is the
+owner-approved completed User/Main pair lifecycle: Engraphis native semantic resolution stops duplicates;
+native regex extraction/feed enumerates new pair opportunities without persistence; graph-aware Jev gates
+durable endpoints and edges; and the existing saved ThinkGraph Card supplies Engraphis-structured node
+Notes, missed concepts, and free-form pair proposals before Jev classifies final edges. This is not the
+removed proxy/replay design. Do not add a pending-candidate queue, approval state, shadow graph, broad
+historical deletion, direct model edge writer, second extractor, or database-side semantic shortcut.
+KnowGraph retains actual sourced research through its existing owner.
 
 Keep entity identity, attributed claims, uncertainty, meaningful relationships and provenance distinct.
 A stored note, queued episode, native ID or attractive graph is not proof of useful knowledge.

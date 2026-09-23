@@ -416,11 +416,21 @@ AgentGraph = LiquidAIty Card relationships, delegation, parent-run lineage, and 
 
 One authority and one writer per graph.
 
-Main reads ThinkGraph, answers in chat, and chooses explicit Engraphis writes. Automatic completed-pair
-extraction is removed by the September 9 owner decision. Main may delegate focused extraction or
-enrichment to ThinkGraph; it is not an automatic conversation replay. KnowGraph retains sourced research through its
-existing research agent and Graphiti intake. Operating instructions belong in saved Cards; dynamic
-input carries the actual task and selected data. Do not submit system-design guidance as test chatter.
+Main reads ThinkGraph, answers in chat, and retains explicit Engraphis writes. After an ordinary Main
+User/assistant turn has completed and its visible response has returned, the exact completed pair enters
+the approved Engraphis-owned hybrid intake. Native semantic resolution stops a `noop` immediately. New or
+changed material uses native `RegexGraphExtractor` plus native `feed()` through a non-persisting intake
+adapter; only A/B relationships accepted by graph-aware Jev may persist their native endpoints and edge.
+The existing saved ThinkGraph Card then runs through the normal saved-Card/App Server path with its saved
+model and Engraphis `llm_structured` prompt/schema. Its output becomes self-contained node Notes, missed
+concepts, and free-form directed relationship proposals; Jev alone chooses every durable edge label,
+distribution, and strength. A new Card-discovered node requires an accepted edge and an attached Note.
+A genuinely new Note on an existing canonical node reopens only that node's current live one-hop Jev edges.
+The September 9 removal remains the historical removal of the old proxy/replay path, not a prohibition on
+this native novelty-gated lifecycle. No candidate graph, approval state, shadow graph, raw conversation
+replay, or broad cleanup path returns. KnowGraph retains sourced research through its existing research
+agent and Graphiti intake. Operating instructions belong in saved Cards; dynamic input carries the actual
+task and selected data. Do not submit system-design guidance as test chatter.
 
 - Pass pointers, native IDs, bounded Context Selections, and provenance—not copied subgraphs.
 - Transient context selection may reference native authorities for bounded IDF hydration; it is not another graph

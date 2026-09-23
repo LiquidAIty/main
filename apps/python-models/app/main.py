@@ -84,6 +84,40 @@ async def thinkgraph_operation(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
+@app.post("/thinkgraph/completed-pair/fast")
+async def thinkgraph_completed_pair_fast(payload: dict[str, Any]):
+    """Run native regex enumeration and Jev admission for one completed Main pair."""
+    from app.python_models.engraphis import (
+        JevRelationshipError,
+        ThinkGraphIntakeError,
+        begin_completed_pair,
+    )
+    import asyncio
+    try:
+        return await asyncio.to_thread(begin_completed_pair, payload)
+    except (ValueError, KeyError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except (JevRelationshipError, ThinkGraphIntakeError, RuntimeError) as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+
+@app.post("/thinkgraph/completed-pair/settle")
+async def thinkgraph_completed_pair_settle(payload: dict[str, Any]):
+    """Apply saved ThinkGraph Card Notes and Jev-gated pairings."""
+    from app.python_models.engraphis import (
+        JevRelationshipError,
+        ThinkGraphIntakeError,
+        settle_completed_pair,
+    )
+    import asyncio
+    try:
+        return await asyncio.to_thread(settle_completed_pair, payload)
+    except (ValueError, KeyError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except (JevRelationshipError, ThinkGraphIntakeError, RuntimeError) as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+
 
 
 @app.on_event("startup")

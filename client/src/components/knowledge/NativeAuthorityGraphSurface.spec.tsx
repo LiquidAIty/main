@@ -97,13 +97,26 @@ describe('native authority graph surfaces', () => {
   });
 
   it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
-    const scene = { nodes: [], edges: [], communities: [], meta: { layout_seed: 7 } };
+    const scene = {
+      nodes: [{ id: 'jev', label: 'Jev', semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2 }],
+      edges: [{
+        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'REFINES', relation: 'REFINES',
+        relationship_strength: 0.82, label_confidence: 0.71,
+        spring_strength: 0.1744, rest_length: 16.16,
+      }],
+      communities: [], meta: { layout_seed: 7 },
+    };
     render(<NativeGraphProjectionSurface authority="knowgraph"
       projection={{ ...empty('thinkgraph'), scene }} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.setData.mock.calls[0][0]).toBe(scene);
-    expect(graph.data.nodes).toEqual([]);
-    expect(graph.data.links).toEqual([]);
+    expect(graph.data.nodes[0]).toMatchObject({
+      semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2,
+    });
+    expect(graph.data.links[0]).toMatchObject({
+      relation: 'REFINES', relationship_strength: 0.82,
+      spring_strength: 0.1744, rest_length: 16.16,
+    });
   });
 
   it('starts KnowGraph empty without loading the complete Neo4j graph', async () => {
@@ -302,7 +315,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.links).toEqual([]);
     fireEvent.click(screen.getByRole('button', { name: 'Reset to preset defaults' }));
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('3');
-    expect(screen.queryByRole('button', { name: 'Freeze', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Freeze$/ })).toBeNull();
   });
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
@@ -311,7 +324,7 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved note.');
-    expect(screen.queryByRole('button', { name: 'Expand', exact: true })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Expand$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     expect(screen.queryByRole('region', { name: 'Existing entry details' })).toBeNull();
@@ -321,12 +334,16 @@ describe('native authority graph surfaces', () => {
   it('removes only the selected stored note and reports a failed removal without hiding data', async () => {
     const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
-      properties: { evidence: [{ id: 'memory-id', summary: 'Saved note.' }] } }] };
+      properties: { evidence: [{ id: 'memory-id', summary: 'Saved note.', ingestedAt: 200,
+        metadata: { thinkgraph_note: { kind: 'DECISION' } } }] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
+    expect(screen.getByText('Thought history · newest first')).toBeTruthy();
     fireEvent.click(screen.getByText('Supporting note'));
+    expect(document.querySelector('time')?.getAttribute('datetime'))
+      .toBe('1970-01-01T00:03:20.000Z');
     fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
     expect(remove).toHaveBeenCalledExactlyOnceWith('memory-id');
@@ -358,6 +375,52 @@ describe('native authority graph surfaces', () => {
       expect(screen.queryByText(label)).toBeNull();
     }
     expect(screen.queryByPlaceholderText('Find entity…')).toBeNull();
+  });
+
+  it('shows the Jev edge winner, numerical strength, confidence, and full distribution', () => {
+    const distribution = {
+      REFINES: 0.76,
+      NONE: 0.14,
+      INSUFFICIENT_CONTEXT: 0.10,
+    };
+    const projection = {
+      ...empty('thinkgraph'),
+      nodes: [
+        { id: 'jev', label: 'Jev', mentionCount: 1 },
+        { id: 'thinkgraph', label: 'ThinkGraph', mentionCount: 1 },
+      ],
+      edges: [{
+        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'REFINES',
+        properties: {
+          directed: true,
+          relationship_strength: 0.76,
+          label_confidence: 0.76,
+          jev: { distribution },
+        },
+      }],
+    };
+    render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
+      status="ready" error={null} />);
+    const graph = forceGraphMocks.instances.at(-1);
+    act(() => graph.nodeClick(graph.data.nodes[0]));
+    fireEvent.click(screen.getByRole('button', { name: 'Jev REFINES ThinkGraph' }));
+
+    expect(screen.getByText('Relationship strength').nextSibling?.textContent).toBe('76.0%');
+    expect(screen.getByText('Label confidence').nextSibling?.textContent).toBe('76.0%');
+    const probabilityDetails = screen.getByText('Jev relationship probabilities')
+      .parentElement as HTMLDetailsElement;
+    expect(probabilityDetails.open).toBe(true);
+    const probability = (choice: string) => Array.from(
+      probabilityDetails.querySelectorAll('dt'),
+    ).find(item => item.textContent === choice)?.nextElementSibling?.textContent;
+    expect(probability('REFINES')).toBe('76.0%');
+    expect(probability('NONE')).toBe('14.0%');
+    expect(probability('INSUFFICIENT_CONTEXT')).toBe('10.0%');
+    const winner = Array.from(probabilityDetails.querySelectorAll('div'))
+      .find(item => item.querySelector('dt')?.textContent === 'REFINES')!;
+    expect(winner.getAttribute('data-winner')).toBe('true');
+    expect((winner.querySelector('.graph-jev-probability-fill') as HTMLElement).style.width)
+      .toBe('76.0%');
   });
 
   it('follows native episode references to citations without treating unrelated sources as evidence', () => {

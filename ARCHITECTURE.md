@@ -40,7 +40,7 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, native availability, deterministic validation, and execution; transports do not duplicate these owners |
 | Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
-| ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning and explicit writes |
+| ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning, native novelty/canonicalization/time/evidence, node Notes, and the sole persistent ThinkGraph store; Jev owns durable semantic edge classification |
 | KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
 | AgentGraph | AGE/PostgreSQL through the Card-domain observation path | Saved Card relationships and truthful Run/reference/artifact observations |
 
@@ -101,7 +101,7 @@ signed runtime boundary and are mounted separately from browser authentication.
 | Route family | Current responsibility |
 | --- | --- |
 | `/api/cards` | Card editor choices, saved Card execution, connected relationships, Run inspection, and Stop |
-| `/api/main` | Shared-chat address resolution, saved-Card streaming turns, Main context/driver state, participant-aware history, native attention, and exact-Run Stop |
+| `/api/main` | Shared-chat address resolution, saved-Card streaming turns, Main context/driver state, participant-aware history, native attention, completed-pair ThinkGraph lifecycle transport/revision push, and exact-Run Stop |
 | `/api/agent-terminals` | Authenticated open, SSE events, input, resize/detach, and Stop for the Card's native TUI |
 | `/api/hermes-profile` | Saved-Card-scoped native profile projection and explicit native profile operations |
 | `/api/idd` | IDD-backed Card editor and tool projections |
@@ -337,8 +337,36 @@ AgentGraph = AGE Card topology and truthful execution observations
 
 Each graph has one authority and one writer. Run-scoped Context Selections may carry bounded native
 IDs, data, and provenance together in `in.idf`; that transport is not another graph and does not copy
-ownership. Main chooses explicit ThinkGraph writes or deliberate delegation. Automatic completed-pair
-extraction remains removed.
+ownership. Main retains explicit ThinkGraph writes and deliberate delegation. It also submits an exact
+completed User/Main pair to the approved Engraphis-native lifecycle only after the visible Main turn and
+conversation persistence complete:
+
+```text
+Engraphis semantic resolution
+  noop -> stop
+  add/invalidate/relate
+    -> RegexGraphExtractor.extract() + native feed() on a non-persisting adapter
+    -> bounded graph-aware Jev classification
+    -> accepted native endpoints/edges only
+    -> event-driven fast projection refresh
+    -> exact saved ThinkGraph Card through the normal saved-Card/App Server Run path
+    -> Engraphis llm_structured facts/entities/free-form relations
+    -> self-contained native node Notes + missed concepts + directed pair proposals
+    -> Jev classification of every proposed durable edge
+    -> accepted node + Note + edge persistence in the same Engraphis graph
+    -> current live one-hop reclassification only for existing nodes with a new Note
+    -> event-driven settled projection refresh
+```
+
+Engraphis owns canonical identity, semantic deduplication/novelty, memory/entity incidence, bi-temporal
+fields, native evidence, graph scene projection, and its existing force/galaxy vocabulary. Code owns Note
+origin and entry time; the saved Card does not emit either. A portable singular ThinkGraph item is a
+**Thought**: one canonical node plus its historical self-contained Notes, ordered newest-first by native
+`ingested_at` with native ID as the stable tie-break. The Card's free-form relationship is retained as
+Note/proposition context, while Jev independently chooses the canonical edge winner, full distribution,
+and relationship strength. The old automatic proxy/replay path remains removed; there is no candidate
+system, approval state, shadow graph, second extractor, direct model edge writer, or whole-graph
+reclassification loop. This lifecycle does not write KnowGraph.
 
 Visual activity may be driven only by real reads, selections, deliveries, traversals, writes, Run
 completion, or failure. `native_attention.py` normalizes observable tool events. AGE may store stable
@@ -401,6 +429,12 @@ direct-agent roster entry, and the root-scoped Mag One assignee ceiling in
 changes only profile-scoped local target authority. The Mag One entry changes only assignment authority
 inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
 LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
+
+The vendored Engraphis 1.7.1 renderer has one additional bounded local divergence:
+
+| Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
+| --- | --- | --- | --- |
+| Installed PyPI distribution `engraphis==1.7.1`, `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, and paint a transient current-turn halo. Existing Engraphis presets, palettes, graph scene, inspectors, galaxy physics, controls, and layout engine remain authoritative. No second layout or graph is introduced. | Focused renderer and graph-state tests plus client production typecheck. Sync cost is a small call-site rebase when adopting a later Engraphis renderer. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
 
 ## Current proof limits
 

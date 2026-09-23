@@ -218,12 +218,22 @@ def read_thinkgraph_exact(
     entity = native.get("entity")
     if isinstance(entity, dict):
         evidence = entity.get("evidence", [])
-        body = "\n\n".join(str(item.get("excerpt", "")) for item in evidence)
+        notes = [
+            item for item in evidence
+            if isinstance(item.get("metadata"), dict)
+            and isinstance(item["metadata"].get("thinkgraph_note"), dict)
+        ]
+        portable_context = notes or evidence
+        body = "\n\n".join(
+            str(item.get("excerpt", "")) for item in portable_context
+        )
         relations = entity.get("relations", [])[:max(0, result_limit - 1)] if bounded_expansion else []
         return {
             "authority": "ThinkGraph", "nativeId": entity["canonical_id"], "nativeKind": "node",
+            "portableKind": "thought",
             "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
-            "content": body[:_ANCHOR_BODY_LIMIT], "metadata": {"evidence": evidence},
+            "content": body[:_ANCHOR_BODY_LIMIT],
+            "metadata": {"notes": notes, "evidence": evidence},
             "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
             "asOf": "current", "readOperation": "graph_entity",
             "relationshipEvidence": [{"nodes": [{"nativeId": r["other_id"], "title": r["other_label"]} for r in relations],

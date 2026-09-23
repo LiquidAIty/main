@@ -98,6 +98,82 @@ type SharedChatAuthority = {
   agents: AddressableAgent[];
 };
 
+type ThinkGraphRevisionStage = 'fast' | 'settled';
+
+type ThinkGraphRevisionEvent = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  originatingRunId: string;
+  stage: ThinkGraphRevisionStage;
+  revision: string;
+  changedNodeIds: string[];
+  changedEdgeIds: string[];
+  affectedNodeIds: string[];
+  turnHeat: Record<string, number>;
+  topActiveNodes: Array<{ nativeId: string; turnHeat: number }>;
+};
+
+const thinkGraphRevisionSubscribers = new Map<string, Set<Response>>();
+
+type CompletedPairThinkGraphLifecycleArgs = {
+  req: Request;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  authority: SharedChatAuthority;
+  originatingRunId: string;
+  completedPair: Record<string, string>;
+};
+
+// A saved ThinkGraph Card/profile has one native terminal session. Keep completed
+// pairs ordered inside that authority rather than staging overlapping Card turns.
+// Main has already ended its response before this path is enqueued.
+const completedPairThinkGraphLifecycleTails = new Map<string, Promise<void>>();
+
+function thinkGraphRevisionScope(
+  projectId: string,
+  deckId: string,
+  conversationId: string,
+): string {
+  return `${projectId}\u0000${deckId}\u0000${conversationId}`;
+}
+
+function publishThinkGraphStreamEvent(
+  projectId: string,
+  deckId: string,
+  conversationId: string,
+  eventName: 'thinkgraph_revision' | 'thinkgraph_error',
+  payload: Record<string, unknown>,
+): void {
+  const key = thinkGraphRevisionScope(projectId, deckId, conversationId);
+  const subscribers = thinkGraphRevisionSubscribers.get(key);
+  if (!subscribers?.size) return;
+  const frame = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const response of [...subscribers]) {
+    if (response.destroyed || response.writableEnded) {
+      subscribers.delete(response);
+      continue;
+    }
+    try {
+      response.write(frame);
+    } catch {
+      subscribers.delete(response);
+    }
+  }
+  if (!subscribers.size) thinkGraphRevisionSubscribers.delete(key);
+}
+
+function publishThinkGraphRevision(event: ThinkGraphRevisionEvent): void {
+  publishThinkGraphStreamEvent(
+    event.projectId,
+    event.deckId,
+    event.conversationId,
+    'thinkgraph_revision',
+    event,
+  );
+}
+
 const SHARED_CONTEXT_MESSAGE_LIMIT = 24;
 const SHARED_CONTEXT_CHARACTER_LIMIT = 12_000;
 const SHARED_CHAT_ADDRESS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -1407,6 +1483,240 @@ async function executePreparedGatewayCardRun(args: {
   }
 }
 
+function thinkGraphCardAssignment(fast: any): string {
+  return [
+    'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
+    'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
+    'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
+    'Preserve directed relations as source/relation/target extraction hints. Write relation as',
+    'concise, meaningful free-form semantic language; do not choose a canonical ThinkGraph label.',
+    'Omit a relation if no meaningful directed relationship is grounded in the current pair.',
+    'Code preserves that wording in node Notes; Jev alone classifies any durable graph edge.',
+    'Facts and Note depth must be self-contained. Apart from each required relation.source, do not',
+    'emit timestamps, external source references, citations, origin/provenance fields, or final edge labels.',
+    '',
+    'OUTPUT_SCHEMA',
+    JSON.stringify(fast.enrichmentSchema),
+    '',
+    'ENGRAPHIS_LLM_STRUCTURED_PROMPT',
+    String(fast.enrichmentPrompt || ''),
+  ].join('\n');
+}
+
+async function runCompletedPairThinkGraphLifecycle(
+  args: CompletedPairThinkGraphLifecycleArgs,
+): Promise<void> {
+  let stage: 'fast' | 'thinkgraph_card' | 'settle' = 'fast';
+  try {
+    const fast: any = await requestPythonRailsJson('/thinkgraph/completed-pair/fast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args.completedPair),
+    });
+    const fastFailures = Array.isArray(fast?.fast?.failures) ? fast.fast.failures : [];
+    if (fastFailures.length) {
+      logHarnessTrace(
+        `[thinkgraph] fast Jev pair failures count=${fastFailures.length}`,
+      );
+      publishThinkGraphStreamEvent(
+        args.projectId,
+        args.deckId,
+        args.conversationId,
+        'thinkgraph_error',
+        {
+          projectId: args.projectId,
+          deckId: args.deckId,
+          conversationId: args.conversationId,
+          originatingRunId: args.originatingRunId,
+          stage: 'fast',
+          error: 'jev_relationship_pair_failures',
+          failureCount: fastFailures.length,
+        },
+      );
+    }
+    if (fast?.revisionChanged === true) {
+      publishThinkGraphRevision({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        conversationId: args.conversationId,
+        originatingRunId: args.originatingRunId,
+        stage: 'fast',
+        revision: String(fast.revision ?? ''),
+        changedNodeIds: Array.isArray(fast.fast?.changedNodeIds)
+          ? fast.fast.changedNodeIds.map(String) : [],
+        changedEdgeIds: Array.isArray(fast.fast?.changedEdgeIds)
+          ? fast.fast.changedEdgeIds.map(String) : [],
+        affectedNodeIds: Array.isArray(fast.fast?.changedNodeIds)
+          ? fast.fast.changedNodeIds.map(String) : [],
+        turnHeat: fast.fast?.turnHeat && typeof fast.fast.turnHeat === 'object'
+          ? fast.fast.turnHeat : {},
+        topActiveNodes: Array.isArray(fast.fast?.topActiveNodes)
+          ? fast.fast.topActiveNodes : [],
+      });
+    }
+
+    const intakeOperation = String(fast?.intakeOperation || '');
+    if (fast?.enrichmentRequired === false && intakeOperation === 'noop') return;
+    if (
+      fast?.enrichmentRequired !== true
+      || !['add', 'invalidate', 'relate'].includes(intakeOperation)
+    ) {
+      throw new Error('thinkgraph_fast_intake_contract_invalid');
+    }
+
+    stage = 'thinkgraph_card';
+    const matches = args.authority.agents.filter((agent) => agent.title === 'ThinkGraph');
+    if (matches.length !== 1) throw new Error(
+      matches.length > 1
+        ? 'thinkgraph_saved_card_ambiguous'
+        : 'thinkgraph_saved_card_unavailable',
+    );
+    const thinkGraphCard = matches[0];
+    const cardRunId = `req_${randomUUID().slice(0, 8)}`;
+    const savedPreparation = await prepareSavedCardRun({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      cardId: thinkGraphCard.cardId,
+      cardRevisionId: thinkGraphCard.cardRevisionId,
+      assignment: thinkGraphCardAssignment(fast),
+      senderCardId: args.authority.main.cardId,
+      originatingRunId: args.originatingRunId,
+      conversationId: args.conversationId,
+      correlationId: cardRunId,
+    });
+    const prepared = savedPreparation.prepared;
+    const exactIdentity = prepared.runtimeOwner === 'hermes'
+      && String(prepared.runId || '') === cardRunId
+      && String(prepared.cardRevisionId || '') === thinkGraphCard.cardRevisionId
+      && String(prepared.hermesTransport?.cardIdentity?.cardId || '') === thinkGraphCard.cardId
+      && String(prepared.hermesTransport?.request?.runtime?.profile || '') === thinkGraphCard.profile
+      && Boolean(prepared.hermesTransport?.request);
+    if (!exactIdentity) throw new Error('thinkgraph_saved_card_runtime_identity_mismatch');
+    const owner = await resolveCardRuntimeOwner(
+      args.req,
+      args.projectId,
+      args.deckId,
+      thinkGraphCard.cardId,
+    );
+    const cardResult = await executePreparedGatewayCardRun({
+      owner,
+      conversationId: args.conversationId,
+      runId: cardRunId,
+      prepared,
+      savedDeck: savedPreparation.savedDeck,
+      savedCard: savedPreparation.savedCard,
+      attachTui: false,
+    });
+
+    stage = 'settle';
+    const settled: any = await requestPythonRailsJson('/thinkgraph/completed-pair/settle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...args.completedPair,
+        pairMemoryId: String(fast.pairMemoryId || ''),
+        fastTurnHeat: fast.fast?.turnHeat || {},
+        structuredOutput: cardResult.text,
+        cardRun: {
+          runId: cardRunId,
+          cardId: thinkGraphCard.cardId,
+          revisionId: thinkGraphCard.cardRevisionId,
+          profile: cardResult.profile,
+          nativeSessionRef: cardResult.nativeSessionId,
+          resolvedModel: String(
+            prepared.hermesTransport?.request?.provider?.providerModelId || '',
+          ),
+        },
+      }),
+    });
+    const settleFailures = Array.isArray(settled?.failures) ? settled.failures : [];
+    if (settleFailures.length) {
+      logHarnessTrace(
+        `[thinkgraph] settled pair failures count=${settleFailures.length}`,
+      );
+      publishThinkGraphStreamEvent(
+        args.projectId,
+        args.deckId,
+        args.conversationId,
+        'thinkgraph_error',
+        {
+          projectId: args.projectId,
+          deckId: args.deckId,
+          conversationId: args.conversationId,
+          originatingRunId: args.originatingRunId,
+          stage: 'settle',
+          error: 'thinkgraph_settle_pair_failures',
+          failureCount: settleFailures.length,
+        },
+      );
+    }
+    if (settled?.revisionChanged === true) {
+      publishThinkGraphRevision({
+        projectId: args.projectId,
+        deckId: args.deckId,
+        conversationId: args.conversationId,
+        originatingRunId: args.originatingRunId,
+        stage: 'settled',
+        revision: String(settled.revision ?? ''),
+        changedNodeIds: Array.isArray(settled.changedNodeIds)
+          ? settled.changedNodeIds.map(String) : [],
+        changedEdgeIds: Array.isArray(settled.changedEdgeIds)
+          ? settled.changedEdgeIds.map(String) : [],
+        affectedNodeIds: Array.isArray(settled.affectedNodeIds)
+          ? settled.affectedNodeIds.map(String) : [],
+        turnHeat: settled.turnHeat && typeof settled.turnHeat === 'object'
+          ? settled.turnHeat : {},
+        topActiveNodes: Array.isArray(settled.topActiveNodes)
+          ? settled.topActiveNodes : [],
+      });
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'thinkgraph_lifecycle_failed';
+    logHarnessTrace(
+      `[thinkgraph] lifecycle failed stage=${stage} reason=${redactTrace(reason)}`,
+    );
+    publishThinkGraphStreamEvent(
+      args.projectId,
+      args.deckId,
+      args.conversationId,
+      'thinkgraph_error',
+      {
+        projectId: args.projectId,
+        deckId: args.deckId,
+        conversationId: args.conversationId,
+        originatingRunId: args.originatingRunId,
+        stage,
+        error: reason,
+      },
+    );
+  }
+}
+
+function enqueueCompletedPairThinkGraphLifecycle(
+  args: CompletedPairThinkGraphLifecycleArgs,
+): Promise<void> {
+  const scope = `${args.projectId}\u0000${args.deckId}`;
+  const prior = completedPairThinkGraphLifecycleTails.get(scope) || Promise.resolve();
+  const current = prior
+    .catch(() => undefined)
+    .then(() => runCompletedPairThinkGraphLifecycle(args));
+  completedPairThinkGraphLifecycleTails.set(scope, current);
+  void current.then(() => {
+    if (completedPairThinkGraphLifecycleTails.get(scope) === current) {
+      completedPairThinkGraphLifecycleTails.delete(scope);
+    }
+  });
+  return current;
+}
+
+// Tests and controlled shutdown callers may drain already-authorized background
+// work. The chat route never waits here before ending Main's SSE response.
+export async function waitForCompletedPairThinkGraphLifecycles(): Promise<void> {
+  while (completedPairThinkGraphLifecycleTails.size) {
+    await Promise.all([...completedPairThinkGraphLifecycleTails.values()]);
+  }
+}
+
 // Thin configured-Card transport. Python owns saved Card authorization, the one
 // canonical IDF materializer, runtime-owner selection, and separate Run
 // persistence. This route never rebuilds the model call.
@@ -1898,6 +2208,35 @@ function latestScopedNativeAttentionEvents(
   });
 }
 
+mainRoutes.get('/session/thinkgraph-revisions', async (req, res) => {
+  const projectId = String(req.query?.projectId || '').trim();
+  const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.query?.conversationId || '').trim();
+  if (!projectId || !conversationId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'projectId_and_conversationId_required',
+    });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  const key = thinkGraphRevisionScope(projectId, deckId, conversationId);
+  const subscribers = thinkGraphRevisionSubscribers.get(key) || new Set<Response>();
+  subscribers.add(res);
+  thinkGraphRevisionSubscribers.set(key, subscribers);
+  res.write(': ThinkGraph revisions connected\n\n');
+  res.on('close', () => {
+    subscribers.delete(res);
+    if (!subscribers.size) thinkGraphRevisionSubscribers.delete(key);
+  });
+  return undefined;
+});
+
 mainRoutes.get('/session/attention', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
@@ -2259,6 +2598,10 @@ mainRoutes.post('/session/chat', async (req, res) => {
   const magenticAcceptance: { status: MagenticExecutionStatus | null } = { status: null };
   let magenticProgressBound = false;
   let magenticOuterRunFinalized = false;
+  let completedPairLifecycle: {
+    completedPair: Record<string, string>;
+    originatingRunId: string;
+  } | null = null;
   try {
     let resultText = '';
     let continuationRef = '';
@@ -2389,6 +2732,20 @@ mainRoutes.post('/session/chat', async (req, res) => {
     } catch {
       throw new Error('shared_conversation_persistence_failed');
     }
+    if (!directAddressed) completedPairLifecycle = {
+      originatingRunId: run.runId,
+      completedPair: {
+        projectId,
+        deckId,
+        conversationId,
+        runId: run.runId,
+        cardId: run.cardId,
+        nativeSessionRef: continuationRef,
+        completedAt: new Date().toISOString(),
+        userMessage: message,
+        mainResponse: resultText,
+      },
+    };
     writeSse('done', {
       fullText: resultText,
       turnOwner: directAddressed ? 'addressed_card' : 'main',
@@ -2451,6 +2808,20 @@ mainRoutes.post('/session/chat', async (req, res) => {
   } finally {
     writeSse('end', {});
     if (!res.destroyed && !res.writableEnded) res.end();
+    if (completedPairLifecycle) {
+      const lifecycle = completedPairLifecycle;
+      setImmediate(() => {
+        void enqueueCompletedPairThinkGraphLifecycle({
+          req,
+          projectId,
+          deckId,
+          conversationId,
+          authority,
+          originatingRunId: lifecycle.originatingRunId,
+          completedPair: lifecycle.completedPair,
+        });
+      });
+    }
   }
   return undefined;
 });

@@ -5,6 +5,8 @@ uvicorn[standard]==0.31.1
 pydantic==2.12.5
 pytest==8.4.2
 python-dotenv==1.2.2
+# Direct provider transport for Jev Decisions.
+httpx==0.28.1
 # The current Graphiti MCP package requires the official Python MCP SDK v1
 # (`mcp>=1.27.2,<2`). Keep the tested v1 SDK explicit while this host uses its
 # supported stateless Streamable HTTP mode.

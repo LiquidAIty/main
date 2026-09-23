@@ -66,6 +66,29 @@ export type NativeAttentionSession = {
   materializedNativeReferences?: Array<{ authority: string; nativeId: string }>;
 };
 
+export type ThinkGraphRevisionEvent = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  originatingRunId: string;
+  stage: 'fast' | 'settled';
+  revision: string;
+  changedNodeIds: string[];
+  changedEdgeIds: string[];
+  affectedNodeIds: string[];
+  turnHeat: Record<string, number>;
+  topActiveNodes: Array<{ nativeId: string; turnHeat: number }>;
+};
+
+export type ThinkGraphLifecycleError = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  originatingRunId: string;
+  stage: 'fast' | 'thinkgraph_card' | 'settle';
+  error: string;
+};
+
 type ExpandRequest = {
   authority: GraphAttentionAuthority;
   node: GraphProjectionNode;
@@ -75,7 +98,7 @@ type ExpandRequest = {
 };
 
 export type GraphAttentionState = {
-  refreshThinkGraph: () => Promise<void>;
+  refreshThinkGraph: (revision?: ThinkGraphRevisionEvent) => Promise<void>;
   removeThinkGraphEvidence: (memoryId: string) => Promise<void>;
   projections: Record<GraphAttentionAuthority, GraphProjectionV1>;
   errors: Partial<Record<GraphAttentionAuthority, string>>;
@@ -85,6 +108,8 @@ export type GraphAttentionState = {
   finishAttentionScope: (turn: MainChatTurnFinished) => void;
   observeAttentionEvent: (event: NativeAttentionEvent) => void;
   observeAttentionSession: (session: NativeAttentionSession) => void;
+  observeThinkGraphRevision: (event: ThinkGraphRevisionEvent) => void;
+  observeThinkGraphFailure: (event: ThinkGraphLifecycleError) => void;
   expandNode: (request: ExpandRequest) => Promise<void>;
 };
 
@@ -204,6 +229,47 @@ export function overlayAuthoritativeGraphAttention(
   };
 }
 
+export function overlayThinkGraphTurnActivity(
+  authoritative: GraphProjectionV1,
+  event: ThinkGraphRevisionEvent,
+): GraphProjectionV1 {
+  const affected = new Set(event.affectedNodeIds);
+  const active = new Set(event.topActiveNodes.slice(0, 5).map((item) => item.nativeId));
+  const decorate = (node: GraphProjectionNode): GraphProjectionNode => {
+    const memberIds = Array.isArray((node as any).member_ids)
+      ? (node as any).member_ids.map(String)
+      : [node.id];
+    const heat = memberIds.reduce(
+      (total: number, nativeId: string) => total + Number(event.turnHeat[nativeId] || 0),
+      0,
+    );
+    const localResettle = memberIds.some((nativeId: string) => affected.has(nativeId));
+    const turnHeatActive = memberIds.some((nativeId: string) => active.has(nativeId));
+    return {
+      ...node,
+      turn_heat: heat,
+      turn_heat_active: turnHeatActive,
+      local_resettle: localResettle,
+      properties: {
+        ...node.properties,
+        turnHeat: heat,
+        turnHeatActive,
+        localResettle,
+      },
+    } as GraphProjectionNode;
+  };
+  return {
+    ...authoritative,
+    nodes: authoritative.nodes.map(decorate),
+    ...(authoritative.scene ? {
+      scene: {
+        ...authoritative.scene,
+        nodes: authoritative.scene.nodes.map(decorate),
+      },
+    } : {}),
+  };
+}
+
 function emptyAttention(projectId: string): Record<GraphAttentionAuthority, GraphProjectionV1> {
   return {
     thinkgraph: projection('thinkgraph', projectId),
@@ -234,6 +300,7 @@ export default function useAgentBuilderGraphAttention({
   const mainActorRef = useRef<string | null>(null);
   const authoritativeThinkGraphRef = useRef<GraphProjectionV1>(projection('thinkgraph', projectId));
   const thinkGraphRequestRef = useRef(0);
+  const seenThinkGraphRevisionsRef = useRef(new Set<string>());
   const authoritativeKnowGraphRef = useRef<GraphProjectionV1>(projection('knowgraph', projectId));
   const knowGraphRequestRef = useRef(0);
   const codeGraphScopeRef = useRef(0);
@@ -246,6 +313,7 @@ export default function useAgentBuilderGraphAttention({
   useEffect(() => {
     activeScopeRef.current = null;
     seenEventIdsRef.current.clear();
+    seenThinkGraphRevisionsRef.current.clear();
     selectedRunRef.current = null;
     setErrors({});
     setProjections(emptyAttention(projectId));
@@ -284,7 +352,10 @@ export default function useAgentBuilderGraphAttention({
     setErrors((current) => ({ ...current, [authority]: undefined }));
   }, []);
 
-  const refreshThinkGraph = useCallback(async (attention?: GraphHighlight) => {
+  const refreshThinkGraph = useCallback(async (
+    revision?: ThinkGraphRevisionEvent,
+    attention?: GraphHighlight,
+  ) => {
     const requestId = thinkGraphRequestRef.current + 1;
     thinkGraphRequestRef.current = requestId;
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
@@ -305,12 +376,17 @@ export default function useAgentBuilderGraphAttention({
         throw new Error('invalid_thinkgraph_projection');
       }
       if (requestId !== thinkGraphRequestRef.current) return;
-      const authoritative = payload as GraphProjectionV1;
+      const authoritative = revision
+        ? overlayThinkGraphTurnActivity(payload as GraphProjectionV1, revision)
+        : payload as GraphProjectionV1;
       authoritativeThinkGraphRef.current = authoritative;
       setProjections((current) => ({
         ...current,
         thinkgraph: attention
-          ? overlayAuthoritativeGraphAttention(overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph), attention)
+          ? overlayAuthoritativeGraphAttention(
+              overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph),
+              attention,
+            )
           : overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph),
       }));
       setErrors((current) => ({ ...current, thinkgraph: undefined }));
@@ -441,7 +517,9 @@ export default function useAgentBuilderGraphAttention({
       }));
       if (authority === 'thinkgraph') {
         const ids = new Set(authoritativeThinkGraphRef.current.nodes.map(node => node.id));
-        if (event.operation === 'write' || event.nativeNodeIds.some(id => !ids.has(id))) void refreshThinkGraph(highlight);
+        if (event.operation === 'write' || event.nativeNodeIds.some(id => !ids.has(id))) {
+          void refreshThinkGraph(undefined, highlight);
+        }
       } else if (authority === 'knowgraph' && event.operation === 'write') void refreshKnowGraph(highlight);
       else if (authority === 'codegraph') void loadCodeGraphAttention(highlight);
     }
@@ -492,6 +570,33 @@ export default function useAgentBuilderGraphAttention({
       if (authority === 'codegraph') void loadCodeGraphAttention(highlight);
     }
   }, [deckId, projectId, selectedCardId, loadCodeGraphAttention]);
+
+  const observeThinkGraphRevision = useCallback((event: ThinkGraphRevisionEvent) => {
+    if (event.projectId !== projectId || event.deckId !== deckId
+      || event.conversationId !== conversationId
+      || !['fast', 'settled'].includes(event.stage)
+      || !event.originatingRunId || !event.revision
+      || !Array.isArray(event.changedNodeIds)
+      || !Array.isArray(event.changedEdgeIds)
+      || !Array.isArray(event.affectedNodeIds)
+      || !isRecord(event.turnHeat)
+      || !Array.isArray(event.topActiveNodes)) return;
+    const key = `${event.originatingRunId}:${event.stage}:${event.revision}`;
+    if (seenThinkGraphRevisionsRef.current.has(key)) return;
+    seenThinkGraphRevisionsRef.current.add(key);
+    if (seenThinkGraphRevisionsRef.current.size > 256) {
+      seenThinkGraphRevisionsRef.current.delete(
+        seenThinkGraphRevisionsRef.current.values().next().value!,
+      );
+    }
+    void refreshThinkGraph(event);
+  }, [conversationId, deckId, projectId, refreshThinkGraph]);
+
+  const observeThinkGraphFailure = useCallback((event: ThinkGraphLifecycleError) => {
+    if (event.projectId !== projectId || event.deckId !== deckId
+      || event.conversationId !== conversationId) return;
+    console.warn('[THINKGRAPH_LIFECYCLE_FAILED]', event);
+  }, [conversationId, deckId, projectId]);
 
   const startAttentionScope = useCallback((turn: MainChatTurnStarted) => {
     if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
@@ -544,8 +649,7 @@ export default function useAgentBuilderGraphAttention({
   const finishAttentionScope = useCallback((turn: MainChatTurnFinished) => {
     if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
     if (activeScopeRef.current?.clientRunId === turn.runId) activeScopeRef.current = null;
-    if (turn.status === 'completed') void refreshThinkGraph();
-  }, [projectId, conversationId, refreshThinkGraph]);
+  }, [projectId, conversationId]);
 
   const expandNode = useCallback(async ({
     authority,
@@ -611,6 +715,8 @@ export default function useAgentBuilderGraphAttention({
     finishAttentionScope,
     observeAttentionEvent,
     observeAttentionSession,
+    observeThinkGraphRevision,
+    observeThinkGraphFailure,
     expandNode,
   };
 }

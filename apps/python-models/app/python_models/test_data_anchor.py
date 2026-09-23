@@ -146,6 +146,53 @@ def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(native
     assert record["content"] == "Project-scoped native engine content"
 
 
+def test_thought_handoff_prefers_self_contained_notes_and_keeps_native_evidence(
+    monkeypatch,
+) -> None:
+    import io
+    import json
+
+    native = {
+        "entity": {
+            "canonical_id": "entity-one",
+            "type": "person_or_concept",
+            "label": "Jev",
+            "member_ids": ["entity-one"],
+            "relations": [],
+            "history": [],
+            "truncation": {"relations": False, "evidence": False, "history": False},
+            "evidence": [
+                {
+                    "memory_id": "mem_note",
+                    "excerpt": "Self-contained structured Thought Note.",
+                    "metadata": {"thinkgraph_note": {"kind": "DECISION"}},
+                },
+                {
+                    "memory_id": "mem_pair",
+                    "excerpt": "Raw completed conversation evidence.",
+                    "metadata": {"thinkgraph_completed_pair": {}},
+                },
+            ],
+        }
+    }
+    monkeypatch.setattr(
+        data_anchor,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(json.dumps(native).encode()),
+    )
+
+    record = read_thinkgraph_exact("project-1", "entity-one")
+
+    assert record["portableKind"] == "thought"
+    assert record["content"] == "Self-contained structured Thought Note."
+    assert [item["memory_id"] for item in record["metadata"]["notes"]] == [
+        "mem_note"
+    ]
+    assert [item["memory_id"] for item in record["metadata"]["evidence"]] == [
+        "mem_note", "mem_pair"
+    ]
+
+
 def test_required_anchor_materializes_real_data_and_stable_reference(native_graph) -> None:
     _, first, _ = native_graph
     seed, references = resolve_data_anchors(

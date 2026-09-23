@@ -431,7 +431,6 @@ export default function AgentBuilder(): React.ReactElement {
       ...(selectedCardId ? { cardId: selectedCardId } : {}),
     });
     const stream = new EventSource(`/api/main/session/attention?${params.toString()}`, { withCredentials: true });
-    stream.onopen = () => { void graphAttention.refreshThinkGraph(); };
     stream.addEventListener('session', (event) => {
       graphAttention.observeAttentionSession(JSON.parse((event as MessageEvent).data));
     });
@@ -442,7 +441,34 @@ export default function AgentBuilder(): React.ReactElement {
       console.warn('[NATIVE_GRAPH_ATTENTION_READBACK]', error);
     };
     return () => stream.close();
-  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession, graphAttention.refreshThinkGraph]);
+  }, [activeProject, selectedCardId, graphAttention.observeAttentionEvent, graphAttention.observeAttentionSession]);
+  useEffect(() => {
+    if (!activeProject) return undefined;
+    const params = new URLSearchParams({
+      projectId: activeProject,
+      deckId: BUILDER_DECK_ID,
+      conversationId,
+    });
+    const stream = new EventSource(
+      `/api/main/session/thinkgraph-revisions?${params.toString()}`,
+      { withCredentials: true },
+    );
+    stream.addEventListener('thinkgraph_revision', (event) => {
+      graphAttention.observeThinkGraphRevision(JSON.parse((event as MessageEvent).data));
+    });
+    stream.addEventListener('thinkgraph_error', (event) => {
+      graphAttention.observeThinkGraphFailure(JSON.parse((event as MessageEvent).data));
+    });
+    stream.onerror = (error) => {
+      console.warn('[THINKGRAPH_REVISION_STREAM]', error);
+    };
+    return () => stream.close();
+  }, [
+    activeProject,
+    conversationId,
+    graphAttention.observeThinkGraphFailure,
+    graphAttention.observeThinkGraphRevision,
+  ]);
   const handleUseAttentionNode = useCallback((
     authority: 'thinkgraph' | 'knowgraph' | 'codegraph',
     node: GraphProjectionNode,

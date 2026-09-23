@@ -3213,6 +3213,40 @@
     return Math.max(0, Math.min(0.25,
       Number.isFinite(Number(link.spring_strength)) ? Number(link.spring_strength) : 0.05));
   }
+  function semanticRelationshipStrength(link) {
+    if (!link) return null;
+    const value = Number(link.relationship_strength);
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+  }
+  function semanticRelationshipWidth(link, multiplier = 1, focused = false, active = false) {
+    const strength = semanticRelationshipStrength(link);
+    if (strength === null) return null;
+    const width = (0.45 + 2.25 * strength) * Math.max(0, Number(multiplier) || 0);
+    if (!focused) return width;
+    return active ? width * 1.7 : Math.max(0.25, width * 0.35);
+  }
+  function semanticRelationshipDistance(link, fallback) {
+    const value = Number(link && link.rest_length);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+  function semanticRelationshipSpring(link, fallback) {
+    const value = Number(link && link.spring_strength);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  }
+  function turnHeatIntensity(node) {
+    if (!node || node.turn_heat_active !== true) return 0;
+    const heat = Number(node.turn_heat);
+    if (!Number.isFinite(heat) || heat <= 0) return 0.35;
+    return Math.max(0.35, Math.min(1, heat / (heat + 1)));
+  }
+  function preserveRefreshPosition(previous, incoming) {
+    const copy = Object.assign({}, incoming);
+    if (!previous) return copy;
+    ['x', 'y', 'vx', 'vy'].forEach(key => {
+      if (Number.isFinite(previous[key])) copy[key] = previous[key];
+    });
+    return copy;
+  }
   function galaxySpringDistance(link, orbitScale) {
     const base = finitePositive(link && link.rest_length, 24, 240);
     return base * Math.max(1 / 16, Math.min(25, Number(orbitScale) || 1));
@@ -8167,14 +8201,14 @@
          negative many-body charge, and apply this multiplier to the attractive anchor forces
          below so increasing gravity tightens the layout instead of spreading it apart. */
       if (charge && charge.strength) charge.strength(-baseRepel);
-      if (link && link.distance) link.distance(s.link);
+      if (link && link.distance) link.distance(edge => semanticRelationshipDistance(edge, s.link));
       if (link && link.strength) link.strength(edge => {
         const source = typeof edge.source === 'object' ? edge.source : layoutById.get(linkEndpoint(edge, 'source'));
         const target = typeof edge.target === 'object' ? edge.target : layoutById.get(linkEndpoint(edge, 'target'));
         const base = 1 / Math.max(1, Math.min(
           source && source.degree || 1, target && target.degree || 1
         ));
-        return base * localMultiplier;
+        return semanticRelationshipSpring(edge, base) * localMultiplier;
       });
       /* Space friction (the dashboard's "damping" slider) maps onto d3's velocityDecay. The
          slider's 0..15 visible range must reach the full d3 decay range so the lower quarter
@@ -8512,6 +8546,20 @@
       if (galaxyAnchor) paintGalaxyAnchorAdornment(
         ctx, node, scale, state.themeColors.accent || nodeMaterial.identity, true
       );
+      const currentTurnHeat = turnHeatIntensity(node);
+      if (currentTurnHeat > 0) {
+        /* Current-turn heat is a transient UI overlay from the authoritative graph revision.
+           It does not alter node mass, radius, or the saved graph. */
+        ctx.save();
+        ctx.globalAlpha *= currentTurnHeat;
+        ctx.lineWidth = 1.7 / scale;
+        ctx.strokeStyle = alpha('#fff1a8', 0.98);
+        ctx.beginPath(); ctx.arc(node.x, node.y, r + 3.4 / scale, 0, 6.2832); ctx.stroke();
+        ctx.lineWidth = 0.75 / scale;
+        ctx.strokeStyle = alpha('#ff9f43', 0.9);
+        ctx.beginPath(); ctx.arc(node.x, node.y, r + 5.8 / scale, 0, 6.2832); ctx.stroke();
+        ctx.restore();
+      }
       if (node.id === hilite) {
         /* Hover lifts exposure without changing the material or rotating its light. The two
            unblurred rings remain crisp at every DPR and also serve explicit selection. */
@@ -9930,6 +9978,10 @@
         const s = linkEndpoint(l, 'source'), t = linkEndpoint(l, 'target');
         if (l.aggregate) return Math.min(6, 0.6 + Math.log2(1 + (l.weight || 1)) * 1.4) * w;
         if (state.bridges && l.bridge) return 2.6 * w;
+        const semanticWidth = semanticRelationshipWidth(
+          l, w, focus, s === hilite || t === hilite
+        );
+        if (semanticWidth !== null) return semanticWidth;
         if (!focus && state.settings.mode === 'galaxy') {
           const orbitalRole = galaxyOrbitalLinkRole(l);
           if (orbitalRole === 'internal') return 0.3 * w;
@@ -10096,6 +10148,8 @@
     }
     api.setData = data => {
       if (destroyed) return;
+      const previousNodes = new Map(raw.nodes.map(node => [node.id, node]));
+      const preserveViewport = previousNodes.size > 0;
       cancelGalaxyDynamics(true);
       resetGalaxyDiagnostics();
       galaxyServerPhase.clear();
@@ -10107,7 +10161,8 @@
         if (!node || (typeof node !== 'object' && typeof node !== 'function')
           || !validNodeId(node.id) || nodeIds.has(node.id)) return;
         nodeIds.add(node.id);
-        const copy = Object.assign({}, node, { name: nodeName(node) });
+        const copy = preserveRefreshPosition(previousNodes.get(node.id),
+          Object.assign({}, node, { name: nodeName(node) }));
         galaxyServerPhase.set(copy.id, Object.freeze({
           x: Number.isFinite(copy.x) ? copy.x : undefined,
           y: Number.isFinite(copy.y) ? copy.y : undefined,
@@ -10236,7 +10291,10 @@
       if ((state.bridges || state.sizeBy === 'betweenness') && opts.onMetrics) {
         opts.onMetrics(api.metrics());
       }
-      render(true, true);
+      /* A graph revision is an in-place knowledge update. Retain established coordinates and
+         the current camera; new/changed edges then pull only their local neighborhood through
+         the existing force engine instead of refitting the mature galaxy on every turn. */
+      render(!preserveViewport, true);
     };
     /* Which of these settings changes the *layout* rather than just the paint, matching the
        classic path's `key==='repel'||key==='link'||key==='gravity'||key==='size'` in
@@ -10959,6 +11017,9 @@
       galaxyLayoutCompactness,
       applyGalaxyGravitySettingResponse,
       galaxySpringStrength, galaxySpringDistance, galaxySafeSpringDistance,
+      semanticRelationshipStrength, semanticRelationshipWidth,
+      semanticRelationshipDistance, semanticRelationshipSpring,
+      turnHeatIntensity, preserveRefreshPosition,
       fallbackCommunityBridges, paintFlowArrow,
       nodeName, linkEndpoint, asOfValue, materialRecipe, materialTier,
       paintMaterialDirect, paintMaterialSurface, paintGalaxyAnchorAdornment,

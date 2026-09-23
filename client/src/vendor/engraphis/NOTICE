@@ -1,2 +1,5 @@
 Engraphis 1.7.1 dashboard_assets/engraphis-graph.js and its shipped vendor dependencies.
-Copied byte-for-byte from the installed distribution. No renderer modifications.
+The local renderer retains the upstream engine, presets, palettes, controls, inspectors, and layout
+algorithms. LiquidAIty's bounded divergence maps native Jev relationship strength to existing edge
+paint/force inputs, preserves coordinates and camera across authoritative graph revisions, and paints
+transient current-turn heat. ARCHITECTURE.md records the exact symbols, proof, sync cost, and rollback.
