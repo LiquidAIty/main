@@ -33,6 +33,7 @@ import copy
 import hashlib
 import hmac
 import inspect
+from importlib import metadata as importlib_metadata
 import json
 import os
 import queue
@@ -334,6 +335,22 @@ def _catalog_diagnostics() -> dict[str, Any]:
         "currentSourceSha256": current_source_sha256,
         "sourceCurrent": (current_source_sha256 == _STARTUP_SOURCE_SHA256
                           if current_source_sha256 and _STARTUP_SOURCE_SHA256 else None),
+        "graphitiVersions": _graphiti_runtime_versions(),
+    }
+
+
+def _graphiti_runtime_versions() -> dict[str, str | None]:
+    """Expose resolved Graphiti packages, never an expected or hard-coded pin."""
+
+    def resolved(distribution: str) -> str | None:
+        try:
+            return importlib_metadata.version(distribution)
+        except importlib_metadata.PackageNotFoundError:
+            return None
+
+    return {
+        "core": resolved("graphiti-core"),
+        "mcp": resolved("mcp-server"),
     }
 
 

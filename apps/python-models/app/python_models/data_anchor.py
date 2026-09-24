@@ -23,6 +23,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _ANCHOR_BODY_LIMIT = 12_000
 _GRAPH_SEED_LIMIT = 48_000
 _KNOWGRAPH_RESULT_LIMIT = 24
+_KNOWGRAPH_EPISODE_LIMIT = 50
+_KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
 
 
@@ -298,6 +300,128 @@ def _without_native_embedding_vectors(value: Any) -> Any:
     return value
 
 
+def _knowgraph_driver(
+    driver_factory: Callable[[], Any] | None = None,
+) -> tuple[Any, str]:
+    """Open the existing project-scoped Neo4j read seam."""
+    database = os.environ.get("NEO4J_DATABASE", "neo4j").strip() or "neo4j"
+    if driver_factory is not None:
+        return driver_factory(), database
+    uri = os.environ.get("NEO4J_URI", "").strip()
+    user = os.environ.get("NEO4J_USER", "").strip()
+    password = os.environ.get("NEO4J_PASSWORD", "").strip()
+    if not uri or not user or not password:
+        raise DataAnchorError("data_anchor_knowgraph_unavailable")
+    try:
+        from neo4j import GraphDatabase
+    except ImportError as error:
+        raise DataAnchorError("data_anchor_knowgraph_driver_unavailable") from error
+    return GraphDatabase.driver(uri, auth=(user, password)), database
+
+
+def read_knowgraph_episodes_exact(
+    project_id: str,
+    episode_ids: list[str],
+    *,
+    driver_factory: Callable[[], Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Hydrate only the requested project-scoped Graphiti source episodes."""
+    requested = list(dict.fromkeys(
+        str(value or "").strip() for value in episode_ids if str(value or "").strip()
+    ))
+    if not requested:
+        return []
+    if len(requested) > _KNOWGRAPH_EPISODE_LIMIT:
+        raise DataAnchorError("data_anchor_knowgraph_episode_limit_invalid")
+    driver, database = _knowgraph_driver(driver_factory)
+    scope_ids = [project_id, f"liquidaity-{project_id}"]
+    try:
+        with driver.session(database=database) as session:
+            rows = _neo4j_rows(session.run(
+                """
+                MATCH (episode:Episodic)
+                WHERE toString(episode.uuid) IN $episodeIds
+                  AND (
+                    toString(episode.group_id) IN $scopeIds
+                    OR toString(episode.project_id) = $projectId
+                  )
+                RETURN toString(episode.uuid) AS uuid,
+                       properties(episode) AS properties
+                """,
+                episodeIds=requested,
+                scopeIds=scope_ids,
+                projectId=project_id,
+            ))
+    except Exception as error:
+        if isinstance(error, DataAnchorError):
+            raise
+        raise DataAnchorError("data_anchor_knowgraph_episode_read_failed") from error
+    finally:
+        close = getattr(driver, "close", None)
+        if callable(close):
+            close()
+
+    hydrated: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        native_id = str(row.get("uuid") or "").strip()
+        if not native_id or native_id not in requested:
+            continue
+        properties = _without_native_embedding_vectors(
+            _json_safe(row.get("properties") if isinstance(row.get("properties"), dict) else {})
+        )
+        content = str(properties.get("content") or "")
+        source = {
+            "uuid": native_id,
+            **{
+                key: properties.get(key)
+                for key in (
+                    "name", "source", "source_description", "source_name", "source_url",
+                    "source_path", "source_type", "document_id", "created_at", "valid_at",
+                    "reference_time", "fetched_at", "snippet", "content_fingerprint",
+                    "graphiti_version",
+                )
+                if properties.get(key) is not None
+            },
+            "content_chars": len(content),
+            "content_preview": content[:_KNOWGRAPH_EPISODE_PREVIEW_CHARS],
+            "content_truncated": len(content) > _KNOWGRAPH_EPISODE_PREVIEW_CHARS,
+        }
+        hydrated[native_id] = source
+    return [hydrated[native_id] for native_id in requested if native_id in hydrated]
+
+
+def _portable_know(
+    native_id: str,
+    properties: dict[str, Any],
+    *,
+    source_id: str,
+    target_id: str,
+    source_name: str = "",
+    target_name: str = "",
+    episodes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Project one native Graphiti fact without creating another stored object."""
+    episode_ids = _episode_ids(properties)
+    invalid_at = properties.get("invalid_at")
+    expired_at = properties.get("expired_at")
+    return {
+        "portableKind": "know",
+        "nativeFactUuid": native_id,
+        "sourceEntity": {"uuid": source_id, **({"name": source_name} if source_name else {})},
+        "targetEntity": {"uuid": target_id, **({"name": target_name} if target_name else {})},
+        "nativeRelation": str(properties.get("name") or properties.get("edge_type") or "Fact"),
+        "fact": str(properties.get("fact") or ""),
+        "supportingEpisodeUuids": episode_ids,
+        "supportingEpisodes": list(episodes or []),
+        "createdAt": properties.get("created_at"),
+        "referenceTime": properties.get("reference_time"),
+        "validAt": properties.get("valid_at"),
+        "invalidAt": invalid_at,
+        "expiredAt": expired_at,
+        "temporalStatus": "historical" if invalid_at or expired_at else "current",
+    }
+
+
 def read_knowgraph_exact(
     project_id: str,
     native_id: str,
@@ -305,27 +429,15 @@ def read_knowgraph_exact(
     bounded_expansion: int = 0,
     result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
     driver_factory: Callable[[], Any] | None = None,
+    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any] | None:
     """Read one project-scoped Neo4j object and a bounded current neighborhood."""
     if bounded_expansion < 0 or bounded_expansion > 3:
         raise DataAnchorError("data_anchor_expansion_invalid")
     if result_limit < 1 or result_limit > _KNOWGRAPH_RESULT_LIMIT:
         raise DataAnchorError("data_anchor_result_limit_invalid")
-    uri = os.environ.get("NEO4J_URI", "").strip()
-    user = os.environ.get("NEO4J_USER", "").strip()
-    password = os.environ.get("NEO4J_PASSWORD", "").strip()
-    database = os.environ.get("NEO4J_DATABASE", "neo4j").strip() or "neo4j"
-    if driver_factory is None:
-        if not uri or not user or not password:
-            raise DataAnchorError("data_anchor_knowgraph_unavailable")
-        try:
-            from neo4j import GraphDatabase
-        except ImportError as error:
-            raise DataAnchorError("data_anchor_knowgraph_driver_unavailable") from error
-        driver_factory = lambda: GraphDatabase.driver(uri, auth=(user, password))
-
     scope_ids = [project_id, f"liquidaity-{project_id}"]
-    driver = driver_factory()
+    driver, database = _knowgraph_driver(driver_factory)
     try:
         with driver.session(database=database) as session:
             center_rows = _neo4j_rows(session.run(
@@ -405,10 +517,23 @@ def read_knowgraph_exact(
     properties = center.get("properties") if isinstance(center.get("properties"), dict) else {}
     labels = center.get("labels") if isinstance(center.get("labels"), list) else []
     neighborhood = _json_safe(paths)[:result_limit]
+    episode_ids = _episode_ids(properties) if relationship_center else []
+    episodes = (episode_reader or read_knowgraph_episodes_exact)(project_id, episode_ids) \
+        if episode_ids else []
+    endpoint_nodes = center.get("endpointNodes") if relationship_center else []
+    endpoints = endpoint_nodes if isinstance(endpoint_nodes, list) else []
+    source_endpoint = endpoints[0] if endpoints and isinstance(endpoints[0], dict) else {}
+    target_endpoint = endpoints[1] if len(endpoints) > 1 and isinstance(endpoints[1], dict) else {}
+    source_properties = source_endpoint.get("properties") \
+        if isinstance(source_endpoint.get("properties"), dict) else {}
+    target_properties = target_endpoint.get("properties") \
+        if isinstance(target_endpoint.get("properties"), dict) else {}
+    native_id = str(center.get("nativeId") or native_id)
     return {
         "authority": "KnowGraph",
-        "nativeId": str(center.get("nativeId") or native_id),
+        "nativeId": native_id,
         "nativeKind": "edge" if relationship_center else "node",
+        **({"portableKind": "know"} if relationship_center else {}),
         "type": str(labels[0] if labels else "Neo4jObject"),
         "title": str(properties.get("name") or properties.get("title") or native_id),
         "content": json.dumps(
@@ -418,14 +543,29 @@ def read_knowgraph_exact(
             default=str,
         )[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
-        "endpointNodes": center.get("endpointNodes") if relationship_center else [],
+        "endpointNodes": endpoint_nodes,
         "sourceNativeId": str(center.get("sourceNativeId") or ""),
         "targetNativeId": str(center.get("targetNativeId") or ""),
+        **({"know": _portable_know(
+            native_id,
+            properties,
+            source_id=str(center.get("sourceNativeId") or ""),
+            target_id=str(center.get("targetNativeId") or ""),
+            source_name=str(source_properties.get("name") or ""),
+            target_name=str(target_properties.get("name") or ""),
+            episodes=episodes,
+        )} if relationship_center else {}),
         "relationshipEvidence": neighborhood,
         "provenance": {
-            key: properties.get(key)
-            for key in ("group_id", "source", "source_description", "created_at", "valid_at")
-            if properties.get(key) is not None
+            **{
+                key: properties.get(key)
+                for key in (
+                    "group_id", "source", "source_description", "created_at",
+                    "reference_time", "valid_at", "invalid_at", "expired_at",
+                )
+                if properties.get(key) is not None
+            },
+            **({"episodeUuids": episode_ids, "episodes": episodes} if episode_ids else {}),
         },
         "asOf": _now_iso(),
         "readOperation": "neo4j.project_scoped_exact",
@@ -656,10 +796,17 @@ def _knowgraph_fact_record(
         "authority": "KnowGraph",
         "nativeId": native_id,
         "nativeKind": "edge",
+        "portableKind": "know",
         "type": str(item.get("name") or item.get("edge_type") or "Fact"),
         "title": str(item.get("fact") or item.get("name") or native_id)[:500],
         "content": json.dumps(properties, ensure_ascii=False, separators=(",", ":"))[:_ANCHOR_BODY_LIMIT],
         "properties": properties,
+        "know": _portable_know(
+            native_id,
+            properties,
+            source_id=source_id,
+            target_id=target_id,
+        ),
         "relationshipEvidence": [{
             "sourceNodeUuid": source_id,
             "targetNodeUuid": target_id,
@@ -693,6 +840,7 @@ def search_knowgraph_hybrid(
     max_facts: int = 8,
     bounded_expansion: int = 1,
     mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] = read_knowgraph_episodes_exact,
 ) -> dict[str, Any]:
     """Resolve one bounded hybrid KnowGraph search through the official MCP host."""
     query = str(query or "").strip()
@@ -802,22 +950,9 @@ def search_knowgraph_hybrid(
     ))
     episodes_by_id: dict[str, dict[str, Any]] = {}
     if episode_ids:
-        episode_results = mcp_reader(
-            project_id=project_id,
-            deck_id=deck_id,
-            card_id=card_id,
-            calls=[("graphiti.get_episodes", {
-                "max_episodes": min(50, max(len(episode_ids), 10)),
-                "include_body": False,
-                "body_preview_chars": 300,
-                "max_response_chars": 20_000,
-            })],
-        )
-        if len(episode_results) != 1:
-            raise DataAnchorError("data_anchor_knowgraph_provenance_result_invalid")
         episodes_by_id = {
             str(item.get("uuid") or ""): _json_safe(item)
-            for item in _payload_records(episode_results[0], "episodes")
+            for item in episode_reader(project_id, episode_ids)
             if str(item.get("uuid") or "") in set(episode_ids)
         }
     for record in deduplicated:
@@ -827,6 +962,10 @@ def search_knowgraph_hybrid(
             "episodeUuids": ids,
             "episodes": [episodes_by_id[value] for value in ids if value in episodes_by_id],
         }
+        if record.get("portableKind") == "know" and isinstance(record.get("know"), dict):
+            record["know"]["supportingEpisodes"] = [
+                episodes_by_id[value] for value in ids if value in episodes_by_id
+            ]
         record.pop("_rank", None)
 
     truncated = any((

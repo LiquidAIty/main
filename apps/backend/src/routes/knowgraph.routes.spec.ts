@@ -2,7 +2,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import router, { boundedKnowGraphProperties } from './knowgraph.routes';
+import router, { boundedKnowGraphProperties, portableKnowGraphFact } from './knowgraph.routes';
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -61,6 +61,35 @@ describe('KnowGraph PDF upload project authority', () => {
       uuid: 'node-1',
       source: 'Graphiti',
       entity_edges: ['edge-1'],
+    });
+  });
+
+  it('projects one native Graphiti fact as a portable sourced temporal Know', () => {
+    expect(portableKnowGraphFact(
+      'fact-1',
+      'RELATES_TO',
+      {
+        name: 'PARTNERS_WITH',
+        fact: 'Alpha partners with Beta.',
+        episodes: ['episode-1', 'episode-2'],
+        created_at: '2026-09-23T12:00:00Z',
+        reference_time: '2026-09-01T00:00:00Z',
+        valid_at: '2026-09-01T00:00:00Z',
+      },
+      { uuid: 'entity-a', name: 'Alpha' },
+      { uuid: 'entity-b', name: 'Beta' },
+    )).toMatchObject({
+      authority: 'know',
+      nativeStore: 'graphiti/neo4j',
+      portableKind: 'know',
+      nativeFactUuid: 'fact-1',
+      nativeRelationshipType: 'RELATES_TO',
+      nativeRelation: 'PARTNERS_WITH',
+      fact: 'Alpha partners with Beta.',
+      sourceEntity: { uuid: 'entity-a', name: 'Alpha' },
+      targetEntity: { uuid: 'entity-b', name: 'Beta' },
+      supportingEpisodeUuids: ['episode-1', 'episode-2'],
+      temporalStatus: 'current',
     });
   });
 

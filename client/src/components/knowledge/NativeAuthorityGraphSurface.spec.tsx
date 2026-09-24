@@ -437,7 +437,11 @@ describe('native authority graph surfaces', () => {
         { id: 'article', label: 'NASA launch report', type: 'Episodic', mentionCount: 1, properties: { content: JSON.stringify({ source_url: 'https://www.nasa.gov/mission', publisher: 'NASA', summary: 'The launch report.' }) } },
         { id: 'unrelated', label: 'Unrelated source', type: 'Episodic', mentionCount: 1, properties: { source_url: 'https://example.org/unrelated' } },
       ],
-      edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDED_LAUNCH_FOR', mentionCount: 1, properties: { episodes: ['article'], fact: 'Rocket Lab launched CAPSTONE.' } }],
+      edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDED_LAUNCH_FOR', mentionCount: 1, properties: {
+        portableKind: 'know', nativeFactUuid: 'launch', supportingEpisodeUuids: ['article'],
+        temporalStatus: 'current', createdAt: '2026-09-23T12:00:00Z',
+        validAt: '2022-06-28T00:00:00Z', fact: 'Rocket Lab launched CAPSTONE.',
+      } }],
     };
     render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
     const graph = forceGraphMocks.instances.at(-1);
@@ -447,6 +451,8 @@ describe('native authority graph surfaces', () => {
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
     act(() => screen.getByRole('button', { name: 'Rocket Lab PROVIDED_LAUNCH_FOR CAPSTONE' }).click());
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
+    expect(screen.getByTestId('portable-know').textContent).toContain('Current Know');
+    expect(screen.getByTestId('portable-know').textContent).toContain('2022-06-28');
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
     act(() => graph.nodeClick(graph.data.nodes[2]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The launch report.');

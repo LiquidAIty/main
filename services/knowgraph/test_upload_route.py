@@ -24,6 +24,19 @@ APP_SPEC.loader.exec_module(app)
 
 
 class KnowGraphUploadRouteTests(unittest.TestCase):
+    def test_health_exposes_loaded_graphiti_versions(self) -> None:
+        with patch.object(
+            app,
+            "graphiti_runtime_versions",
+            return_value={"graphiti_core": "0.30.2", "graphiti_mcp": None},
+        ):
+            response = TestClient(app.app).get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "status": "ok",
+            "versions": {"graphiti_core": "0.30.2", "graphiti_mcp": None},
+        })
+
     def test_multipart_pdf_reaches_graphiti_ingest_with_project_authority(self) -> None:
         ingest_pdf = AsyncMock(
             return_value={

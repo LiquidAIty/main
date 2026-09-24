@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import unittest
 from datetime import datetime, timezone
@@ -87,6 +88,25 @@ def _run(graphiti: FakeGraphiti):
 
 
 class GraphitiIngestTests(unittest.TestCase):
+    def test_loaded_graphiti_api_exposes_required_temporal_fact_contract(self) -> None:
+        from graphiti_core import Graphiti
+        from graphiti_core.edges import EntityEdge
+
+        add_episode = inspect.signature(Graphiti.add_episode).parameters
+        self.assertTrue({
+            "episode_body", "source_description", "reference_time", "group_id",
+            "update_communities", "custom_extraction_instructions",
+        }.issubset(add_episode))
+        self.assertTrue({
+            "uuid", "source_node_uuid", "target_node_uuid", "name", "fact",
+            "episodes", "created_at", "valid_at", "invalid_at", "expired_at",
+        }.issubset(EntityEdge.model_fields))
+
+    def test_runtime_version_is_resolved_from_the_loaded_distribution(self) -> None:
+        versions = ingest.graphiti_runtime_versions()
+        self.assertRegex(str(versions["graphiti_core"]), r"^\d+\.\d+\.\d+")
+        self.assertEqual(ingest._graphiti_core_version(), versions["graphiti_core"])
+
     def test_service_owned_openrouter_model_precedence(self) -> None:
         with patch.dict(
             os.environ,
@@ -198,6 +218,7 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(call["group_id"], "liquidaity-project-1")
         self.assertNotIn("uuid", call)
         self.assertEqual(result["episode_id"], "graphiti-episode-1")
+        self.assertEqual(result["graphiti_version"], ingest._graphiti_core_version())
         self.assertEqual(call["custom_extraction_instructions"], "Keep claims grounded.")
         self.assertTrue(
             any("graphiti_version" in cypher for cypher, _ in graphiti.driver.queries)

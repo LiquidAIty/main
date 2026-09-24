@@ -387,8 +387,11 @@ export function NativeGraphProjectionSurface({
   const selectedRelationships = selected ? projection?.edges.filter(edge => edge.source === selected.id || edge.target === selected.id) || [] : [];
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
   for (const edge of selectedEdge ? [selectedEdge] : selectedRelationships) {
-    const episodes = edge.properties?.episodes;
-    for (const id of Array.isArray(episodes) ? episodes : typeof episodes === 'string' ? [episodes] : []) evidenceIds.add(String(id));
+    for (const value of [edge.properties?.episodes, edge.properties?.supportingEpisodeUuids]) {
+      for (const id of Array.isArray(value) ? value : typeof value === 'string' ? [value] : []) {
+        evidenceIds.add(String(id));
+      }
+    }
     if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
   }
   const evidence = (projection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
@@ -409,6 +412,10 @@ export function NativeGraphProjectionSurface({
     typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
   const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
   const labelConfidence = probabilityLabel(selectedEdge?.properties?.label_confidence);
+  const portableKnow = authority === 'knowgraph'
+    && selectedEdge?.properties?.portableKind === 'know'
+    ? selectedEdge.properties
+    : null;
   const jevDistribution = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
@@ -518,6 +525,22 @@ export function NativeGraphProjectionSurface({
           <button type="button" onClick={() => { setSelectedId(selectedEdge.source); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.source)}</button>
           <button type="button" onClick={() => { setSelectedId(selectedEdge.target); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.target)}</button>
         </article> : null}
+        {portableKnow ? <section className="graph-note" data-testid="portable-know">
+          <h4>{portableKnow.temporalStatus === 'historical' ? 'Historical Know' : 'Current Know'}</h4>
+          {typeof portableKnow.fact === 'string' && portableKnow.fact
+            ? <p>{portableKnow.fact}</p> : null}
+          <dl className="graph-record-fields">
+            {([
+              ['Learned', portableKnow.createdAt],
+              ['Reference time', portableKnow.referenceTime],
+              ['Valid from', portableKnow.validAt],
+              ['Invalid from', portableKnow.invalidAt],
+              ['Expired', portableKnow.expiredAt],
+            ] as const).map(([label, value]) => value
+              ? <div key={label}><dt>{label}</dt><dd>{String(value)}</dd></div>
+              : null)}
+          </dl>
+        </section> : null}
         <dl className="graph-record-fields">
           <dt>Source graph</dt><dd>{authority === 'thinkgraph' ? 'ThinkGraph / Engraphis' : 'KnowGraph / Graphiti'}</dd>
           <dt>Native ID</dt><dd>{selected?.id || selectedEdge?.id}</dd>

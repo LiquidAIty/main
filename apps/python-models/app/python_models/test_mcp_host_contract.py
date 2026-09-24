@@ -40,6 +40,26 @@ def test_public_mcp_identity_is_liquidaity():
     )
 
 
+def test_catalog_health_reports_resolved_graphiti_packages(monkeypatch):
+    import mcp_host
+
+    versions = {"graphiti-core": "0.30.2", "mcp-server": "1.1.0"}
+    monkeypatch.setattr(
+        mcp_host.importlib_metadata,
+        "version",
+        lambda distribution: versions[distribution],
+    )
+
+    assert mcp_host._graphiti_runtime_versions() == {
+        "core": "0.30.2",
+        "mcp": "1.1.0",
+    }
+    assert mcp_host._catalog_diagnostics()["graphitiVersions"] == {
+        "core": "0.30.2",
+        "mcp": "1.1.0",
+    }
+
+
 def test_canonical_catalog_publishes_native_engraphis_schemas_with_owned_scope(monkeypatch):
     import asyncio
     import jsonschema
@@ -3687,6 +3707,7 @@ def test_authenticated_catalog_uses_one_main_scope_for_the_full_registry(
         "sourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
         "currentSourceSha256": mcp_host._STARTUP_SOURCE_SHA256,
         "sourceCurrent": True,
+        "graphitiVersions": mcp_host._graphiti_runtime_versions(),
     }
 
 

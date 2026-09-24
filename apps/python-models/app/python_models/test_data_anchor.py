@@ -39,6 +39,7 @@ from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
     read_codegraph_exact,
+    read_knowgraph_episodes_exact,
     read_knowgraph_exact,
     read_thinkgraph_exact,
     resolve_data_anchors,
@@ -247,8 +248,9 @@ def test_thinkgraph_handoff_preserves_native_entities_relationships_and_bounds(n
 
 
 class _FakeNeo4jSession:
-    def __init__(self, rows):
+    def __init__(self, rows, calls):
         self._rows = list(rows)
+        self._calls = calls
 
     def __enter__(self):
         return self
@@ -256,17 +258,19 @@ class _FakeNeo4jSession:
     def __exit__(self, *_args):
         return None
 
-    def run(self, _query, **_params):
+    def run(self, query, **params):
+        self._calls.append((query, params))
         return _FakeNeo4jResult(self._rows.pop(0))
 
 
 class _FakeNeo4jDriver:
     def __init__(self, rows):
         self._rows = rows
+        self.calls = []
         self.closed = False
 
     def session(self, **_kwargs):
-        return _FakeNeo4jSession(self._rows)
+        return _FakeNeo4jSession(self._rows, self.calls)
 
     def close(self):
         self.closed = True
@@ -303,6 +307,89 @@ def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance()
     assert "name_embedding" not in record["properties"]
     assert "name_embedding" not in record["relationshipEvidence"][0]["nodes"][0]["properties"]
     assert driver.closed is True
+
+
+def test_knowgraph_exact_episode_hydration_uses_requested_ids_and_project_scope() -> None:
+    driver = _FakeNeo4jDriver([[{
+        "uuid": "episode-2",
+        "properties": {
+            "name": "Primary source",
+            "group_id": "liquidaity-project-1",
+            "source_url": "https://example.test/source",
+            "valid_at": "2026-09-23T12:00:00Z",
+            "content": "source body",
+            "content_embedding": [0.1] * 12,
+        },
+    }, {
+        "uuid": "unrequested",
+        "properties": {"group_id": "liquidaity-project-1"},
+    }]])
+
+    episodes = read_knowgraph_episodes_exact(
+        "project-1", ["episode-1", "episode-2"], driver_factory=lambda: driver,
+    )
+
+    assert [episode["uuid"] for episode in episodes] == ["episode-2"]
+    assert episodes[0]["source_url"] == "https://example.test/source"
+    assert episodes[0]["content_preview"] == "source body"
+    assert "content_embedding" not in episodes[0]
+    query, params = driver.calls[0]
+    assert "MATCH (episode:Episodic)" in query
+    assert params["episodeIds"] == ["episode-1", "episode-2"]
+    assert params["scopeIds"] == ["project-1", "liquidaity-project-1"]
+    assert driver.closed is True
+
+
+def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None:
+    driver = _FakeNeo4jDriver([[], [{
+        "nativeId": "fact-1",
+        "labels": ["RELATES_TO"],
+        "properties": {
+            "name": "PARTNERS_WITH",
+            "fact": "Alpha partners with Beta.",
+            "group_id": "liquidaity-project-1",
+            "episodes": ["episode-1"],
+            "created_at": "2026-09-23T12:00:00Z",
+            "valid_at": "2026-09-01T00:00:00Z",
+        },
+        "sourceNativeId": "entity-a",
+        "targetNativeId": "entity-b",
+        "endpointNodes": [
+            {"nativeId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+            {"nativeId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
+        ],
+    }]])
+    episode = {
+        "uuid": "episode-1", "source_url": "https://example.test/alpha-beta",
+        "valid_at": "2026-09-01T00:00:00Z",
+    }
+
+    record = read_knowgraph_exact(
+        "project-1", "fact-1", driver_factory=lambda: driver,
+        episode_reader=lambda project_id, ids: [episode]
+        if project_id == "project-1" and ids == ["episode-1"] else [],
+    )
+
+    assert record is not None
+    assert record["portableKind"] == "know"
+    assert record["nativeId"] == "fact-1"
+    assert record["know"] == {
+        "portableKind": "know",
+        "nativeFactUuid": "fact-1",
+        "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
+        "targetEntity": {"uuid": "entity-b", "name": "Beta"},
+        "nativeRelation": "PARTNERS_WITH",
+        "fact": "Alpha partners with Beta.",
+        "supportingEpisodeUuids": ["episode-1"],
+        "supportingEpisodes": [episode],
+        "createdAt": "2026-09-23T12:00:00Z",
+        "referenceTime": None,
+        "validAt": "2026-09-01T00:00:00Z",
+        "invalidAt": None,
+        "expiredAt": None,
+        "temporalStatus": "current",
+    }
+    assert record["provenance"]["episodes"] == [episode]
 
 
 def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
@@ -447,11 +534,6 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
     def reader(**kwargs):
         observed.append(kwargs)
         calls = kwargs["calls"]
-        if calls[0][0] == "graphiti.get_episodes":
-            return [{"episodes": [{
-                "uuid": "episode-1", "name": "Source episode",
-                "source_description": "unit source",
-            }]}]
         centered = "center_node_uuid" in calls[0][1]
         if centered:
             assert calls[0][1]["center_node_uuid"] == "explicit-1"
@@ -488,6 +570,10 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
         valid_at_after="2026-01-01T00:00:00Z",
         max_nodes=3, max_facts=3, bounded_expansion=1,
         mcp_reader=reader,
+        episode_reader=lambda project_id, ids: [{
+            "uuid": "episode-1", "name": "Source episode",
+            "source_description": "unit source",
+        }] if project_id == "project-1" and ids == ["episode-1"] else [],
     )
 
     assert [record["nativeId"] for record in result["records"]] == [
@@ -495,7 +581,7 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
     ]
     assert result["records"][2]["provenance"]["episodes"][0]["uuid"] == "episode-1"
     assert result["truncated"] is False
-    assert len(observed) == 3
+    assert len(observed) == 2
 
 
 def test_optional_hybrid_search_returns_honest_empty_context(monkeypatch) -> None:

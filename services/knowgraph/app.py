@@ -19,7 +19,7 @@ from runtime_config import load_runtime_environment
 
 load_runtime_environment()
 
-from ingest import ingest_pdf, ingest_web_documents
+from ingest import graphiti_runtime_versions, ingest_pdf, ingest_web_documents
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
@@ -151,5 +151,5 @@ async def ingest_web_results(
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    return {"status": "ok", "versions": graphiti_runtime_versions()}

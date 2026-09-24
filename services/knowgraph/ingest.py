@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+from importlib import metadata as importlib_metadata
 import json
 import os
 from dataclasses import dataclass
@@ -21,10 +22,31 @@ from runtime_config import load_runtime_environment
 
 load_runtime_environment()
 
-GRAPHITI_VERSION = "0.29.3"
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
 DEFAULT_NEO4J_DATABASE = "neo4j"
 DEFAULT_OPENROUTER_KG_MODEL = "z-ai/glm-5.2"
+
+
+def graphiti_runtime_versions() -> dict[str, str | None]:
+    """Report the packages actually loaded by this KnowGraph process."""
+
+    def resolved(distribution: str) -> str | None:
+        try:
+            return importlib_metadata.version(distribution)
+        except importlib_metadata.PackageNotFoundError:
+            return None
+
+    return {
+        "graphiti_core": resolved("graphiti-core"),
+        "graphiti_mcp": resolved("mcp-server"),
+    }
+
+
+def _graphiti_core_version() -> str:
+    version = graphiti_runtime_versions()["graphiti_core"]
+    if not version:
+        raise RuntimeError("graphiti-core is required for KnowGraph ingestion")
+    return version
 
 
 @dataclass(frozen=True)
@@ -338,9 +360,7 @@ def _create_graphiti_runtime(
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
         from openai import AsyncOpenAI
     except ImportError as exc:
-        raise RuntimeError(
-            f"graphiti-core=={GRAPHITI_VERSION} is required for KnowGraph ingestion"
-        ) from exc
+        raise RuntimeError("graphiti-core is required for KnowGraph ingestion") from exc
 
     runtime = _resolve_runtime_model_config(
         provider=provider,
@@ -488,7 +508,7 @@ async def _record_episode_authority(
         provider=provider,
         model_id=model_id,
         agent_id=agent_id,
-        graphiti_version=GRAPHITI_VERSION,
+        graphiti_version=_graphiti_core_version(),
     )
 
 
@@ -544,7 +564,7 @@ async def _ingest_episode(
                 "source_name": source_name,
                 "content_fingerprint": content_fingerprint,
                 "idempotent": True,
-                "graphiti_version": GRAPHITI_VERSION,
+                "graphiti_version": _graphiti_core_version(),
             }
 
         result = await graphiti.add_episode(
@@ -592,7 +612,7 @@ async def _ingest_episode(
             "source_name": source_name,
             "content_fingerprint": content_fingerprint,
             "idempotent": False,
-            "graphiti_version": GRAPHITI_VERSION,
+            "graphiti_version": _graphiti_core_version(),
             "entity_count": len(result.nodes),
             "fact_count": len(result.edges),
         }
@@ -758,7 +778,7 @@ async def ingest_pdf(
         "source_name": base_source_name,
         "content_fingerprint": document_fingerprint,
         "idempotent": not newly_ingested,
-        "graphiti_version": GRAPHITI_VERSION,
+        "graphiti_version": _graphiti_core_version(),
         "section_count": len(results),
         "entity_count": sum(int(result.get("entity_count") or 0) for result in results),
         "fact_count": sum(int(result.get("fact_count") or 0) for result in results),

@@ -148,6 +148,65 @@ export function boundedKnowGraphProperties(value: unknown): Record<string, unkno
   }));
 }
 
+function stringValues(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
+}
+
+export function portableKnowGraphFact(
+  factUuid: string,
+  nativeRelationshipType: string,
+  properties: Record<string, unknown>,
+  source: { uuid: string; name: string },
+  target: { uuid: string; name: string },
+): Record<string, unknown> {
+  const supportingEpisodeUuids = stringValues(
+    properties.episodes ?? properties.episode_uuids ?? properties.source_episode_uuids,
+  );
+  return {
+    ...properties,
+    authority: 'know',
+    nativeStore: 'graphiti/neo4j',
+    portableKind: 'know',
+    nativeFactUuid: factUuid,
+    nativeRelationshipType,
+    nativeRelation: String(properties.name || nativeRelationshipType || 'Fact'),
+    fact: String(properties.fact || ''),
+    sourceEntity: source,
+    targetEntity: target,
+    supportingEpisodeUuids,
+    createdAt: properties.created_at ?? null,
+    referenceTime: properties.reference_time ?? null,
+    validAt: properties.valid_at ?? null,
+    invalidAt: properties.invalid_at ?? null,
+    expiredAt: properties.expired_at ?? null,
+    temporalStatus: properties.invalid_at || properties.expired_at ? 'historical' : 'current',
+  };
+}
+
+async function hydrateExactSupportingEpisodes(
+  session: any,
+  episodeIds: string[],
+  projectScopeIds: string[],
+  upsertNode: (id: unknown, labels: unknown, properties: unknown) => void,
+): Promise<void> {
+  const exactIds = Array.from(new Set(episodeIds.map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!exactIds.length) return;
+  const episodeResult = await session.run(
+    `
+      MATCH (episode:Episodic)
+      WHERE toString(episode.uuid) IN $episodeIds
+        AND toString(episode.group_id) IN $projectScopeIds
+      RETURN toString(episode.uuid) AS node_id,
+        labels(episode) AS node_labels, properties(episode) AS node_props
+    `,
+    { episodeIds: exactIds, projectScopeIds },
+  );
+  episodeResult.records.forEach((record: any) => {
+    upsertNode(record.get('node_id'), record.get('node_labels'), record.get('node_props'));
+  });
+}
+
 function neoNodeLabel(id: string, props: Record<string, unknown>): string {
   const candidates = [props.name, props.title, props.label, props.id, props.document_id, props.chunk_id];
   for (const candidate of candidates) {
@@ -318,7 +377,7 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
           AND to_id IN $nodeIds
           AND toString(r.group_id) IN $projectScopeIds
         RETURN DISTINCT
-          elementId(r) AS rel_id,
+          coalesce(toString(r.uuid), elementId(r)) AS rel_id,
           type(r) AS rel_type,
           properties(r) AS rel_props,
           from_id,
@@ -344,15 +403,35 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
       upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
       upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
 
+      const nativeRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
+      const nativeProperties = boundedKnowGraphProperties(record.get('rel_props'));
+      const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
+      const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
+      const properties = portableKnowGraphFact(
+        relId,
+        nativeRelationshipType,
+        nativeProperties,
+        { uuid: fromId, name: sourceName },
+        { uuid: toId, name: targetName },
+      );
       relationships.push({
         id: relId,
         from: fromId,
         to: toId,
-        type: String(record.get('rel_type') || 'RELATED_TO'),
+        type: String(properties.nativeRelation || nativeRelationshipType),
         source: 'know',
-        properties: boundedKnowGraphProperties(record.get('rel_props')),
+        properties,
       });
     });
+
+    await hydrateExactSupportingEpisodes(
+      session,
+      relationships.flatMap((relationship) => stringValues(
+        relationship.properties.supportingEpisodeUuids,
+      )),
+      projectScopeIds,
+      upsertNode,
+    );
 
     return {
       nodes: Array.from(nodeMap.values()),
@@ -452,12 +531,12 @@ async function queryKnowGraphExpand(
           coalesce(toString(r.uuid), elementId(r)) AS rel_id,
           type(r) AS rel_type,
           properties(r) AS rel_props,
-          coalesce(toString(a.uuid), elementId(a)) AS from_id,
-          labels(a) AS from_labels,
-          properties(a) AS from_props,
-          coalesce(toString(b.uuid), elementId(b)) AS to_id,
-          labels(b) AS to_labels,
-          properties(b) AS to_props
+          coalesce(toString(startNode(r).uuid), elementId(startNode(r))) AS from_id,
+          labels(startNode(r)) AS from_labels,
+          properties(startNode(r)) AS from_props,
+          coalesce(toString(endNode(r).uuid), elementId(endNode(r))) AS to_id,
+          labels(endNode(r)) AS to_labels,
+          properties(endNode(r)) AS to_props
         LIMIT toInteger($limit)
       `,
       { nodeId: rawNodeId, projectScopeIds, limit },
@@ -473,15 +552,35 @@ async function queryKnowGraphExpand(
       upsertNode(record.get('from_id'), record.get('from_labels'), record.get('from_props'));
       upsertNode(record.get('to_id'), record.get('to_labels'), record.get('to_props'));
 
+      const nativeRelationshipType = String(record.get('rel_type') || 'RELATED_TO');
+      const nativeProperties = boundedKnowGraphProperties(record.get('rel_props'));
+      const sourceName = neoNodeLabel(fromId, boundedKnowGraphProperties(record.get('from_props')));
+      const targetName = neoNodeLabel(toId, boundedKnowGraphProperties(record.get('to_props')));
+      const properties = portableKnowGraphFact(
+        relId,
+        nativeRelationshipType,
+        nativeProperties,
+        { uuid: fromId, name: sourceName },
+        { uuid: toId, name: targetName },
+      );
       relationships.push({
         id: relId,
         from: fromId,
         to: toId,
-        type: String(record.get('rel_type') || 'RELATED_TO'),
+        type: String(properties.nativeRelation || nativeRelationshipType),
         source: 'know',
-        properties: boundedKnowGraphProperties(record.get('rel_props')),
+        properties,
       });
     });
+
+    await hydrateExactSupportingEpisodes(
+      session,
+      relationships.flatMap((relationship) => stringValues(
+        relationship.properties.supportingEpisodeUuids,
+      )),
+      projectScopeIds,
+      upsertNode,
+    );
 
     return {
       nodes: Array.from(nodeMap.values()),
