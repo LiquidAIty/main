@@ -395,12 +395,14 @@ export function NativeGraphProjectionSurface({
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
-  const notes = authority === 'thinkgraph' && selected && !selectedEdge
-    ? evidenceRecords.filter(item => item.metadata !== null
-      && typeof item.metadata === 'object'
-      && item.metadata.thinkgraph_note !== null
-      && typeof item.metadata.thinkgraph_note === 'object')
-    : evidenceRecords;
+    const notes = authority === 'thinkgraph' && selected && !selectedEdge
+      ? evidenceRecords.filter(item => item.metadata !== null
+        && typeof item.metadata === 'object'
+        && item.metadata.thinkgraph_note !== null
+        && typeof item.metadata.thinkgraph_note === 'object')
+      : evidenceRecords;
+    const latestThought = authority === 'thinkgraph' && selected && !selectedEdge
+      ? notes[0] : null;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => projection?.nodes.find(node => node.id === id)?.label || id;
   const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
@@ -538,11 +540,25 @@ export function NativeGraphProjectionSurface({
             </div>;
           })}</dl>
         </details> : null}
-        {notes.length && authority === 'thinkgraph'
-          ? <h4>Thought history · newest first</h4> : null}
-        {notes.map(item => {
-          const entryTime = nativeEntryTime(item.ingestedAt);
-          return <section className="graph-note" key={item.id} data-memory-id={item.id}>
+          {latestThought ? <section className="graph-note" data-memory-id={latestThought.id}>
+            <h4>Latest Thought</h4>
+            {(() => {
+              const entryTime = nativeEntryTime(latestThought.ingestedAt);
+              return entryTime
+                ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time>
+                : null;
+            })()}
+            <p>{latestThought.content || latestThought.summary}</p>
+            {authority === 'thinkgraph' && onRemoveEvidence ? <button type="button" disabled={removingId !== null} onClick={async () => {
+              setRemovingId(latestThought.id); setRemoveError(null);
+              try { await onRemoveEvidence(latestThought.id); }
+              catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
+              finally { setRemovingId(null); }
+            }}>{removingId === latestThought.id ? 'Removing…' : 'Remove note'}</button> : null}
+          </section> : null}
+          {!latestThought ? notes.map(item => {
+            const entryTime = nativeEntryTime(item.ingestedAt);
+            return <section className="graph-note" key={item.id} data-memory-id={item.id}>
           <details>
             <summary>{item.title || 'Supporting note'}</summary>
             {entryTime ? <time dateTime={entryTime.dateTime}>Learned {entryTime.label}</time> : null}
@@ -556,9 +572,9 @@ export function NativeGraphProjectionSurface({
               catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
               finally { setRemovingId(null); }
             }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
-          </details>
-        </section>;
-        })}
+            </details>
+          </section>;
+          }) : null}
         {removeError ? <p role="alert">{removeError}</p> : null}
         {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
           <details key={node.id}>

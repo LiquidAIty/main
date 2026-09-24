@@ -43,9 +43,9 @@ THINKGRAPH_RELATIONSHIPS = (
     "ASSUMES", "QUESTIONS", "PREDICTS", "IMPLIES", "REFINES",
     "CONTRADICTS", "DEPENDS_ON", "ALTERNATIVE_TO", "CORRECTS",
     "EXPLAINS", "MOTIVATES", "GENERALIZES", "SPECIALIZES", "NONE",
-    "OTHER_RELATION", "INSUFFICIENT_CONTEXT",
+    "OTHER_RELATION", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR",
 )
-THINKGRAPH_RELATIONSHIP_SCHEMA_VERSION = "thinkgraph.relationships.v1"
+THINKGRAPH_RELATIONSHIP_SCHEMA_VERSION = "thinkgraph.relationships.v2"
 THINKGRAPH_RELATIONSHIP_SCHEMA_HASH = hashlib.sha256(
     json.dumps(THINKGRAPH_RELATIONSHIPS, separators=(",", ":")).encode("utf-8")
 ).hexdigest()
@@ -67,6 +67,11 @@ _RELATIONSHIP_CRITERIA = {
     "NONE": "A and B are both present but no useful semantic relationship is supported.",
     "OTHER_RELATION": "A and B have a useful semantic relationship not represented by another option.",
     "INSUFFICIENT_CONTEXT": "The supplied completed pair does not support deciding how A relates to B.",
+    "INVALID_NODE_PAIR": (
+        "In the meaning of the completed pair, at least one proposed endpoint does not denote "
+        "a durable reusable ThinkGraph concept; it is instead discourse/request framing, "
+        "sentence residue, generic filler, or another non-conceptual span."
+    ),
 }
 
 
@@ -204,7 +209,7 @@ def _bounded_graph_snapshot(
     if not ids:
         return {"nodes": [], "notes": [], "incident_edges": []}
     flt = SearchFilter(workspace_id=workspace_id)
-    edges = [
+    edges = [] if edge_limit <= 0 else [
         edge for edge in store.neighbors(ids, flt=flt, limit=max(128, edge_limit * 4))
         if _jev_edge(edge) is not None
     ][:edge_limit]
@@ -226,57 +231,58 @@ def _bounded_graph_snapshot(
         "canonical_id": str(row["canonical_id"] or row["id"]),
         "focus": str(row["id"]) in ids,
     } for row in rows]
-    focus_marks = ",".join("?" for _ in ids)
-    member_rows = store.conn.execute(
-        f"SELECT id, COALESCE(canonical_id,id) AS canonical_id FROM entities "
-        f"WHERE workspace_id=? AND (id IN ({focus_marks}) "
-        f"OR canonical_id IN ({focus_marks})) "
-        "ORDER BY id LIMIT 128",
-        (workspace_id, *ids, *ids),
-    ).fetchall()
-    canonical_by_member = {
-        str(row["id"]): str(row["canonical_id"]) for row in member_rows
-    }
-    focus_members = [
-        member for member, canonical in canonical_by_member.items()
-        if canonical in ids
-    ]
-    incidences = store.list_memory_entities(
-        flt, entity_ids=focus_members, limit=max(note_limit * 8, 128),
-    )
-    memories = store.get_memories(
-        list(dict.fromkeys(str(row["memory_id"]) for row in incidences))
-    )
     notes: list[dict[str, Any]] = []
-    for row in incidences:
-        memory = memories.get(str(row["memory_id"]))
-        if memory is None:
-            continue
-        note_meta = _note_metadata(memory)
-        if note_meta is None:
-            continue
-        notes.append({
-            "entity_id": canonical_by_member.get(
-                str(row["entity_id"]), str(row["entity_id"])
-            ),
-            "memory_id": memory.id,
-            "title": memory.title,
-            "content": memory.content[:1_200],
-            "keywords": list(memory.keywords)[:16],
-            "kind": note_meta.get("kind"),
-            "properties": list(note_meta.get("properties") or [])[:16],
-            "concepts": list(note_meta.get("concepts") or [])[:16],
-            "propositions": list(note_meta.get("propositions") or [])[:16],
-            "relationship_observations": list(
-                note_meta.get("relationship_observations") or []
-            )[:16],
-            "valid_from": memory.valid_from,
-            "valid_to": memory.valid_to,
-            "valid_to_recorded_at": memory.valid_to_recorded_at,
-            "ingested_at": memory.ingested_at,
-            "expired_at": memory.expired_at,
-        })
-    notes = sorted(notes, key=_newest_note_key)[:note_limit]
+    if note_limit > 0:
+        focus_marks = ",".join("?" for _ in ids)
+        member_rows = store.conn.execute(
+            f"SELECT id, COALESCE(canonical_id,id) AS canonical_id FROM entities "
+            f"WHERE workspace_id=? AND (id IN ({focus_marks}) "
+            f"OR canonical_id IN ({focus_marks})) "
+            "ORDER BY id LIMIT 128",
+            (workspace_id, *ids, *ids),
+        ).fetchall()
+        canonical_by_member = {
+            str(row["id"]): str(row["canonical_id"]) for row in member_rows
+        }
+        focus_members = [
+            member for member, canonical in canonical_by_member.items()
+            if canonical in ids
+        ]
+        incidences = store.list_memory_entities(
+            flt, entity_ids=focus_members, limit=max(note_limit * 8, 128),
+        )
+        memories = store.get_memories(
+            list(dict.fromkeys(str(row["memory_id"]) for row in incidences))
+        )
+        for row in incidences:
+            memory = memories.get(str(row["memory_id"]))
+            if memory is None:
+                continue
+            note_meta = _note_metadata(memory)
+            if note_meta is None:
+                continue
+            notes.append({
+                "entity_id": canonical_by_member.get(
+                    str(row["entity_id"]), str(row["entity_id"])
+                ),
+                "memory_id": memory.id,
+                "title": memory.title,
+                "content": memory.content[:1_200],
+                "keywords": list(memory.keywords)[:16],
+                "kind": note_meta.get("kind"),
+                "properties": list(note_meta.get("properties") or [])[:16],
+                "concepts": list(note_meta.get("concepts") or [])[:16],
+                "propositions": list(note_meta.get("propositions") or [])[:16],
+                "relationship_observations": list(
+                    note_meta.get("relationship_observations") or []
+                )[:16],
+                "valid_from": memory.valid_from,
+                "valid_to": memory.valid_to,
+                "valid_to_recorded_at": memory.valid_to_recorded_at,
+                "ingested_at": memory.ingested_at,
+                "expired_at": memory.expired_at,
+            })
+        notes = sorted(notes, key=_newest_note_key)[:note_limit]
     incident_edges = []
     for edge in edges:
         jev = _jev_edge(edge)
@@ -308,21 +314,38 @@ def _bounded_relationship_context(
     target_id: str = "",
     source_name: str = "",
     target_name: str = "",
-    pending_notes: dict[str, list[dict[str, Any]]] | None = None,
+    prior_thought_snapshot: dict[str, dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     snapshot = _bounded_graph_snapshot(
         store, workspace_id=workspace_id,
-        entity_ids=[source_id, target_id], edge_limit=24, note_limit=24,
+        entity_ids=[source_id, target_id], edge_limit=24, note_limit=0,
     )
+    snapshot.pop("notes", None)
+    latest_prior_thoughts: list[dict[str, Any]] = []
+    for endpoint, native_id in (("A", source_id), ("B", target_id)):
+        if not native_id:
+            thought = None
+        elif prior_thought_snapshot is None:
+            thought = _latest_endpoint_thought(
+                store,
+                workspace_id=workspace_id,
+                canonical_id=native_id,
+            )
+        else:
+            # A supplied turn-start snapshot is authoritative for this turn.
+            # A missing/null entry deliberately means no prior Thought; never
+            # refill it with a live lookup after the current Thought may exist.
+            thought = deepcopy(prior_thought_snapshot.get(native_id))
+        if thought is not None:
+            latest_prior_thoughts.append({"endpoint": endpoint, **thought})
+    snapshot["latest_prior_thoughts"] = latest_prior_thoughts
     snapshot["source"] = {
         "native_id": source_id or None,
         "name": source_name,
-        "pending_notes": list((pending_notes or {}).get(source_id or source_name, []))[:8],
     }
     snapshot["target"] = {
         "native_id": target_id or None,
         "name": target_name,
-        "pending_notes": list((pending_notes or {}).get(target_id or target_name, []))[:8],
     }
     snapshot["prior_pair_edges"] = [
         edge for edge in snapshot["incident_edges"]
@@ -330,6 +353,139 @@ def _bounded_relationship_context(
         and edge["source_id"] == source_id and edge["target_id"] == target_id
     ][:4]
     return snapshot
+
+
+def _latest_endpoint_thought(
+    store: Any,
+    *,
+    workspace_id: str,
+    canonical_id: str,
+) -> dict[str, Any] | None:
+    """Read exactly one newest direct ThinkGraph Thought for one endpoint."""
+    canonical_id = _canonical_entity_id(store, canonical_id) or canonical_id
+    member_rows = store.conn.execute(
+        "SELECT id FROM entities WHERE workspace_id=? "
+        "AND (id=? OR canonical_id=?) ORDER BY id LIMIT 128",
+        (workspace_id, canonical_id, canonical_id),
+    ).fetchall()
+    member_ids = [str(row["id"]) for row in member_rows]
+    if not member_ids:
+        return None
+    marks = ",".join("?" for _ in member_ids)
+    row = store.conn.execute(
+        "SELECT m.id FROM memory_entities me "
+        "JOIN memories m ON m.id=me.memory_id "
+        f"WHERE me.workspace_id=? AND me.entity_id IN ({marks}) "
+        "AND me.source_kind='thinkgraph_note' "
+        "AND me.valid_to IS NULL AND me.expired_at IS NULL "
+        "AND m.valid_to IS NULL AND m.expired_at IS NULL "
+        "ORDER BY COALESCE(m.ingested_at,me.ingested_at,0) DESC, m.id DESC "
+        "LIMIT 1",
+        (workspace_id, *member_ids),
+    ).fetchone()
+    if row is None:
+        return None
+    memory = store.get_memory(str(row["id"]))
+    if memory is None:
+        return None
+    note = _note_metadata(memory)
+    if note is None:
+        return None
+    entity = _entity_row(store, canonical_id) or {}
+    return {
+        "native_id": canonical_id,
+        "canonical_name": str(entity.get("name") or ""),
+        "memory_id": memory.id,
+        "kind": note.get("kind"),
+        "content": memory.content[:1_200],
+        "keywords": list(memory.keywords)[:16],
+        "properties": list(note.get("properties") or [])[:16],
+        "concepts": list(note.get("concepts") or [])[:16],
+        "propositions": list(note.get("propositions") or [])[:16],
+        "relationship_observations": list(
+            note.get("relationship_observations") or []
+        )[:16],
+        "ingested_at": memory.ingested_at,
+        "valid_from": memory.valid_from,
+        "valid_to": memory.valid_to,
+    }
+
+
+def _bounded_structured_graph_shape(
+    store: Any,
+    *,
+    workspace_id: str,
+    entity_ids: list[str],
+) -> dict[str, Any]:
+    """Expose bounded topology to the structured writer without Thought bodies."""
+    snapshot = _bounded_graph_snapshot(
+        store,
+        workspace_id=workspace_id,
+        entity_ids=entity_ids,
+        edge_limit=24,
+        note_limit=0,
+    )
+    return {
+        "scope": "active_endpoints_plus_direct_live_jev_neighbors",
+        "nodes": [{
+            "nativeId": node["id"],
+            "canonicalName": node["name"],
+            "nodeType": node["type"],
+            "activeEndpoint": node["focus"],
+        } for node in snapshot["nodes"]],
+        "edges": [{
+            "source": {
+                "nativeId": edge["source_id"],
+                "canonicalName": edge["source_name"],
+            },
+            "target": {
+                "nativeId": edge["target_id"],
+                "canonicalName": edge["target_name"],
+            },
+            "canonicalRelationship": edge["relation"],
+            "relationshipStrength": edge["relationship_strength"],
+        } for edge in snapshot["incident_edges"]],
+    }
+
+
+def _turn_start_prior_thought_snapshot(
+    store: Any,
+    *,
+    workspace_id: str,
+    opportunities: list[dict[str, Any]],
+) -> dict[str, dict[str, Any] | None]:
+    """Freeze bounded prior Thoughts before this turn can append a Thought."""
+    focus_ids: list[str] = []
+    for opportunity in opportunities:
+        for endpoint in (opportunity["source"], opportunity["target"]):
+            existing = _existing_entity_for_name(
+                store,
+                workspace_id=workspace_id,
+                name=endpoint["name"],
+                entity_type=endpoint["type"],
+            )
+            if existing is not None:
+                focus_ids.append(str(existing["id"]))
+    focus_ids = list(dict.fromkeys(focus_ids))
+    if not focus_ids:
+        return {}
+    shape = _bounded_structured_graph_shape(
+        store,
+        workspace_id=workspace_id,
+        entity_ids=focus_ids,
+    )
+    bounded_ids = list(dict.fromkeys([
+        *focus_ids,
+        *(str(node["nativeId"]) for node in shape["nodes"]),
+    ]))
+    return {
+        native_id: _latest_endpoint_thought(
+            store,
+            workspace_id=workspace_id,
+            canonical_id=native_id,
+        )
+        for native_id in bounded_ids
+    }
 
 
 def _bounded_jev_text(text: str, source: str, target: str) -> str:
@@ -380,7 +536,11 @@ def _validate_jev_response(response: dict[str, Any]) -> dict[str, Any]:
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevRelationshipError("jev_relationship_response_invalid") from error
     strength = max(0.0, min(1.0,
-        1.0 - probabilities["NONE"] - probabilities["INSUFFICIENT_CONTEXT"]))
+        1.0
+        - probabilities["NONE"]
+        - probabilities["INSUFFICIENT_CONTEXT"]
+        - probabilities["INVALID_NODE_PAIR"]
+    ))
     return {
         "winner": winner,
         "distribution": probabilities,
@@ -422,14 +582,16 @@ def classify_relationship(
     state: dict[str, Any] = {
         "description": (
             f"One {event_kind}, one directed ThinkGraph entity pair, and a bounded "
-            "one-hop snapshot from the existing graph. Judge only A -> B."
+            "one-hop topology snapshot from the existing graph, plus at most the newest "
+            "prior Thought directly attached to each existing endpoint. Jointly judge "
+            "whether both endpoints are durable concepts and, only then, how A relates to B."
         ),
         "source_node_a": source,
         "target_node_b": target,
         "direction": "A -> B",
         "current_event": event_text,
         "bounded_local_graph": graph_context or {
-            "nodes": [], "notes": [], "incident_edges": [],
+            "nodes": [], "latest_prior_thoughts": [], "incident_edges": [],
         },
     }
     if relationship_proposal:
@@ -443,12 +605,25 @@ def classify_relationship(
             "relationship": {
                 "type": "choice",
                 "instructions": (
-                    "Which single allowed relationship best describes how source_node_a "
-                    "relates directionally to target_node_b, using the current event and "
-                    "bounded local graph context? A saved ThinkGraph Card free-form relationship "
-                    "proposal, when present, is semantic evidence rather than a preselected answer; "
-                    "independently choose from the complete allowed vocabulary. Do not "
-                    "infer unrelated graph regions."
+                    "Make one joint endpoint-validity and directed-relationship decision for "
+                    "source_node_a -> target_node_b using the current event and bounded local "
+                    "graph context. latest_prior_thoughts contains zero or one prior temporal "
+                    "Thought per existing endpoint; use it only to understand current endpoint "
+                    "meaning, never to infer more pairs or rewrite history. Both endpoints must "
+                    "be durable, reusable ThinkGraph concepts "
+                    "worth preserving in continuing project cognition. If either endpoint is "
+                    "semantically discourse/request framing, sentence residue, generic filler, or "
+                    "otherwise does not denote a reusable concept in this context, choose "
+                    "INVALID_NODE_PAIR. Judge this from the pair's meaning and graph context, not "
+                    "capitalization, keywords, stopwords, or another surface string rule. Do not "
+                    "silently rename a rejected proposal into a different endpoint. Distinguish a "
+                    "literal textual relationship or mere co-occurrence from a durable reusable "
+                    "ThinkGraph relationship. If both endpoints are valid but no meaningful durable "
+                    "directed relationship is supported, choose NONE. If context is inadequate, "
+                    "choose INSUFFICIENT_CONTEXT. Otherwise choose the best canonical relationship. "
+                    "A saved ThinkGraph Card free-form relationship proposal, when present, is "
+                    "semantic evidence rather than a preselected answer. Do not infer unrelated "
+                    "graph regions."
                 ),
                 "criteria": _RELATIONSHIP_CRITERIA,
             }
@@ -482,7 +657,7 @@ def _jev_provenance(
     proposition_memory_id: str = "",
 ) -> dict[str, Any]:
     jev = {
-        "question_schema_version": "thinkgraph.relationship-choice.v1",
+        "question_schema_version": "thinkgraph.relationship-choice.v2",
         "vocabulary_version": THINKGRAPH_RELATIONSHIP_SCHEMA_VERSION,
         "vocabulary_hash": THINKGRAPH_RELATIONSHIP_SCHEMA_HASH,
         "provider": decision["provider"],
@@ -509,7 +684,9 @@ def _jev_provenance(
 
 def _decision_is_accepted(decision: dict[str, Any]) -> bool:
     return (
-        decision.get("winner") not in {"NONE", "INSUFFICIENT_CONTEXT"}
+        decision.get("winner") not in {
+            "NONE", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR",
+        }
         and float(decision.get("relationship_strength") or 0.0)
         >= SEMANTIC_ADMISSION_MINIMUM
     )
@@ -837,7 +1014,7 @@ def _classify_opportunities(
     classifier: Callable[..., dict[str, Any]],
     propositions: dict[int, str] | None = None,
     relationship_proposals: dict[int, str] | None = None,
-    pending_notes: dict[str, list[dict[str, Any]]] | None = None,
+    prior_thought_snapshot: dict[str, dict[str, Any] | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Build bounded contexts first, then run at most four Jev calls concurrently."""
     work: list[dict[str, Any]] = []
@@ -870,7 +1047,7 @@ def _classify_opportunities(
                 target_id=target_id,
                 source_name=source["name"],
                 target_name=target["name"],
-                pending_notes=pending_notes,
+                prior_thought_snapshot=prior_thought_snapshot,
             ),
             "proposition": str((propositions or {}).get(index) or ""),
             "relationship_proposal": str(
@@ -1006,6 +1183,31 @@ def _persist_opportunity_decisions(
         "changedEdgeIds": list(dict.fromkeys(changed_edges)),
         "turnHeat": heat,
     }
+
+
+def _active_enrichment_targets(
+    store: Any,
+    *,
+    relationships: list[dict[str, Any]],
+    preexisting_ids: set[str],
+) -> list[dict[str, str]]:
+    """Project accepted canonical endpoints as explicit turn-scoped Card targets."""
+    targets: dict[str, dict[str, str]] = {}
+    for relationship in relationships:
+        if relationship.get("status") not in {"written", "updated", "superseded"}:
+            continue
+        for endpoint in ("source", "target"):
+            native_id = str(relationship.get(endpoint) or "")
+            canonical_id = _canonical_entity_id(store, native_id) or native_id
+            row = _entity_row(store, canonical_id)
+            if row is None:
+                raise ThinkGraphIntakeError("thinkgraph_active_target_invalid")
+            targets.setdefault(canonical_id, {
+                "nativeId": canonical_id,
+                "canonicalName": str(row["name"]),
+                "status": "EXISTING" if canonical_id in preexisting_ids else "NEW",
+            })
+    return list(targets.values())
 
 
 def _install_graph_feeder(service: Any) -> None:
@@ -1367,8 +1569,7 @@ def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
         for entity in entities:
             key = normalize_entity_name(entity)
             target = notes_by_entity.setdefault(key, {"name": entity, "notes": []})
-            if _note_hash(note) not in {_note_hash(item) for item in target["notes"]}:
-                target["notes"].append(note)
+            target["notes"].append(note)
     return _ProjectedStructuredOutput(
         pair_summary="\n\n".join(summaries)[:4_000],
         new_nodes=[
@@ -1382,11 +1583,6 @@ def _project_structured_facts(facts: list[Any]) -> _ProjectedStructuredOutput:
 
 def _note_data(note: ThinkGraphNodeNote) -> dict[str, Any]:
     return note.model_dump(mode="json")
-
-
-def _note_hash(note: ThinkGraphNodeNote | dict[str, Any]) -> str:
-    value = _note_data(note) if isinstance(note, ThinkGraphNodeNote) else note
-    return _text_hash(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 
 def _render_note(note: ThinkGraphNodeNote) -> str:
@@ -1411,52 +1607,6 @@ def _render_note(note: ThinkGraphNodeNote) -> str:
     return "\n".join(lines)
 
 
-def _entity_members(store: Any, workspace_id: str, canonical_id: str) -> list[str]:
-    rows = store.conn.execute(
-        "SELECT id FROM entities WHERE workspace_id=? "
-        "AND (id=? OR canonical_id=?) ORDER BY id LIMIT 128",
-        (workspace_id, canonical_id, canonical_id),
-    ).fetchall()
-    return [str(row["id"]) for row in rows]
-
-
-def _existing_note_hashes(
-    store: Any,
-    *,
-    workspace_id: str,
-    canonical_id: str,
-) -> set[str]:
-    members = _entity_members(store, workspace_id, canonical_id)
-    if not members:
-        return set()
-    incidences = store.list_memory_entities(
-        SearchFilter(workspace_id=workspace_id),
-        entity_ids=members,
-        limit=512,
-    )
-    memories = store.get_memories(
-        list(dict.fromkeys(str(item["memory_id"]) for item in incidences))
-    )
-    hashes: set[str] = set()
-    for memory in memories.values():
-        metadata = _note_metadata(memory)
-        if metadata is None:
-            continue
-        stored = str(metadata.get("note_hash") or "")
-        if stored:
-            hashes.add(stored)
-            continue
-        logical = {
-            key: deepcopy(metadata.get(key, [] if key != "importance" else 0.0))
-            for key in (
-                "kind", "summary", "keywords", "properties", "concepts",
-                "propositions", "relationship_observations", "importance",
-            )
-        }
-        hashes.add(_note_hash(logical))
-    return hashes
-
-
 def _save_note_memory(
     service: Any,
     *,
@@ -1470,7 +1620,6 @@ def _save_note_memory(
     kind_value = note.kind.value if isinstance(note.kind, Enum) else str(note.kind)
     note_metadata = {
         **deepcopy(logical),
-        "note_hash": _note_hash(logical),
         "entity_name": entity_name,
     }
     if entity_id:
@@ -1600,6 +1749,14 @@ def begin_completed_pair(
     with _intake_lock:
         workspace_id = service.store.get_or_create_workspace(project)
         revision_before = _graph_revision(service.store, workspace_id)
+        preexisting_ids = {
+            str(row["canonical_id"])
+            for row in service.store.conn.execute(
+                "SELECT DISTINCT COALESCE(canonical_id,id) AS canonical_id "
+                "FROM entities WHERE workspace_id=?",
+                (workspace_id,),
+            ).fetchall()
+        }
         try:
             saved = _remember_without_graph(
                 service,
@@ -1659,12 +1816,18 @@ def begin_completed_pair(
                 "memory_id": saved["id"],
             },
         )
+        turn_start_prior_thought_snapshot = _turn_start_prior_thought_snapshot(
+            service.store,
+            workspace_id=workspace_id,
+            opportunities=local.opportunities,
+        )
         decisions = _classify_opportunities(
             service.store,
             workspace_id=workspace_id,
             payload=payload,
             opportunities=local.opportunities,
             classifier=classifier,
+            prior_thought_snapshot=turn_start_prior_thought_snapshot,
         )
         persisted = _persist_opportunity_decisions(
             service.store,
@@ -1680,14 +1843,24 @@ def begin_completed_pair(
             item for item in persisted["relationships"]
             if item["status"] in {"written", "updated", "superseded"}
         ]
+        active_targets = _active_enrichment_targets(
+            service.store,
+            relationships=accepted,
+            preexisting_ids=preexisting_ids,
+        )
         changed_node_ids = persisted["changedNodeIds"]
-        snapshot = _bounded_graph_snapshot(
+        structured_graph_shape = _bounded_structured_graph_shape(
             service.store,
             workspace_id=workspace_id,
-            entity_ids=changed_node_ids,
-            edge_limit=32,
-            note_limit=32,
+            entity_ids=[target["nativeId"] for target in active_targets],
         )
+        # Newly admitted nodes have no prior Thought. Keep explicit nulls for
+        # every node exposed to the Card so settled Jev cannot later re-query a
+        # node and mistake this turn's current Thought for historical context.
+        for node in structured_graph_shape["nodes"]:
+            turn_start_prior_thought_snapshot.setdefault(
+                str(node["nativeId"]), None,
+            )
         fast = {
             "status": (
                 "completed" if not persisted["failures"]
@@ -1700,13 +1873,39 @@ def begin_completed_pair(
             "changedEdgeIds": persisted["changedEdgeIds"],
             "turnHeat": persisted["turnHeat"],
             "topActiveNodes": _top_turn_heat(persisted["turnHeat"]),
+            "activeEnrichmentTargets": active_targets,
         }
+        target_names = {
+            target["nativeId"]: target["canonicalName"] for target in active_targets
+        }
+        current_turn_relationships = [{
+            "source": {
+                "nativeId": relationship["source"],
+                "canonicalName": target_names[relationship["source"]],
+            },
+            "target": {
+                "nativeId": relationship["target"],
+                "canonicalName": target_names[relationship["target"]],
+            },
+            "canonicalRelationship": relationship["winner"],
+            "relationshipStrength": relationship["relationship_strength"],
+        } for relationship in accepted]
         enrichment_input = {
             "exact_user_message": payload["userMessage"],
             "exact_main_response": payload["mainResponse"],
-            "surviving_fast_nodes": snapshot["nodes"],
-            "fast_jev_edges": accepted,
-            "bounded_nearby_graph": snapshot,
+            "current_turn_enrichment_targets": [
+                {
+                    **target,
+                    "structuredNoteRule": (
+                        "CREATE_FIRST_CURRENT_PAIR_THOUGHT"
+                        if target["status"] == "NEW"
+                        else "APPEND_CURRENT_PAIR_THOUGHT"
+                    ),
+                }
+                for target in active_targets
+            ],
+            "current_graph_shape": structured_graph_shape,
+            "current_turn_accepted_relationships": current_turn_relationships,
         }
         enrichment_schema, enrichment_prompt = _llm_structured_contract(
             pair_text,
@@ -1725,19 +1924,62 @@ def begin_completed_pair(
             "enrichmentSchema": enrichment_schema,
             "enrichmentPrompt": enrichment_prompt,
             "enrichmentInput": enrichment_input,
+            "turnStartPriorThoughtSnapshot": turn_start_prior_thought_snapshot,
         }
+
+
+_TURN_START_THOUGHT_FIELDS = {
+    "native_id", "canonical_name", "memory_id", "kind", "content",
+    "keywords", "properties", "concepts", "propositions",
+    "relationship_observations", "ingested_at", "valid_from", "valid_to",
+}
+
+
+def _validate_turn_start_prior_thought_snapshot(
+    value: Any,
+) -> dict[str, dict[str, Any] | None]:
+    if not isinstance(value, dict) or len(value) > 128:
+        raise ValueError("thinkgraph_prior_thought_snapshot_invalid")
+    snapshot: dict[str, dict[str, Any] | None] = {}
+    for raw_native_id, raw_thought in value.items():
+        if not isinstance(raw_native_id, str) or not raw_native_id:
+            raise ValueError("thinkgraph_prior_thought_snapshot_invalid")
+        if raw_thought is None:
+            snapshot[raw_native_id] = None
+            continue
+        if (
+            not isinstance(raw_thought, dict)
+            or set(raw_thought) != _TURN_START_THOUGHT_FIELDS
+            or raw_thought.get("native_id") != raw_native_id
+            or not isinstance(raw_thought.get("canonical_name"), str)
+            or not str(raw_thought.get("memory_id") or "").startswith("mem_")
+            or not isinstance(raw_thought.get("content"), str)
+            or not all(isinstance(raw_thought.get(key), list) for key in (
+                "keywords", "properties", "concepts", "propositions",
+                "relationship_observations",
+            ))
+        ):
+            raise ValueError("thinkgraph_prior_thought_snapshot_invalid")
+        snapshot[raw_native_id] = deepcopy(raw_thought)
+    return snapshot
 
 
 def _validate_settle_payload(
     payload: dict[str, Any],
-) -> tuple[dict[str, Any], str, dict[str, float], Any, dict[str, str]]:
+) -> tuple[
+    dict[str, Any], str, dict[str, float], list[dict[str, str]],
+    dict[str, dict[str, Any] | None], Any, dict[str, str]
+]:
     if not isinstance(payload, dict):
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
     }
-    extras = {"pairMemoryId", "fastTurnHeat", "structuredOutput", "cardRun"}
+    extras = {
+        "pairMemoryId", "fastTurnHeat", "fastActiveTargets", "structuredOutput",
+        "turnStartPriorThoughtSnapshot", "cardRun",
+    }
     if set(payload) - completed_keys - extras:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     completed = _validate_completed_pair_payload({
@@ -1755,6 +1997,35 @@ def _validate_settle_payload(
         if not native_id or not math.isfinite(value) or value < 0:
             raise ValueError("thinkgraph_turn_heat_invalid")
         heat[str(native_id)] = value
+    raw_targets = payload.get("fastActiveTargets")
+    if not isinstance(raw_targets, list):
+        raise ValueError("thinkgraph_active_targets_invalid")
+    active_targets: list[dict[str, str]] = []
+    seen_targets: set[str] = set()
+    for raw_target in raw_targets:
+        if not isinstance(raw_target, dict) or set(raw_target) != {
+            "nativeId", "canonicalName", "status",
+        }:
+            raise ValueError("thinkgraph_active_targets_invalid")
+        native_id = str(raw_target.get("nativeId") or "")
+        canonical_name = _clean_concept(str(raw_target.get("canonicalName") or ""))
+        status = str(raw_target.get("status") or "")
+        if (
+            not native_id or not canonical_name or status not in {"NEW", "EXISTING"}
+            or native_id in seen_targets or native_id not in heat
+        ):
+            raise ValueError("thinkgraph_active_targets_invalid")
+        seen_targets.add(native_id)
+        active_targets.append({
+            "nativeId": native_id,
+            "canonicalName": canonical_name,
+            "status": status,
+        })
+    if seen_targets != set(heat):
+        raise ValueError("thinkgraph_active_targets_invalid")
+    prior_thought_snapshot = _validate_turn_start_prior_thought_snapshot(
+        payload.get("turnStartPriorThoughtSnapshot")
+    )
     structured_output = payload.get("structuredOutput")
     if not isinstance(structured_output, (str, dict, list)):
         raise ValueError("thinkgraph_card_output_invalid_json")
@@ -1770,7 +2041,10 @@ def _validate_settle_payload(
     card_run = {key: str(raw_run.get(key) or "") for key in allowed_run}
     if any(not card_run[key] for key in allowed_run):
         raise ValueError("thinkgraph_card_run_invalid")
-    return completed, pair_memory_id, heat, structured_output, card_run
+    return (
+        completed, pair_memory_id, heat, active_targets,
+        prior_thought_snapshot, structured_output, card_run,
+    )
 
 
 def _canonical_row_in_workspace(
@@ -1799,7 +2073,10 @@ def settle_completed_pair(
     classifier: Callable[..., dict[str, Any]] = classify_relationship,
 ) -> dict[str, Any]:
     """Apply validated saved-ThinkGraph-Card Notes and Jev-gated pairings."""
-    completed, pair_memory_id, heat, card_output, card_run = _validate_settle_payload(payload)
+    (
+        completed, pair_memory_id, heat, active_targets,
+        prior_thought_snapshot, card_output, card_run,
+    ) = _validate_settle_payload(payload)
     project = completed["projectId"]
     service = get_service()
     with _intake_lock:
@@ -1818,18 +2095,52 @@ def settle_completed_pair(
             or pair_metadata.get("source_pair") != expected_source
         ):
             raise ThinkGraphIntakeError("thinkgraph_completed_pair_scope_mismatch")
+        for target in active_targets:
+            row = _canonical_row_in_workspace(
+                store,
+                workspace_id=workspace_id,
+                native_id=target["nativeId"],
+            )
+            if (
+                str(row["id"]) != target["nativeId"]
+                or str(row["name"]) != target["canonicalName"]
+            ):
+                raise ThinkGraphIntakeError("thinkgraph_active_target_scope_mismatch")
+        for native_id, thought in prior_thought_snapshot.items():
+            row = _canonical_row_in_workspace(
+                store,
+                workspace_id=workspace_id,
+                native_id=native_id,
+            )
+            if str(row["id"]) != native_id:
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_prior_thought_snapshot_scope_mismatch"
+                )
+            if thought is None:
+                continue
+            memory = store.get_memory(str(thought["memory_id"]))
+            incidence = store.conn.execute(
+                "SELECT 1 FROM memory_entities me "
+                "JOIN entities e ON e.id=me.entity_id "
+                "WHERE me.workspace_id=? AND me.memory_id=? "
+                "AND me.source_kind='thinkgraph_note' "
+                "AND (e.id=? OR e.canonical_id=?) LIMIT 1",
+                (workspace_id, thought["memory_id"], native_id, native_id),
+            ).fetchone()
+            if (
+                memory is None
+                or memory.workspace_id != workspace_id
+                or incidence is None
+                or thought["canonical_name"] != str(row["name"])
+            ):
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_prior_thought_snapshot_scope_mismatch"
+                )
         revision_before = _graph_revision(store, workspace_id)
-        fast_node_ids = list(heat)[:128]
         structured_context = {
             "exact_user_message": completed["userMessage"],
             "exact_main_response": completed["mainResponse"],
-            "bounded_nearby_graph": _bounded_graph_snapshot(
-                store,
-                workspace_id=workspace_id,
-                entity_ids=fast_node_ids,
-                edge_limit=32,
-                note_limit=32,
-            ),
+            "current_turn_enrichment_targets": active_targets,
         }
         facts = _extract_saved_card_facts(
             card_output,
@@ -1844,14 +2155,6 @@ def settle_completed_pair(
 
         from engraphis.core.store import normalize_entity_name
 
-        preexisting_ids = {
-            str(row["id"])
-            for row in store.conn.execute(
-                "SELECT id FROM entities WHERE workspace_id=? "
-                "AND COALESCE(canonical_id,id)=id",
-                (workspace_id,),
-            ).fetchall()
-        }
         declared_nodes: dict[str, _ProjectedNewNode] = {}
         for proposed in output.new_nodes:
             clean = _clean_concept(proposed.canonical_name)
@@ -1861,6 +2164,13 @@ def settle_completed_pair(
             declared_nodes[key] = proposed.model_copy(
                 update={"canonical_name": clean}
             )
+
+        for target in active_targets:
+            key = normalize_entity_name(target["canonicalName"])
+            if key not in declared_nodes:
+                raise ThinkGraphIntakeError(
+                    "thinkgraph_card_active_node_thought_required"
+                )
 
         endpoint_cache: dict[tuple[str, str], dict[str, str]] = {}
 
@@ -1928,15 +2238,6 @@ def settle_completed_pair(
             entity_names[native_id] = str(existing["name"])
             enrichment_notes.setdefault(native_id, []).extend(proposed.notes)
 
-        pending_notes: dict[str, list[dict[str, Any]]] = {}
-        for native_id, notes in enrichment_notes.items():
-            pending_notes[native_id] = [_note_data(note) for note in notes]
-        for key, proposed in declared_nodes.items():
-            if key not in new_node_existing_ids:
-                pending_notes[proposed.canonical_name] = [
-                    _note_data(note) for note in proposed.notes
-                ]
-
         opportunities: list[dict[str, Any]] = []
         propositions: dict[int, str] = {}
         relationship_proposals: dict[int, str] = {}
@@ -1979,13 +2280,10 @@ def settle_completed_pair(
             classifier=classifier,
             propositions=propositions,
             relationship_proposals=relationship_proposals,
-            pending_notes=pending_notes,
+            prior_thought_snapshot=prior_thought_snapshot,
         )
 
         note_memory_ids: list[str] = []
-        note_ids_by_entity: dict[str, list[str]] = {}
-        note_text_by_entity: dict[str, list[str]] = {}
-        reopened_ids: set[str] = set()
         failures: list[dict[str, Any]] = []
 
         # A genuinely new graph node is born only as node + Note + accepted edge.
@@ -2054,15 +2352,7 @@ def settle_completed_pair(
         }
 
         for native_id, notes in enrichment_notes.items():
-            known_hashes = _existing_note_hashes(
-                store,
-                workspace_id=workspace_id,
-                canonical_id=native_id,
-            )
             for note in notes:
-                digest = _note_hash(note)
-                if digest in known_hashes:
-                    continue
                 try:
                     memory_id = _persist_note(
                         service,
@@ -2080,13 +2370,8 @@ def settle_completed_pair(
                         "error": _decision_failure(error),
                     })
                     continue
-                known_hashes.add(digest)
                 note_memory_ids.append(memory_id)
-                note_ids_by_entity.setdefault(native_id, []).append(memory_id)
-                note_text_by_entity.setdefault(native_id, []).append(_render_note(note))
                 heat[native_id] = heat.get(native_id, 0.0) + 1.0
-                if native_id in preexisting_ids:
-                    reopened_ids.add(native_id)
 
         card_persisted = _persist_opportunity_decisions(
             store,
@@ -2138,14 +2423,11 @@ def settle_completed_pair(
             entity_names[native_id] = str(row["name"])
             staged = staged_note_ids_by_new_key.get(key, [])
             note_memory_ids.extend(staged)
-            note_ids_by_entity.setdefault(native_id, []).extend(staged)
-            note_text_by_entity.setdefault(native_id, []).extend(
-                _render_note(note) for note in proposed.notes
-            )
             heat[native_id] = heat.get(native_id, 0.0) + float(len(staged))
             changed_node_ids.append(native_id)
 
-        processed_reopened_pairs: set[tuple[str, str]] = set()
+        # Notes never trigger edge maintenance. Only an explicit structured
+        # A -> B proposal can update, supersede, or close that exact live pair.
         relation_by_index = {
             int(item["opportunity_index"]): item
             for item in card_persisted["relationships"]
@@ -2170,10 +2452,6 @@ def settle_completed_pair(
                 continue
             source_id = str(source_row["id"])
             target_id = str(target_row["id"])
-            if source_id not in reopened_ids and target_id not in reopened_ids:
-                continue
-            key = (source_id, target_id)
-            processed_reopened_pairs.add(key)
             if classified["status"] != "decided":
                 continue
             decision = classified["decision"]
@@ -2193,151 +2471,10 @@ def settle_completed_pair(
                     current["status"] = "closed"
                     current["closed_edge_ids"] = closed
 
-        live_incident: dict[str, Any] = {}
-        if reopened_ids:
-            for edge in store.neighbors(
-                sorted(reopened_ids),
-                flt=SearchFilter(workspace_id=workspace_id),
-                limit=1024,
-            ):
-                if _jev_edge(edge) is None:
-                    continue
-                source_id = _canonical_entity_id(store, edge.src) or edge.src
-                target_id = _canonical_entity_id(store, edge.dst) or edge.dst
-                if (source_id, target_id) in processed_reopened_pairs:
-                    continue
-                live_incident.setdefault(edge.id, edge)
-
-        reclass_opportunities: list[dict[str, Any]] = []
-        reclass_edges: list[Any] = []
-        reclass_propositions: dict[int, str] = {}
-        for edge in sorted(
-            live_incident.values(), key=lambda item: (item.src, item.dst, item.id)
-        ):
-            source = _entity_row(store, _canonical_entity_id(store, edge.src) or edge.src)
-            target = _entity_row(store, _canonical_entity_id(store, edge.dst) or edge.dst)
-            if source is None or target is None:
-                continue
-            index = len(reclass_opportunities)
-            reclass_edges.append(edge)
-            reclass_opportunities.append({
-                "id": f"reopened_edge_{index:04d}",
-                "source": {
-                    "name": str(source["name"]),
-                    "type": str(source["etype"] or "person_or_concept"),
-                },
-                "target": {
-                    "name": str(target["name"]),
-                    "type": str(target["etype"] or "person_or_concept"),
-                },
-                "native_relation": str(edge.relation),
-                "native_weight": float(edge.weight),
-                "provenance": deepcopy(
-                    edge.provenance if isinstance(edge.provenance, dict) else {}
-                ),
-            })
-            changed_notes = [
-                note_text
-                for native_id in (str(source["id"]), str(target["id"]))
-                for note_text in note_text_by_entity.get(native_id, [])
-            ]
-            note_context = "\n\n".join(changed_notes)[:8_000]
-            reclass_propositions[index] = (
-                "Reconsider this current live edge using the newly attached "
-                f"node Notes:\n\n{note_context}"
-            )
-
-        reclass_decisions = _classify_opportunities(
-            store,
-            workspace_id=workspace_id,
-            payload=completed,
-            opportunities=reclass_opportunities,
-            classifier=classifier,
-            propositions=reclass_propositions,
-        )
-        reclassified: list[dict[str, Any]] = []
-        for index, (opportunity, classified) in enumerate(
-            zip(reclass_opportunities, reclass_decisions)
-        ):
-            old_edge = reclass_edges[index]
-            source_id = _canonical_entity_id(store, old_edge.src) or old_edge.src
-            target_id = _canonical_entity_id(store, old_edge.dst) or old_edge.dst
-            if classified["status"] != "decided":
-                failures.append({
-                    "stage": "reopened_edge",
-                    "source": opportunity["source"]["name"],
-                    "target": opportunity["target"]["name"],
-                    "error": classified["error"],
-                })
-                reclassified.append({
-                    "status": "kept_after_failure",
-                    "edge_id": old_edge.id,
-                })
-                continue
-            decision = classified["decision"]
-            if not _decision_is_accepted(decision):
-                closed = _invalidate_current_jev_pair(
-                    store,
-                    workspace_id=workspace_id,
-                    source_id=source_id,
-                    target_id=target_id,
-                )
-                changed_edge_ids.extend(closed)
-                changed_node_ids.extend((source_id, target_id))
-                reclassified.append({
-                    "status": "closed",
-                    "closed_edge_ids": closed,
-                    "source": source_id,
-                    "target": target_id,
-                    **decision,
-                })
-                continue
-            memory_ids = [
-                pair_memory_id,
-                *note_ids_by_entity.get(source_id, []),
-                *note_ids_by_entity.get(target_id, []),
-            ]
-            try:
-                written = _apply_accepted_decision(
-                    store,
-                    source_id=source_id,
-                    target_id=target_id,
-                    source_name=opportunity["source"]["name"],
-                    target_name=opportunity["target"]["name"],
-                    workspace_id=workspace_id,
-                    repo_id=None,
-                    payload=completed,
-                    memory_ids=memory_ids,
-                    decision=decision,
-                    stage="reopened_node",
-                )
-            except Exception as error:
-                failures.append({
-                    "stage": "reopened_edge",
-                    "source": opportunity["source"]["name"],
-                    "target": opportunity["target"]["name"],
-                    "error": _decision_failure(error),
-                })
-                reclassified.append({
-                    "status": "kept_after_failure",
-                    "edge_id": old_edge.id,
-                })
-                continue
-            reclassified.append(written)
-            changed_edge_ids.append(written["edge_id"])
-            changed_edge_ids.extend(written.get("replaced_edge_ids") or [])
-            changed_node_ids.extend((source_id, target_id))
-            strength = float(written["relationship_strength"])
-            heat[source_id] = heat.get(source_id, 0.0) + strength
-            heat[target_id] = heat.get(target_id, 0.0) + strength
-
         revision = _graph_revision(store, workspace_id)
         changed_node_ids = list(dict.fromkeys(changed_node_ids))
         changed_edge_ids = list(dict.fromkeys(changed_edge_ids))
-        affected_ids = set(changed_node_ids) | reopened_ids
-        for edge in live_incident.values():
-            affected_ids.add(_canonical_entity_id(store, edge.src) or edge.src)
-            affected_ids.add(_canonical_entity_id(store, edge.dst) or edge.dst)
+        affected_ids = set(changed_node_ids)
         return {
             "ok": True,
             "projectId": project,
@@ -2348,9 +2485,7 @@ def settle_completed_pair(
             "cardRun": card_run,
             "pairSummary": output.pair_summary,
             "noteMemoryIds": note_memory_ids,
-            "reopenedNodeIds": sorted(reopened_ids),
             "relationships": card_persisted["relationships"],
-            "reclassifiedRelationships": reclassified,
             "failures": failures,
             "changedNodeIds": changed_node_ids,
             "changedEdgeIds": changed_edge_ids,
@@ -2728,18 +2863,24 @@ def projection(project: str, native_id: str | None = None) -> dict:
                     supporting[mid]["content"] = memory["content"]
     nodes = []
     for node in scene["nodes"]:
-        evidence_ids = list(dict.fromkeys([
-            *entity_evidence[node["id"]],
-            *(
-                memory_id
-                for edge in scene["edges"]
-                if node["id"] in (edge["source"], edge["target"])
-                for memory_id in edge.get("support_memory_ids", [])
-            ),
-        ]))
+        # Node Thought display is owned by memory/entity incidence. Edge support
+        # may include Notes belonging to the opposite endpoint and remains on the
+        # edge inspector; it must not become this node's latest Thought.
+        evidence_ids = list(dict.fromkeys(entity_evidence[node["id"]]))
         evidence_ids.sort(
             key=lambda memory_id: _newest_note_key(supporting[memory_id])
             if memory_id in supporting else (0.0, memory_id)
+        )
+        latest_thought_id = next((
+            memory_id for memory_id in evidence_ids
+            if memory_id in supporting
+            and isinstance(supporting[memory_id].get("metadata"), dict)
+            and isinstance(
+                supporting[memory_id]["metadata"].get("thinkgraph_note"), dict
+            )
+        ), "")
+        visible_evidence_ids = (
+            [latest_thought_id] if latest_thought_id else evidence_ids[:1]
         )
         nodes.append({
             **node,
@@ -2760,7 +2901,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
                 "visual_radius": node.get("visual_radius"),
                 "evidence": [
                     supporting[memory_id]
-                    for memory_id in evidence_ids
+                    for memory_id in visible_evidence_ids
                     if memory_id in supporting
                 ],
             },

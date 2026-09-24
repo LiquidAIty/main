@@ -3903,6 +3903,10 @@ describe('saved Card routes', () => {
             changedNodeIds: ['think-fast-a', 'think-fast-b'],
             changedEdgeIds: ['think-fast-edge'],
             turnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
+            activeEnrichmentTargets: [
+              { nativeId: 'think-fast-a', canonicalName: 'Jev', status: 'NEW' },
+              { nativeId: 'think-fast-b', canonicalName: 'ThinkGraph', status: 'NEW' },
+            ],
             topActiveNodes: [
               { nativeId: 'think-fast-a', turnHeat: 0.75 },
               { nativeId: 'think-fast-b', turnHeat: 0.75 },
@@ -3914,6 +3918,19 @@ describe('saved Card routes', () => {
             required: ['facts'],
           },
           enrichmentPrompt: 'Native Engraphis llm_structured prompt.',
+          turnStartPriorThoughtSnapshot: {
+            'think-fast-a': {
+              native_id: 'think-fast-a',
+              canonical_name: 'Jev',
+              memory_id: 'mem_prior_jev',
+              kind: 'DECISION',
+              content: 'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
+              keywords: [], properties: [], concepts: [], propositions: [],
+              relationship_observations: [], ingested_at: 1,
+              valid_from: null, valid_to: null,
+            },
+            'think-fast-b': null,
+          },
         };
         return defaultRailsImplementation(endpoint, init);
       });
@@ -3982,6 +3999,30 @@ describe('saved Card routes', () => {
         });
         expect(cardBeginBody.assignment).toContain('free-form semantic language');
         expect(cardBeginBody.assignment).toContain('Jev alone classifies any durable graph edge');
+        expect(cardBeginBody.assignment).toContain('current_turn_enrichment_targets');
+        expect(cardBeginBody.assignment).toContain(
+          'Create the current temporal ThinkGraph Thought from this completed User/Main exchange',
+        );
+        expect(cardBeginBody.assignment).toContain(
+          'Main does not author or initiate this automatic Thought',
+        );
+        expect(cardBeginBody.assignment).toContain('current_graph_shape');
+        expect(cardBeginBody.assignment).toContain('current_turn_accepted_relationships');
+        expect(cardBeginBody.assignment).toContain(
+          'with light canonical node/edge context',
+        );
+        expect(cardBeginBody.assignment).toContain(
+          'Do not read historical Thought bodies',
+        );
+        expect(cardBeginBody.assignment).toContain(
+          'No old Thought/Note bodies are supplied or may be inferred',
+        );
+        expect(cardBeginBody.assignment).toContain(
+          'Do not compare, merge, rewrite, or suppress it against older Thoughts',
+        );
+        expect(cardBeginBody.assignment).not.toContain(
+          'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
+        );
 
         const settleCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/thinkgraph/completed-pair/settle',
@@ -3990,6 +4031,23 @@ describe('saved Card routes', () => {
           ...completedPair,
           pairMemoryId: 'mem_pair_one',
           fastTurnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
+          fastActiveTargets: [
+            { nativeId: 'think-fast-a', canonicalName: 'Jev', status: 'NEW' },
+            { nativeId: 'think-fast-b', canonicalName: 'ThinkGraph', status: 'NEW' },
+          ],
+          turnStartPriorThoughtSnapshot: {
+            'think-fast-a': {
+              native_id: 'think-fast-a',
+              canonical_name: 'Jev',
+              memory_id: 'mem_prior_jev',
+              kind: 'DECISION',
+              content: 'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
+              keywords: [], properties: [], concepts: [], propositions: [],
+              relationship_observations: [], ingested_at: 1,
+              valid_from: null, valid_to: null,
+            },
+            'think-fast-b': null,
+          },
           structuredOutput: 'Real assistant reply.',
           cardRun: {
             runId: cardBeginBody.runId,

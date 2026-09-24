@@ -331,23 +331,28 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
   });
 
-  it('removes only the selected stored note and reports a failed removal without hiding data', async () => {
+  it('shows only the latest ThinkGraph Thought by default and removes that exact note', async () => {
     const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
-      properties: { evidence: [{ id: 'memory-id', summary: 'Saved note.', ingestedAt: 200,
-        metadata: { thinkgraph_note: { kind: 'DECISION' } } }] } }] };
+      properties: { evidence: [
+        { id: 'memory-new', summary: 'Latest saved Thought.', ingestedAt: 200,
+          metadata: { thinkgraph_note: { kind: 'DECISION' } } },
+        { id: 'memory-old', summary: 'Older saved Thought.', ingestedAt: 100,
+          metadata: { thinkgraph_note: { kind: 'OBSERVATION' } } },
+      ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByText('Thought history · newest first')).toBeTruthy();
-    fireEvent.click(screen.getByText('Supporting note'));
+    expect(screen.getByText('Latest Thought')).toBeTruthy();
+    expect(screen.getByText('Latest saved Thought.')).toBeTruthy();
+    expect(screen.queryByText('Older saved Thought.')).toBeNull();
     expect(document.querySelector('time')?.getAttribute('datetime'))
       .toBe('1970-01-01T00:03:20.000Z');
     fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
-    expect(remove).toHaveBeenCalledExactlyOnceWith('memory-id');
-    expect(screen.getByText('Saved note.')).toBeTruthy();
+    expect(remove).toHaveBeenCalledExactlyOnceWith('memory-new');
+    expect(screen.getByText('Latest saved Thought.')).toBeTruthy();
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['stored']);
   });
 
