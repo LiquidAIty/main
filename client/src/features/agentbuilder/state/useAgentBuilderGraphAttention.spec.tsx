@@ -4,6 +4,8 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import useAgentBuilderGraphAttention, {
+  applyKnowGraphJevPhysics,
+  knowGraphProjection,
   mergeAttentionProjection,
   overlayAuthoritativeGraphAttention,
   overlayThinkGraphTurnActivity,
@@ -75,6 +77,72 @@ function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relations
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('uses persisted Jev winner probabilities for live incident node mass', () => {
+    const projected = knowGraphProjection({
+      nodes: [
+        { id: 'a', label: 'Alpha', properties: {} },
+        { id: 'b', label: 'Beta', properties: {} },
+        { id: 'c', label: 'Gamma', properties: {} },
+        { id: 'd', label: 'Historical', properties: {} },
+      ],
+      relationships: [
+        {
+          id: 'ab', from: 'a', to: 'b', type: 'SUPPLIES',
+          properties: {
+            relationship_strength: 0.2,
+            jev: {
+              status: 'success', winner: 'SUPPLIES', label_confidence: 0.8,
+              distribution: { SUPPLIES: 0.8, OTHER_RELATION: 0.2 },
+            },
+          },
+        },
+        {
+          id: 'cb', from: 'c', to: 'b', type: 'FUNDS',
+          properties: {
+            relationship_strength: 0.6,
+            jev: {
+              status: 'success', winner: 'FUNDS', label_confidence: 0.6,
+              distribution: { FUNDS: 0.6, OTHER_RELATION: 0.4 },
+            },
+          },
+        },
+        {
+          id: 'db-old', from: 'd', to: 'b', type: 'PARTNERS_WITH',
+          properties: {
+            temporalStatus: 'historical', invalidAt: '2026-09-23T00:00:00Z',
+            jev: {
+              status: 'success', winner: 'PARTNERS_WITH', label_confidence: 0.99,
+              distribution: { PARTNERS_WITH: 0.99, OTHER_RELATION: 0.01 },
+            },
+          },
+        },
+      ],
+    }, 'project-1');
+
+    expect(projected.edges[0]).toMatchObject({
+      predicate: 'SUPPLIES', relationship_strength: 0.8,
+      strength: 0.8, spring_strength: 0.171,
+    });
+    expect(projected.nodes.find((node) => node.id === 'b')).toMatchObject({
+      semantic_mass: 1.4,
+      properties: { incident_relationship_weight: 1.4 },
+    });
+    expect(projected.nodes.find((node) => node.id === 'a')).toMatchObject({
+      semantic_mass: 0.8,
+    });
+    expect(projected.nodes.find((node) => node.id === 'd')).toMatchObject({
+      semantic_mass: 0,
+    });
+    expect(projected.edges[0].spring_strength).toBeGreaterThan(projected.edges[1].spring_strength || 0);
+    expect(projected.edges[0].rest_length).toBeLessThan(projected.edges[1].rest_length || Infinity);
+    expect(projected.nodes.find((node) => node.id === 'b')?.visual_radius)
+      .toBeGreaterThan(projected.nodes.find((node) => node.id === 'a')?.visual_radius || 0);
+    expect(projected.edges[2].relationship_strength).toBeUndefined();
+
+    const refreshed = applyKnowGraphJevPhysics(projected);
+    expect(refreshed.nodes.find((node) => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
+  });
+
   it('refreshes exactly once per pushed fast/settled ThinkGraph revision', async () => {
     let response = thinkgraphResponse();
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')

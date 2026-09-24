@@ -535,22 +535,31 @@ def _validate_jev_response(response: dict[str, Any]) -> dict[str, Any]:
         probabilities = {name: value / total for name, value in probabilities.items()}
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevRelationshipError("jev_relationship_response_invalid") from error
-    strength = max(0.0, min(1.0,
-        1.0
-        - probabilities["NONE"]
-        - probabilities["INSUFFICIENT_CONTEXT"]
-        - probabilities["INVALID_NODE_PAIR"]
-    ))
     return {
         "winner": winner,
         "distribution": probabilities,
         "label_confidence": probabilities[winner],
-        "relationship_strength": strength,
+        "relationship_strength": probabilities[winner],
         "provider": str(response.get("provider") or ""),
         "requested_model": JEV_MODEL,
         "resolved_model": str(response.get("model") or ""),
         "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
     }
+
+
+def _winner_probability(decision: dict[str, Any]) -> float:
+    """Return the one Jev number used by edge and node visual physics."""
+    winner = str(decision.get("winner") or "")
+    distribution = decision.get("distribution")
+    value = (
+        distribution.get(winner)
+        if isinstance(distribution, dict) and winner
+        else decision.get("label_confidence")
+    )
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 def classify_relationship(
@@ -666,8 +675,8 @@ def _jev_provenance(
         "evaluated_at": _utc_now(),
         "winner": decision["winner"],
         "distribution": decision["distribution"],
-        "label_confidence": decision["label_confidence"],
-        "relationship_strength": decision["relationship_strength"],
+        "label_confidence": _winner_probability(decision),
+        "relationship_strength": _winner_probability(decision),
         "source_event": _source_event_reference(payload),
         "stage": stage,
     }
@@ -683,12 +692,23 @@ def _jev_provenance(
 
 
 def _decision_is_accepted(decision: dict[str, Any]) -> bool:
+    # Preserve the existing noisy-intake admission gate independently from the
+    # visual edge weight. Only P(winner) is stored as relationship physics.
+    distribution = decision.get("distribution")
+    if isinstance(distribution, dict):
+        semantic_support = max(0.0, min(1.0,
+            1.0
+            - float(distribution.get("NONE") or 0.0)
+            - float(distribution.get("INSUFFICIENT_CONTEXT") or 0.0)
+            - float(distribution.get("INVALID_NODE_PAIR") or 0.0)
+        ))
+    else:
+        semantic_support = float(decision.get("relationship_strength") or 0.0)
     return (
         decision.get("winner") not in {
             "NONE", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR",
         }
-        and float(decision.get("relationship_strength") or 0.0)
-        >= SEMANTIC_ADMISSION_MINIMUM
+        and semantic_support >= SEMANTIC_ADMISSION_MINIMUM
     )
 
 
@@ -854,6 +874,7 @@ def _apply_accepted_decision(
             *source_note_memory_ids,
             *target_note_memory_ids,
         ]))
+        edge_weight = _winner_probability(decision)
         provenance = _jev_provenance(
             decision,
             payload,
@@ -879,7 +900,7 @@ def _apply_accepted_decision(
                     src=source_id,
                     dst=target_id,
                     relation=winner,
-                    weight=decision["relationship_strength"],
+                    weight=edge_weight,
                     workspace_id=workspace_id,
                     repo_id=repo_id,
                     valid_from=existing.valid_from,
@@ -899,7 +920,7 @@ def _apply_accepted_decision(
                     src=source_id,
                     dst=target_id,
                     relation=winner,
-                    weight=decision["relationship_strength"],
+                    weight=edge_weight,
                     workspace_id=workspace_id,
                     repo_id=repo_id,
                     provenance=provenance,
@@ -908,12 +929,14 @@ def _apply_accepted_decision(
             )
             status = "superseded" if replaced_ids else "written"
         return {
+            **decision,
             "status": status,
             "edge_id": edge_id,
             "replaced_edge_ids": replaced_ids,
             "source": source_id,
             "target": target_id,
-            **decision,
+            "label_confidence": edge_weight,
+            "relationship_strength": edge_weight,
         }
 
 
@@ -2809,10 +2832,12 @@ def projection(project: str, native_id: str | None = None) -> dict:
             continue
         chosen = max(
             jev_edges,
-            key=lambda item: float(item.provenance["jev"].get("relationship_strength") or 0.0),
+            key=lambda item: _winner_probability(item.provenance["jev"]),
         )
         jev = deepcopy(chosen.provenance["jev"])
-        strength = max(0.0, min(1.0, float(jev["relationship_strength"])))
+        strength = _winner_probability(jev)
+        jev["label_confidence"] = strength
+        jev["relationship_strength"] = strength
         edge.update({
             "relation": chosen.relation,
             "relationship_strength": strength,

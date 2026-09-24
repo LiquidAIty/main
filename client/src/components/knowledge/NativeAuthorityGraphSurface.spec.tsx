@@ -437,10 +437,12 @@ describe('native authority graph surfaces', () => {
         { id: 'article', label: 'NASA launch report', type: 'Episodic', mentionCount: 1, properties: { content: JSON.stringify({ source_url: 'https://www.nasa.gov/mission', publisher: 'NASA', summary: 'The launch report.' }) } },
         { id: 'unrelated', label: 'Unrelated source', type: 'Episodic', mentionCount: 1, properties: { source_url: 'https://example.org/unrelated' } },
       ],
-      edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDED_LAUNCH_FOR', mentionCount: 1, properties: {
+      edges: [{ id: 'launch', source: 'company', target: 'mission', predicate: 'PROVIDES', mentionCount: 1, properties: {
         portableKind: 'know', nativeFactUuid: 'launch', supportingEpisodeUuids: ['article'],
         temporalStatus: 'current', createdAt: '2026-09-23T12:00:00Z',
         validAt: '2022-06-28T00:00:00Z', fact: 'Rocket Lab launched CAPSTONE.',
+        nativeRelation: 'provided launch services for',
+        jev: { status: 'success', winner: 'PROVIDES', distribution: { PROVIDES: 0.9, OTHER_RELATION: 0.1 } },
       } }],
     };
     render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);
@@ -449,10 +451,13 @@ describe('native authority graph surfaces', () => {
     fireEvent.click(screen.getByText('NASA launch report'));
     expect(screen.getByRole('link', { name: 'NASA' }).getAttribute('href')).toBe('https://www.nasa.gov/mission');
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
-    act(() => screen.getByRole('button', { name: 'Rocket Lab PROVIDED_LAUNCH_FOR CAPSTONE' }).click());
+    act(() => screen.getByRole('button', { name: 'Rocket Lab PROVIDES CAPSTONE' }).click());
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
     expect(screen.getByTestId('portable-know').textContent).toContain('Current Know');
     expect(screen.getByTestId('portable-know').textContent).toContain('2022-06-28');
+    expect(screen.getByTestId('portable-know').textContent).toContain('provided launch services for');
+    expect(screen.getByTestId('portable-know').textContent).toContain('PROVIDES');
+    expect(screen.getByText('Jev relationship probabilities')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'NASA' })).toBeTruthy();
     act(() => graph.nodeClick(graph.data.nodes[2]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The launch report.');

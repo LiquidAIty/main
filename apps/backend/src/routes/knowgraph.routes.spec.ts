@@ -2,7 +2,10 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import router, { boundedKnowGraphProperties, portableKnowGraphFact } from './knowgraph.routes';
+import router, {
+  boundedKnowGraphProperties,
+  portableKnowGraphFact,
+} from './knowgraph.routes';
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
@@ -90,6 +93,50 @@ describe('KnowGraph PDF upload project authority', () => {
       targetEntity: { uuid: 'entity-b', name: 'Beta' },
       supportingEpisodeUuids: ['episode-1', 'episode-2'],
       temporalStatus: 'current',
+    });
+  });
+
+  it('passively projects stored Jev metadata without replacing native fact fields', () => {
+    const properties = portableKnowGraphFact(
+      'fact-1',
+      'RELATES_TO',
+      {
+        name: 'was awarded a launch services contract by',
+        fact: 'NASA awarded Rocket Lab a launch services contract.',
+        episodes: ['episode-1'],
+        valid_at: '2026-09-01T00:00:00Z',
+        jev_relation_winner: 'CONTRACTS_WITH',
+        jev_relation_distribution_json: JSON.stringify({
+          CONTRACTS_WITH: 0.92,
+          OTHER_RELATION: 0.08,
+        }),
+        jev_label_confidence: 0.92,
+        jev_requested_model: 'typesafe/jev-1.13',
+        jev_resolved_model: 'typesafe/jev-1.13',
+        jev_evaluated_at: '2026-09-24T12:00:00Z',
+        jev_question_schema_version: 'knowgraph.relationship.v1',
+        jev_ontology_version: 'knowgraph.v1',
+        jev_ontology_hash: 'hash-1',
+      },
+      { uuid: 'rocket-lab', name: 'Rocket Lab' },
+      { uuid: 'nasa', name: 'NASA' },
+    );
+
+    expect(properties).toMatchObject({
+      nativeFactUuid: 'fact-1',
+      nativeRelation: 'was awarded a launch services contract by',
+      fact: 'NASA awarded Rocket Lab a launch services contract.',
+      supportingEpisodeUuids: ['episode-1'],
+      validAt: '2026-09-01T00:00:00Z',
+      jevCanonicalRelation: 'CONTRACTS_WITH',
+      relationship_strength: 0.92,
+      jev: {
+        nativeFactUuid: 'fact-1',
+        status: 'success',
+        winner: 'CONTRACTS_WITH',
+        distribution: { CONTRACTS_WITH: 0.92, OTHER_RELATION: 0.08 },
+        label_confidence: 0.92,
+      },
     });
   });
 

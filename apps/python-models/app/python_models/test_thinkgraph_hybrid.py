@@ -127,10 +127,11 @@ def entities_and_edges(hybrid) -> tuple[list[Any], list[Any]]:
     return entities, edges
 
 
-def test_jev_choice_requires_complete_vocabulary_and_derives_strength():
+def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
     probabilities = {name: 0.0 for name in adapter.THINKGRAPH_RELATIONSHIPS}
     probabilities.update(
-        CONTRADICTS=0.64,
+        CONTRADICTS=0.52,
+        REFINES=0.12,
         NONE=0.18,
         INSUFFICIENT_CONTEXT=0.10,
         INVALID_NODE_PAIR=0.08,
@@ -139,15 +140,18 @@ def test_jev_choice_requires_complete_vocabulary_and_derives_strength():
         "answers": {"relationship": {
             "type": "choice",
             "choice": "CONTRADICTS",
-            "confidence": 0.64,
+            "confidence": 0.52,
             "probabilities": probabilities,
         }},
         "provider": "TypeSafe",
         "model": "typesafe/jev-1.13-test",
     })
     assert parsed["winner"] == "CONTRADICTS"
-    assert parsed["label_confidence"] == pytest.approx(0.64)
-    assert parsed["relationship_strength"] == pytest.approx(0.64)
+    assert parsed["label_confidence"] == pytest.approx(0.52)
+    assert parsed["relationship_strength"] == pytest.approx(0.52)
+    # Admission still sees 0.64 total semantic support, while visual physics
+    # uses only the 0.52 probability of the winning edge type.
+    assert adapter._decision_is_accepted(parsed) is True
     assert tuple(parsed["distribution"]) == adapter.THINKGRAPH_RELATIONSHIPS
 
     invalid_mass = {name: 0.0 for name in adapter.THINKGRAPH_RELATIONSHIPS}

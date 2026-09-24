@@ -60,6 +60,26 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/knowgraph/jev/classify")
+async def knowgraph_jev_classify(payload: dict[str, Any]):
+    """Derive Jev Choice metadata for selected native Graphiti facts."""
+    from app.python_models.knowgraph_jev import (
+        KnowGraphJevError,
+        classify_knowgraph_facts,
+    )
+    import asyncio
+
+    facts = payload.get("facts")
+    if not isinstance(facts, list) or any(not isinstance(item, dict) for item in facts):
+        raise HTTPException(status_code=400, detail="knowgraph_jev_facts_invalid")
+    try:
+        return {
+            "results": await asyncio.to_thread(classify_knowgraph_facts, facts),
+        }
+    except KnowGraphJevError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+
+
 @app.post("/codegraph/read")
 def codegraph_read(payload: dict[str, Any]):
     from app.python_models.data_anchor import read_codegraph_tool

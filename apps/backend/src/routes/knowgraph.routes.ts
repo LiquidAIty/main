@@ -153,6 +153,41 @@ function stringValues(value: unknown): string[] {
   return Array.from(new Set(values.map((item) => String(item || '').trim()).filter(Boolean)));
 }
 
+function persistedKnowGraphJev(properties: Record<string, unknown>): Record<string, unknown> | undefined {
+  const winner = String(properties.jev_relation_winner || '').trim();
+  const serialized = String(properties.jev_relation_distribution_json || '').trim();
+  if (!winner || !serialized) return undefined;
+
+  let distribution: Record<string, number>;
+  try {
+    const parsed = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    distribution = Object.fromEntries(Object.entries(parsed).flatMap(([choice, probability]) => {
+      const numeric = Number(probability);
+      return Number.isFinite(numeric) ? [[choice, numeric]] : [];
+    }));
+  } catch {
+    return undefined;
+  }
+  if (!Object.keys(distribution).length) return undefined;
+  const winnerProbability = Number(distribution[winner]);
+  if (!Number.isFinite(winnerProbability)) return undefined;
+  const labelConfidence = Math.max(0, Math.min(1, winnerProbability));
+
+  return {
+    status: 'success',
+    winner,
+    distribution,
+    label_confidence: labelConfidence,
+    requested_model: String(properties.jev_requested_model || ''),
+    resolved_model: String(properties.jev_resolved_model || ''),
+    evaluated_at: String(properties.jev_evaluated_at || ''),
+    question_schema_version: String(properties.jev_question_schema_version || ''),
+    vocabulary_version: String(properties.jev_ontology_version || ''),
+    vocabulary_hash: String(properties.jev_ontology_hash || ''),
+  };
+}
+
 export function portableKnowGraphFact(
   factUuid: string,
   nativeRelationshipType: string,
@@ -163,6 +198,7 @@ export function portableKnowGraphFact(
   const supportingEpisodeUuids = stringValues(
     properties.episodes ?? properties.episode_uuids ?? properties.source_episode_uuids,
   );
+  const jev = persistedKnowGraphJev(properties);
   return {
     ...properties,
     authority: 'know',
@@ -181,6 +217,11 @@ export function portableKnowGraphFact(
     invalidAt: properties.invalid_at ?? null,
     expiredAt: properties.expired_at ?? null,
     temporalStatus: properties.invalid_at || properties.expired_at ? 'historical' : 'current',
+    ...(jev ? {
+      jevCanonicalRelation: jev.winner,
+      relationship_strength: jev.label_confidence,
+      jev: { nativeFactUuid: factUuid, ...jev },
+    } : {}),
   };
 }
 
@@ -418,7 +459,7 @@ async function queryKnowGraphProject(projectId: string, limit: number): Promise<
         id: relId,
         from: fromId,
         to: toId,
-        type: String(properties.nativeRelation || nativeRelationshipType),
+        type: String(properties.jevCanonicalRelation || properties.nativeRelation || nativeRelationshipType),
         source: 'know',
         properties,
       });
@@ -567,7 +608,7 @@ async function queryKnowGraphExpand(
         id: relId,
         from: fromId,
         to: toId,
-        type: String(properties.nativeRelation || nativeRelationshipType),
+        type: String(properties.jevCanonicalRelation || properties.nativeRelation || nativeRelationshipType),
         source: 'know',
         properties,
       });

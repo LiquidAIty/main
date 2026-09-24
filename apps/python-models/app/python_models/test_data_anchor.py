@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pytest
 
 
@@ -351,6 +352,15 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
             "episodes": ["episode-1"],
             "created_at": "2026-09-23T12:00:00Z",
             "valid_at": "2026-09-01T00:00:00Z",
+            "jev_relation_winner": "PARTNERS_WITH",
+            "jev_relation_distribution_json": json.dumps({"PARTNERS_WITH": 1.0}),
+            "jev_label_confidence": 1.0,
+            "jev_requested_model": "typesafe/jev-1.13",
+            "jev_resolved_model": "typesafe/jev-1.13",
+            "jev_evaluated_at": "2026-09-24T12:00:00Z",
+            "jev_question_schema_version": "knowgraph.relationship.v1",
+            "jev_ontology_version": "knowgraph.v1",
+            "jev_ontology_hash": "hash-1",
         },
         "sourceNativeId": "entity-a",
         "targetNativeId": "entity-b",
@@ -388,7 +398,23 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
         "invalidAt": None,
         "expiredAt": None,
         "temporalStatus": "current",
+        "jevCanonicalRelation": "PARTNERS_WITH",
+        "relationship_strength": 1.0,
+        "jev": {
+            "nativeFactUuid": "fact-1",
+            "status": "success",
+            "winner": "PARTNERS_WITH",
+            "distribution": {"PARTNERS_WITH": 1.0},
+            "label_confidence": 1.0,
+            "requested_model": "typesafe/jev-1.13",
+            "resolved_model": "typesafe/jev-1.13",
+            "evaluated_at": "2026-09-24T12:00:00Z",
+            "question_schema_version": "knowgraph.relationship.v1",
+            "vocabulary_version": "knowgraph.v1",
+            "vocabulary_hash": "hash-1",
+        },
     }
+    assert record["jev"]["winner"] == "PARTNERS_WITH"
     assert record["provenance"]["episodes"] == [episode]
 
 
@@ -554,6 +580,9 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
                 "uuid": "fact-1", "fact": "Alpha is current",
                 "source_node_uuid": "entity-1", "target_node_uuid": "entity-2",
                 "valid_at": "2026-01-02T00:00:00Z", "episode_uuids": ["episode-1"],
+                "jev_relation_winner": "ASSOCIATED_WITH",
+                "jev_relation_distribution_json": json.dumps({"ASSOCIATED_WITH": 1.0}),
+                "jev_label_confidence": 1.0,
             }]},
         ]
 
@@ -580,6 +609,7 @@ def test_hybrid_knowgraph_search_is_concurrent_centered_ranked_and_provenanced()
         "explicit-1", "entity-1", "fact-1", "fact-2", "entity-2",
     ]
     assert result["records"][2]["provenance"]["episodes"][0]["uuid"] == "episode-1"
+    assert result["records"][2]["jev"]["winner"] == "ASSOCIATED_WITH"
     assert result["truncated"] is False
     assert len(observed) == 2
 

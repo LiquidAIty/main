@@ -404,6 +404,7 @@ def _portable_know(
     episode_ids = _episode_ids(properties)
     invalid_at = properties.get("invalid_at")
     expired_at = properties.get("expired_at")
+    jev = _persisted_knowgraph_jev(native_id, properties)
     return {
         "portableKind": "know",
         "nativeFactUuid": native_id,
@@ -419,6 +420,50 @@ def _portable_know(
         "invalidAt": invalid_at,
         "expiredAt": expired_at,
         "temporalStatus": "historical" if invalid_at or expired_at else "current",
+        **({
+            "jevCanonicalRelation": jev["winner"],
+            "relationship_strength": jev["label_confidence"],
+            "jev": jev,
+        } if jev is not None else {}),
+    }
+
+
+def _persisted_knowgraph_jev(
+    native_id: str,
+    properties: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Read already-settled Jev metadata from the native Graphiti relationship."""
+    winner = str(properties.get("jev_relation_winner") or "").strip()
+    serialized = properties.get("jev_relation_distribution_json")
+    if not winner or serialized in (None, ""):
+        return None
+    try:
+        distribution = (
+            json.loads(serialized) if isinstance(serialized, str) else dict(serialized)
+        )
+        if not isinstance(distribution, dict) or not distribution:
+            return None
+        distribution = {
+            str(choice): float(probability)
+            for choice, probability in distribution.items()
+        }
+        confidence = max(0.0, min(1.0, float(distribution[winner])))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return {
+        "nativeFactUuid": native_id,
+        "status": "success",
+        "winner": winner,
+        "distribution": distribution,
+        "label_confidence": confidence,
+        "requested_model": str(properties.get("jev_requested_model") or ""),
+        "resolved_model": str(properties.get("jev_resolved_model") or ""),
+        "evaluated_at": str(properties.get("jev_evaluated_at") or ""),
+        "question_schema_version": str(
+            properties.get("jev_question_schema_version") or ""
+        ),
+        "vocabulary_version": str(properties.get("jev_ontology_version") or ""),
+        "vocabulary_hash": str(properties.get("jev_ontology_hash") or ""),
     }
 
 
@@ -529,6 +574,15 @@ def read_knowgraph_exact(
     target_properties = target_endpoint.get("properties") \
         if isinstance(target_endpoint.get("properties"), dict) else {}
     native_id = str(center.get("nativeId") or native_id)
+    portable_know = _portable_know(
+        native_id,
+        properties,
+        source_id=str(center.get("sourceNativeId") or ""),
+        target_id=str(center.get("targetNativeId") or ""),
+        source_name=str(source_properties.get("name") or ""),
+        target_name=str(target_properties.get("name") or ""),
+        episodes=episodes,
+    ) if relationship_center else None
     return {
         "authority": "KnowGraph",
         "nativeId": native_id,
@@ -546,15 +600,8 @@ def read_knowgraph_exact(
         "endpointNodes": endpoint_nodes,
         "sourceNativeId": str(center.get("sourceNativeId") or ""),
         "targetNativeId": str(center.get("targetNativeId") or ""),
-        **({"know": _portable_know(
-            native_id,
-            properties,
-            source_id=str(center.get("sourceNativeId") or ""),
-            target_id=str(center.get("targetNativeId") or ""),
-            source_name=str(source_properties.get("name") or ""),
-            target_name=str(target_properties.get("name") or ""),
-            episodes=episodes,
-        )} if relationship_center else {}),
+        **({"know": portable_know, "jev": portable_know.get("jev")}
+           if portable_know is not None else {}),
         "relationshipEvidence": neighborhood,
         "provenance": {
             **{
@@ -976,6 +1023,11 @@ def search_knowgraph_hybrid(
         len(deduplicated) > _KNOWGRAPH_RESULT_LIMIT,
     ))
     bounded = deduplicated[:_KNOWGRAPH_RESULT_LIMIT]
+    for record in bounded:
+        if record.get("portableKind") == "know" and isinstance(record.get("know"), dict):
+            jev = record["know"].get("jev")
+            if isinstance(jev, dict):
+                record["jev"] = jev
     return {
         "query": query,
         "records": bounded,
@@ -1002,6 +1054,10 @@ def _render_anchor(anchor: dict[str, Any], record: dict[str, Any]) -> str:
         f"Native read operation: {record.get('readOperation') or 'exact_read'}",
         f"Verified native provenance: {json.dumps(record.get('provenance') or {}, ensure_ascii=False, separators=(',', ':'), default=str)}",
         f"Verified native properties: {json.dumps(properties, ensure_ascii=False, separators=(',', ':'), default=str)}",
+        *(
+            [f"Portable Know with persisted Jev classification: {json.dumps(record['know'], ensure_ascii=False, separators=(',', ':'), default=str)}"]
+            if isinstance(record.get("know"), dict) else []
+        ),
         *(
             [f"Verified relationship evidence: {json.dumps(record['relationshipEvidence'], ensure_ascii=False, separators=(',', ':'), default=str)}"]
             if record.get("relationshipEvidence") else []
@@ -1186,12 +1242,24 @@ def _record_graph_projection(project_id: str, record: dict[str, Any]) -> dict[st
         if isinstance(evidence, list) and evidence and isinstance(evidence[0], dict):
             source_id = source_id or str(evidence[0].get("sourceNodeUuid") or "").strip()
             target_id = target_id or str(evidence[0].get("targetNodeUuid") or "").strip()
+        edge_properties = dict(record.get("properties") or {})
+        portable_know = record.get("know") if isinstance(record.get("know"), dict) else {}
+        jev = record.get("jev") if isinstance(record.get("jev"), dict) else {}
+        edge_properties.update(portable_know)
+        if jev:
+            edge_properties["jev"] = jev
+            if jev.get("status") == "success" and jev.get("winner"):
+                edge_properties["jevCanonicalRelation"] = jev["winner"]
         add_edge({
             "nativeId": native_id,
             "sourceNativeId": source_id,
             "targetNativeId": target_id,
-            "type": record.get("type"),
-            "properties": record.get("properties"),
+            "type": (
+                jev.get("winner")
+                if jev.get("status") == "success" and jev.get("winner")
+                else record.get("type")
+            ),
+            "properties": edge_properties,
         })
     elif native_id:
         add_node({

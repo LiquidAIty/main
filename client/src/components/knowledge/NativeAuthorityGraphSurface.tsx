@@ -43,6 +43,9 @@ export type GraphProjectionNode = {
   provenance?: Record<string, unknown>;
   provenanceCount?: number;
   degree?: number;
+  semantic_mass?: number;
+  gravity_mass?: number;
+  visual_radius?: number;
   cardId?: string;
   correlationId?: string;
   codeGraphRef?: string;
@@ -66,6 +69,11 @@ export type GraphProjectionEdge = {
   provenanceCount?: number;
   validFrom?: string;
   validTo?: string | null;
+  relationship_strength?: number;
+  label_confidence?: number;
+  strength?: number;
+  spring_strength?: number;
+  rest_length?: number;
 };
 
 export type GraphProjectionV1 = {
@@ -416,12 +424,14 @@ export function NativeGraphProjectionSurface({
     && selectedEdge?.properties?.portableKind === 'know'
     ? selectedEdge.properties
     : null;
-  const jevDistribution = selectedEdge?.properties?.jev
+  const jev = selectedEdge?.properties?.jev
     && typeof selectedEdge.properties.jev === 'object'
     && !Array.isArray(selectedEdge.properties.jev)
-    && (selectedEdge.properties.jev as Record<string, unknown>).distribution
-    && typeof (selectedEdge.properties.jev as Record<string, any>).distribution === 'object'
-    ? Object.entries((selectedEdge.properties.jev as Record<string, any>).distribution)
+    ? selectedEdge.properties.jev as Record<string, unknown>
+    : null;
+  const jevDistribution = jev?.distribution
+    && typeof jev.distribution === 'object'
+    ? Object.entries(jev.distribution as Record<string, unknown>)
       .filter((entry): entry is [string, number] => Number.isFinite(Number(entry[1])))
     : [];
   return (
@@ -530,6 +540,9 @@ export function NativeGraphProjectionSurface({
           {typeof portableKnow.fact === 'string' && portableKnow.fact
             ? <p>{portableKnow.fact}</p> : null}
           <dl className="graph-record-fields">
+            {portableKnow.nativeRelation ? <div><dt>Native Graphiti relation</dt><dd>{String(portableKnow.nativeRelation)}</dd></div> : null}
+            {jev?.status === 'success' && jev.winner ? <div><dt>Jev canonical relation</dt><dd>{String(jev.winner)}</dd></div> : null}
+            {jev?.status && jev.status !== 'success' ? <div><dt>Jev classification</dt><dd>{String(jev.status)}</dd></div> : null}
             {([
               ['Learned', portableKnow.createdAt],
               ['Reference time', portableKnow.referenceTime],

@@ -139,4 +139,5 @@ describe('pythonRailsClient', () => {
       expect.objectContaining({ method: 'GET' }),
     );
   });
+
 });
