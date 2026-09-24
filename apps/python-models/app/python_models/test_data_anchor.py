@@ -44,9 +44,101 @@ from app.python_models.data_anchor import (
     read_knowgraph_exact,
     read_thinkgraph_exact,
     resolve_data_anchors,
+    search_knowgraph_attention_candidates,
     search_knowgraph_hybrid,
 )
 from app.python_models import engraphis, data_anchor
+
+
+def test_knowgraph_attention_search_maps_nodes_and_fact_endpoints_without_hydration():
+    calls = []
+
+    def read(**kwargs):
+        calls.append(kwargs)
+        return [
+            {
+                "ok": True,
+                "nodes": [
+                    {
+                        "uuid": "entity-a",
+                        "name": "Alpha",
+                        "labels": ["Company"],
+                        "score": 0.91,
+                        "episode_uuids": ["must-not-be-hydrated"],
+                    },
+                    {
+                        "uuid": "entity-a",
+                        "name": "Duplicate Alpha",
+                        "labels": ["Company"],
+                    },
+                ],
+            },
+            {
+                "ok": True,
+                "facts": [
+                    {
+                        "uuid": "fact-one",
+                        "source_node_uuid": "entity-a",
+                        "target_node_uuid": "entity-b",
+                        "name": "SUPPORTS",
+                        "fact": "Alpha supports Beta.",
+                        "episode_uuids": ["also-not-hydrated"],
+                    },
+                    {
+                        "uuid": "fact-two",
+                        "sourceNodeUuid": "entity-b",
+                        "targetNodeUuid": "entity-c",
+                        "edge_type": "DEPENDS_ON",
+                        "fact": "Beta depends on Gamma.",
+                    },
+                ],
+            },
+        ]
+
+    candidates = search_knowgraph_attention_candidates(
+        "project-one",
+        "deck-one",
+        "main",
+        "What knowledge matters?",
+        mcp_reader=read,
+    )
+
+    assert len(calls) == 1
+    assert calls[0] == {
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "card_id": "main",
+        "calls": [
+            (
+                "graphiti.search_nodes",
+                {"query": "What knowledge matters?", "max_nodes": 8},
+            ),
+            (
+                "graphiti.search_memory_facts",
+                {"query": "What knowledge matters?", "max_facts": 8},
+            ),
+        ],
+        "concurrent": True,
+    }
+    assert [candidate["nativeId"] for candidate in candidates] == [
+        "entity-a", "entity-b", "entity-c",
+    ]
+    assert all(candidate["authority"] == "KnowGraph" for candidate in candidates)
+    assert "fact-one" not in {candidate["nativeId"] for candidate in candidates}
+    assert candidates[0]["title"] == "Alpha"
+    assert candidates[0]["nativeSearch"] == {"score": 0.91}
+    assert candidates[0]["factEvidence"] == [{
+        "nativeFactUuid": "fact-one",
+        "relation": "SUPPORTS",
+        "fact": "Alpha supports Beta.",
+    }]
+    assert [item["nativeFactUuid"] for item in candidates[1]["factEvidence"]] == [
+        "fact-one", "fact-two",
+    ]
+    assert all(
+        "episode" not in json.dumps(candidate).casefold()
+        for candidate in candidates
+    )
 
 
 def test_codegraph_projection_preserves_returned_ids_direction_and_type(monkeypatch):

@@ -80,6 +80,17 @@ class JevRelationshipError(RuntimeError):
     """A real Jev decision could not be obtained or validated."""
 
 
+class JevAttentionError(RuntimeError):
+    """One read-only Main attention decision failed with a typed public status."""
+
+    def __init__(self, status: str, error_code: str) -> None:
+        if status not in {"unavailable", "timeout", "invalid", "error"}:
+            raise ValueError("jev_attention_status_invalid")
+        self.status = status
+        self.error_code = error_code
+        super().__init__(error_code)
+
+
 class ThinkGraphIntakeError(RuntimeError):
     """The completed-pair intake could not start or persist its source memory."""
 
@@ -767,6 +778,315 @@ def _validate_jev_response(
         "resolved_model": str(response.get("model") or ""),
         "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
     }
+
+
+def _attention_choice_id(authority: str, native_id: str) -> str:
+    """Return one stable opaque option identity without changing native authority."""
+
+    identity = f"{authority}\0{native_id}".encode("utf-8")
+    return f"choice_{hashlib.sha256(identity).hexdigest()[:24]}"
+
+
+def recall_thinkgraph_attention_candidates(
+    project: str,
+    query: str,
+    *,
+    limit: int = 8,
+    service: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Serialize the shared Engraphis service while KnowGraph reads concurrently."""
+
+    with _lock:
+        return _recall_thinkgraph_attention_candidates_locked(
+            project,
+            query,
+            limit=limit,
+            service=service,
+        )
+
+
+def _recall_thinkgraph_attention_candidates_locked(
+    project: str,
+    query: str,
+    *,
+    limit: int = 8,
+    service: Any | None = None,
+) -> list[dict[str, Any]]:
+    """Map native fast-recall Memory hits to direct canonical ThinkGraph entities.
+
+    This is an internal read path for pre-response attention.  It deliberately
+    consumes raw scored memories before the public recall formatter packs prose,
+    and it never creates a workspace, reinforces a Memory, records a receipt, or
+    enters any ThinkGraph settlement/write path.
+    """
+
+    project = project_id(project)
+    query = str(query or "")
+    if not query.strip():
+        raise JevAttentionError("invalid", "jev_attention_query_required")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 8:
+        raise JevAttentionError("invalid", "jev_attention_think_limit_invalid")
+    service = service or get_service()
+    workspace_row = service.store.conn.execute(
+        "SELECT id FROM workspaces WHERE name=?",
+        (project,),
+    ).fetchone()
+    if workspace_row is None:
+        return []
+    workspace_id = str(workspace_row["id"])
+    try:
+        recalled = service.recall(
+            query=query,
+            workspace=project,
+            mtypes=["episodic"],
+            k=8,
+            token_budget=0,
+            retrieval_profile="fast",
+            candidate_depth="fixed",
+            response_mode="compact",
+            include_untrusted=False,
+            planning="off",
+            reinforce=False,
+            record_receipt=False,
+        )
+    except Exception as error:
+        raise JevAttentionError(
+            "unavailable", "jev_attention_think_recall_unavailable"
+        ) from error
+    if not isinstance(recalled, dict):
+        raise JevAttentionError("invalid", "jev_attention_think_recall_invalid")
+    if not recalled.get("semantic_support") or recalled.get("degraded_mode"):
+        raise JevAttentionError(
+            "unavailable", "jev_attention_think_semantic_search_unavailable"
+        )
+    raw_memories = recalled.get("memories")
+    if not isinstance(raw_memories, list):
+        raise JevAttentionError("invalid", "jev_attention_think_recall_invalid")
+
+    ranked_memories: dict[str, dict[str, Any]] = {}
+    ordered_memory_ids: list[str] = []
+    for rank, raw in enumerate(raw_memories[:8], start=1):
+        if not isinstance(raw, dict):
+            continue
+        memory_id = str(raw.get("id") or "").strip()
+        if not memory_id or memory_id in ranked_memories:
+            continue
+        ranked_memories[memory_id] = {**raw, "recallRank": rank}
+        ordered_memory_ids.append(memory_id)
+    if not ordered_memory_ids:
+        return []
+
+    store = service.store
+    incidences = store.list_memory_entities(
+        SearchFilter(workspace_id=workspace_id),
+        memory_ids=ordered_memory_ids,
+    )
+    memories = store.get_memories(ordered_memory_ids)
+    recall_order = {
+        memory_id: index for index, memory_id in enumerate(ordered_memory_ids)
+    }
+    incidences = sorted(
+        (row for row in incidences if isinstance(row, dict)),
+        key=lambda row: (
+            recall_order.get(str(row.get("memory_id") or ""), len(recall_order)),
+            str(row.get("entity_id") or ""),
+        ),
+    )
+    candidates_by_id: dict[str, dict[str, Any]] = {}
+    for incidence in incidences:
+        if incidence.get("source_kind") != _THINK_INCIDENCE_KIND:
+            continue
+        memory_id = str(incidence.get("memory_id") or "")
+        memory = memories.get(memory_id)
+        think = _think_metadata(memory) if memory is not None else None
+        if think is None or memory_id not in ranked_memories:
+            continue
+        canonical_id = _canonical_entity_id(
+            store, str(incidence.get("entity_id") or "")
+        )
+        entity = _entity_row(store, canonical_id) if canonical_id else None
+        if not canonical_id or entity is None:
+            continue
+        candidate = candidates_by_id.get(canonical_id)
+        if candidate is None:
+            if len(candidates_by_id) >= limit:
+                continue
+            candidate = {
+                "choiceId": _attention_choice_id("ThinkGraph", canonical_id),
+                "authority": "ThinkGraph",
+                "nativeId": canonical_id,
+                "title": str(entity.get("name") or canonical_id)[:256],
+                "nodeType": str(entity.get("etype") or "")[:128],
+                "recallEvidence": [],
+            }
+            candidates_by_id[canonical_id] = candidate
+        evidence = candidate["recallEvidence"]
+        if len(evidence) >= 3 or any(
+            item["memoryId"] == memory_id for item in evidence
+        ):
+            continue
+
+        def finite_score(name: str) -> float:
+            try:
+                value = float(ranked_memories[memory_id].get(name) or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+            return value if math.isfinite(value) else 0.0
+
+        evidence.append({
+            "memoryId": memory_id,
+            "recallRank": int(ranked_memories[memory_id]["recallRank"]),
+            "relativeScore": finite_score("relative_score"),
+            "absoluteSupport": finite_score("absolute_support"),
+            "memoryTitle": str(getattr(memory, "title", "") or "")[:256],
+            "thinkKind": str(think.get("kind") or "")[:64],
+            "thinkSummary": str(think.get("summary") or "")[:500],
+        })
+    return list(candidates_by_id.values())[:limit]
+
+
+def _validate_jev_attention_response(
+    response: dict[str, Any],
+    choice_ids: tuple[str, ...],
+) -> dict[str, Any]:
+    """Strictly validate one attention Choice independently of edge admission."""
+
+    try:
+        answer = response["answers"]["attention"]
+        if not isinstance(answer, dict) or answer.get("type") != "choice":
+            raise ValueError("answer type")
+        winner = str(answer["choice"])
+        if winner not in choice_ids:
+            raise ValueError("winner")
+        raw = answer["probabilities"]
+        if not isinstance(raw, dict) or set(raw) != set(choice_ids):
+            raise ValueError("probability keys")
+        probabilities = {choice: float(raw[choice]) for choice in choice_ids}
+        if any(
+            not math.isfinite(value) or value < 0.0 or value > 1.0
+            for value in probabilities.values()
+        ):
+            raise ValueError("probability values")
+        total = sum(probabilities.values())
+        if total <= 0.0:
+            raise ValueError("probability total")
+        probabilities = {
+            choice: value / total for choice, value in probabilities.items()
+        }
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise JevAttentionError(
+            "invalid", "jev_attention_response_invalid"
+        ) from error
+    return {
+        "decisionId": str(response.get("id") or "").strip(),
+        "winner": winner,
+        "distribution": probabilities,
+        "provider": str(response.get("provider") or ""),
+        "requestedModel": JEV_MODEL,
+        "resolvedModel": str(response.get("model") or ""),
+        "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
+    }
+
+
+def decide_main_graph_attention(
+    query: str,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Ask Jev exactly one bounded read-only Choice over canonical graph entities."""
+
+    query = str(query or "")
+    if not query.strip():
+        raise JevAttentionError("invalid", "jev_attention_query_required")
+    if not candidates or len(candidates) > 16:
+        raise JevAttentionError("invalid", "jev_attention_candidates_invalid")
+    choice_ids: list[str] = []
+    options: list[dict[str, Any]] = []
+    seen_identities: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        authority = str(candidate.get("authority") or "")
+        native_id = str(candidate.get("nativeId") or "")
+        choice_id = str(candidate.get("choiceId") or "")
+        identity = (authority, native_id)
+        if (
+            authority not in {"ThinkGraph", "KnowGraph"}
+            or not native_id
+            or identity in seen_identities
+            or choice_id != _attention_choice_id(authority, native_id)
+            or choice_id in choice_ids
+        ):
+            raise JevAttentionError("invalid", "jev_attention_candidates_invalid")
+        seen_identities.add(identity)
+        choice_ids.append(choice_id)
+        evidence = candidate.get("recallEvidence")
+        evidence = evidence[:3] if isinstance(evidence, list) else []
+        options.append({
+            "choice_id": choice_id,
+            "authority": authority,
+            "native_id": native_id,
+            "title": str(candidate.get("title") or native_id)[:256],
+            "node_type": str(candidate.get("nodeType") or "")[:128],
+            "recall_evidence": evidence,
+            "fact_evidence": list(candidate.get("factEvidence") or [])[:3],
+        })
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise JevAttentionError(
+            "unavailable", "jev_attention_openrouter_key_unavailable"
+        )
+    criteria = {
+        option["choice_id"]: (
+            "Select this exact canonical native entity when it is among the most useful "
+            "graph context for answering the current user message accurately and directly."
+        )
+        for option in options
+    }
+    body = {
+        "model": JEV_MODEL,
+        "state": {
+            "description": (
+                "The current visible Main user message and at most sixteen canonical entity "
+                "candidates retrieved read-only from ThinkGraph and KnowGraph."
+            ),
+            "current_user_message": query,
+            "canonical_entity_options": options,
+        },
+        "questions": {
+            "attention": {
+                "type": "choice",
+                "instructions": (
+                    "Choose the one canonical entity most useful as native graph context for "
+                    "the current user message. Return a full probability distribution across "
+                    "every supplied opaque choice id. Judge semantic usefulness, not string "
+                    "similarity. The application may hydrate a small cumulative-probability "
+                    "subset; do not invent another entity."
+                ),
+                "criteria": criteria,
+            }
+        },
+    }
+    try:
+        with httpx.Client(timeout=45.0, follow_redirects=False) as client:
+            result = client.post(
+                JEV_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            result.raise_for_status()
+            response = result.json()
+    except httpx.TimeoutException as error:
+        raise JevAttentionError("timeout", "jev_attention_timeout") from error
+    except httpx.HTTPError as error:
+        raise JevAttentionError("unavailable", "jev_attention_unavailable") from error
+    except (json.JSONDecodeError, ValueError) as error:
+        raise JevAttentionError("invalid", "jev_attention_response_invalid") from error
+    except Exception as error:
+        raise JevAttentionError("error", "jev_attention_request_error") from error
+    if not isinstance(response, dict):
+        raise JevAttentionError("invalid", "jev_attention_response_invalid")
+    return _validate_jev_attention_response(response, tuple(choice_ids))
 
 
 def _winner_probability(decision: dict[str, Any]) -> float:

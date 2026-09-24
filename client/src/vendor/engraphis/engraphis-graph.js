@@ -9906,13 +9906,14 @@
     /* A drag uses fx/fy only while the pointer is down. The fixed-step Galaxy clock remains
        live throughout the gesture; pointer-up merely releases that one moving mass source. */
     fg.backgroundColor('rgba(0,0,0,0)').nodeRelSize(1)
-      .enableNodeDrag(false).autoPauseRedraw(true)
+      .enableNodeDrag(false).autoPauseRedraw(true).linkHoverPrecision(12)
       /* force-graph's default `nodeLabel`/`linkLabel` is the literal accessor "name", and its
          tooltip renders a string label with innerHTML. Node names here are entity labels
          extracted from ingested memories — untrusted input — so both accessors are set
          explicitly and escaped rather than left on the vendor default. */
       .nodeLabel(node => esc(nodeName(node)))
-      .linkLabel(link => esc(link && link.label ? link.label : ''))
+      .linkLabel(link => esc(link && (link.hover_label || link.label)
+        ? (link.hover_label || link.label) : ''))
       .onRenderFramePre((ctx, scale) => {
         try {
           styleBackground(ctx, scale);
@@ -10014,6 +10015,7 @@
         invalidate();
       })
       .onNodeClick(handleNodeClick)
+      .onLinkClick(link => { if (opts.onLinkClick) opts.onLinkClick(link); })
       .onBackgroundClick(() => { if (opts.onBackgroundClick) opts.onBackgroundClick(); })
       .onZoom(z => {
         zoom = z.k || 1;

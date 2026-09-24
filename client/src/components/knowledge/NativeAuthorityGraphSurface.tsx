@@ -217,6 +217,7 @@ declare global {
   interface Window {
     EngraphisGraph: { create: (host: HTMLElement, options: {
       onNodeClick: (node: { id: string }) => void;
+      onLinkClick: (link: { id: string }) => void;
       onBackgroundClick: () => void;
     }) => EngraphisRenderer };
   }
@@ -435,11 +436,18 @@ export function NativeGraphProjectionSurface({
           setSelectedEdgeId(null);
           setInspectorOpen(true);
         },
+        onLinkClick: link => {
+          setControlsOpen(false);
+          setRemoveError(null);
+          setSelectedId(null);
+          setSelectedEdgeId(String(link.id));
+          setInspectorOpen(true);
+        },
         onBackgroundClick: () => {
           setSelectedId(null);
           setSelectedEdgeId(null);
           setInspectorOpen(false);
-          setControlsOpen(true);
+          setControlsOpen(false);
         },
       });
       const defaults = graph.setPreset('compact');
@@ -461,29 +469,43 @@ export function NativeGraphProjectionSurface({
   useEffect(() => {
     // Engraphis scenes retain all engine-owned layout and evidence fields.
     // Graphiti uses the renderer's supported field aliases; no graph is inferred here.
-    const data = displayProjection?.scene || {
-      nodes: displayProjection?.nodes || [],
-      links: (displayProjection?.edges || []).map(edge => {
-        if (authority !== 'thinkgraph') return { ...edge, relation: edge.predicate };
-        const jev = edge.properties?.jev;
+    const scene = displayProjection?.scene;
+    const sceneNodes = Array.isArray(scene?.nodes) ? scene.nodes : displayProjection?.nodes || [];
+    const sceneLinks = Array.isArray(scene?.links)
+      ? scene.links
+      : Array.isArray(scene?.edges)
+        ? scene.edges
+        : displayProjection?.edges || [];
+    const projectionEdgesById = new Map((displayProjection?.edges || []).map(edge => [edge.id, edge]));
+    const data = {
+      ...(scene || {}),
+      nodes: sceneNodes,
+      links: sceneLinks.map(rawEdge => {
+        const edge = rawEdge as GraphProjectionEdge;
+        const projected = projectionEdgesById.get(String(edge.id));
+        const properties = { ...(edge.properties || {}), ...(projected?.properties || {}) };
+        const semanticEdge = { ...edge, ...(projected || {}), properties };
+        if (authority !== 'thinkgraph') return { ...semanticEdge, relation: semanticEdge.predicate };
+        const jev = semanticEdge.properties?.jev;
         const distribution = jev && typeof jev === 'object' && !Array.isArray(jev)
           && (jev as Record<string, unknown>).distribution
           && typeof (jev as Record<string, unknown>).distribution === 'object'
           ? (jev as Record<string, any>).distribution as Record<string, unknown>
           : null;
         const winner = jev && typeof jev === 'object' && !Array.isArray(jev)
-          ? String((jev as Record<string, unknown>).winner || edge.predicate)
-          : edge.predicate;
+          ? String((jev as Record<string, unknown>).winner || semanticEdge.predicate)
+          : semanticEdge.predicate;
         const probability = compactProbability(
           distribution?.[winner]
-            ?? edge.properties?.relationship_strength
-            ?? edge.relationship_strength,
+            ?? semanticEdge.properties?.relationship_strength
+            ?? semanticEdge.relationship_strength,
         );
         return {
-          ...edge,
-          relation: edge.predicate,
-          label: `${winner}${probability ? ` · ${probability}` : ''}`,
-          label_min_scale: 0.35,
+          ...semanticEdge,
+          relation: semanticEdge.predicate,
+          label: probability,
+          hover_label: `${winner}${probability ? ` · ${probability}` : ''}`,
+          label_min_scale: 0.01,
           directional_arrow_length: 3,
           directional_arrow_rel_pos: 0.9,
         };
@@ -519,16 +541,15 @@ export function NativeGraphProjectionSurface({
     setSelectedId(null);
     setSelectedEdgeId(null);
     setInspectorOpen(false);
-    setControlsOpen(inspectorOpen);
+    setControlsOpen(false);
   };
 
   const allNodes = displayProjection?.nodes.length ?? 0;
   const selectedEdge = displayProjection?.edges.find((edge) => edge.id === selectedEdgeId);
   const selectedNative = displayProjection?.nodes.find(node => node.id === selected?.id);
   const selectedSource = selectedNative ? sourceDocument(selectedNative) : null;
-  const selectedRelationships = selected ? displayProjection?.edges.filter(edge => edge.source === selected.id || edge.target === selected.id) || [] : [];
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
-  for (const edge of selectedEdge ? [selectedEdge] : selectedRelationships) {
+  for (const edge of selectedEdge ? [selectedEdge] : []) {
     for (const value of [edge.properties?.episodes, edge.properties?.supportingEpisodeUuids]) {
       for (const id of Array.isArray(value) ? value : typeof value === 'string' ? [value] : []) {
         evidenceIds.add(String(id));
@@ -567,6 +588,7 @@ export function NativeGraphProjectionSurface({
     && typeof jev.distribution === 'object'
     ? Object.entries(jev.distribution as Record<string, unknown>)
       .filter((entry): entry is [string, number] => Number.isFinite(Number(entry[1])))
+      .sort((left, right) => Number(right[1]) - Number(left[1]))
     : [];
   const jevWinner = jev ? String(jev.winner || selectedEdge?.predicate || '') : '';
   const naturalRelationship = jev && typeof jev.natural_relationship === 'string'
@@ -603,7 +625,7 @@ export function NativeGraphProjectionSurface({
       </div>
         <RightGlassDrawer
           isOpen={controlsOpen || inspectorOpen}
-          title={inspectorOpen ? entryTitle : 'Graph settings'}
+          title={inspectorOpen ? (selectedEdge ? '' : entryTitle) : 'Graph settings'}
           onClose={closePanel}
           onOpen={() => { setSelectedId(null); setSelectedEdgeId(null); setControlsOpen(true); setInspectorOpen(false); }}
           collapsedLabel={null}
@@ -689,12 +711,6 @@ export function NativeGraphProjectionSurface({
             heading={`Earlier Think ${index + 1}`}
           />)}</div>
         </details> : null}
-        {selectedRelationships.length ? <section className="knowgraph-relationships">
-          {selectedRelationships.map(edge => <button type="button" key={edge.id} data-edge-id={edge.id}
-            onClick={() => { setSelectedId(null); setSelectedEdgeId(edge.id); }}>
-            <strong>{nativeLabel(edge.source)}</strong><span>{edge.predicate}</span><strong>{nativeLabel(edge.target)}</strong>
-          </button>)}
-        </section> : null}
         {selectedEdge ? <article data-testid={`${authority}-edge-inspector`} data-native-id={selectedEdge.id}>
           <h4 tabIndex={-1}>{nativeLabel(selectedEdge.source)} → {selectedEdge.predicate} → {nativeLabel(selectedEdge.target)}</h4>
           {(['fact', 'summary', 'reason'] as const).map(key => typeof selectedEdge.properties?.[key] === 'string'

@@ -15,11 +15,12 @@ vi.mock('../../vendor/engraphis/vendor/d3.min.js', () => ({}));
 vi.mock('../../vendor/engraphis/vendor/force-graph.min.js', () => ({}));
 vi.mock('../../vendor/engraphis/engraphis-graph.js', () => {
   window.EngraphisGraph = { create(host, options) {
-    expect(Object.keys(options).sort()).toEqual(['onBackgroundClick', 'onNodeClick']);
+    expect(Object.keys(options).sort()).toEqual(['onBackgroundClick', 'onLinkClick', 'onNodeClick']);
     const canvas = document.createElement('canvas');
     host.appendChild(canvas);
     const instance: any = {
-      data: { nodes: [], links: [] }, nodeClick: options.onNodeClick, backgroundClick: options.onBackgroundClick,
+      data: { nodes: [], links: [] }, nodeClick: options.onNodeClick,
+      linkClick: options.onLinkClick, backgroundClick: options.onBackgroundClick,
       setData: vi.fn(function (this: any, data: any) {
         this.data = { ...data, nodes: data.nodes.map((node: any) => ({ ...node })), links: data.links || data.edges || [] };
       }),
@@ -328,7 +329,7 @@ describe('native authority graph surfaces', () => {
     }));
   });
 
-  it('passes the Jev winner and probability as the ThinkGraph line label without changing endpoints or evidence', () => {
+  it('puts only Jev probability on the ThinkGraph line and keeps the winner in hover data', () => {
     const projection = {
       ...empty('thinkgraph'),
       nodes: [{ id: 'subject', label: 'Subject' }, { id: 'idea', label: 'Idea' }],
@@ -343,13 +344,13 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.links).toHaveLength(1);
     expect(graph.data.links[0]).toMatchObject({
-      ...projection.edges[0], relation: 'DEPENDS_ON', label: 'DEPENDS_ON · .71',
-      label_min_scale: 0.35, directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
+      ...projection.edges[0], relation: 'DEPENDS_ON', label: '.71',
+      hover_label: 'DEPENDS_ON · .71', label_min_scale: 0.01,
+      directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
     });
     expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([['subject', 'Subject'], ['idea', 'Idea']]);
     expect(JSON.stringify(projection)).toBe(before);
-    act(() => graph.nodeClick(graph.data.nodes[0]));
-    fireEvent.click(screen.getByRole('button', { name: 'Subject DEPENDS_ON Idea' }));
+    act(() => graph.linkClick(graph.data.links[0]));
     expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('Recorded relationship.');
   });
 
@@ -388,7 +389,8 @@ describe('native authority graph surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     expect(screen.queryByRole('region', { name: 'Existing entry details' })).toBeNull();
-    expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
+    expect(screen.queryByRole('slider', { name: 'Text size' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open graph settings' })).toBeTruthy();
   });
 
   it('shows the complete latest direct Think and keeps earlier direct Thinks in newest-first history', async () => {
@@ -460,7 +462,7 @@ describe('native authority graph surfaces', () => {
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The recorded source summary.');
-    fireEvent.click(screen.getByRole('button', { name: 'Source SUPPORTS Claim' }));
+    act(() => graph.linkClick(graph.data.links[0]));
     const inspector = screen.getByTestId('knowgraph-edge-inspector');
     expect(inspector.getAttribute('data-native-id')).toBe('evidence');
     expect(inspector.textContent).toContain('SUPPORTS');
@@ -503,8 +505,7 @@ describe('native authority graph surfaces', () => {
     render(<NativeGraphProjectionSurface authority={authority} projection={projection}
       status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
-    act(() => graph.nodeClick(graph.data.nodes[0]));
-    fireEvent.click(screen.getByRole('button', { name: 'Jev QUALIFIES ThinkGraph' }));
+    act(() => graph.linkClick(graph.data.links[0]));
 
     expect(screen.getByText('Jev winner').nextSibling?.textContent).toBe('QUALIFIES');
     expect(screen.getByText('Probability').nextSibling?.textContent).toBe('76.0%');
@@ -553,7 +554,7 @@ describe('native authority graph surfaces', () => {
     fireEvent.click(screen.getByText('NASA launch report'));
     expect(screen.getByRole('link', { name: 'NASA' }).getAttribute('href')).toBe('https://www.nasa.gov/mission');
     expect(screen.queryByRole('link', { name: 'example.org' })).toBeNull();
-    act(() => screen.getByRole('button', { name: 'Rocket Lab PROVIDES CAPSTONE' }).click());
+    act(() => graph.linkClick(graph.data.links[0]));
     expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Rocket Lab launched CAPSTONE.');
     expect(screen.getByTestId('portable-know').textContent).toContain('Current Know');
     expect(screen.getByTestId('portable-know').textContent).toContain('2022-06-28');
@@ -610,7 +611,9 @@ describe('native authority graph surfaces', () => {
     expect(panel.style.right).toBe('12px');
     expect(screen.getByRole('button', { name: 'Detach panel' })).toBeTruthy();
     fireEvent.keyDown(panel, { key: 'Escape' });
-    expect(screen.getByRole('combobox', { name: 'Physics profile' })).toBe(document.activeElement);
+    expect(screen.getByRole('complementary').getAttribute('data-open')).toBe('false');
+    expect(screen.queryByRole('combobox', { name: 'Physics profile' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
     expect(screen.getByRole('complementary').style.width).toBe('400px');
     expect(container.querySelector('.thinkgraph-entry')).toBeNull();
@@ -621,10 +624,9 @@ describe('native authority graph surfaces', () => {
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['native-1']);
     act(() => graph.nodeClick(graph.data.nodes[0]));
     act(() => graph.backgroundClick());
-    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
     expect(screen.getByRole('complementary').getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+    expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
     expect(screen.getByRole('complementary').style.width).toBe('400px');
   });
 });

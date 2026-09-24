@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -47,6 +49,14 @@ from app.python_models.data_anchor import (
     DataAnchorError,
     empty_graph_projection,
     resolve_data_anchors,
+    search_knowgraph_attention_candidates,
+)
+from app.python_models.engraphis import (
+    JEV_MODEL,
+    JevAttentionError,
+    _attention_choice_id,
+    decide_main_graph_attention,
+    recall_thinkgraph_attention_candidates,
 )
 from app.python_models.postgres import connect_postgres
 from app.python_models.tool_registry import tool_manifest
@@ -2162,6 +2172,12 @@ def resolve_hermes_bot_rosters(project_id: str, deck_id: str) -> dict[str, Any]:
 
 
 _DATA_ANCHOR_LIMIT = 16
+_MAIN_ATTENTION_TOKEN = object()
+_JEV_ATTENTION_SCHEMA_VERSION = "jev-attention.v1"
+_JEV_ATTENTION_QUESTION_SCHEMA_VERSION = "main.graph-attention-choice.v1"
+_JEV_ATTENTION_CUMULATIVE_MASS = 0.80
+_JEV_ATTENTION_MINIMUM_SELECTED = 1
+_JEV_ATTENTION_MAXIMUM_SELECTED = 3
 _FORBIDDEN_INVOCATION_CONTEXT_FIELDS = (
     "builderOperation", "agentBuilderOperation", "agentBuilderGuidance",
     "buildTarget", "selectedCardTarget",
@@ -2181,6 +2197,249 @@ def _reject_non_graph_invocation_context(payload: dict[str, Any]) -> None:
     for field in _FORBIDDEN_INVOCATION_CONTEXT_FIELDS:
         if field in payload:
             raise CardDomainError(f"invocation_context_field_forbidden:{field}")
+    if (
+        ("_mainAttentionQuery" in payload or "_mainAttentionToken" in payload)
+        and payload.get("_mainAttentionToken") is not _MAIN_ATTENTION_TOKEN
+    ):
+        raise CardDomainError("main_attention_context_private")
+
+
+def _attention_error_status(error: Exception) -> tuple[str, str]:
+    if isinstance(error, JevAttentionError):
+        return error.status, error.error_code
+    code = str(error).strip() or type(error).__name__
+    folded = code.casefold()
+    if "timeout" in folded:
+        return "timeout", code
+    if "invalid" in folded:
+        return "invalid", code
+    if "unavailable" in folded or "not_ready" in folded:
+        return "unavailable", code
+    return "error", code
+
+
+def _attention_failure_status(statuses: list[str]) -> str:
+    for status in ("invalid", "timeout", "error", "unavailable"):
+        if status in statuses:
+            return status
+    return "unavailable"
+
+
+def _attention_retrieval(
+    name: str,
+    operation: Any,
+) -> tuple[str, dict[str, Any]]:
+    started = time.perf_counter()
+    try:
+        candidates = operation()
+        if not isinstance(candidates, list):
+            raise JevAttentionError("invalid", f"jev_attention_{name}_result_invalid")
+        status = "success" if candidates else "unavailable"
+        return name, {
+            "status": status,
+            "candidateCount": len(candidates),
+            "timingMs": round((time.perf_counter() - started) * 1000, 3),
+            "candidates": candidates,
+            **(
+                {"errorCode": f"jev_attention_{name}_candidates_unavailable"}
+                if not candidates else {}
+            ),
+        }
+    except Exception as error:
+        status, error_code = _attention_error_status(error)
+        return name, {
+            "status": status,
+            "candidateCount": 0,
+            "timingMs": round((time.perf_counter() - started) * 1000, 3),
+            "candidates": [],
+            "errorCode": error_code,
+        }
+
+
+def _prepare_main_graph_attention(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    query: str,
+    excluded_identities: set[tuple[str, str]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
+    """Retrieve twin-graph candidates and make exactly one bounded Jev Choice."""
+
+    total_started = time.perf_counter()
+    retrieval_started = time.perf_counter()
+    operations = {
+        "thinkGraph": lambda: recall_thinkgraph_attention_candidates(
+            project_id, query, limit=8,
+        ),
+        "knowGraph": lambda: search_knowgraph_attention_candidates(
+            project_id, deck_id, card_id, query, limit=8,
+        ),
+    }
+    with ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="main-graph-attention"
+    ) as executor:
+        futures = {
+            name: executor.submit(_attention_retrieval, name, operation)
+            for name, operation in operations.items()
+        }
+        retrieval_results = {
+            name: future.result()[1] for name, future in futures.items()
+        }
+    retrieval_ms = round((time.perf_counter() - retrieval_started) * 1000, 3)
+    candidates: list[dict[str, Any]] = []
+    seen = set(excluded_identities)
+    for name in ("thinkGraph", "knowGraph"):
+        native_candidates = retrieval_results[name].pop("candidates")
+        for raw in native_candidates[:8]:
+            if not isinstance(raw, dict):
+                continue
+            authority = str(raw.get("authority") or "")
+            native_id = str(raw.get("nativeId") or "")
+            identity = (authority, native_id)
+            if (
+                authority not in {"ThinkGraph", "KnowGraph"}
+                or not native_id
+                or identity in seen
+            ):
+                continue
+            seen.add(identity)
+            candidates.append({
+                **raw,
+                "choiceId": _attention_choice_id(authority, native_id),
+            })
+            if len(candidates) >= 16:
+                break
+        if len(candidates) >= 16:
+            break
+    public_candidates = [{
+        "choiceId": candidate["choiceId"],
+        "authority": candidate["authority"],
+        "nativeId": candidate["nativeId"],
+        "title": str(candidate.get("title") or candidate["nativeId"])[:256],
+        "selected": False,
+        "hydrated": False,
+    } for candidate in candidates]
+    attention: dict[str, Any] = {
+        "schemaVersion": _JEV_ATTENTION_SCHEMA_VERSION,
+        "status": "unavailable",
+        "questionSchemaVersion": _JEV_ATTENTION_QUESTION_SCHEMA_VERSION,
+        "decisionId": f"jev-attention:{uuid4()}",
+        "candidates": public_candidates,
+        "distribution": {},
+        "selectedReferences": [],
+        "policy": {
+            "cumulativeMass": _JEV_ATTENTION_CUMULATIVE_MASS,
+            "minimumSelected": _JEV_ATTENTION_MINIMUM_SELECTED,
+            "maximumSelected": _JEV_ATTENTION_MAXIMUM_SELECTED,
+            "selectedMass": 0.0,
+        },
+        "provider": "",
+        "requestedModel": JEV_MODEL,
+        "resolvedModel": "",
+        "usage": {},
+        "retrieval": retrieval_results,
+        "timingMs": {
+            "thinkRetrieval": retrieval_results["thinkGraph"]["timingMs"],
+            "knowRetrieval": retrieval_results["knowGraph"]["timingMs"],
+            "retrieval": retrieval_ms,
+            "jev": 0.0,
+            "hydration": 0.0,
+            "total": round((time.perf_counter() - total_started) * 1000, 3),
+        },
+    }
+    if not candidates:
+        statuses = [
+            str(result["status"]) for result in retrieval_results.values()
+        ]
+        attention["status"] = _attention_failure_status(statuses)
+        attention["errorCode"] = "jev_attention_candidates_unavailable"
+        return attention, [], total_started
+
+    jev_started = time.perf_counter()
+    try:
+        decision = decide_main_graph_attention(query, candidates)
+    except Exception as error:
+        attention["timingMs"]["jev"] = round(
+            (time.perf_counter() - jev_started) * 1000, 3
+        )
+        attention["timingMs"]["total"] = round(
+            (time.perf_counter() - total_started) * 1000, 3
+        )
+        status, error_code = _attention_error_status(error)
+        attention["status"] = status
+        attention["errorCode"] = error_code
+        return attention, [], total_started
+    attention["timingMs"]["jev"] = round(
+        (time.perf_counter() - jev_started) * 1000, 3
+    )
+    distribution = decision.get("distribution")
+    if not isinstance(distribution, dict) or set(distribution) != {
+        candidate["choiceId"] for candidate in candidates
+    }:
+        attention["status"] = "invalid"
+        attention["errorCode"] = "jev_attention_response_invalid"
+        return attention, [], total_started
+    ordered = sorted(
+        ((choice_id, float(probability)) for choice_id, probability in distribution.items()),
+        key=lambda item: (-item[1], item[0]),
+    )
+    selected_choice_ids: list[str] = []
+    selected_mass = 0.0
+    for choice_id, probability in ordered:
+        if len(selected_choice_ids) >= _JEV_ATTENTION_MAXIMUM_SELECTED:
+            break
+        selected_choice_ids.append(choice_id)
+        selected_mass += probability
+        if (
+            len(selected_choice_ids) >= _JEV_ATTENTION_MINIMUM_SELECTED
+            and selected_mass >= _JEV_ATTENTION_CUMULATIVE_MASS
+        ):
+            break
+    selected_set = set(selected_choice_ids)
+    attention.update({
+        "status": "success",
+        "decisionId": str(decision.get("decisionId") or attention["decisionId"]),
+        "distribution": dict(distribution),
+        "provider": str(decision.get("provider") or ""),
+        "resolvedModel": str(decision.get("resolvedModel") or ""),
+        "usage": decision.get("usage") if isinstance(decision.get("usage"), dict) else {},
+    })
+    attention["policy"]["selectedMass"] = selected_mass
+    for candidate in attention["candidates"]:
+        candidate["probability"] = float(distribution[candidate["choiceId"]])
+        candidate["selected"] = candidate["choiceId"] in selected_set
+    by_choice = {candidate["choiceId"]: candidate for candidate in candidates}
+    selected_anchors = [{
+        "authority": by_choice[choice_id]["authority"],
+        "nativeId": by_choice[choice_id]["nativeId"],
+        "reason": "JevAttention selected this canonical native entity for the current Main message.",
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": False,
+    } for choice_id in selected_choice_ids]
+    attention["timingMs"]["total"] = round(
+        (time.perf_counter() - total_started) * 1000, 3
+    )
+    return attention, selected_anchors, total_started
+
+
+def _fail_attention_hydration(
+    attention: dict[str, Any],
+    *,
+    error_code: str,
+    total_started: float,
+) -> None:
+    attention.update({
+        "status": "error",
+        "selectedReferences": [],
+        "errorCode": error_code,
+    })
+    for candidate in attention["candidates"]:
+        candidate["hydrated"] = False
+    attention["timingMs"]["total"] = round(
+        (time.perf_counter() - total_started) * 1000, 3
+    )
 
 
 def _normalized_data_anchors(value: Any, *, record_name: str) -> list[dict[str, Any]]:
@@ -2927,21 +3186,107 @@ def _resolve_invocation_components(payload: dict[str, Any]) -> dict[str, Any]:
     ]
     if len(anchor_identities) != len(set(anchor_identities)):
         raise CardDomainError("data_anchor_duplicate")
+    attention: dict[str, Any] | None = None
+    attention_anchors: list[dict[str, Any]] = []
+    attention_started: float | None = None
+    attention_query = (
+        str(payload.get("_mainAttentionQuery") or "")
+        if payload.get("_mainAttentionToken") is _MAIN_ATTENTION_TOKEN
+        else ""
+    )
+    runtime = call_config.get("runtime") if isinstance(call_config, dict) else None
+    if (
+        attention_query
+        and isinstance(runtime, dict)
+        and runtime.get("kind") == "hermes"
+        and runtime.get("mode") == "main"
+    ):
+        attention, attention_anchors, attention_started = _prepare_main_graph_attention(
+            project_id=prepared["projectId"],
+            deck_id=prepared["deckId"],
+            card_id=prepared["cardIdentity"]["cardId"],
+            query=attention_query,
+            excluded_identities=set(anchor_identities),
+        )
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
-    graph_projection = empty_graph_projection(prepared["projectId"])
-    try:
-        graph_seed, anchor_references = resolve_data_anchors(
+    all_anchors = [*anchors, *attention_anchors]
+
+    def resolve(
+        current_anchors: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+        projection = empty_graph_projection(prepared["projectId"])
+        seed, resolved = resolve_data_anchors(
             prepared["projectId"],
-            anchors,
+            current_anchors,
             deck_id=prepared["deckId"],
             card_id=prepared["cardIdentity"]["cardId"],
             search_text=assignment,
-            graph_projection=graph_projection,
+            graph_projection=projection,
         )
+        return seed, resolved, projection
+
+    hydration_started = time.perf_counter()
+    try:
+        graph_seed, anchor_references, graph_projection = resolve(all_anchors)
     except DataAnchorError as error:
-        raise CardDomainError(str(error)) from error
+        if not attention_anchors or attention is None or attention_started is None:
+            raise CardDomainError(str(error)) from error
+        try:
+            graph_seed, anchor_references, graph_projection = resolve(anchors)
+        except DataAnchorError as baseline_error:
+            raise CardDomainError(str(baseline_error)) from baseline_error
+        _fail_attention_hydration(
+            attention,
+            error_code=f"jev_attention_hydration_failed:{error}",
+            total_started=attention_started,
+        )
+    else:
+        if attention_anchors and attention is not None and attention_started is not None:
+            resolved_by_identity = {
+                (reference["authority"], reference["nativeId"]): reference
+                for reference in anchor_references
+            }
+            selected_identities = [
+                (anchor["authority"], anchor["nativeId"])
+                for anchor in attention_anchors
+            ]
+            missing = [
+                identity for identity in selected_identities
+                if identity not in resolved_by_identity
+            ]
+            if missing:
+                try:
+                    graph_seed, anchor_references, graph_projection = resolve(anchors)
+                except DataAnchorError as baseline_error:
+                    raise CardDomainError(str(baseline_error)) from baseline_error
+                _fail_attention_hydration(
+                    attention,
+                    error_code="jev_attention_hydration_incomplete",
+                    total_started=attention_started,
+                )
+            else:
+                selected_set = set(selected_identities)
+                attention["selectedReferences"] = [
+                    resolved_by_identity[identity]
+                    for identity in selected_identities
+                ]
+                for candidate in attention["candidates"]:
+                    candidate["hydrated"] = (
+                        candidate["authority"], candidate["nativeId"]
+                    ) in selected_set
+                attention["timingMs"]["total"] = round(
+                    (time.perf_counter() - attention_started) * 1000, 3
+                )
+    if attention is not None and attention_started is not None:
+        attention["timingMs"]["hydration"] = round(
+            (time.perf_counter() - hydration_started) * 1000, 3
+        ) if attention_anchors else 0.0
+        attention["timingMs"]["total"] = round(
+            (time.perf_counter() - attention_started) * 1000, 3
+        )
+        prepared["jevAttention"] = attention
     existing_reference_ids = {
         (reference["authority"], reference["nativeId"]) for reference in references
     }
@@ -3530,6 +3875,8 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
         "deckId": main["deckId"],
         "cardId": main["cardIdentity"]["cardId"],
         "assignment": assignment,
+        "_mainAttentionQuery": message,
+        "_mainAttentionToken": _MAIN_ATTENTION_TOKEN,
     })
 
 

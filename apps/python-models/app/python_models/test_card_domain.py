@@ -3197,6 +3197,381 @@ def test_only_main_mode_can_retask_one_connected_graph_card(
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         invoke("helper", "An ordinary Card cannot orchestrate another Card.")
 
+
+def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    think = [
+        {
+            "authority": "ThinkGraph",
+            "nativeId": native_id,
+            "title": f"Think {native_id}",
+            "nodeType": "Concept",
+        }
+        for native_id in (
+            "explicit", "think-one", "think-one", "think-two",
+            "think-three", "think-four", "shared", "think-five",
+        )
+    ]
+    know = [
+        {
+            "authority": "KnowGraph",
+            "nativeId": native_id,
+            "title": f"Know {native_id}",
+            "nodeType": "Entity",
+        }
+        for native_id in (
+            "explicit", "know-one", "know-one", "know-two",
+            "know-three", "know-four", "shared", "know-five",
+        )
+    ]
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: think,
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: know,
+    )
+    decision_calls = []
+
+    def decide(query, candidates):
+        decision_calls.append((query, candidates))
+        probabilities = [0.45, 0.25, 0.15]
+        tail = 0.15 / (len(candidates) - len(probabilities))
+        distribution = {
+            candidate["choiceId"]: (
+                probabilities[index] if index < 3 else tail
+            )
+            for index, candidate in enumerate(candidates)
+        }
+        return {
+            "decisionId": "decision-policy",
+            "winner": candidates[0]["choiceId"],
+            "distribution": distribution,
+            "provider": "OpenRouter",
+            "requestedModel": "typesafe/jev-1.13",
+            "resolvedModel": "typesafe/jev-1.13",
+            "usage": {"prompt_tokens": 19},
+        }
+
+    monkeypatch.setattr(card_domain, "decide_main_graph_attention", decide)
+
+    attention, anchors, _started = card_domain._prepare_main_graph_attention(
+        project_id="project-one",
+        deck_id="deck-one",
+        card_id="main",
+        query="Current user message",
+        excluded_identities={("ThinkGraph", "explicit")},
+    )
+
+    assert len(decision_calls) == 1
+    assert decision_calls[0][0] == "Current user message"
+    offered = decision_calls[0][1]
+    assert len(offered) <= 16
+    identities = [
+        (candidate["authority"], candidate["nativeId"])
+        for candidate in offered
+    ]
+    assert len(identities) == len(set(identities))
+    assert ("ThinkGraph", "explicit") not in identities
+    assert ("KnowGraph", "explicit") in identities
+    assert ("ThinkGraph", "shared") in identities
+    assert ("KnowGraph", "shared") in identities
+    assert attention["status"] == "success"
+    assert attention["decisionId"] == "decision-policy"
+    assert attention["questionSchemaVersion"] == (
+        "main.graph-attention-choice.v1"
+    )
+    assert set(attention["distribution"]) == {
+        candidate["choiceId"] for candidate in offered
+    }
+    assert attention["policy"] == {
+        "cumulativeMass": 0.8,
+        "minimumSelected": 1,
+        "maximumSelected": 3,
+        "selectedMass": pytest.approx(0.85),
+    }
+    assert len(anchors) == 3
+    assert all(
+        anchor["boundedExpansion"] == 0
+        and anchor["resultLimit"] == 1
+        and anchor["required"] is False
+        for anchor in anchors
+    )
+    assert sum(
+        candidate["selected"] for candidate in attention["candidates"]
+    ) == 3
+    assert all(
+        set(candidate) == {
+            "choiceId", "authority", "nativeId", "title",
+            "probability", "selected", "hydrated",
+        }
+        for candidate in attention["candidates"]
+    )
+    assert "Current user message" not in json.dumps(attention)
+
+
+def _main_attention_materialization_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict:
+    _destination_fixture(monkeypatch)
+    payload = _destination_payload("sender")
+    payload.pop("senderCardId")
+    payload.update({
+        "assignment": "Shared transcript supplied to Main.",
+        "_mainAttentionQuery": "Only this current message is the attention query.",
+        "_mainAttentionToken": card_domain._MAIN_ATTENTION_TOKEN,
+        "dataAnchors": [{
+            "authority": "ThinkGraph",
+            "nativeId": "explicit-one",
+            "reason": "User-selected context",
+            "priority": 10,
+            "boundedExpansion": 0,
+            "resultLimit": 1,
+            "required": False,
+        }],
+    })
+    return payload
+
+
+def _attention_decision(_query, candidates):
+    assert len(candidates) == 2
+    return {
+        "decisionId": "decision-hydration",
+        "winner": candidates[0]["choiceId"],
+        "distribution": {
+            candidates[0]["choiceId"]: 0.8,
+            candidates[1]["choiceId"]: 0.2,
+        },
+        "provider": "OpenRouter",
+        "resolvedModel": "typesafe/jev-1.13",
+        "usage": {"prompt_tokens": 13},
+    }
+
+
+def test_main_attention_hydrates_only_selected_and_stays_outside_idf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _main_attention_materialization_payload(monkeypatch)
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "authority": "ThinkGraph",
+                "nativeId": "explicit-one",
+                "title": "Explicit duplicate",
+            },
+            {
+                "authority": "ThinkGraph",
+                "nativeId": "selected-one",
+                "title": "Selected one",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: [{
+            "authority": "KnowGraph",
+            "nativeId": "unselected-one",
+            "title": "Unselected one",
+        }],
+    )
+    monkeypatch.setattr(
+        card_domain, "decide_main_graph_attention", _attention_decision
+    )
+    resolved_calls = []
+
+    def resolve(_project_id, anchors, **_kwargs):
+        resolved_calls.append([dict(anchor) for anchor in anchors])
+        return "actual selected native graph data", [
+            {
+                "authority": anchor["authority"],
+                "nativeId": anchor["nativeId"],
+                "reason": anchor["reason"],
+                "asOf": "current",
+                "required": anchor["required"],
+            }
+            for anchor in anchors
+        ]
+
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
+
+    invocation = card_domain.materialize_invocation(payload)
+
+    assert len(resolved_calls) == 1
+    assert [anchor["nativeId"] for anchor in resolved_calls[0]] == [
+        "explicit-one", "selected-one",
+    ]
+    assert resolved_calls[0][1] == {
+        "authority": "ThinkGraph",
+        "nativeId": "selected-one",
+        "reason": (
+            "JevAttention selected this canonical native entity for the current "
+            "Main message."
+        ),
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": False,
+    }
+    attention = invocation["jevAttention"]
+    assert attention["status"] == "success"
+    assert [
+        reference["nativeId"] for reference in attention["selectedReferences"]
+    ] == ["selected-one"]
+    assert {
+        candidate["nativeId"]: (
+            candidate["selected"], candidate["hydrated"]
+        )
+        for candidate in attention["candidates"]
+    } == {
+        "selected-one": (True, True),
+        "unselected-one": (False, False),
+    }
+    serialized_idf = json.dumps(invocation["idf"], sort_keys=True)
+    assert "jevAttention" not in serialized_idf
+    assert "decision-hydration" not in serialized_idf
+    assert "unselected-one" not in serialized_idf
+    assert "selected-one" in serialized_idf
+
+
+def test_main_attention_failure_keeps_explicit_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _main_attention_materialization_payload(monkeypatch)
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: [{
+            "authority": "ThinkGraph",
+            "nativeId": "candidate-one",
+            "title": "Candidate one",
+        }],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "decide_main_graph_attention",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            card_domain.JevAttentionError("timeout", "jev_attention_timeout")
+        ),
+    )
+    resolved_calls = []
+
+    def resolve(_project_id, anchors, **_kwargs):
+        resolved_calls.append([dict(anchor) for anchor in anchors])
+        return "explicit baseline", [{
+            "authority": anchors[0]["authority"],
+            "nativeId": anchors[0]["nativeId"],
+            "reason": anchors[0]["reason"],
+            "asOf": "current",
+            "required": anchors[0]["required"],
+        }]
+
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
+
+    invocation = card_domain.materialize_invocation(payload)
+
+    assert [[item["nativeId"] for item in call] for call in resolved_calls] == [
+        ["explicit-one"]
+    ]
+    attention = invocation["jevAttention"]
+    assert attention["status"] == "timeout"
+    assert attention["errorCode"] == "jev_attention_timeout"
+    assert attention["decisionId"].startswith("jev-attention:")
+    assert attention["distribution"] == {}
+    assert all("probability" not in item for item in attention["candidates"])
+    assert [
+        item["nativeId"]
+        for item in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]
+    ] == ["explicit-one"]
+
+
+def test_main_attention_hydration_failure_preserves_real_decision_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _main_attention_materialization_payload(monkeypatch)
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "authority": "ThinkGraph",
+                "nativeId": "selected-one",
+                "title": "Selected one",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: [{
+            "authority": "KnowGraph",
+            "nativeId": "unselected-one",
+            "title": "Unselected one",
+        }],
+    )
+    monkeypatch.setattr(
+        card_domain, "decide_main_graph_attention", _attention_decision
+    )
+    resolved_calls = []
+
+    def resolve(_project_id, anchors, **_kwargs):
+        resolved_calls.append([dict(anchor) for anchor in anchors])
+        if len(anchors) > 1:
+            raise card_domain.DataAnchorError("data_anchor_seed_limit_exceeded")
+        anchor = anchors[0]
+        return "explicit baseline", [{
+            "authority": anchor["authority"],
+            "nativeId": anchor["nativeId"],
+            "reason": anchor["reason"],
+            "asOf": "current",
+            "required": anchor["required"],
+        }]
+
+    monkeypatch.setattr(card_domain, "resolve_data_anchors", resolve)
+
+    invocation = card_domain.materialize_invocation(payload)
+
+    assert [[item["nativeId"] for item in call] for call in resolved_calls] == [
+        ["explicit-one", "selected-one"],
+        ["explicit-one"],
+    ]
+    attention = invocation["jevAttention"]
+    assert attention["status"] == "error"
+    assert attention["errorCode"] == (
+        "jev_attention_hydration_failed:data_anchor_seed_limit_exceeded"
+    )
+    assert attention["decisionId"] == "decision-hydration"
+    assert sorted(attention["distribution"].values()) == [0.2, 0.8]
+    assert attention["policy"]["selectedMass"] == 0.8
+    assert attention["selectedReferences"] == []
+    assert {
+        candidate["nativeId"]: (
+            candidate["probability"],
+            candidate["selected"],
+            candidate["hydrated"],
+        )
+        for candidate in attention["candidates"]
+    } == {
+        "selected-one": (0.8, True, False),
+        "unselected-one": (0.2, False, False),
+    }
+    selected_ids = [
+        item["nativeId"]
+        for item in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]
+    ]
+    assert selected_ids == ["explicit-one"]
+
+
 def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -3207,6 +3582,23 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
         engraphis,
         "get_service",
         lambda *_args, **_kwargs: pytest.fail("Main preparation opened Engraphis"),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "decide_main_graph_attention",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cold-start attention made a Jev call"
+        ),
     )
     main = _agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "default"}
@@ -3277,6 +3669,8 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert inserted["prepared"]["idf"]["dynamicContext"]["task"] == begun["idf"]["dynamicContext"]["task"]
     assert begun["inputFile"]["idfPath"].endswith("in.idf")
     assert materializations == ["Help me prepare work for another agent."]
+    assert begun["jevAttention"]["status"] == "unavailable"
+    assert begun["jevAttention"]["decisionId"].startswith("jev-attention:")
 
 
 def test_main_shared_conversation_is_visible_only_when_main_is_invoked() -> None:

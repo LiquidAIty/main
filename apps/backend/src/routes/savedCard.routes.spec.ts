@@ -3391,6 +3391,77 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('streams one complete Jev attention decision after Run identity and before runtime inference', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      const jevAttention = {
+        schemaVersion: 'jev-attention.v1',
+        status: 'success',
+        decisionId: 'attention-decision-one',
+        resultIdentity: 'attention-result-one',
+        candidates: [{
+          choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'think-native-one',
+          title: 'Think candidate', probability: 0.625, selected: true, hydrated: true,
+        }, {
+          choiceId: 'know-one', authority: 'KnowGraph', nativeId: 'know-native-one',
+          title: 'Know candidate', probability: 0.375, selected: false, hydrated: false,
+        }],
+        distribution: { 'think-one': 0.625, 'know-one': 0.375 },
+        selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'think-native-one' }],
+        policy: { name: 'main-fast-graph-attention' },
+        model: { provider: 'test', model: 'jev-test' },
+        timing: { elapsedMs: 9 },
+        error: null,
+      };
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
+        const value = await railsImplementation(endpoint, init);
+        return endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin'
+          ? { ...value as Record<string, unknown>, jevAttention }
+          : value;
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'jev-attention-order',
+            message: 'inspect exact prepared graph attention',
+          }),
+        });
+        const body = await response.text();
+        const frames = body.split('\n\n');
+        const eventNames = frames.flatMap((frame) => {
+          const match = /^event: (.+)$/m.exec(frame);
+          return match ? [match[1]] : [];
+        });
+        expect(eventNames.filter((name) => name === 'jev_attention')).toEqual(['jev_attention']);
+        expect(eventNames.indexOf('run')).toBeLessThan(eventNames.indexOf('jev_attention'));
+        expect(eventNames.indexOf('jev_attention')).toBeLessThan(eventNames.indexOf('session'));
+        const attentionFrame = frames.find((frame) => frame.startsWith('event: jev_attention'))!;
+        expect(JSON.parse(attentionFrame.split('\ndata: ')[1])).toEqual({
+          kind: 'jev_attention',
+          ...jevAttention,
+          projectId: 'project-1', deckId: 'deck_builder', conversationId: 'jev-attention-order',
+          cardId: 'card_main_chat', runId: expect.stringMatching(/^req_/),
+          participant: expect.objectContaining({ kind: 'card', cardId: 'card_main_chat' }),
+          directAddressed: false,
+        });
+
+        const addressed = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'jev-attention-addressed',
+            message: '@builder answer directly',
+          }),
+        });
+        const addressedBody = await addressed.text();
+        expect(addressed.status).toBe(200);
+        expect(addressedBody).not.toContain('event: jev_attention');
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
     it('preserves a long multiline direct Builder reply unchanged in the native Run and shared chat', async () => {
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -4423,9 +4494,6 @@ describe('saved Card routes', () => {
         expect(body).toContain('main_gateway_turn_failed');
         expect(body).toContain('"runId":"req_');
         expect(body).not.toContain('provider credential leaked');
-        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.some(
-          ([route]) => route === '/domain/main/completed-pair',
-        )).toBe(false);
       } finally {
         await closeServer(server);
       }

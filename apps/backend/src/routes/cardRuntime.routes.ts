@@ -84,6 +84,136 @@ type PreparedMainCliRun = {
   savedCard: any;
 };
 
+type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
+type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
+
+type JevAttentionDecision = {
+  schemaVersion: 'jev-attention.v1';
+  status: JevAttentionStatus;
+  decisionId: string;
+  candidates: Array<{
+    choiceId: string;
+    authority: JevAttentionAuthority;
+    nativeId: string;
+    title: string;
+    probability?: number;
+    selected: boolean;
+    hydrated: boolean;
+  }>;
+  distribution: Record<string, number>;
+  selectedReferences: Array<{
+    authority: JevAttentionAuthority;
+    nativeId: string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+function jevAttentionTelemetry(decision: JevAttentionDecision): Record<string, unknown> {
+  return {
+    schemaVersion: decision.schemaVersion,
+    status: decision.status,
+    decisionId: decision.decisionId,
+    candidates: decision.candidates.map((candidate) => ({
+      choiceId: candidate.choiceId,
+      authority: candidate.authority,
+      nativeId: candidate.nativeId,
+      ...(candidate.probability === undefined ? {} : { probability: candidate.probability }),
+      selected: candidate.selected,
+      hydrated: candidate.hydrated,
+    })),
+    distribution: decision.distribution,
+    selectedReferences: decision.selectedReferences.map((reference) => ({
+      authority: reference.authority,
+      nativeId: reference.nativeId,
+    })),
+    provider: decision.provider ?? null,
+    model: decision.model ?? null,
+    policy: decision.policy ?? null,
+    retrieval: decision.retrieval ?? null,
+    timing: decision.timing ?? null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function preparedJevAttention(value: unknown): JevAttentionDecision | null {
+  if (value === undefined || value === null) return null;
+  if (!isRecord(value)
+    || value.schemaVersion !== 'jev-attention.v1'
+    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(String(value.status || ''))
+    || typeof value.decisionId !== 'string' || !value.decisionId.trim()
+    || !Array.isArray(value.candidates)
+    || !isRecord(value.distribution)
+    || !Array.isArray(value.selectedReferences)) {
+    throw new Error('main_jev_attention_invalid');
+  }
+  const choiceIds = new Set<string>();
+  for (const candidate of value.candidates) {
+    if (!isRecord(candidate)
+      || typeof candidate.choiceId !== 'string' || !candidate.choiceId.trim()
+      || choiceIds.has(candidate.choiceId)
+      || !['ThinkGraph', 'KnowGraph'].includes(String(candidate.authority || ''))
+      || typeof candidate.nativeId !== 'string' || !candidate.nativeId.trim()
+      || typeof candidate.title !== 'string' || !candidate.title.trim()
+      || typeof candidate.selected !== 'boolean'
+      || typeof candidate.hydrated !== 'boolean'
+      || (candidate.probability !== undefined && (
+        typeof candidate.probability !== 'number'
+        || !Number.isFinite(candidate.probability)
+        || candidate.probability < 0
+        || candidate.probability > 1
+      ))) {
+      throw new Error('main_jev_attention_invalid');
+    }
+    choiceIds.add(candidate.choiceId);
+  }
+  for (const [choiceId, probability] of Object.entries(value.distribution)) {
+    if (!choiceId.trim() || typeof probability !== 'number' || !Number.isFinite(probability)
+      || probability < 0 || probability > 1) {
+      throw new Error('main_jev_attention_invalid');
+    }
+  }
+  for (const reference of value.selectedReferences) {
+    if (!isRecord(reference)
+      || !['ThinkGraph', 'KnowGraph'].includes(String(reference.authority || ''))
+      || typeof reference.nativeId !== 'string' || !reference.nativeId.trim()) {
+      throw new Error('main_jev_attention_invalid');
+    }
+  }
+  if (value.status === 'success') {
+    const candidates = value.candidates as JevAttentionDecision['candidates'];
+    const distribution = value.distribution as Record<string, number>;
+    const distributionKeys = Object.keys(distribution);
+    const probabilitySum = candidates.reduce((sum, candidate) => {
+      if (candidate.probability === undefined
+        || !(candidate.choiceId in distribution)
+        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) {
+        throw new Error('main_jev_attention_invalid');
+      }
+      return sum + candidate.probability;
+    }, 0);
+    if (distributionKeys.length !== candidates.length
+      || distributionKeys.some((choiceId) => !choiceIds.has(choiceId))
+      || Math.abs(probabilitySum - 1) > 1e-6) {
+      throw new Error('main_jev_attention_invalid');
+    }
+    const selectedCandidateRefs = new Set(candidates
+      .filter((candidate) => candidate.selected && candidate.hydrated)
+      .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));
+    const selectedReferenceRefs = new Set((value.selectedReferences as JevAttentionDecision['selectedReferences'])
+      .map((reference) => `${reference.authority}\u0000${reference.nativeId}`));
+    if (selectedReferenceRefs.size !== value.selectedReferences.length
+      || selectedCandidateRefs.size !== selectedReferenceRefs.size
+      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))) {
+      throw new Error('main_jev_attention_invalid');
+    }
+  }
+  return value as JevAttentionDecision;
+}
+
 type AddressableAgent = {
   cardId: string;
   cardRevisionId: string;
@@ -2483,6 +2613,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
 
   const requestedRunId = `req_${randomUUID().slice(0, 8)}`;
   let run: PreparedMainCliRun;
+  let jevAttention: JevAttentionDecision | null = null;
   try {
     if (directAddressed) {
       const savedPreparation = await prepareSavedCardRun({
@@ -2539,6 +2670,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       if (run.cardId !== authority.main.cardId) {
         throw new Error('main_card_identity_mismatch');
       }
+      jevAttention = preparedJevAttention(run.prepared?.jevAttention);
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : (
@@ -2584,6 +2716,10 @@ mainRoutes.post('/session/chat', async (req, res) => {
       contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
     }),
   });
+  if (!directAddressed && jevAttention) {
+    logHarnessTrace(`[jev-attention] ${JSON.stringify(jevAttentionTelemetry(jevAttention))}`);
+    writeSse('jev_attention', { ...jevAttention, kind: 'jev_attention' });
+  }
 
   const magenticAcceptance: { status: MagenticExecutionStatus | null } = { status: null };
   let magenticProgressBound = false;

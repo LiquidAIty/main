@@ -33,6 +33,7 @@ export default function BuilderChat({
   colors,
   busy = false,
   connecting = false,
+  queuedCount = 0,
   historyLoading = false,
   error = null,
   onStop,
@@ -58,10 +59,12 @@ export default function BuilderChat({
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
-  /** The real SSE turn is still open; prevent a second send and state it plainly. */
+  /** The real SSE turn is still open; the composer remains available and submissions queue. */
   busy?: boolean;
-  /** The send request is opening; no native Hermes turn has been announced yet. */
+  /** The send request is opening; additional submissions queue behind it. */
   connecting?: boolean;
+  /** Inputs waiting to use the same canonical Main session after its active turn. */
+  queuedCount?: number;
   /** Native conversation history is rejoining; prevent a send that could be overwritten by readback. */
   historyLoading?: boolean;
   /** Visible transport/configuration failure; never represented as assistant speech. */
@@ -72,7 +75,7 @@ export default function BuilderChat({
 }) {
   const [localDraft, setLocalDraft] = useState("");
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
-  const interactionDisabled = busy || connecting || historyLoading;
+  const interactionDisabled = historyLoading;
   const value = draft === undefined ? localDraft : draft;
   const setValue = (next: string) => {
     if (draft === undefined) setLocalDraft(next);
@@ -339,7 +342,7 @@ export default function BuilderChat({
               ))}
             </div>
           ) : null}
-          {busy ? (
+          {busy || connecting ? (
             <span
               data-testid="builder-chat-active-indicator"
               aria-hidden="true"
@@ -351,6 +354,15 @@ export default function BuilderChat({
                 animation: "builder-chat-active-pulse 1.1s ease-in-out infinite",
               }}
             />
+          ) : null}
+          {queuedCount > 0 ? (
+            <span
+              data-testid="builder-chat-queued-count"
+              role="status"
+              style={{ color: colors.neutral, fontSize: 11, whiteSpace: "nowrap" }}
+            >
+              {queuedCount} queued
+            </span>
           ) : null}
           {busy && onStop ? (
             <button type="button" data-testid="builder-chat-stop" onClick={onStop}>

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  isJevAttentionEvent,
   loadMainDriverStatus,
   loadSessionHistory,
   selectedConversationId,
@@ -63,6 +64,64 @@ describe('loadMainDriverStatus', () => {
 });
 
 describe('streamSession', () => {
+  it('forwards one complete Jev attention result with its distribution and identity', async () => {
+    const attention = {
+      schemaVersion: 'jev-attention.v1', status: 'success',
+      decisionId: 'decision-one', resultIdentity: 'result-one',
+      projectId: 'p', deckId: 'd', conversationId: 'main', cardId: 'card_main_chat', runId: 'r',
+      directAddressed: false,
+      candidates: [{ choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'native-think',
+        title: 'Think result', probability: 0.7, selected: true, hydrated: true },
+      { choiceId: 'know-one', authority: 'KnowGraph', nativeId: 'native-know',
+        title: 'Know result', probability: 0.3, selected: false, hydrated: true }],
+      distribution: { 'think-one': 0.7, 'know-one': 0.3 },
+      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-think' }],
+      policy: { limit: 8 }, model: { name: 'jev-test' }, timing: { elapsedMs: 5 }, error: null,
+    };
+    const frame = `event: jev_attention\ndata: ${JSON.stringify(attention)}\n\n`;
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      'event: run\ndata: {"projectId":"p","deckId":"d","conversationId":"main","cardId":"card_main_chat","runId":"r","directAddressed":false}\n\n',
+      frame, frame,
+      'event: done\ndata: {"fullText":"done"}\n\nevent: end\ndata: {}\n\n',
+    ])));
+    const onEvent = vi.fn();
+
+    await streamSession({ projectId: 'p', conversationId: 'main', message: 'input', onEvent });
+
+    const delivered = onEvent.mock.calls.map(([event]) => event)
+      .filter((event) => event.kind === 'jev_attention');
+    expect(delivered).toEqual([{ kind: 'jev_attention', ...attention }]);
+    expect(delivered[0].distribution).toEqual({ 'think-one': 0.7, 'know-one': 0.3 });
+  });
+
+  it('refuses malformed Jev attention identity, status, and distribution shapes', async () => {
+    const valid = {
+      kind: 'jev_attention', schemaVersion: 'jev-attention.v1', status: 'success',
+      decisionId: 'decision-one', projectId: 'p', deckId: 'd', conversationId: 'main',
+      cardId: 'card_main_chat', runId: 'r', directAddressed: false,
+      candidates: [{ choiceId: 'choice-one', authority: 'ThinkGraph', nativeId: 'native-one',
+        title: 'Candidate one', probability: 1, selected: true, hydrated: true }],
+      distribution: { 'choice-one': 1 },
+      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'native-one' }],
+    };
+    expect(isJevAttentionEvent(valid)).toBe(true);
+    expect(isJevAttentionEvent({ ...valid, decisionId: '' })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid, status: 'complete' })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid, distribution: { choice: '0.9' } })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 0.9 } })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid, distribution: { 'choice-one': 1, extra: 0 } })).toBe(false);
+    expect(isJevAttentionEvent({ ...valid,
+      selectedReferences: [{ authority: 'KnowGraph', nativeId: 'native-one' }],
+    })).toBe(false);
+    vi.stubGlobal('fetch', vi.fn(async () => sseResponse([
+      `event: jev_attention\ndata: ${JSON.stringify({ ...valid, kind: undefined, distribution: { choice: '0.9' } })}\n\n`,
+      'event: end\ndata: {}\n\n',
+    ])));
+    await expect(streamSession({
+      projectId: 'p', conversationId: 'main', message: 'input', onEvent: vi.fn(),
+    })).rejects.toMatchObject({ code: 'jev_attention_event_invalid' });
+  });
+
   it('delivers a stable native event ID exactly once without comparing its content', async () => {
     const frame = (output: string) => `event: tool_progress\ndata: ${JSON.stringify({ output,
       projectId: 'p', deckId: 'd', runId: 'r', terminalEvent: { id: 'r:tool:t:partial', detail: output } })}\n\n`;

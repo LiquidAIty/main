@@ -116,6 +116,39 @@ describe('Main chat live observation callbacks', () => {
     ]);
   });
 
+  it('binds the initial Run identity before forwarding its Jev attention event', async () => {
+    const order: string[] = [];
+    const onUserTurnStarted = vi.fn(() => order.push('started'));
+    const onNativeTurnEvent = vi.fn((turn) => order.push(String(turn.event.kind)));
+    const attention = {
+      kind: 'jev_attention', schemaVersion: 'jev-attention.v1', status: 'success',
+      decisionId: 'decision-one', resultIdentity: 'result-one',
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      cardId: 'card_main_chat', runId: 'server-run', directAddressed: false,
+      candidates: [], distribution: {}, selectedReferences: [],
+    };
+    mocks.streamSession.mockImplementation(async ({ onEvent }) => {
+      onEvent({
+        kind: 'run', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', runId: 'server-run', directAddressed: false,
+      });
+      onEvent(attention);
+      return { finalText: 'Answer.' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      onUserTurnStarted, onNativeTurnEvent,
+    }));
+
+    await act(async () => { await result.current.requestMainText('Question'); });
+
+    expect(order).toEqual(['started', 'run', 'jev_attention']);
+    expect(onUserTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ runId: 'server-run' }));
+    expect(onNativeTurnEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+      runId: 'server-run', event: attention,
+    }));
+  });
+
   it('projects input and final answer into Chat exactly once while execution stays terminal-only', async () => {
     const base = { projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
       cardName: 'Main Chat', runId: 'server-run', parentRunId: null, nativeChildId: null,

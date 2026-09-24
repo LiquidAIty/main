@@ -576,6 +576,7 @@ export default function AgentBuilder(): React.ReactElement {
     addressableAgents,
     nativeSessionActive,
     nativeSessionConnecting,
+    queuedInputCount,
     mainDriverSource,
     sessionHistoryLoading,
     stopMainTurn,
@@ -1207,6 +1208,7 @@ export default function AgentBuilder(): React.ReactElement {
           colors={C}
           busy={nativeSessionActive}
           connecting={nativeSessionConnecting}
+          queuedCount={queuedInputCount}
           historyLoading={sessionHistoryLoading}
           error={technicalError}
           onStop={() => {

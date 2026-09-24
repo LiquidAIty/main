@@ -873,6 +873,125 @@ def _knowgraph_fact_record(
     }
 
 
+def search_knowgraph_attention_candidates(
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    query: str,
+    *,
+    limit: int = 8,
+    mcp_reader: Callable[..., list[dict[str, Any]]] = call_read_tools_via_mcp,
+) -> list[dict[str, Any]]:
+    """Return canonical KnowGraph entity candidates without graph hydration.
+
+    This attention-only stage performs the existing native node and fact searches
+    under the materializer-read principal.  Node hits and fact endpoint UUIDs are
+    reduced to bounded identity metadata; episodes, neighborhoods, and full
+    native records remain untouched until an ordinary selected Data Anchor is
+    resolved later.
+    """
+
+    query = str(query or "")
+    if not query.strip():
+        raise DataAnchorError("data_anchor_knowgraph_search_query_required")
+    if not deck_id or not card_id:
+        raise DataAnchorError("data_anchor_knowgraph_context_missing")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 8:
+        raise DataAnchorError("data_anchor_knowgraph_limit_invalid")
+    try:
+        results = mcp_reader(
+            project_id=project_id,
+            deck_id=deck_id,
+            card_id=card_id,
+            calls=[
+                ("graphiti.search_nodes", {"query": query, "max_nodes": 8}),
+                ("graphiti.search_memory_facts", {"query": query, "max_facts": 8}),
+            ],
+            concurrent=True,
+        )
+    except Exception as error:
+        raise DataAnchorError("data_anchor_knowgraph_unavailable") from error
+    if len(results) != 2 or any(not isinstance(item, dict) for item in results):
+        raise DataAnchorError("data_anchor_knowgraph_search_result_invalid")
+    if any(item.get("ok") is False or item.get("error") for item in results):
+        raise DataAnchorError("data_anchor_knowgraph_unavailable")
+    node_rows = _payload_records(results[0], "nodes")
+    fact_rows = _payload_records(results[1], "facts")
+
+    candidates: dict[str, dict[str, Any]] = {}
+
+    def ensure_candidate(
+        native_id: str,
+        *,
+        title: str = "",
+        node_type: str = "",
+    ) -> dict[str, Any] | None:
+        native_id = str(native_id or "").strip()
+        if not native_id:
+            return None
+        current = candidates.get(native_id)
+        if current is None:
+            if len(candidates) >= limit:
+                return None
+            current = {
+                "authority": "KnowGraph",
+                "nativeId": native_id,
+                "title": str(title or native_id)[:256],
+                "nodeType": str(node_type or "Entity")[:128],
+                "nativeSearch": {},
+                "factEvidence": [],
+            }
+            candidates[native_id] = current
+        elif title and current["title"] == native_id:
+            current["title"] = str(title)[:256]
+        return current
+
+    for item in node_rows:
+        native_id = str(item.get("uuid") or item.get("nativeId") or "").strip()
+        labels = _string_values(item.get("labels") or item.get("entity_types"))
+        candidate = ensure_candidate(
+            native_id,
+            title=str(item.get("name") or item.get("title") or native_id),
+            node_type=(labels[0] if labels else str(item.get("type") or "Entity")),
+        )
+        if candidate is None:
+            continue
+        native_search = {
+            key: item[key]
+            for key in ("score", "distance", "reranker_score")
+            if isinstance(item.get(key), (int, float))
+            and not isinstance(item.get(key), bool)
+        }
+        if native_search and not candidate["nativeSearch"]:
+            candidate["nativeSearch"] = native_search
+
+    for item in fact_rows:
+        fact_id = str(item.get("uuid") or item.get("nativeId") or "").strip()
+        source_id = str(
+            item.get("source_node_uuid") or item.get("sourceNodeUuid") or ""
+        ).strip()
+        target_id = str(
+            item.get("target_node_uuid") or item.get("targetNodeUuid") or ""
+        ).strip()
+        evidence = {
+            "nativeFactUuid": fact_id,
+            "relation": str(item.get("name") or item.get("edge_type") or "Fact")[:128],
+            "fact": str(item.get("fact") or "")[:500],
+        }
+        for endpoint_id in (source_id, target_id):
+            candidate = ensure_candidate(endpoint_id)
+            if candidate is None:
+                continue
+            fact_evidence = candidate["factEvidence"]
+            if (
+                len(fact_evidence) < 3
+                and fact_id
+                and all(item["nativeFactUuid"] != fact_id for item in fact_evidence)
+            ):
+                fact_evidence.append(evidence)
+    return list(candidates.values())[:limit]
+
+
 def search_knowgraph_hybrid(
     project_id: str,
     deck_id: str,

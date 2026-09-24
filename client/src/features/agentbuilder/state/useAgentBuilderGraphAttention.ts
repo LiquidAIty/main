@@ -7,6 +7,10 @@ import type {
 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { callCbmTool, CANONICAL_CBM_PROJECT_NAME } from '../../../components/codegraph/resolveCodeGraphProjectIdentity';
+import {
+  isJevAttentionEvent,
+  type JevAttentionEvent,
+} from '../console/mainSessionClient';
 import type {
   MainChatTurnEvent,
   MainChatTurnFinished,
@@ -643,7 +647,7 @@ export default function useAgentBuilderGraphAttention({
       || turn.conversationId !== conversationId
     ) return;
     const session = turn.event as Record<string, unknown>;
-    if (session.kind === 'session') {
+    if (session.kind === 'run' || session.kind === 'session') {
       const serverRunId = String(session.runId || '').trim();
       if (
         serverRunId
@@ -651,8 +655,55 @@ export default function useAgentBuilderGraphAttention({
         && session.deckId === deckId
         && session.conversationId === conversationId
       ) {
-        scope.serverRunId = serverRunId;
+        if (session.kind === 'run' || !scope.serverRunId) scope.serverRunId = serverRunId;
       }
+      return;
+    }
+    if (session.kind === 'jev_attention') {
+      if (!scope.serverRunId || !isJevAttentionEvent(session)) return;
+      const event = session as JevAttentionEvent;
+      if (event.projectId !== projectId || event.deckId !== deckId
+        || event.conversationId !== conversationId || event.runId !== scope.serverRunId) return;
+      const resultIdentity = typeof event.resultIdentity === 'string' && event.resultIdentity.trim()
+        ? event.resultIdentity.trim()
+        : typeof event.resultHash === 'string' && event.resultHash.trim()
+          ? event.resultHash.trim()
+          : event.status;
+      const key = `jev:${event.decisionId}:${resultIdentity}`;
+      if (seenEventIdsRef.current.has(key)) return;
+      seenEventIdsRef.current.add(key);
+      mainActorRef.current = event.cardId;
+      if (event.status !== 'success') return;
+      const nodeIds = {
+        thinkgraph: new Set<string>(),
+        knowgraph: new Set<string>(),
+      };
+      for (const candidate of event.candidates) {
+        if (!candidate.selected || !candidate.hydrated) continue;
+        nodeIds[candidate.authority === 'ThinkGraph' ? 'thinkgraph' : 'knowgraph']
+          .add(candidate.nativeId);
+      }
+      if (!nodeIds.thinkgraph.size && !nodeIds.knowgraph.size) return;
+      const context: AttentionContext = {
+        actorCardId: event.cardId,
+        actorColor: CARD_ACTIVE_COLOR,
+        toolName: 'jev_attention',
+        operation: 'read',
+        eventId: event.decisionId,
+        runId: event.runId,
+        ...(typeof event.resultHash === 'string' && event.resultHash
+          ? { resultHash: event.resultHash }
+          : {}),
+      };
+      setProjections((current) => ({
+        ...current,
+        thinkgraph: overlayAuthoritativeGraphAttention(current.thinkgraph, {
+          nodeIds: [...nodeIds.thinkgraph], edgeIds: [], context, active: true,
+        }),
+        knowgraph: overlayAuthoritativeGraphAttention(current.knowgraph, {
+          nodeIds: [...nodeIds.knowgraph], edgeIds: [], context, active: true,
+        }),
+      }));
       return;
     }
     const event = turn.event as NativeAttentionEvent;

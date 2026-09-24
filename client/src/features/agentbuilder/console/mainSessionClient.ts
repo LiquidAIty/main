@@ -20,6 +20,110 @@ export type NativeSessionEvent = {
   [key: string]: unknown;
 };
 
+export type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
+export type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
+
+export type JevAttentionCandidate = {
+  choiceId: string;
+  authority: JevAttentionAuthority;
+  nativeId: string;
+  title: string;
+  probability?: number;
+  selected: boolean;
+  hydrated: boolean;
+};
+
+export type JevAttentionEvent = NativeSessionEvent & {
+  kind: 'jev_attention';
+  schemaVersion: 'jev-attention.v1';
+  status: JevAttentionStatus;
+  decisionId: string;
+  candidates: JevAttentionCandidate[];
+  distribution: Record<string, number>;
+  selectedReferences: Array<{
+    authority: JevAttentionAuthority;
+    nativeId: string;
+    [key: string]: unknown;
+  }>;
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  cardId: string;
+  runId: string;
+  directAddressed: false;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function isJevAttentionEvent(value: unknown): value is JevAttentionEvent {
+  if (!isRecord(value)
+    || value.kind !== 'jev_attention'
+    || value.schemaVersion !== 'jev-attention.v1'
+    || !['success', 'unavailable', 'timeout', 'invalid', 'error'].includes(String(value.status || ''))
+    || typeof value.decisionId !== 'string' || !value.decisionId.trim()
+    || typeof value.projectId !== 'string' || !value.projectId.trim()
+    || typeof value.deckId !== 'string' || !value.deckId.trim()
+    || typeof value.conversationId !== 'string' || !value.conversationId.trim()
+    || typeof value.cardId !== 'string' || !value.cardId.trim()
+    || typeof value.runId !== 'string' || !value.runId.trim()
+    || value.directAddressed !== false
+    || !Array.isArray(value.candidates)
+    || !isRecord(value.distribution)
+    || !Array.isArray(value.selectedReferences)) return false;
+  const choiceIds = new Set<string>();
+  for (const candidate of value.candidates) {
+    if (!isRecord(candidate)
+      || typeof candidate.choiceId !== 'string' || !candidate.choiceId.trim()
+      || choiceIds.has(candidate.choiceId)
+      || !['ThinkGraph', 'KnowGraph'].includes(String(candidate.authority || ''))
+      || typeof candidate.nativeId !== 'string' || !candidate.nativeId.trim()
+      || typeof candidate.title !== 'string' || !candidate.title.trim()
+      || typeof candidate.selected !== 'boolean'
+      || typeof candidate.hydrated !== 'boolean'
+      || (candidate.probability !== undefined && (
+        typeof candidate.probability !== 'number'
+        || !Number.isFinite(candidate.probability)
+        || candidate.probability < 0
+        || candidate.probability > 1
+      ))) return false;
+    choiceIds.add(candidate.choiceId);
+  }
+  for (const [choiceId, probability] of Object.entries(value.distribution)) {
+    if (!choiceId.trim() || typeof probability !== 'number' || !Number.isFinite(probability)
+      || probability < 0 || probability > 1) return false;
+  }
+  if (!value.selectedReferences.every((reference) => isRecord(reference)
+    && ['ThinkGraph', 'KnowGraph'].includes(String(reference.authority || ''))
+    && typeof reference.nativeId === 'string' && Boolean(reference.nativeId.trim()))) return false;
+  if (value.status === 'success') {
+    const candidates = value.candidates as JevAttentionCandidate[];
+    const distribution = value.distribution as Record<string, number>;
+    const distributionKeys = Object.keys(distribution);
+    const probabilitySum = candidates.reduce((sum, candidate) => {
+      if (candidate.probability === undefined
+        || !(candidate.choiceId in distribution)
+        || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) return Number.NaN;
+      return sum + candidate.probability;
+    }, 0);
+    if (distributionKeys.length !== candidates.length
+      || distributionKeys.some((choiceId) => !choiceIds.has(choiceId))
+      || !Number.isFinite(probabilitySum)
+      || Math.abs(probabilitySum - 1) > 1e-6) return false;
+    const selectedCandidateRefs = new Set(candidates
+      .filter((candidate) => candidate.selected && candidate.hydrated)
+      .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));
+    const selectedReferences = value.selectedReferences as JevAttentionEvent['selectedReferences'];
+    const selectedReferenceRefs = new Set(selectedReferences
+      .map((reference) => `${reference.authority}\u0000${reference.nativeId}`));
+    if (selectedReferenceRefs.size !== selectedReferences.length
+      || selectedCandidateRefs.size !== selectedReferenceRefs.size
+      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))) return false;
+  }
+  return true;
+}
+
 export type MainGatewayEvent = {
   type: string;
   session_id?: string;
@@ -194,14 +298,25 @@ export async function streamSession(args: {
         });
       }
       if (kind === 'end') sawEnd = true;
+      const event = { ...data, kind };
+      if (kind === 'jev_attention' && !isJevAttentionEvent(event)) {
+        throw new SessionStreamError({
+          code: 'jev_attention_event_invalid',
+          message: 'The chat stream reported a malformed Jev attention decision.',
+          route: `${BASE}/chat`,
+        });
+      }
       const eventId = (data.projection as MainProjectionEvent | undefined)?.id
-        || (data.terminalEvent as RuntimeEvent | undefined)?.id;
+        || (data.terminalEvent as RuntimeEvent | undefined)?.id
+        || (kind === 'jev_attention'
+          ? `${String(data.decisionId || '')}:${String(data.resultIdentity || data.resultHash || '')}`
+          : undefined);
       if (eventId) {
         const identity = `${String(data.projectId || '')}:${String(data.deckId || '')}:${String(data.runId || '')}:${eventId}`;
         if (deliveredEvents.has(identity)) continue;
         deliveredEvents.add(identity);
       }
-      args.onEvent({ ...data, kind });
+      args.onEvent(event);
     }
   }
   if (streamFailure) throw streamFailure;

@@ -172,6 +172,8 @@ export default function useAgentBuilderMainChat({
     key: conversationKey,
     ids: new Set(),
   });
+  const queuedInputsRef = useRef<Array<{ key: string; text: string }>>([]);
+  const [queuedInputCount, setQueuedInputCount] = useState(0);
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
   const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
@@ -247,6 +249,8 @@ export default function useAgentBuilderMainChat({
     setSharedAuthority({ key: conversationKey, mainCardId: '', agents: [] });
     setTechnical({ key: conversationKey, events: [], error: null });
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
+    queuedInputsRef.current = [];
+    setQueuedInputCount(0);
     setTurnState({ key: conversationKey, phase: 'idle' });
     setMainDriverSource(null);
 
@@ -587,12 +591,29 @@ export default function useAgentBuilderMainChat({
 
   const handleNativeSend = useCallback(
     (text: string) => {
+      if (!text.trim()) return;
+      if (nativeSessionPending || activeStreamRef.current?.key === conversationKey) {
+        queuedInputsRef.current.push({ key: conversationKey, text });
+        setQueuedInputCount(queuedInputsRef.current.length);
+        return;
+      }
       void requestMainText(text).catch(() => {
         // Native failure remains transport telemetry and never transcript text.
       });
     },
-    [requestMainText],
+    [conversationKey, nativeSessionPending, requestMainText],
   );
+
+  useEffect(() => {
+    if (nativeSessionPending || sessionHistoryLoading) return;
+    const next = queuedInputsRef.current[0];
+    if (!next || next.key !== conversationKey) return;
+    queuedInputsRef.current.shift();
+    setQueuedInputCount(queuedInputsRef.current.length);
+    void requestMainText(next.text).catch(() => {
+      // The queued turn used the same canonical route; failures remain transport telemetry.
+    });
+  }, [conversationKey, nativeSessionPending, queuedInputCount, requestMainText, sessionHistoryLoading]);
 
   const stopMainTurn = useCallback(async () => {
     if (!nativeSessionPending || !canvasProjectId) return;
@@ -635,6 +656,7 @@ export default function useAgentBuilderMainChat({
     mainDriverSource,
     nativeSessionActive,
     nativeSessionConnecting,
+    queuedInputCount,
     sessionHistoryLoading,
     requestMainText,
     stopMainTurn,

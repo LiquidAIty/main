@@ -77,6 +77,124 @@ function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relations
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('illuminates only selected hydrated Jev candidates in their exact native authority scope', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? thinkgraphResponse([
+        { id: 'think-selected', label: 'Selected thought', properties: {} },
+        { id: 'think-unselected', label: 'Unselected thought', properties: {} },
+      ])
+      : knowledgeResponse([
+        { id: 'know-selected', label: 'Selected source', properties: {} },
+        { id: 'know-unhydrated', label: 'Unhydrated source', properties: {} },
+      ])));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+    const runEvent = (runId: string) => ({
+      ...turn,
+      runId,
+      event: {
+        kind: 'run', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', runId, directAddressed: false,
+      },
+    });
+    const jevEvent = (runId: string, overrides: Record<string, unknown> = {}) => ({
+      ...turn,
+      runId,
+      event: {
+        kind: 'jev_attention', schemaVersion: 'jev-attention.v1', status: 'success',
+        decisionId: `decision-${runId}`, resultIdentity: `result-${runId}`,
+        projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', runId, directAddressed: false,
+        candidates: [
+          { choiceId: 'think-selected', authority: 'ThinkGraph', nativeId: 'think-selected',
+            title: 'Selected thought', probability: 0.4, selected: true, hydrated: true },
+          { choiceId: 'think-unselected', authority: 'ThinkGraph', nativeId: 'think-unselected',
+            title: 'Unselected thought', probability: 0.3, selected: false, hydrated: true },
+          { choiceId: 'know-selected', authority: 'KnowGraph', nativeId: 'know-selected',
+            title: 'Selected source', probability: 0.2, selected: true, hydrated: true },
+          { choiceId: 'know-unhydrated', authority: 'KnowGraph', nativeId: 'know-unhydrated',
+            title: 'Unhydrated source', probability: 0.1, selected: true, hydrated: false },
+        ],
+        distribution: {
+          'think-selected': 0.4, 'think-unselected': 0.3,
+          'know-selected': 0.2, 'know-unhydrated': 0.1,
+        },
+        selectedReferences: [
+          { authority: 'ThinkGraph', nativeId: 'think-selected' },
+          { authority: 'KnowGraph', nativeId: 'know-selected' },
+        ],
+        ...overrides,
+      },
+    });
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-one' }));
+    act(() => result.current.observeNativeTurnEvent(runEvent('client-one')));
+    act(() => result.current.observeNativeTurnEvent(jevEvent('client-one')));
+
+    expect(result.current.projections.thinkgraph.nodes.map((node) => ({
+      id: node.id, active: node.properties?.attentionActive,
+    }))).toEqual([
+      { id: 'think-selected', active: true },
+      { id: 'think-unselected', active: undefined },
+    ]);
+    expect(result.current.projections.knowgraph.nodes.map((node) => ({
+      id: node.id, active: node.properties?.attentionActive,
+    }))).toEqual([
+      { id: 'know-selected', active: true },
+      { id: 'know-unhydrated', active: undefined },
+    ]);
+    expect(result.current.projections.thinkgraph.nodes[0].properties).toMatchObject({
+      attentionEventId: 'decision-client-one', attentionToolName: 'jev_attention',
+      attentionRunId: 'client-one',
+    });
+
+    // The exact decision/result identity is delivered at most once.
+    act(() => result.current.observeNativeTurnEvent(jevEvent('client-one', {
+      candidates: [{ choiceId: 'duplicate', authority: 'ThinkGraph', nativeId: 'think-unselected',
+        title: 'Duplicate delivery', probability: 1, selected: true, hydrated: true }],
+      distribution: { duplicate: 1 },
+      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'think-unselected' }],
+    })));
+    expect(result.current.projections.thinkgraph.nodes[1].properties?.attentionActive).toBeUndefined();
+
+    act(() => result.current.finishAttentionScope({ ...turn, runId: 'client-one', status: 'completed' }));
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-two' }));
+    expect(result.current.projections.thinkgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+    act(() => result.current.observeNativeTurnEvent(runEvent('client-two')));
+    act(() => result.current.observeNativeTurnEvent(jevEvent('client-two', {
+      candidates: [{ choiceId: 'next', authority: 'KnowGraph', nativeId: 'know-unhydrated',
+        title: 'Next selected source', probability: 1, selected: true, hydrated: true }],
+      distribution: { next: 1 },
+      selectedReferences: [{ authority: 'KnowGraph', nativeId: 'know-unhydrated' }],
+    })));
+    expect(result.current.projections.knowgraph.nodes[1].properties?.attentionActive).toBe(true);
+    expect(result.current.projections.thinkgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+
+    act(() => result.current.finishAttentionScope({ ...turn, runId: 'client-two', status: 'completed' }));
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-three' }));
+    act(() => result.current.observeNativeTurnEvent(runEvent('client-three')));
+    act(() => result.current.observeNativeTurnEvent(jevEvent('client-three', {
+      status: 'unavailable', candidates: [], distribution: {}, selectedReferences: [],
+    })));
+    expect(result.current.projections.knowgraph.nodes.every(
+      (node) => node.properties?.attentionActive === undefined,
+    )).toBe(true);
+
+    // Existing native_attention processing remains available in the same scope.
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      runId: 'client-three',
+      event: { ...attention('thinkgraph', ['think-unselected']), runId: 'client-three' },
+    }));
+    expect(result.current.projections.thinkgraph.nodes[1].properties).toMatchObject({
+      attentionActive: true, attentionToolName: 'engraphis_recall_context',
+    });
+  });
+
   it('uses persisted Jev winner probabilities for live incident node mass', () => {
     const projected = knowGraphProjection({
       nodes: [
