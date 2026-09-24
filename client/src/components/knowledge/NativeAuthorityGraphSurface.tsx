@@ -68,6 +68,8 @@ export type GraphProjectionEdge = {
   source: string;
   target: string;
   predicate: string;
+  relation?: string;
+  label?: string;
   mentionCount?: number;
   lastMentionedAt?: string;
   properties?: Record<string, unknown>;
@@ -262,6 +264,92 @@ function probabilityLabel(value: unknown): string | null {
   return `${(Math.max(0, Math.min(1, numeric)) * 100).toFixed(1)}%`;
 }
 
+function compactProbability(value: unknown): string | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.max(0, Math.min(1, numeric)).toFixed(2).replace(/^0/, '');
+}
+
+function thoughtMetadata(item: Record<string, any>): Record<string, any> {
+  const metadata = item.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+  const note = metadata.thinkgraph_note;
+  return note && typeof note === 'object' && !Array.isArray(note) ? note : {};
+}
+
+function thoughtStrings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function ThinkGraphThought({
+  item,
+  heading,
+  removing = false,
+  onRemove,
+}: {
+  item: Record<string, any>;
+  heading: string;
+  removing?: boolean;
+  onRemove?: () => void;
+}) {
+  const note = thoughtMetadata(item);
+  const entryTime = nativeEntryTime(item.ingestedAt);
+  const summary = typeof note.summary === 'string' && note.summary.trim()
+    ? note.summary
+    : typeof item.summary === 'string' && item.summary.trim()
+      ? item.summary
+      : typeof item.content === 'string' && item.content.trim()
+        ? item.content
+        : null;
+  const keywords = thoughtStrings(note.keywords);
+  const concepts = thoughtStrings(note.concepts);
+  const propositions = thoughtStrings(note.propositions);
+  const observations = thoughtStrings(note.relationship_observations);
+  const properties = Array.isArray(note.properties)
+    ? note.properties.filter((property: unknown): property is { name: string; value: unknown } => {
+      if (!property || typeof property !== 'object' || Array.isArray(property)) return false;
+      const candidate = property as Record<string, unknown>;
+      return typeof candidate.name === 'string' && candidate.name.trim().length > 0
+        && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
+    })
+    : [];
+  const importance = Number(note.importance);
+  return <section className="graph-note graph-thought" data-memory-id={item.id}>
+    <div className="graph-thought-heading">
+      <h4>{heading}</h4>
+      {typeof note.kind === 'string' && note.kind ? <span>{note.kind}</span> : null}
+    </div>
+    {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
+    {summary ? <p>{summary}</p> : null}
+    {Number.isFinite(importance) ? <dl className="graph-thought-fields">
+      <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
+    </dl> : null}
+    {properties.length ? <section className="graph-thought-section">
+      <h5>Extracted properties</h5>
+      <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
+        <dt>{property.name}</dt><dd>{String(property.value)}</dd>
+      </div>)}</dl>
+    </section> : null}
+    {propositions.length ? <section className="graph-thought-section">
+      <h5>Propositions</h5><ul>{propositions.map(value => <li key={value}>{value}</li>)}</ul>
+    </section> : null}
+    {observations.length ? <section className="graph-thought-section">
+      <h5>Relationship observations</h5><ul>{observations.map(value => <li key={value}>{value}</li>)}</ul>
+    </section> : null}
+    {keywords.length ? <section className="graph-thought-section">
+      <h5>Keywords</h5><p>{keywords.join(' · ')}</p>
+    </section> : null}
+    {concepts.length ? <section className="graph-thought-section">
+      <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
+    </section> : null}
+    {onRemove ? <button type="button" disabled={removing} onClick={onRemove}>
+      {removing ? 'Removing…' : 'Remove note'}
+    </button> : null}
+  </section>;
+}
+
 export function NativeGraphProjectionSurface({
   projection,
   status,
@@ -365,7 +453,31 @@ export function NativeGraphProjectionSurface({
     // Graphiti uses the renderer's supported field aliases; no graph is inferred here.
     const data = displayProjection?.scene || {
       nodes: displayProjection?.nodes || [],
-      links: (displayProjection?.edges || []).map(edge => ({ ...edge, relation: edge.predicate })),
+      links: (displayProjection?.edges || []).map(edge => {
+        if (authority !== 'thinkgraph') return { ...edge, relation: edge.predicate };
+        const jev = edge.properties?.jev;
+        const distribution = jev && typeof jev === 'object' && !Array.isArray(jev)
+          && (jev as Record<string, unknown>).distribution
+          && typeof (jev as Record<string, unknown>).distribution === 'object'
+          ? (jev as Record<string, any>).distribution as Record<string, unknown>
+          : null;
+        const winner = jev && typeof jev === 'object' && !Array.isArray(jev)
+          ? String((jev as Record<string, unknown>).winner || edge.predicate)
+          : edge.predicate;
+        const probability = compactProbability(
+          distribution?.[winner]
+            ?? edge.properties?.relationship_strength
+            ?? edge.relationship_strength,
+        );
+        return {
+          ...edge,
+          relation: edge.predicate,
+          label: `${winner}${probability ? ` · ${probability}` : ''}`,
+          label_min_scale: 0.35,
+          directional_arrow_length: 3,
+          directional_arrow_rel_pos: 0.9,
+        };
+      }),
     };
     graphRef.current?.setData(data);
   }, [displayProjection, authority]);
@@ -428,10 +540,6 @@ export function NativeGraphProjectionSurface({
       ? notes[0] : null;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => displayProjection?.nodes.find(node => node.id === id)?.label || id;
-  const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
-    typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
-  const semanticMassValue = Number(selected?.semantic_mass ?? selectedProperties.semantic_mass);
-  const semanticMass = Number.isFinite(semanticMassValue) ? semanticMassValue : null;
   const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
   const labelConfidence = probabilityLabel(selectedEdge?.properties?.label_confidence);
   const portableKnow = authority === 'knowgraph'
@@ -449,7 +557,9 @@ export function NativeGraphProjectionSurface({
       .filter((entry): entry is [string, number] => Number.isFinite(Number(entry[1])))
     : [];
   const jevWinner = jev ? String(jev.winner || selectedEdge?.predicate || '') : '';
-  const jevVocabularyVersion = jev ? String(jev.vocabulary_version || '') : '';
+  const naturalRelationship = jev && typeof jev.natural_relationship === 'string'
+    ? jev.natural_relationship
+    : '';
   const jevWinnerProbability = probabilityLabel(
     jevDistribution.find(([choice]) => choice === jevWinner)?.[1],
   );
@@ -543,11 +653,30 @@ export function NativeGraphProjectionSurface({
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="native-authority-controls" role="region" aria-label={`${entryTitle} details`}>
         {selected ? <article data-testid={`${authority}-node-inspector`} data-native-id={selected.id}>
           <h4 tabIndex={-1}>{selected.label}</h4>
-          {(['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
+          {authority === 'knowgraph' ? (['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
             .filter((value, index, values): value is string => typeof value === 'string' && !!value && values.indexOf(value) === index)
-            .map(value => <p key={value}>{value}</p>)}
-          {selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
+            .map(value => <p key={value}>{value}</p>) : null}
+          {authority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
         </article> : null}
+        {latestThought ? <ThinkGraphThought
+          item={latestThought}
+          heading="Latest Thought"
+          removing={removingId === latestThought.id}
+          onRemove={authority === 'thinkgraph' && onRemoveEvidence ? async () => {
+            setRemovingId(latestThought.id); setRemoveError(null);
+            try { await onRemoveEvidence(latestThought.id); }
+            catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
+            finally { setRemovingId(null); }
+          } : undefined}
+        /> : null}
+        {notes.length > 1 ? <details className="graph-thought-history">
+          <summary>Older Thoughts ({notes.length - 1})</summary>
+          <div>{notes.slice(1).map((item, index) => <ThinkGraphThought
+            key={item.id}
+            item={item}
+            heading={`Earlier Thought ${index + 1}`}
+          />)}</div>
+        </details> : null}
         {selectedRelationships.length ? <section className="knowgraph-relationships">
           {selectedRelationships.map(edge => <button type="button" key={edge.id} data-edge-id={edge.id}
             onClick={() => { setSelectedId(null); setSelectedEdgeId(edge.id); }}>
@@ -561,6 +690,14 @@ export function NativeGraphProjectionSurface({
           <button type="button" onClick={() => { setSelectedId(selectedEdge.source); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.source)}</button>
           <button type="button" onClick={() => { setSelectedId(selectedEdge.target); setSelectedEdgeId(null); }}>{nativeLabel(selectedEdge.target)}</button>
         </article> : null}
+        {selectedEdge ? <dl className="graph-record-fields graph-edge-meaning">
+          <div><dt>Direction</dt><dd>{nativeLabel(selectedEdge.source)} → {nativeLabel(selectedEdge.target)}</dd></div>
+          {jevWinner ? <div><dt>Jev winner</dt><dd>{jevWinner}</dd></div> : null}
+          {jevWinnerProbability ? <div><dt>Probability</dt><dd>{jevWinnerProbability}</dd></div> : null}
+          {naturalRelationship ? <div><dt>Natural extracted relationship</dt><dd>{naturalRelationship}</dd></div> : null}
+          {!jevWinnerProbability && relationshipStrength ? <div><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></div> : null}
+          {!jevWinnerProbability && labelConfidence ? <div><dt>Label confidence</dt><dd>{labelConfidence}</dd></div> : null}
+        </dl> : null}
         {portableKnow ? <section className="graph-note" data-testid="portable-know">
           <h4>{portableKnow.temporalStatus === 'historical' ? 'Historical Know' : 'Current Know'}</h4>
           {typeof portableKnow.fact === 'string' && portableKnow.fact
@@ -580,19 +717,6 @@ export function NativeGraphProjectionSurface({
               : null)}
           </dl>
         </section> : null}
-        <dl className="graph-record-fields">
-          <dt>Source graph</dt><dd>{authority === 'thinkgraph' ? 'ThinkGraph / Engraphis' : 'KnowGraph / Graphiti'}</dd>
-          <dt>Native ID</dt><dd>{selected?.id || selectedEdge?.id}</dd>
-          <dt>Physics profile</dt><dd>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[physicsProfile]}</dd>
-          {semanticMass !== null ? <><dt>Semantic mass</dt><dd>{semanticMass.toFixed(3)}</dd></> : null}
-          {selectedEdge ? <><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Predicate</dt><dd>{selectedEdge.predicate}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd>
-            <dt>Direction</dt><dd>{selectedEdge.properties?.directed === false ? 'Undirected' : selectedEdge.properties?.directed === true ? 'Source → target' : 'Not supplied'}</dd>
-            {jevWinner ? <><dt>Jev canonical relation</dt><dd>{jevWinner}</dd></> : null}
-            {jevVocabularyVersion ? <><dt>Edge ontology</dt><dd>{jevVocabularyVersion}</dd></> : null}
-            {jevWinnerProbability ? <><dt>Winner probability</dt><dd>{jevWinnerProbability}</dd></> : null}
-            {!jevWinnerProbability && relationshipStrength ? <><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></> : null}
-            {!jevWinnerProbability && labelConfidence ? <><dt>Label confidence</dt><dd>{labelConfidence}</dd></> : null}</> : null}
-        </dl>
         {jevDistribution.length ? <details className="graph-jev-distribution" open>
           <summary>Jev relationship probabilities</summary>
           <dl>{jevDistribution.map(([choice, probability]) => {
@@ -607,58 +731,13 @@ export function NativeGraphProjectionSurface({
             </div>;
           })}</dl>
         </details> : null}
-          {latestThought ? <section className="graph-note" data-memory-id={latestThought.id}>
-            <h4>Latest Thought</h4>
-            {(() => {
-              const entryTime = nativeEntryTime(latestThought.ingestedAt);
-              return entryTime
-                ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time>
-                : null;
-            })()}
-            <p>{latestThought.content || latestThought.summary}</p>
-            {authority === 'thinkgraph' && onRemoveEvidence ? <button type="button" disabled={removingId !== null} onClick={async () => {
-              setRemovingId(latestThought.id); setRemoveError(null);
-              try { await onRemoveEvidence(latestThought.id); }
-              catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
-              finally { setRemovingId(null); }
-            }}>{removingId === latestThought.id ? 'Removing…' : 'Remove note'}</button> : null}
-          </section> : null}
-          {!latestThought ? notes.map(item => {
-            const entryTime = nativeEntryTime(item.ingestedAt);
-            return <section className="graph-note" key={item.id} data-memory-id={item.id}>
-          <details>
-            <summary>{item.title || 'Supporting note'}</summary>
-            {entryTime ? <time dateTime={entryTime.dateTime}>Learned {entryTime.label}</time> : null}
-            <p>{item.content || item.summary}</p>
-            <code>{item.id}</code>
-            {item.provenance && typeof item.provenance === 'object' ? <dl>{fields(item.provenance).map(([key, value]) =>
-              <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl> : null}
-            {authority === 'thinkgraph' && onRemoveEvidence ? <button type="button" disabled={removingId !== null} onClick={async () => {
-              setRemovingId(item.id); setRemoveError(null);
-              try { await onRemoveEvidence(item.id); }
-              catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
-              finally { setRemovingId(null); }
-            }}>{removingId === item.id ? 'Removing…' : 'Remove note'}</button> : null}
-            </details>
-          </section>;
-          }) : null}
         {removeError ? <p role="alert">{removeError}</p> : null}
         {evidence.length ? <section className="knowgraph-sources"><h4>Sources</h4>{evidence.map(({ node, links }) =>
           <details key={node.id}>
             <summary>{node.label}</summary>
             {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}
             {typeof node.properties?.content === 'string' ? <pre>{node.properties.content}</pre> : null}
-            <code>{node.id}</code>
           </details>)}</section> : null}
-        <details className="graph-record"><summary>Record</summary>
-          <code>{selected?.id || selectedEdge?.id}</code>
-          {selectedEdge ? <dl><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd></dl> : null}
-          <dl>{fields((selected || selectedEdge || {}) as Record<string, unknown>).filter(([key]) =>
-            !['id', 'label', 'source', 'target'].includes(key)).map(([key, value]) =>
-            <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>
-          <pre>{JSON.stringify({ properties: (selected || selectedEdge)?.properties,
-            provenance: (selected || selectedEdge)?.provenance }, null, 2)}</pre>
-        </details>
         {authority === 'knowgraph' && selected ? <div className="native-authority-actions">
           {onExpand ? <button type="button" disabled={expanding} onClick={() => {
             setExpanding(true);

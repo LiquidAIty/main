@@ -905,6 +905,7 @@ def _jev_provenance(
     *,
     stage: str,
     proposition_memory_id: str = "",
+    natural_relationship: str = "",
 ) -> dict[str, Any]:
     jev = {
         "question_schema_version": "thinkgraph.relationship-choice.v4",
@@ -928,6 +929,11 @@ def _jev_provenance(
         "source_event": _source_event_reference(payload),
         "stage": stage,
     }
+    if natural_relationship:
+        # Preserve the structured extractor's exact relationship proposal beside
+        # Jev's canonical winner. The renderer may display both authorities, but
+        # only the Jev winner remains the durable edge relation.
+        jev["natural_relationship"] = natural_relationship
     for key in (
         "relationship_proposal_status",
         "novel_relationship_candidate",
@@ -1039,6 +1045,7 @@ def _apply_accepted_decision(
     decision: dict[str, Any],
     stage: str,
     proposition_memory_id: str = "",
+    natural_relationship: str = "",
     commit: bool = True,
 ) -> dict[str, Any]:
     if not _decision_is_accepted(decision):
@@ -1171,6 +1178,7 @@ def _apply_accepted_decision(
             all_memory_ids,
             stage=stage,
             proposition_memory_id=proposition_memory_id,
+            natural_relationship=natural_relationship,
         )
         replaced_ids: list[str] = []
         if len(current) == 1 and current[0].relation == winner:
@@ -1459,6 +1467,9 @@ def _persist_opportunity_decisions(
                 target_note_memory_ids=(target_note_memory_ids or {}).get(index),
                 decision=decision,
                 stage=stage,
+                natural_relationship=str(
+                    opportunity.get("native_relation") or ""
+                ),
             )
             written["opportunity_index"] = index
             relationships.append(written)
@@ -2878,8 +2889,17 @@ def projection(project: str, native_id: str | None = None) -> dict:
         strength = _winner_probability(jev)
         jev["label_confidence"] = strength
         jev["relationship_strength"] = strength
+        probability_text = f"{strength:.2f}".removeprefix("0")
         edge.update({
             "relation": chosen.relation,
+            "label": f"{chosen.relation} · {probability_text}",
+            # The native renderer normally hides relation labels until a deep
+            # zoom. ThinkGraph semantic edges are product content, so these
+            # presentation hints keep the existing renderer contract while
+            # making the Jev label and direction readable at the fitted view.
+            "label_min_scale": 0.35,
+            "directional_arrow_length": 3.0,
+            "directional_arrow_rel_pos": 0.9,
             "relationship_strength": strength,
             "label_confidence": float(jev["label_confidence"]),
             "strength": strength,
@@ -2905,11 +2925,13 @@ def projection(project: str, native_id: str | None = None) -> dict:
     entity_members = {node["id"]: node.get("member_ids", [node["id"]]) for node in scene["nodes"]}
     incidences = service.store.list_memory_entities(entity_ids=list(dict.fromkeys(
         member for members in entity_members.values() for member in members)))
-    entity_evidence = {node_id: list(dict.fromkeys(
-        row["memory_id"] for row in incidences if row["entity_id"] in members))
+    entity_thoughts = {node_id: list(dict.fromkeys(
+        row["memory_id"] for row in incidences
+        if row["entity_id"] in members
+        and row["source_kind"] == "thinkgraph_note"))
         for node_id, members in entity_members.items()}
     evidence_groups = [edge.get("support_memory_ids", []) for edge in scene["edges"]]
-    evidence_groups.extend(entity_evidence.values())
+    evidence_groups.extend(entity_thoughts.values())
     for memory_ids in evidence_groups:
         for mid in memory_ids:
             if mid not in supporting:
@@ -2931,21 +2953,10 @@ def projection(project: str, native_id: str | None = None) -> dict:
         # Node Thought display is owned by memory/entity incidence. Edge support
         # may include Notes belonging to the opposite endpoint and remains on the
         # edge inspector; it must not become this node's latest Thought.
-        evidence_ids = list(dict.fromkeys(entity_evidence[node["id"]]))
+        evidence_ids = list(dict.fromkeys(entity_thoughts[node["id"]]))
         evidence_ids.sort(
             key=lambda memory_id: _newest_note_key(supporting[memory_id])
             if memory_id in supporting else (0.0, memory_id)
-        )
-        latest_thought_id = next((
-            memory_id for memory_id in evidence_ids
-            if memory_id in supporting
-            and isinstance(supporting[memory_id].get("metadata"), dict)
-            and isinstance(
-                supporting[memory_id]["metadata"].get("thinkgraph_note"), dict
-            )
-        ), "")
-        visible_evidence_ids = (
-            [latest_thought_id] if latest_thought_id else evidence_ids[:1]
         )
         nodes.append({
             **node,
@@ -2966,7 +2977,7 @@ def projection(project: str, native_id: str | None = None) -> dict:
                 "visual_radius": node.get("visual_radius"),
                 "evidence": [
                     supporting[memory_id]
-                    for memory_id in visible_evidence_ids
+                    for memory_id in evidence_ids
                     if memory_id in supporting
                 ],
             },

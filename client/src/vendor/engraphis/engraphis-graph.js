@@ -8640,7 +8640,12 @@
       if (!fg.linkCanvasObject || !fg.linkCanvasObjectMode) return;
       if (!state.settings.labels) { fg.linkCanvasObjectMode(() => undefined); return; }
       fg.linkCanvasObjectMode(() => 'after').linkCanvasObject((link, ctx, scale) => {
-        if (!link || !showRelationLabel(link.label) || scale < LINK_LABEL_MIN_SCALE) return;
+        if (!link || !showRelationLabel(link.label)) return;
+        const requestedScale = Number(link.label_min_scale);
+        const minimumScale = Number.isFinite(requestedScale)
+          ? Math.max(0.01, requestedScale)
+          : LINK_LABEL_MIN_SCALE;
+        if (scale < minimumScale) return;
         if (dense && !hilite) return;
         const source = link.source, target = link.target;
         if (!source || !target || typeof source !== 'object' || typeof target !== 'object') return;
@@ -9701,7 +9706,16 @@
       if (fg.linkCurvature) {
         fg.linkCurvature(dense ? 0 : ((PRESETS[state.settings.mode] || PRESETS.compact).curve || 0));
       }
-      fg.linkDirectionalArrowLength(dense ? 0 : 0.625).linkDirectionalArrowRelPos(1);
+      fg.linkDirectionalArrowLength(link => {
+        if (dense) return 0;
+        const requested = Number(link && link.directional_arrow_length);
+        return Number.isFinite(requested) ? Math.max(0, requested) : 0.625;
+      }).linkDirectionalArrowRelPos(link => {
+        const requested = Number(link && link.directional_arrow_rel_pos);
+        return Number.isFinite(requested)
+          ? Math.max(0, Math.min(1, requested))
+          : 1;
+      });
       applyLinkLabels();
       if (fg.linkDirectionalParticles) {
         const rawFlowSpeed = Number(state.settings.flowSpeed);

@@ -939,6 +939,11 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
     )
     assert projected["relationship_strength"] == pytest.approx(0.76)
     assert projected["label_confidence"] == pytest.approx(0.76)
+    assert projected["label"] == "QUALIFIES · .76"
+    assert projected["label_min_scale"] == pytest.approx(0.35)
+    assert projected["directional_arrow_length"] == pytest.approx(3.0)
+    assert projected["directional_arrow_rel_pos"] == pytest.approx(0.9)
+    assert projected["jev"]["natural_relationship"] == FREEFORM_RELATION
     assert projected["spring_strength"] == pytest.approx(0.1642)
     assert projected["rest_length"] == pytest.approx(16.88)
     projected_node = next(
@@ -972,13 +977,10 @@ def test_thought_notes_use_native_time_and_are_newest_first(hybrid):
         entity_ids=[jev.id],
         limit=512,
     )
-    memories = service.store.get_memories(list(dict.fromkeys(
+    direct_note_ids = list(dict.fromkeys(
         str(item["memory_id"]) for item in incidences
-    )))
-    direct_note_ids = [
-        memory_id for memory_id, memory in memories.items()
-        if hybrid._note_metadata(memory) is not None
-    ]
+        if item["source_kind"] == "thinkgraph_note"
+    ))
     assert len(direct_note_ids) >= 2
     for sequence, memory_id in enumerate(direct_note_ids, start=1):
         service.store.conn.execute(
@@ -987,6 +989,27 @@ def test_thought_notes_use_native_time_and_are_newest_first(hybrid):
         )
     service.store.conn.commit()
     newest_id = direct_note_ids[-1]
+
+    # A newer Thought that merely mentions Jev is still not Jev's direct
+    # temporal Thought. This reproduces the real Rocket Lab/Neutron failure.
+    mention_only_id = next(
+        memory_id for memory_id in settled["noteMemoryIds"]
+        if memory_id not in set(direct_note_ids)
+    )
+    service.store.link_memory_entity(
+        memory_id=mention_only_id,
+        entity_id=jev.id,
+        workspace_id=workspace_id,
+        repo_id=None,
+        source_kind="text_mention",
+        confidence=1.0,
+        provenance={"source": "test_exact_mention"},
+    )
+    service.store.conn.execute(
+        "UPDATE memories SET ingested_at=? WHERE id=?",
+        (10_000.0, mention_only_id),
+    )
+    service.store.conn.commit()
 
     native = hybrid.inspect("project-one", jev.id)["entity"]
     native_note_ids = [
@@ -1004,7 +1027,11 @@ def test_thought_notes_use_native_time_and_are_newest_first(hybrid):
         item["id"] for item in thought["properties"]["evidence"]
         if item["id"] in set(direct_note_ids)
     ]
-    assert projected_note_ids == [newest_id]
+    assert projected_note_ids == list(reversed(direct_note_ids))
+    assert mention_only_id not in {
+        item["id"] for item in thought["properties"]["evidence"]
+    }
+    assert projected_note_ids[0] == newest_id
     assert thought["properties"]["evidence"][0]["ingestedAt"] is not None
 
 

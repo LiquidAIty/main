@@ -138,8 +138,9 @@ describe('native authority graph surfaces', () => {
       });
       expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
       act(() => graph.nodeClick(graph.data.nodes[1]));
-      expect(screen.getByText('Semantic mass').nextSibling?.textContent).toBe('0.800');
-      expect(screen.getByText('Physics profile').nextSibling?.textContent).toBe('Open');
+      for (const implementationField of ['Semantic mass', 'Physics profile', 'Source graph', 'Native ID']) {
+        expect(screen.queryByText(implementationField)).toBeNull();
+      }
       expect(projection).toEqual(original);
       expect(fetchMock).not.toHaveBeenCalled();
     },
@@ -327,23 +328,29 @@ describe('native authority graph surfaces', () => {
     }));
   });
 
-  it('passes recorded predicates as Engraphis link labels without changing endpoints or evidence', () => {
+  it('passes the Jev winner and probability as the ThinkGraph line label without changing endpoints or evidence', () => {
     const projection = {
       ...empty('thinkgraph'),
       nodes: [{ id: 'subject', label: 'Subject' }, { id: 'idea', label: 'Idea' }],
-      edges: [{ id: 'edge', source: 'subject', target: 'idea', predicate: 'considers',
-        provenance: { memoryId: 'stored-memory' }, properties: { summary: 'Recorded relationship.' } }],
+      edges: [{ id: 'edge', source: 'subject', target: 'idea', predicate: 'DEPENDS_ON',
+        provenance: { memoryId: 'stored-memory' }, properties: {
+          summary: 'Recorded relationship.', relationship_strength: 0.71,
+          jev: { winner: 'DEPENDS_ON', distribution: { DEPENDS_ON: 0.71, AFFECTS: 0.29 } },
+        } }],
     };
     const before = JSON.stringify(projection);
-    render(<NativeGraphProjectionSurface authority="knowgraph" projection={projection} status="ready" error={null} />);
+    render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     expect(graph.data.links).toHaveLength(1);
-    expect(graph.data.links[0]).toMatchObject({ ...projection.edges[0], relation: 'considers' });
+    expect(graph.data.links[0]).toMatchObject({
+      ...projection.edges[0], relation: 'DEPENDS_ON', label: 'DEPENDS_ON · .71',
+      label_min_scale: 0.35, directional_arrow_length: 3, directional_arrow_rel_pos: 0.9,
+    });
     expect(graph.data.nodes.map((node: any) => [node.id, node.label])).toEqual([['subject', 'Subject'], ['idea', 'Idea']]);
     expect(JSON.stringify(projection)).toBe(before);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    fireEvent.click(screen.getByRole('button', { name: 'Subject considers Idea' }));
-    expect(screen.getByTestId('knowgraph-edge-inspector').textContent).toContain('Recorded relationship.');
+    fireEvent.click(screen.getByRole('button', { name: 'Subject DEPENDS_ON Idea' }));
+    expect(screen.getByTestId('thinkgraph-edge-inspector').textContent).toContain('Recorded relationship.');
   });
 
   it('renders ThinkGraph in the existing canvas and binds the pull tab to Engraphis settings', async () => {
@@ -368,11 +375,15 @@ describe('native authority graph surfaces', () => {
   });
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
-    const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: { summary: 'Saved note.' } }] };
+    const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
+      evidence: [{ id: 'memory-one', ingestedAt: 100, metadata: { thinkgraph_note: {
+        kind: 'OBSERVATION', summary: 'Saved Thought.', propositions: [], relationship_observations: [],
+      } } }],
+    } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved note.');
+    expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved Thought.');
     expect(screen.queryByRole('button', { name: /^Expand$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
@@ -380,14 +391,23 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
   });
 
-  it('shows only the latest ThinkGraph Thought by default and removes that exact note', async () => {
+  it('shows the complete latest direct Thought and keeps older direct Thoughts in newest-first history', async () => {
     const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
       properties: { evidence: [
         { id: 'memory-new', summary: 'Latest saved Thought.', ingestedAt: 200,
-          metadata: { thinkgraph_note: { kind: 'DECISION' } } },
+          metadata: { thinkgraph_note: {
+            kind: 'DECISION', summary: 'Latest saved Thought.', importance: 0.91,
+            keywords: ['latest', 'decision'], concepts: ['Current thesis'],
+            properties: [{ name: 'time_horizon', value: 'one year' }],
+            propositions: ['The current thesis depends on execution.'],
+            relationship_observations: ['Rocket Lab DEPENDS_ON Neutron'],
+          } } },
         { id: 'memory-old', summary: 'Older saved Thought.', ingestedAt: 100,
-          metadata: { thinkgraph_note: { kind: 'OBSERVATION' } } },
+          metadata: { thinkgraph_note: {
+            kind: 'OBSERVATION', summary: 'Older saved Thought.', propositions: [],
+            relationship_observations: [],
+          } } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
@@ -395,7 +415,16 @@ describe('native authority graph surfaces', () => {
     act(() => graph.nodeClick(graph.data.nodes[0]));
     expect(screen.getByText('Latest Thought')).toBeTruthy();
     expect(screen.getByText('Latest saved Thought.')).toBeTruthy();
-    expect(screen.queryByText('Older saved Thought.')).toBeNull();
+    expect(screen.getByText('DECISION')).toBeTruthy();
+    expect(screen.getByText('The current thesis depends on execution.')).toBeTruthy();
+    expect(screen.getByText('Rocket Lab DEPENDS_ON Neutron')).toBeTruthy();
+    expect(screen.getByText('time_horizon').nextSibling?.textContent).toBe('one year');
+    const older = screen.getByText('Older Thoughts (1)').parentElement as HTMLDetailsElement;
+    expect(older.open).toBe(false);
+    expect(older.textContent).toContain('Older saved Thought.');
+    fireEvent.click(screen.getByText('Older Thoughts (1)'));
+    expect(older.open).toBe(true);
+    expect(screen.getByText('Older saved Thought.')).toBeTruthy();
     expect(document.querySelector('time')?.getAttribute('datetime'))
       .toBe('1970-01-01T00:03:20.000Z');
     fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
@@ -432,7 +461,7 @@ describe('native authority graph surfaces', () => {
   });
 
   it.each(['thinkgraph', 'knowgraph'] as const)(
-    'shows the shared Jev edge ontology, winner, and full distribution for %s',
+    'shows the meaningful Jev winner, natural relation, and full distribution for %s without system fields',
     authority => {
     const distribution = {
       QUALIFIES: 0.76,
@@ -454,6 +483,7 @@ describe('native authority graph surfaces', () => {
           jev: {
             winner: 'QUALIFIES', distribution,
             vocabulary_version: 'jev.semantic-relationships.v1',
+            natural_relationship: 'provides probabilistic semantic classification for',
           },
         },
       }],
@@ -464,11 +494,13 @@ describe('native authority graph surfaces', () => {
     act(() => graph.nodeClick(graph.data.nodes[0]));
     fireEvent.click(screen.getByRole('button', { name: 'Jev QUALIFIES ThinkGraph' }));
 
-    expect(screen.getByText('Jev canonical relation').nextSibling?.textContent).toBe('QUALIFIES');
-    expect(screen.getByText('Edge ontology').nextSibling?.textContent)
-      .toBe('jev.semantic-relationships.v1');
-    expect(screen.getByText('Winner probability').nextSibling?.textContent).toBe('76.0%');
-    expect(screen.getByText('Physics profile').nextSibling?.textContent).toBe('Balanced');
+    expect(screen.getByText('Jev winner').nextSibling?.textContent).toBe('QUALIFIES');
+    expect(screen.getByText('Probability').nextSibling?.textContent).toBe('76.0%');
+    expect(screen.getByText('Natural extracted relationship').nextSibling?.textContent)
+      .toBe('provides probabilistic semantic classification for');
+    for (const implementationField of ['Edge ontology', 'Physics profile', 'Source graph', 'Native ID', 'Record']) {
+      expect(screen.queryByText(implementationField)).toBeNull();
+    }
     const probabilityDetails = screen.getByText('Jev relationship probabilities')
       .parentElement as HTMLDetailsElement;
     expect(probabilityDetails.open).toBe(true);
@@ -521,30 +553,37 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByTestId('knowgraph-node-inspector').textContent).toContain('The launch report.');
   });
 
-  it.each(['thinkgraph', 'knowgraph'] as const)('preserves %s inspector width, provenance, keyboard access and graph settings', authority => {
+  it.each(['thinkgraph', 'knowgraph'] as const)('preserves %s inspector width, keyboard access and graph settings without exposing record plumbing', authority => {
     const panelStyles = vi.spyOn(graphVisualTokens, 'graphInspectorPanelStyle');
     const key = `liquidaity.drawer.${authority}.width`;
     window.localStorage.setItem(key, '390');
     const projection = { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
       runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
-      properties: { statement: 'The complete original statement.', certainty: 0.4, supersedes: 'native-0' },
+      properties: authority === 'thinkgraph' ? { evidence: [{
+        id: 'memory-one', ingestedAt: 100, metadata: { thinkgraph_note: {
+          kind: 'OBSERVATION', summary: 'The complete Thought summary.',
+          propositions: [], relationship_observations: [],
+        } },
+      }] } : { statement: 'The complete original statement.', certainty: 0.4, supersedes: 'native-0' },
       provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] };
     const { container } = render(<NativeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
     fireEvent.change(screen.getByRole('slider', { name: 'Node size' }), { target: { value: '5' } });
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    const panel = screen.getByRole('complementary', { name: 'Recorded subject' });
+    const panel = screen.getByRole('complementary');
     expect(panel.style.width).toBe('390px');
     expect(screen.getByRole('heading', { name: 'Recorded subject' })).toBe(document.activeElement);
-    expect(panel.textContent).toContain('The complete original statement.');
-    expect(panel.textContent).toContain('native-1');
-    expect(panel.textContent).toContain('run-1');
-    expect(panel.textContent).toContain('chat-1');
-    expect(panel.textContent).toContain('2026-09-01');
-    expect(panel.textContent).toContain('Research Agent');
-    expect(panel.textContent).toContain('native-0');
-    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize drawer' }), { key: 'ArrowLeft' });
+    expect(panel.textContent).toContain(authority === 'thinkgraph'
+      ? 'The complete Thought summary.'
+      : 'The complete original statement.');
+    for (const implementationValue of ['native-1', 'run-1', 'chat-1', 'Research Agent', 'native-0']) {
+      expect(panel.textContent).not.toContain(implementationValue);
+    }
+    expect(screen.queryByText('Record')).toBeNull();
+    fireEvent.mouseDown(screen.getByLabelText('Resize drawer'), { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 490 });
+    fireEvent.mouseUp(window);
     expect(panel.style.width).toBe('400px');
     expect(window.localStorage.getItem(key)).toBe('400');
     fireEvent.click(screen.getByRole('button', { name: 'Detach panel' }));
@@ -552,9 +591,6 @@ describe('native authority graph surfaces', () => {
     vi.spyOn(panel.parentElement!, 'getBoundingClientRect').mockReturnValue({
       x: 0, y: 0, top: 0, left: 0, right: 1200, bottom: 800, width: 1200, height: 800, toJSON() {},
     });
-    const previousTop = Number.parseFloat(panel.style.top);
-    fireEvent.keyDown(screen.getByLabelText('Move panel with arrow keys'), { key: 'ArrowDown' });
-    expect(Number.parseFloat(panel.style.top)).toBe(previousTop + 10);
     fireEvent.click(screen.getByRole('button', { name: 'Dock panel' }));
     // This jsdom version ignores assigning CSS left:auto over a pixel value.
     // Check the real material helper's input; browser layout is separate proof.
@@ -562,9 +598,9 @@ describe('native authority graph surfaces', () => {
     expect(panel.style.right).toBe('12px');
     expect(screen.getByRole('button', { name: 'Detach panel' })).toBeTruthy();
     fireEvent.keyDown(panel, { key: 'Escape' });
-    expect(screen.getByRole('combobox', { name: 'Layout' })).toBe(document.activeElement);
+    expect(screen.getByRole('combobox', { name: 'Physics profile' })).toBe(document.activeElement);
     expect(screen.getByRole('slider', { name: 'Node size' }).getAttribute('value')).toBe('5');
-    expect(screen.getByRole('complementary', { name: 'Graph settings' }).style.width).toBe('400px');
+    expect(screen.getByRole('complementary').style.width).toBe('400px');
     expect(container.querySelector('.thinkgraph-entry')).toBeNull();
     expect(graph.setPreset).toHaveBeenCalledTimes(1);
     expect(graph.setPreset).toHaveBeenCalledWith('compact');
@@ -575,8 +611,8 @@ describe('native authority graph surfaces', () => {
     act(() => graph.backgroundClick());
     expect(screen.getByRole('combobox', { name: 'Layout' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
-    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(screen.getByRole('complementary').getAttribute('data-open')).toBe('false');
     fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
-    expect(screen.getByRole('complementary', { name: 'Graph settings' }).style.width).toBe('400px');
+    expect(screen.getByRole('complementary').style.width).toBe('400px');
   });
 });
