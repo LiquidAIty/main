@@ -1488,19 +1488,19 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
     'Return only one JSON object that validates against OUTPUT_SCHEMA. Do not wrap it in prose.',
-    'Create the current temporal ThinkGraph Thought from this completed User/Main exchange.',
-    'The exchange is observable input; Main does not author or initiate this automatic Thought.',
+    'Create the current temporal ThinkGraph Think from this completed User/Main exchange.',
+    'The exchange is observable input; Main does not author or initiate this automatic Think.',
     'Interpret the current completed User/Main pair with light canonical node/edge context so',
-    'the current Thought can attach to the existing conceptual map. Use the exact current pair',
-    'and current_graph_shape supplied in the native prompt. Do not read historical Thought bodies.',
+    'the current Think can attach to the existing conceptual map. Use the exact current pair',
+    'and current_graph_shape supplied in the native prompt. Do not read historical Think bodies.',
     'Do not browse, investigate, introduce evidence, extend the analysis, answer the user again,',
     'or continue the exchange beyond semantic interpretation grounded in the current pair.',
     'current_graph_shape contains only bounded node identities and live Jev edge shape. Use it',
-    'only to reuse canonical concepts and propose where this current Thought relates. Never derive',
-    'Thought content from topology. No old Thought/Note bodies are supplied or may be inferred.',
+    'only to reuse canonical concepts and propose where this current Think relates. Never derive',
+    'Think content from topology. No earlier Think bodies are supplied or may be inferred.',
     'Extract only meaningful reusable concepts grounded in this pair, including concepts that a',
     'lexical extractor would miss. Reuse an exact supplied canonical name when it is the same concept.',
-    'Do not compare, merge, rewrite, or suppress the current Thought against older Thoughts.',
+    'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks.',
     'Canonicalize entities semantically as concise standalone reusable concepts grounded in the pair.',
     'Do not use casing, keywords, stopword lists, or regex surface form as concept authority. Remove',
     'discourse/request framing when it is not itself the concept.',
@@ -1514,9 +1514,9 @@ function thinkGraphCardAssignment(preparation: any): string {
     'Omit a relation if no meaningful directed relationship is grounded in the current pair.',
     'Do not emit an entity solely to make it durable; a new entity becomes a graph node only if Jev',
     'accepts a structured relationship involving it after this Card returns.',
-    'The Thought preserves the full explanatory meaning; Jev alone classifies any durable graph edge',
+    'The Think preserves the full explanatory meaning; Jev alone classifies any durable graph edge',
     'by making the proposed predicate compete with the entire current project vocabulary.',
-    'Facts and Note depth must be self-contained. Apart from each required relation.source, do not',
+    'The one episodic Think must be self-contained. Apart from each required relation.source, do not',
     'emit timestamps, external source references, citations, origin/provenance fields, or final edge labels.',
     '',
     'OUTPUT_SCHEMA',
@@ -1550,7 +1550,7 @@ async function runCompletedPairThinkGraphLifecycle(
     ) return;
     if (
       preparation?.structuredExtractionRequired !== true
-      || !['add', 'invalidate', 'relate'].includes(intakeOperation)
+      || intakeOperation !== 'pending'
     ) {
       throw new Error('thinkgraph_prepare_intake_contract_invalid');
     }

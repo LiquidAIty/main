@@ -418,17 +418,18 @@ One authority and one writer per graph.
 
 Main reads ThinkGraph, answers in chat, and retains explicit Engraphis writes. After an ordinary Main
 User/assistant turn has completed and its visible response has returned, the exact completed pair enters
-the approved Engraphis-owned hybrid intake. Native semantic resolution stops a `noop` immediately. New or
-changed material uses native `RegexGraphExtractor` plus native `feed()` through a non-persisting intake
-adapter; only A/B relationships accepted by graph-aware Jev may persist their native endpoints and edge.
-The existing saved ThinkGraph Card then runs through the normal saved-Card/App Server path with its saved
-model and Engraphis `llm_structured` prompt/schema. Its output becomes self-contained node Notes, missed
-concepts, and free-form directed relationship proposals; Jev alone chooses every durable edge label,
-distribution, and strength. A new Card-discovered node requires an accepted edge and an attached Note.
-A genuinely new Note on an existing canonical node reopens only that node's current live one-hop Jev edges.
+the approved Engraphis-owned intake. Preparation is non-persisting; an existing authoritative Think for the
+same completed-pair identity stops a duplicate as a `noop`. Otherwise the existing saved ThinkGraph Card runs
+through the normal saved-Card/App Server path with its saved model and Engraphis `llm_structured` prompt/schema.
+It returns exactly one self-contained custom `think` payload, canonical entities/concepts, and free-form
+directed relationship proposals. Settlement writes exactly one append-only native Engraphis `EPISODIC`
+Memory with `resolve_conflicts=False`; direct node association requires both validated Think metadata and
+native `memory_entities` incidence with `source_kind="structured_extractor"`. Jev alone admits every new
+endpoint through an accepted directed relationship and chooses every durable edge label, distribution, and
+strength. Generic Engraphis co-occurrence edges never become ThinkGraph semantic authority.
 The September 9 removal remains the historical removal of the old proxy/replay path, not a prohibition on
-this native novelty-gated lifecycle. No candidate graph, approval state, shadow graph, raw conversation
-replay, or broad cleanup path returns. KnowGraph retains sourced research through its existing research
+this native lifecycle. No candidate graph, approval state, shadow graph, raw conversation Memory, regex-first
+skeleton, or broad cleanup path returns. KnowGraph retains sourced research through its existing research
 agent and Graphiti intake. Operating instructions belong in saved Cards; dynamic input carries the actual
 task and selected data. Do not submit system-design guidance as test chatter.
 

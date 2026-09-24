@@ -148,7 +148,7 @@ def test_exact_thinkgraph_read_accepts_project_scoped_native_engraphis_id(native
     assert record["content"] == "Project-scoped native engine content"
 
 
-def test_thought_handoff_prefers_self_contained_notes_and_keeps_native_evidence(
+def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
     monkeypatch,
 ) -> None:
     import io
@@ -165,14 +165,17 @@ def test_thought_handoff_prefers_self_contained_notes_and_keeps_native_evidence(
             "truncation": {"relations": False, "evidence": False, "history": False},
             "evidence": [
                 {
-                    "memory_id": "mem_note",
-                    "excerpt": "Self-contained structured Thought Note.",
-                    "metadata": {"thinkgraph_note": {"kind": "DECISION"}},
+                    "memory_id": "mem_think",
+                    "excerpt": "Self-contained structured Think.",
+                    "metadata": {"structured_extraction": {"think": {
+                        "kind": "DECISION",
+                        "summary": "Self-contained structured Think.",
+                    }}},
                 },
                 {
-                    "memory_id": "mem_pair",
-                    "excerpt": "Raw completed conversation evidence.",
-                    "metadata": {"thinkgraph_completed_pair": {}},
+                    "memory_id": "mem_other",
+                    "excerpt": "Other native evidence.",
+                    "metadata": {"provenance": {"source": "test"}},
                 },
             ],
         }
@@ -185,13 +188,13 @@ def test_thought_handoff_prefers_self_contained_notes_and_keeps_native_evidence(
 
     record = read_thinkgraph_exact("project-1", "entity-one")
 
-    assert record["portableKind"] == "thought"
-    assert record["content"] == "Self-contained structured Thought Note."
-    assert [item["memory_id"] for item in record["metadata"]["notes"]] == [
-        "mem_note"
+    assert record["portableKind"] == "think"
+    assert record["content"] == "Self-contained structured Think."
+    assert [item["memory_id"] for item in record["metadata"]["thinks"]] == [
+        "mem_think"
     ]
     assert [item["memory_id"] for item in record["metadata"]["evidence"]] == [
-        "mem_note", "mem_pair"
+        "mem_think", "mem_other"
     ]
 
 

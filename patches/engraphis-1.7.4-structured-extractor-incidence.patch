@@ -1,0 +1,70 @@
+diff --git a/engraphis/backends/graph_extractor.py b/engraphis/backends/graph_extractor.py
+index b9cb581..73da344 100644
+--- a/engraphis/backends/graph_extractor.py
++++ b/engraphis/backends/graph_extractor.py
+@@ -374,7 +374,10 @@ def feed(store: Any, content: str, *, workspace_id: str, repo_id: Optional[str]
+     * A ``None`` / ``NullGraphExtractor`` writes nothing and returns zero counts, so
+       the default path is a genuine no-op.
+ 
+-    Returns ``{"entities": <written>, "relations": <written>}``.
++    Returns ``{"entities": <written>, "relations": <written>,
++    "entity_ids": <canonical ids>}``.  Returning the canonical ids lets the
++    trusted engine path attach the source memory directly to the entities that
++    structured extraction emitted without rescanning memory text.
+     """
+     extractor = extractor or NullGraphExtractor()
+     result = extraction if extraction is not None else extractor.extract(content, title=title)
+@@ -464,4 +467,8 @@ def feed(store: Any, content: str, *, workspace_id: str, repo_id: Optional[str]
+                 edge_by_key[key] = Edge(id=eid, src=lo, dst=hi, relation="co_occurs")
+                 written_relations += 1
+ 
+-    return {"entities": len(name_to_id), "relations": written_relations}
++    return {
++        "entities": len(name_to_id),
++        "relations": written_relations,
++        "entity_ids": list(dict.fromkeys(name_to_id.values())),
++    }
+diff --git a/engraphis/core/engine.py b/engraphis/core/engine.py
+index 2019f2f..1f7f7dc 100644
+--- a/engraphis/core/engine.py
++++ b/engraphis/core/engine.py
+@@ -1666,7 +1666,7 @@ class MemoryEngine:
+             and self._has_structured_graph_metadata(meta)
+         ):
+             try:
+-                self.graph_feeder(
++                structured_result = self.graph_feeder(
+                     self.store,
+                     content,
+                     workspace_id=workspace_id,
+@@ -1681,6 +1681,30 @@ class MemoryEngine:
+                     valid_from=rec.valid_from,
+                     ingested_at=rec.ingested_at,
+                 )
++                entity_ids = (
++                    structured_result.get("entity_ids", [])
++                    if isinstance(structured_result, dict) else []
++                )
++                for entity_id in dict.fromkeys(
++                    value for value in entity_ids
++                    if isinstance(value, str) and value
++                ):
++                    self.store.link_memory_entity(
++                        memory_id=mid,
++                        entity_id=entity_id,
++                        workspace_id=workspace_id,
++                        repo_id=repo_id,
++                        source_kind="structured_extractor",
++                        confidence=1.0,
++                        valid_from=rec.valid_from,
++                        ingested_at=rec.ingested_at,
++                        provenance={
++                            "memory_id": mid,
++                            "source": "structured_extractor",
++                            "source_kind": "structured_extractor",
++                        },
++                        commit=False,
++                    )
+             except Exception as exc:
+                 self._warn_redacted_failure("structured graph enrichment", exc)
+         if (

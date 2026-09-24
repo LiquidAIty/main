@@ -67,12 +67,13 @@ Engraphis owns ThinkGraph; Graphiti/Neo4j owns KnowGraph; native CBM owns CodeGr
 saved Card relationships and observed Run lineage. Do not resurrect Constellation or combine writers.
 
 Main reads context and retains explicit writes and focused delegation. One additional current path is the
-owner-approved completed User/Main pair lifecycle: Engraphis native semantic resolution stops duplicates;
-native regex extraction/feed enumerates new pair opportunities without persistence; graph-aware Jev gates
-durable endpoints and edges; and the existing saved ThinkGraph Card supplies Engraphis-structured node
-Notes, missed concepts, and free-form pair proposals before Jev classifies final edges. This is not the
-removed proxy/replay design. Do not add a pending-candidate queue, approval state, shadow graph, broad
-historical deletion, direct model edge writer, second extractor, or database-side semantic shortcut.
+owner-approved completed User/Main pair lifecycle: preparation is non-persisting; the existing saved
+ThinkGraph Card supplies exactly one native Engraphis `EPISODIC` Think, canonical entities/concepts, and
+free-form directed pair proposals; native direct structured-extractor incidence associates that Think to
+accepted canonical nodes; and graph-aware Jev alone admits endpoints and classifies final edges. Thinks are
+append-only and excluded from episodic consolidation. This is not the removed proxy/replay design. Do not add
+a regex-first graph skeleton, pending-candidate queue, approval state, shadow graph, broad historical
+deletion, direct model edge writer, second extractor, or database-side semantic shortcut.
 KnowGraph retains actual sourced research through its existing owner.
 
 Keep entity identity, attributed claims, uncertainty, meaningful relationships and provenance distinct.

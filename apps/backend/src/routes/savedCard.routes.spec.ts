@@ -3888,12 +3888,13 @@ describe('saved Card routes', () => {
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
         if (endpoint === '/thinkgraph/completed-pair/prepare') return {
           ok: true,
-          pairMemoryId: 'mem_pair_one',
-          intakeOperation: 'add',
+          pairMemoryId: 'pair_reference_one',
+          pairReference: 'pair_reference_one',
+          intakeOperation: 'pending',
           structuredExtractionRequired: true,
           revision: 4,
           revisionChanged: false,
-          preparation: { status: 'completed_without_graph_mutation' },
+          preparation: { status: 'pending_structured_extraction' },
           enrichmentInput: {
             exact_user_message: 'complete with hybrid ThinkGraph intake',
             exact_main_response: 'Real assistant reply.',
@@ -3989,23 +3990,23 @@ describe('saved Card routes', () => {
           'Jev alone classifies any durable graph edge',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Create the current temporal ThinkGraph Thought from this completed User/Main exchange',
+          'Create the current temporal ThinkGraph Think from this completed User/Main exchange',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Main does not author or initiate this automatic Thought',
+          'Main does not author or initiate this automatic Think',
         );
         expect(cardBeginBody.assignment).toContain('current_graph_shape');
         expect(cardBeginBody.assignment).toContain(
           'with light canonical node/edge context',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not read historical Thought bodies',
+          'Do not read historical Think bodies',
         );
         expect(cardBeginBody.assignment).toContain(
-          'No old Thought/Note bodies are supplied or may be inferred',
+          'No earlier Think bodies are supplied or may be inferred',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not compare, merge, rewrite, or suppress the current Thought against older Thoughts',
+          'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks',
         );
         expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
 
@@ -4014,7 +4015,7 @@ describe('saved Card routes', () => {
         );
         expect(JSON.parse(String(settleCall?.[1]?.body))).toEqual({
           ...completedPair,
-          pairMemoryId: 'mem_pair_one',
+          pairMemoryId: 'pair_reference_one',
           structuredOutput: 'Real assistant reply.',
           cardRun: {
             runId: cardBeginBody.runId,

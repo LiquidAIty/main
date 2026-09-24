@@ -40,7 +40,7 @@ When CBM is unavailable or a path is excluded, use the bounded direct-source fal
 | Tool contracts and execution | `apps/python-models/app/python_models/tool_registry.py` plus the current Python operation owners | Canonical schemas, native availability, deterministic validation, and execution; transports do not duplicate these owners |
 | Official MCP host | `apps/python-models/app/mcp_host.py` | External OAuth publication and native external-tool federation; current internal callers remain until the approved Hermes-plugin boundary replaces that use |
 | CodeGraph | Native Codebase Memory through the official MCP host | Repository structure and source relationships; CBM is the sole graph writer |
-| ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning, native novelty/canonicalization/time/evidence, node Notes, and the sole persistent ThinkGraph store; Jev owns durable semantic edge classification |
+| ThinkGraph | Engraphis through `engraphis.py` and `thinkgraph.py` | Project reasoning, canonical entities, append-only temporal episodic Thinks, native structured incidence, and the sole persistent ThinkGraph store; Jev owns durable semantic edge admission/classification |
 | KnowGraph | Graphiti/Neo4j through `services/knowgraph` | Sourced knowledge and provenance |
 | AgentGraph | AGE/PostgreSQL through the Card-domain observation path | Saved Card relationships and truthful Run/reference/artifact observations |
 
@@ -342,31 +342,32 @@ completed User/Main pair to the approved Engraphis-native lifecycle only after t
 conversation persistence complete:
 
 ```text
-Engraphis semantic resolution
-  noop -> stop
-  add/invalidate/relate
-    -> RegexGraphExtractor.extract() + native feed() on a non-persisting adapter
-    -> bounded graph-aware Jev classification
-    -> accepted native endpoints/edges only
-    -> event-driven fast projection refresh
+non-persisting completed-pair preparation
+  existing authoritative Think -> duplicate noop -> stop
+  new pair
     -> exact saved ThinkGraph Card through the normal saved-Card/App Server Run path
-    -> Engraphis llm_structured facts/entities/free-form relations
-    -> self-contained native node Notes + missed concepts + directed pair proposals
-    -> Jev classification of every proposed durable edge
-    -> accepted node + Note + edge persistence in the same Engraphis graph
-    -> current live one-hop reclassification only for existing nodes with a new Note
+    -> Engraphis llm_structured: exactly one episodic Think + canonical entities/concepts
+       + free-form directed relationship proposals
+    -> freeze the turn-start latest-prior-Think snapshot for existing endpoints
+    -> bounded graph-aware Jev classification of every proposed durable edge
+    -> append exactly one native EPISODIC Memory with validated structured_extraction.think
+       and resolve_conflicts=False
+    -> native direct structured_extractor incidence for accepted/reused canonical entities
+    -> accepted native endpoints plus Jev winner/distribution/strength edges only
     -> event-driven settled projection refresh
 ```
 
-Engraphis owns canonical identity, semantic deduplication/novelty, memory/entity incidence, bi-temporal
-fields, native evidence, graph scene projection, and its existing force/galaxy vocabulary. Code owns Note
-origin and entry time; the saved Card does not emit either. A portable singular ThinkGraph item is a
-**Thought**: one canonical node plus its historical self-contained Notes, ordered newest-first by native
-`ingested_at` with native ID as the stable tie-break. The Card's free-form relationship is retained as
-Note/proposition context, while Jev independently chooses the canonical edge winner, full distribution,
-and relationship strength. The old automatic proxy/replay path remains removed; there is no candidate
-system, approval state, shadow graph, second extractor, direct model edge writer, or whole-graph
-reclassification loop. This lifecycle does not write KnowGraph.
+Engraphis owns canonical identity, memory/entity incidence, bi-temporal fields, native evidence, graph scene
+projection, and its existing force/galaxy vocabulary. One portable ThinkGraph unit is a **Think**: exactly one
+completed User/Main pair stored as one native append-only `EPISODIC` Memory whose semantic authority is
+`structured_extraction.think`. Native code owns entry time and saved-Card/run provenance. A canonical entity's
+Latest Think and Earlier Thinks are resolved only through direct `memory_entities` incidence with
+`source_kind="structured_extractor"` plus a validated Think payload, newest-first by native Engraphis time.
+The Card's free-form relationship remains structured context, while Jev independently chooses the canonical
+edge winner, full distribution, and relationship strength. Thinks are excluded from Engraphis semantic
+distillation, retention archival, and profile consolidation. The old automatic proxy/replay and regex-first
+paths remain removed; there is no candidate system, approval state, shadow graph, second extractor, direct
+model edge writer, or whole-graph reclassification loop. This lifecycle does not write KnowGraph.
 
 Visual activity may be driven only by real reads, selections, deliveries, traversals, writes, Run
 completion, or failure. `native_attention.py` normalizes observable tool events. AGE may store stable
@@ -430,11 +431,13 @@ changes only profile-scoped local target authority. The Mag One entry changes on
 inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
 LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
 
-The vendored Engraphis 1.7.1 renderer has one additional bounded local divergence:
+The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| Installed PyPI distribution `engraphis==1.7.1`, `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, and paint a transient current-turn halo. Existing Engraphis presets, palettes, graph scene, inspectors, galaxy physics, controls, and layout engine remain authoritative. No second layout or graph is introduced. | Focused renderer and graph-state tests plus client production typecheck. Sync cost is a small call-site rebase when adopting a later Engraphis renderer. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
+| Installed PyPI distribution `engraphis==1.7.4`, `backends/graph_extractor.py::feed`, `core/engine.py::MemoryEngine._remember_impl` | Actual imported project `.venv` source plus `patches/engraphis-1.7.4-structured-extractor-incidence.patch` | Return the canonical IDs already resolved by trusted graph feeding and materialize idempotent bi-temporal `memory_entities` rows with `source_kind="structured_extractor"`. Caller-supplied graph metadata remains outside the trusted path. | Generic focused tests prove out-of-content association, mention/support separation, trust rejection, idempotence, and native time. Fork cost is two small upstream seams; rollback reinstalls 1.7.4 and omits this patch. |
+| Installed PyPI distribution `engraphis==1.7.4`, `core/consolidate.py` | Actual imported project `.venv` source plus `patches/engraphis-1.7.4-consolidation-exempt.patch` | Honor generic `metadata.consolidation_exempt is True` across episodic distillation, retention archival, carry-over candidates, and entity-profile inputs. The flag is generic and introduces no LiquidAIty terminology. | Generic focused tests prove ordinary memories still participate while exempt memories do not. Fork cost is one predicate at existing candidate boundaries; rollback reinstalls 1.7.4 and omits this patch. |
+| Browser renderer fork originally copied from Engraphis 1.7.1 `dashboard_assets/engraphis-graph.js` | `client/src/vendor/engraphis/engraphis-graph.js`: `semanticRelationshipStrength`, `semanticRelationshipWidth`, `semanticRelationshipDistance`, `semanticRelationshipSpring`, `turnHeatIntensity`, `preserveRefreshPosition`, and the existing force/paint/`setData` call sites | Render Jev relationship strength through native edge width/spring/distance, preserve mature coordinates/camera across authoritative revisions, and paint a transient current-turn halo. Existing Engraphis presets, palettes, graph scene, inspectors, galaxy physics, controls, and layout engine remain authoritative. No second layout or graph is introduced. | Focused renderer and graph-state tests plus client production typecheck. Sync cost is a small call-site rebase when deliberately adopting a later renderer asset. Rollback removes these helpers/call-site mappings and restores the upstream width/force/refresh behavior without changing graph data. |
 
 ## Current proof limits
 

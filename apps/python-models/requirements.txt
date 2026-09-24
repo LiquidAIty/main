@@ -34,5 +34,5 @@ ccxt==4.5.64
 # Bound resolver search across Databento's paired Python/native releases.
 databento==0.86.0
 # ThinkGraph native Python engine; local semantic model, no dashboard/server extras.
-engraphis==1.7.1
+engraphis==1.7.4
 sentence-transformers==5.7.0

@@ -1,0 +1,43 @@
+diff --git a/engraphis/core/consolidate.py b/engraphis/core/consolidate.py
+--- a/engraphis/core/consolidate.py
++++ b/engraphis/core/consolidate.py
+@@ -171,6 +171,12 @@ def _mem_tokens(m: MemoryRecord) -> int:
+     return estimate_tokens(f"{m.title} {m.content}")
+ 
+ 
++def _consolidation_exempt(memory: MemoryRecord) -> bool:
++    """Return whether a memory opts out of every consolidation-derived lifecycle."""
++    metadata = memory.metadata if isinstance(memory.metadata, dict) else {}
++    return metadata.get("consolidation_exempt") is True
++
++
+ def _compaction(tokens_before: int, tokens_after: int, units: int) -> dict:
+@@ -406,6 +412,7 @@ def _load_distill_candidates(
+             and memory.mtype == MemoryType.EPISODIC
+             and memory_matches_filter(memory, flt, at=now)
+             and prompt_eligible(memory.provenance, memory.metadata)
++            and not _consolidation_exempt(memory)
+         ):
+             records.append(memory)
+@@ -1002,6 +1009,9 @@ def consolidate(engine, *, workspace_id: str, repo_id: Optional[str] = None,
+         overlap=distill_overlap,
+         advance_records=DISTILL_CLUSTER_LIMIT + distill_overlap,
+     )
++    episodic = [
++        memory for memory in episodic if not _consolidation_exempt(memory)
++    ]
+     prior_candidates = _load_distill_candidates(store, flt, pending_ids, now=now)
+@@ -1151,7 +1161,7 @@ def consolidate(engine, *, workspace_id: str, repo_id: Optional[str] = None,
+     for m in _scan_memories(
+         store, flt, mtypes=TRANSIENT_TYPES, batch_size=DISTILL_SCAN_LIMIT,
+     ):
+-        if m.pinned:
++        if m.pinned or _consolidation_exempt(m):
+             continue
+         r = scoring.retention(m.stability, m.last_access, now)
+@@ -1898,6 +1908,7 @@ def consolidate_profiles(engine, *, workspace_id: str, repo_id: Optional[str] = None,
+         memory for memory in profile_memories
+         if memory.metadata.get("provenance", {}).get("source")
+         != "profile_consolidation"
++        and not _consolidation_exempt(memory)
+     ]

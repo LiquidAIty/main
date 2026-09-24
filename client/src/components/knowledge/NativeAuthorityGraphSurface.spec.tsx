@@ -376,14 +376,14 @@ describe('native authority graph surfaces', () => {
 
   it('opens only the selected ThinkGraph entry and keeps graph settings separate', () => {
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry', properties: {
-      evidence: [{ id: 'memory-one', ingestedAt: 100, metadata: { thinkgraph_note: {
-        kind: 'OBSERVATION', summary: 'Saved Thought.', propositions: [], relationship_observations: [],
-      } } }],
+      evidence: [{ id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
+        kind: 'OBSERVATION', summary: 'Saved Think.', propositions: [], relationship_observations: [],
+      } } } }],
     } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection} status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved Thought.');
+    expect(screen.getByRole('region', { name: 'Existing entry details' }).textContent).toContain('Saved Think.');
     expect(screen.queryByRole('button', { name: /^Expand$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Use in chat' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
@@ -391,46 +391,58 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByRole('slider', { name: 'Text size' })).toBeTruthy();
   });
 
-  it('shows the complete latest direct Thought and keeps older direct Thoughts in newest-first history', async () => {
+  it('shows the complete latest direct Think and keeps earlier direct Thinks in newest-first history', async () => {
     const remove = vi.fn().mockRejectedValue(new Error('Removal unavailable'));
     const projection = { ...empty('thinkgraph'), nodes: [{ id: 'stored', label: 'Existing entry',
       properties: { evidence: [
-        { id: 'memory-new', summary: 'Latest saved Thought.', ingestedAt: 200,
-          metadata: { thinkgraph_note: {
-            kind: 'DECISION', summary: 'Latest saved Thought.', importance: 0.91,
-            keywords: ['latest', 'decision'], concepts: ['Current thesis'],
+        { id: 'memory-new', summary: 'Latest saved Think.', ingestedAt: 200,
+          metadata: { keywords: ['latest', 'decision'], structured_extraction: { think: {
+            kind: 'DECISION', summary: 'Latest saved Think.', importance: 0.91,
+            concepts: ['Current thesis'],
             properties: [{ name: 'time_horizon', value: 'one year' }],
             propositions: ['The current thesis depends on execution.'],
+            questions: ['Will the launch remain on schedule?'],
+            predictions: ['A successful launch would improve the thesis.'],
+            assumptions: ['The published schedule remains current.'],
+            preferences: ['Keep the theses separate.'],
+            corrections: ['Do not collapse this into one ranking.'],
+            uncertainty: ['Launch timing remains uncertain.'],
             relationship_observations: ['Rocket Lab DEPENDS_ON Neutron'],
-          } } },
-        { id: 'memory-old', summary: 'Older saved Thought.', ingestedAt: 100,
-          metadata: { thinkgraph_note: {
-            kind: 'OBSERVATION', summary: 'Older saved Thought.', propositions: [],
+          } } } },
+        { id: 'memory-old', summary: 'Earlier saved Think.', ingestedAt: 100,
+          metadata: { structured_extraction: { think: {
+            kind: 'OBSERVATION', summary: 'Earlier saved Think.', propositions: [],
             relationship_observations: [],
-          } } },
+          } } } },
       ] } }] };
     render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
       status="ready" error={null} onRemoveEvidence={remove} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    expect(screen.getByText('Latest Thought')).toBeTruthy();
-    expect(screen.getByText('Latest saved Thought.')).toBeTruthy();
+    expect(screen.getByText('Latest Think')).toBeTruthy();
+    expect(screen.getByText('Latest saved Think.')).toBeTruthy();
     expect(screen.getByText('DECISION')).toBeTruthy();
     expect(screen.getByText('The current thesis depends on execution.')).toBeTruthy();
     expect(screen.getByText('Rocket Lab DEPENDS_ON Neutron')).toBeTruthy();
+    expect(screen.getByText('Will the launch remain on schedule?')).toBeTruthy();
+    expect(screen.getByText('A successful launch would improve the thesis.')).toBeTruthy();
+    expect(screen.getByText('The published schedule remains current.')).toBeTruthy();
+    expect(screen.getByText('Keep the theses separate.')).toBeTruthy();
+    expect(screen.getByText('Do not collapse this into one ranking.')).toBeTruthy();
+    expect(screen.getByText('Launch timing remains uncertain.')).toBeTruthy();
     expect(screen.getByText('time_horizon').nextSibling?.textContent).toBe('one year');
-    const older = screen.getByText('Older Thoughts (1)').parentElement as HTMLDetailsElement;
-    expect(older.open).toBe(false);
-    expect(older.textContent).toContain('Older saved Thought.');
-    fireEvent.click(screen.getByText('Older Thoughts (1)'));
-    expect(older.open).toBe(true);
-    expect(screen.getByText('Older saved Thought.')).toBeTruthy();
+    const earlier = screen.getByText('Earlier Thinks (1)').parentElement as HTMLDetailsElement;
+    expect(earlier.open).toBe(false);
+    expect(earlier.textContent).toContain('Earlier saved Think.');
+    fireEvent.click(screen.getByText('Earlier Thinks (1)'));
+    expect(earlier.open).toBe(true);
+    expect(screen.getByText('Earlier saved Think.')).toBeTruthy();
     expect(document.querySelector('time')?.getAttribute('datetime'))
       .toBe('1970-01-01T00:03:20.000Z');
-    fireEvent.click(screen.getByRole('button', { name: 'Remove note' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Think' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Removal unavailable'));
     expect(remove).toHaveBeenCalledExactlyOnceWith('memory-new');
-    expect(screen.getByText('Latest saved Thought.')).toBeTruthy();
+    expect(screen.getByText('Latest saved Think.')).toBeTruthy();
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(['stored']);
   });
 
@@ -560,10 +572,10 @@ describe('native authority graph surfaces', () => {
     const projection = { ...empty(authority), nodes: [{ id: 'native-1', label: 'Recorded subject',
       runId: 'run-1', conversationId: 'chat-1', createdAt: '2026-09-01',
       properties: authority === 'thinkgraph' ? { evidence: [{
-        id: 'memory-one', ingestedAt: 100, metadata: { thinkgraph_note: {
-          kind: 'OBSERVATION', summary: 'The complete Thought summary.',
+        id: 'memory-one', ingestedAt: 100, metadata: { structured_extraction: { think: {
+          kind: 'OBSERVATION', summary: 'The complete Think summary.',
           propositions: [], relationship_observations: [],
-        } },
+        } } },
       }] } : { statement: 'The complete original statement.', certainty: 0.4, supersedes: 'native-0' },
       provenance: { author: 'Research Agent', correction: 'Source corrected its estimate.' } }] };
     const { container } = render(<NativeGraphProjectionSurface authority={authority} projection={projection} status="ready" error={null} />);
@@ -575,7 +587,7 @@ describe('native authority graph surfaces', () => {
     expect(panel.style.width).toBe('390px');
     expect(screen.getByRole('heading', { name: 'Recorded subject' })).toBe(document.activeElement);
     expect(panel.textContent).toContain(authority === 'thinkgraph'
-      ? 'The complete Thought summary.'
+      ? 'The complete Think summary.'
       : 'The complete original statement.');
     for (const implementationValue of ['native-1', 'run-1', 'chat-1', 'Research Agent', 'native-0']) {
       expect(panel.textContent).not.toContain(implementationValue);

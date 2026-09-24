@@ -270,20 +270,22 @@ function compactProbability(value: unknown): string | null {
   return Math.max(0, Math.min(1, numeric)).toFixed(2).replace(/^0/, '');
 }
 
-function thoughtMetadata(item: Record<string, any>): Record<string, any> {
+function thinkMetadata(item: Record<string, any>): Record<string, any> {
   const metadata = item.metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
-  const note = metadata.thinkgraph_note;
-  return note && typeof note === 'object' && !Array.isArray(note) ? note : {};
+  const structured = metadata.structured_extraction;
+  if (!structured || typeof structured !== 'object' || Array.isArray(structured)) return {};
+  const think = structured.think;
+  return think && typeof think === 'object' && !Array.isArray(think) ? think : {};
 }
 
-function thoughtStrings(value: unknown): string[] {
+function thinkStrings(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
     : [];
 }
 
-function ThinkGraphThought({
+function ThinkGraphThink({
   item,
   heading,
   removing = false,
@@ -294,58 +296,66 @@ function ThinkGraphThought({
   removing?: boolean;
   onRemove?: () => void;
 }) {
-  const note = thoughtMetadata(item);
+  const think = thinkMetadata(item);
+  const metadata = item.metadata && typeof item.metadata === 'object' && !Array.isArray(item.metadata)
+    ? item.metadata as Record<string, unknown>
+    : {};
   const entryTime = nativeEntryTime(item.ingestedAt);
-  const summary = typeof note.summary === 'string' && note.summary.trim()
-    ? note.summary
+  const summary = typeof think.summary === 'string' && think.summary.trim()
+    ? think.summary
     : typeof item.summary === 'string' && item.summary.trim()
       ? item.summary
       : typeof item.content === 'string' && item.content.trim()
         ? item.content
         : null;
-  const keywords = thoughtStrings(note.keywords);
-  const concepts = thoughtStrings(note.concepts);
-  const propositions = thoughtStrings(note.propositions);
-  const observations = thoughtStrings(note.relationship_observations);
-  const properties = Array.isArray(note.properties)
-    ? note.properties.filter((property: unknown): property is { name: string; value: unknown } => {
+  const keywords = thinkStrings(metadata.keywords);
+  const concepts = thinkStrings(think.concepts);
+  const semanticSections = ([
+    ['Propositions', thinkStrings(think.propositions)],
+    ['Questions', thinkStrings(think.questions)],
+    ['Predictions', thinkStrings(think.predictions)],
+    ['Assumptions', thinkStrings(think.assumptions)],
+    ['Preferences', thinkStrings(think.preferences)],
+    ['Corrections', thinkStrings(think.corrections)],
+    ['Uncertainty', thinkStrings(think.uncertainty)],
+    ['Relationship observations', thinkStrings(think.relationship_observations)],
+  ] as const).filter(([, values]) => values.length > 0);
+  const properties = Array.isArray(think.properties)
+    ? think.properties.filter((property: unknown): property is { name: string; value: unknown } => {
       if (!property || typeof property !== 'object' || Array.isArray(property)) return false;
       const candidate = property as Record<string, unknown>;
       return typeof candidate.name === 'string' && candidate.name.trim().length > 0
         && candidate.value !== null && candidate.value !== undefined && String(candidate.value).trim().length > 0;
     })
     : [];
-  const importance = Number(note.importance);
-  return <section className="graph-note graph-thought" data-memory-id={item.id}>
-    <div className="graph-thought-heading">
+  const importance = Number(think.importance);
+  return <section className="graph-note graph-think" data-memory-id={item.id}>
+    <div className="graph-think-heading">
       <h4>{heading}</h4>
-      {typeof note.kind === 'string' && note.kind ? <span>{note.kind}</span> : null}
+      {typeof think.kind === 'string' && think.kind ? <span>{think.kind}</span> : null}
     </div>
     {entryTime ? <time dateTime={entryTime.dateTime}>{entryTime.label}</time> : null}
     {summary ? <p>{summary}</p> : null}
-    {Number.isFinite(importance) ? <dl className="graph-thought-fields">
+    {Number.isFinite(importance) ? <dl className="graph-think-fields">
       <div><dt>Importance</dt><dd>{String(importance)}</dd></div>
     </dl> : null}
-    {properties.length ? <section className="graph-thought-section">
-      <h5>Extracted properties</h5>
+    {properties.length ? <section className="graph-think-section">
+      <h5>Properties</h5>
       <dl>{properties.map(property => <div key={`${property.name}:${String(property.value)}`}>
         <dt>{property.name}</dt><dd>{String(property.value)}</dd>
       </div>)}</dl>
     </section> : null}
-    {propositions.length ? <section className="graph-thought-section">
-      <h5>Propositions</h5><ul>{propositions.map(value => <li key={value}>{value}</li>)}</ul>
-    </section> : null}
-    {observations.length ? <section className="graph-thought-section">
-      <h5>Relationship observations</h5><ul>{observations.map(value => <li key={value}>{value}</li>)}</ul>
-    </section> : null}
-    {keywords.length ? <section className="graph-thought-section">
+    {semanticSections.map(([label, values]) => <section className="graph-think-section" key={label}>
+      <h5>{label}</h5><ul>{values.map(value => <li key={value}>{value}</li>)}</ul>
+    </section>)}
+    {keywords.length ? <section className="graph-think-section">
       <h5>Keywords</h5><p>{keywords.join(' · ')}</p>
     </section> : null}
-    {concepts.length ? <section className="graph-thought-section">
+    {concepts.length ? <section className="graph-think-section">
       <h5>Concepts</h5><p>{concepts.join(' · ')}</p>
     </section> : null}
     {onRemove ? <button type="button" disabled={removing} onClick={onRemove}>
-      {removing ? 'Removing…' : 'Remove note'}
+      {removing ? 'Removing…' : 'Remove Think'}
     </button> : null}
   </section>;
 }
@@ -530,14 +540,16 @@ export function NativeGraphProjectionSurface({
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
-    const notes = authority === 'thinkgraph' && selected && !selectedEdge
+    const thinks = authority === 'thinkgraph' && selected && !selectedEdge
       ? evidenceRecords.filter(item => item.metadata !== null
         && typeof item.metadata === 'object'
-        && item.metadata.thinkgraph_note !== null
-        && typeof item.metadata.thinkgraph_note === 'object')
+        && item.metadata.structured_extraction !== null
+        && typeof item.metadata.structured_extraction === 'object'
+        && item.metadata.structured_extraction.think !== null
+        && typeof item.metadata.structured_extraction.think === 'object')
       : evidenceRecords;
-    const latestThought = authority === 'thinkgraph' && selected && !selectedEdge
-      ? notes[0] : null;
+    const latestThink = authority === 'thinkgraph' && selected && !selectedEdge
+      ? thinks[0] : null;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
   const nativeLabel = (id: string) => displayProjection?.nodes.find(node => node.id === id)?.label || id;
   const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
@@ -658,23 +670,23 @@ export function NativeGraphProjectionSurface({
             .map(value => <p key={value}>{value}</p>) : null}
           {authority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
         </article> : null}
-        {latestThought ? <ThinkGraphThought
-          item={latestThought}
-          heading="Latest Thought"
-          removing={removingId === latestThought.id}
+        {latestThink ? <ThinkGraphThink
+          item={latestThink}
+          heading="Latest Think"
+          removing={removingId === latestThink.id}
           onRemove={authority === 'thinkgraph' && onRemoveEvidence ? async () => {
-            setRemovingId(latestThought.id); setRemoveError(null);
-            try { await onRemoveEvidence(latestThought.id); }
+            setRemovingId(latestThink.id); setRemoveError(null);
+            try { await onRemoveEvidence(latestThink.id); }
             catch (failure) { setRemoveError(failure instanceof Error ? failure.message : String(failure)); }
             finally { setRemovingId(null); }
           } : undefined}
         /> : null}
-        {notes.length > 1 ? <details className="graph-thought-history">
-          <summary>Older Thoughts ({notes.length - 1})</summary>
-          <div>{notes.slice(1).map((item, index) => <ThinkGraphThought
+        {thinks.length > 1 ? <details className="graph-think-history">
+          <summary>Earlier Thinks ({thinks.length - 1})</summary>
+          <div>{thinks.slice(1).map((item, index) => <ThinkGraphThink
             key={item.id}
             item={item}
-            heading={`Earlier Thought ${index + 1}`}
+            heading={`Earlier Think ${index + 1}`}
           />)}</div>
         </details> : null}
         {selectedRelationships.length ? <section className="knowgraph-relationships">

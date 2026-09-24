@@ -36,16 +36,16 @@
 .native-authority-graph > aside { max-width:calc(100% - 24px); }
 .native-authority-controls summary { cursor:pointer; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
 .graph-note time { display:block; margin-top:8px; color:#85d3ca; font-size:11px; letter-spacing:.02em; }
-.graph-thought { display:grid; gap:9px; }
-.graph-thought-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
-.graph-thought-heading span { color:#85d3ca; font-size:11px; font-weight:700; letter-spacing:.06em; }
-.graph-thought p { margin:0; }
-.graph-thought-fields, .graph-thought-section dl { margin:0; }
-.graph-thought-fields > div, .graph-thought-section dl > div, .graph-edge-meaning > div { display:grid; grid-template-columns:minmax(90px,.7fr) minmax(0,1.3fr); gap:10px; }
-.graph-thought-section { padding:0 !important; border:0 !important; background:transparent !important; }
-.graph-thought-section h5 { margin:0 0 5px; color:#dce8e8; font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
-.graph-thought-section ul { display:grid; gap:5px; margin:0; padding-left:18px; color:#b8c7cc; font-size:12px; line-height:1.45; }
-.graph-thought-history > div { display:grid; gap:10px; margin-top:10px; }
+.graph-think { display:grid; gap:9px; }
+.graph-think-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.graph-think-heading span { color:#85d3ca; font-size:11px; font-weight:700; letter-spacing:.06em; }
+.graph-think p { margin:0; }
+.graph-think-fields, .graph-think-section dl { margin:0; }
+.graph-think-fields > div, .graph-think-section dl > div, .graph-edge-meaning > div { display:grid; grid-template-columns:minmax(90px,.7fr) minmax(0,1.3fr); gap:10px; }
+.graph-think-section { padding:0 !important; border:0 !important; background:transparent !important; }
+.graph-think-section h5 { margin:0 0 5px; color:#dce8e8; font-size:11px; letter-spacing:.04em; text-transform:uppercase; }
+.graph-think-section ul { display:grid; gap:5px; margin:0; padding-left:18px; color:#b8c7cc; font-size:12px; line-height:1.45; }
+.graph-think-history > div { display:grid; gap:10px; margin-top:10px; }
 .graph-edge-meaning { display:grid; gap:5px; margin:0; padding:10px 12px; border:1px solid rgba(55,173,170,.28); border-radius:10px; background:rgba(11,20,24,.72); }
 .graph-jev-distribution { padding:10px 12px; border:1px solid rgba(183,137,255,.3); border-radius:10px; background:linear-gradient(145deg,rgba(34,224,255,.055),rgba(183,137,255,.08)); }
 .graph-jev-distribution dl { display:grid; gap:5px; margin:10px 0 0; }
