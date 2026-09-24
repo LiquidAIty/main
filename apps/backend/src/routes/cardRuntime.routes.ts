@@ -98,7 +98,7 @@ type SharedChatAuthority = {
   agents: AddressableAgent[];
 };
 
-type ThinkGraphRevisionStage = 'fast' | 'settled';
+type ThinkGraphRevisionStage = 'settled';
 
 type ThinkGraphRevisionEvent = {
   projectId: string;
@@ -1483,7 +1483,7 @@ async function executePreparedGatewayCardRun(args: {
   }
 }
 
-function thinkGraphCardAssignment(fast: any): string {
+function thinkGraphCardAssignment(preparation: any): string {
   return [
     'Run one Engraphis llm_structured extraction pass using the native prompt and schema below.',
     'Use your saved ThinkGraph Card instructions and configured model. Do not call tools.',
@@ -1491,95 +1491,68 @@ function thinkGraphCardAssignment(fast: any): string {
     'Create the current temporal ThinkGraph Thought from this completed User/Main exchange.',
     'The exchange is observable input; Main does not author or initiate this automatic Thought.',
     'Interpret the current completed User/Main pair with light canonical node/edge context so',
-    'the current Thought can attach to the existing conceptual map. Use the exact current pair,',
-    'accepted active endpoints, current_graph_shape, and current_turn_accepted_relationships',
-    'supplied in the native prompt. Do not read historical Thought bodies.',
+    'the current Thought can attach to the existing conceptual map. Use the exact current pair',
+    'and current_graph_shape supplied in the native prompt. Do not read historical Thought bodies.',
     'Do not browse, investigate, introduce evidence, extend the analysis, answer the user again,',
     'or continue the exchange beyond semantic interpretation grounded in the current pair.',
     'current_graph_shape contains only bounded node identities and live Jev edge shape. Use it',
     'only to reuse canonical concepts and propose where this current Thought relates. Never derive',
     'Thought content from topology. No old Thought/Note bodies are supplied or may be inferred.',
-    'The native prompt context lists current_turn_enrichment_targets. Consider every listed target.',
-    'For every listed target, emit at least one proper current-pair fact whose entities include its',
-    'exact canonicalName. NEW targets receive their first Thought Note; EXISTING targets append this',
-    'pair\'s Thought Note. Do not compare, merge, rewrite, or suppress it against older Thoughts.',
+    'Extract only meaningful reusable concepts grounded in this pair, including concepts that a',
+    'lexical extractor would miss. Reuse an exact supplied canonical name when it is the same concept.',
+    'Do not compare, merge, rewrite, or suppress the current Thought against older Thoughts.',
     'Canonicalize entities semantically as concise standalone reusable concepts grounded in the pair.',
     'Do not use casing, keywords, stopword lists, or regex surface form as concept authority. Remove',
-    'discourse/request framing when it is not itself the concept; regex proposals are only suggestions.',
-    'Preserve directed relations as source/relation/target extraction hints. Write relation as',
-    'concise, meaningful free-form semantic language; do not choose a canonical ThinkGraph label.',
+    'discourse/request framing when it is not itself the concept.',
+    'Preserve directed relations as source/relation/target extraction hints. The native prompt',
+    'supplies current_project_relationship_vocabulary: the shared project predicates, beginning',
+    'with the 20 seeds and including any prior Jev-promoted winners. Prefer one exact existing',
+    'label whenever it accurately expresses the relation. Do not invent a synonym to be different.',
+    'Only when none fits may relation propose ONE new concise semantic predicate. Use',
+    'UPPER_SNAKE_CASE; prefer one word, use two only when needed, and never exceed three words.',
+    'The relation must be a short predicate, never a prose sentence or hedged explanation.',
     'Omit a relation if no meaningful directed relationship is grounded in the current pair.',
-    'Code preserves that wording in node Notes; Jev alone classifies any durable graph edge.',
+    'Do not emit an entity solely to make it durable; a new entity becomes a graph node only if Jev',
+    'accepts a structured relationship involving it after this Card returns.',
+    'The Thought preserves the full explanatory meaning; Jev alone classifies any durable graph edge',
+    'by making the proposed predicate compete with the entire current project vocabulary.',
     'Facts and Note depth must be self-contained. Apart from each required relation.source, do not',
     'emit timestamps, external source references, citations, origin/provenance fields, or final edge labels.',
     '',
     'OUTPUT_SCHEMA',
-    JSON.stringify(fast.enrichmentSchema),
+    JSON.stringify(preparation.enrichmentSchema),
     '',
     'ENGRAPHIS_LLM_STRUCTURED_PROMPT',
-    String(fast.enrichmentPrompt || ''),
+    String(preparation.enrichmentPrompt || ''),
   ].join('\n');
 }
 
 async function runCompletedPairThinkGraphLifecycle(
   args: CompletedPairThinkGraphLifecycleArgs,
 ): Promise<void> {
-  let stage: 'fast' | 'thinkgraph_card' | 'settle' = 'fast';
+  let stage: 'prepare' | 'thinkgraph_card' | 'settle' = 'prepare';
   try {
-    const fast: any = await requestPythonRailsJson('/thinkgraph/completed-pair/fast', {
+    const preparation: any = await requestPythonRailsJson('/thinkgraph/completed-pair/prepare', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(args.completedPair),
     });
-    const fastFailures = Array.isArray(fast?.fast?.failures) ? fast.fast.failures : [];
-    if (fastFailures.length) {
-      logHarnessTrace(
-        `[thinkgraph] fast Jev pair failures count=${fastFailures.length}`,
-      );
-      publishThinkGraphStreamEvent(
-        args.projectId,
-        args.deckId,
-        args.conversationId,
-        'thinkgraph_error',
-        {
-          projectId: args.projectId,
-          deckId: args.deckId,
-          conversationId: args.conversationId,
-          originatingRunId: args.originatingRunId,
-          stage: 'fast',
-          error: 'jev_relationship_pair_failures',
-          failureCount: fastFailures.length,
-        },
-      );
-    }
-    if (fast?.revisionChanged === true) {
-      publishThinkGraphRevision({
-        projectId: args.projectId,
-        deckId: args.deckId,
-        conversationId: args.conversationId,
-        originatingRunId: args.originatingRunId,
-        stage: 'fast',
-        revision: String(fast.revision ?? ''),
-        changedNodeIds: Array.isArray(fast.fast?.changedNodeIds)
-          ? fast.fast.changedNodeIds.map(String) : [],
-        changedEdgeIds: Array.isArray(fast.fast?.changedEdgeIds)
-          ? fast.fast.changedEdgeIds.map(String) : [],
-        affectedNodeIds: Array.isArray(fast.fast?.changedNodeIds)
-          ? fast.fast.changedNodeIds.map(String) : [],
-        turnHeat: fast.fast?.turnHeat && typeof fast.fast.turnHeat === 'object'
-          ? fast.fast.turnHeat : {},
-        topActiveNodes: Array.isArray(fast.fast?.topActiveNodes)
-          ? fast.fast.topActiveNodes : [],
-      });
-    }
-
-    const intakeOperation = String(fast?.intakeOperation || '');
-    if (fast?.enrichmentRequired === false && intakeOperation === 'noop') return;
+    const intakeOperation = String(preparation?.intakeOperation || '');
     if (
-      fast?.enrichmentRequired !== true
+      preparation?.revisionChanged !== false
+      || preparation?.preparation?.status === undefined
+    ) {
+      throw new Error('thinkgraph_prepare_mutated_graph');
+    }
+    if (
+      preparation?.structuredExtractionRequired === false
+      && intakeOperation === 'noop'
+    ) return;
+    if (
+      preparation?.structuredExtractionRequired !== true
       || !['add', 'invalidate', 'relate'].includes(intakeOperation)
     ) {
-      throw new Error('thinkgraph_fast_intake_contract_invalid');
+      throw new Error('thinkgraph_prepare_intake_contract_invalid');
     }
 
     stage = 'thinkgraph_card';
@@ -1596,7 +1569,7 @@ async function runCompletedPairThinkGraphLifecycle(
       deckId: args.deckId,
       cardId: thinkGraphCard.cardId,
       cardRevisionId: thinkGraphCard.cardRevisionId,
-      assignment: thinkGraphCardAssignment(fast),
+      assignment: thinkGraphCardAssignment(preparation),
       senderCardId: args.authority.main.cardId,
       originatingRunId: args.originatingRunId,
       conversationId: args.conversationId,
@@ -1632,10 +1605,7 @@ async function runCompletedPairThinkGraphLifecycle(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...args.completedPair,
-        pairMemoryId: String(fast.pairMemoryId || ''),
-        fastTurnHeat: fast.fast?.turnHeat || {},
-        fastActiveTargets: fast.fast?.activeEnrichmentTargets || [],
-        turnStartPriorThoughtSnapshot: fast.turnStartPriorThoughtSnapshot || {},
+        pairMemoryId: String(preparation.pairMemoryId || ''),
         structuredOutput: cardResult.text,
         cardRun: {
           runId: cardRunId,

@@ -3221,7 +3221,10 @@
   function semanticRelationshipWidth(link, multiplier = 1, focused = false, active = false) {
     const strength = semanticRelationshipStrength(link);
     if (strength === null) return null;
-    const width = (0.45 + 2.25 * strength) * Math.max(0, Number(multiplier) || 0);
+    const suppliedWidth = Number(link.visual_width);
+    const width = (Number.isFinite(suppliedWidth) && suppliedWidth > 0
+      ? suppliedWidth : 0.45 + 2.25 * strength)
+      * Math.max(0, Number(multiplier) || 0);
     if (!focused) return width;
     return active ? width * 1.7 : Math.max(0.25, width * 0.35);
   }

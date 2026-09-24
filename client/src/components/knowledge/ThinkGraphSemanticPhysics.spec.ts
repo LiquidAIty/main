@@ -17,6 +17,9 @@ describe('ThinkGraph Jev semantic physics', () => {
       .toBeCloseTo(2.295);
     expect(internals.semanticRelationshipWidth({ relationship_strength: 0.82 }, 1, true, true))
       .toBeCloseTo(3.9015);
+    expect(internals.semanticRelationshipWidth({
+      relationship_strength: 0.82, visual_width: 1.6,
+    }, 1)).toBeCloseTo(1.6);
     expect(internals.semanticRelationshipWidth({ weight: 9 }, 1)).toBeNull();
   });
 

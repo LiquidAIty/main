@@ -103,6 +103,19 @@ describe('requested initial Card topology', () => {
     expect(team?.prompt).toContain('Optional Agent candidate:');
     expect(team?.prompt).toContain('repeatable missing specialty');
   });
+
+  it('seeds KnowGraph to ingest verified research without requiring an existing graph target', () => {
+    const knowGraph = INITIAL_DECK.nodes.find((card) => card.id === 'card_knowgraph');
+    expect(knowGraph?.prompt).toContain(
+      'persist the source material with graphiti.add_memory before answering',
+    );
+    expect(knowGraph?.prompt).toContain(
+      'does not require a preexisting node, edge, native ID, target Card, or selected graph reference',
+    );
+    expect(knowGraph?.prompt).toContain(
+      'Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake',
+    );
+  });
 });
 
 describe('buildQuickAddAssistCard (hex-plus add agent)', () => {

@@ -87,32 +87,32 @@ describe('attention-activated native graph projection', () => {
       ],
       relationships: [
         {
-          id: 'ab', from: 'a', to: 'b', type: 'SUPPLIES',
+          id: 'ab', from: 'a', to: 'b', type: 'PROVIDES',
           properties: {
             relationship_strength: 0.2,
             jev: {
-              status: 'success', winner: 'SUPPLIES', label_confidence: 0.8,
-              distribution: { SUPPLIES: 0.8, OTHER_RELATION: 0.2 },
+              status: 'success', winner: 'PROVIDES', label_confidence: 0.8,
+              distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 },
             },
           },
         },
         {
-          id: 'cb', from: 'c', to: 'b', type: 'FUNDS',
+          id: 'cb', from: 'c', to: 'b', type: 'SUPPORTS',
           properties: {
             relationship_strength: 0.6,
             jev: {
-              status: 'success', winner: 'FUNDS', label_confidence: 0.6,
-              distribution: { FUNDS: 0.6, OTHER_RELATION: 0.4 },
+              status: 'success', winner: 'SUPPORTS', label_confidence: 0.6,
+              distribution: { SUPPORTS: 0.6, ASSOCIATED_WITH: 0.4 },
             },
           },
         },
         {
-          id: 'db-old', from: 'd', to: 'b', type: 'PARTNERS_WITH',
+          id: 'db-old', from: 'd', to: 'b', type: 'COMPETES_WITH',
           properties: {
             temporalStatus: 'historical', invalidAt: '2026-09-23T00:00:00Z',
             jev: {
-              status: 'success', winner: 'PARTNERS_WITH', label_confidence: 0.99,
-              distribution: { PARTNERS_WITH: 0.99, OTHER_RELATION: 0.01 },
+              status: 'success', winner: 'COMPETES_WITH', label_confidence: 0.99,
+              distribution: { COMPETES_WITH: 0.99, ASSOCIATED_WITH: 0.01 },
             },
           },
         },
@@ -120,7 +120,7 @@ describe('attention-activated native graph projection', () => {
     }, 'project-1');
 
     expect(projected.edges[0]).toMatchObject({
-      predicate: 'SUPPLIES', relationship_strength: 0.8,
+      predicate: 'PROVIDES', relationship_strength: 0.8,
       strength: 0.8, spring_strength: 0.171,
     });
     expect(projected.nodes.find((node) => node.id === 'b')).toMatchObject({
@@ -143,7 +143,7 @@ describe('attention-activated native graph projection', () => {
     expect(refreshed.nodes.find((node) => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
   });
 
-  it('refreshes exactly once per pushed fast/settled ThinkGraph revision', async () => {
+  it('refreshes exactly once per pushed settled ThinkGraph revision', async () => {
     let response = thinkgraphResponse();
     const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? response : knowledgeResponse());
@@ -161,16 +161,16 @@ describe('attention-activated native graph projection', () => {
       properties: {},
     }];
     response = thinkgraphResponse(records);
-    const fast: ThinkGraphRevisionEvent = {
+    const settled: ThinkGraphRevisionEvent = {
       projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
-      originatingRunId: 'run-1', stage: 'fast', revision: '4',
-      changedNodeIds: ['native-entity'], changedEdgeIds: ['edge-fast'],
+      originatingRunId: 'run-1', stage: 'settled', revision: '4',
+      changedNodeIds: ['native-entity'], changedEdgeIds: ['edge-rich'],
       affectedNodeIds: ['native-entity'], turnHeat: { 'native-entity': 0.75 },
       topActiveNodes: [{ nativeId: 'native-entity', turnHeat: 0.75 }],
     };
     act(() => {
-      result.current.observeThinkGraphRevision(fast);
-      result.current.observeThinkGraphRevision(fast);
+      result.current.observeThinkGraphRevision(settled);
+      result.current.observeThinkGraphRevision(settled);
     });
     await waitFor(() => expect(
       result.current.projections.thinkgraph.nodes.map((node) => node.id),
@@ -190,18 +190,6 @@ describe('attention-activated native graph projection', () => {
     expect(fetchMock.mock.calls.filter(
       ([url]) => String(url).startsWith('/api/thinkgraph/'),
     )).toHaveLength(initialThinkGraphReads + 1);
-
-    act(() => result.current.observeThinkGraphRevision({
-      ...fast, stage: 'settled', revision: '5', changedEdgeIds: ['edge-rich'],
-      turnHeat: { 'native-entity': 1.75 },
-      topActiveNodes: [{ nativeId: 'native-entity', turnHeat: 1.75 }],
-    }));
-    await waitFor(() => expect(
-      (result.current.projections.thinkgraph.nodes[0] as any).turn_heat,
-    ).toBe(1.75));
-    expect(fetchMock.mock.calls.filter(
-      ([url]) => String(url).startsWith('/api/thinkgraph/'),
-    )).toHaveLength(initialThinkGraphReads + 2);
   });
 
   it('derives transient top-five heat for both projection and scene nodes', () => {

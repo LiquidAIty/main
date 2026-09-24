@@ -1,20 +1,23 @@
 from copy import deepcopy
 
+from app.python_models.jev_edge_ontology import (
+    SHARED_JEV_RELATIONSHIPS,
+)
+from app.python_models.engraphis import PROJECT_RELATIONSHIP_VOCABULARY_VERSION
 from app.python_models.knowgraph_jev import (
-    KNOWGRAPH_RELATIONSHIPS,
+    KNOWGRAPH_JEV_CHOICES,
     classify_knowgraph_fact,
     classify_knowgraph_facts,
 )
 
 
 EXPECTED_RELATIONSHIPS = (
-    "IS_A", "PART_OF", "HAS_PART", "LOCATED_IN",
-    "OWNS", "OPERATES", "PRODUCES", "PROVIDES", "USES", "DEPENDS_ON",
-    "CAUSES", "AFFECTS", "PARTNERS_WITH", "COMPETES_WITH",
-    "CONTRACTS_WITH", "SUPPLIES", "FUNDS", "INVESTS_IN", "ACQUIRES",
-    "REGULATES", "GOVERNS", "REPORTS", "MEASURES", "ASSOCIATED_WITH",
-    "OTHER_RELATION", "INSUFFICIENT_CONTEXT",
+    "IS_A", "PART_OF", "HAS_PART", "CAUSES", "AFFECTS", "DEPENDS_ON",
+    "ENABLES", "CONSTRAINS", "REQUIRES", "SUPPORTS", "CONTRADICTS",
+    "QUALIFIES", "EXPLAINS", "ASSOCIATED_WITH", "ALTERNATIVE_TO",
+    "COMPETES_WITH", "PROVIDES", "USES", "PRECEDES", "FOLLOWS",
 )
+EXPECTED_CHOICES = EXPECTED_RELATIONSHIPS + ("INSUFFICIENT_CONTEXT",)
 
 
 def native_fact() -> dict:
@@ -22,8 +25,8 @@ def native_fact() -> dict:
         "nativeFactUuid": "fact-1",
         "sourceEntity": {"uuid": "company-a", "name": "Rocket Lab"},
         "targetEntity": {"uuid": "customer-b", "name": "NASA"},
-        "nativeRelation": "was awarded a launch services contract by",
-        "fact": "NASA awarded Rocket Lab a launch services contract.",
+        "nativeRelation": "provides launch services to",
+        "fact": "Rocket Lab provides NASA launch services under contract.",
         "supportingEpisodes": [{
             "uuid": "episode-1",
             "source_url": "https://example.test/source",
@@ -34,9 +37,12 @@ def native_fact() -> dict:
     }
 
 
-def choice_response(winner: str = "CONTRACTS_WITH") -> dict:
+def choice_response(
+    winner: str = "PROVIDES",
+    choices: tuple[str, ...] = KNOWGRAPH_JEV_CHOICES,
+) -> dict:
     probability = 0.01
-    probabilities = {name: probability for name in KNOWGRAPH_RELATIONSHIPS}
+    probabilities = {name: probability for name in choices}
     probabilities[winner] = 0.75
     return {
         "provider": "test-provider",
@@ -53,7 +59,8 @@ def choice_response(winner: str = "CONTRACTS_WITH") -> dict:
 
 
 def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
-    assert KNOWGRAPH_RELATIONSHIPS == EXPECTED_RELATIONSHIPS
+    assert SHARED_JEV_RELATIONSHIPS == EXPECTED_RELATIONSHIPS
+    assert KNOWGRAPH_JEV_CHOICES == EXPECTED_CHOICES
     fact = native_fact()
     original = deepcopy(fact)
     captured = {}
@@ -66,17 +73,59 @@ def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
 
     assert fact == original
     assert result["status"] == "success"
-    assert result["winner"] == "CONTRACTS_WITH"
-    assert set(result["distribution"]) == set(EXPECTED_RELATIONSHIPS)
+    assert result["winner"] == "PROVIDES"
+    assert set(result["distribution"]) == set(EXPECTED_CHOICES)
     assert abs(sum(result["distribution"].values()) - 1.0) < 1e-9
     assert "relationship_strength" not in result
     state = captured["state"]
     assert state["native_fact_uuid"] == "fact-1"
     assert state["source_entity_a"]["name"] == "Rocket Lab"
     assert state["target_entity_b"]["name"] == "NASA"
-    assert state["native_graphiti_relationship"] == "was awarded a launch services contract by"
+    assert state["native_graphiti_relationship"] == "provides launch services to"
     assert state["supporting_source_episodes"][0]["uuid"] == "episode-1"
-    assert set(captured["questions"]["relationship"]["criteria"]) == set(EXPECTED_RELATIONSHIPS)
+    assert set(captured["questions"]["relationship"]["criteria"]) == set(EXPECTED_CHOICES)
+    assert result["vocabulary_version"] == PROJECT_RELATIONSHIP_VOCABULARY_VERSION
+    assert result["relationship_proposal_status"] == "invalid_novel_label"
+    assert result["novel_relationship_candidate"] == ""
+
+
+def test_concise_native_relation_competes_as_one_optional_novel_candidate() -> None:
+    fact = native_fact()
+    fact["nativeRelation"] = "amplifies"
+    captured = {}
+
+    def transport(body):
+        captured.update(body)
+        choices = tuple(body["questions"]["relationship"]["criteria"])
+        return choice_response("AMPLIFIES", choices)
+
+    result = classify_knowgraph_fact(fact, transport=transport)
+
+    assert result["status"] == "success"
+    assert result["winner"] == "AMPLIFIES"
+    assert result["novel_relationship_candidate"] == "AMPLIFIES"
+    assert result["relationship_proposal_status"] == "novel_candidate"
+    assert tuple(result["choice_options"])[-2:] == (
+        "AMPLIFIES", "INSUFFICIENT_CONTEXT",
+    )
+    assert captured["state"]["optional_novel_relationship_candidate"] == "AMPLIFIES"
+
+
+def test_insufficient_context_is_control_only_and_preserves_native_fact() -> None:
+    fact = native_fact()
+    original = deepcopy(fact)
+
+    result = classify_knowgraph_fact(
+        fact,
+        transport=lambda _body: choice_response("INSUFFICIENT_CONTEXT"),
+    )
+
+    assert fact == original
+    assert result["status"] == "unavailable"
+    assert result["control_outcome"] == "INSUFFICIENT_CONTEXT"
+    assert result["failure_reason"] == "knowgraph_jev_insufficient_context"
+    assert "label_confidence" not in result
+    assert result["winner"] not in SHARED_JEV_RELATIONSHIPS
 
 
 def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
@@ -93,9 +142,10 @@ def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
         "nativeFactUuid": "fact-1",
         "status": "unavailable",
         "requested_model": "typesafe/jev-1.13",
-        "question_schema_version": "knowgraph.relationship-choice.v1",
-        "vocabulary_version": "knowgraph.relationships.v1",
+        "question_schema_version": "knowgraph.relationship-choice.v3",
+        "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
         "vocabulary_hash": results[0]["vocabulary_hash"],
+        "vocabulary_count": 20,
         "evaluated_at": results[0]["evaluated_at"],
         "failure_reason": "knowgraph_jev_unavailable",
     }]

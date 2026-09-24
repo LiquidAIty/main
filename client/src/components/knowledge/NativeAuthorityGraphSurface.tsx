@@ -6,6 +6,12 @@ import '../../vendor/engraphis/engraphis-graph.js';
 import type { GraphData } from '../../vendor/codebase-memory-ui/src/lib/types';
 import RightGlassDrawer from '../graph/RightGlassDrawer';
 import { GraphNavigationControls, GraphPaperBackground } from '../graph/GraphCanvasChrome';
+import {
+  applyJevGraphPhysics,
+  JEV_GRAPH_PHYSICS_PROFILE_LABELS,
+  JEV_GRAPH_PHYSICS_PROFILES,
+  type JevGraphPhysicsProfile,
+} from './jevGraphPhysics';
 import './nativeAuthorityGraphSurface.css';
 
 const CbmGraphTab = lazy(async () => {
@@ -74,6 +80,7 @@ export type GraphProjectionEdge = {
   strength?: number;
   spring_strength?: number;
   rest_length?: number;
+  visual_width?: number;
 };
 
 export type GraphProjectionV1 = {
@@ -281,6 +288,7 @@ export function NativeGraphProjectionSurface({
   const [settings, setSettings] = useState<Record<string, number | boolean | string>>({});
   const [layout, setLayout] = useState<NativeLayout>('compact');
   const [style, setStyle] = useState<NativeStyle>('classic');
+  const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>('balanced');
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const [expanding, setExpanding] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -288,7 +296,11 @@ export function NativeGraphProjectionSurface({
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const cameraRef = useRef<{ x: number; y: number; scale: number } | null>(null);
-  const selected = projection?.nodes.find(node => node.id === selectedId);
+  const displayProjection = useMemo(
+    () => projection ? applyJevGraphPhysics(projection, physicsProfile) : null,
+    [physicsProfile, projection],
+  );
+  const selected = displayProjection?.nodes.find(node => node.id === selectedId);
   const selectedProperties = selected?.properties || {};
   const syncPaper = () => {
     const graph = graphRef.current;
@@ -351,29 +363,29 @@ export function NativeGraphProjectionSurface({
   useEffect(() => {
     // Engraphis scenes retain all engine-owned layout and evidence fields.
     // Graphiti uses the renderer's supported field aliases; no graph is inferred here.
-    const data = projection?.scene || {
-      nodes: projection?.nodes || [],
-      links: (projection?.edges || []).map(edge => ({ ...edge, relation: edge.predicate })),
+    const data = displayProjection?.scene || {
+      nodes: displayProjection?.nodes || [],
+      links: (displayProjection?.edges || []).map(edge => ({ ...edge, relation: edge.predicate })),
     };
     graphRef.current?.setData(data);
-  }, [projection, authority]);
+  }, [displayProjection, authority]);
 
   useEffect(() => {
     graphRef.current?.setHighlight(selectedId);
   }, [selectedId]);
 
   useEffect(() => {
-    if (selectedId && !projection?.nodes.some(node => node.id === selectedId)) {
+    if (selectedId && !displayProjection?.nodes.some(node => node.id === selectedId)) {
       setSelectedId(null);
       setInspectorOpen(false);
       setControlsOpen(true);
     }
-    if (selectedEdgeId && !projection?.edges.some(edge => edge.id === selectedEdgeId)) {
+    if (selectedEdgeId && !displayProjection?.edges.some(edge => edge.id === selectedEdgeId)) {
       setSelectedEdgeId(null);
       setInspectorOpen(false);
       setControlsOpen(true);
     }
-  }, [projection, selectedId, selectedEdgeId]);
+  }, [displayProjection, selectedId, selectedEdgeId]);
 
   useEffect(() => {
     if (inspectorOpen || controlsOpen) {
@@ -388,11 +400,11 @@ export function NativeGraphProjectionSurface({
     setControlsOpen(inspectorOpen);
   };
 
-  const allNodes = projection?.nodes.length ?? 0;
-  const selectedEdge = projection?.edges.find((edge) => edge.id === selectedEdgeId);
-  const selectedNative = projection?.nodes.find(node => node.id === selected?.id);
+  const allNodes = displayProjection?.nodes.length ?? 0;
+  const selectedEdge = displayProjection?.edges.find((edge) => edge.id === selectedEdgeId);
+  const selectedNative = displayProjection?.nodes.find(node => node.id === selected?.id);
   const selectedSource = selectedNative ? sourceDocument(selectedNative) : null;
-  const selectedRelationships = selected ? projection?.edges.filter(edge => edge.source === selected.id || edge.target === selected.id) || [] : [];
+  const selectedRelationships = selected ? displayProjection?.edges.filter(edge => edge.source === selected.id || edge.target === selected.id) || [] : [];
   const evidenceIds = new Set<string>(selected ? [selected.id] : []);
   for (const edge of selectedEdge ? [selectedEdge] : selectedRelationships) {
     for (const value of [edge.properties?.episodes, edge.properties?.supportingEpisodeUuids]) {
@@ -402,7 +414,7 @@ export function NativeGraphProjectionSurface({
     }
     if (edge.predicate === 'MENTIONS') evidenceIds.add(edge.source);
   }
-  const evidence = (projection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
+  const evidence = (displayProjection?.nodes || []).filter(node => evidenceIds.has(node.id)).map(node => ({ node, ...sourceDocument(node) })).filter(item => item.links.length);
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
@@ -415,9 +427,11 @@ export function NativeGraphProjectionSurface({
     const latestThought = authority === 'thinkgraph' && selected && !selectedEdge
       ? notes[0] : null;
   const entryTitle = selected?.label || (selectedEdge ? selectedEdge.predicate : '');
-  const nativeLabel = (id: string) => projection?.nodes.find(node => node.id === id)?.label || id;
+  const nativeLabel = (id: string) => displayProjection?.nodes.find(node => node.id === id)?.label || id;
   const fields = (value: Record<string, unknown>) => Object.entries(value).filter(([, item]) =>
     typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean');
+  const semanticMassValue = Number(selected?.semantic_mass ?? selectedProperties.semantic_mass);
+  const semanticMass = Number.isFinite(semanticMassValue) ? semanticMassValue : null;
   const relationshipStrength = probabilityLabel(selectedEdge?.properties?.relationship_strength);
   const labelConfidence = probabilityLabel(selectedEdge?.properties?.label_confidence);
   const portableKnow = authority === 'knowgraph'
@@ -434,8 +448,13 @@ export function NativeGraphProjectionSurface({
     ? Object.entries(jev.distribution as Record<string, unknown>)
       .filter((entry): entry is [string, number] => Number.isFinite(Number(entry[1])))
     : [];
+  const jevWinner = jev ? String(jev.winner || selectedEdge?.predicate || '') : '';
+  const jevVocabularyVersion = jev ? String(jev.vocabulary_version || '') : '';
+  const jevWinnerProbability = probabilityLabel(
+    jevDistribution.find(([choice]) => choice === jevWinner)?.[1],
+  );
   return (
-    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
+    <div data-testid={`native-${authority}-surface`} className="native-authority-graph" data-layout={layout} data-style={style} data-physics-profile={physicsProfile} data-panel-open={controlsOpen || inspectorOpen} aria-busy={status === 'loading'}
       onKeyDown={event => { if (event.key === 'Escape' && (inspectorOpen || controlsOpen)) { event.stopPropagation(); closePanel(); } }}>
       <GraphPaperBackground viewport={paperViewport} />
       <div className="native-authority-canvas">
@@ -473,6 +492,13 @@ export function NativeGraphProjectionSurface({
           top={48} right={12} bottom={12} zIndex={6}
         >
           {!inspectorOpen ? <div ref={panelBodyRef} className="native-authority-controls">
+            <label>Physics profile<select aria-label="Physics profile" value={physicsProfile} onChange={event => {
+              setPhysicsProfile(event.target.value as JevGraphPhysicsProfile);
+            }}>
+              {JEV_GRAPH_PHYSICS_PROFILES.map(profile => <option key={profile} value={profile}>
+                {JEV_GRAPH_PHYSICS_PROFILE_LABELS[profile]}
+              </option>)}
+            </select></label>
             <label>Layout<select aria-label="Layout" value={layout} onChange={event => {
               const next = event.target.value as NativeLayout;
               const defaults = graphRef.current?.setPreset(next);
@@ -557,16 +583,21 @@ export function NativeGraphProjectionSurface({
         <dl className="graph-record-fields">
           <dt>Source graph</dt><dd>{authority === 'thinkgraph' ? 'ThinkGraph / Engraphis' : 'KnowGraph / Graphiti'}</dd>
           <dt>Native ID</dt><dd>{selected?.id || selectedEdge?.id}</dd>
+          <dt>Physics profile</dt><dd>{JEV_GRAPH_PHYSICS_PROFILE_LABELS[physicsProfile]}</dd>
+          {semanticMass !== null ? <><dt>Semantic mass</dt><dd>{semanticMass.toFixed(3)}</dd></> : null}
           {selectedEdge ? <><dt>Source</dt><dd>{selectedEdge.source}</dd><dt>Predicate</dt><dd>{selectedEdge.predicate}</dd><dt>Target</dt><dd>{selectedEdge.target}</dd>
             <dt>Direction</dt><dd>{selectedEdge.properties?.directed === false ? 'Undirected' : selectedEdge.properties?.directed === true ? 'Source → target' : 'Not supplied'}</dd>
-            {relationshipStrength ? <><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></> : null}
-            {labelConfidence ? <><dt>Label confidence</dt><dd>{labelConfidence}</dd></> : null}</> : null}
+            {jevWinner ? <><dt>Jev canonical relation</dt><dd>{jevWinner}</dd></> : null}
+            {jevVocabularyVersion ? <><dt>Edge ontology</dt><dd>{jevVocabularyVersion}</dd></> : null}
+            {jevWinnerProbability ? <><dt>Winner probability</dt><dd>{jevWinnerProbability}</dd></> : null}
+            {!jevWinnerProbability && relationshipStrength ? <><dt>Relationship strength</dt><dd>{relationshipStrength}</dd></> : null}
+            {!jevWinnerProbability && labelConfidence ? <><dt>Label confidence</dt><dd>{labelConfidence}</dd></> : null}</> : null}
         </dl>
         {jevDistribution.length ? <details className="graph-jev-distribution" open>
           <summary>Jev relationship probabilities</summary>
           <dl>{jevDistribution.map(([choice, probability]) => {
             const probabilityText = probabilityLabel(probability) || '0.0%';
-            return <div key={choice} data-winner={choice === selectedEdge?.predicate}>
+            return <div key={choice} data-winner={choice === jevWinner}>
               <dt>{choice}</dt><dd>
                 <span className="graph-jev-probability-track" aria-hidden="true">
                   <span className="graph-jev-probability-fill" style={{ width: probabilityText }} />

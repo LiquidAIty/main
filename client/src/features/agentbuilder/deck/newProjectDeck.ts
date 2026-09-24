@@ -190,6 +190,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       constraints: [
         'Inspect supplied graph data before researching. Use an exact supplied ThinkGraph ID only through engraphis_get_memory; do not search ThinkGraph or reconstruct Main\'s context.',
         'Preserve sources, URLs, dates, entities, relationships, contradictions, native IDs, and uncertainty. Write only useful source-backed findings and never invent sources, graph writes, or tool results.',
+        'When bounded research produces useful verified findings, persist the source material with graphiti.add_memory before answering so Graphiti performs native episode ingestion, entity extraction, fact extraction, canonicalization, provenance, and temporal handling.',
+        'The authenticated runtime supplies the current project Graphiti scope. Creating the first sourced episode in a clean KnowGraph does not require a preexisting node, edge, native ID, target Card, or selected graph reference. Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake.',
         'Do not use CBM or become a coding worker. Do not initiate another saved Card, create recursive workers, or execute Magnetic.',
         'Use card.load_graph_references and write_mag_one_instructions only to stage the existing bounded mission and context editors after authorized review; they do not create another input format or execute a Card.',
       ].join('\n'),

@@ -67,17 +67,105 @@ async def knowgraph_jev_classify(payload: dict[str, Any]):
         KnowGraphJevError,
         classify_knowgraph_facts,
     )
+    from app.python_models.engraphis import (
+        ThinkGraphIntakeError,
+        promote_project_relationship_label,
+        read_project_relationship_vocabulary,
+    )
     import asyncio
 
+    project = str(payload.get("projectId") or "")
     facts = payload.get("facts")
-    if not isinstance(facts, list) or any(not isinstance(item, dict) for item in facts):
+    if (
+        not project
+        or not isinstance(facts, list)
+        or any(not isinstance(item, dict) for item in facts)
+    ):
         raise HTTPException(status_code=400, detail="knowgraph_jev_facts_invalid")
     try:
+        before = await asyncio.to_thread(
+            read_project_relationship_vocabulary,
+            project,
+        )
+        vocabulary = tuple(str(value) for value in before["labels"])
+        results = await asyncio.to_thread(
+            lambda: classify_knowgraph_facts(
+                facts,
+                relationship_vocabulary=vocabulary,
+            )
+        )
+        for result in results:
+            if result.get("status") != "success":
+                continue
+            winner = str(result.get("winner") or "")
+            candidate = str(result.get("novel_relationship_candidate") or "")
+            if not candidate or winner != candidate:
+                result["vocabulary_promotion"] = "not_promoted"
+                continue
+            try:
+                promoted = await asyncio.to_thread(
+                    promote_project_relationship_label,
+                    project,
+                    winner,
+                )
+            except ThinkGraphIntakeError as error:
+                result.update({
+                    "status": "error",
+                    "failure_reason": str(error),
+                    "vocabulary_promotion": "failed",
+                })
+                continue
+            result.update({
+                "vocabulary_promotion": (
+                    "promoted" if promoted["promoted"]
+                    else "reused_concurrent"
+                ),
+                "vocabulary_after_hash": promoted["hash"],
+                "vocabulary_after_count": promoted["count"],
+            })
+        after = await asyncio.to_thread(
+            read_project_relationship_vocabulary,
+            project,
+        )
         return {
-            "results": await asyncio.to_thread(classify_knowgraph_facts, facts),
+            "results": results,
+            "relationshipVocabulary": {
+                "before": before,
+                "after": after,
+                "added": [
+                    label for label in after["labels"]
+                    if label not in before["labels"]
+                ],
+            },
         }
     except KnowGraphJevError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
+    except (ThinkGraphIntakeError, RuntimeError, ValueError) as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+
+@app.post("/graph/relationship-vocabulary/read")
+async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
+    """Return one project's vocabulary for existing graph-writer prompts."""
+    from app.python_models.engraphis import (
+        ThinkGraphIntakeError,
+        read_project_relationship_vocabulary,
+    )
+    import asyncio
+
+    project = str(payload.get("projectId") or "")
+    if not project:
+        raise HTTPException(
+            status_code=400,
+            detail="project_relationship_vocabulary_project_invalid",
+        )
+    try:
+        return await asyncio.to_thread(
+            read_project_relationship_vocabulary,
+            project,
+        )
+    except (ThinkGraphIntakeError, RuntimeError, ValueError) as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
 
 
 @app.post("/codegraph/read")
@@ -104,20 +192,19 @@ async def thinkgraph_operation(payload: dict[str, Any]):
         raise HTTPException(status_code=409, detail=str(err)) from err
 
 
-@app.post("/thinkgraph/completed-pair/fast")
-async def thinkgraph_completed_pair_fast(payload: dict[str, Any]):
-    """Run native regex enumeration and Jev admission for one completed Main pair."""
+@app.post("/thinkgraph/completed-pair/prepare")
+async def thinkgraph_completed_pair_prepare(payload: dict[str, Any]):
+    """Prepare one completed Main pair for its saved ThinkGraph Card pass."""
     from app.python_models.engraphis import (
-        JevRelationshipError,
         ThinkGraphIntakeError,
-        begin_completed_pair,
+        prepare_completed_pair,
     )
     import asyncio
     try:
-        return await asyncio.to_thread(begin_completed_pair, payload)
+        return await asyncio.to_thread(prepare_completed_pair, payload)
     except (ValueError, KeyError) as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    except (JevRelationshipError, ThinkGraphIntakeError, RuntimeError) as err:
+    except (ThinkGraphIntakeError, RuntimeError) as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
 
 

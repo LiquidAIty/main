@@ -96,11 +96,60 @@ describe('native authority graph surfaces', () => {
     expect(graph.reheat).not.toHaveBeenCalled();
   });
 
+  it.each(['thinkgraph', 'knowgraph'] as const)(
+    'switches %s physics profiles locally without mutating graph data or calling Jev',
+    authority => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const projection = {
+        ...empty(authority),
+        nodes: [{ id: 'a', label: 'Alpha', properties: {} }, { id: 'b', label: 'Beta', properties: {} }],
+        edges: [{
+          id: 'ab', source: 'a', target: 'b', predicate: 'PROVIDES',
+          properties: {
+            jev: {
+              winner: 'PROVIDES',
+              distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 },
+            },
+          },
+        }],
+      };
+      const original = structuredClone(projection);
+      const { container } = render(<NativeGraphProjectionSurface authority={authority}
+        projection={projection} status="ready" error={null} />);
+      const graph = forceGraphMocks.instances.at(-1);
+      expect(graph.data.links[0]).toMatchObject({
+        relationship_strength: 0.8,
+        visual_width: 2.25,
+        spring_strength: 0.171,
+        rest_length: 16.4,
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Open graph settings' }));
+      expect((screen.getByRole('combobox', { name: 'Physics profile' }) as HTMLSelectElement).value)
+        .toBe('balanced');
+      fireEvent.change(screen.getByRole('combobox', { name: 'Physics profile' }), {
+        target: { value: 'open' },
+      });
+      expect(container.querySelector(`[data-physics-profile="open"]`)).toBeTruthy();
+      expect(graph.data.links[0]).toMatchObject({
+        relationship_strength: 0.8,
+        spring_strength: 0.121,
+        rest_length: 24.4,
+      });
+      expect(graph.data.links[0].visual_width).toBeCloseTo(1.8);
+      act(() => graph.nodeClick(graph.data.nodes[1]));
+      expect(screen.getByText('Semantic mass').nextSibling?.textContent).toBe('0.800');
+      expect(screen.getByText('Physics profile').nextSibling?.textContent).toBe('Open');
+      expect(projection).toEqual(original);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it('passes the complete Engraphis scene unchanged, including layout metadata', () => {
     const scene = {
       nodes: [{ id: 'jev', label: 'Jev', semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2 }],
       edges: [{
-        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'REFINES', relation: 'REFINES',
+        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'QUALIFIES', relation: 'QUALIFIES',
         relationship_strength: 0.82, label_confidence: 0.71,
         spring_strength: 0.1744, rest_length: 16.16,
       }],
@@ -114,7 +163,7 @@ describe('native authority graph surfaces', () => {
       semantic_mass: 0.82, gravity_mass: 9.4, visual_radius: 7.2,
     });
     expect(graph.data.links[0]).toMatchObject({
-      relation: 'REFINES', relationship_strength: 0.82,
+      relation: 'QUALIFIES', relationship_strength: 0.82,
       spring_strength: 0.1744, rest_length: 16.16,
     });
   });
@@ -382,51 +431,60 @@ describe('native authority graph surfaces', () => {
     expect(screen.queryByPlaceholderText('Find entity…')).toBeNull();
   });
 
-  it('shows the Jev edge winner, numerical strength, confidence, and full distribution', () => {
+  it.each(['thinkgraph', 'knowgraph'] as const)(
+    'shows the shared Jev edge ontology, winner, and full distribution for %s',
+    authority => {
     const distribution = {
-      REFINES: 0.76,
+      QUALIFIES: 0.76,
       NONE: 0.14,
       INSUFFICIENT_CONTEXT: 0.10,
     };
     const projection = {
-      ...empty('thinkgraph'),
+      ...empty(authority),
       nodes: [
         { id: 'jev', label: 'Jev', mentionCount: 1 },
         { id: 'thinkgraph', label: 'ThinkGraph', mentionCount: 1 },
       ],
       edges: [{
-        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'REFINES',
+        id: 'semantic-edge', source: 'jev', target: 'thinkgraph', predicate: 'QUALIFIES',
         properties: {
           directed: true,
           relationship_strength: 0.76,
           label_confidence: 0.76,
-          jev: { distribution },
+          jev: {
+            winner: 'QUALIFIES', distribution,
+            vocabulary_version: 'jev.semantic-relationships.v1',
+          },
         },
       }],
     };
-    render(<NativeGraphProjectionSurface authority="thinkgraph" projection={projection}
+    render(<NativeGraphProjectionSurface authority={authority} projection={projection}
       status="ready" error={null} />);
     const graph = forceGraphMocks.instances.at(-1);
     act(() => graph.nodeClick(graph.data.nodes[0]));
-    fireEvent.click(screen.getByRole('button', { name: 'Jev REFINES ThinkGraph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Jev QUALIFIES ThinkGraph' }));
 
-    expect(screen.getByText('Relationship strength').nextSibling?.textContent).toBe('76.0%');
-    expect(screen.getByText('Label confidence').nextSibling?.textContent).toBe('76.0%');
+    expect(screen.getByText('Jev canonical relation').nextSibling?.textContent).toBe('QUALIFIES');
+    expect(screen.getByText('Edge ontology').nextSibling?.textContent)
+      .toBe('jev.semantic-relationships.v1');
+    expect(screen.getByText('Winner probability').nextSibling?.textContent).toBe('76.0%');
+    expect(screen.getByText('Physics profile').nextSibling?.textContent).toBe('Balanced');
     const probabilityDetails = screen.getByText('Jev relationship probabilities')
       .parentElement as HTMLDetailsElement;
     expect(probabilityDetails.open).toBe(true);
     const probability = (choice: string) => Array.from(
       probabilityDetails.querySelectorAll('dt'),
     ).find(item => item.textContent === choice)?.nextElementSibling?.textContent;
-    expect(probability('REFINES')).toBe('76.0%');
+    expect(probability('QUALIFIES')).toBe('76.0%');
     expect(probability('NONE')).toBe('14.0%');
     expect(probability('INSUFFICIENT_CONTEXT')).toBe('10.0%');
     const winner = Array.from(probabilityDetails.querySelectorAll('div'))
-      .find(item => item.querySelector('dt')?.textContent === 'REFINES')!;
+      .find(item => item.querySelector('dt')?.textContent === 'QUALIFIES')!;
     expect(winner.getAttribute('data-winner')).toBe('true');
     expect((winner.querySelector('.graph-jev-probability-fill') as HTMLElement).style.width)
       .toBe('76.0%');
-  });
+    },
+  );
 
   it('follows native episode references to citations without treating unrelated sources as evidence', () => {
     const projection = {
@@ -442,7 +500,7 @@ describe('native authority graph surfaces', () => {
         temporalStatus: 'current', createdAt: '2026-09-23T12:00:00Z',
         validAt: '2022-06-28T00:00:00Z', fact: 'Rocket Lab launched CAPSTONE.',
         nativeRelation: 'provided launch services for',
-        jev: { status: 'success', winner: 'PROVIDES', distribution: { PROVIDES: 0.9, OTHER_RELATION: 0.1 } },
+        jev: { status: 'success', winner: 'PROVIDES', distribution: { PROVIDES: 0.9, ASSOCIATED_WITH: 0.1 } },
       } }],
     };
     render(<NativeKnowGraphSurface projection={projection} error={null} onExpand={vi.fn()} />);

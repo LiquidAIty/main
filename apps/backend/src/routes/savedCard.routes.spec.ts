@@ -445,21 +445,15 @@ const orchestratorMocks = vi.hoisted(() => {
         catalogs: { 'configured-models': body.models },
       };
     }
-    if (endpoint === '/thinkgraph/completed-pair/fast') {
+    if (endpoint === '/thinkgraph/completed-pair/prepare') {
       return {
         ok: true,
         pairMemoryId: 'mem_pair_one',
         intakeOperation: 'noop',
-        enrichmentRequired: false,
+        structuredExtractionRequired: false,
         revision: 3,
         revisionChanged: false,
-        fast: {
-          status: 'duplicate_noop',
-          opportunityCount: 0,
-          relationships: [], failures: [],
-          changedNodeIds: [], changedEdgeIds: [],
-          turnHeat: {}, topActiveNodes: [],
-        },
+        preparation: { status: 'duplicate_noop' },
       };
     }
     if (endpoint === '/thinkgraph/completed-pair/settle') {
@@ -3892,24 +3886,24 @@ describe('saved Card routes', () => {
         .getMockImplementation()!;
       orchestratorMocks.requestPythonRailsJson.mockReset();
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
-        if (endpoint === '/thinkgraph/completed-pair/fast') return {
+        if (endpoint === '/thinkgraph/completed-pair/prepare') return {
           ok: true,
           pairMemoryId: 'mem_pair_one',
           intakeOperation: 'add',
-          enrichmentRequired: true,
+          structuredExtractionRequired: true,
           revision: 4,
-          revisionChanged: true,
-          fast: {
-            changedNodeIds: ['think-fast-a', 'think-fast-b'],
-            changedEdgeIds: ['think-fast-edge'],
-            turnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
-            activeEnrichmentTargets: [
-              { nativeId: 'think-fast-a', canonicalName: 'Jev', status: 'NEW' },
-              { nativeId: 'think-fast-b', canonicalName: 'ThinkGraph', status: 'NEW' },
-            ],
-            topActiveNodes: [
-              { nativeId: 'think-fast-a', turnHeat: 0.75 },
-              { nativeId: 'think-fast-b', turnHeat: 0.75 },
+          revisionChanged: false,
+          preparation: { status: 'completed_without_graph_mutation' },
+          enrichmentInput: {
+            exact_user_message: 'complete with hybrid ThinkGraph intake',
+            exact_main_response: 'Real assistant reply.',
+            current_graph_shape: { nodes: [], edges: [] },
+            current_project_relationship_vocabulary: [
+              'IS_A', 'PART_OF', 'HAS_PART', 'CAUSES', 'AFFECTS',
+              'DEPENDS_ON', 'ENABLES', 'CONSTRAINS', 'REQUIRES', 'SUPPORTS',
+              'CONTRADICTS', 'QUALIFIES', 'EXPLAINS', 'ASSOCIATED_WITH',
+              'ALTERNATIVE_TO', 'COMPETES_WITH', 'PROVIDES', 'USES',
+              'PRECEDES', 'FOLLOWS',
             ],
           },
           enrichmentSchema: {
@@ -3917,20 +3911,11 @@ describe('saved Card routes', () => {
             properties: { facts: { type: 'array' } },
             required: ['facts'],
           },
-          enrichmentPrompt: 'Native Engraphis llm_structured prompt.',
-          turnStartPriorThoughtSnapshot: {
-            'think-fast-a': {
-              native_id: 'think-fast-a',
-              canonical_name: 'Jev',
-              memory_id: 'mem_prior_jev',
-              kind: 'DECISION',
-              content: 'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
-              keywords: [], properties: [], concepts: [], propositions: [],
-              relationship_observations: [], ingested_at: 1,
-              valid_from: null, valid_to: null,
-            },
-            'think-fast-b': null,
-          },
+          enrichmentPrompt: [
+            'Native Engraphis llm_structured prompt.',
+            'current_project_relationship_vocabulary:',
+            '["IS_A","PART_OF","HAS_PART","CAUSES","AFFECTS","DEPENDS_ON","ENABLES","CONSTRAINS","REQUIRES","SUPPORTS","CONTRADICTS","QUALIFIES","EXPLAINS","ASSOCIATED_WITH","ALTERNATIVE_TO","COMPETES_WITH","PROVIDES","USES","PRECEDES","FOLLOWS"]',
+          ].join('\n'),
         };
         return defaultRailsImplementation(endpoint, init);
       });
@@ -3961,14 +3946,14 @@ describe('saved Card routes', () => {
         });
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
           '/domain/main/runs/begin',
-          '/thinkgraph/completed-pair/fast',
+          '/thinkgraph/completed-pair/prepare',
           '/domain/runs/begin',
           '/thinkgraph/completed-pair/settle',
         ]);
-        const fastCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
-          ([route]) => route === '/thinkgraph/completed-pair/fast',
+        const prepareCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([route]) => route === '/thinkgraph/completed-pair/prepare',
         );
-        expect(fastCall?.[1]).toMatchObject({ method: 'POST' });
+        expect(prepareCall?.[1]).toMatchObject({ method: 'POST' });
         const completedPair = {
           projectId: 'project-1',
           deckId: 'deck_builder',
@@ -3980,7 +3965,7 @@ describe('saved Card routes', () => {
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
         };
-        expect(JSON.parse(String(fastCall?.[1]?.body))).toEqual(completedPair);
+        expect(JSON.parse(String(prepareCall?.[1]?.body))).toEqual(completedPair);
 
         const cardBegin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/domain/runs/begin',
@@ -3997,9 +3982,12 @@ describe('saved Card routes', () => {
           runId: expect.stringMatching(/^req_/),
           correlationId: expect.stringMatching(/^req_/),
         });
-        expect(cardBeginBody.assignment).toContain('free-form semantic language');
-        expect(cardBeginBody.assignment).toContain('Jev alone classifies any durable graph edge');
-        expect(cardBeginBody.assignment).toContain('current_turn_enrichment_targets');
+        expect(cardBeginBody.assignment).toContain('current_project_relationship_vocabulary');
+        expect(cardBeginBody.assignment).toContain('Prefer one exact existing');
+        expect(cardBeginBody.assignment).toContain('never exceed three words');
+        expect(cardBeginBody.assignment).toContain(
+          'Jev alone classifies any durable graph edge',
+        );
         expect(cardBeginBody.assignment).toContain(
           'Create the current temporal ThinkGraph Thought from this completed User/Main exchange',
         );
@@ -4007,7 +3995,6 @@ describe('saved Card routes', () => {
           'Main does not author or initiate this automatic Thought',
         );
         expect(cardBeginBody.assignment).toContain('current_graph_shape');
-        expect(cardBeginBody.assignment).toContain('current_turn_accepted_relationships');
         expect(cardBeginBody.assignment).toContain(
           'with light canonical node/edge context',
         );
@@ -4018,11 +4005,9 @@ describe('saved Card routes', () => {
           'No old Thought/Note bodies are supplied or may be inferred',
         );
         expect(cardBeginBody.assignment).toContain(
-          'Do not compare, merge, rewrite, or suppress it against older Thoughts',
+          'Do not compare, merge, rewrite, or suppress the current Thought against older Thoughts',
         );
-        expect(cardBeginBody.assignment).not.toContain(
-          'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
-        );
+        expect(cardBeginBody.assignment).not.toContain('RegexGraphExtractor');
 
         const settleCall = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
           ([route]) => route === '/thinkgraph/completed-pair/settle',
@@ -4030,24 +4015,6 @@ describe('saved Card routes', () => {
         expect(JSON.parse(String(settleCall?.[1]?.body))).toEqual({
           ...completedPair,
           pairMemoryId: 'mem_pair_one',
-          fastTurnHeat: { 'think-fast-a': 0.75, 'think-fast-b': 0.75 },
-          fastActiveTargets: [
-            { nativeId: 'think-fast-a', canonicalName: 'Jev', status: 'NEW' },
-            { nativeId: 'think-fast-b', canonicalName: 'ThinkGraph', status: 'NEW' },
-          ],
-          turnStartPriorThoughtSnapshot: {
-            'think-fast-a': {
-              native_id: 'think-fast-a',
-              canonical_name: 'Jev',
-              memory_id: 'mem_prior_jev',
-              kind: 'DECISION',
-              content: 'PRIOR THOUGHT MUST NOT REACH THE STRUCTURED CARD',
-              keywords: [], properties: [], concepts: [], propositions: [],
-              relationship_observations: [], ingested_at: 1,
-              valid_from: null, valid_to: null,
-            },
-            'think-fast-b': null,
-          },
           structuredOutput: 'Real assistant reply.',
           cardRun: {
             runId: cardBeginBody.runId,
@@ -4084,7 +4051,7 @@ describe('saved Card routes', () => {
         await waitForCompletedPairThinkGraphLifecycles();
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
           '/domain/main/runs/begin',
-          '/thinkgraph/completed-pair/fast',
+          '/thinkgraph/completed-pair/prepare',
         ]);
         expect(agentTerminalMocks.manager.submit.mock.calls.map(
           ([owner]) => owner.cardId,

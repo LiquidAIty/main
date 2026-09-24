@@ -1,6 +1,7 @@
 """Focused proof for the real Engraphis-owned hybrid ThinkGraph lifecycle."""
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import threading
@@ -10,6 +11,9 @@ from typing import Any
 import pytest
 
 from app.python_models import engraphis as adapter
+from app.python_models.jev_edge_ontology import (
+    SHARED_JEV_RELATIONSHIPS,
+)
 
 
 @pytest.fixture()
@@ -24,13 +28,20 @@ def hybrid(tmp_path: Path):
         adapter.DATABASE = original
 
 
-def decision(winner: str = "REFINES") -> dict[str, Any]:
-    distribution = {name: 0.0 for name in adapter.THINKGRAPH_RELATIONSHIPS}
+def decision(
+    winner: str = "QUALIFIES",
+    *,
+    choices: tuple[str, ...] | None = None,
+    novel_candidate: str = "",
+    proposal_status: str = "reused_canonical",
+) -> dict[str, Any]:
+    choice_options = choices or adapter.THINKGRAPH_JEV_CHOICES
+    distribution = {name: 0.0 for name in choice_options}
     distribution[winner] = 0.76
     distribution["NONE"] = 0.14 if winner != "NONE" else 0.76
     distribution["INSUFFICIENT_CONTEXT"] = 0.10
     if winner == "NONE":
-        distribution["REFINES"] = 0.14
+        distribution["QUALIFIES"] = 0.14
     return {
         "winner": winner,
         "distribution": distribution,
@@ -44,6 +55,20 @@ def decision(winner: str = "REFINES") -> dict[str, Any]:
         "requested_model": adapter.JEV_MODEL,
         "resolved_model": "typesafe/jev-1.13-test",
         "usage": {},
+        "choice_options": list(choice_options),
+        "vocabulary_version": adapter.PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+        "vocabulary_hash": adapter.relationship_vocabulary_hash(
+            tuple(name for name in choice_options
+                  if name not in adapter.THINKGRAPH_CONTROL_OUTCOMES
+                  and name != novel_candidate)
+        ),
+        "vocabulary_count": len([
+            name for name in choice_options
+            if name not in adapter.THINKGRAPH_CONTROL_OUTCOMES
+            and name != novel_candidate
+        ]),
+        "relationship_proposal_status": proposal_status,
+        "novel_relationship_candidate": novel_candidate,
     }
 
 
@@ -104,17 +129,14 @@ def structured_output(*, content: str = "Jev normalizes expressive graph relatio
 
 
 def settle_payload(
-    fast: dict,
+    preparation: dict,
     *,
     output: dict | None = None,
     completed: dict[str, str] | None = None,
 ) -> dict:
     return {
         **(completed or payload()),
-        "pairMemoryId": fast["pairMemoryId"],
-        "fastTurnHeat": fast["fast"]["turnHeat"],
-        "fastActiveTargets": fast["fast"]["activeEnrichmentTargets"],
-        "turnStartPriorThoughtSnapshot": fast["turnStartPriorThoughtSnapshot"],
+        "pairMemoryId": preparation["pairMemoryId"],
         "structuredOutput": output or structured_output(),
         "cardRun": card_run(),
     }
@@ -128,10 +150,12 @@ def entities_and_edges(hybrid) -> tuple[list[Any], list[Any]]:
 
 
 def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
-    probabilities = {name: 0.0 for name in adapter.THINKGRAPH_RELATIONSHIPS}
+    assert len(SHARED_JEV_RELATIONSHIPS) == 20
+    assert adapter.THINKGRAPH_JEV_CHOICES[:20] == SHARED_JEV_RELATIONSHIPS
+    probabilities = {name: 0.0 for name in adapter.THINKGRAPH_JEV_CHOICES}
     probabilities.update(
         CONTRADICTS=0.52,
-        REFINES=0.12,
+        QUALIFIES=0.12,
         NONE=0.18,
         INSUFFICIENT_CONTEXT=0.10,
         INVALID_NODE_PAIR=0.08,
@@ -152,11 +176,11 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
     # Admission still sees 0.64 total semantic support, while visual physics
     # uses only the 0.52 probability of the winning edge type.
     assert adapter._decision_is_accepted(parsed) is True
-    assert tuple(parsed["distribution"]) == adapter.THINKGRAPH_RELATIONSHIPS
+    assert tuple(parsed["distribution"]) == adapter.THINKGRAPH_JEV_CHOICES
 
-    invalid_mass = {name: 0.0 for name in adapter.THINKGRAPH_RELATIONSHIPS}
+    invalid_mass = {name: 0.0 for name in adapter.THINKGRAPH_JEV_CHOICES}
     invalid_mass.update(
-        REFINES=0.55,
+        QUALIFIES=0.55,
         NONE=0.05,
         INSUFFICIENT_CONTEXT=0.05,
         INVALID_NODE_PAIR=0.35,
@@ -164,14 +188,14 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
     rejected = adapter._validate_jev_response({
         "answers": {"relationship": {
             "type": "choice",
-            "choice": "REFINES",
+            "choice": "QUALIFIES",
             "probabilities": invalid_mass,
         }}
     })
     assert rejected["relationship_strength"] == pytest.approx(0.55)
     assert adapter._decision_is_accepted(rejected) is False
 
-    probabilities.pop("ASSUMES")
+    probabilities.pop("ENABLES")
     with pytest.raises(adapter.JevRelationshipError, match="response_invalid"):
         adapter._validate_jev_response({
             "answers": {"relationship": {
@@ -182,11 +206,13 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
         })
 
 
-def test_native_llm_structured_relation_remains_freeform():
+def test_native_llm_structured_relation_uses_dynamic_predicate_guidance():
     schema, _prompt = adapter._llm_structured_contract("pair", {})
     relation = schema["$defs"]["ThinkGraphStructuredRelation"]["properties"]["relation"]
     assert relation["type"] == "string"
     assert "enum" not in relation
+    assert "current_project_relationship_vocabulary" in relation["description"]
+    assert "never exceed three words" in relation["description"]
     assert adapter.ThinkGraphStructuredRelation(
         source="Jev",
         relation=FREEFORM_RELATION,
@@ -195,58 +221,358 @@ def test_native_llm_structured_relation_remains_freeform():
 
 
 @pytest.mark.parametrize(
-    "winner", ["NONE", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR"],
+    "legacy_label",
+    [
+        "ASSUMES", "QUESTIONS", "PREDICTS", "IMPLIES", "REFINES", "CORRECTS",
+        "MOTIVATES", "GENERALIZES", "SPECIALIZES",
+    ],
 )
-def test_fast_rejection_keeps_pair_memory_without_leaking_nodes(hybrid, winner):
-    fast = hybrid.begin_completed_pair(
-        payload(), classifier=lambda *_args, **_kwargs: decision(winner),
+def test_non_seed_labels_require_a_real_dynamic_choice_option(legacy_label):
+    probabilities = {name: 0.0 for name in adapter.THINKGRAPH_JEV_CHOICES}
+    probabilities["QUALIFIES"] = 1.0
+    with pytest.raises(adapter.JevRelationshipError, match="response_invalid"):
+        adapter._validate_jev_response({
+            "answers": {"relationship": {
+                "type": "choice",
+                "choice": legacy_label,
+                "probabilities": probabilities,
+            }},
+        })
+    assert adapter._decision_is_accepted({
+        "winner": legacy_label,
+        "distribution": {legacy_label: 1.0},
+    }) is False
+
+    choices = (*SHARED_JEV_RELATIONSHIPS, legacy_label, *adapter.THINKGRAPH_CONTROL_OUTCOMES)
+    dynamic = decision(
+        legacy_label,
+        choices=choices,
+        novel_candidate=legacy_label,
+        proposal_status="novel_candidate",
     )
-    assert hybrid.inspect("project-one", fast["pairMemoryId"])["memory"]["content"].startswith(
+    assert adapter._decision_is_accepted(dynamic) is True
+
+
+def test_prepare_stores_pair_without_regex_jev_or_graph_mutation(hybrid):
+    prepared = hybrid.prepare_completed_pair(payload())
+    assert hybrid.inspect("project-one", prepared["pairMemoryId"])["memory"]["content"].startswith(
         "USER:\nJev evaluates ThinkGraph"
     )
-    assert all(item["status"] == "no_edge" for item in fast["fast"]["relationships"])
-    assert all(item["winner"] == winner for item in fast["fast"]["relationships"])
+    assert prepared["structuredExtractionRequired"] is True
+    assert prepared["revisionChanged"] is False
+    assert prepared["preparation"] == {
+        "status": "completed_without_graph_mutation",
+    }
+    assert set(prepared["enrichmentInput"]) == {
+        "exact_user_message", "exact_main_response", "current_graph_shape",
+        "current_project_relationship_vocabulary",
+    }
+    assert prepared["enrichmentInput"][
+        "current_project_relationship_vocabulary"
+    ] == list(SHARED_JEV_RELATIONSHIPS)
+    assert prepared["relationshipVocabulary"] == {
+        "version": adapter.PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+        "hash": adapter.relationship_vocabulary_hash(
+            SHARED_JEV_RELATIONSHIPS
+        ),
+        "labels": list(SHARED_JEV_RELATIONSHIPS),
+        "count": 20,
+        "maximum": 255,
+        "atMaximum": False,
+    }
     entities, edges = entities_and_edges(hybrid)
     assert entities == []
     assert edges == []
-    assert all(edge.relation != "INVALID_NODE_PAIR" for edge in edges)
 
 
-def test_native_engraphis_noop_skips_repeat_regex_jev_and_card_enrichment(hybrid):
-    classifier_calls = 0
+@pytest.mark.parametrize(
+    ("proposal", "status", "candidate"),
+    [
+        (" affects ", "reused_canonical", ""),
+        ("co evolves with", "novel_candidate", "CO_EVOLVES_WITH"),
+        ("improves relative future value", "invalid_novel_label", ""),
+    ],
+)
+def test_relationship_choice_plan_offers_at_most_one_short_novel_candidate(
+    proposal, status, candidate,
+):
+    plan = adapter.relationship_choice_plan(
+        proposal,
+        SHARED_JEV_RELATIONSHIPS,
+    )
 
-    def classify(*_args, **_kwargs):
-        nonlocal classifier_calls
-        classifier_calls += 1
-        return decision("REFINES")
+    assert plan["proposal_status"] == status
+    assert plan["novel_candidate"] == candidate
+    assert plan["choices"][:20] == SHARED_JEV_RELATIONSHIPS
+    assert plan["choices"][-3:] == adapter.THINKGRAPH_CONTROL_OUTCOMES
+    if candidate:
+        assert plan["choices"].count(candidate) == 1
+        assert plan["choices"][-4] == candidate
 
-    first = hybrid.begin_completed_pair(payload(), classifier=classify)
-    calls_after_first = classifier_calls
-    repeated = hybrid.begin_completed_pair(payload(), classifier=classify)
+
+def test_jev_winning_novel_relation_is_promoted_once_and_survives_restart(
+    hybrid,
+):
+    completed = payload("novel-winner")
+    prepared = hybrid.prepare_completed_pair(completed)
+    output = structured_output(content="Jev amplification sharpens ThinkGraph semantics.")
+    output["facts"][0]["relations"][0]["relation"] = "amplifies"
+
+    def choose_novel(
+        *_args,
+        relationship_vocabulary,
+        novel_relationship_candidate,
+        relationship_proposal_status,
+    ):
+        assert relationship_vocabulary == SHARED_JEV_RELATIONSHIPS
+        assert novel_relationship_candidate == "AMPLIFIES"
+        assert relationship_proposal_status == "novel_candidate"
+        choices = (
+            *relationship_vocabulary,
+            novel_relationship_candidate,
+            *adapter.THINKGRAPH_CONTROL_OUTCOMES,
+        )
+        return decision(
+            "AMPLIFIES",
+            choices=choices,
+            novel_candidate=novel_relationship_candidate,
+            proposal_status=relationship_proposal_status,
+        )
+
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=choose_novel,
+    )
+
+    assert settled["failures"] == []
+    assert settled["relationshipVocabulary"]["added"] == ["AMPLIFIES"]
+    assert settled["relationshipVocabulary"]["before"]["count"] == 20
+    assert settled["relationshipVocabulary"]["after"]["count"] == 21
+    assert settled["relationships"][0]["winner"] == "AMPLIFIES"
+    assert settled["relationships"][0]["vocabulary_promotion"] == "promoted"
+
+    from app.python_models import knowgraph_jev
+
+    captured: dict[str, Any] = {}
+
+    def know_transport(body: dict[str, Any]) -> dict[str, Any]:
+        captured.update(body)
+        choices = tuple(body["questions"]["relationship"]["criteria"])
+        probabilities = {name: 0.0 for name in choices}
+        probabilities["AMPLIFIES"] = 1.0
+        return {
+            "provider": "test-provider",
+            "model": "typesafe/jev-1.13-test",
+            "answers": {"relationship": {
+                "type": "choice",
+                "choice": "AMPLIFIES",
+                "probabilities": probabilities,
+            }},
+        }
+
+    vocabulary = tuple(
+        hybrid.read_project_relationship_vocabulary("project-one")["labels"]
+    )
+    know_result = knowgraph_jev.classify_knowgraph_fact({
+        "nativeFactUuid": "fact-amplifies",
+        "sourceEntity": {"uuid": "entity-a", "name": "Jev"},
+        "targetEntity": {"uuid": "entity-b", "name": "ThinkGraph"},
+        "nativeRelation": "AMPLIFIES",
+        "fact": "Jev amplification sharpens ThinkGraph semantics.",
+        "supportingEpisodes": [],
+    }, relationship_vocabulary=vocabulary, transport=know_transport)
+    assert know_result["winner"] == "AMPLIFIES"
+    assert know_result["relationship_proposal_status"] == "reused_canonical"
+    assert "optional_novel_relationship_candidate" not in captured["state"]
+
+    hybrid.close_engine()
+    reopened = hybrid.read_project_relationship_vocabulary("project-one")
+    assert reopened["labels"].count("AMPLIFIES") == 1
+    assert reopened["count"] == 21
+
+    later = payload("after-restart")
+    later.update({
+        "userMessage": "The next completed pair reuses the promoted predicate.",
+        "mainResponse": "The shared vocabulary is loaded before extraction.",
+    })
+    later_preparation = hybrid.prepare_completed_pair(later)
+    assert later_preparation["enrichmentInput"][
+        "current_project_relationship_vocabulary"
+    ][-1] == "AMPLIFIES"
+
+
+@pytest.mark.parametrize("winner", ["QUALIFIES", "NONE"])
+def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
+    hybrid, winner,
+):
+    completed = payload(f"novel-loses-{winner.lower()}")
+    prepared = hybrid.prepare_completed_pair(completed)
+    output = structured_output(content="A proposed relationship may lose Jev Choice.")
+    output["facts"][0]["relations"][0]["relation"] = "amplifies"
+
+    def choose_existing_or_control(
+        *_args,
+        relationship_vocabulary,
+        novel_relationship_candidate,
+        relationship_proposal_status,
+    ):
+        choices = (
+            *relationship_vocabulary,
+            novel_relationship_candidate,
+            *adapter.THINKGRAPH_CONTROL_OUTCOMES,
+        )
+        return decision(
+            winner,
+            choices=choices,
+            novel_candidate=novel_relationship_candidate,
+            proposal_status=relationship_proposal_status,
+        )
+
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=choose_existing_or_control,
+    )
+
+    assert settled["relationshipVocabulary"]["added"] == []
+    assert settled["relationshipVocabulary"]["after"]["labels"] == list(
+        SHARED_JEV_RELATIONSHIPS
+    )
+    assert "AMPLIFIES" not in hybrid.read_project_relationship_vocabulary(
+        "project-one"
+    )["labels"]
+
+
+def test_project_relationship_vocabulary_stops_at_255(hybrid):
+    service = hybrid.get_service()
+    workspace_id = service.store.get_or_create_workspace("project-one")
+    with service.store._write_operation(
+        "test_relationship_vocabulary_ceiling", commit=True,
+    ):
+        for index in range(235):
+            hybrid._promote_project_relationship_label(
+                service.store,
+                workspace_id=workspace_id,
+                label=f"REL_{index:03d}",
+            )
+
+    vocabulary = tuple(
+        hybrid.read_project_relationship_vocabulary("project-one")["labels"]
+    )
+    assert len(vocabulary) == 255
+    plan = hybrid.relationship_choice_plan("over performs", vocabulary)
+    assert plan["proposal_status"] == "novel_blocked_at_ceiling"
+    assert plan["novel_candidate"] == ""
+    assert "OVER_PERFORMS" not in plan["choices"]
+    with pytest.raises(
+        hybrid.ThinkGraphIntakeError,
+        match="thinkgraph_relationship_vocabulary_ceiling",
+    ):
+        hybrid.promote_project_relationship_label(
+            "project-one", "OVER_PERFORMS",
+        )
+
+
+def test_novel_vocabulary_promotion_rolls_back_with_failed_edge_write(
+    hybrid, monkeypatch: pytest.MonkeyPatch,
+):
+    service = hybrid.get_service()
+    workspace_id = service.store.get_or_create_workspace("project-one")
+    choices = (
+        *SHARED_JEV_RELATIONSHIPS,
+        "AMPLIFIES",
+        *hybrid.THINKGRAPH_CONTROL_OUTCOMES,
+    )
+    novel_decision = decision(
+        "AMPLIFIES",
+        choices=choices,
+        novel_candidate="AMPLIFIES",
+        proposal_status="novel_candidate",
+    )
+
+    def fail_edge(*_args, **_kwargs):
+        raise RuntimeError("edge_write_failed")
+
+    monkeypatch.setattr(service.store, "upsert_edge", fail_edge)
+    with pytest.raises(RuntimeError, match="edge_write_failed"):
+        hybrid._apply_accepted_decision(
+            service.store,
+            source_name="Alpha",
+            target_name="Beta",
+            workspace_id=workspace_id,
+            repo_id=None,
+            payload=payload("rollback"),
+            memory_ids=[],
+            decision=novel_decision,
+            stage="test",
+        )
+
+    assert hybrid.read_project_relationship_vocabulary(
+        "project-one"
+    )["labels"] == list(SHARED_JEV_RELATIONSHIPS)
+    assert service.store.list_entities() == []
+
+
+def test_knowgraph_jev_winner_is_visible_to_next_thinkgraph_card(
+    hybrid, monkeypatch: pytest.MonkeyPatch,
+):
+    from app import main as python_main
+    from app.python_models import knowgraph_jev
+
+    def classify_facts(facts, *, relationship_vocabulary):
+        assert relationship_vocabulary == SHARED_JEV_RELATIONSHIPS
+        assert facts[0]["nativeRelation"] == "undermines"
+        return [{
+            "nativeFactUuid": "fact-under",
+            "status": "success",
+            "winner": "UNDERMINES",
+            "novel_relationship_candidate": "UNDERMINES",
+        }]
+
+    monkeypatch.setattr(
+        knowgraph_jev,
+        "classify_knowgraph_facts",
+        classify_facts,
+    )
+    response = asyncio.run(python_main.knowgraph_jev_classify({
+        "projectId": "project-one",
+        "facts": [{
+            "nativeFactUuid": "fact-under",
+            "sourceEntity": {"uuid": "a", "name": "Risk"},
+            "targetEntity": {"uuid": "b", "name": "Thesis"},
+            "nativeRelation": "undermines",
+            "fact": "Risk undermines the thesis.",
+        }],
+    }))
+
+    assert response["results"][0]["vocabulary_promotion"] == "promoted"
+    assert response["relationshipVocabulary"]["added"] == ["UNDERMINES"]
+    next_pair = payload("know-to-think")
+    next_pair.update({
+        "userMessage": "Reuse a KnowGraph-discovered project predicate.",
+        "mainResponse": "The next ThinkGraph Card receives the same list.",
+    })
+    prepared = hybrid.prepare_completed_pair(next_pair)
+    assert prepared["enrichmentInput"][
+        "current_project_relationship_vocabulary"
+    ][-1] == "UNDERMINES"
+
+
+def test_native_engraphis_noop_skips_repeat_structured_card_extraction(hybrid):
+    first = hybrid.prepare_completed_pair(payload())
+    repeated = hybrid.prepare_completed_pair(payload())
 
     assert first["intakeOperation"] == "add"
-    assert first["enrichmentRequired"] is True
-    assert calls_after_first > 0
+    assert first["structuredExtractionRequired"] is True
     assert repeated == {
         "ok": True,
         "projectId": "project-one",
         "pairMemoryId": first["pairMemoryId"],
         "intakeOperation": "noop",
-        "enrichmentRequired": False,
+        "structuredExtractionRequired": False,
         "revision": first["revision"],
         "revisionChanged": False,
-        "fast": {
-            "status": "duplicate_noop",
-            "opportunityCount": 0,
-            "relationships": [],
-            "failures": [],
-            "changedNodeIds": [],
-            "changedEdgeIds": [],
-            "turnHeat": {},
-            "topActiveNodes": [],
-        },
+        "preparation": {"status": "duplicate_noop"},
     }
-    assert classifier_calls == calls_after_first
 
 
 def test_jev_pair_calls_use_native_order_with_at_most_four_in_flight(hybrid):
@@ -271,7 +597,7 @@ def test_jev_pair_calls_use_native_order_with_at_most_four_in_flight(hybrid):
             peak = max(peak, active)
         try:
             time.sleep(0.02)
-            result = decision("REFINES")
+            result = decision("QUALIFIES")
             result["source_seen"] = source
             return result
         finally:
@@ -303,7 +629,7 @@ def test_jev_context_contains_only_latest_endpoint_thought_and_direct_edges(hybr
         repo_id=None,
         payload=payload(),
         memory_ids=[],
-        decision=decision("REFINES"),
+        decision=decision("QUALIFIES"),
         stage="test",
     )
     second = hybrid._apply_accepted_decision(
@@ -315,7 +641,7 @@ def test_jev_context_contains_only_latest_endpoint_thought_and_direct_edges(hybr
         repo_id=None,
         payload=payload("run-two"),
         memory_ids=[],
-        decision=decision("IMPLIES"),
+        decision=decision("ENABLES"),
         stage="test",
     )
     third = hybrid._apply_accepted_decision(
@@ -386,7 +712,7 @@ def test_jev_context_contains_only_latest_endpoint_thought_and_direct_edges(hybr
     )
 
 
-def test_canonical_reuse_marks_every_accepted_endpoint_for_active_enrichment(
+def test_structured_proposal_reuses_canonical_node_and_freezes_prior_thought(
     hybrid, monkeypatch: pytest.MonkeyPatch,
 ):
     service = hybrid.get_service()
@@ -399,7 +725,7 @@ def test_canonical_reuse_marks_every_accepted_endpoint_for_active_enrichment(
         repo_id=None,
         payload=payload("seed-run"),
         memory_ids=[],
-        decision=decision("REFINES"),
+        decision=decision("QUALIFIES"),
         stage="test",
     )
     prior_note_id = hybrid._persist_note(
@@ -416,31 +742,18 @@ def test_canonical_reuse_marks_every_accepted_endpoint_for_active_enrichment(
         ),
         card_run=card_run("seed-note-run"),
     )
-
-    local = hybrid._IntakeLocalGraphStore()
-    local.opportunities.append({
-        "id": "intake_edge_0000",
-        "source": {"name": "Alpha", "type": "person_or_concept"},
-        "target": {"name": "Beta", "type": "person_or_concept"},
-        "native_relation": "co_occurs",
-        "native_weight": 0.5,
-        "provenance": {},
-    })
-    monkeypatch.setattr(
-        hybrid,
-        "_enumerate_native_regex_opportunities",
-        lambda *_args, **_kwargs: (None, local),
-    )
     calls: list[dict[str, Any]] = []
 
-    def classify(source, target, _payload, _fact, context, proposal):
+    def classify(
+        source, target, _payload, _fact, context, proposal, **_kwargs,
+    ):
         calls.append({
             "source": source,
             "target": target,
             "context": context,
             "proposal": proposal,
         })
-        return decision("REFINES")
+        return decision("QUALIFIES")
 
     completed = payload("active-target-run")
     completed.update({
@@ -448,95 +761,36 @@ def test_canonical_reuse_marks_every_accepted_endpoint_for_active_enrichment(
         "userMessage": "Alpha now supplies a bounded input to Beta.",
         "mainResponse": "Beta uses that input for the current project decision.",
     })
-    fast = hybrid.begin_completed_pair(completed, classifier=classify)
-
-    targets = {
-        item["canonicalName"]: item
-        for item in fast["fast"]["activeEnrichmentTargets"]
-    }
-    assert targets == {
-        "Alpha": {
-            "nativeId": prior["source"],
-            "canonicalName": "Alpha",
-            "status": "EXISTING",
-        },
-        "Beta": {
-            "nativeId": targets["Beta"]["nativeId"],
-            "canonicalName": "Beta",
-            "status": "NEW",
-        },
-    }
-    enrichment = fast["enrichmentInput"]
+    graph_before = hybrid._graph_revision(service.store, workspace_id)
+    prepared = hybrid.prepare_completed_pair(completed)
+    assert prepared["revision"] == graph_before
+    assert prepared["revisionChanged"] is False
+    enrichment = prepared["enrichmentInput"]
     assert set(enrichment) == {
         "exact_user_message",
         "exact_main_response",
-        "current_turn_enrichment_targets",
         "current_graph_shape",
-        "current_turn_accepted_relationships",
+        "current_project_relationship_vocabulary",
     }
-    assert {
-        item["canonicalName"]: item["structuredNoteRule"]
-        for item in enrichment["current_turn_enrichment_targets"]
-    } == {
-        "Alpha": "APPEND_CURRENT_PAIR_THOUGHT",
-        "Beta": "CREATE_FIRST_CURRENT_PAIR_THOUGHT",
-    }
-    prompt_targets = {
-        item["canonicalName"]: item
-        for item in enrichment["current_turn_enrichment_targets"]
-    }
-    assert all("existingNotes" not in item for item in prompt_targets.values())
-    assert "Alpha already has durable project context." not in fast["enrichmentPrompt"]
+    assert "Alpha already has durable project context." not in prepared["enrichmentPrompt"]
     graph_shape = enrichment["current_graph_shape"]
-    assert graph_shape["scope"] == "active_endpoints_plus_direct_live_jev_neighbors"
+    assert graph_shape["scope"] == "bounded_current_canonical_shape"
     assert {node["canonicalName"] for node in graph_shape["nodes"]} == {
-        "Alpha", "Beta", "Prior Context",
+        "Alpha", "Prior Context",
     }
     assert all(set(node) == {
-        "nativeId", "canonicalName", "nodeType", "activeEndpoint",
+        "nativeId", "canonicalName", "nodeType",
     } for node in graph_shape["nodes"])
     assert any(
         edge["source"]["nativeId"] == prior["source"]
         and edge["target"]["nativeId"] == prior["target"]
-        and edge["canonicalRelationship"] == "REFINES"
+        and edge["canonicalRelationship"] == "QUALIFIES"
         for edge in graph_shape["edges"]
     )
     assert all("distribution" not in edge for edge in graph_shape["edges"])
-    current_relationships = enrichment["current_turn_accepted_relationships"]
-    assert current_relationships == [{
-        "source": {"nativeId": prior["source"], "canonicalName": "Alpha"},
-        "target": {"nativeId": targets["Beta"]["nativeId"], "canonicalName": "Beta"},
-        "canonicalRelationship": "REFINES",
-        "relationshipStrength": pytest.approx(0.76),
-    }]
-    assert not {
-        "provider", "requested_model", "resolved_model", "usage", "edge_id",
-        "opportunity_index",
-    }.intersection(current_relationships[0])
-    assert "current_graph_shape" in fast["enrichmentPrompt"]
-    assert "existingNotes" not in fast["enrichmentPrompt"]
-    assert fast["turnStartPriorThoughtSnapshot"][prior["source"]][
-        "memory_id"
-    ] == prior_note_id
-    assert prior_note_id not in fast["enrichmentPrompt"]
-    fast_call = next(
-        item for item in calls
-        if item["source"] == "Alpha" and item["target"] == "Beta"
-        and not item["proposal"]
-    )
-    assert any(
-        item["id"] == prior["source"] and item["focus"]
-        for item in fast_call["context"]["nodes"]
-    )
-    assert any(
-        item["memory_id"] == prior_note_id
-        for item in fast_call["context"]["latest_prior_thoughts"]
-    )
-    assert "notes" not in fast_call["context"]
-    assert any(
-        item["id"] == prior["edge_id"]
-        for item in fast_call["context"]["incident_edges"]
-    )
+    assert "current_graph_shape" in prepared["enrichmentPrompt"]
+    assert "existingNotes" not in prepared["enrichmentPrompt"]
+    assert prior_note_id not in prepared["enrichmentPrompt"]
 
     output = structured_output(content="Alpha now supplies a bounded input to Beta.")
     output["facts"][0]["entities"] = ["Alpha", "Beta"]
@@ -545,49 +799,41 @@ def test_canonical_reuse_marks_every_accepted_endpoint_for_active_enrichment(
         "relation": "supplies a bounded current input to",
         "target": "Beta",
     }]
-    current_turn_note_id = hybrid._persist_note(
-        service,
-        project="project-one",
-        workspace_id=workspace_id,
-        entity_id=prior["source"],
-        entity_name="Alpha",
-        note=hybrid.ThinkGraphNodeNote(
-            kind="OBSERVATION",
-            summary="Alpha current T3 Thought must not become its own prior context.",
-        ),
-        card_run=card_run("simulated-current-turn"),
-    )
+    original_latest = hybrid._latest_endpoint_thought
+    original_save = hybrid._save_note_memory
+    current_thought_written = False
 
-    def reject_post_write_latest_lookup(*_args, **_kwargs):
-        raise AssertionError("settled Jev re-queried latest Thought after T3 write")
+    def latest_before_write(*args, **kwargs):
+        assert current_thought_written is False
+        return original_latest(*args, **kwargs)
 
-    monkeypatch.setattr(
-        hybrid, "_latest_endpoint_thought", reject_post_write_latest_lookup,
-    )
+    def mark_current_write(*args, **kwargs):
+        nonlocal current_thought_written
+        current_thought_written = True
+        return original_save(*args, **kwargs)
+
+    monkeypatch.setattr(hybrid, "_latest_endpoint_thought", latest_before_write)
+    monkeypatch.setattr(hybrid, "_save_note_memory", mark_current_write)
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast, output=output, completed=completed),
+        settle_payload(prepared, output=output, completed=completed),
         classifier=classify,
     )
 
     entities = service.store.list_entities()
     assert sum(entity.name == "Alpha" for entity in entities) == 1
     assert sum(entity.name == "Beta" for entity in entities) == 1
-    beta_id = targets["Beta"]["nativeId"]
+    beta_id = next(entity.id for entity in entities if entity.name == "Beta")
     beta_read = hybrid.inspect("project-one", beta_id)["entity"]
     assert any(
         "Alpha now supplies" in str(item.get("excerpt") or "")
         for item in beta_read["evidence"]
     )
-    assert len(calls) == 2
-    settled_call = next(item for item in calls if item["proposal"])
+    assert len(calls) == 1
+    settled_call = calls[0]
     assert [
         item["memory_id"]
         for item in settled_call["context"]["latest_prior_thoughts"]
     ] == [prior_note_id]
-    assert current_turn_note_id not in {
-        item["memory_id"]
-        for item in settled_call["context"]["latest_prior_thoughts"]
-    }
     assert not any(item["target"] == "Prior Context" for item in calls)
     assert prior["edge_id"] in {
         edge.id for edge in service.store.neighbors([prior["source"]])
@@ -605,6 +851,7 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
         supporting_fact: str,
         graph_context: dict,
         relationship_proposal: str,
+        **_kwargs,
     ) -> dict:
         calls.append({
             "source": source,
@@ -614,12 +861,15 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
             "graph_context": graph_context,
             "relationship_proposal": relationship_proposal,
         })
-        return decision("REFINES" if relationship_proposal else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES" if relationship_proposal else "INVALID_NODE_PAIR")
 
-    fast = hybrid.begin_completed_pair(payload(), classifier=classify)
-    settled = hybrid.settle_completed_pair(settle_payload(fast), classifier=classify)
+    prepared = hybrid.prepare_completed_pair(payload())
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared), classifier=classify,
+    )
 
-    assert fast["ok"] is True
+    assert prepared["ok"] is True
+    assert prepared["revisionChanged"] is False
     assert settled["ok"] is True
     assert not settled["failures"], settled["failures"]
     proposal_call = next(
@@ -643,10 +893,13 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
         if edge.src == jev.id and edge.dst == thinkgraph.id
         and edge.provenance.get("jev")
     )
-    assert edge.relation == "REFINES"
+    assert edge.relation == "QUALIFIES"
     assert edge.relation != FREEFORM_RELATION
     assert edge.weight == pytest.approx(0.76)
-    assert edge.provenance["jev"]["distribution"]["REFINES"] == pytest.approx(0.76)
+    assert edge.provenance["jev"]["distribution"]["QUALIFIES"] == pytest.approx(0.76)
+    assert edge.provenance["jev"]["vocabulary_version"] == (
+        adapter.PROJECT_RELATIONSHIP_VOCABULARY_VERSION
+    )
 
     assert settled["noteMemoryIds"], settled
     note_memories = service.store.get_memories(settled["noteMemoryIds"])
@@ -659,6 +912,7 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
         for memory in note_memories.values()
     ]
     note = matching_notes[0]
+    assert note.metadata["thinkgraph_note"]["kind"] == "DECISION"
     assert note.metadata["thinkgraph_note"]["relationship_observations"]
     assert note.metadata["thinkgraph_origin"] == {
         "authority": "thinkgraph",
@@ -697,18 +951,16 @@ def test_saved_card_freeform_proposal_becomes_note_context_and_jev_edge(hybrid):
 
 def test_thought_notes_use_native_time_and_are_newest_first(hybrid):
     def classify(*args, **_kwargs):
-        return decision("REFINES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
 
-    fast = hybrid.begin_completed_pair(
-        payload(), classifier=classify,
-    )
+    prepared = hybrid.prepare_completed_pair(payload())
     output = structured_output()
     output["facts"].append({
         **structured_output(content="A later self-contained Thought Note.")["facts"][0],
         "title": "Later Thought Note",
     })
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast, output=output),
+        settle_payload(prepared, output=output),
         classifier=classify,
     )
     assert len(settled["noteMemoryIds"]) >= 2
@@ -758,11 +1010,11 @@ def test_thought_notes_use_native_time_and_are_newest_first(hybrid):
 
 def test_same_structured_thought_body_appends_on_a_later_completed_pair(hybrid):
     def classify(*args, **_kwargs):
-        return decision("REFINES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
 
-    first_fast = hybrid.begin_completed_pair(payload(), classifier=classify)
+    first_preparation = hybrid.prepare_completed_pair(payload())
     first = hybrid.settle_completed_pair(
-        settle_payload(first_fast), classifier=classify,
+        settle_payload(first_preparation), classifier=classify,
     )
 
     later = payload("run-two")
@@ -771,8 +1023,8 @@ def test_same_structured_thought_body_appends_on_a_later_completed_pair(hybrid):
         "userMessage": "Revisit Jev and ThinkGraph in this later exchange.",
         "mainResponse": "Record the current temporal Thought without rewriting history.",
     })
-    second_fast = hybrid.begin_completed_pair(later, classifier=classify)
-    second_payload = settle_payload(second_fast, completed=later)
+    second_preparation = hybrid.prepare_completed_pair(later)
+    second_payload = settle_payload(second_preparation, completed=later)
     second_payload["cardRun"] = card_run("thinkgraph-run-two")
     second = hybrid.settle_completed_pair(second_payload, classifier=classify)
 
@@ -796,17 +1048,49 @@ def test_same_structured_thought_body_appends_on_a_later_completed_pair(hybrid):
     )
 
 
+def test_structured_only_concept_can_become_durable_after_jev_accepts(hybrid):
+    completed = payload("structured-discovery")
+    assert "Execution Risk" not in completed["userMessage"]
+    assert "Execution Risk" not in completed["mainResponse"]
+    prepared = hybrid.prepare_completed_pair(completed)
+    output = structured_output(
+        content="Neutron schedule uncertainty creates execution risk for the thesis."
+    )
+    output["facts"][0]["entities"] = ["Neutron", "Execution Risk"]
+    output["facts"][0]["relations"] = [{
+        "source": "Neutron",
+        "relation": "creates schedule-sensitive uncertainty represented by",
+        "target": "Execution Risk",
+    }]
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared, output=output, completed=completed),
+        classifier=lambda *_args, **_kwargs: decision("CAUSES"),
+    )
+
+    assert not settled["failures"]
+    entities, edges = entities_and_edges(hybrid)
+    assert {entity.name for entity in entities} == {"Neutron", "Execution Risk"}
+    assert [edge.relation for edge in edges if edge.provenance.get("jev")] == [
+        "CAUSES",
+    ]
+
+
 @pytest.mark.parametrize(
     "winner", ["NONE", "INSUFFICIENT_CONTEXT", "INVALID_NODE_PAIR"],
 )
 def test_unaccepted_saved_card_pair_creates_neither_new_nodes_nor_notes(
     hybrid, winner,
 ):
-    fast = hybrid.begin_completed_pair(
-        payload(), classifier=lambda *_args, **_kwargs: decision(winner),
-    )
+    prepared = hybrid.prepare_completed_pair(payload())
+    output = structured_output(content="Discard this weak structured proposal.")
+    output["facts"][0]["entities"] = ["Jev", "Transient Sentence Fragment"]
+    output["facts"][0]["relations"] = [{
+        "source": "Jev",
+        "relation": "appears beside",
+        "target": "Transient Sentence Fragment",
+    }]
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast),
+        settle_payload(prepared, output=output),
         classifier=lambda *_args, **_kwargs: decision(winner),
     )
     assert settled["relationships"]
@@ -816,6 +1100,7 @@ def test_unaccepted_saved_card_pair_creates_neither_new_nodes_nor_notes(
     entities, edges = entities_and_edges(hybrid)
     assert entities == []
     assert edges == []
+    assert all(entity.name != "Transient Sentence Fragment" for entity in entities)
     assert all(edge.relation != "INVALID_NODE_PAIR" for edge in edges)
 
 
@@ -829,17 +1114,18 @@ def test_new_node_note_failure_prevents_partial_node_and_edge_birth(
         _supporting_fact: str,
         _graph_context: dict,
         relationship_proposal: str,
+        **_kwargs,
     ) -> dict:
-        return decision("REFINES" if relationship_proposal else "NONE")
+        return decision("QUALIFIES" if relationship_proposal else "NONE")
 
-    fast = hybrid.begin_completed_pair(payload(), classifier=classify)
+    prepared = hybrid.prepare_completed_pair(payload())
 
     def fail_note(*_args, **_kwargs):
         raise RuntimeError("note_store_unavailable")
 
     monkeypatch.setattr(hybrid, "_save_note_memory", fail_note)
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast),
+        settle_payload(prepared),
         classifier=classify,
     )
 
@@ -866,7 +1152,7 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
         repo_id=None,
         payload=payload(),
         memory_ids=[],
-        decision=decision("REFINES"),
+        decision=decision("QUALIFIES"),
         stage="test",
     )
     original = service.store.conn.execute(
@@ -884,7 +1170,7 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
         repo_id=None,
         payload=payload("run-two"),
         memory_ids=[],
-        decision=decision("REFINES"),
+        decision=decision("QUALIFIES"),
         stage="test",
     )
     assert same["status"] == "updated"
@@ -907,7 +1193,7 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
         repo_id=None,
         payload=payload("run-three"),
         memory_ids=[],
-        decision=decision("CORRECTS"),
+        decision=decision("CONTRADICTS"),
         stage="test",
     )
     assert changed["status"] == "superseded"
@@ -925,7 +1211,7 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
         target_id=first["target"],
     )
     assert [(edge.id, edge.relation) for edge in live] == [
-        (changed["edge_id"], "CORRECTS")
+        (changed["edge_id"], "CONTRADICTS")
     ]
 
     closed = hybrid._invalidate_current_jev_pair(
@@ -944,37 +1230,20 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
 
 
 def test_structured_writer_gets_shape_not_thought_bodies_or_edge_reclassification(
-    hybrid, monkeypatch: pytest.MonkeyPatch,
+    hybrid,
 ):
     def seed_classifier(*args, **_kwargs):
-        return decision("REFINES" if args[5] else "INVALID_NODE_PAIR")
+        return decision("QUALIFIES" if args[5] else "INVALID_NODE_PAIR")
 
-    seed_fast = hybrid.begin_completed_pair(
-        payload(), classifier=seed_classifier,
-    )
+    seed_preparation = hybrid.prepare_completed_pair(payload())
     seed_settled = hybrid.settle_completed_pair(
-        settle_payload(seed_fast), classifier=seed_classifier,
+        settle_payload(seed_preparation), classifier=seed_classifier,
     )
     assert not seed_settled["failures"]
     service = hybrid.get_service()
     jev = next(node for node in service.store.list_entities() if node.name == "Jev")
     thinkgraph = next(
         node for node in service.store.list_entities() if node.name == "ThinkGraph"
-    )
-
-    local = hybrid._IntakeLocalGraphStore()
-    local.opportunities.append({
-        "id": "intake_edge_0000",
-        "source": {"name": "Jev", "type": "person_or_concept"},
-        "target": {"name": "ThinkGraph", "type": "person_or_concept"},
-        "native_relation": "co_occurs",
-        "native_weight": 0.5,
-        "provenance": {},
-    })
-    monkeypatch.setattr(
-        hybrid,
-        "_enumerate_native_regex_opportunities",
-        lambda *_args, **_kwargs: (None, local),
     )
 
     output = structured_output(content="Jev has a genuinely new operating constraint.")
@@ -988,46 +1257,27 @@ def test_structured_writer_gets_shape_not_thought_bodies_or_edge_reclassificatio
         "userMessage": "Jev now operates under a stricter bounded constraint.",
         "mainResponse": "The new constraint changes how Jev may be applied.",
     })
-    fast_contexts: list[dict[str, Any]] = []
-
-    def classify_fast(_source, _target, _payload, _fact, context, _proposal):
-        fast_contexts.append(context)
-        return decision("REFINES")
-
-    fast = hybrid.begin_completed_pair(completed, classifier=classify_fast)
-    assert {item["nativeId"] for item in fast["fast"]["activeEnrichmentTargets"]} == {
-        jev.id, thinkgraph.id,
-    }
-    assert set(fast["enrichmentInput"]) == {
+    prepared = hybrid.prepare_completed_pair(completed)
+    assert prepared["revisionChanged"] is False
+    assert set(prepared["enrichmentInput"]) == {
         "exact_user_message",
         "exact_main_response",
-        "current_turn_enrichment_targets",
         "current_graph_shape",
-        "current_turn_accepted_relationships",
+        "current_project_relationship_vocabulary",
     }
-    prompt_targets = {
-        item["nativeId"]: item
-        for item in fast["enrichmentInput"]["current_turn_enrichment_targets"]
-    }
-    assert all("existingNotes" not in item for item in prompt_targets.values())
-    assert "Jev normalizes expressive graph relations." not in fast["enrichmentPrompt"]
-    shape = fast["enrichmentInput"]["current_graph_shape"]
+    assert "Jev normalizes expressive graph relations." not in prepared["enrichmentPrompt"]
+    shape = prepared["enrichmentInput"]["current_graph_shape"]
     assert {item["nativeId"] for item in shape["nodes"]} == {
         jev.id, thinkgraph.id,
     }
     assert any(
         edge["source"]["nativeId"] == jev.id
         and edge["target"]["nativeId"] == thinkgraph.id
-        and edge["canonicalRelationship"] == "REFINES"
+        and edge["canonicalRelationship"] == "QUALIFIES"
         for edge in shape["edges"]
     )
-    assert any(
-        edge["source_id"] == jev.id and edge["target_id"] == thinkgraph.id
-        for context in fast_contexts
-        for edge in context["incident_edges"]
-    )
-    assert "current_graph_shape" in fast["enrichmentPrompt"]
-    assert "existingNotes" not in fast["enrichmentPrompt"]
+    assert "current_graph_shape" in prepared["enrichmentPrompt"]
+    assert "existingNotes" not in prepared["enrichmentPrompt"]
     live_before = {
         edge.id: (edge.relation, edge.weight, edge.provenance)
         for edge in service.store.neighbors([jev.id])
@@ -1043,7 +1293,7 @@ def test_structured_writer_gets_shape_not_thought_bodies_or_edge_reclassificatio
         raise adapter.JevRelationshipError("jev_relationship_unavailable")
 
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast, output=output, completed=completed),
+        settle_payload(prepared, output=output, completed=completed),
         classifier=fail,
     )
 
@@ -1061,7 +1311,7 @@ def test_structured_writer_gets_shape_not_thought_bodies_or_edge_reclassificatio
 
 
 def test_only_explicit_rejected_structured_pair_closes_its_live_edge(
-    hybrid, monkeypatch: pytest.MonkeyPatch,
+    hybrid,
 ):
     service = hybrid.get_service()
     workspace_id = service.store.get_or_create_workspace("project-one")
@@ -1073,7 +1323,7 @@ def test_only_explicit_rejected_structured_pair_closes_its_live_edge(
         repo_id=None,
         payload=payload(),
         memory_ids=[],
-        decision=decision("REFINES"),
+        decision=decision("QUALIFIES"),
         stage="test",
     )
     neighbor = hybrid._apply_accepted_decision(
@@ -1088,19 +1338,11 @@ def test_only_explicit_rejected_structured_pair_closes_its_live_edge(
         decision=decision("DEPENDS_ON"),
         stage="test",
     )
-    monkeypatch.setattr(
-        hybrid,
-        "_enumerate_native_regex_opportunities",
-        lambda *_args, **_kwargs: (None, hybrid._IntakeLocalGraphStore()),
-    )
     completed = payload("explicit-close-run")
-    fast = hybrid.begin_completed_pair(
-        completed,
-        classifier=lambda *_args, **_kwargs: decision("INVALID_NODE_PAIR"),
-    )
+    prepared = hybrid.prepare_completed_pair(completed)
     output = structured_output(content="The current pair no longer supports this edge.")
     settled = hybrid.settle_completed_pair(
-        settle_payload(fast, output=output, completed=completed),
+        settle_payload(prepared, output=output, completed=completed),
         classifier=lambda *_args, **_kwargs: decision("NONE"),
     )
 
@@ -1124,10 +1366,13 @@ def test_jev_failure_is_visible_and_does_not_mutate_graph(hybrid):
     def fail(*_args, **_kwargs):
         raise adapter.JevRelationshipError("jev_relationship_unavailable")
 
-    fast = hybrid.begin_completed_pair(payload(), classifier=fail)
-    assert fast["fast"]["status"] == "completed_with_pair_failures"
-    assert fast["fast"]["failures"]
+    prepared = hybrid.prepare_completed_pair(payload())
+    settled = hybrid.settle_completed_pair(
+        settle_payload(prepared), classifier=fail,
+    )
+    assert settled["status"] == "completed_with_failures"
+    assert settled["failures"]
     entities, edges = entities_and_edges(hybrid)
     assert entities == []
     assert edges == []
-    assert hybrid.inspect("project-one", fast["pairMemoryId"])["memory"]["content"]
+    assert hybrid.inspect("project-one", prepared["pairMemoryId"])["memory"]["content"]

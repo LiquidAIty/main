@@ -5,6 +5,7 @@ import type {
   GraphProjectionNode,
   GraphProjectionV1,
 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
+import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { callCbmTool, CANONICAL_CBM_PROJECT_NAME } from '../../../components/codegraph/resolveCodeGraphProjectIdentity';
 import type {
   MainChatTurnEvent,
@@ -71,7 +72,7 @@ export type ThinkGraphRevisionEvent = {
   deckId: string;
   conversationId: string;
   originatingRunId: string;
-  stage: 'fast' | 'settled';
+  stage: 'settled';
   revision: string;
   changedNodeIds: string[];
   changedEdgeIds: string[];
@@ -85,7 +86,7 @@ export type ThinkGraphLifecycleError = {
   deckId: string;
   conversationId: string;
   originatingRunId: string;
-  stage: 'fast' | 'thinkgraph_card' | 'settle';
+  stage: 'prepare' | 'thinkgraph_card' | 'settle';
   error: string;
 };
 
@@ -156,65 +157,13 @@ function projection(
   };
 }
 
-function boundedProbability(value: unknown): number | null {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? Math.max(0, Math.min(1, numeric)) : null;
-}
-
 /**
  * Translate persisted Jev probabilities into the renderer's existing numeric
  * contract. This is local display physics: it never calls Jev or changes graph
  * meaning. Node mass is the sum of current/live incident edge weights.
  */
 export function applyKnowGraphJevPhysics(value: GraphProjectionV1): GraphProjectionV1 {
-  const incidentMass = new Map(value.nodes.map((node) => [node.id, 0]));
-  const edges = value.edges.map((edge) => {
-    const properties = isRecord(edge.properties) ? edge.properties : {};
-    const jev = isRecord(properties.jev) ? properties.jev : {};
-    const distribution = isRecord(jev.distribution) ? jev.distribution : {};
-    const winner = String(jev.winner || '');
-    const weight = boundedProbability(distribution[winner]);
-    const isLive = properties.temporalStatus !== 'historical'
-      && !properties.invalidAt && !properties.expiredAt
-      && !properties.invalid_at && !properties.expired_at
-      && !edge.validTo;
-    const {
-      relationship_strength: _oldWeight,
-      label_confidence: _oldConfidence,
-      strength: _oldStrength,
-      spring_strength: _oldSpring,
-      rest_length: _oldDistance,
-      ...unweightedEdge
-    } = edge;
-    if (weight === null || !isLive) return unweightedEdge;
-    incidentMass.set(edge.source, (incidentMass.get(edge.source) || 0) + weight);
-    incidentMass.set(edge.target, (incidentMass.get(edge.target) || 0) + weight);
-    return {
-      ...unweightedEdge,
-      relationship_strength: weight,
-      label_confidence: weight,
-      strength: weight,
-      spring_strength: 0.035 + (0.17 * weight),
-      rest_length: Math.max(14, Math.min(34, 26 - (12 * weight))),
-      properties: { ...properties, relationship_strength: weight },
-    };
-  });
-  const nodes = value.nodes.map((node) => {
-    const semanticMass = incidentMass.get(node.id) || 0;
-    const scale = Math.log1p(semanticMass);
-    return {
-      ...node,
-      semantic_mass: semanticMass,
-      gravity_mass: 1 + (4 * scale),
-      visual_radius: 2.5 + (3 * scale),
-      properties: {
-        ...node.properties,
-        semantic_mass: semanticMass,
-        incident_relationship_weight: semanticMass,
-      },
-    };
-  });
-  return { ...value, nodes, edges };
+  return applyJevGraphPhysics(value, 'balanced');
 }
 
 export function knowGraphProjection(payload: Record<string, any>, projectId: string): GraphProjectionV1 {

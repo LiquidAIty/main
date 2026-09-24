@@ -106,15 +106,19 @@ def _decision(native_fact_uuid: str = "fact-1") -> dict:
     return {
         "nativeFactUuid": native_fact_uuid,
         "status": "success",
-        "winner": "SUPPLIES",
-        "distribution": {"SUPPLIES": 0.88, "OTHER_RELATION": 0.12},
+        "winner": "PROVIDES",
+        "distribution": {"PROVIDES": 0.88, "ASSOCIATED_WITH": 0.12},
         "label_confidence": 0.88,
         "requested_model": "typesafe/jev-1.13",
         "resolved_model": "typesafe/jev-1.13",
         "evaluated_at": "2026-09-24T12:00:00Z",
-        "question_schema_version": "knowgraph.relationship-choice.v1",
-        "vocabulary_version": "knowgraph.relationships.v1",
+        "question_schema_version": "knowgraph.relationship-choice.v3",
+        "vocabulary_version": "project.relationship-vocabulary.v1",
         "vocabulary_hash": "hash-1",
+        "vocabulary_count": 20,
+        "relationship_proposal_status": "invalid_novel_label",
+        "novel_relationship_candidate": "",
+        "vocabulary_promotion": "not_promoted",
     }
 
 
@@ -123,8 +127,10 @@ def _run(
     *,
     decisions: list[dict] | None = None,
     jev_error: Exception | None = None,
+    vocabulary_error: Exception | None = None,
 ):
-    async def classify(facts: list[dict]) -> list[dict]:
+    async def classify(project_id: str, facts: list[dict]) -> list[dict]:
+        assert project_id == "project-1"
         graphiti.jev_calls.append(facts)
         if jev_error:
             raise jev_error
@@ -132,10 +138,35 @@ def _run(
             _decision(str(fact["nativeFactUuid"])) for fact in facts
         ]
 
+    vocabulary = {
+        "version": "project.relationship-vocabulary.v1",
+        "hash": "vocabulary-hash",
+        "count": 20,
+        "maximum": 255,
+        "atMaximum": False,
+        "labels": [
+            "IS_A", "PART_OF", "HAS_PART", "CAUSES", "AFFECTS",
+            "DEPENDS_ON", "ENABLES", "CONSTRAINS", "REQUIRES", "SUPPORTS",
+            "CONTRADICTS", "QUALIFIES", "EXPLAINS", "ASSOCIATED_WITH",
+            "ALTERNATIVE_TO", "COMPETES_WITH", "PROVIDES", "USES",
+            "PRECEDES", "FOLLOWS",
+        ],
+    }
+
+    async def read_vocabulary(project_id: str) -> dict:
+        assert project_id == "project-1"
+        if vocabulary_error:
+            raise vocabulary_error
+        return vocabulary
+
     with patch.object(
         ingest,
         "_create_graphiti_runtime",
         return_value=(_runtime(), graphiti, "neo4j"),
+    ), patch.object(
+        ingest,
+        "_read_project_relationship_vocabulary",
+        side_effect=read_vocabulary,
     ), patch.object(ingest, "_call_knowgraph_jev", side_effect=classify):
         return asyncio.run(
             ingest._ingest_episode(
@@ -292,7 +323,18 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertNotIn("uuid", call)
         self.assertEqual(result["episode_id"], "graphiti-episode-1")
         self.assertEqual(result["graphiti_version"], ingest._graphiti_core_version())
-        self.assertEqual(call["custom_extraction_instructions"], "Keep claims grounded.")
+        self.assertEqual(result["relationship_vocabulary_guidance"], {
+            "status": "available",
+            "version": "project.relationship-vocabulary.v1",
+            "hash": "vocabulary-hash",
+            "count": 20,
+        })
+        self.assertIn("Keep claims grounded.", call["custom_extraction_instructions"])
+        self.assertIn(
+            "CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY",
+            call["custom_extraction_instructions"],
+        )
+        self.assertIn("PROVIDES", call["custom_extraction_instructions"])
         self.assertTrue(
             any("graphiti_version" in cypher for cypher, _ in graphiti.driver.queries)
         )
@@ -311,10 +353,36 @@ class GraphitiIngestTests(unittest.TestCase):
         ]
         self.assertEqual(len(persisted), 1)
         self.assertEqual(persisted[0]["native_fact_uuid"], "fact-1")
-        self.assertEqual(persisted[0]["winner"], "SUPPLIES")
+        self.assertEqual(persisted[0]["winner"], "PROVIDES")
         self.assertEqual(persisted[0]["label_confidence"], 0.88)
+        self.assertEqual(persisted[0]["vocabulary_count"], 20)
+        self.assertEqual(
+            persisted[0]["relationship_proposal_status"],
+            "invalid_novel_label",
+        )
         self.assertEqual(vars(graphiti.native_edge), native_before)
         self.assertTrue(graphiti.driver.closed)
+
+    def test_vocabulary_guidance_failure_does_not_discard_native_graphiti_fact(self) -> None:
+        graphiti = FakeGraphiti()
+        native_before = vars(graphiti.native_edge).copy()
+
+        result = _run(
+            graphiti,
+            vocabulary_error=RuntimeError("shared vocabulary unavailable"),
+        )
+
+        self.assertEqual(result["status"], "ingested")
+        self.assertEqual(result["fact_count"], 1)
+        self.assertEqual(result["relationship_vocabulary_guidance"], {
+            "status": "unavailable",
+            "failure_reason": "shared vocabulary unavailable",
+        })
+        self.assertEqual(
+            graphiti.add_calls[0]["custom_extraction_instructions"],
+            "Keep claims grounded.",
+        )
+        self.assertEqual(vars(graphiti.native_edge), native_before)
 
     def test_support_only_update_reuses_semantically_identical_classification(self) -> None:
         signature = ingest._native_fact_signature({
@@ -325,8 +393,8 @@ class GraphitiIngestTests(unittest.TestCase):
         })
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
             "native_signature": signature,
-            "winner": "SUPPLIES",
-            "distribution_json": '{"SUPPLIES":0.88,"OTHER_RELATION":0.12}',
+            "winner": "PROVIDES",
+            "distribution_json": '{"ASSOCIATED_WITH":0.12,"PROVIDES":0.88}',
         }})
 
         result = _run(graphiti)
@@ -347,8 +415,8 @@ class GraphitiIngestTests(unittest.TestCase):
     def test_materially_changed_native_fact_is_classified_once(self) -> None:
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
             "native_signature": "old-meaning",
-            "winner": "OTHER_RELATION",
-            "distribution_json": '{"OTHER_RELATION":1.0}',
+            "winner": "ASSOCIATED_WITH",
+            "distribution_json": '{"ASSOCIATED_WITH":1.0}',
         }})
 
         result = _run(graphiti)
@@ -373,6 +441,30 @@ class GraphitiIngestTests(unittest.TestCase):
             for cypher, _ in graphiti.driver.queries
         ))
         self.assertTrue(graphiti.driver.closed)
+
+    def test_unmapped_jev_control_outcome_keeps_the_grounded_native_fact(self) -> None:
+        graphiti = FakeGraphiti()
+        native_before = vars(graphiti.native_edge).copy()
+        insufficient = {
+            **_decision(),
+            "status": "unavailable",
+            "winner": "INSUFFICIENT_CONTEXT",
+            "distribution": {"PROVIDES": 0.35, "INSUFFICIENT_CONTEXT": 0.65},
+            "control_outcome": "INSUFFICIENT_CONTEXT",
+            "failure_reason": "knowgraph_jev_insufficient_context",
+        }
+
+        result = _run(graphiti, decisions=[insufficient])
+
+        self.assertEqual(result["status"], "ingested")
+        self.assertEqual(result["fact_count"], 1)
+        self.assertEqual(result["jev_classification"]["status"], "unavailable")
+        self.assertEqual(result["jev_classification"]["failed_fact_uuids"], ["fact-1"])
+        self.assertEqual(vars(graphiti.native_edge), native_before)
+        self.assertFalse(any(
+            "SET fact.jev_relation_winner" in cypher
+            for cypher, _ in graphiti.driver.queries
+        ))
 
     def test_duplicate_episode_skips_graphiti_and_provider_work(self) -> None:
         graphiti = FakeGraphiti(existing_episode_id="graphiti-existing-episode")

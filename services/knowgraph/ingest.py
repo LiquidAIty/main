@@ -445,14 +445,59 @@ def _native_fact_signature(fact: dict[str, Any]) -> str:
     return _sha256_hex(json.dumps(semantic_identity, sort_keys=True, separators=(",", ":")))
 
 
-async def _call_knowgraph_jev(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def _read_project_relationship_vocabulary(
+    project_id: str,
+) -> dict[str, Any]:
+    base_url = os.getenv("PYTHON_RAILS_URL", "http://127.0.0.1:8003").strip().rstrip("/")
+    if not base_url:
+        raise RuntimeError("knowgraph_jev_python_rails_unavailable")
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        response = await client.post(
+            f"{base_url}/graph/relationship-vocabulary/read",
+            json={"projectId": project_id},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    labels = payload.get("labels") if isinstance(payload, dict) else None
+    if (
+        not isinstance(labels, list)
+        or not 20 <= len(labels) <= 255
+        or any(not isinstance(label, str) or not label for label in labels)
+    ):
+        raise RuntimeError("knowgraph_relationship_vocabulary_invalid")
+    return payload
+
+
+def _graphiti_relationship_vocabulary_guidance(
+    guidance: str | None,
+    vocabulary: dict[str, Any],
+) -> str:
+    labels = [str(label) for label in vocabulary["labels"]]
+    existing = str(guidance or "").strip()
+    instruction = (
+        "For each native Graphiti relationship name, first prefer an exact predicate "
+        "from CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY when it accurately fits. "
+        "If none fits, propose one concise UPPER_SNAKE_CASE predicate: prefer one word, "
+        "use two only when necessary, and never exceed three words. Do not invent a "
+        "synonym for an existing predicate. Keep the natural-language fact fully "
+        "expressive and continue normal entity and factual relationship extraction.\n"
+        "CURRENT_SHARED_PROJECT_RELATIONSHIP_VOCABULARY:\n"
+        + json.dumps(labels, ensure_ascii=False, separators=(",", ":"))
+    )
+    return f"{existing}\n\n{instruction}" if existing else instruction
+
+
+async def _call_knowgraph_jev(
+    project_id: str,
+    facts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     base_url = os.getenv("PYTHON_RAILS_URL", "http://127.0.0.1:8003").strip().rstrip("/")
     if not base_url:
         raise RuntimeError("knowgraph_jev_python_rails_unavailable")
     async with httpx.AsyncClient(timeout=180.0, follow_redirects=False) as client:
         response = await client.post(
             f"{base_url}/knowgraph/jev/classify",
-            json={"facts": facts},
+            json={"projectId": project_id, "facts": facts},
         )
         response.raise_for_status()
         payload = response.json()
@@ -513,6 +558,12 @@ async def _persist_jev_metadata(
             fact.jev_question_schema_version = $question_schema_version,
             fact.jev_ontology_version = $ontology_version,
             fact.jev_ontology_hash = $ontology_hash,
+            fact.jev_vocabulary_count = $vocabulary_count,
+            fact.jev_relationship_candidate = $relationship_candidate,
+            fact.jev_relationship_proposal_status = $relationship_proposal_status,
+            fact.jev_vocabulary_promotion = $vocabulary_promotion,
+            fact.jev_vocabulary_after_hash = $vocabulary_after_hash,
+            fact.jev_vocabulary_after_count = $vocabulary_after_count,
             fact.jev_native_signature = $native_signature
         """,
         native_fact_uuid=native_fact_uuid,
@@ -525,6 +576,20 @@ async def _persist_jev_metadata(
         question_schema_version=str(decision.get("question_schema_version") or ""),
         ontology_version=str(decision.get("vocabulary_version") or ""),
         ontology_hash=str(decision.get("vocabulary_hash") or ""),
+        vocabulary_count=int(decision.get("vocabulary_count") or 0),
+        relationship_candidate=str(
+            decision.get("novel_relationship_candidate") or ""
+        ),
+        relationship_proposal_status=str(
+            decision.get("relationship_proposal_status") or ""
+        ),
+        vocabulary_promotion=str(decision.get("vocabulary_promotion") or ""),
+        vocabulary_after_hash=str(decision.get("vocabulary_after_hash") or ""),
+        vocabulary_after_count=int(
+            decision.get("vocabulary_after_count")
+            or decision.get("vocabulary_count")
+            or 0
+        ),
         native_signature=native_signature,
     )
 
@@ -532,6 +597,7 @@ async def _persist_jev_metadata(
 async def _settle_jev_smart_edges(
     graphiti: Any,
     *,
+    project_id: str,
     edges: list[Any],
     nodes: list[Any],
     episode_id: str,
@@ -635,7 +701,7 @@ async def _settle_jev_smart_edges(
     for offset in range(0, len(changed), 64):
         batch = changed[offset:offset + 64]
         try:
-            decisions.extend(await _call_knowgraph_jev([
+            decisions.extend(await _call_knowgraph_jev(project_id, [
                 {key: value for key, value in fact.items() if key != "_nativeSignature"}
                 for fact in batch
             ]))
@@ -837,6 +903,30 @@ async def _ingest_episode(
                 "graphiti_version": _graphiti_core_version(),
             }
 
+        try:
+            relationship_vocabulary = await _read_project_relationship_vocabulary(
+                project_id
+            )
+            extraction_guidance = _graphiti_relationship_vocabulary_guidance(
+                guidance,
+                relationship_vocabulary,
+            )
+            vocabulary_guidance = {
+                "status": "available",
+                "version": relationship_vocabulary.get("version"),
+                "hash": relationship_vocabulary.get("hash"),
+                "count": relationship_vocabulary.get("count"),
+            }
+        except Exception as error:
+            # Graphiti evidence remains useful even when optional vocabulary
+            # guidance is unavailable. The later Jev call fails independently
+            # and visibly if Python rails itself is unavailable.
+            extraction_guidance = guidance
+            vocabulary_guidance = {
+                "status": "unavailable",
+                "failure_reason": str(error).strip() or type(error).__name__,
+            }
+
         result = await graphiti.add_episode(
             name=source_name,
             episode_body=text,
@@ -848,7 +938,7 @@ async def _ingest_episode(
             # isolated while the existing Neo4j driver remains the one store.
             group_id=graphiti_project_group_id(project_id),
             update_communities=False,
-            custom_extraction_instructions=guidance,
+            custom_extraction_instructions=extraction_guidance,
         )
         episode_id = str(result.episode.uuid)
         await _record_episode_authority(
@@ -871,6 +961,7 @@ async def _ingest_episode(
         try:
             jev_classification = await _settle_jev_smart_edges(
                 graphiti,
+                project_id=project_id,
                 edges=list(result.edges),
                 nodes=list(result.nodes),
                 episode_id=episode_id,
@@ -911,6 +1002,7 @@ async def _ingest_episode(
             "graphiti_version": _graphiti_core_version(),
             "entity_count": len(result.nodes),
             "fact_count": len(result.edges),
+            "relationship_vocabulary_guidance": vocabulary_guidance,
             "jev_classification": jev_classification,
         }
     finally:
