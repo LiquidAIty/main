@@ -137,9 +137,23 @@ function jevWinnerProbability(edge: GraphProjectionEdge | Record<string, any>): 
   const jev = Object.keys(record(properties.jev)).length
     ? record(properties.jev)
     : record(rawEdge.jev);
+  if ((jev.status !== undefined && jev.status !== 'success')
+    || typeof jev.winner !== 'string'
+    || !jev.winner.trim()) {
+    return null;
+  }
   const distribution = record(jev.distribution);
-  const winner = String(jev.winner || edge.predicate || rawEdge.relation || '');
-  return winner ? boundedProbability(distribution[winner]) : null;
+  const probabilities = Object.values(distribution);
+  if (!probabilities.length || probabilities.some(probability => (
+    typeof probability !== 'number'
+    || !Number.isFinite(probability)
+    || probability < 0
+    || probability > 1
+  ))) {
+    return null;
+  }
+  const winnerProbability = distribution[jev.winner];
+  return typeof winnerProbability === 'number' ? winnerProbability : null;
 }
 
 function isCurrentLiveEdge(edge: GraphProjectionEdge | Record<string, any>): boolean {
@@ -161,6 +175,12 @@ function isCurrentLiveEdge(edge: GraphProjectionEdge | Record<string, any>): boo
     && !properties.expiredAt && !properties.expired_at;
 }
 
+function currentLiveJevWinnerProbability(
+  edge: GraphProjectionEdge | Record<string, any>,
+): number | null {
+  return isCurrentLiveEdge(edge) ? jevWinnerProbability(edge) : null;
+}
+
 function applyToRecords(
   nodes: GraphProjectionNode[],
   edges: GraphProjectionEdge[],
@@ -168,6 +188,8 @@ function applyToRecords(
 ): { nodes: GraphProjectionNode[]; edges: GraphProjectionEdge[] } {
   const incidentMass = new Map(nodes.map((node) => [node.id, 0]));
   const mappedEdges = edges.map((edge) => {
+    const weight = currentLiveJevWinnerProbability(edge);
+    if (weight === null) return edge;
     const {
       relationship_strength: _oldWeight,
       label_confidence: _oldConfidence,
@@ -177,10 +199,11 @@ function applyToRecords(
       visual_width: _oldWidth,
       ...unweightedEdge
     } = edge as GraphProjectionEdge & { visual_width?: number };
-    const weight = jevWinnerProbability(edge);
-    if (weight === null || !isCurrentLiveEdge(edge)) return unweightedEdge;
     incidentMass.set(edge.source, (incidentMass.get(edge.source) || 0) + weight);
     incidentMass.set(edge.target, (incidentMass.get(edge.target) || 0) + weight);
+    // w is exactly P(winner) from a validated Jev classification. Its application
+    // and visual semantics are classification-derived, not physical, causal,
+    // financial, or ontological magnitude; compare only matching Jev vocabularies.
     const transfer = mapJevGraphPhysics(profile, weight, 0);
     return {
       ...unweightedEdge,
@@ -233,8 +256,10 @@ export function applyJevGraphPhysics(
   const sceneEdges = scene && (Array.isArray(scene.edges)
     ? scene.edges
     : Array.isArray(scene.links) ? scene.links : []);
-  if (!value.edges.some(edge => jevWinnerProbability(edge) !== null)
-    && !(sceneEdges || []).some((edge: GraphProjectionEdge) => jevWinnerProbability(edge) !== null)) {
+  if (!value.edges.some(edge => currentLiveJevWinnerProbability(edge) !== null)
+    && !(sceneEdges || []).some(
+      (edge: GraphProjectionEdge) => currentLiveJevWinnerProbability(edge) !== null,
+    )) {
     return value;
   }
   const mapped = applyToRecords(value.nodes, value.edges, profile);

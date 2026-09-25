@@ -295,7 +295,7 @@ def test_attention_fast_recall_maps_direct_think_incidence_to_canonical_entity()
     }]
 
 
-def test_attention_jev_makes_one_choice_call_and_normalizes_full_distribution(
+def test_attention_jev_makes_one_choice_call_and_preserves_rounded_distribution(
     monkeypatch: pytest.MonkeyPatch,
 ):
     candidates = [
@@ -327,8 +327,9 @@ def test_attention_jev_makes_one_choice_call_and_normalizes_full_distribution(
                     "attention": {
                         "type": "choice",
                         "choice": choice_ids[0],
+                        "confidence": 0.73,
                         "probabilities": {
-                            choice_id: (0.2 if index == 0 else 0.05)
+                            choice_id: 0.4 if index == 0 else 0.04
                             for index, choice_id in enumerate(choice_ids)
                         },
                     },
@@ -337,7 +338,10 @@ def test_attention_jev_makes_one_choice_call_and_normalizes_full_distribution(
 
     class Client:
         def __init__(self, **options):
-            assert options == {"timeout": 45.0, "follow_redirects": False}
+            assert options == {
+                "timeout": adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS,
+                "follow_redirects": False,
+            }
 
         def __enter__(self):
             return self
@@ -361,9 +365,17 @@ def test_attention_jev_makes_one_choice_call_and_normalizes_full_distribution(
     assert list(body["questions"]) == ["attention"]
     assert set(body["questions"]["attention"]["criteria"]) == set(choice_ids)
     assert len(body["state"]["canonical_entity_options"]) == 16
+    assert {option["choice_id"] for option in body["state"]["canonical_entity_options"]} == set(choice_ids)
     assert decision["decisionId"] == "decision-one"
+    assert decision["confidence"] == pytest.approx(0.73)
     assert set(decision["distribution"]) == set(choice_ids)
     assert sum(decision["distribution"].values()) == pytest.approx(1.0)
+    assert adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS == pytest.approx(15.0)
+    assert adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS < 45.0
+    assert (
+        adapter.MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS
+        < adapter.PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS
+    )
 
     with pytest.raises(
         adapter.JevAttentionError, match="jev_attention_response_invalid"
@@ -374,6 +386,7 @@ def test_attention_jev_makes_one_choice_call_and_normalizes_full_distribution(
                     "attention": {
                         "type": "choice",
                         "choice": choice_ids[0],
+                        "confidence": 0.5,
                         "probabilities": {choice_ids[0]: 1.0},
                     },
                 },
@@ -494,6 +507,7 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
                     "focus": {
                         "type": "choice",
                         "choice": choice_ids[0],
+                        "confidence": 0.61,
                         "probabilities": distribution,
                     },
                 },
@@ -531,6 +545,7 @@ def test_focus_jev_makes_one_subject_choice_and_selects_eight_visual_bundles(
     )
     assert decision["sourceRevision"] == "combined-projection:17"
     assert decision["decisionId"] == "focus-decision-one"
+    assert decision["confidence"] == pytest.approx(0.61)
     assert decision["distribution"] == distribution
     assert len(decision["candidates"]) == len(payload["candidates"])
     assert {candidate["rank"] for candidate in decision["candidates"]} == set(range(1, 11))
@@ -561,6 +576,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
                         "focus": {
                             "type": "choice",
                             "choice": "focus-one",
+                            "confidence": 0.5,
                             "probabilities": probabilities,
                         },
                     },
@@ -577,6 +593,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
                     "focus": {
                         "type": "choice",
                         "choice": "focus-one",
+                        "confidence": 0.5,
                         "probabilities": {"focus-one": 0.6, "focus-two": 0.4},
                     },
                 },
@@ -593,6 +610,7 @@ def test_focus_jev_rejects_incomplete_or_non_exact_distribution():
                     "focus": {
                         "type": "choice",
                         "choice": "focus-one",
+                        "confidence": 0.5,
                         "probabilities": {"focus-one": 0.6, "focus-two": 0.4},
                     },
                 },
@@ -716,7 +734,13 @@ def test_native_id_projection_uses_only_bounded_direct_neighborhood(
 
     monkeypatch.setattr(adapter, "get_service", lambda: Service())
     monkeypatch.setattr(adapter, "_bounded_graph_snapshot", bounded)
-    monkeypatch.setattr(adapter, "_latest_endpoint_think", latest)
+    monkeypatch.setattr(
+        adapter,
+        "_endpoint_thinks",
+        lambda *args, canonical_id, **kwargs: [
+            latest(*args, canonical_id=canonical_id, **kwargs),
+        ],
+    )
 
     result = adapter.projection("project-one", "center")
 

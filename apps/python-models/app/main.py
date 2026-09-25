@@ -128,8 +128,23 @@ async def knowgraph_jev_classify(payload: dict[str, Any]):
             read_project_relationship_vocabulary,
             project,
         )
+        for result in results:
+            if result.get("status") == "success":
+                result["vocabulary_after_hash"] = after["hash"]
+                result["vocabulary_after_count"] = after["count"]
+        unfinished_fact_uuids = [
+            str(result.get("nativeFactUuid") or "")
+            for result in results
+            if result.get("status") == "unfinished"
+        ]
         return {
             "results": results,
+            "attemptedFactUuids": [
+                str(result.get("nativeFactUuid") or "")
+                for result in results
+                if result.get("status") != "unfinished"
+            ],
+            "unfinishedFactUuids": unfinished_fact_uuids,
             "relationshipVocabulary": {
                 "before": before,
                 "after": after,

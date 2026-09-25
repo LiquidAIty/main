@@ -18,6 +18,7 @@ function projection(): GraphProjectionV1 {
         jev: {
           winner: 'PROVIDES',
           distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 },
+          vocabulary_version: 'jev.semantic-relationships.v1',
         },
       },
     },
@@ -25,19 +26,42 @@ function projection(): GraphProjectionV1 {
       id: 'cb', source: 'c', target: 'b', predicate: 'SUPPORTS',
       properties: {
         jev: {
+          status: 'success',
           winner: 'SUPPORTS',
           distribution: { SUPPORTS: 0.6, ASSOCIATED_WITH: 0.4 },
+          vocabulary_version: 'jev.semantic-relationships.v1',
+        },
+      },
+    },
+    {
+      id: 'ordinary', source: 'a', target: 'c', predicate: 'NATIVE_RELATION',
+      relationship_strength: 0.42, label_confidence: 0.43, strength: 0.44,
+      spring_strength: 0.045, rest_length: 31, visual_width: 1.7,
+      properties: { relationship_strength: 0.42, native_field: 'preserved' },
+    },
+    {
+      id: 'malformed', source: 'c', target: 'a', predicate: 'SUPPORTS',
+      relationship_strength: 0.52, label_confidence: 0.53, strength: 0.54,
+      spring_strength: 0.055, rest_length: 29, visual_width: 1.9,
+      properties: {
+        native_field: 'preserved',
+        jev: {
+          status: 'success', winner: 'SUPPORTS',
+          distribution: { SUPPORTS: '0.7', ASSOCIATED_WITH: 0.3 },
         },
       },
     },
     {
       id: 'old-b', source: 'old', target: 'b', predicate: 'COMPETES_WITH',
-      relationship_strength: 0.99,
+      relationship_strength: 0.99, label_confidence: 0.98, strength: 0.97,
+      spring_strength: 0.2, rest_length: 12, visual_width: 3.4,
       properties: {
         temporalStatus: 'superseded',
         jev: {
+          status: 'success',
           winner: 'COMPETES_WITH',
           distribution: { COMPETES_WITH: 0.99, ASSOCIATED_WITH: 0.01 },
+          vocabulary_version: 'jev.semantic-relationships.v1',
         },
       },
     },
@@ -49,7 +73,7 @@ function projection(): GraphProjectionV1 {
       edges: edges.map(edge => ({
         ...edge,
         relation: edge.predicate,
-        jev: edge.properties.jev,
+        ...('jev' in edge.properties ? { jev: edge.properties.jev } : {}),
       })),
       meta: { layout_seed: 7 },
     },
@@ -70,9 +94,11 @@ describe('Jev graph physics transfer profiles', () => {
     },
   );
 
-  it('uses P(winner), sums live incident mass at both endpoints, and excludes closed edges', () => {
+  it('uses P(winner) only for valid live Jev edges and preserves every other edge byte-for-byte', () => {
     const source = projection();
     const snapshot = structuredClone(source);
+    const untouchedProjectionEdges = source.edges.slice(2);
+    const untouchedSceneEdges = source.scene!.edges.slice(2);
     const result = applyJevGraphPhysics(source, 'balanced');
 
     expect(source).toEqual(snapshot);
@@ -88,9 +114,16 @@ describe('Jev graph physics transfer profiles', () => {
     expect(result.nodes.find(node => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
     expect(result.nodes.find(node => node.id === 'c')?.semantic_mass).toBeCloseTo(0.6);
     expect(result.nodes.find(node => node.id === 'old')?.semantic_mass).toBe(0);
-    expect(result.edges[2].relationship_strength).toBeUndefined();
+    expect(result.edges.slice(2)).toEqual(snapshot.edges.slice(2));
+    expect(result.edges.slice(2)).toEqual(untouchedProjectionEdges);
+    result.edges.slice(2).forEach((edge, index) => {
+      expect(edge).toBe(untouchedProjectionEdges[index]);
+    });
     expect(result.scene?.nodes.find(node => node.id === 'b')?.semantic_mass).toBeCloseTo(1.4);
-    expect(result.scene?.edges[2].relationship_strength).toBeUndefined();
+    expect(result.scene?.edges.slice(2)).toEqual(snapshot.scene?.edges.slice(2));
+    result.scene?.edges.slice(2).forEach((edge, index) => {
+      expect(edge).toBe(untouchedSceneEdges[index]);
+    });
     expect(result.scene?.meta).toEqual({ layout_seed: 7 });
   });
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tui_gateway import methods_prompt, prompt_turn
+from tui_gateway.method_ctx import rebind
 
 
 def _tool(name: str) -> dict:
@@ -45,7 +46,7 @@ def test_turn_tool_selection_is_exact_and_restores_native_agent_state() -> None:
 
     prompt_turn._restore_turn_tool_selection(agent, snapshot)
 
-    assert agent.tools is tools
+    assert agent.tools == tools
     assert agent.valid_tool_names == {"unmanaged", "card__read", "card__write"}
     assert agent._cached_system_prompt == "cached"
     assert agent._cached_system_prompt_static == "static"
@@ -134,34 +135,30 @@ def test_failed_turn_scoped_model_switch_restores_partial_commit(monkeypatch) ->
         "agent": object(),
     }
 
-    monkeypatch.setattr(methods_prompt, "_wait_agent_for_prompt", lambda *_args: None)
-    monkeypatch.setattr(
-        methods_prompt,
-        "_session_profile_runtime_scope",
-        lambda _session: contextlib.nullcontext(),
-    )
-
     def fail_after_snapshot(*_args, **_kwargs):
         session["one_turn_model_restore"] = snapshot
         raise RuntimeError("reasoning configuration failed")
+    noop = lambda *_args, **_kwargs: None
+    run_after_ready = rebind(methods_prompt._run_after_agent_ready, {
+        "_wait_agent_for_prompt": lambda *_args: None,
+        "_session_profile_runtime_scope": lambda _session: contextlib.nullcontext(),
+        "_apply_model_switch": fail_after_snapshot,
+        "_restore_agent_model_runtime": (
+            lambda _agent, value: restored.append(value)
+        ),
+        "_restart_slash_worker": noop,
+        "_persist_live_session_runtime": noop,
+        "_persist_live_session_system_prompt": noop,
+        "_clear_inflight_turn": noop,
+        "_emit_terminal_turn_error": (
+            lambda *_args, **kwargs: errors.append(kwargs)
+        ),
+        "_run_prompt_submit": lambda *_args, **_kwargs: pytest.fail(
+            "turn must not start after the model switch failed"
+        ),
+    })
 
-    monkeypatch.setattr(methods_prompt, "_apply_model_switch", fail_after_snapshot)
-    monkeypatch.setattr(
-        methods_prompt,
-        "_restore_agent_model_runtime",
-        lambda _agent, value: restored.append(value),
-    )
-    monkeypatch.setattr(methods_prompt, "_restart_slash_worker", lambda *_args: None)
-    monkeypatch.setattr(methods_prompt, "_persist_live_session_runtime", lambda *_args: None)
-    monkeypatch.setattr(methods_prompt, "_persist_live_session_system_prompt", lambda *_args: None)
-    monkeypatch.setattr(methods_prompt, "_clear_inflight_turn", lambda *_args: None)
-    monkeypatch.setattr(
-        methods_prompt,
-        "_emit_terminal_turn_error",
-        lambda *_args, **kwargs: errors.append(kwargs),
-    )
-
-    methods_prompt._run_after_agent_ready(
+    run_after_ready(
         "request-one",
         "session-one",
         session,

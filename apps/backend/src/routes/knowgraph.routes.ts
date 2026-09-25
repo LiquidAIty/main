@@ -163,8 +163,10 @@ function persistedKnowGraphJev(properties: Record<string, unknown>): Record<stri
     const parsed = JSON.parse(serialized);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
     distribution = Object.fromEntries(Object.entries(parsed).flatMap(([choice, probability]) => {
-      const numeric = Number(probability);
-      return Number.isFinite(numeric) ? [[choice, numeric]] : [];
+      if (typeof probability !== 'number') return [];
+      return Number.isFinite(probability) && probability >= 0 && probability <= 1
+        ? [[choice, probability]]
+        : [];
     }));
   } catch {
     return undefined;
@@ -172,13 +174,36 @@ function persistedKnowGraphJev(properties: Record<string, unknown>): Record<stri
   if (!Object.keys(distribution).length) return undefined;
   const winnerProbability = Number(distribution[winner]);
   if (!Number.isFinite(winnerProbability)) return undefined;
-  const labelConfidence = Math.max(0, Math.min(1, winnerProbability));
+  const lowerTotal = Object.values(distribution)
+    .reduce((total, value) => total + Math.max(0, value - 0.005), 0);
+  const upperTotal = Object.values(distribution)
+    .reduce((total, value) => total + Math.min(1, value + 0.005), 0);
+  if (lowerTotal > 1 + 1e-12 || upperTotal < 1 - 1e-12) return undefined;
+  const winnerUpper = Math.min(1, winnerProbability + 0.005);
+  if (Object.entries(distribution).some(([choice, probability]) =>
+    choice !== winner && Math.max(0, probability - 0.005) > winnerUpper + 1e-12)) {
+    return undefined;
+  }
+  if (typeof properties.jev_label_confidence !== 'number') return undefined;
+  const labelConfidence = properties.jev_label_confidence;
+  if (!Number.isFinite(labelConfidence) || labelConfidence !== winnerProbability) return undefined;
+  const rawProviderConfidence = properties.jev_provider_confidence;
+  const providerConfidence = rawProviderConfidence == null
+    ? undefined
+    : typeof rawProviderConfidence === 'number'
+      && Number.isFinite(rawProviderConfidence)
+      && rawProviderConfidence >= 0
+      && rawProviderConfidence <= 1
+      ? rawProviderConfidence
+      : null;
+  if (providerConfidence === null) return undefined;
 
   return {
     status: 'success',
     winner,
     distribution,
     label_confidence: labelConfidence,
+    ...(providerConfidence === undefined ? {} : { provider_confidence: providerConfidence }),
     requested_model: String(properties.jev_requested_model || ''),
     resolved_model: String(properties.jev_resolved_model || ''),
     evaluated_at: String(properties.jev_evaluated_at || ''),
@@ -880,6 +905,59 @@ router.post('/ingest', knowgraphUploadSingle as any, async (req, res) => {
       error?.message ||
       'KnowGraph proxy request failed';
     return res.status(502).json({ ok: false, error: { message } });
+  }
+});
+
+router.post('/reconcile-jev-annotations', async (req, res) => {
+  try {
+    const userId = String((req as any).userId || '').trim();
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        error: { message: 'Authentication required for KnowGraph reconciliation.' },
+      });
+    }
+    const requestedProjectId = String(req.body?.project_id || '').trim();
+    const rawFactIds = req.body?.native_fact_uuids ?? [];
+    if (
+      !requestedProjectId
+      || !Array.isArray(rawFactIds)
+      || rawFactIds.length > 64
+      || rawFactIds.some((value: unknown) => typeof value !== 'string' || !value.trim())
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: { message: 'project_id and at most 64 native_fact_uuids are required.' },
+      });
+    }
+    const projectId = await resolveAuthenticatedKnowGraphProjectId(
+      userId,
+      requestedProjectId,
+    );
+    if (!projectId) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: 'KnowGraph project not found for the authenticated user.' },
+      });
+    }
+    const nativeFactUuids = Array.from(new Set(
+      rawFactIds.map((value: string) => value.trim()),
+    ));
+    const response = await fetch(`${knowgraphBaseUrl()}/reconcile_jev_annotations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        project_id: projectId,
+        native_fact_uuids: nativeFactUuids,
+      }),
+      signal: AbortSignal.timeout(180_000),
+    });
+    return res.status(response.status).json(await readResponseDataSafe(response));
+  } catch (error: any) {
+    return res.status(502).json({
+      ok: false,
+      error: { message: error?.message || 'KnowGraph reconciliation proxy failed' },
+    });
   }
 });
 

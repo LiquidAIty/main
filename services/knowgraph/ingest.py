@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 from importlib import metadata as importlib_metadata
 import json
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,6 +28,10 @@ load_runtime_environment()
 GRAPHITI_EPISODE_NAMESPACE = "liquidaity:knowgraph:episode"
 DEFAULT_NEO4J_DATABASE = "neo4j"
 DEFAULT_OPENROUTER_KG_MODEL = "z-ai/glm-5.2"
+KNOWGRAPH_JEV_MODEL = "typesafe/jev-1.13"
+KNOWGRAPH_JEV_QUESTION_SCHEMA_VERSION = "knowgraph.relationship-choice.v3"
+KNOWGRAPH_JEV_CONTROL_OUTCOMES = {"INSUFFICIENT_CONTEXT"}
+MAX_JEV_RECONCILIATION_FACTS = 64
 
 
 def graphiti_runtime_versions() -> dict[str, str | None]:
@@ -506,6 +511,10 @@ async def _call_knowgraph_jev(
         raise RuntimeError("knowgraph_jev_response_invalid")
     if any(not isinstance(item, dict) for item in results):
         raise RuntimeError("knowgraph_jev_response_invalid")
+    requested_ids = [str(fact.get("nativeFactUuid") or "") for fact in facts]
+    returned_ids = [str(item.get("nativeFactUuid") or "") for item in results]
+    if returned_ids != requested_ids or len(set(returned_ids)) != len(returned_ids):
+        raise RuntimeError("knowgraph_jev_response_invalid")
     return results
 
 
@@ -522,7 +531,16 @@ async def _existing_jev_metadata(
         RETURN toString(fact.uuid) AS uuid,
                fact.jev_native_signature AS native_signature,
                fact.jev_relation_winner AS winner,
-               fact.jev_relation_distribution_json AS distribution_json
+               fact.jev_relation_distribution_json AS distribution_json,
+               fact.jev_label_confidence AS label_confidence,
+               fact.jev_provider_confidence AS provider_confidence,
+               fact.jev_requested_model AS requested_model,
+               fact.jev_resolved_model AS resolved_model,
+               fact.jev_question_schema_version AS question_schema_version,
+               fact.jev_ontology_version AS ontology_version,
+               fact.jev_ontology_hash AS ontology_hash,
+               fact.jev_vocabulary_count AS vocabulary_count,
+               fact.jev_choice_options_json AS choice_options_json
         """,
         fact_ids=fact_ids,
         routing_="r",
@@ -534,24 +552,137 @@ async def _existing_jev_metadata(
     }
 
 
+def _rounded_distribution(
+    value: Any,
+    choices: list[str],
+) -> dict[str, float]:
+    if not isinstance(value, dict) or set(value) != set(choices):
+        raise ValueError("knowgraph_jev_distribution_invalid")
+    distribution: dict[str, float] = {}
+    for choice in choices:
+        raw = value[choice]
+        if isinstance(raw, bool):
+            raise ValueError("knowgraph_jev_distribution_invalid")
+        probability = float(raw)
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            raise ValueError("knowgraph_jev_distribution_invalid")
+        distribution[choice] = probability
+    if not distribution or all(value == 0.0 for value in distribution.values()):
+        raise ValueError("knowgraph_jev_distribution_invalid")
+    lower = sum(max(0.0, value - 0.005) for value in distribution.values())
+    upper = sum(min(1.0, value + 0.005) for value in distribution.values())
+    if lower > 1.0 + 1e-12 or upper < 1.0 - 1e-12:
+        raise ValueError("knowgraph_jev_distribution_invalid")
+    return distribution
+
+
+def _validated_decision_metadata(decision: dict[str, Any]) -> dict[str, Any]:
+    winner = str(decision.get("winner") or "").strip()
+    choices = decision.get("choice_options")
+    if (
+        not winner
+        or winner in KNOWGRAPH_JEV_CONTROL_OUTCOMES
+        or not isinstance(choices, list)
+        or not choices
+        or any(not isinstance(choice, str) or not choice for choice in choices)
+        or len(set(choices)) != len(choices)
+    ):
+        raise ValueError("knowgraph_jev_decision_invalid")
+    distribution = _rounded_distribution(decision.get("distribution"), choices)
+    if winner not in distribution:
+        raise ValueError("knowgraph_jev_decision_invalid")
+    winner_upper = min(1.0, distribution[winner] + 0.005)
+    if any(
+        max(0.0, probability - 0.005) > winner_upper + 1e-12
+        for choice, probability in distribution.items()
+        if choice != winner
+    ):
+        raise ValueError("knowgraph_jev_decision_invalid")
+    provider_confidence = decision.get("provider_confidence")
+    if isinstance(provider_confidence, bool):
+        raise ValueError("knowgraph_jev_provider_confidence_invalid")
+    provider_confidence = float(provider_confidence)
+    if not math.isfinite(provider_confidence) or not 0.0 <= provider_confidence <= 1.0:
+        raise ValueError("knowgraph_jev_provider_confidence_invalid")
+    label_confidence = decision.get("label_confidence")
+    if isinstance(label_confidence, bool):
+        raise ValueError("knowgraph_jev_label_confidence_invalid")
+    label_confidence = float(label_confidence)
+    if (
+        not math.isfinite(label_confidence)
+        or label_confidence != distribution[winner]
+    ):
+        raise ValueError("knowgraph_jev_label_confidence_invalid")
+    return {
+        "winner": winner,
+        "distribution": distribution,
+        "provider_confidence": provider_confidence,
+        "label_confidence": label_confidence,
+        "choice_options": choices,
+    }
+
+
+def _jev_annotation_is_current(
+    metadata: dict[str, Any],
+    *,
+    native_signature: str,
+    vocabulary: dict[str, Any],
+) -> bool:
+    try:
+        serialized = metadata.get("distribution_json")
+        distribution = (
+            json.loads(serialized) if isinstance(serialized, str) else dict(serialized)
+        )
+        serialized_choices = metadata.get("choice_options_json")
+        choices = (
+            json.loads(serialized_choices)
+            if isinstance(serialized_choices, str)
+            else list(serialized_choices)
+        )
+        validated = _validated_decision_metadata({
+            "winner": metadata.get("winner"),
+            "distribution": distribution,
+            "provider_confidence": metadata.get("provider_confidence"),
+            "label_confidence": metadata.get("label_confidence"),
+            "choice_options": choices,
+        })
+        current_choices = set(str(label) for label in vocabulary["labels"])
+        current_choices.update(KNOWGRAPH_JEV_CONTROL_OUTCOMES)
+        stored_choices = set(validated["choice_options"])
+        extra_choices = stored_choices - current_choices
+        return (
+            metadata.get("native_signature") == native_signature
+            and metadata.get("question_schema_version")
+            == KNOWGRAPH_JEV_QUESTION_SCHEMA_VERSION
+            and metadata.get("requested_model") == KNOWGRAPH_JEV_MODEL
+            and bool(str(metadata.get("resolved_model") or "").strip())
+            and metadata.get("ontology_version") == vocabulary.get("version")
+            and metadata.get("ontology_hash") == vocabulary.get("hash")
+            and int(metadata.get("vocabulary_count")) == int(vocabulary.get("count"))
+            and current_choices.issubset(stored_choices)
+            and len(extra_choices) <= 1
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 async def _persist_jev_metadata(
     graphiti: Any,
     native_fact_uuid: str,
     native_signature: str,
     decision: dict[str, Any],
-) -> None:
-    winner = str(decision["winner"])
-    distribution = decision["distribution"]
-    winner_probability = float(distribution[winner])
-    if not 0.0 <= winner_probability <= 1.0:
-        raise ValueError("knowgraph_jev_winner_probability_invalid")
-    await graphiti.driver.execute_query(
+) -> dict[str, Any]:
+    validated = _validated_decision_metadata(decision)
+    winner = validated["winner"]
+    distribution = validated["distribution"]
+    result = await graphiti.driver.execute_query(
         """
         MATCH ()-[fact]->()
         WHERE toString(fact.uuid) = $native_fact_uuid
         SET fact.jev_relation_winner = $winner,
-            fact.jev_relation_distribution_json = $distribution_json,
-            fact.jev_label_confidence = $label_confidence,
+              fact.jev_relation_distribution_json = $distribution_json,
+              fact.jev_label_confidence = $label_confidence,
+              fact.jev_provider_confidence = $provider_confidence,
             fact.jev_requested_model = $requested_model,
             fact.jev_resolved_model = $resolved_model,
             fact.jev_evaluated_at = $evaluated_at,
@@ -563,20 +694,43 @@ async def _persist_jev_metadata(
             fact.jev_relationship_proposal_status = $relationship_proposal_status,
             fact.jev_vocabulary_promotion = $vocabulary_promotion,
             fact.jev_vocabulary_after_hash = $vocabulary_after_hash,
-            fact.jev_vocabulary_after_count = $vocabulary_after_count,
-            fact.jev_native_signature = $native_signature
+              fact.jev_vocabulary_after_count = $vocabulary_after_count,
+              fact.jev_choice_options_json = $choice_options_json,
+              fact.jev_native_signature = $native_signature
+        RETURN toString(fact.uuid) AS uuid,
+               fact.jev_native_signature AS native_signature,
+               fact.jev_relation_winner AS winner,
+               fact.jev_relation_distribution_json AS distribution_json,
+               fact.jev_label_confidence AS label_confidence,
+               fact.jev_provider_confidence AS provider_confidence,
+               fact.jev_requested_model AS requested_model,
+               fact.jev_resolved_model AS resolved_model,
+               fact.jev_question_schema_version AS question_schema_version,
+               fact.jev_ontology_version AS ontology_version,
+               fact.jev_ontology_hash AS ontology_hash,
+               fact.jev_vocabulary_count AS vocabulary_count,
+               fact.jev_choice_options_json AS choice_options_json
         """,
         native_fact_uuid=native_fact_uuid,
         winner=winner,
         distribution_json=json.dumps(distribution, sort_keys=True, separators=(",", ":")),
-        label_confidence=winner_probability,
+        label_confidence=validated["label_confidence"],
+        provider_confidence=validated["provider_confidence"],
         requested_model=str(decision.get("requested_model") or ""),
         resolved_model=str(decision.get("resolved_model") or ""),
         evaluated_at=str(decision.get("evaluated_at") or ""),
         question_schema_version=str(decision.get("question_schema_version") or ""),
         ontology_version=str(decision.get("vocabulary_version") or ""),
-        ontology_hash=str(decision.get("vocabulary_hash") or ""),
-        vocabulary_count=int(decision.get("vocabulary_count") or 0),
+        ontology_hash=str(
+            decision.get("vocabulary_after_hash")
+            or decision.get("vocabulary_hash")
+            or ""
+        ),
+        vocabulary_count=int(
+            decision.get("vocabulary_after_count")
+            or decision.get("vocabulary_count")
+            or 0
+        ),
         relationship_candidate=str(
             decision.get("novel_relationship_candidate") or ""
         ),
@@ -590,8 +744,143 @@ async def _persist_jev_metadata(
             or decision.get("vocabulary_count")
             or 0
         ),
+        choice_options_json=json.dumps(
+            validated["choice_options"], separators=(",", ":")
+        ),
         native_signature=native_signature,
     )
+    records = _records(result)
+    if len(records) != 1 or str(records[0].get("uuid") or "") != native_fact_uuid:
+        raise RuntimeError("knowgraph_jev_persist_readback_missing")
+    return dict(records[0])
+
+
+async def _reconcile_jev_facts(
+    graphiti: Any,
+    *,
+    project_id: str,
+    facts: list[dict[str, Any]],
+    relationship_vocabulary: dict[str, Any],
+) -> dict[str, Any]:
+    """Idempotently repair bounded Jev annotations on existing native facts."""
+    deduplicated: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for fact in facts:
+        native_id = str(fact.get("nativeFactUuid") or "").strip()
+        if not native_id or native_id in seen:
+            continue
+        seen.add(native_id)
+        deduplicated.append(fact)
+
+    existing = await _existing_jev_metadata(
+        graphiti,
+        [str(fact["nativeFactUuid"]) for fact in deduplicated],
+    )
+    changed: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for fact in deduplicated:
+        native_id = str(fact["nativeFactUuid"])
+        signature = _native_fact_signature(fact)
+        fact["_nativeSignature"] = signature
+        if _jev_annotation_is_current(
+            existing.get(native_id) or {},
+            native_signature=signature,
+            vocabulary=relationship_vocabulary,
+        ):
+            skipped.append(native_id)
+        else:
+            changed.append(fact)
+
+    admitted = changed[:MAX_JEV_RECONCILIATION_FACTS]
+    unfinished = [
+        str(fact["nativeFactUuid"])
+        for fact in changed[MAX_JEV_RECONCILIATION_FACTS:]
+    ]
+    decisions: list[dict[str, Any]] = []
+    call_failure_reason = ""
+    if admitted:
+        try:
+            decisions = await _call_knowgraph_jev(project_id, [
+                {
+                    key: value
+                    for key, value in fact.items()
+                    if key != "_nativeSignature"
+                }
+                for fact in admitted
+            ])
+        except Exception as error:
+            call_failure_reason = str(error).strip() or type(error).__name__
+
+    by_id = {
+        str(decision.get("nativeFactUuid") or ""): decision
+        for decision in decisions
+    }
+    attempted: list[str] = []
+    succeeded: list[str] = []
+    failed: list[str] = []
+    failure_reasons: dict[str, str] = {}
+    for fact in admitted:
+        native_id = str(fact["nativeFactUuid"])
+        if call_failure_reason:
+            attempted.append(native_id)
+            failed.append(native_id)
+            failure_reasons[native_id] = call_failure_reason
+            continue
+        decision = by_id.get(native_id) or {}
+        if decision.get("status") == "unfinished":
+            unfinished.append(native_id)
+            failure_reasons[native_id] = str(
+                decision.get("failure_reason")
+                or "knowgraph_jev_deadline_exceeded"
+            )
+            continue
+        attempted.append(native_id)
+        if decision.get("status") != "success":
+            failed.append(native_id)
+            failure_reasons[native_id] = str(
+                decision.get("failure_reason")
+                or "knowgraph_jev_result_invalid"
+            )
+            continue
+        try:
+            persisted = await _persist_jev_metadata(
+                graphiti,
+                native_id,
+                str(fact["_nativeSignature"]),
+                decision,
+            )
+            if not _jev_annotation_is_current(
+                persisted,
+                native_signature=str(fact["_nativeSignature"]),
+                vocabulary=relationship_vocabulary,
+            ):
+                raise RuntimeError("knowgraph_jev_persist_readback_invalid")
+        except Exception as error:
+            failed.append(native_id)
+            failure_reasons[native_id] = (
+                str(error).strip() or type(error).__name__
+            )
+            continue
+        succeeded.append(native_id)
+
+    still_unsettled = list(dict.fromkeys([*failed, *unfinished]))
+    if still_unsettled:
+        status = "partial" if succeeded or skipped else "unavailable"
+    else:
+        status = "success" if succeeded else "current"
+    return {
+        "status": status,
+        "touched_fact_count": len(deduplicated),
+        "classified_fact_count": len(succeeded),
+        "reused_fact_count": len(skipped),
+        "attempted_fact_uuids": attempted,
+        "succeeded_fact_uuids": succeeded,
+        "failed_fact_uuids": failed,
+        "skipped_fact_uuids": skipped,
+        "unfinished_fact_uuids": unfinished,
+        "still_unsettled_fact_uuids": still_unsettled,
+        **({"failure_reasons": failure_reasons} if failure_reasons else {}),
+    }
 
 
 async def _settle_jev_smart_edges(
@@ -607,6 +896,7 @@ async def _settle_jev_smart_edges(
     source_type: str,
     text: str,
     reference_time: datetime,
+    relationship_vocabulary: dict[str, Any],
 ) -> dict[str, Any]:
     """Classify only new or materially changed facts returned by this episode."""
     names = {
@@ -666,97 +956,146 @@ async def _settle_jev_smart_edges(
             or str(other["targetEntity"]["uuid"]) in endpoints
         )][:8]
 
-    existing = await _existing_jev_metadata(
-        graphiti, [str(fact["nativeFactUuid"]) for fact in facts]
+    return await _reconcile_jev_facts(
+        graphiti,
+        project_id=project_id,
+        facts=facts,
+        relationship_vocabulary=relationship_vocabulary,
     )
-    changed: list[dict[str, Any]] = []
-    reused = 0
-    for fact in facts:
-        signature = _native_fact_signature(fact)
-        fact["_nativeSignature"] = signature
-        previous = existing.get(str(fact["nativeFactUuid"])) or {}
-        if (
-            previous.get("native_signature") == signature
-            and previous.get("winner")
-            and previous.get("distribution_json")
-        ):
-            reused += 1
-        else:
-            changed.append(fact)
 
-    if not changed:
+
+async def _read_jev_reconciliation_facts(
+    graphiti: Any,
+    *,
+    project_id: str,
+    native_fact_uuids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    requested = list(dict.fromkeys(
+        str(value or "").strip()
+        for value in (native_fact_uuids or [])
+        if str(value or "").strip()
+    ))
+    if len(requested) > MAX_JEV_RECONCILIATION_FACTS:
+        raise ValueError("knowgraph_jev_reconciliation_limit")
+    scope_ids = [project_id, graphiti_project_group_id(project_id)]
+    result = await graphiti.driver.execute_query(
+        """
+        MATCH (source)-[fact]->(target)
+        WHERE toString(source.group_id) IN $scope_ids
+          AND toString(target.group_id) IN $scope_ids
+          AND toString(fact.group_id) IN $scope_ids
+          AND fact.invalid_at IS NULL
+          AND fact.expired_at IS NULL
+          AND (size($fact_ids) = 0 OR toString(fact.uuid) IN $fact_ids)
+        RETURN toString(fact.uuid) AS uuid,
+               coalesce(toString(source.uuid), elementId(source)) AS source_uuid,
+               coalesce(toString(source.name), '') AS source_name,
+               coalesce(toString(target.uuid), elementId(target)) AS target_uuid,
+               coalesce(toString(target.name), '') AS target_name,
+               properties(fact) AS properties
+        ORDER BY
+          CASE
+            WHEN fact.jev_relation_winner IS NULL
+              OR fact.jev_relation_distribution_json IS NULL
+              OR fact.jev_native_signature IS NULL
+              OR fact.jev_question_schema_version <> $question_schema_version
+              OR fact.jev_requested_model <> $requested_model
+            THEN 0 ELSE 1
+          END,
+          uuid
+        LIMIT $limit
+        """,
+        scope_ids=scope_ids,
+        fact_ids=requested,
+        question_schema_version=KNOWGRAPH_JEV_QUESTION_SCHEMA_VERSION,
+        requested_model=KNOWGRAPH_JEV_MODEL,
+        limit=MAX_JEV_RECONCILIATION_FACTS,
+        routing_="r",
+    )
+    facts: list[dict[str, Any]] = []
+    for record in _records(result):
+        properties = (
+            dict(record.get("properties"))
+            if isinstance(record.get("properties"), dict)
+            else {}
+        )
+        native_id = str(record.get("uuid") or "").strip()
+        source_id = str(record.get("source_uuid") or "").strip()
+        target_id = str(record.get("target_uuid") or "").strip()
+        statement = str(properties.get("fact") or "").strip()
+        if not native_id or not source_id or not target_id or not statement:
+            continue
+        facts.append({
+            "nativeFactUuid": native_id,
+            "sourceEntity": {
+                "uuid": source_id,
+                "name": str(record.get("source_name") or ""),
+            },
+            "targetEntity": {
+                "uuid": target_id,
+                "name": str(record.get("target_name") or ""),
+            },
+            "nativeRelation": str(
+                properties.get("name") or properties.get("edge_type") or ""
+            ),
+            "fact": statement,
+            "supportingEpisodeUuids": [
+                str(value)
+                for value in (properties.get("episodes") or [])
+                if str(value)
+            ],
+            "supportingEpisodes": [],
+            "createdAt": _json_safe(properties.get("created_at")),
+            "referenceTime": _json_safe(properties.get("reference_time")),
+            "validAt": _json_safe(properties.get("valid_at")),
+            "invalidAt": _json_safe(properties.get("invalid_at")),
+            "expiredAt": _json_safe(properties.get("expired_at")),
+        })
+    return facts
+
+
+async def reconcile_jev_annotations(
+    project_id: str,
+    *,
+    native_fact_uuids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Repair existing annotations without re-running Graphiti ingestion."""
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        raise ValueError("project_id is required")
+    requested = native_fact_uuids or []
+    if (
+        not isinstance(requested, list)
+        or any(not isinstance(value, str) or not value.strip() for value in requested)
+        or len(requested) > MAX_JEV_RECONCILIATION_FACTS
+    ):
+        raise ValueError("knowgraph_jev_reconciliation_fact_ids_invalid")
+    _runtime, graphiti, _database = _create_graphiti_runtime(
+        provider=None,
+        model_key=None,
+        model_id=None,
+    )
+    try:
+        vocabulary = await _read_project_relationship_vocabulary(project_id)
+        facts = await _read_jev_reconciliation_facts(
+            graphiti,
+            project_id=project_id,
+            native_fact_uuids=requested,
+        )
+        reconciliation = await _reconcile_jev_facts(
+            graphiti,
+            project_id=project_id,
+            facts=facts,
+            relationship_vocabulary=vocabulary,
+        )
         return {
-            "status": "current",
-            "touched_fact_count": len(facts),
-            "classified_fact_count": 0,
-            "reused_fact_count": reused,
-            "failed_fact_uuids": [],
+            "project_id": project_id,
+            "requested_fact_uuids": list(dict.fromkeys(requested)),
+            "reingested": False,
+            **reconciliation,
         }
-
-    decisions: list[dict[str, Any]] = []
-    call_failures: dict[str, str] = {}
-    # The Python Jev boundary owns a bounded 64-fact batch. Each current-run
-    # fact appears in exactly one batch: this is partitioning, never retry or
-    # graph-wide reclassification.
-    for offset in range(0, len(changed), 64):
-        batch = changed[offset:offset + 64]
-        try:
-            decisions.extend(await _call_knowgraph_jev(project_id, [
-                {key: value for key, value in fact.items() if key != "_nativeSignature"}
-                for fact in batch
-            ]))
-        except Exception as error:
-            reason = str(error).strip() or type(error).__name__
-            call_failures.update({
-                str(fact["nativeFactUuid"]): reason for fact in batch
-            })
-
-    by_id = {
-        str(decision.get("nativeFactUuid") or ""): decision
-        for decision in decisions
-    }
-    classified = 0
-    failures: list[str] = list(call_failures)
-    failure_reasons = dict(call_failures)
-    for fact in changed:
-        native_id = str(fact["nativeFactUuid"])
-        if native_id in call_failures:
-            continue
-        decision = by_id.get(native_id) or {}
-        if (
-            decision.get("status") != "success"
-            or not decision.get("winner")
-            or not isinstance(decision.get("distribution"), dict)
-        ):
-            failures.append(native_id)
-            failure_reasons[native_id] = str(
-                decision.get("failure_reason") or "knowgraph_jev_result_invalid"
-            )
-            continue
-        try:
-            await _persist_jev_metadata(
-                graphiti,
-                native_id,
-                str(fact["_nativeSignature"]),
-                decision,
-            )
-        except Exception as error:
-            failures.append(native_id)
-            failure_reasons[native_id] = str(error).strip() or type(error).__name__
-            continue
-        classified += 1
-    return {
-        "status": (
-            "success" if not failures
-            else "unavailable" if classified == 0
-            else "partial"
-        ),
-        "touched_fact_count": len(facts),
-        "classified_fact_count": classified,
-        "reused_fact_count": reused,
-        "failed_fact_uuids": failures,
-        **({"failure_reasons": failure_reasons} if failure_reasons else {}),
-    }
+    finally:
+        await graphiti.driver.close()
 
 
 async def _find_existing_episode_id(
@@ -903,6 +1242,7 @@ async def _ingest_episode(
                 "graphiti_version": _graphiti_core_version(),
             }
 
+        relationship_vocabulary: dict[str, Any] | None = None
         try:
             relationship_vocabulary = await _read_project_relationship_vocabulary(
                 project_id
@@ -959,6 +1299,10 @@ async def _ingest_episode(
             agent_id=agent_id,
         )
         try:
+            if relationship_vocabulary is None:
+                relationship_vocabulary = (
+                    await _read_project_relationship_vocabulary(project_id)
+                )
             jev_classification = await _settle_jev_smart_edges(
                 graphiti,
                 project_id=project_id,
@@ -971,6 +1315,7 @@ async def _ingest_episode(
                 source_type=source_type,
                 text=text,
                 reference_time=reference_time,
+                relationship_vocabulary=relationship_vocabulary,
             )
         except Exception as error:
             jev_classification = {
@@ -978,7 +1323,16 @@ async def _ingest_episode(
                 "touched_fact_count": len(result.edges),
                 "classified_fact_count": 0,
                 "reused_fact_count": 0,
-                "failed_fact_uuids": [
+                "failed_fact_uuids": [],
+                "attempted_fact_uuids": [],
+                "succeeded_fact_uuids": [],
+                "skipped_fact_uuids": [],
+                "unfinished_fact_uuids": [
+                    str(_edge_value(edge, "uuid") or "")
+                    for edge in result.edges
+                    if str(_edge_value(edge, "uuid") or "")
+                ],
+                "still_unsettled_fact_uuids": [
                     str(_edge_value(edge, "uuid") or "")
                     for edge in result.edges
                     if str(_edge_value(edge, "uuid") or "")

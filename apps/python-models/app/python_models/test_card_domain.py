@@ -3251,6 +3251,7 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
             "decisionId": "decision-policy",
             "winner": candidates[0]["choiceId"],
             "distribution": distribution,
+            "confidence": 0.73,
             "provider": "OpenRouter",
             "requestedModel": "typesafe/jev-1.13",
             "resolvedModel": "typesafe/jev-1.13",
@@ -3290,6 +3291,7 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
     assert set(attention["distribution"]) == {
         candidate["choiceId"] for candidate in offered
     }
+    assert attention["winner"] == offered[0]["choiceId"]
     assert attention["policy"] == {
         "cumulativeMass": 0.8,
         "minimumSelected": 1,
@@ -3349,6 +3351,7 @@ def _attention_decision(_query, candidates, *, effective_request=None):
             candidates[0]["choiceId"]: 0.8,
             candidates[1]["choiceId"]: 0.2,
         },
+        "confidence": 0.71,
         "provider": "OpenRouter",
         "resolvedModel": "typesafe/jev-1.13",
         "usage": {"prompt_tokens": 13},
@@ -3496,6 +3499,55 @@ def test_main_attention_failure_keeps_explicit_baseline(
         item["nativeId"]
         for item in invocation["idf"]["actualGraphData"]["selectedNativeReferences"]
     ] == ["explicit-one"]
+
+
+def test_main_attention_selects_one_when_only_one_candidate_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        card_domain,
+        "recall_thinkgraph_attention_candidates",
+        lambda *_args, **_kwargs: [{
+            "authority": "ThinkGraph",
+            "nativeId": "only-think",
+            "title": "Only Think",
+        }],
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "search_knowgraph_attention_candidates",
+        lambda *_args, **_kwargs: [],
+    )
+
+    def choose_one(_query, candidates, *, effective_request=None):
+        assert effective_request == "Shared transcript supplied to Main."
+        return {
+            "decisionId": "decision-one",
+            "winner": candidates[0]["choiceId"],
+            "distribution": {candidates[0]["choiceId"]: 1.0},
+            "confidence": 0.91,
+            "provider": "OpenRouter",
+            "requestedModel": "typesafe/jev-1.13",
+            "resolvedModel": "typesafe/jev-1.13",
+            "usage": {"prompt_tokens": 11},
+        }
+
+    monkeypatch.setattr(card_domain, "decide_main_graph_attention", choose_one)
+    attention, anchors, _started = card_domain._prepare_main_graph_attention(
+        project_id="project-one",
+        deck_id="deck-one",
+        card_id="main",
+        query="Current user message",
+        effective_assignment="Shared transcript supplied to Main.",
+        excluded_identities=set(),
+    )
+
+    assert attention["status"] == "success"
+    assert attention["winner"] == attention["candidates"][0]["choiceId"]
+    assert attention["policy"]["minimumSelected"] == 1
+    assert attention["policy"]["selectedMass"] == 1.0
+    assert attention["candidates"][0]["selected"] is True
+    assert [anchor["nativeId"] for anchor in anchors] == ["only-think"]
 
 
 def test_main_attention_hydration_failure_preserves_real_decision_evidence(
@@ -4272,6 +4324,70 @@ def test_request_fulfillment_score_rejects_unusable_numeric_payloads(answer) -> 
         card_domain._validated_request_fulfillment_answer(answer)
 
 
+def test_request_fulfillment_model_input_is_immutable_and_minimized() -> None:
+    from types import SimpleNamespace
+
+    materialized = SimpleNamespace(idf=SimpleNamespace(
+        stableSavedCardContext=SimpleNamespace(
+            instructions="Follow the saved instructions.",
+            outputRequirements="Return the requested result.",
+            runtimeOptions={"configuration": {"token": "configuration-secret"}},
+        ),
+        actualGraphData=SimpleNamespace(modelText="Exact bounded graph context."),
+        dynamicContext=SimpleNamespace(task="Inspect the native record."),
+        selectedToolsAndGrants=SimpleNamespace(toolDefinitions=[{
+            "canonicalId": "native.read",
+            "displayName": "Native read",
+            "shortDescription": "Read one native record.",
+            "effects": ["read"],
+            "contracts": [{
+                "sourceId": "python_runtime",
+                "connectionKind": "private-runtime",
+                "nativeName": "native.read",
+                "description": "Read one native record.",
+                "inputSchema": {"type": "object", "properties": {}},
+                "effects": ["read"],
+                "credential": "tool-secret",
+            }],
+            "configurationFingerprint": "tool-fingerprint",
+        }, {
+            "canonicalId": "native.write",
+            "shortDescription": "Unexposed tool.",
+            "contracts": [],
+        }]),
+    ))
+
+    projected = card_domain._request_fulfillment_model_input(
+        materialized, ["native.read"],
+    )
+
+    assert projected == {
+        "saved_instructions": "Follow the saved instructions.",
+        "output_requirements": "Return the requested result.",
+        "graph_context": "Exact bounded graph context.",
+        "request_or_delegated_mission": "Inspect the native record.",
+        "presented_tool_contracts": [{
+            "canonicalId": "native.read",
+            "displayName": "Native read",
+            "shortDescription": "Read one native record.",
+            "effects": ["read"],
+            "contracts": [{
+                "sourceId": "python_runtime",
+                "connectionKind": "private-runtime",
+                "nativeName": "native.read",
+                "description": "Read one native record.",
+                "inputSchema": {"type": "object", "properties": {}},
+                "effects": ["read"],
+            }],
+        }],
+    }
+    serialized = json.dumps(projected, sort_keys=True)
+    assert "configuration-secret" not in serialized
+    assert "tool-secret" not in serialized
+    assert "tool-fingerprint" not in serialized
+    assert "native.write" not in serialized
+
+
 def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
     monkeypatch,
 ) -> None:
@@ -4385,3 +4501,365 @@ def test_request_fulfillment_missing_idf_persists_explicit_unavailable(
     assert assessment["executionEvidenceComplete"] is True
     assert assessment["executionEvidenceError"] is None
     assert stored == [assessment]
+
+
+def test_request_fulfillment_persistence_replay_is_idempotent_and_binding_safe(
+    monkeypatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    assessment = {
+        "schemaVersion": "request-fulfillment-assessment.v1",
+        "runId": "run-one",
+        "cardRevisionId": "revision-one",
+        "idfSha256": "a" * 64,
+        "outputSha256": "b" * 64,
+        "executionEvidenceSha256": "c" * 64,
+        "exposedToolsSha256": "d" * 64,
+        "executionEvidenceComplete": True,
+        "executionEvidenceError": None,
+        "actualProvider": "openrouter",
+        "actualModel": "configured/model",
+        "status": "scored",
+    }
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchone.side_effect = [None, {"request_fulfillment": dict(assessment)}]
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: connection)
+
+    replay = card_domain._persist_request_fulfillment("run-one", dict(assessment))
+
+    assert replay == assessment
+    assert cursor.execute.call_count == 2
+
+    conflicting_connection = MagicMock()
+    conflicting_cursor = (
+        conflicting_connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    )
+    conflicting_cursor.fetchone.side_effect = [
+        None,
+        {"request_fulfillment": {**assessment, "outputSha256": "e" * 64}},
+    ]
+    monkeypatch.setattr(
+        card_domain,
+        "connect_postgres",
+        lambda **_kwargs: conflicting_connection,
+    )
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="request_fulfillment_binding_conflict",
+    ):
+        card_domain._persist_request_fulfillment("run-one", dict(assessment))
+
+
+def _card_jev_application_fixture(*, auto_tools: bool, auto_select: bool):
+    prepared = {
+        "cardIdentity": {"cardId": "card-one", "title": "Card One"},
+        "cardRevisionId": "revision-one",
+    }
+    call_config = {
+        "systemPrompt": "Use the saved Card instructions.",
+        "runtime": {"kind": "hermes", "mode": "delegate", "profile": "card-one"},
+        "provider": {
+            "provider": "openrouter",
+            "accessMode": "openrouter-api",
+            "modelKey": "gpt-5.6-luna",
+            "providerModelId": "openai/gpt-5.6-luna",
+        },
+        "runtimeOptions": {
+            "autoTools": auto_tools,
+            "autoSelect": auto_select,
+            "reasoningEffort": "high",
+        },
+        "enabledTools": ["native.read", "native.write"],
+        "unavailableTools": [],
+        "unavailableToolReasons": {},
+        "presentedTools": ["native.read", "native.write"],
+        "scriptPresentation": {"mode": "ordinary", "fallbackReason": None},
+        "skills": [],
+        "nativeTools": ["terminal"],
+        "toolsets": ["file"],
+        "mcpConnectionIds": [],
+    }
+    definitions = [{
+        "canonicalId": name,
+        "displayName": name,
+        "shortDescription": f"Contract for {name}",
+        "effects": ["read" if name.endswith("read") else "write"],
+        "contracts": [{
+            "sourceId": "python_runtime",
+            "connectionKind": "private-runtime",
+            "nativeName": name,
+            "description": f"Contract for {name}",
+            "inputSchema": {"type": "object", "properties": {}},
+            "effects": ["read" if name.endswith("read") else "write"],
+            "available": True,
+        }],
+    } for name in call_config["enabledTools"]]
+    models = [{
+        "provider": "openrouter",
+        "key": key,
+        "label": key,
+        "providerModelId": f"openai/{key}",
+        "contextWindow": 100_000,
+        "routingProfile": {
+            "taskFit": f"Configured fit for {key}.",
+            "supportsTools": True,
+            "inputModalities": ["text"],
+            "reasoningEfforts": ["high"],
+        },
+    } for key in ("gpt-5.6-luna", "gpt-5.6-terra")]
+    return prepared, call_config, definitions, models
+
+
+def test_card_jev_context_omits_credentials_configuration_and_fingerprints() -> None:
+    prepared, call_config, _definitions, _models = _card_jev_application_fixture(
+        auto_tools=True,
+        auto_select=True,
+    )
+    call_config["runtime"]["credential"] = "runtime-secret"
+    call_config["provider"]["apiKey"] = "provider-secret"
+    call_config["runtimeOptions"].update({
+        "configuration": {"token": "configuration-secret"},
+        "configurationFingerprint": "configuration-fingerprint",
+        "executionAuthorityFingerprint": "authority-fingerprint",
+        "customSecret": "extension-secret",
+    })
+
+    context = card_domain._card_jev_context(
+        prepared=prepared,
+        call_config=call_config,
+        assignment="Inspect the native record.",
+        output_requirements="Return the requested result.",
+        graph_text="Native context.",
+        references=[],
+        images=[],
+    )
+
+    serialized = json.dumps(context, sort_keys=True)
+    assert context["saved_card"]["runtime"] == {
+        "kind": "hermes", "mode": "delegate", "profile": "card-one",
+    }
+    assert context["saved_card"]["provider"] == {
+        "provider": "openrouter",
+        "accessMode": "openrouter-api",
+        "modelKey": "gpt-5.6-luna",
+        "providerModelId": "openai/gpt-5.6-luna",
+    }
+    assert context["saved_card"]["runtime_options"] == {
+        "reasoningEffort": "high", "autoTools": True, "autoSelect": True,
+    }
+    for forbidden in (
+        "runtime-secret", "provider-secret", "configuration-secret",
+        "configuration-fingerprint", "authority-fingerprint", "extension-secret",
+    ):
+        assert forbidden not in serialized
+
+
+@pytest.mark.parametrize(
+    ("auto_tools", "auto_select", "expected_tools", "expected_model"),
+    [
+        (False, False, ["native.read", "native.write"], "gpt-5.6-luna"),
+        (True, False, ["native.read"], "gpt-5.6-luna"),
+        (False, True, ["native.read", "native.write"], "gpt-5.6-terra"),
+        (True, True, ["native.read"], "gpt-5.6-terra"),
+    ],
+)
+def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
+    monkeypatch,
+    auto_tools,
+    auto_select,
+    expected_tools,
+    expected_model,
+) -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=auto_tools,
+        auto_select=auto_select,
+    )
+    calls: list[tuple[str, list[str]]] = []
+
+    def decide_tools(_context, candidates):
+        calls.append((
+            "tools",
+            [str(candidate["canonicalId"]) for candidate in candidates],
+        ))
+        return ["native.read"], {
+            "schemaVersion": "card-auto-tools.v1",
+            "enabled": True,
+            "status": "selected",
+            "requestCount": 1,
+            "questionCount": len(candidates),
+            "normalAuthorizedTools": [
+                str(candidate["canonicalId"]) for candidate in candidates
+            ],
+            "selectedTools": ["native.read"],
+        }
+
+    def decide_model(context, _candidates, saved):
+        actual = [
+            str(candidate["canonical_id"])
+            for candidate in context["actual_initial_tools"]
+        ]
+        calls.append(("model", actual))
+        selected = {
+            **saved,
+            "modelKey": "gpt-5.6-terra",
+            "providerModelId": "openai/gpt-5.6-terra",
+        }
+        return selected, {
+            "schemaVersion": "card-model-router.v1",
+            "enabled": True,
+            "status": "selected",
+            "requestCount": 1,
+            "questionCount": 1,
+            "savedModel": saved,
+            "selectedModel": selected,
+        }
+
+    monkeypatch.setattr(card_domain, "_decide_card_auto_tools", decide_tools)
+    monkeypatch.setattr(card_domain, "_decide_card_model_router", decide_model)
+
+    selected_definitions = card_domain._apply_card_jev_decisions(
+        payload={"configuredModels": models},
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the completed requested result.",
+        assignment="Inspect the native record and report the result.",
+        tool_definitions=definitions,
+        saved_script_value=None,
+        graph_text="Native context.",
+        references=[],
+        images=[],
+    )
+
+    assert call_config["enabledTools"] == expected_tools
+    assert [item["canonicalId"] for item in selected_definitions] == expected_tools
+    assert call_config["provider"]["modelKey"] == expected_model
+    assert [name for name, _items in calls] == (
+        (["tools"] if auto_tools else []) + (["model"] if auto_select else [])
+    )
+    if auto_select:
+        assert calls[-1] == ("model", expected_tools)
+    assert prepared["jevAutoTools"]["enabled"] is auto_tools
+    assert prepared["jevModelRouter"]["enabled"] is auto_select
+
+
+def test_card_auto_tools_failure_restores_complete_saved_authorized_set(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        card_domain,
+        "_jev_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            card_domain._CardJevError("unavailable", "card_auto_tools_unavailable")
+        ),
+    )
+    definitions = _card_jev_application_fixture(
+        auto_tools=True,
+        auto_select=False,
+    )[2]
+
+    selected, receipt = card_domain._decide_card_auto_tools(
+        {"request_or_delegated_mission": "Inspect the record."},
+        definitions,
+    )
+
+    assert selected == ["native.read", "native.write"]
+    assert receipt["status"] == "unavailable"
+    assert receipt["selectedTools"] == ["native.read", "native.write"]
+    assert receipt["errorCode"] == "card_auto_tools_unavailable"
+
+
+def test_card_auto_tools_cannot_omit_a_saved_script_mandatory_handle(
+    monkeypatch,
+) -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=True,
+        auto_select=False,
+    )
+    source = '''CARD_SCRIPT = {
+    "mode": "tool_recipe",
+    "input": {"type": "object", "properties": {}},
+    "output": {"type": "object", "properties": {"result": {}}, "required": ["result"]},
+}
+from hermes_tools import SCRIPT, output, tools
+tools.native.write = SCRIPT
+tools.call("native.write")
+output.emit({"result": {}})
+'''
+    saved_script_value = card_domain.saved_script(
+        {"enabled": True, "source": source},
+        selected_tools=["native.read", "native.write"],
+        default_agent_tools=["native.read"],
+        native_available=False,
+    )
+    call_config["runtimeOptions"]["script"] = saved_script_value
+
+    def decide_tools(_context, candidates):
+        assert [candidate["canonicalId"] for candidate in candidates] == ["native.read"]
+        return [], {
+            "schemaVersion": "card-auto-tools.v1",
+            "enabled": True,
+            "status": "selected",
+            "requestCount": 1,
+            "questionCount": 1,
+            "normalAuthorizedTools": ["native.read"],
+            "selectedTools": [],
+        }
+
+    monkeypatch.setattr(card_domain, "_decide_card_auto_tools", decide_tools)
+    selected = card_domain._apply_card_jev_decisions(
+        payload={"configuredModels": models},
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the requested result.",
+        assignment="Write the requested native record.",
+        tool_definitions=definitions,
+        saved_script_value=saved_script_value,
+        graph_text="Native context.",
+        references=[],
+        images=[],
+    )
+
+    assert call_config["enabledTools"] == ["native.write"]
+    assert call_config["presentedTools"] == ["native.write"]
+    assert [definition["canonicalId"] for definition in selected] == ["native.write"]
+    assert prepared["jevAutoTools"]["normalAuthorizedTools"] == [
+        "native.read", "native.write",
+    ]
+    assert prepared["jevAutoTools"]["mandatoryTools"] == ["native.write"]
+    assert prepared["jevAutoTools"]["selectedTools"] == ["native.write"]
+
+
+def test_card_model_router_failure_uses_saved_model_only_when_still_eligible(
+    monkeypatch,
+) -> None:
+    _prepared, call_config, _definitions, models = _card_jev_application_fixture(
+        auto_tools=False,
+        auto_select=True,
+    )
+    candidates = card_domain._configured_card_router_candidates(
+        models,
+        call_config["provider"],
+        100,
+        requires_tools=True,
+        has_images=False,
+        reasoning_effort="high",
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "_jev_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            card_domain._CardJevError("timeout", "card_model_router_timeout")
+        ),
+    )
+
+    selected, receipt = card_domain._decide_card_model_router(
+        {"actual_initial_tools": [{"canonical_id": "native.read"}]},
+        candidates,
+        call_config["provider"],
+    )
+
+    assert selected == call_config["provider"]
+    assert receipt["status"] == "fallback_saved"
+    assert receipt["errorCode"] == "card_model_router_timeout"

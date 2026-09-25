@@ -1,10 +1,14 @@
 # Jev Control Plane Readback for LiquidAIty
 
-**Status:** architecture readback and implementation plan only
+**Status:** historical architecture readback and implementation plan only
 
 **Repository snapshot:** `C:/Projects/LiquidAIty/main`, Git `d0942d189b1b0d19a20b560256a1b4c2a962899b`, inspected 2026-09-22
 
-**Implementation status:** **not implemented**
+**Implementation status at this historical snapshot:** **not implemented**
+
+**Current status:** this snapshot is superseded as implementation evidence. See
+[`JEV_CLOSEOUT_REPORT.md`](./JEV_CLOSEOUT_REPORT.md) for the current bounded Jev
+closeout, proof levels, explicit deferrals, and reload requirements.
 
 **Authority rule:** current source and saved runtime state remain authoritative; this document does not change them.
 

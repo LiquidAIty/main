@@ -747,27 +747,41 @@ export function AgentManager({
       toolsetsText,
       mcpConnectionIdsText,
     });
+    const runtimeOptions: AgentCardRuntimeOptions = {
+      ...(localConfig.runtime_options || {}),
+      ...(
+        runtimeKind === 'hermes' && runtimeMode === 'magentic_one'
+          ? { subagentType: 'none' as const }
+          : subagentTypeTouched
+            ? { subagentType }
+            : {}
+      ),
+      ...(providerModelId !== undefined ? { providerModelId } : {}),
+      ...(
+        runtimeKind === 'hermes'
+        && (autoSelect || localConfig.runtime_options?.autoSelect !== undefined)
+          ? { autoSelect }
+          : {}
+      ),
+      ...(
+        runtimeKind === 'hermes'
+        && (autoTools || localConfig.runtime_options?.autoTools !== undefined)
+          ? { autoTools }
+          : {}
+      ),
+      ...(subagentTouched ? { subagentModel } : {}),
+      ...(
+        localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
+          ? { script: scriptDraft }
+          : {}
+      ),
+    };
     return {
       ...localConfig,
       ...editedConfig,
-      runtime_options: {
-        ...(localConfig.runtime_options || {}),
-        ...(
-          runtimeKind === 'hermes' && runtimeMode === 'magentic_one'
-            ? { subagentType: 'none' as const }
-            : subagentTypeTouched
-              ? { subagentType }
-              : {}
-        ),
-        ...(providerModelId !== undefined ? { providerModelId } : {}),
-        ...(runtimeKind === 'hermes' ? { autoSelect, autoTools } : {}),
-        ...(subagentTouched ? { subagentModel } : {}),
-        ...(
-          localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
-            ? { script: scriptDraft }
-            : {}
-        ),
-      },
+      runtime_options: Object.keys(runtimeOptions).length
+        ? runtimeOptions
+        : localConfig.runtime_options,
       // Card role is presentation metadata. Stable model instructions live only
       // in prompt_template, including the editable [ROLE] block.
       role: localConfig.role,

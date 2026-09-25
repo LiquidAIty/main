@@ -7,10 +7,12 @@ that same relationship; this module never admits, rejects, or rewrites facts.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 import json
+import math
 import os
+from time import monotonic
 from typing import Any, Callable
 
 import httpx
@@ -35,6 +37,10 @@ JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 MAX_JEV_CONCURRENCY = 4
 MAX_FACTS_PER_BATCH = 64
+JEV_PROVIDER_TIMEOUT_SECONDS = 45.0
+JEV_OUTER_TIMEOUT_SECONDS = 180.0
+JEV_BATCH_DEADLINE_SECONDS = 170.0
+QUESTION_SCHEMA_VERSION = "knowgraph.relationship-choice.v3"
 
 KNOWGRAPH_CONTROL_OUTCOMES = ("INSUFFICIENT_CONTEXT",)
 KNOWGRAPH_JEV_CHOICES = SHARED_JEV_RELATIONSHIPS + KNOWGRAPH_CONTROL_OUTCOMES
@@ -134,16 +140,23 @@ def _validate_jev_response(
         probabilities = validate_rounded_probability_distribution(raw, choices)
         validate_rounded_choice_winner(winner, probabilities)
         distribution = probabilities
+        provider_confidence_raw = answer["confidence"]
+        if isinstance(provider_confidence_raw, bool):
+            raise ValueError("provider confidence")
+        provider_confidence = float(provider_confidence_raw)
+        if not math.isfinite(provider_confidence) or not 0.0 <= provider_confidence <= 1.0:
+            raise ValueError("provider confidence")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise KnowGraphJevError("knowgraph_jev_response_invalid") from error
     common = {
         "winner": winner,
         "distribution": distribution,
+        "provider_confidence": provider_confidence,
         "provider": str(response.get("provider") or ""),
         "requested_model": JEV_MODEL,
         "resolved_model": str(response.get("model") or ""),
         "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
-        "question_schema_version": "knowgraph.relationship-choice.v3",
+        "question_schema_version": QUESTION_SCHEMA_VERSION,
         "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
         "vocabulary_hash": relationship_vocabulary_hash(
             relationship_vocabulary
@@ -266,7 +279,10 @@ def classify_knowgraph_fact(
         if not api_key:
             raise KnowGraphJevError("knowgraph_jev_key_unavailable")
         try:
-            with httpx.Client(timeout=45.0, follow_redirects=False) as client:
+            with httpx.Client(
+                timeout=JEV_PROVIDER_TIMEOUT_SECONDS,
+                follow_redirects=False,
+            ) as client:
                 result = client.post(
                     JEV_ENDPOINT,
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -295,10 +311,31 @@ def classify_knowgraph_facts(
     *,
     relationship_vocabulary: tuple[str, ...] = SHARED_JEV_RELATIONSHIPS,
     classifier: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    deadline_seconds: float = JEV_BATCH_DEADLINE_SECONDS,
+    provider_timeout_seconds: float = JEV_PROVIDER_TIMEOUT_SECONDS,
+    clock: Callable[[], float] = monotonic,
 ) -> list[dict[str, Any]]:
-    """Classify a bounded fact set while preserving one result per native fact."""
+    """Classify a bounded fact set without work surviving the returned result.
+
+    Only four provider calls may be active. New work is admitted only while a
+    complete provider-timeout window remains inside the 170 second internal
+    deadline, leaving ten seconds for the 180 second outer HTTP boundary to
+    serialize and deliver the exact partial result. Executor shutdown waits for
+    every admitted call, so no background classification can outlive this
+    function's response.
+    """
     if len(facts) > MAX_FACTS_PER_BATCH:
         raise KnowGraphJevError("knowgraph_jev_batch_too_large")
+    if (
+        isinstance(deadline_seconds, bool)
+        or isinstance(provider_timeout_seconds, bool)
+        or not math.isfinite(float(deadline_seconds))
+        or not math.isfinite(float(provider_timeout_seconds))
+        or float(deadline_seconds) <= 0.0
+        or float(provider_timeout_seconds) <= 0.0
+        or float(deadline_seconds) >= JEV_OUTER_TIMEOUT_SECONDS
+    ):
+        raise KnowGraphJevError("knowgraph_jev_deadline_invalid")
     results: list[dict[str, Any]] = [{} for _ in facts]
     if not facts:
         return results
@@ -309,31 +346,93 @@ def classify_knowgraph_facts(
             relationship_vocabulary=relationship_vocabulary,
         )
     )
-    with ThreadPoolExecutor(
+    deadline = clock() + float(deadline_seconds)
+    next_index = 0
+    active: dict[Future[dict[str, Any]], int] = {}
+
+    def failure(index: int, error: Exception) -> dict[str, Any]:
+        native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+        return {
+            "nativeFactUuid": native_id,
+            "status": _failure_status(error),
+            "requested_model": JEV_MODEL,
+            "question_schema_version": QUESTION_SCHEMA_VERSION,
+            "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+            "vocabulary_hash": relationship_vocabulary_hash(
+                relationship_vocabulary
+            ),
+            "vocabulary_count": len(relationship_vocabulary),
+            "evaluated_at": _utc_now(),
+            "failure_reason": str(error).strip() or type(error).__name__,
+        }
+
+    def admit(executor: ThreadPoolExecutor) -> None:
+        nonlocal next_index
+        while (
+            next_index < len(facts)
+            and len(active) < MAX_JEV_CONCURRENCY
+            and deadline - clock() >= float(provider_timeout_seconds)
+        ):
+            active[executor.submit(classify, facts[next_index])] = next_index
+            next_index += 1
+
+    executor = ThreadPoolExecutor(
         max_workers=min(MAX_JEV_CONCURRENCY, len(facts)),
         thread_name_prefix="knowgraph-jev",
-    ) as executor:
-        future_indexes = {
-            executor.submit(classify, fact): index
-            for index, fact in enumerate(facts)
+    )
+    try:
+        admit(executor)
+        while active:
+            remaining = max(0.0, deadline - clock())
+            completed, _pending = wait(
+                active,
+                timeout=remaining,
+                return_when=FIRST_COMPLETED,
+            )
+            if not completed:
+                break
+            for future in completed:
+                index = active.pop(future)
+                native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+                try:
+                    results[index] = {
+                        "nativeFactUuid": native_id,
+                        **future.result(),
+                    }
+                except Exception as error:
+                    results[index] = failure(index, error)
+            admit(executor)
+    finally:
+        # Running Python threads cannot be force-cancelled. Waiting here is the
+        # explicit no-continuation contract; production calls are bounded by the
+        # 45 second provider timeout and are admitted only with that much budget.
+        executor.shutdown(wait=True, cancel_futures=True)
+
+    for future, index in list(active.items()):
+        if future.cancelled():
+            continue
+        native_id = str(facts[index].get("nativeFactUuid") or "").strip()
+        try:
+            results[index] = {"nativeFactUuid": native_id, **future.result()}
+        except Exception as error:
+            results[index] = failure(index, error)
+
+    for index, result in enumerate(results):
+        if result:
+            continue
+        results[index] = {
+            "nativeFactUuid": str(
+                facts[index].get("nativeFactUuid") or ""
+            ).strip(),
+            "status": "unfinished",
+            "requested_model": JEV_MODEL,
+            "question_schema_version": QUESTION_SCHEMA_VERSION,
+            "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+            "vocabulary_hash": relationship_vocabulary_hash(
+                relationship_vocabulary
+            ),
+            "vocabulary_count": len(relationship_vocabulary),
+            "evaluated_at": _utc_now(),
+            "failure_reason": "knowgraph_jev_deadline_exceeded",
         }
-        for future in as_completed(future_indexes):
-            index = future_indexes[future]
-            native_id = str(facts[index].get("nativeFactUuid") or "").strip()
-            try:
-                results[index] = {"nativeFactUuid": native_id, **future.result()}
-            except Exception as error:
-                results[index] = {
-                    "nativeFactUuid": native_id,
-                    "status": _failure_status(error),
-                    "requested_model": JEV_MODEL,
-                    "question_schema_version": "knowgraph.relationship-choice.v3",
-                    "vocabulary_version": PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
-                    "vocabulary_hash": relationship_vocabulary_hash(
-                        relationship_vocabulary
-                    ),
-                    "vocabulary_count": len(relationship_vocabulary),
-                    "evaluated_at": _utc_now(),
-                    "failure_reason": str(error).strip() or type(error).__name__,
-                }
     return results

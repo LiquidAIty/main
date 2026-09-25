@@ -424,11 +424,12 @@ upstream forks or first-party runtime source, not general cleanup targets. Prefe
 protocol, configuration, hook, or existing adapter boundary. A justified vendor edit must record its
 exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback.
 
-For Hermes, the retained local fork patches are the previously recorded extension, the bounded
-direct-agent roster entry, and the root-scoped Mag One assignee ceiling in
+For Hermes, the exact nine retained local extensions are recorded in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery remains upstream-owned; its roster entry
 changes only profile-scoped local target authority. The Mag One entry changes only assignment authority
-inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. Upstream ACP is not a
+inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. The invocation-local
+Card-routing entry narrows only Card-managed tools, uses native one-turn model switching, restores both
+surfaces, and emits observable execution receipts on the existing completion event. Upstream ACP is not a
 LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:

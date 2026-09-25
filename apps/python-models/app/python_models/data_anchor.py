@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -17,6 +18,10 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from app.python_models.internal_mcp import call_read_tools_via_mcp
+from app.python_models.jev_validation import (
+    validate_rounded_choice_winner,
+    validate_rounded_probability_distribution,
+)
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -597,19 +602,52 @@ def _persisted_knowgraph_jev(
         )
         if not isinstance(distribution, dict) or not distribution:
             return None
-        distribution = {
-            str(choice): float(probability)
-            for choice, probability in distribution.items()
-        }
-        confidence = max(0.0, min(1.0, float(distribution[winner])))
-    except (TypeError, ValueError, json.JSONDecodeError):
+        serialized_choices = properties.get("jev_choice_options_json")
+        choices = (
+            json.loads(serialized_choices)
+            if isinstance(serialized_choices, str) and serialized_choices.strip()
+            else list(distribution)
+        )
+        if (
+            not isinstance(choices, list)
+            or any(not isinstance(choice, str) or not choice for choice in choices)
+        ):
+            return None
+        distribution = validate_rounded_probability_distribution(
+            distribution,
+            choices,
+        )
+        validate_rounded_choice_winner(winner, distribution)
+        label_confidence_value = properties.get("jev_label_confidence")
+        if isinstance(label_confidence_value, bool):
+            return None
+        label_confidence = float(label_confidence_value)
+        if (
+            not math.isfinite(label_confidence)
+            or label_confidence != distribution[winner]
+        ):
+            return None
+        provider_confidence_value = properties.get("jev_provider_confidence")
+        provider_confidence: float | None = None
+        if provider_confidence_value not in (None, ""):
+            if isinstance(provider_confidence_value, bool):
+                return None
+            provider_confidence = float(provider_confidence_value)
+            if (
+                not math.isfinite(provider_confidence)
+                or not 0.0 <= provider_confidence <= 1.0
+            ):
+                return None
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
     return {
         "nativeFactUuid": native_id,
         "status": "success",
         "winner": winner,
         "distribution": distribution,
-        "label_confidence": confidence,
+        "label_confidence": label_confidence,
+        **({"provider_confidence": provider_confidence}
+           if provider_confidence is not None else {}),
         "requested_model": str(properties.get("jev_requested_model") or ""),
         "resolved_model": str(properties.get("jev_resolved_model") or ""),
         "evaluated_at": str(properties.get("jev_evaluated_at") or ""),

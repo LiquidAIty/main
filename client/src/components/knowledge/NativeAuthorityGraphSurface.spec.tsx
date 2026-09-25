@@ -557,7 +557,7 @@ describe('native authority graph surfaces', () => {
     expect(screen.getByText('First Think.')).toBeTruthy();
   });
 
-  it('resolves a real double-click before inspection can move the node and enters a calm bounded Focus', async () => {
+  it('resolves a real double-click, expands, and exits Focus through empty canvas without recomputation', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -643,6 +643,13 @@ describe('native authority graph surfaces', () => {
       gravity_mass: 7,
     });
     expect(screen.getByRole('button', { name: 'Expand' })).toBeTruthy();
+    const focusedWeights = graph.data.links.map((edge: any) => ({
+      id: edge.id,
+      predicate: edge.predicate,
+      relationship_strength: edge.relationship_strength,
+      label_confidence: edge.label_confidence,
+      jev: edge.properties?.jev,
+    }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
     await waitFor(() => expect(screen.getByTestId('native-combined-surface')
@@ -650,8 +657,41 @@ describe('native authority graph surfaces', () => {
     expect(forceGraphMocks.instances).toHaveLength(rendererCount);
     expect(graph.data.nodes.map((node: any) => node.id)).toEqual(focusedNodeIds);
     expect(graph.data.links.map((edge: any) => edge.id)).toEqual(focusedEdgeIds);
+    expect(graph.data.links.map((edge: any) => ({
+      id: edge.id,
+      predicate: edge.predicate,
+      relationship_strength: edge.relationship_strength,
+      label_confidence: edge.label_confidence,
+      jev: edge.properties?.jev,
+    }))).toEqual(focusedWeights);
     expect(onReadNativeFocusNeighborhood).toHaveBeenCalledTimes(2);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    act(() => graph.nodeDoubleClick(center));
+    await waitFor(() => expect(screen.getByTestId('native-combined-surface')
+      .getAttribute('data-focus-phase')).toBe('manual_blackhole_focus'));
+    expect(onReadNativeFocusNeighborhood).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const emptyCanvasExitWeights = graph.data.links.map((edge: any) => ({
+      id: edge.id,
+      predicate: edge.predicate,
+      relationship_strength: edge.relationship_strength,
+      label_confidence: edge.label_confidence,
+      jev: edge.properties?.jev,
+    }));
+
+    act(() => graph.backgroundClick());
+    await waitFor(() => expect(screen.getByTestId('native-combined-surface')
+      .getAttribute('data-focus-phase')).not.toBe('manual_blackhole_focus'));
+    expect(graph.data.links.map((edge: any) => ({
+      id: edge.id,
+      predicate: edge.predicate,
+      relationship_strength: edge.relationship_strength,
+      label_confidence: edge.label_confidence,
+      jev: edge.properties?.jev,
+    }))).toEqual(emptyCanvasExitWeights);
+    expect(onReadNativeFocusNeighborhood).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the local canvas unchanged when native Focus preparation is unavailable', async () => {
@@ -743,6 +783,7 @@ describe('native authority graph surfaces', () => {
           id: 'ab', source: 'a', target: 'b', predicate: 'PROVIDES',
           properties: {
             jev: {
+              status: 'success',
               winner: 'PROVIDES',
               distribution: { PROVIDES: 0.8, ASSOCIATED_WITH: 0.2 },
             },

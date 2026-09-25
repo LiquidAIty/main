@@ -4,9 +4,11 @@ import express from 'express';
 import { describe, expect, it, vi } from 'vitest';
 import cardRuntime, {
   internalMainMcpRoutes,
+  jevAttentionTelemetry,
   mainRoutes,
   materializerReadPrincipalForSavedCard,
   waitForCompletedPairThinkGraphLifecycles,
+  waitForRequestFulfillmentAssessments,
 } from './cardRuntime.routes';
 import cardEditor, { iddRoutes } from './cardEditor.routes';
 import codegraph from './codegraph.routes';
@@ -227,6 +229,12 @@ const agentTerminalMocks = vi.hoisted(() => {
         usage: nativeFields,
         effectiveProvider: nativeFields.effectiveProvider,
         providerApiMode: nativeFields.providerApiMode,
+        actualProvider: nativeFields.actualProvider || nativeFields.effectiveProvider,
+        actualModel: nativeFields.actualModel || 'gpt-5.6-luna',
+        exposedTools: nativeFields.exposedTools || [],
+        executionEvidence: nativeFields.executionEvidence || [],
+        executionEvidenceComplete: nativeFields.executionEvidenceComplete ?? true,
+        executionEvidenceError: nativeFields.executionEvidenceError,
         nativeRootId: nativeFields.nativeRootId,
         nativeRunId: nativeFields.nativeRunId,
       } };
@@ -260,6 +268,11 @@ const agentTerminalMocks = vi.hoisted(() => {
       nativeRunId: result.event?.payload?.nativeRunId ?? null,
       effectiveProvider: result.event?.payload?.effectiveProvider ?? null,
       providerApiMode: result.event?.payload?.providerApiMode ?? null,
+      actualModel: result.event?.payload?.actualModel ?? null,
+      exposedTools: result.event?.payload?.exposedTools ?? [],
+      executionEvidence: result.event?.payload?.executionEvidence ?? [],
+      executionEvidenceComplete: result.event?.payload?.executionEvidenceComplete === true,
+      executionEvidenceError: result.event?.payload?.executionEvidenceError ?? null,
       inputTokens: usage.providerInputTokens ?? null,
       outputTokens: usage.providerOutputTokens ?? null,
       cachedTokens: usage.providerCachedTokens ?? null,
@@ -416,7 +429,11 @@ const orchestratorMocks = vi.hoisted(() => {
     runId: 'run-mag-one',
     finalResponseText: 'Native Mag One response.',
   })),
-  requestPythonRailsJson: vi.fn(async (endpoint: string, init?: RequestInit): Promise<any> => {
+  requestPythonRailsJson: vi.fn(async (
+    endpoint: string,
+    init?: RequestInit,
+    _options?: { timeoutMs?: number },
+  ): Promise<any> => {
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
     if (endpoint === '/tools/manifest') return { tools: [] };
     if (endpoint === '/idd/tools/materialize') return { references: body.tools };
@@ -466,6 +483,26 @@ const orchestratorMocks = vi.hoisted(() => {
         affectedNodeIds: ['think-rich-a', 'think-fast-a'],
         turnHeat: { 'think-rich-a': 1.7 },
         topActiveNodes: [{ nativeId: 'think-rich-a', turnHeat: 1.7 }],
+      };
+    }
+    if (endpoint === '/domain/runs/request-fulfillment') {
+      return {
+        ok: true,
+        runId: body.runId,
+        assessment: {
+          schemaVersion: 'request-fulfillment-assessment.v1',
+          metric: 'request_fulfillment',
+          rubricVersion: 'request-fulfillment.v1',
+          status: 'unavailable',
+          runId: body.runId,
+          executionEvidenceComplete: body.executionEvidenceComplete === true,
+          executionEvidenceError: body.executionEvidenceError || null,
+          actualProvider: body.actualProvider || null,
+          actualModel: body.actualModel || null,
+          failureReason: 'test_jev_provider_unavailable',
+          requestCount: 0,
+          questionCount: 0,
+        },
       };
     }
     if (endpoint === '/domain/main/prepare') {
@@ -811,10 +848,45 @@ async function closeServer(server: Server): Promise<void> {
   // native session and mocks cannot bleed into the next test.
   await new Promise<void>((resolve) => setImmediate(resolve));
   await waitForCompletedPairThinkGraphLifecycles();
+  await waitForRequestFulfillmentAssessments();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
 }
+
+describe('Jev attention telemetry', () => {
+  it('maps canonical requested/resolved model and timing fields without inventing aliases', () => {
+    const telemetry = jevAttentionTelemetry({
+      schemaVersion: 'jev-attention.v1',
+      status: 'success',
+      decisionId: 'attention-decision-one',
+      candidates: [{
+        choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'think-native-one',
+        title: 'Think candidate', probability: 1.0, selected: true, hydrated: true,
+      }],
+      distribution: { 'think-one': 1.0 },
+      winner: 'think-one',
+      confidence: 0.82,
+      selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'think-native-one' }],
+      provider: 'TypeSafe',
+      requestedModel: 'openrouter/jev',
+      resolvedModel: 'openrouter/jev-resolved',
+      timingMs: { jev: 12.5, total: 18.75 },
+      policy: { minimumSelected: 1, maximumSelected: 3 },
+      retrieval: {},
+    });
+
+    expect(telemetry).toMatchObject({
+      requestedModel: 'openrouter/jev',
+      resolvedModel: 'openrouter/jev-resolved',
+      confidence: 0.82,
+      winner: 'think-one',
+      timingMs: { jev: 12.5, total: 18.75 },
+    });
+    expect(telemetry).not.toHaveProperty('model');
+    expect(telemetry).not.toHaveProperty('timing');
+  });
+});
 
 describe('saved Card routes', () => {
   it.each([{ userId: null, status: 401 }])(
@@ -2267,6 +2339,9 @@ describe('saved Card routes', () => {
           payload: {
             status: 'completed', text: 'Native graph proposal', usage: {},
             effectiveProvider: 'openai-codex', providerApiMode: null,
+            actualProvider: 'openai-codex', actualModel: 'gpt-5.6-luna',
+            exposedTools: [], executionEvidence: [],
+            executionEvidenceComplete: true, executionEvidenceError: null,
             nativeRootId: null, nativeRunId: null,
           },
         } };
@@ -2329,6 +2404,9 @@ describe('saved Card routes', () => {
           payload: {
             status: 'completed', text: 'late delegate completion', usage: {},
             effectiveProvider: 'openai-codex', providerApiMode: null,
+            actualProvider: 'openai-codex', actualModel: 'gpt-5.6-luna',
+            exposedTools: [], executionEvidence: [],
+            executionEvidenceComplete: true, executionEvidenceError: null,
             nativeRootId: null, nativeRunId: null,
           } },
       };
@@ -3466,6 +3544,53 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('delivers Main text before grading and rejects a malformed Score receipt at the backend boundary', async () => {
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint === '/domain/runs/request-fulfillment') {
+          return {
+            ok: true,
+            assessment: {
+              schemaVersion: 'request-fulfillment-assessment.v1',
+              metric: 'request_fulfillment',
+              rubricVersion: 'request-fulfillment.v1',
+              status: 'scored',
+              runId: 'wrong-run',
+            },
+          };
+        }
+        return railsImplementation(endpoint, init, options);
+      });
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'malformed-score', message: 'inspect',
+          }),
+        });
+        const body = await response.text();
+        const frames = body.split('\n\n');
+        const doneIndex = frames.findIndex((frame) => frame.startsWith('event: done'));
+        const scoreIndex = frames.findIndex((frame) => frame.startsWith('event: request_fulfillment'));
+        expect(response.status).toBe(200);
+        expect(doneIndex).toBeGreaterThanOrEqual(0);
+        expect(scoreIndex).toBeGreaterThan(doneIndex);
+        const scoreFrame = JSON.parse(frames[scoreIndex].split('\ndata: ')[1]);
+        expect(scoreFrame.assessment).toMatchObject({
+          schemaVersion: 'request-fulfillment-assessment.v1',
+          status: 'unavailable',
+          failureReason: 'request_fulfillment_receipt_invalid',
+          requestCount: 0,
+          questionCount: 0,
+        });
+      } finally {
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
+        await closeServer(server);
+      }
+    });
+
     it('streams one complete Jev attention decision after Run identity and before runtime inference', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       const jevAttention = {
@@ -3475,16 +3600,23 @@ describe('saved Card routes', () => {
         resultIdentity: 'attention-result-one',
         candidates: [{
           choiceId: 'think-one', authority: 'ThinkGraph', nativeId: 'think-native-one',
-          title: 'Think candidate', probability: 0.625, selected: true, hydrated: true,
+          title: 'Think candidate', probability: 0.6, selected: true, hydrated: true,
         }, {
           choiceId: 'know-one', authority: 'KnowGraph', nativeId: 'know-native-one',
-          title: 'Know candidate', probability: 0.375, selected: false, hydrated: false,
+          title: 'Know candidate', probability: 0.4, selected: false, hydrated: false,
         }],
-        distribution: { 'think-one': 0.625, 'know-one': 0.375 },
+        distribution: {
+          'think-one': 0.6,
+          'know-one': 0.4,
+        },
+        winner: 'think-one',
+        confidence: 0.86,
         selectedReferences: [{ authority: 'ThinkGraph', nativeId: 'think-native-one' }],
         policy: { name: 'main-fast-graph-attention' },
-        model: { provider: 'test', model: 'jev-test' },
-        timing: { elapsedMs: 9 },
+        provider: 'TypeSafe',
+        requestedModel: 'openrouter/jev',
+        resolvedModel: 'openrouter/jev-resolved',
+        timingMs: { jev: 9, total: 12 },
         error: null,
       };
       orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init) => {
@@ -4093,6 +4225,7 @@ describe('saved Card routes', () => {
         });
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
           '/domain/main/runs/begin',
+          '/domain/runs/request-fulfillment',
           '/thinkgraph/completed-pair/prepare',
           '/domain/runs/begin',
           '/thinkgraph/completed-pair/settle',
@@ -4111,6 +4244,20 @@ describe('saved Card routes', () => {
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
+          sourceResponseFit: {
+            schemaVersion: 'request-fulfillment-assessment.v1',
+            metric: 'request_fulfillment',
+            rubricVersion: 'request-fulfillment.v1',
+            status: 'unavailable',
+            runId: expect.stringMatching(/^req_/),
+            executionEvidenceComplete: true,
+            executionEvidenceError: null,
+            actualProvider: 'openai-codex',
+            actualModel: 'gpt-5.6-luna',
+            failureReason: 'test_jev_provider_unavailable',
+            requestCount: 0,
+            questionCount: 0,
+          },
         };
         expect(JSON.parse(String(prepareCall?.[1]?.body))).toEqual(completedPair);
 
@@ -4198,6 +4345,7 @@ describe('saved Card routes', () => {
         await waitForCompletedPairThinkGraphLifecycles();
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.map(([route]) => route)).toEqual([
           '/domain/main/runs/begin',
+          '/domain/runs/request-fulfillment',
           '/thinkgraph/completed-pair/prepare',
         ]);
         expect(agentTerminalMocks.manager.submit.mock.calls.map(
@@ -4209,6 +4357,37 @@ describe('saved Card routes', () => {
     it('drives the same Main Chat bridge from the authenticated external-plugin doorway', async () => {
       const priorSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
       process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'test-external-main-secret-0123456789abcdef';
+      const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
+      let releaseScore: () => void = () => {};
+      const scoreGate = new Promise<void>((resolve) => { releaseScore = resolve; });
+      let scoreStarted = false;
+      orchestratorMocks.requestPythonRailsJson.mockImplementation(async (endpoint, init, options) => {
+        if (endpoint !== '/domain/runs/request-fulfillment') {
+          return railsImplementation(endpoint, init, options);
+        }
+        scoreStarted = true;
+        const scoreRequest = JSON.parse(String(init?.body || '{}'));
+        await scoreGate;
+        return {
+          ok: true,
+          runId: scoreRequest.runId,
+          assessment: {
+            schemaVersion: 'request-fulfillment-assessment.v1',
+            metric: 'request_fulfillment',
+            rubricVersion: 'request-fulfillment.v1',
+            status: 'unavailable',
+            runId: scoreRequest.runId,
+            executionEvidenceComplete: scoreRequest.executionEvidenceComplete === true,
+            executionEvidenceError: scoreRequest.executionEvidenceError || null,
+            actualProvider: scoreRequest.actualProvider || null,
+            actualModel: scoreRequest.actualModel || null,
+            failureReason: 'test_delayed_grader_unavailable',
+            requestCount: 0,
+            questionCount: 0,
+            timingMs: 0,
+          },
+        };
+      });
       orchestratorMocks.requestPythonRailsJson.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       const { server, baseUrl } = await createApiServer();
@@ -4225,7 +4404,7 @@ describe('saved Card routes', () => {
         expect(denied.status).toBe(401);
         expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
 
-        const response = await fetch(`${baseUrl}/main/chat`, {
+        const responsePromise = fetch(`${baseUrl}/main/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -4239,6 +4418,17 @@ describe('saved Card routes', () => {
             message: 'hello from the connector',
           }),
         });
+        let responseTimeout: ReturnType<typeof setTimeout> | undefined;
+        const response = await Promise.race([
+          responsePromise,
+          new Promise<Response>((_resolve, reject) => {
+            responseTimeout = setTimeout(
+              () => reject(new Error('external_main_answer_blocked_by_grading')),
+              1_000,
+            );
+          }),
+        ]);
+        if (responseTimeout) clearTimeout(responseTimeout);
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toMatchObject({
           ok: true,
@@ -4247,7 +4437,11 @@ describe('saved Card routes', () => {
           contextAuthorityMode: 'plugin_context_only',
           finalText: 'Real assistant reply.',
           nativeSessionId: 'native:default',
+          requestFulfillmentDeferred: true,
         });
+        expect(scoreStarted).toBe(true);
+        releaseScore();
+        await waitForCompletedPairThinkGraphLifecycles();
         const begin = JSON.parse(String(
           orchestratorMocks.requestPythonRailsJson.mock.calls[0]?.[1]?.body,
         ));
@@ -4265,6 +4459,8 @@ describe('saved Card routes', () => {
           expect.any(Object),
         );
       } finally {
+        releaseScore();
+        orchestratorMocks.requestPythonRailsJson.mockImplementation(railsImplementation);
         if (priorSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
         else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = priorSecret;
         await closeServer(server);
@@ -4403,6 +4599,9 @@ describe('saved Card routes', () => {
             payload: {
               status: 'completed', text: 'Completed after disconnect.', usage: {},
               effectiveProvider: 'openai-codex', providerApiMode: null,
+              actualProvider: 'openai-codex', actualModel: 'gpt-5.6-luna',
+              exposedTools: [], executionEvidence: [],
+              executionEvidenceComplete: true, executionEvidenceError: null,
               nativeRootId: null, nativeRunId: null,
             } },
         };

@@ -1,13 +1,14 @@
 # LiquidAIty Hermes divergence register
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
-plus exactly eight LiquidAIty-owned runtime extensions: durable Team delegation,
+plus exactly nine LiquidAIty-owned runtime extensions: durable Team delegation,
 profile-scoped native Bot rosters projected from saved Card topology, a nullable
 root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
 authentication for detached workers whose saved profile selects the native app-server
 runtime, exact saved-profile toolset pins for native CLI execution, saved-SOUL
-refresh on persistent-session resume, and native Codex thread/turn receipts on
-Gateway completion events.
+refresh on persistent-session resume, native Codex thread/turn receipts on
+Gateway completion events, detached-worker Gateway-bearer isolation, and
+invocation-local Card tool/model routing with observable completion evidence.
 This register describes source scope; loaded product acceptance is reported separately.
 
 ## Verified upstream base
@@ -485,6 +486,70 @@ ROLLBACK: remove the worker-only v2 plugin helper/branch, restore the default cl
 to the host/process identity, and remove the explicit environment removal together if the
 end-to-end saved Card worker acceptance path is later replaced.
 
+## 9. Invocation-local Card routing and observable completion evidence
+
+VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
+`73521a8e375a867fae14ec0579f2dfb47aa0017e`.
+
+PURPOSE: let one saved Card invocation atomically narrow only its Card-managed
+tools, apply one eligible model for that turn, and return the actual provider,
+model, exposed tools, and exact current-turn tool calls/results on the existing
+Gateway completion event. LiquidAIty uses those receipts to verify dispatch and
+to assess the completed response without inferring execution from prose.
+
+EXTERNAL ALTERNATIVE CHECK: persistent profile reconfiguration would leak a
+route into later turns, while filtering only in the TypeScript caller would not
+change Hermes' actual model/tool surface. The existing `/model --once`, prompt
+turn lifecycle, and completion event are the smallest native atomic boundary.
+
+FILES AND SYMBOLS:
+
+- `tui_gateway/contracts/prompt_voice.py`: optional `managed_tools`,
+  `allowed_tools`, and `model_once` prompt fields.
+- `tui_gateway/methods_prompt.py::_run_after_agent_ready`: validated one-turn
+  model application and pre-start restoration after any partial switch.
+- `tui_gateway/prompt_turn.py::_apply_turn_tool_selection`,
+  `_restore_turn_tool_selection`, `_observable_turn_evidence`, and
+  `_complete_turn_payload`: invocation-local tool narrowing/restoration and
+  truthful completion receipts.
+- `tui_gateway/contracts/events.py::MessageCompletePayload` plus generated
+  OpenRPC/TypeScript contracts: typed actual-dispatch and evidence fields.
+
+UPSTREAM BEHAVIOR PRESERVED: callers that omit the new optional fields retain
+the complete upstream tool surface, normal configured model, history, session,
+streaming, cancellation, and completion behavior. Unmanaged native facilities
+remain present. No saved profile, global configuration, or tool grant is
+mutated by a turn-scoped route.
+
+CONTRACTS:
+
+- allowed tools must be an exact subset of the named managed tools and must
+  exist before the turn starts;
+- omitted managed tools cannot reappear in the actual exposed-tool receipt;
+- model selection is validated and applied through native `--once` semantics;
+- model and tool snapshots restore after success, error, cancellation, or a
+  pre-dispatch failure;
+- evidence contains only current-turn assistant tool calls and tool results;
+  changed history, invalid values, or an oversized capture is explicitly
+  incomplete rather than partial-success-shaped.
+
+TESTS:
+
+- `tests/tui_gateway/test_turn_scoped_card_routing.py`
+- `tests/tui_gateway/contracts/test_generated.py`
+- LiquidAIty adapter coverage in
+  `apps/backend/src/hermes/agentTerminal.spec.ts` and
+  `apps/backend/src/hermes/agentTerminalExecution.spec.ts`
+
+FORK COST: four small existing Gateway/TUI owner seams and regenerated public
+contracts. There is no second session, dispatcher, tool registry, model router,
+or evidence store.
+
+ROLLBACK: remove the optional prompt fields, turn-local model/tool application,
+completion evidence fields, generated-contract deltas, and focused tests
+together. Upstream prompt submission and persistent model/tool behavior then
+remain unchanged.
+
 ## Complete upstream-relative difference manifest
 
 Production files:
@@ -509,8 +574,15 @@ Production files:
 - `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution
 - `agent/system_prompt.py` — shared saved-SOUL identity resolution
 - `agent/conversation_loop.py` — persistent-session saved-SOUL refresh guard
-- `tui_gateway/prompt_turn.py` — native Codex receipt projection on completion
-- `tui_gateway/contracts/events.py` — optional native completion receipt fields
+- `tui_gateway/methods_prompt.py` — invocation-local model application and
+  pre-dispatch restoration
+- `tui_gateway/prompt_turn.py` — native Codex receipt projection plus
+  invocation-local tool narrowing/restoration and observable completion evidence
+- `tui_gateway/contracts/prompt_voice.py` — optional turn-local tool/model fields
+- `tui_gateway/contracts/events.py` — optional native completion receipt and
+  observable execution fields
+- `apps/shared/src/gateway-contract.generated.ts` and
+  `apps/shared/src/gateway-contract.openrpc.json` — generated public contracts
 
 Focused tests:
 
@@ -527,6 +599,9 @@ Focused tests:
 - `tests/agent/test_system_prompt_restore.py` — stored-prompt reuse contract
 - `tests/agent/transports/test_codex_app_server_session.py` — exact stable/dynamic prompt split
 - `tests/tui_gateway/test_bot_mode_silence_delivery.py` — native completion receipt projection
+- `tests/tui_gateway/test_turn_scoped_card_routing.py` — exact tool exposure,
+  restoration, evidence bounds, and partial model-switch restoration
+- `tests/tui_gateway/contracts/test_generated.py` — generated-contract parity
 - `tests/agent/test_codex_app_server_integration.py` — Codex result thread/turn identity
 - `tests/hermes_cli/test_kanban_worker_spawn_toolsets.py` — exact worker toolsets and
   Gateway-bearer isolation

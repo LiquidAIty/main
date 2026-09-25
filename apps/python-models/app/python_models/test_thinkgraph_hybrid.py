@@ -45,6 +45,7 @@ def decision(
     return {
         "winner": winner,
         "distribution": distribution,
+        "confidence": 0.64,
         "label_confidence": distribution[winner],
         "relationship_strength": max(
             0.0, 1.0 - distribution["NONE"]
@@ -98,6 +99,7 @@ def scored_source_response_fit(run_id: str) -> dict[str, Any]:
         "idfSha256": "a" * 64,
         "outputSha256": "b" * 64,
         "executionEvidenceSha256": "c" * 64,
+        "exposedToolsSha256": "d" * 64,
         "executionEvidenceComplete": True,
         "executionEvidenceError": None,
         "actualProvider": "openrouter",
@@ -113,6 +115,7 @@ def scored_source_response_fit(run_id: str) -> dict[str, Any]:
         "confidence": 0.2,
         "provider": "TypeSafe",
         "resolvedModel": "typesafe/jev-1.13-test",
+        "decisionId": "decision-one",
         "usage": {},
         "requestCount": 1,
         "questionCount": 1,
@@ -414,6 +417,7 @@ def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():
         "answers": {"relationship": {
             "type": "choice",
             "choice": "QUALIFIES",
+            "confidence": 0.41,
             "probabilities": invalid_mass,
         }}
     })
@@ -597,6 +601,7 @@ def test_jev_winning_novel_relation_is_promoted_once_and_survives_restart(
             "answers": {"relationship": {
                 "type": "choice",
                 "choice": "AMPLIFIES",
+                "confidence": 0.64,
                 "probabilities": probabilities,
             }},
         }

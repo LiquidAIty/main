@@ -19,7 +19,12 @@ from runtime_config import load_runtime_environment
 
 load_runtime_environment()
 
-from ingest import graphiti_runtime_versions, ingest_pdf, ingest_web_documents
+from ingest import (
+    graphiti_runtime_versions,
+    ingest_pdf,
+    ingest_web_documents,
+    reconcile_jev_annotations,
+)
 
 app = FastAPI(title="KnowGraph")
 UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
@@ -48,6 +53,11 @@ class WebResearchIngestRequest(BaseModel):
     relationship_taxonomy: Any = None
     extraction_policy: Any = None
     research_focus: dict[str, Any] = Field(default_factory=dict)
+
+
+class JevReconciliationRequest(BaseModel):
+    project_id: str
+    native_fact_uuids: list[str] = Field(default_factory=list, max_length=64)
 
 
 def _model_dump(model: BaseModel) -> dict[str, Any]:
@@ -147,6 +157,29 @@ async def ingest_web_results(
                     "message": str(exc),
                 },
             },
+        )
+
+
+@app.post("/reconcile_jev_annotations")
+async def reconcile_existing_jev_annotations(
+    payload: JevReconciliationRequest,
+) -> JSONResponse:
+    """Explicitly repair existing native fact annotations without ingestion."""
+    try:
+        result = await reconcile_jev_annotations(
+            payload.project_id,
+            native_fact_uuids=list(payload.native_fact_uuids),
+        )
+        return JSONResponse(status_code=200, content={"ok": True, **result})
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": {"message": str(exc)}},
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": {"message": str(exc)}},
         )
 
 

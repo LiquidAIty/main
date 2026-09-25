@@ -48,6 +48,12 @@ _intake_local = threading.local()
 
 JEV_MODEL = "typesafe/jev-1.13"
 JEV_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
+PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS = 120.0
+# Main graph attention receives one eighth of the existing Python-rails request
+# budget. This is a fail-open allocation contract, not an observed latency SLA.
+MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS = (
+    PYTHON_RAILS_DEFAULT_REQUEST_BUDGET_SECONDS / 8.0
+)
 MAX_JEV_CONCURRENCY = 4
 CONTEXTUAL_NODE_MAX_REAL_OPTIONS = 254
 CONTEXTUAL_NODE_STATE_TOKEN_LIMIT = 26_000
@@ -341,10 +347,11 @@ def _validate_source_response_fit(value: Any, run_id: str) -> dict[str, Any]:
         "cardRevisionId", "idfSha256", "outputSha256",
         "executionEvidenceSha256", "executionEvidenceComplete",
         "executionEvidenceError", "actualProvider", "actualModel",
+        "exposedToolsSha256",
         "requestedModel", "scale", "evaluatedAt", "failureReason",
         "requestCount", "questionCount", "timingMs", "rawScore",
         "normalizedScore100", "probabilities", "confidence", "provider",
-        "resolvedModel", "usage",
+        "resolvedModel", "decisionId", "usage",
     }
     if set(value) - allowed:
         raise ValueError("thinkgraph_source_response_fit_invalid")
@@ -357,7 +364,10 @@ def _validate_source_response_fit(value: Any, run_id: str) -> dict[str, Any]:
         or str(result.get("runId") or "") != run_id
     ):
         raise ValueError("thinkgraph_source_response_fit_invalid")
-    for field in ("idfSha256", "outputSha256", "executionEvidenceSha256"):
+    for field in (
+        "idfSha256", "outputSha256", "executionEvidenceSha256",
+        "exposedToolsSha256",
+    ):
         if field in result and not re.fullmatch(r"[a-f0-9]{64}", str(result[field])):
             raise ValueError("thinkgraph_source_response_fit_invalid")
     if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 100_000:
@@ -381,8 +391,10 @@ def _validate_source_response_fit(value: Any, run_id: str) -> dict[str, Any]:
             raise ValueError("thinkgraph_source_response_fit_invalid") from error
         required_text = (
             "cardRevisionId", "idfSha256", "outputSha256",
-            "executionEvidenceSha256", "actualProvider", "actualModel",
+            "executionEvidenceSha256", "exposedToolsSha256",
+            "actualProvider", "actualModel",
             "requestedModel", "evaluatedAt", "provider", "resolvedModel",
+            "decisionId",
         )
         scale = result.get("scale")
         if (
@@ -912,11 +924,17 @@ def _validate_jev_response(
             raise ValueError("probability keys")
         probabilities = validate_rounded_probability_distribution(raw, choices)
         validate_rounded_choice_winner(winner, probabilities)
+        confidence = float(answer["confidence"])
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevRelationshipError("jev_relationship_response_invalid") from error
     return {
         "winner": winner,
         "distribution": probabilities,
+        # Provider confidence describes the Choice response; P(winner) remains
+        # the separate semantic edge support and visual weight.
+        "confidence": confidence,
         "label_confidence": probabilities[winner],
         "relationship_strength": probabilities[winner],
         "provider": str(response.get("provider") or ""),
@@ -1147,6 +1165,9 @@ def _validate_contextual_choice_answer(
             raise ValueError("probability values")
         probabilities = validate_rounded_probability_distribution(raw, choice_ids)
         validate_rounded_choice_winner(provider_winner, probabilities)
+        confidence = float(answer["confidence"])
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence")
         winner = provider_winner
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError(
@@ -1171,6 +1192,7 @@ def _validate_contextual_choice_answer(
         "nativeIds": [choices[choice] for choice in selected_choices],
         "winnerChoiceId": winner,
         "distribution": probabilities,
+        "confidence": confidence,
     }
 
 
@@ -1808,8 +1830,14 @@ def _validate_jev_attention_response(
     """Strictly validate one attention Choice independently of edge admission."""
 
     try:
+        decision_id = str(response["id"]).strip()
+        provider = str(response["provider"]).strip()
+        resolved_model = str(response["model"]).strip()
         answer = response["answers"]["attention"]
-        if not isinstance(answer, dict) or answer.get("type") != "choice":
+        if (
+            not decision_id or not provider or not resolved_model
+            or not isinstance(answer, dict) or answer.get("type") != "choice"
+        ):
             raise ValueError("answer type")
         winner = str(answer["choice"])
         if winner not in choice_ids:
@@ -1819,17 +1847,21 @@ def _validate_jev_attention_response(
             raise ValueError("probability keys")
         probabilities = validate_rounded_probability_distribution(raw, choice_ids)
         validate_rounded_choice_winner(winner, probabilities)
+        confidence = float(answer["confidence"])
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError(
             "invalid", "jev_attention_response_invalid"
         ) from error
     return {
-        "decisionId": str(response.get("id") or "").strip(),
+        "decisionId": decision_id,
         "winner": winner,
         "distribution": probabilities,
-        "provider": str(response.get("provider") or ""),
+        "confidence": confidence,
+        "provider": provider,
         "requestedModel": JEV_MODEL,
-        "resolvedModel": str(response.get("model") or ""),
+        "resolvedModel": resolved_model,
         "usage": response.get("usage") if isinstance(response.get("usage"), dict) else {},
     }
 
@@ -1918,7 +1950,10 @@ def decide_main_graph_attention(
         },
     }
     try:
-        with httpx.Client(timeout=45.0, follow_redirects=False) as client:
+        with httpx.Client(
+            timeout=MAIN_GRAPH_ATTENTION_TIMEOUT_SECONDS,
+            follow_redirects=False,
+        ) as client:
             result = client.post(
                 JEV_ENDPOINT,
                 headers={
@@ -1945,7 +1980,7 @@ def decide_main_graph_attention(
 def _validate_jev_focus_response(
     response: dict[str, Any],
     choice_ids: tuple[str, ...],
-) -> tuple[str, dict[str, float]]:
+) -> tuple[str, dict[str, float], float]:
     """Return Jev's complete, unmodified probability distribution."""
 
     try:
@@ -1968,9 +2003,12 @@ def _validate_jev_focus_response(
             raise ValueError("probability values")
         probabilities = validate_rounded_probability_distribution(raw, choice_ids)
         validate_rounded_choice_winner(winner, probabilities)
+        confidence = float(answer["confidence"])
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            raise ValueError("confidence")
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError("invalid", "jev_focus_response_invalid") from error
-    return decision_id, probabilities
+    return decision_id, probabilities, confidence
 
 
 def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2075,7 +2113,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(response, dict):
         raise JevAttentionError("invalid", "jev_focus_response_invalid")
 
-    decision_id, distribution = _validate_jev_focus_response(
+    decision_id, distribution, confidence = _validate_jev_focus_response(
         response, tuple(choice_ids),
     )
     ranked_indexes = sorted(
@@ -2112,6 +2150,7 @@ def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
         "decisionId": decision_id,
         "errorCode": None,
         "distribution": distribution,
+        "confidence": confidence,
         "candidates": response_candidates,
     }
 
@@ -2305,6 +2344,7 @@ def _jev_provenance(
         "evaluated_at": _utc_now(),
         "winner": decision["winner"],
         "distribution": decision["distribution"],
+        "provider_confidence": decision["confidence"],
         "label_confidence": _winner_probability(decision),
         "relationship_strength": _winner_probability(decision),
         "source_event": _source_event_reference(payload),

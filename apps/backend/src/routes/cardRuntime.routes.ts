@@ -87,7 +87,7 @@ type PreparedMainCliRun = {
 type JevAttentionAuthority = 'ThinkGraph' | 'KnowGraph';
 type JevAttentionStatus = 'success' | 'unavailable' | 'timeout' | 'invalid' | 'error';
 
-type JevAttentionDecision = {
+export type JevAttentionDecision = {
   schemaVersion: 'jev-attention.v1';
   status: JevAttentionStatus;
   decisionId: string;
@@ -101,6 +101,8 @@ type JevAttentionDecision = {
     hydrated: boolean;
   }>;
   distribution: Record<string, number>;
+  winner?: string | null;
+  confidence?: number;
   selectedReferences: Array<{
     authority: JevAttentionAuthority;
     nativeId: string;
@@ -109,7 +111,7 @@ type JevAttentionDecision = {
   [key: string]: unknown;
 };
 
-function jevAttentionTelemetry(decision: JevAttentionDecision): Record<string, unknown> {
+export function jevAttentionTelemetry(decision: JevAttentionDecision): Record<string, unknown> {
   return {
     schemaVersion: decision.schemaVersion,
     status: decision.status,
@@ -123,15 +125,18 @@ function jevAttentionTelemetry(decision: JevAttentionDecision): Record<string, u
       hydrated: candidate.hydrated,
     })),
     distribution: decision.distribution,
+    winner: decision.winner ?? null,
     selectedReferences: decision.selectedReferences.map((reference) => ({
       authority: reference.authority,
       nativeId: reference.nativeId,
     })),
     provider: decision.provider ?? null,
-    model: decision.model ?? null,
+    requestedModel: decision.requestedModel ?? null,
+    resolvedModel: decision.resolvedModel ?? null,
+    confidence: decision.confidence ?? null,
     policy: decision.policy ?? null,
     retrieval: decision.retrieval ?? null,
-    timing: decision.timing ?? null,
+    timingMs: decision.timingMs ?? null,
   };
 }
 
@@ -144,7 +149,91 @@ function isRoundedDecisionDistribution(values: number[]): boolean {
   const halfStep = 0.005;
   const lower = values.reduce((sum, value) => sum + Math.max(0, value - halfStep), 0);
   const upper = values.reduce((sum, value) => sum + Math.min(1, value + halfStep), 0);
-  return lower <= 1 + Number.EPSILON && upper >= 1 - Number.EPSILON;
+  const arithmeticTolerance = 1e-12;
+  return lower <= 1 + arithmeticTolerance && upper >= 1 - arithmeticTolerance;
+}
+
+function isSha256(value: unknown): boolean {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function preparedRequestFulfillmentAssessment(
+  value: unknown,
+  expectedRunId: string,
+): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error('request_fulfillment_receipt_invalid');
+  const allowed = new Set([
+    'schemaVersion', 'metric', 'rubricVersion', 'status', 'runId',
+    'cardRevisionId', 'idfSha256', 'outputSha256', 'executionEvidenceSha256',
+    'exposedToolsSha256', 'executionEvidenceComplete', 'executionEvidenceError',
+    'actualProvider', 'actualModel', 'requestedModel', 'scale', 'evaluatedAt',
+    'failureReason', 'requestCount', 'questionCount', 'timingMs', 'rawScore',
+    'normalizedScore100', 'probabilities', 'confidence', 'provider',
+    'resolvedModel', 'decisionId', 'usage',
+  ]);
+  if (Object.keys(value).some((key) => !allowed.has(key))
+    || value.schemaVersion !== 'request-fulfillment-assessment.v1'
+    || value.metric !== 'request_fulfillment'
+    || value.rubricVersion !== 'request-fulfillment.v1'
+    || !['scored', 'unavailable'].includes(String(value.status || ''))
+    || String(value.runId || '') !== expectedRunId
+    || typeof value.executionEvidenceComplete !== 'boolean'
+    || typeof value.requestCount !== 'number' || !Number.isInteger(value.requestCount)
+    || value.requestCount < 0
+    || typeof value.questionCount !== 'number' || !Number.isInteger(value.questionCount)
+    || value.questionCount < 0
+    || (value.timingMs !== undefined && (
+      typeof value.timingMs !== 'number' || !Number.isFinite(value.timingMs) || value.timingMs < 0
+    ))) {
+    throw new Error('request_fulfillment_receipt_invalid');
+  }
+  for (const field of ['idfSha256', 'outputSha256', 'executionEvidenceSha256', 'exposedToolsSha256']) {
+    if (value[field] !== undefined && !isSha256(value[field])) {
+      throw new Error('request_fulfillment_receipt_invalid');
+    }
+  }
+  if (value.status === 'scored') {
+    const requiredText = [
+      'cardRevisionId', 'idfSha256', 'outputSha256', 'executionEvidenceSha256',
+      'exposedToolsSha256', 'actualProvider', 'actualModel', 'requestedModel',
+      'evaluatedAt', 'provider', 'resolvedModel', 'decisionId',
+    ];
+    const probabilities = value.probabilities;
+    const keys = ['0', '1', '2', '3', '4'];
+    const probabilityValues = isRecord(probabilities)
+      ? keys.map((key) => probabilities[key])
+      : [];
+    if (requiredText.some((field) => typeof value[field] !== 'string' || !String(value[field]).trim())
+      || value.executionEvidenceComplete !== true
+      || value.executionEvidenceError !== null
+      || value.failureReason !== undefined
+      || value.requestCount !== 1
+      || value.questionCount !== 1
+      || !isRecord(probabilities)
+      || Object.keys(probabilities).length !== keys.length
+      || Object.keys(probabilities).some((key) => !keys.includes(key))
+      || probabilityValues.some((item) => (
+        typeof item !== 'number' || !Number.isFinite(item) || item < 0 || item > 1
+      ))
+      || !isRoundedDecisionDistribution(probabilityValues as number[])
+      || typeof value.rawScore !== 'number' || !Number.isFinite(value.rawScore)
+      || value.rawScore < 0 || value.rawScore > 4
+      || typeof value.normalizedScore100 !== 'number'
+      || !Number.isFinite(value.normalizedScore100)
+      || Math.abs(value.normalizedScore100 - (value.rawScore * 25)) > 1e-6
+      || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence)
+      || value.confidence < 0 || value.confidence > 1
+      || !isRecord(value.usage)
+      || !isRecord(value.scale)
+      || value.scale.minimum !== 0 || value.scale.maximum !== 4) {
+      throw new Error('request_fulfillment_receipt_invalid');
+    }
+  } else if (typeof value.failureReason !== 'string' || !value.failureReason.trim()
+    || ['rawScore', 'normalizedScore100', 'probabilities', 'confidence']
+      .some((field) => value[field] !== undefined)) {
+    throw new Error('request_fulfillment_receipt_invalid');
+  }
+  return value;
 }
 
 function preparedJevAttention(value: unknown): JevAttentionDecision | null {
@@ -184,6 +273,14 @@ function preparedJevAttention(value: unknown): JevAttentionDecision | null {
       throw new Error('main_jev_attention_invalid');
     }
   }
+  if (value.confidence !== undefined && (
+    typeof value.confidence !== 'number'
+    || !Number.isFinite(value.confidence)
+    || value.confidence < 0
+    || value.confidence > 1
+  )) {
+    throw new Error('main_jev_attention_invalid');
+  }
   for (const reference of value.selectedReferences) {
     if (!isRecord(reference)
       || !['ThinkGraph', 'KnowGraph'].includes(String(reference.authority || ''))
@@ -207,14 +304,28 @@ function preparedJevAttention(value: unknown): JevAttentionDecision | null {
       || !isRoundedDecisionDistribution(candidates.map((candidate) => candidate.probability!))) {
       throw new Error('main_jev_attention_invalid');
     }
+    const winner = value.winner;
+    if (typeof winner !== 'string' || !choiceIds.has(winner)) {
+      throw new Error('main_jev_attention_invalid');
+    }
+    const winnerUpper = Math.min(1, distribution[winner] + 0.005);
+    if (distributionKeys.some((choiceId) => (
+      choiceId !== winner && Math.max(0, distribution[choiceId] - 0.005) > winnerUpper + 1e-12
+    ))) {
+      throw new Error('main_jev_attention_invalid');
+    }
     const selectedCandidateRefs = new Set(candidates
       .filter((candidate) => candidate.selected && candidate.hydrated)
       .map((candidate) => `${candidate.authority}\u0000${candidate.nativeId}`));
     const selectedReferenceRefs = new Set((value.selectedReferences as JevAttentionDecision['selectedReferences'])
       .map((reference) => `${reference.authority}\u0000${reference.nativeId}`));
+    const selectedCount = candidates.filter((candidate) => candidate.selected).length;
     if (selectedReferenceRefs.size !== value.selectedReferences.length
       || selectedCandidateRefs.size !== selectedReferenceRefs.size
-      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))) {
+      || [...selectedCandidateRefs].some((identity) => !selectedReferenceRefs.has(identity))
+      || selectedCount < 1
+      || selectedCount > 3
+      || candidates.some((candidate) => candidate.selected !== candidate.hydrated)) {
       throw new Error('main_jev_attention_invalid');
     }
   }
@@ -267,6 +378,7 @@ type CompletedPairThinkGraphLifecycleArgs = {
 // pairs ordered inside that authority rather than staging overlapping Card turns.
 // Main has already ended its response before this path is enqueued.
 const completedPairThinkGraphLifecycleTails = new Map<string, Promise<void>>();
+const requestFulfillmentAssessmentTails = new Set<Promise<void>>();
 
 function thinkGraphRevisionScope(
   projectId: string,
@@ -824,34 +936,29 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       savedDeck: run.savedDeck,
       savedCard: run.savedCard,
     });
-    const requestFulfillment = await assessGatewayRunCompletion(
-      run.runId,
-      result.nativeCompletion,
-    );
+    let requestFulfillmentDeferred = false;
     try {
       const authority = await resolveSharedChatAuthority(projectId, deckId);
-      setImmediate(() => {
-        void enqueueCompletedPairThinkGraphLifecycle({
-          req,
+      requestFulfillmentDeferred = true;
+      void enqueueAssessedCompletedPairThinkGraphLifecycle({
+        req,
+        projectId,
+        deckId,
+        conversationId,
+        authority,
+        originatingRunId: run.runId,
+        completedPair: {
           projectId,
           deckId,
           conversationId,
-          authority,
-          originatingRunId: run.runId,
-          completedPair: {
-            projectId,
-            deckId,
-            conversationId,
-            runId: run.runId,
-            cardId: mainCardId,
-            nativeSessionRef: result.nativeSessionId,
-            completedAt: new Date().toISOString(),
-            userMessage: message,
-            mainResponse: result.text,
-            sourceResponseFit: requestFulfillment,
-          },
-        });
-      });
+          runId: run.runId,
+          cardId: mainCardId,
+          nativeSessionRef: result.nativeSessionId,
+          completedAt: new Date().toISOString(),
+          userMessage: message,
+          mainResponse: result.text,
+        },
+      }, result.nativeCompletion);
     } catch (error) {
       logHarnessTrace(
         `[thinkgraph] external Main intake unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -866,7 +973,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       finalText: result.text,
       nativeSessionId: result.nativeSessionId,
       nativeTurnId: result.nativeCompletion.nativeRunId,
-      requestFulfillment,
+      requestFulfillmentDeferred,
       configuration: {
         subagentModel: run.prepared.hermesTransport.request.runtimeOptions?.subagentModel || null,
       },
@@ -1598,23 +1705,52 @@ async function assessGatewayRunCompletion(
         executionEvidenceError: completion.executionEvidenceError,
       }),
     });
-    if (!result?.assessment || typeof result.assessment !== 'object') {
-      throw new Error('request_fulfillment_receipt_invalid');
-    }
-    return result.assessment as Record<string, unknown>;
+    return preparedRequestFulfillmentAssessment(result?.assessment, runId);
   } catch (error) {
+    const executionEvidenceComplete = completion.executionEvidenceComplete === true;
+    const executionEvidenceError = String(completion.executionEvidenceError || '').trim() || null;
     return {
       schemaVersion: 'request-fulfillment-assessment.v1',
       metric: 'request_fulfillment',
       rubricVersion: 'request-fulfillment.v1',
       status: 'unavailable',
       runId,
+      executionEvidenceComplete,
+      executionEvidenceError,
+      actualProvider: String(completion.effectiveProvider || '').trim() || null,
+      actualModel: String(completion.actualModel || '').trim() || null,
       failureReason: error instanceof Error
         ? error.message
         : 'request_fulfillment_unavailable',
       requestCount: 0,
       questionCount: 0,
     };
+  }
+}
+
+function enqueueRequestFulfillmentAssessment(
+  runId: string,
+  completion: GatewayCardExecution['nativeCompletion'],
+): Promise<void> {
+  const assessment = assessGatewayRunCompletion(runId, completion)
+    .then(() => undefined)
+    .catch((error) => {
+      logHarnessTrace(
+        `[request-fulfillment] background settlement failed run=${runId} reason=${redactTrace(
+          error instanceof Error ? error.message : String(error),
+        )}`,
+      );
+    });
+  requestFulfillmentAssessmentTails.add(assessment);
+  void assessment.finally(() => requestFulfillmentAssessmentTails.delete(assessment));
+  return assessment;
+}
+
+// Tests and controlled shutdown callers may drain post-response Score work.
+// Answer-returning JSON routes deliberately never await this set.
+export async function waitForRequestFulfillmentAssessments(): Promise<void> {
+  while (requestFulfillmentAssessmentTails.size) {
+    await Promise.all([...requestFulfillmentAssessmentTails]);
   }
 }
 
@@ -1971,6 +2107,36 @@ function enqueueCompletedPairThinkGraphLifecycle(
   return current;
 }
 
+function enqueueAssessedCompletedPairThinkGraphLifecycle(
+  args: CompletedPairThinkGraphLifecycleArgs,
+  completion: GatewayCardExecution['nativeCompletion'],
+): Promise<void> {
+  const scope = `${args.projectId}\u0000${args.deckId}`;
+  const prior = completedPairThinkGraphLifecycleTails.get(scope) || Promise.resolve();
+  const current = prior
+    .catch(() => undefined)
+    .then(async () => {
+      const sourceResponseFit = await assessGatewayRunCompletion(
+        args.originatingRunId,
+        completion,
+      );
+      await runCompletedPairThinkGraphLifecycle({
+        ...args,
+        completedPair: {
+          ...args.completedPair,
+          sourceResponseFit,
+        },
+      });
+    });
+  completedPairThinkGraphLifecycleTails.set(scope, current);
+  void current.then(() => {
+    if (completedPairThinkGraphLifecycleTails.get(scope) === current) {
+      completedPairThinkGraphLifecycleTails.delete(scope);
+    }
+  });
+  return current;
+}
+
 // Tests and controlled shutdown callers may drain already-authorized background
 // work. The chat route never waits here before ending Main's SSE response.
 export async function waitForCompletedPairThinkGraphLifecycles(): Promise<void> {
@@ -2297,9 +2463,10 @@ router.post('/run', async (req, res) => {
           finalResult: output,
         }) as any;
       }
-      const requestFulfillment = gatewayCompletion
-        ? await assessGatewayRunCompletion(runId, gatewayCompletion)
-        : null;
+      const requestFulfillmentDeferred = gatewayCompletion !== null;
+      if (gatewayCompletion) {
+        void enqueueRequestFulfillmentAssessment(runId, gatewayCompletion);
+      }
       if (res.destroyed || res.writableEnded) return undefined;
       return res.json({
         ok: true,
@@ -2325,7 +2492,7 @@ router.post('/run', async (req, res) => {
             cardIdentity: prepared.cardIdentity,
           },
           output,
-          ...(requestFulfillment ? { requestFulfillment } : {}),
+          requestFulfillmentDeferred,
           transport,
           receipt: finished?.receipt || null,
         },
@@ -3094,6 +3261,8 @@ mainRoutes.post('/session/chat', async (req, res) => {
         rubricVersion: 'request-fulfillment.v1',
         status: 'unavailable',
         runId: run.runId,
+        executionEvidenceComplete: false,
+        executionEvidenceError: 'request_fulfillment_execution_evidence_unavailable',
         failureReason: 'request_fulfillment_execution_evidence_unavailable',
         requestCount: 0,
         questionCount: 0,

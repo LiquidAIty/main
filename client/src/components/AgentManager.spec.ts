@@ -80,6 +80,59 @@ const savedConfig: AgentManagerLocalConfig = {
 };
 
 describe('AgentManager active builder config', () => {
+  it('persists independent Jev auto controls and disables model auto-select after a manual model choice', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const props = {
+      localConfig: {
+        ...savedConfig,
+        runtime_options: { autoSelect: true, autoTools: true },
+      },
+      onSaveLocalConfig: onSave,
+    };
+    const view = render(React.createElement(AgentManager, {
+      activeTab: 'Runtime',
+      ...props,
+    }));
+
+    const autoSelect = await screen.findByLabelText<HTMLInputElement>('Auto-select model with Jev');
+    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model').disabled).toBe(false));
+    expect(autoSelect.checked).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'model-a' } });
+    expect(autoSelect.checked).toBe(false);
+
+    view.rerender(React.createElement(AgentManager, { activeTab: 'Tools', ...props }));
+    const autoTools = screen.getByLabelText<HTMLInputElement>('Auto-tools with Jev');
+    expect(autoTools.checked).toBe(true);
+    fireEvent.click(autoTools);
+    expect(autoTools.checked).toBe(false);
+
+    await leaveEditor();
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      model_key: 'model-a',
+      runtime_options: { autoSelect: false, autoTools: false },
+    });
+  });
+
+  it('does not materialize disabled Jev defaults during an unrelated legacy Card edit', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Skills',
+      localConfig: savedConfig,
+      onSaveLocalConfig: onSave,
+    }));
+
+    fireEvent.change(screen.getByLabelText('Card skill grants'), { target: { value: 'research' } });
+    await leaveEditor();
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].skills).toEqual(['research']);
+    expect(onSave.mock.calls[0][0].runtime_options).toBeUndefined();
+  });
+
   it.each(['openai', 'openrouter'] as const)('saves the selected %s catalog model ID through the Card editor and retains it on reopen', async (targetProvider) => {
     const fetchMock = mockEditorFetch();
     const originalFetch = fetchMock.getMockImplementation()!;

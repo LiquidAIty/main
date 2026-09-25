@@ -1,4 +1,6 @@
 from copy import deepcopy
+from threading import Lock
+from time import sleep
 
 from app.python_models.jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIPS,
@@ -52,6 +54,7 @@ def choice_response(
                 "type": "choice",
                 "choice": winner,
                 "probabilities": probabilities,
+                "confidence": 0.61,
             },
         },
         "usage": {"input_tokens": 100},
@@ -74,6 +77,8 @@ def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
     assert fact == original
     assert result["status"] == "success"
     assert result["winner"] == "PROVIDES"
+    assert result["provider_confidence"] == 0.61
+    assert result["label_confidence"] == 0.75
     assert set(result["distribution"]) == set(EXPECTED_CHOICES)
     assert abs(sum(result["distribution"].values()) - 1.0) < 1e-9
     assert "relationship_strength" not in result
@@ -116,6 +121,24 @@ def test_possible_two_decimal_probability_total_is_preserved() -> None:
 
     assert result["winner"] == "PROVIDES"
     assert result["distribution"] == {choice: 0.33 for choice in choices}
+
+
+def test_provider_confidence_is_distinct_and_validated() -> None:
+    response = choice_response()
+    response["answers"]["relationship"]["confidence"] = 0.41
+    result = classify_knowgraph_fact(
+        native_fact(), transport=lambda _body: response
+    )
+    assert result["provider_confidence"] == 0.41
+    assert result["label_confidence"] == 0.75
+
+    response["answers"]["relationship"]["confidence"] = 1.01
+    try:
+        classify_knowgraph_fact(native_fact(), transport=lambda _body: response)
+    except Exception as error:
+        assert str(error) == "knowgraph_jev_response_invalid"
+    else:
+        raise AssertionError("provider confidence outside [0, 1] must fail")
 
 
 def test_concise_native_relation_competes_as_one_optional_novel_candidate() -> None:
@@ -178,3 +201,77 @@ def test_batch_failure_is_visible_and_never_removes_or_rewrites_fact() -> None:
         "evaluated_at": results[0]["evaluated_at"],
         "failure_reason": "knowgraph_jev_unavailable",
     }]
+
+
+def test_full_batch_is_bounded_to_four_workers_and_preserves_native_order() -> None:
+    lock = Lock()
+    active = 0
+    maximum_active = 0
+
+    def classify(fact):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        sleep(0.002)
+        with lock:
+            active -= 1
+        return {
+            "status": "success",
+            "winner": "PROVIDES",
+            "distribution": {"PROVIDES": 1.0},
+            "provider_confidence": 0.73,
+        }
+
+    facts = [
+        {**native_fact(), "nativeFactUuid": f"fact-{index:02d}"}
+        for index in range(64)
+    ]
+    results = classify_knowgraph_facts(
+        facts,
+        classifier=classify,
+        deadline_seconds=1.0,
+        provider_timeout_seconds=0.1,
+    )
+
+    assert maximum_active == 4
+    assert [result["nativeFactUuid"] for result in results] == [
+        f"fact-{index:02d}" for index in range(64)
+    ]
+    assert all(result["status"] == "success" for result in results)
+
+
+def test_deadline_reports_exact_unfinished_ids_and_joins_admitted_work() -> None:
+    completed: list[str] = []
+
+    def classify(fact):
+        sleep(0.03)
+        completed.append(fact["nativeFactUuid"])
+        return {
+            "status": "success",
+            "winner": "PROVIDES",
+            "distribution": {"PROVIDES": 1.0},
+            "provider_confidence": 0.73,
+        }
+
+    facts = [
+        {**native_fact(), "nativeFactUuid": f"fact-{index}"}
+        for index in range(8)
+    ]
+    results = classify_knowgraph_facts(
+        facts,
+        classifier=classify,
+        deadline_seconds=0.05,
+        provider_timeout_seconds=0.04,
+    )
+    unfinished = [
+        result["nativeFactUuid"]
+        for result in results
+        if result["status"] == "unfinished"
+    ]
+
+    assert sorted(completed) == ["fact-0", "fact-1", "fact-2", "fact-3"]
+    assert unfinished == ["fact-4", "fact-5", "fact-6", "fact-7"]
+    snapshot = list(completed)
+    sleep(0.05)
+    assert completed == snapshot

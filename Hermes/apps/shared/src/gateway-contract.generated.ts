@@ -3896,6 +3896,9 @@ export interface MessageCompletePayload {
   actualProvider?: string | null
   actualModel?: string | null
   exposedTools?: string[] | null
+  executionEvidence?: unknown[] | null
+  executionEvidenceComplete?: boolean | null
+  executionEvidenceError?: string | null
 }
 /** ``prompt_turn._result_status``. */
 export type TurnStatus = 'complete' | 'error' | 'interrupted'

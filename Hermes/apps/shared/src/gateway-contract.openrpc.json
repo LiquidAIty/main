@@ -14916,6 +14916,43 @@
             ],
             "default": null,
             "title": "Exposedtools"
+          },
+          "executionEvidence": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executionevidence"
+          },
+          "executionEvidenceComplete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executionevidencecomplete"
+          },
+          "executionEvidenceError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executionevidenceerror"
           }
         },
         "title": "MessageCompletePayload",

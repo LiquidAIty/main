@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import unittest
 from datetime import datetime, timezone
@@ -31,7 +32,10 @@ class FakeGraphDriver:
         self.queries.append((cypher, params))
         if self.existing_episode_id and "LIMIT 1" in cypher:
             rows = [{"uuid": self.existing_episode_id}]
-        elif "fact.jev_native_signature AS native_signature" in cypher:
+        elif (
+            "fact.jev_native_signature AS native_signature" in cypher
+            and "SET fact.jev_relation_winner" not in cypher
+        ):
             rows = [
                 {"uuid": fact_id, **metadata}
                 for fact_id, metadata in self.existing_jev.items()
@@ -40,7 +44,25 @@ class FakeGraphDriver:
         elif "SET fact.jev_relation_winner" in cypher:
             if self.persist_error:
                 raise self.persist_error
-            rows = []
+            persisted = {
+                "uuid": params["native_fact_uuid"],
+                "native_signature": params["native_signature"],
+                "winner": params["winner"],
+                "distribution_json": params["distribution_json"],
+                "label_confidence": params["label_confidence"],
+                "provider_confidence": params["provider_confidence"],
+                "requested_model": params["requested_model"],
+                "resolved_model": params["resolved_model"],
+                "question_schema_version": params["question_schema_version"],
+                "ontology_version": params["ontology_version"],
+                "ontology_hash": params["ontology_hash"],
+                "vocabulary_count": params["vocabulary_count"],
+                "choice_options_json": params["choice_options_json"],
+            }
+            self.existing_jev[params["native_fact_uuid"]] = {
+                key: value for key, value in persisted.items() if key != "uuid"
+            }
+            rows = [persisted]
         else:
             rows = []
         return SimpleNamespace(records=rows)
@@ -103,12 +125,22 @@ def _runtime():
 
 
 def _decision(native_fact_uuid: str = "fact-1") -> dict:
+    choice_options = [
+        "IS_A", "PART_OF", "HAS_PART", "CAUSES", "AFFECTS",
+        "DEPENDS_ON", "ENABLES", "CONSTRAINS", "REQUIRES", "SUPPORTS",
+        "CONTRADICTS", "QUALIFIES", "EXPLAINS", "ASSOCIATED_WITH",
+        "ALTERNATIVE_TO", "COMPETES_WITH", "PROVIDES", "USES",
+        "PRECEDES", "FOLLOWS", "INSUFFICIENT_CONTEXT",
+    ]
+    distribution = {choice: 0.0 for choice in choice_options}
+    distribution.update({"PROVIDES": 0.88, "ASSOCIATED_WITH": 0.12})
     return {
         "nativeFactUuid": native_fact_uuid,
         "status": "success",
         "winner": "PROVIDES",
-        "distribution": {"PROVIDES": 0.88, "ASSOCIATED_WITH": 0.12},
+        "distribution": distribution,
         "label_confidence": 0.88,
+        "provider_confidence": 0.64,
         "requested_model": "typesafe/jev-1.13",
         "resolved_model": "typesafe/jev-1.13",
         "evaluated_at": "2026-09-24T12:00:00Z",
@@ -116,6 +148,9 @@ def _decision(native_fact_uuid: str = "fact-1") -> dict:
         "vocabulary_version": "project.relationship-vocabulary.v1",
         "vocabulary_hash": "hash-1",
         "vocabulary_count": 20,
+        "vocabulary_after_hash": "vocabulary-hash",
+        "vocabulary_after_count": 20,
+        "choice_options": choice_options,
         "relationship_proposal_status": "invalid_novel_label",
         "novel_relationship_candidate": "",
         "vocabulary_promotion": "not_promoted",
@@ -142,7 +177,7 @@ def _run(
         "version": "project.relationship-vocabulary.v1",
         "hash": "vocabulary-hash",
         "count": 20,
-        "maximum": 255,
+        "maximum": 252,
         "atMaximum": False,
         "labels": [
             "IS_A", "PART_OF", "HAS_PART", "CAUSES", "AFFECTS",
@@ -345,7 +380,12 @@ class GraphitiIngestTests(unittest.TestCase):
             "touched_fact_count": 1,
             "classified_fact_count": 1,
             "reused_fact_count": 0,
+            "attempted_fact_uuids": ["fact-1"],
+            "succeeded_fact_uuids": ["fact-1"],
             "failed_fact_uuids": [],
+            "skipped_fact_uuids": [],
+            "unfinished_fact_uuids": [],
+            "still_unsettled_fact_uuids": [],
         })
         persisted = [
             params for cypher, params in graphiti.driver.queries
@@ -355,6 +395,7 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(persisted[0]["native_fact_uuid"], "fact-1")
         self.assertEqual(persisted[0]["winner"], "PROVIDES")
         self.assertEqual(persisted[0]["label_confidence"], 0.88)
+        self.assertEqual(persisted[0]["provider_confidence"], 0.64)
         self.assertEqual(persisted[0]["vocabulary_count"], 20)
         self.assertEqual(
             persisted[0]["relationship_proposal_status"],
@@ -394,7 +435,18 @@ class GraphitiIngestTests(unittest.TestCase):
         graphiti = FakeGraphiti(existing_jev={"fact-1": {
             "native_signature": signature,
             "winner": "PROVIDES",
-            "distribution_json": '{"ASSOCIATED_WITH":0.12,"PROVIDES":0.88}',
+            "distribution_json": json.dumps(
+                _decision()["distribution"], sort_keys=True, separators=(",", ":")
+            ),
+            "label_confidence": 0.88,
+            "provider_confidence": 0.64,
+            "requested_model": "typesafe/jev-1.13",
+            "resolved_model": "typesafe/jev-1.13",
+            "question_schema_version": "knowgraph.relationship-choice.v3",
+            "ontology_version": "project.relationship-vocabulary.v1",
+            "ontology_hash": "vocabulary-hash",
+            "vocabulary_count": 20,
+            "choice_options_json": json.dumps(_decision()["choice_options"]),
         }})
 
         result = _run(graphiti)
@@ -405,7 +457,12 @@ class GraphitiIngestTests(unittest.TestCase):
             "touched_fact_count": 1,
             "classified_fact_count": 0,
             "reused_fact_count": 1,
+            "attempted_fact_uuids": [],
+            "succeeded_fact_uuids": [],
             "failed_fact_uuids": [],
+            "skipped_fact_uuids": ["fact-1"],
+            "unfinished_fact_uuids": [],
+            "still_unsettled_fact_uuids": [],
         })
         self.assertFalse(any(
             "SET fact.jev_relation_winner" in cypher
@@ -424,6 +481,76 @@ class GraphitiIngestTests(unittest.TestCase):
         self.assertEqual(len(graphiti.jev_calls), 1)
         self.assertEqual(len(graphiti.jev_calls[0]), 1)
         self.assertEqual(result["jev_classification"]["classified_fact_count"], 1)
+
+    def test_explicit_reconciliation_repairs_malformed_annotation_then_is_idempotent(self) -> None:
+        graphiti = FakeGraphiti(existing_jev={"fact-1": {
+            "native_signature": "stale-signature",
+            "winner": "PROVIDES",
+            "distribution_json": '{"ASSOCIATED_WITH":1.0}',
+            "label_confidence": 1.0,
+            "provider_confidence": 0.64,
+            "requested_model": "typesafe/jev-1.13",
+            "resolved_model": "typesafe/jev-1.13",
+            "question_schema_version": "knowgraph.relationship-choice.v3",
+            "ontology_version": "project.relationship-vocabulary.v1",
+            "ontology_hash": "stale-vocabulary",
+            "vocabulary_count": 20,
+            "choice_options_json": '["ASSOCIATED_WITH"]',
+        }})
+        native_before = vars(graphiti.native_edge).copy()
+        fact = {
+            "nativeFactUuid": "fact-1",
+            "sourceEntity": {"uuid": "entity-a", "name": "Alpha"},
+            "targetEntity": {"uuid": "entity-b", "name": "Beta"},
+            "nativeRelation": "supplies launch services to",
+            "fact": "Alpha supplies launch services to Beta.",
+            "supportingEpisodeUuids": ["graphiti-episode-1"],
+            "supportingEpisodes": [],
+            "createdAt": "2026-07-01T12:00:00+00:00",
+            "referenceTime": "2026-07-01T12:00:00+00:00",
+            "validAt": "2026-06-30T12:00:00+00:00",
+            "invalidAt": None,
+            "expiredAt": None,
+        }
+        vocabulary = {
+            "version": "project.relationship-vocabulary.v1",
+            "hash": "vocabulary-hash",
+            "count": 20,
+            "labels": _decision()["choice_options"][:-1],
+        }
+        calls: list[list[dict]] = []
+
+        async def classify(project_id: str, facts: list[dict]) -> list[dict]:
+            self.assertEqual(project_id, "project-1")
+            calls.append(facts)
+            return [_decision(str(item["nativeFactUuid"])) for item in facts]
+
+        with patch.object(ingest, "_call_knowgraph_jev", side_effect=classify):
+            repaired = asyncio.run(ingest._reconcile_jev_facts(
+                graphiti,
+                project_id="project-1",
+                facts=[dict(fact)],
+                relationship_vocabulary=vocabulary,
+            ))
+            current = asyncio.run(ingest._reconcile_jev_facts(
+                graphiti,
+                project_id="project-1",
+                facts=[dict(fact)],
+                relationship_vocabulary=vocabulary,
+            ))
+
+        self.assertEqual(repaired["status"], "success")
+        self.assertEqual(repaired["attempted_fact_uuids"], ["fact-1"])
+        self.assertEqual(repaired["succeeded_fact_uuids"], ["fact-1"])
+        self.assertEqual(repaired["skipped_fact_uuids"], [])
+        self.assertEqual(repaired["still_unsettled_fact_uuids"], [])
+        self.assertEqual(current["status"], "current")
+        self.assertEqual(current["attempted_fact_uuids"], [])
+        self.assertEqual(current["succeeded_fact_uuids"], [])
+        self.assertEqual(current["skipped_fact_uuids"], ["fact-1"])
+        self.assertEqual(current["still_unsettled_fact_uuids"], [])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(vars(graphiti.native_edge), native_before)
 
     def test_jev_failure_keeps_the_grounded_native_fact(self) -> None:
         graphiti = FakeGraphiti()

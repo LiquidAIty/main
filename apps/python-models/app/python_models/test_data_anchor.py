@@ -78,9 +78,10 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
                 "model": engraphis.JEV_MODEL,
                 "usage": {"prompt_tokens": 321},
                 "answers": {
-                    "think": {
-                        "type": "choice",
-                        "choice": think_a,
+                        "think": {
+                            "type": "choice",
+                            "choice": think_a,
+                            "confidence": 0.74,
                         "probabilities": {
                             think_a: 0.45,
                             think_b: 0.30,
@@ -88,9 +89,10 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
                             "NONE_RELEVANT": 0.10,
                         },
                     },
-                    "know": {
-                        "type": "choice",
-                        "choice": "NONE_RELEVANT",
+                        "know": {
+                            "type": "choice",
+                            "choice": "NONE_RELEVANT",
+                            "confidence": 0.68,
                         "probabilities": {
                             know_a: 0.25,
                             know_b: 0.10,
@@ -168,9 +170,10 @@ def test_contextual_node_jev_only_questions_the_overflowing_side(
                 "model": engraphis.JEV_MODEL,
                 "usage": {},
                 "answers": {
-                    "think": {
-                        "type": "choice",
-                        "choice": choice_a,
+                        "think": {
+                            "type": "choice",
+                            "choice": choice_a,
+                            "confidence": 0.72,
                         "probabilities": {
                             choice_a: 0.55,
                             choice_b: 0.25,
@@ -250,9 +253,10 @@ def test_contextual_node_jev_keeps_only_real_items_above_none_relevant(
                 "model": engraphis.JEV_MODEL,
                 "usage": {},
                 "answers": {
-                    "think": {
-                        "type": "choice",
-                        "choice": think_a,
+                        "think": {
+                            "type": "choice",
+                            "choice": think_a,
+                            "confidence": 0.70,
                         "probabilities": {
                             think_a: 0.50,
                             think_b: 0.20,
@@ -1051,6 +1055,52 @@ def test_knowgraph_exact_fact_returns_portable_know_with_exact_sources() -> None
     }
     assert record["jev"]["winner"] == "ASSOCIATED_WITH"
     assert record["provenance"]["episodes"] == [episode]
+
+
+def test_knowgraph_exact_fact_preserves_native_fact_when_jev_readback_is_malformed() -> None:
+    driver = _FakeNeo4jDriver([[], [{
+        "nativeId": "fact-malformed",
+        "labels": ["RELATES_TO"],
+        "properties": {
+            "name": "supports",
+            "fact": "Alpha supports Beta.",
+            "group_id": "liquidaity-project-1",
+            "episodes": ["episode-1"],
+            "jev_relation_winner": "PROVIDES",
+            # A persisted Jev annotation is optional enrichment. This malformed
+            # distribution must not erase or reinterpret the native Graphiti fact.
+            "jev_relation_distribution_json": json.dumps({"ASSOCIATED_WITH": 1.0}),
+            "jev_label_confidence": 1.0,
+        },
+        "sourceNativeId": "entity-a",
+        "targetNativeId": "entity-b",
+        "endpointNodes": [
+            {"nativeId": "entity-a", "labels": ["Entity"], "properties": {"name": "Alpha"}},
+            {"nativeId": "entity-b", "labels": ["Entity"], "properties": {"name": "Beta"}},
+        ],
+    }]])
+    episode = {"uuid": "episode-1", "source_url": "https://example.test/source"}
+
+    record = read_knowgraph_exact(
+        "project-1",
+        "fact-malformed",
+        driver_factory=lambda: driver,
+        episode_reader=lambda project_id, ids: [episode]
+        if project_id == "project-1" and ids == ["episode-1"] else [],
+    )
+
+    assert record is not None
+    assert record["nativeId"] == "fact-malformed"
+    assert record["know"]["nativeFactUuid"] == "fact-malformed"
+    assert record["know"]["nativeRelation"] == "supports"
+    assert record["know"]["fact"] == "Alpha supports Beta."
+    assert record["know"]["sourceEntity"] == {"uuid": "entity-a", "name": "Alpha"}
+    assert record["know"]["targetEntity"] == {"uuid": "entity-b", "name": "Beta"}
+    assert record["know"]["supportingEpisodes"] == [episode]
+    assert "jev" not in record["know"]
+    assert "jevCanonicalRelation" not in record["know"]
+    assert "relationship_strength" not in record["know"]
+    assert driver.closed is True
 
 
 def test_native_projection_contains_only_ids_returned_in_model_bound_graph_data(
