@@ -870,6 +870,81 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
+  it('authorizes one contextual node read and carries the active referent context to Python rails', async () => {
+    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
+      {
+        role: 'user', status: 'complete', content: 'Explain the Alpha program.',
+        visibleActivities: [{ kind: 'shared_chat_speaker', status: 'user', label: 'You' }],
+      },
+      {
+        role: 'assistant', status: 'complete', content: 'Alpha has a staged delivery plan.',
+        visibleActivities: [{ kind: 'shared_chat_speaker', status: 'card', label: 'Main',
+          cardId: 'card_main_chat', profile: 'default' }],
+      },
+      {
+        role: 'user', status: 'complete', content: 'What about its timeline?',
+        visibleActivities: [{ kind: 'shared_chat_speaker', status: 'user', label: 'You' }],
+      },
+    ] as any);
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.requestPythonRailsJson.mockResolvedValueOnce({
+      schemaVersion: 'contextual-node-read.v1',
+      status: 'success',
+      sourceRevision: 'graph-revision-one',
+      clientContextRevision: 'chat-revision-one',
+      requestCount: 1,
+      questionCount: 2,
+      sides: {
+        think: { status: 'selected', nativeId: 'mem-one' },
+        know: { status: 'selected', nativeId: 'fact-one' },
+      },
+      dataAnchors: [], selectedReferences: [], modelContext: '',
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/main/session/contextual-node-read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+          sourceRevision: 'graph-revision-one', clientContextRevision: 'chat-revision-one',
+          nativeMembers: [
+            { authority: 'ThinkGraph', nativeId: 'think-entity-one' },
+            { authority: 'KnowGraph', nativeId: 'know-entity-one' },
+          ],
+        }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        schemaVersion: 'contextual-node-read.v1', status: 'success',
+      });
+      expect(orchestratorMocks.requestPythonRailsJson).toHaveBeenCalledTimes(1);
+      const [endpoint, init, options] = orchestratorMocks.requestPythonRailsJson.mock.calls[0];
+      expect(endpoint).toBe('/graph/contextual-node-read');
+      expect(options).toEqual({ timeoutMs: 60_000 });
+      const body = JSON.parse(String(init?.body || '{}'));
+      expect(body).toMatchObject({
+        projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat',
+        conversationId: 'main', sourceRevision: 'graph-revision-one',
+        clientContextRevision: 'chat-revision-one',
+        readerContext: {
+          status: 'ready', activeRequest: 'What about its timeline?',
+        },
+        nativeMembers: [
+          { authority: 'ThinkGraph', nativeId: 'think-entity-one' },
+          { authority: 'KnowGraph', nativeId: 'know-entity-one' },
+        ],
+      });
+      expect(body.readerContext.messages.map((message: any) => message.content)).toEqual([
+        'Explain the Alpha program.',
+        'Alpha has a staged delivery plan.',
+        'What about its timeline?',
+      ]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('opens the saved Main runtime when history arrives during canonical startup', async () => {
     agentTerminalMocks.manager.findCard.mockReturnValueOnce(null);
     const { server, baseUrl } = await createApiServer();

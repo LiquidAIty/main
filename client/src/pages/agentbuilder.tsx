@@ -26,6 +26,7 @@ import KnowledgeGraphFramework, {
   type KnowledgeSurfaceKind,
 } from '../components/knowledge/KnowledgeGraphFramework';
 import type {
+  ContextualNodeReadView,
   GraphProjectionNode,
 } from '../components/knowledge/NativeAuthorityGraphSurface';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
@@ -591,6 +592,89 @@ export default function AgentBuilder(): React.ReactElement {
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
+  const contextualReaderRevision = useMemo(() => {
+    const serialized = JSON.stringify(messages.slice(-24).map((message) => ({
+      role: message.role,
+      text: message.text,
+      speaker: message.speaker.cardId || message.speaker.label,
+      target: message.target?.cardId || message.target?.label || '',
+      status: message.status || 'complete',
+    })));
+    let fingerprint = 2166136261;
+    for (let index = 0; index < serialized.length; index += 1) {
+      fingerprint ^= serialized.charCodeAt(index);
+      fingerprint = Math.imul(fingerprint, 16777619);
+    }
+    return `${conversationId}:${messages.length}:${(fingerprint >>> 0).toString(16)}`;
+  }, [conversationId, messages]);
+  const handleUseContextualNodeRead = useCallback((
+    result: ContextualNodeReadView,
+    _node: GraphProjectionNode,
+  ) => {
+    if (!mainCardId) {
+      setDeckStatusMessage('Main Card is unavailable for contextual graph selection.');
+      return;
+    }
+    const selected = result.dataAnchors.filter((anchor) => (
+      (anchor.authority === 'ThinkGraph' || anchor.authority === 'KnowGraph')
+      && Boolean(anchor.nativeId)
+    ));
+    if (!selected.length) {
+      setDeckStatusMessage('This contextual node read selected no native content.');
+      return;
+    }
+    setTransientCardGraphContext((current) => {
+      const existing = current[mainCardId] || [];
+      const replacementKeys = new Set(selected.map(
+        (anchor) => `${anchor.authority}:${anchor.nativeId}`,
+      ));
+      const retained = existing.filter((item) => !replacementKeys.has(
+        `${item.reference.authority}:${item.reference.nativeId}`,
+      ));
+      const additions: LoadedCardGraphReference[] = selected.map((anchor) => {
+        const side = anchor.authority === 'ThinkGraph'
+          ? result.sides.think
+          : result.sides.know;
+        const selectedItem = side.items?.find(
+          item => item.nativeId === anchor.nativeId,
+        );
+        return {
+          targetCardId: mainCardId,
+          reference: {
+            authority: anchor.authority,
+            nativeId: anchor.nativeId,
+            reason: anchor.reason,
+            order: 0,
+            boundedExpansion: 0,
+            resultLimit: 1,
+            required: true,
+          },
+          resolvedReferences: selectedItem ? [selectedItem.reference] : [],
+          resolvedContextMarkdown: result.modelContext,
+          graphProjection: {
+            schemaVersion: 'contextual-node-selection.v1',
+            authority: anchor.authority.toLowerCase(),
+            projectId: activeProject,
+            nodes: [],
+            edges: [],
+            counts: { nodes: 0, edges: 0 },
+          },
+          resolved: true,
+          ready: true,
+        };
+      });
+      return {
+        ...current,
+        [mainCardId]: [...retained, ...additions].map((item, order) => ({
+          ...item,
+          reference: { ...item.reference, order },
+        })),
+      };
+    });
+    setDeckStatusMessage(
+      `${selected.length} contextual native ${selected.length === 1 ? 'block' : 'blocks'} selected for Main; Python will reread the exact IDs on send.`,
+    );
+  }, [activeProject, mainCardId, setDeckStatusMessage]);
   useEffect(() => {
     const tick = () => setMoonPhase01(synodicPhaseFromDate(new Date()));
     tick();
@@ -1336,6 +1420,8 @@ export default function AgentBuilder(): React.ReactElement {
             attentionStatuses={graphAttention.statuses}
             jevAttentionVisual={graphAttention.jevAttentionVisual}
             onReadNativeFocusNeighborhood={graphAttention.readNativeNeighborhood}
+            onReadContextualNode={graphAttention.readContextualNode}
+            contextualReaderRevision={contextualReaderRevision}
             onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
               authority,
               node,
@@ -1344,6 +1430,7 @@ export default function AgentBuilder(): React.ReactElement {
               readerCardId: mainCardId,
             })}
             onUseAttentionNode={handleUseAttentionNode}
+            onUseContextualNodeRead={handleUseContextualNodeRead}
             onKindChange={setKnowledgeGraphKind}
           />
         </KnowledgeSurfaceErrorBoundary>

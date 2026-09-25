@@ -427,6 +427,63 @@ function boundedSharedContext(
   }));
 }
 
+function boundedContextualNodeReaderContext(
+  messages: ConversationMessage[],
+  main: AddressableAgent,
+): {
+  status: 'ready' | 'unavailable' | 'limit';
+  activeRequest: string;
+  messages: Array<Record<string, string>>;
+} {
+  const projected = messages
+    .filter((message) => (
+      (message.role === 'user' || message.role === 'assistant')
+      && message.status === 'complete'
+      && message.content.trim().length > 0
+    ))
+    .map((message) => sharedHistoryMessage(message, main));
+  let activeRequestIndex = -1;
+  for (let index = projected.length - 1; index >= 0; index -= 1) {
+    if (projected[index].role === 'user') {
+      activeRequestIndex = index;
+      break;
+    }
+  }
+  if (activeRequestIndex < 0) {
+    return { status: 'unavailable', activeRequest: '', messages: [] };
+  }
+  const activeRequest = projected[activeRequestIndex].text;
+  if (activeRequest.length > SHARED_CONTEXT_CHARACTER_LIMIT) {
+    return { status: 'limit', activeRequest: '', messages: [] };
+  }
+  const selectedIndexes = new Set<number>([activeRequestIndex]);
+  let characters = activeRequest.length;
+  for (
+    let index = projected.length - 1;
+    index >= 0 && selectedIndexes.size < SHARED_CONTEXT_MESSAGE_LIMIT;
+    index -= 1
+  ) {
+    if (index === activeRequestIndex) continue;
+    const candidate = projected[index];
+    if (characters + candidate.text.length > SHARED_CONTEXT_CHARACTER_LIMIT) continue;
+    selectedIndexes.add(index);
+    characters += candidate.text.length;
+  }
+  const selected = [...selectedIndexes]
+    .sort((left, right) => left - right)
+    .map((index) => projected[index]);
+  return {
+    status: 'ready',
+    activeRequest,
+    messages: selected.map((view) => ({
+      role: view.role,
+      speaker: view.speaker.label,
+      target: view.target?.label || '',
+      content: view.text,
+    })),
+  };
+}
+
 async function nativeMainHistorySeed(
   projectId: string,
   deckId: string,
@@ -625,6 +682,7 @@ async function prepareMainCliRun(args: {
   const snapshotRevisionId = String(saved.card?._cardRevisionId || '').trim();
   if (!saved.card || !snapshotRevisionId) throw new Error('card_revision_changed');
   const discoveredToolCatalog = saved.catalog;
+  const openaiDefault = process.env.OPENAI_DEFAULT_MODEL || 'gpt-5.6-luna';
   const prepared: any = await requestPythonRailsJson('/domain/main/runs/begin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -642,6 +700,7 @@ async function prepareMainCliRun(args: {
       discoveredTools: discoveredToolCatalog.tools,
       discoveredToolCatalogState: discoveredToolCatalog.state,
       unavailableToolCatalogFamilies: discoveredToolCatalog.unavailableFamilies,
+      configuredModels: listConfiguredModelOptions(openaiDefault),
     }),
   });
   if (
@@ -2558,6 +2617,76 @@ mainRoutes.get('/session/events', async (req, res) => {
   res.write(': native Main Gateway events\n\n');
   res.once('close', detach);
   return undefined;
+});
+
+mainRoutes.post('/session/contextual-node-read', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const sourceRevision = String(req.body?.sourceRevision || '').trim();
+  const clientContextRevision = String(req.body?.clientContextRevision || '').trim();
+  const rawMembers = req.body?.nativeMembers;
+  if (
+    !projectId
+    || !conversationId
+    || !sourceRevision
+    || sourceRevision.length > 1_024
+    || !Array.isArray(rawMembers)
+    || rawMembers.length < 1
+    || rawMembers.length > 64
+  ) {
+    return res.status(400).json({ ok: false, error: 'contextual_node_read_request_invalid' });
+  }
+  const nativeMembers: Array<{ authority: 'ThinkGraph' | 'KnowGraph'; nativeId: string }> = [];
+  const seen = new Set<string>();
+  for (const value of rawMembers) {
+    const authority = String(value?.authority || '');
+    const nativeId = String(value?.nativeId || '').trim();
+    const identity = `${authority}\u0000${nativeId}`;
+    if (
+      !['ThinkGraph', 'KnowGraph'].includes(authority)
+      || !nativeId
+      || nativeId.length > 1_024
+      || seen.has(identity)
+    ) {
+      return res.status(400).json({ ok: false, error: 'contextual_node_read_members_invalid' });
+    }
+    seen.add(identity);
+    nativeMembers.push({
+      authority: authority as 'ThinkGraph' | 'KnowGraph',
+      nativeId,
+    });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+
+  try {
+    const authority = await resolveSharedChatAuthority(projectId, deckId);
+    const messages = await getConversationMessages(projectId, conversationId);
+    const result = await requestPythonRailsJson('/graph/contextual-node-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        deckId,
+        cardId: authority.main.cardId,
+        conversationId,
+        sourceRevision,
+        clientContextRevision,
+        readerContext: boundedContextualNodeReaderContext(messages, authority.main),
+        nativeMembers,
+      }),
+    }, { timeoutMs: 60_000 });
+    return res.json(result);
+  } catch (error) {
+    const reason = error instanceof Error
+      ? error.message
+      : 'contextual_node_read_unavailable';
+    logHarnessTrace(`[contextual-node-read] unavailable reason=${redactTrace(reason)}`);
+    return res.status(503).json({
+      ok: false,
+      error: 'contextual_node_read_unavailable',
+    });
+  }
 });
 
 mainRoutes.post('/session/chat', async (req, res) => {

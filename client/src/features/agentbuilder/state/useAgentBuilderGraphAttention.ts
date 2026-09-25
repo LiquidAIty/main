@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type {
+  ContextualNodeReadView,
   GraphProjectionEdge,
   GraphProjectionNode,
   GraphProjectionV1,
+  ReadContextualNode,
 } from '../../../components/knowledge/NativeAuthorityGraphSurface';
 import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhysics';
 import { callCbmTool, CANONICAL_CBM_PROJECT_NAME } from '../../../components/codegraph/resolveCodeGraphProjectIdentity';
@@ -151,6 +153,7 @@ export type GraphAttentionState = {
     nativeId: string,
     signal?: AbortSignal,
   ) => Promise<GraphProjectionV1>;
+  readContextualNode: ReadContextualNode;
   expandNode: (request: ExpandRequest) => Promise<void>;
 };
 
@@ -1121,6 +1124,42 @@ export default function useAgentBuilderGraphAttention({
     activeScopeRef.current = null;
   }, [projectId, conversationId, updateJevAttentionVisual]);
 
+  const readContextualNode = useCallback<ReadContextualNode>(async (
+    request,
+    signal,
+  ): Promise<ContextualNodeReadView> => {
+    const response = await fetch('/api/main/session/contextual-node-read', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        deckId,
+        conversationId,
+        sourceRevision: request.sourceRevision,
+        clientContextRevision: request.clientContextRevision,
+        nativeMembers: request.nativeMembers,
+      }),
+      ...(signal ? { signal } : {}),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(payload)) {
+      throw new Error(String(payload?.error || `HTTP ${response.status}`));
+    }
+    if (
+      payload.schemaVersion !== 'contextual-node-read.v1'
+      || payload.sourceRevision !== request.sourceRevision
+      || payload.clientContextRevision !== request.clientContextRevision
+      || !isRecord(payload.sides)
+      || !isRecord(payload.sides.think)
+      || !isRecord(payload.sides.know)
+      || !Array.isArray(payload.dataAnchors)
+    ) {
+      throw new Error('contextual_node_read_response_invalid');
+    }
+    return payload as ContextualNodeReadView;
+  }, [conversationId, deckId, projectId]);
+
   const readNativeNeighborhood = useCallback(async (
     authority: NativeNeighborhoodAuthority,
     nativeId: string,
@@ -1208,6 +1247,7 @@ export default function useAgentBuilderGraphAttention({
     observeAttentionSession,
     observeThinkGraphRevision,
     observeThinkGraphFailure,
+    readContextualNode,
     readNativeNeighborhood,
     expandNode,
   };

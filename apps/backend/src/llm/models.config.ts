@@ -5,6 +5,12 @@ export type ModelEntry = {
   provider: Provider;
   id: string;
   context?: number;
+  routingProfile?: {
+    taskFit: string;
+    supportsTools: boolean;
+    inputModalities: string[];
+    reasoningEfforts: string[];
+  };
 };
 
 export type ConfiguredModelOption = {
@@ -13,6 +19,8 @@ export type ConfiguredModelOption = {
   label: string;
   providerModelId: string;
   default: boolean;
+  contextWindow?: number;
+  routingProfile?: ModelEntry['routingProfile'];
 };
 
 /**
@@ -25,9 +33,30 @@ export type ConfiguredModelOption = {
  */
 export const MODEL_REGISTRY: Record<string, ModelEntry> = {
   // --- OpenAI GPT-5.6 family (account-login / OAuth runtime) ---
-  "gpt-5.6-sol": { label: "GPT-5.6 Sol", provider: "openai", id: "gpt-5.6-sol", context: 1_050_000 },
-  "gpt-5.6-terra": { label: "GPT-5.6 Terra", provider: "openai", id: "gpt-5.6-terra", context: 1_050_000 },
-  "gpt-5.6-luna": { label: "GPT-5.6 Luna", provider: "openai", id: "gpt-5.6-luna", context: 1_050_000 },
+  "gpt-5.6-sol": {
+    label: "GPT-5.6 Sol", provider: "openai", id: "gpt-5.6-sol", context: 1_050_000,
+    routingProfile: {
+      taskFit: "Complex coding and important reasoning where depth is more important than lowest latency.",
+      supportsTools: true, inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+  },
+  "gpt-5.6-terra": {
+    label: "GPT-5.6 Terra", provider: "openai", id: "gpt-5.6-terra", context: 1_050_000,
+    routingProfile: {
+      taskFit: "Balanced model for straightforward work that still benefits from deliberate reasoning.",
+      supportsTools: true, inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    },
+  },
+  "gpt-5.6-luna": {
+    label: "GPT-5.6 Luna", provider: "openai", id: "gpt-5.6-luna", context: 1_050_000,
+    routingProfile: {
+      taskFit: "Fast and efficient model for bounded, well-specified, lower-complexity work.",
+      supportsTools: true, inputModalities: ["text", "image"],
+      reasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+    },
+  },
 
   // --- OpenRouter (curated defaults, all confirmed in the live catalog) ---
   "or-google-gemini-2.5-pro": { label: "OpenRouter Gemini 2.5 Pro", provider: "openrouter", id: "google/gemini-2.5-pro", context: 1000000 },
@@ -53,6 +82,8 @@ export function listConfiguredModelOptions(openaiDefault: string): ConfiguredMod
       label: model.label,
       providerModelId: model.id,
       default: model.provider === 'openai' && key === openaiDefault,
+      ...(model.context ? { contextWindow: model.context } : {}),
+      ...(model.routingProfile ? { routingProfile: model.routingProfile } : {}),
     });
     if (model.provider === 'openrouter') {
       add({
@@ -61,6 +92,8 @@ export function listConfiguredModelOptions(openaiDefault: string): ConfiguredMod
         label: `${model.label} (Direct ID)`,
         providerModelId: model.id,
         default: false,
+        ...(model.context ? { contextWindow: model.context } : {}),
+        ...(model.routingProfile ? { routingProfile: model.routingProfile } : {}),
       });
     }
   }

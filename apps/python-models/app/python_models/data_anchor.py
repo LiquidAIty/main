@@ -25,6 +25,7 @@ _GRAPH_SEED_LIMIT = 48_000
 _KNOWGRAPH_RESULT_LIMIT = 24
 _KNOWGRAPH_EPISODE_LIMIT = 50
 _KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
+_CONTEXTUAL_NODE_VISIBLE_PER_SIDE = 2
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
 
 
@@ -194,6 +195,7 @@ def read_thinkgraph_exact(
     db_path: str | Path | None = None,
     bounded_expansion: int = 0,
     result_limit: int = _KNOWGRAPH_RESULT_LIMIT,
+    native_reader: Callable[[str, str], dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Read the exact memory through the same Engraphis service used by agents."""
     if db_path is not None:
@@ -201,16 +203,19 @@ def read_thinkgraph_exact(
     if bounded_expansion not in (0, 1) or not 1 <= result_limit <= _KNOWGRAPH_RESULT_LIMIT:
         raise DataAnchorError("data_anchor_expansion_invalid")
     try:
-        # This resolver also runs inside MCP for selected-Card handoffs. Only
-        # Python rails may own Engraphis; never instantiate it in this process.
-        request = Request(
-            os.environ.get("PYTHON_RAILS_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
-            data=json.dumps({"projectId": project_id, "operation": "inspect",
-                             "arguments": {"nativeId": native_id}}).encode("utf-8"),
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        with urlopen(request, timeout=30) as response:
-            native = json.load(response)
+        if native_reader is not None:
+            native = native_reader(project_id, native_id)
+        else:
+            # This resolver also runs inside MCP for selected-Card handoffs. Only
+            # Python rails may own Engraphis; never instantiate it in this process.
+            request = Request(
+                os.environ.get("PYTHON_RAILS_URL", "http://127.0.0.1:8003").rstrip("/") + "/thinkgraph/operation",
+                data=json.dumps({"projectId": project_id, "operation": "inspect",
+                                 "arguments": {"nativeId": native_id}}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urlopen(request, timeout=30) as response:
+                native = json.load(response)
     except HTTPError as error:
         if error.code == 409:
             return None
@@ -263,6 +268,14 @@ def read_thinkgraph_exact(
         "authority": "ThinkGraph", "nativeId": row["id"], "nativeKind": "node",
         "recordId": row["id"], "type": row.get("mtype", "semantic"),
         "title": row.get("title", ""), "content": str(row.get("content", ""))[:_ANCHOR_BODY_LIMIT],
+        "properties": {
+            "memoryType": row.get("mtype", "semantic"),
+            "validFrom": row.get("valid_from"),
+            "validTo": row.get("valid_to"),
+            "validToRecordedAt": row.get("valid_to_recorded_at"),
+            "ingestedAt": row.get("ingested_at"),
+            "expiredAt": row.get("expired_at"),
+        },
         "metadata": row.get("metadata", {}), "provenance": row.get("provenance", {}),
         "asOf": "current", "readOperation": "engraphis_get_memory",
         "relationshipEvidence": [{
@@ -429,6 +442,144 @@ def _portable_know(
             "jev": jev,
         } if jev is not None else {}),
     }
+
+
+def list_contextual_know_candidates(
+    project_id: str,
+    native_entity_ids: list[str],
+    *,
+    driver_factory: Callable[[], Any] | None = None,
+    episode_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Read every direct project-scoped Graphiti fact on exact node members."""
+
+    requested = list(dict.fromkeys(
+        str(value or "").strip()
+        for value in native_entity_ids
+        if str(value or "").strip()
+    ))
+    if not requested or len(requested) > 64:
+        raise DataAnchorError("contextual_node_know_members_invalid")
+    scope_ids = [project_id, f"liquidaity-{project_id}"]
+    driver, database = _knowgraph_driver(driver_factory)
+    try:
+        with driver.session(database=database) as session:
+            rows = _neo4j_rows(session.run(
+                """
+                MATCH (a)-[r]->(b)
+                WHERE (
+                    coalesce(toString(a.uuid), elementId(a)) IN $nativeIds
+                    OR coalesce(toString(b.uuid), elementId(b)) IN $nativeIds
+                )
+                  AND toString(a.group_id) IN $scopeIds
+                  AND toString(b.group_id) IN $scopeIds
+                  AND toString(r.group_id) IN $scopeIds
+                RETURN coalesce(toString(r.uuid), elementId(r)) AS nativeId,
+                       type(r) AS relationshipType,
+                       properties(r) AS properties,
+                       coalesce(toString(a.uuid), elementId(a)) AS sourceNativeId,
+                       coalesce(toString(b.uuid), elementId(b)) AS targetNativeId,
+                       coalesce(toString(a.name), '') AS sourceName,
+                       coalesce(toString(b.name), '') AS targetName
+                ORDER BY nativeId
+                """,
+                nativeIds=requested,
+                scopeIds=scope_ids,
+            ))
+    except Exception as error:
+        if isinstance(error, DataAnchorError):
+            raise
+        raise DataAnchorError(
+            "contextual_node_know_membership_unavailable"
+        ) from error
+    finally:
+        close = getattr(driver, "close", None)
+        if callable(close):
+            close()
+
+    normalized_rows: list[dict[str, Any]] = []
+    episode_ids: list[str] = []
+    seen_fact_ids: set[str] = set()
+    for raw in rows:
+        native_id = str(raw.get("nativeId") or "").strip()
+        if not native_id or native_id in seen_fact_ids:
+            continue
+        seen_fact_ids.add(native_id)
+        properties = _without_native_embedding_vectors(_json_safe(
+            raw.get("properties")
+            if isinstance(raw.get("properties"), dict) else {}
+        ))
+        normalized = {
+            "nativeId": native_id,
+            "relationshipType": str(raw.get("relationshipType") or "Fact"),
+            "properties": properties,
+            "sourceNativeId": str(raw.get("sourceNativeId") or ""),
+            "targetNativeId": str(raw.get("targetNativeId") or ""),
+            "sourceName": str(raw.get("sourceName") or ""),
+            "targetName": str(raw.get("targetName") or ""),
+        }
+        normalized_rows.append(normalized)
+        for episode_id in _episode_ids(properties):
+            if episode_id not in episode_ids:
+                episode_ids.append(episode_id)
+
+    read_episodes = episode_reader or read_knowgraph_episodes_exact
+    episodes_by_id: dict[str, dict[str, Any]] = {}
+    try:
+        for start in range(0, len(episode_ids), _KNOWGRAPH_EPISODE_LIMIT):
+            batch = episode_ids[start:start + _KNOWGRAPH_EPISODE_LIMIT]
+            for episode in read_episodes(project_id, batch):
+                episode_id = str(episode.get("uuid") or "").strip()
+                if episode_id:
+                    episodes_by_id[episode_id] = _json_safe(episode)
+    except Exception as error:
+        if isinstance(error, DataAnchorError):
+            raise
+        raise DataAnchorError(
+            "contextual_node_know_episode_read_failed"
+        ) from error
+
+    candidates: list[dict[str, Any]] = []
+    for row in normalized_rows:
+        properties = row["properties"]
+        supporting = [
+            episodes_by_id[episode_id]
+            for episode_id in _episode_ids(properties)
+            if episode_id in episodes_by_id
+        ]
+        portable = _portable_know(
+            row["nativeId"],
+            properties,
+            source_id=row["sourceNativeId"],
+            target_id=row["targetNativeId"],
+            source_name=row["sourceName"],
+            target_name=row["targetName"],
+            episodes=supporting,
+        )
+        candidates.append({
+            "nativeId": row["nativeId"],
+            "title": str(
+                properties.get("name")
+                or properties.get("edge_type")
+                or row["relationshipType"]
+                or row["nativeId"]
+            ),
+            "fact": str(properties.get("fact") or ""),
+            "sourceEntity": portable["sourceEntity"],
+            "targetEntity": portable["targetEntity"],
+            "nativeRelation": portable["nativeRelation"],
+            "supportingEpisodeUuids": portable["supportingEpisodeUuids"],
+            "supportingEpisodes": portable["supportingEpisodes"],
+            "dates": {
+                "createdAt": portable["createdAt"],
+                "referenceTime": portable["referenceTime"],
+                "validAt": portable["validAt"],
+                "invalidAt": portable["invalidAt"],
+                "expiredAt": portable["expiredAt"],
+                "temporalStatus": portable["temporalStatus"],
+            },
+        })
+    return candidates
 
 
 def _persisted_knowgraph_jev(
@@ -1436,6 +1587,47 @@ def _merge_graph_projection(target: dict[str, Any], incoming: dict[str, Any]) ->
     target["counts"] = {"nodes": len(target["nodes"]), "edges": len(target["edges"])}
 
 
+def _read_exact_anchor_record(
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    anchor: dict[str, Any],
+    *,
+    thinkgraph_db_path: str | Path | None = None,
+    thinkgraph_native_reader: Callable[[str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Use the existing authority owner for one exact Data Anchor read."""
+
+    authority = anchor["authority"]
+    native_id = str(anchor.get("nativeId") or "").strip()
+    if authority == "ThinkGraph":
+        return read_thinkgraph_exact(
+            project_id,
+            native_id,
+            db_path=thinkgraph_db_path,
+            bounded_expansion=anchor["boundedExpansion"],
+            result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
+            native_reader=thinkgraph_native_reader,
+        )
+    if authority == "KnowGraph":
+        return read_knowgraph_exact(
+            project_id,
+            native_id,
+            bounded_expansion=anchor["boundedExpansion"],
+            result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
+        )
+    if authority == "CodeGraph":
+        return read_codegraph_exact(
+            project_id,
+            deck_id,
+            card_id,
+            native_id,
+            bounded_expansion=anchor["boundedExpansion"],
+            result_limit=int(anchor.get("resultLimit", 24)),
+        )
+    raise DataAnchorError(f"data_anchor_resolver_unavailable:{authority}")
+
+
 def resolve_data_anchors(
     project_id: str,
     anchors: list[dict[str, Any]],
@@ -1444,6 +1636,7 @@ def resolve_data_anchors(
     card_id: str = "",
     search_text: str = "",
     thinkgraph_db_path: str | Path | None = None,
+    thinkgraph_native_reader: Callable[[str, str], dict[str, Any]] | None = None,
     graph_projection: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Resolve ordered anchors and return model text plus native references."""
@@ -1459,32 +1652,14 @@ def resolve_data_anchors(
         native_id = str(anchor.get("nativeId") or "").strip()
         if not native_id:
             continue
-        if authority == "ThinkGraph":
-            record = read_thinkgraph_exact(
-                project_id,
-                native_id,
-                db_path=thinkgraph_db_path,
-                bounded_expansion=anchor["boundedExpansion"],
-                result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
-            )
-        elif authority == "KnowGraph":
-            record = read_knowgraph_exact(
-                project_id,
-                native_id,
-                bounded_expansion=anchor["boundedExpansion"],
-                result_limit=int(anchor.get("resultLimit", _KNOWGRAPH_RESULT_LIMIT)),
-            )
-        elif authority == "CodeGraph":
-            record = read_codegraph_exact(
-                project_id,
-                deck_id,
-                card_id,
-                native_id,
-                bounded_expansion=anchor["boundedExpansion"],
-                result_limit=int(anchor.get("resultLimit", 24)),
-            )
-        else:
-            raise DataAnchorError(f"data_anchor_resolver_unavailable:{authority}")
+        record = _read_exact_anchor_record(
+            project_id,
+            deck_id,
+            card_id,
+            anchor,
+            thinkgraph_db_path=thinkgraph_db_path,
+            thinkgraph_native_reader=thinkgraph_native_reader,
+        )
         if record is None:
             if anchor["required"]:
                 raise DataAnchorError("data_anchor_required_not_found")
@@ -1569,3 +1744,311 @@ def resolve_data_anchors(
     if len(graph_seed.encode("utf-8")) > _GRAPH_SEED_LIMIT:
         raise DataAnchorError("data_anchor_seed_limit_exceeded")
     return graph_seed, references
+
+
+def contextual_node_read(
+    payload: dict[str, Any],
+    *,
+    think_candidate_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
+    know_candidate_reader: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
+    decision_reader: Callable[
+        [Any, list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]
+    ] | None = None,
+    thinkgraph_native_reader: Callable[[str, str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Hydrate all fitting items, or select two per overflowing source side."""
+
+    if not isinstance(payload, dict):
+        raise DataAnchorError("contextual_node_request_invalid")
+    project_id = str(payload.get("projectId") or "").strip()
+    deck_id = str(payload.get("deckId") or "").strip()
+    card_id = str(payload.get("cardId") or "").strip()
+    source_revision = str(payload.get("sourceRevision") or "").strip()
+    client_context_revision = str(
+        payload.get("clientContextRevision") or ""
+    ).strip()
+    reader_context = payload.get("readerContext")
+    raw_members = payload.get("nativeMembers")
+    if (
+        not project_id
+        or not deck_id
+        or not card_id
+        or not source_revision
+        or len(source_revision) > 1_024
+        or not isinstance(raw_members, list)
+        or not 1 <= len(raw_members) <= 64
+    ):
+        raise DataAnchorError("contextual_node_request_invalid")
+
+    members: dict[str, list[str]] = {"ThinkGraph": [], "KnowGraph": []}
+    seen_members: set[tuple[str, str]] = set()
+    for raw_member in raw_members:
+        if not isinstance(raw_member, dict):
+            raise DataAnchorError("contextual_node_members_invalid")
+        authority = str(raw_member.get("authority") or "")
+        native_id = str(raw_member.get("nativeId") or "").strip()
+        identity = (authority, native_id)
+        if (
+            authority not in members
+            or not native_id
+            or len(native_id) > 1_024
+            or identity in seen_members
+        ):
+            raise DataAnchorError("contextual_node_members_invalid")
+        seen_members.add(identity)
+        members[authority].append(native_id)
+
+    from app.python_models.engraphis import (
+        decide_contextual_node_items,
+        inspect as inspect_thinkgraph,
+        list_contextual_think_candidates,
+    )
+
+    read_thinks = think_candidate_reader or list_contextual_think_candidates
+    read_knows = know_candidate_reader or list_contextual_know_candidates
+    decide = decision_reader or decide_contextual_node_items
+    native_think_read = thinkgraph_native_reader or inspect_thinkgraph
+
+    candidates: dict[str, list[dict[str, Any]]] = {
+        "think": [], "know": [],
+    }
+    retrieval_failures: dict[str, str] = {}
+    if members["ThinkGraph"]:
+        try:
+            candidates["think"] = read_thinks(
+                project_id, members["ThinkGraph"]
+            )
+        except Exception:
+            retrieval_failures["think"] = (
+                "contextual_node_think_retrieval_failed"
+            )
+    if members["KnowGraph"]:
+        try:
+            candidates["know"] = read_knows(
+                project_id, members["KnowGraph"]
+            )
+        except Exception:
+            retrieval_failures["know"] = (
+                "contextual_node_know_retrieval_failed"
+            )
+
+    # A semantic ranking is useful only when a source side exceeds the two-item
+    # inspector/model-context capacity.  Fitting sides pass through in their
+    # native reader order, with no fake Choice, probability, or abstention.
+    ranked_candidates = {
+        side: side_candidates
+        if len(side_candidates) > _CONTEXTUAL_NODE_VISIBLE_PER_SIDE else []
+        for side, side_candidates in candidates.items()
+    }
+    if any(ranked_candidates.values()):
+        decision = decide(
+            reader_context,
+            ranked_candidates["think"],
+            ranked_candidates["know"],
+        )
+    else:
+        decision = {
+            "requestCount": 0,
+            "questionCount": 0,
+            "decisionId": None,
+            "provider": "",
+            "requestedModel": "",
+            "resolvedModel": "",
+            "usage": {},
+            "sides": {},
+        }
+    decision_sides = decision.get("sides")
+    if not isinstance(decision_sides, dict):
+        raise DataAnchorError("contextual_node_decision_invalid")
+    for side, side_candidates in candidates.items():
+        if (
+            side not in retrieval_failures
+            and len(side_candidates) <= _CONTEXTUAL_NODE_VISIBLE_PER_SIDE
+        ):
+            native_ids = [
+                str(candidate.get("nativeId") or "").strip()
+                for candidate in side_candidates
+                if isinstance(candidate, dict)
+                and str(candidate.get("nativeId") or "").strip()
+            ]
+            decision_sides[side] = {
+                "status": "selected" if native_ids else "empty",
+                "candidateCount": len(native_ids),
+                "nativeIds": native_ids,
+            }
+    for side, error_code in retrieval_failures.items():
+        decision_sides[side] = {
+            "status": "retrieval_failed",
+            "errorCode": error_code,
+        }
+    for side, authority in (("think", "ThinkGraph"), ("know", "KnowGraph")):
+        if not members[authority] and side not in retrieval_failures:
+            decision_sides[side] = {"status": "missing"}
+
+    anchors: list[dict[str, Any]] = []
+    rendered: list[str] = []
+    references: list[dict[str, Any]] = []
+    public_sides: dict[str, dict[str, Any]] = {}
+    for side, authority in (("think", "ThinkGraph"), ("know", "KnowGraph")):
+        outcome = decision_sides.get(side)
+        if not isinstance(outcome, dict):
+            outcome = {"status": "invalid", "errorCode": "contextual_node_side_missing"}
+        status = str(outcome.get("status") or "invalid")
+        candidate_count = outcome.get("candidateCount")
+        public_side: dict[str, Any] = {
+            "status": status,
+            **({"candidateCount": int(candidate_count)}
+               if isinstance(candidate_count, int) and candidate_count >= 0 else {}),
+            **({"errorCode": str(outcome["errorCode"])}
+               if outcome.get("errorCode") else {}),
+        }
+        raw_native_ids = outcome.get("nativeIds")
+        if isinstance(raw_native_ids, list):
+            selected_native_ids = list(dict.fromkeys(
+                str(value or "").strip()
+                for value in raw_native_ids
+                if str(value or "").strip()
+            ))[:2]
+        else:
+            legacy_native_id = str(outcome.get("nativeId") or "").strip()
+            selected_native_ids = [legacy_native_id] if legacy_native_id else []
+        candidate_ids = {
+            str(candidate.get("nativeId") or "").strip()
+            for candidate in candidates[side]
+            if isinstance(candidate, dict)
+        }
+        if status == "selected" and not selected_native_ids:
+            public_side = {
+                **public_side,
+                "status": "invalid",
+                "errorCode": "contextual_node_selected_ids_missing",
+            }
+        elif status == "selected" and any(
+            native_id not in candidate_ids for native_id in selected_native_ids
+        ):
+            public_side = {
+                **public_side,
+                "status": "invalid",
+                "errorCode": "contextual_node_selected_ids_not_candidates",
+            }
+        elif status == "selected":
+            items: list[dict[str, Any]] = []
+            hydration_failures: list[str] = []
+            for native_id in selected_native_ids:
+                anchor = {
+                    "authority": authority,
+                    "nativeId": native_id,
+                    "reason": (
+                        "Selected on demand for the current authorized contextual node read."
+                    ),
+                    "order": len(anchors),
+                    "boundedExpansion": 0,
+                    "resultLimit": 1,
+                    "required": True,
+                }
+                try:
+                    record = _read_exact_anchor_record(
+                        project_id,
+                        deck_id,
+                        card_id,
+                        anchor,
+                        thinkgraph_native_reader=(
+                            native_think_read if authority == "ThinkGraph" else None
+                        ),
+                    )
+                except Exception:
+                    record = None
+                if record is None:
+                    hydration_failures.append(native_id)
+                    continue
+                rendered_block = _render_anchor(anchor, record)
+                reference = _materialized_reference(
+                    anchor,
+                    record,
+                    truncated=record.get("truncated") is True,
+                )
+                anchors.append(anchor)
+                rendered.append(rendered_block)
+                references.append(reference)
+                items.append({
+                    "nativeId": native_id,
+                    "block": _json_safe(record),
+                    "dataAnchor": anchor,
+                    "reference": reference,
+                })
+            if items:
+                public_side = {
+                    **public_side,
+                    "status": "partial" if hydration_failures else "selected",
+                    "selectedNativeIds": selected_native_ids,
+                    "items": items,
+                    **({
+                        "hydrationFailedNativeIds": hydration_failures,
+                        "errorCode": "contextual_node_hydration_partial",
+                    } if hydration_failures else {}),
+                }
+            else:
+                public_side = {
+                    **public_side,
+                    "status": "hydration_failed",
+                    "selectedNativeIds": selected_native_ids,
+                    "hydrationFailedNativeIds": hydration_failures,
+                    "errorCode": "contextual_node_hydration_failed",
+                }
+        public_sides[side] = public_side
+
+    selected_count = sum(
+        len(side.get("items") or []) for side in public_sides.values()
+    )
+    failure_states = {
+        "retrieval_failed", "limit", "unavailable", "timeout", "invalid",
+        "error", "hydration_failed", "context_limit", "partial",
+    }
+    has_failure = any(
+        side.get("status") in failure_states for side in public_sides.values()
+    )
+    if selected_count and has_failure:
+        status = "partial"
+    elif selected_count:
+        status = "success"
+    elif any(side.get("status") == "context_unavailable"
+             for side in public_sides.values()):
+        status = "context_unavailable"
+    elif has_failure:
+        status = "unavailable"
+    elif all(side.get("status") == "missing" for side in public_sides.values()):
+        status = "missing"
+    else:
+        status = "empty"
+
+    graph_seed = "\n\n".join(rendered)
+    if len(graph_seed.encode("utf-8")) > _GRAPH_SEED_LIMIT:
+        raise DataAnchorError("data_anchor_seed_limit_exceeded")
+    active_request = (
+        str(reader_context.get("activeRequest") or "").strip()
+        if isinstance(reader_context, dict) else ""
+    )
+    context_label = active_request[:240]
+    if len(active_request) > 240:
+        context_label += "…"
+    return {
+        "schemaVersion": "contextual-node-read.v1",
+        "status": status,
+        "sourceRevision": source_revision,
+        "clientContextRevision": client_context_revision,
+        "operationId": decision.get("decisionId"),
+        "contextLabel": context_label,
+        "requestCount": int(decision.get("requestCount") or 0),
+        "questionCount": int(decision.get("questionCount") or 0),
+        "provider": str(decision.get("provider") or ""),
+        "requestedModel": str(decision.get("requestedModel") or ""),
+        "resolvedModel": str(decision.get("resolvedModel") or ""),
+        "usage": (
+            decision.get("usage")
+            if isinstance(decision.get("usage"), dict) else {}
+        ),
+        "sides": public_sides,
+        "dataAnchors": anchors,
+        "selectedReferences": references,
+        "modelContext": graph_seed,
+    }

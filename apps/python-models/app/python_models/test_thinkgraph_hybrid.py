@@ -86,6 +86,23 @@ def payload(run_id: str = "run-one") -> dict[str, str]:
     }
 
 
+def test_retired_evidence_judgment_is_not_exposed_from_native_think_metadata():
+    stored = {
+        "structured_extraction": {
+            "think": {"kind": "OBSERVATION", "summary": "Retained Think."},
+        },
+        "needs_evidence": {
+            "winner": "NO",
+            "distribution": {"YES": 0.07, "NO": 0.93},
+        },
+    }
+
+    exposed = adapter._public_think_metadata(stored)
+
+    assert exposed == {"structured_extraction": stored["structured_extraction"]}
+    assert "needs_evidence" in stored
+
+
 def card_run(run_id: str = "thinkgraph-run-one") -> dict[str, str]:
     return {
         "runId": run_id,
@@ -218,6 +235,72 @@ def persist_direct_think(
                 commit=False,
             )
     return memory_id
+
+
+def test_contextual_think_candidates_are_complete_direct_native_incidence(
+    hybrid,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = hybrid.get_service()
+    workspace_id = service.store.get_or_create_workspace("project-one")
+    graph = hybrid._apply_accepted_decision(
+        service.store,
+        source_name="Alpha",
+        target_name="Beta",
+        workspace_id=workspace_id,
+        repo_id=None,
+        payload=payload("graph-run"),
+        memory_ids=[],
+        decision=decision("QUALIFIES"),
+        stage="test",
+    )
+    older = persist_direct_think(
+        hybrid,
+        workspace_id=workspace_id,
+        entity_ids=[graph["source"]],
+        entity_names=["Alpha"],
+        summary="Older but applicable Alpha constraint.",
+        run_id="older-run",
+    )
+    newer = persist_direct_think(
+        hybrid,
+        workspace_id=workspace_id,
+        entity_ids=[graph["source"]],
+        entity_names=["Alpha"],
+        summary="Newer Alpha implementation note.",
+        run_id="newer-run",
+    )
+    unrelated = persist_direct_think(
+        hybrid,
+        workspace_id=workspace_id,
+        entity_ids=[graph["target"]],
+        entity_names=["Beta"],
+        summary="Beta-only note.",
+        run_id="other-run",
+    )
+    original_get_memories = service.store.get_memories
+
+    def with_legacy_grade(memory_ids):
+        memories = original_get_memories(memory_ids)
+        if older in memories:
+            memories[older].metadata["needs_evidence"] = {
+                "winner": "NO", "distribution": {"YES": 0.07, "NO": 0.93},
+            }
+        return memories
+
+    monkeypatch.setattr(service.store, "get_memories", with_legacy_grade)
+    candidates = hybrid.list_contextual_think_candidates(
+        "project-one", [graph["source"]], service=service,
+    )
+
+    assert [candidate["nativeId"] for candidate in candidates] == sorted([older, newer])
+    assert unrelated not in {candidate["nativeId"] for candidate in candidates}
+    assert all(candidate["incidentEntityIds"] == [graph["source"]] for candidate in candidates)
+    assert "needs_evidence" not in json.dumps(candidates)
+    assert {candidate["content"] for candidate in candidates} == {
+        "Older but applicable Alpha constraint.",
+        "Newer Alpha implementation note.",
+    }
 
 
 def test_jev_choice_requires_complete_vocabulary_and_uses_winner_probability():

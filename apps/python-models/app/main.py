@@ -193,6 +193,20 @@ async def graph_jev_focus(payload: dict[str, Any]):
         }
 
 
+@app.post("/graph/contextual-node-read")
+async def graph_contextual_node_read(payload: dict[str, Any]):
+    """Select and hydrate winner-only native contents for one node opening."""
+    from app.python_models.data_anchor import DataAnchorError, contextual_node_read
+    import asyncio
+
+    try:
+        return await asyncio.to_thread(contextual_node_read, payload)
+    except DataAnchorError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    except (RuntimeError, ValueError, KeyError) as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
+
 @app.post("/codegraph/read")
 def codegraph_read(payload: dict[str, Any]):
     from app.python_models.data_anchor import read_codegraph_tool

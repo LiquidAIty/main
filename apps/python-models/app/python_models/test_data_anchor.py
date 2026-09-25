@@ -37,8 +37,10 @@ def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
         data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})
 
 from app.python_models.data_anchor import (
+    contextual_node_read,
     DataAnchorError,
     empty_graph_projection,
+    list_contextual_know_candidates,
     read_codegraph_exact,
     read_knowgraph_episodes_exact,
     read_knowgraph_exact,
@@ -48,6 +50,402 @@ from app.python_models.data_anchor import (
     search_knowgraph_hybrid,
 )
 from app.python_models import engraphis, data_anchor
+
+
+def _contextual_candidate(native_id: str, text: str) -> dict:
+    return {"nativeId": native_id, "title": native_id, "content": text}
+
+
+def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = []
+    think_a = engraphis._contextual_node_choice_id("think", "mem-a")
+    think_b = engraphis._contextual_node_choice_id("think", "mem-b")
+    know_a = engraphis._contextual_node_choice_id("know", "fact-a")
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "decision-one",
+                "provider": "TypeSafe",
+                "model": engraphis.JEV_MODEL,
+                "usage": {"prompt_tokens": 321},
+                "answers": {
+                    "think": {
+                        "type": "choice",
+                        "choice": think_b,
+                        "probabilities": {
+                            think_a: 0.45,
+                            think_b: 0.45,
+                            "NONE_RELEVANT": 0.10,
+                        },
+                    },
+                    "know": {
+                        "type": "choice",
+                        "choice": "NONE_RELEVANT",
+                        "probabilities": {
+                            know_a: 0.25,
+                            "NONE_RELEVANT": 0.75,
+                        },
+                    },
+                },
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            observed.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
+    monkeypatch.setattr(engraphis.httpx, "Client", Client)
+    result = engraphis.decide_contextual_node_items(
+        {
+            "status": "ready",
+            "activeRequest": "Which implementation constraint matters now?",
+            "messages": [{
+                "role": "user", "speaker": "You", "target": "Main",
+                "content": "Which implementation constraint matters now?",
+            }],
+        },
+        [
+            _contextual_candidate("mem-b", "Newer but off-topic."),
+            _contextual_candidate("mem-a", "Older applicable constraint."),
+        ],
+        [_contextual_candidate("fact-a", "Unrelated sourced fact.")],
+    )
+
+    assert len(observed) == 1
+    assert set(observed[0][1]["json"]["questions"]) == {"think", "know"}
+    assert result["requestCount"] == 1
+    assert result["questionCount"] == 2
+    # Exact ties are deterministic by native identity, not provider ordering.
+    assert result["sides"]["think"]["nativeIds"] == ["mem-a", "mem-b"]
+    assert result["sides"]["know"]["status"] == "none_relevant"
+    assert set(result["sides"]["think"]["distribution"]) == {
+        think_a, think_b, "NONE_RELEVANT",
+    }
+
+
+def test_contextual_node_jev_keeps_only_real_items_above_none_relevant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = []
+    think_a = engraphis._contextual_node_choice_id("think", "mem-a")
+    think_b = engraphis._contextual_node_choice_id("think", "mem-b")
+    think_c = engraphis._contextual_node_choice_id("think", "mem-c")
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "decision-two",
+                "provider": "TypeSafe",
+                "model": engraphis.JEV_MODEL,
+                "usage": {},
+                "answers": {
+                    "think": {
+                        "type": "choice",
+                        "choice": think_a,
+                        "probabilities": {
+                            think_a: 0.50,
+                            think_b: 0.20,
+                            think_c: 0.10,
+                            "NONE_RELEVANT": 0.20,
+                        },
+                    },
+                },
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            observed.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
+    monkeypatch.setattr(engraphis.httpx, "Client", Client)
+    result = engraphis.decide_contextual_node_items(
+        {
+            "status": "ready",
+            "activeRequest": "Which constraint applies?",
+            "messages": [{"role": "user", "content": "Which constraint applies?"}],
+        },
+        [
+            _contextual_candidate("mem-a", "first"),
+            _contextual_candidate("mem-b", "ties abstention"),
+            _contextual_candidate("mem-c", "below abstention"),
+        ],
+        [],
+    )
+
+    assert len(observed) == 1
+    assert result["sides"]["think"]["nativeIds"] == ["mem-a"]
+
+
+def test_contextual_node_jev_empty_context_and_option_overflow_make_no_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
+    monkeypatch.setattr(
+        engraphis.httpx,
+        "Client",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not call")),
+    )
+    no_context = engraphis.decide_contextual_node_items({}, [], [])
+    assert no_context["requestCount"] == 0
+    assert no_context["sides"]["think"]["status"] == "context_unavailable"
+
+    overflow = engraphis.decide_contextual_node_items(
+        {
+            "status": "ready",
+            "activeRequest": "Choose the applicable item.",
+            "messages": [{"role": "user", "content": "Choose it."}],
+        },
+        [_contextual_candidate(f"mem-{index:03d}", "content")
+         for index in range(255)],
+        [],
+    )
+    assert overflow["requestCount"] == 0
+    assert overflow["sides"]["think"]["status"] == "limit"
+    assert overflow["sides"]["know"]["status"] == "empty"
+
+
+def test_contextual_node_public_result_contains_only_hydrated_winners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = {
+        ("ThinkGraph", "mem-win"): {
+            "authority": "ThinkGraph", "nativeId": "mem-win", "nativeKind": "node",
+            "type": "episodic", "title": "Winning Think", "content": "winner think body",
+            "properties": {"ingestedAt": "2026-09-01T00:00:00Z"},
+            "metadata": {"structured_extraction": {"think": {"summary": "winner"}}},
+            "provenance": {"run_id": "run-one"}, "asOf": "current",
+            "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
+            "resultLimit": 1, "truncated": False,
+        },
+        ("ThinkGraph", "mem-second"): {
+            "authority": "ThinkGraph", "nativeId": "mem-second", "nativeKind": "node",
+            "type": "episodic", "title": "Second Think", "content": "second think body",
+            "properties": {"ingestedAt": "2026-08-31T00:00:00Z"},
+            "metadata": {"structured_extraction": {"think": {"summary": "second"}}},
+            "provenance": {"run_id": "run-two"}, "asOf": "current",
+            "readOperation": "engraphis_get_memory", "relationshipEvidence": [],
+            "resultLimit": 1, "truncated": False,
+        },
+        ("KnowGraph", "fact-win"): {
+            "authority": "KnowGraph", "nativeId": "fact-win", "nativeKind": "edge",
+            "type": "SUPPORTS", "title": "Supported fact", "content": "winner know body",
+            "properties": {"fact": "winner know body"},
+            "know": {"portableKind": "know", "nativeFactUuid": "fact-win",
+                     "fact": "winner know body", "supportingEpisodeUuids": ["episode-1"]},
+            "provenance": {"episodes": [{"uuid": "episode-1", "source_url": "https://example.test"}]},
+            "asOf": "2026-09-25T00:00:00Z", "readOperation": "neo4j.project_scoped_exact",
+            "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
+        },
+        ("KnowGraph", "fact-second"): {
+            "authority": "KnowGraph", "nativeId": "fact-second", "nativeKind": "edge",
+            "type": "QUALIFIES", "title": "Qualifying fact", "content": "second know body",
+            "properties": {"fact": "second know body"},
+            "know": {"portableKind": "know", "nativeFactUuid": "fact-second",
+                     "fact": "second know body", "supportingEpisodeUuids": ["episode-2"]},
+            "provenance": {"episodes": [{"uuid": "episode-2", "source_url": "https://second.test"}]},
+            "asOf": "2026-09-24T00:00:00Z", "readOperation": "neo4j.project_scoped_exact",
+            "relationshipEvidence": [], "resultLimit": 1, "truncated": False,
+        },
+    }
+    monkeypatch.setattr(
+        data_anchor,
+        "_read_exact_anchor_record",
+        lambda _p, _d, _c, anchor, **_kwargs: records.get(
+            (anchor["authority"], anchor["nativeId"])
+        ),
+    )
+
+    result = contextual_node_read(
+        {
+            "projectId": "project-1", "deckId": "deck-1", "cardId": "main",
+            "sourceRevision": "graphs-at-read", "clientContextRevision": "context-at-read",
+            "readerContext": {
+                "status": "ready", "activeRequest": "What matters?",
+                "messages": [{"role": "user", "content": "What matters?"}],
+            },
+            "nativeMembers": [
+                {"authority": "ThinkGraph", "nativeId": "entity-t"},
+                {"authority": "KnowGraph", "nativeId": "entity-k"},
+            ],
+        },
+        think_candidate_reader=lambda *_args: [
+            _contextual_candidate("mem-win", "winner think body"),
+            _contextual_candidate("mem-second", "second think body"),
+            _contextual_candidate("mem-runner", "runner think body"),
+        ],
+        know_candidate_reader=lambda *_args: [
+            _contextual_candidate("fact-win", "winner know body"),
+            _contextual_candidate("fact-second", "second know body"),
+            _contextual_candidate("fact-runner", "runner know body"),
+        ],
+        decision_reader=lambda *_args: {
+            "requestCount": 1, "questionCount": 2, "decisionId": "decision-one",
+            "provider": "TypeSafe", "requestedModel": engraphis.JEV_MODEL,
+            "resolvedModel": engraphis.JEV_MODEL, "usage": {},
+            "sides": {
+                "think": {"status": "selected", "nativeIds": ["mem-win", "mem-second"],
+                          "candidateCount": 3, "distribution": {"winner": 0.6, "second": 0.3, "runner": 0.1}},
+                "know": {"status": "selected", "nativeIds": ["fact-win", "fact-second"],
+                         "candidateCount": 3, "distribution": {"winner": 0.55, "second": 0.35, "runner": 0.1}},
+            },
+        },
+    )
+
+    serialized = json.dumps(result)
+    assert result["status"] == "success"
+    assert len(result["dataAnchors"]) == 4
+    assert [anchor["nativeId"] for anchor in result["dataAnchors"]] == [
+        "mem-win", "mem-second", "fact-win", "fact-second",
+    ]
+    assert "mem-win" in result["modelContext"]
+    assert "mem-second" in result["modelContext"]
+    assert "fact-win" in result["modelContext"]
+    assert "fact-second" in result["modelContext"]
+    assert "mem-runner" not in serialized
+    assert "fact-runner" not in serialized
+    assert "distribution" not in serialized
+    assert len(result["sides"]["think"]["items"]) == 2
+    assert len(result["sides"]["know"]["items"]) == 2
+    assert result["sides"]["know"]["items"][0]["block"]["provenance"]["episodes"][0][
+        "source_url"
+    ] == "https://example.test"
+
+
+def test_contextual_node_read_bypasses_jev_for_two_or_fewer_per_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = {}
+    for authority, native_ids in (
+        ("ThinkGraph", ("mem-one", "mem-two")),
+        ("KnowGraph", ("fact-one",)),
+    ):
+        for native_id in native_ids:
+            records[(authority, native_id)] = {
+                "authority": authority,
+                "nativeId": native_id,
+                "nativeKind": "node" if authority == "ThinkGraph" else "edge",
+                "type": "episodic" if authority == "ThinkGraph" else "SUPPORTS",
+                "title": native_id,
+                "content": f"content for {native_id}",
+                "properties": {},
+                "metadata": {},
+                "provenance": {},
+                "asOf": "current",
+                "readOperation": "test_exact_read",
+                "relationshipEvidence": [],
+                "resultLimit": 1,
+                "truncated": False,
+            }
+    monkeypatch.setattr(
+        data_anchor,
+        "_read_exact_anchor_record",
+        lambda _p, _d, _c, anchor, **_kwargs: records.get(
+            (anchor["authority"], anchor["nativeId"])
+        ),
+    )
+
+    result = contextual_node_read(
+        {
+            "projectId": "p", "deckId": "d", "cardId": "main",
+            "sourceRevision": "graphs-r1", "clientContextRevision": "context-r1",
+            "readerContext": {},
+            "nativeMembers": [
+                {"authority": "ThinkGraph", "nativeId": "entity-t"},
+                {"authority": "KnowGraph", "nativeId": "entity-k"},
+            ],
+        },
+        think_candidate_reader=lambda *_args: [
+            _contextual_candidate("mem-one", "first"),
+            _contextual_candidate("mem-two", "second"),
+        ],
+        know_candidate_reader=lambda *_args: [
+            _contextual_candidate("fact-one", "fact"),
+        ],
+        decision_reader=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("Jev must not run for a fitting source side")
+        ),
+    )
+
+    assert result["status"] == "success"
+    assert result["requestCount"] == 0
+    assert result["questionCount"] == 0
+    assert result["operationId"] is None
+    assert result["provider"] == ""
+    assert result["sides"]["think"]["selectedNativeIds"] == [
+        "mem-one", "mem-two",
+    ]
+    assert result["sides"]["know"]["selectedNativeIds"] == ["fact-one"]
+    assert [anchor["nativeId"] for anchor in result["dataAnchors"]] == [
+        "mem-one", "mem-two", "fact-one",
+    ]
+    assert "distribution" not in json.dumps(result)
+
+
+def test_contextual_node_hydration_failure_has_no_runner_up_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(data_anchor, "_read_exact_anchor_record", lambda *_args, **_kwargs: None)
+    result = contextual_node_read(
+        {
+            "projectId": "p", "deckId": "d", "cardId": "main",
+            "sourceRevision": "r", "readerContext": {
+                "status": "ready", "activeRequest": "Use this node",
+                "messages": [{"role": "user", "content": "Use this node"}],
+            },
+            "nativeMembers": [{"authority": "ThinkGraph", "nativeId": "entity"}],
+        },
+        think_candidate_reader=lambda *_args: [
+            _contextual_candidate("mem-win", "winner"),
+            _contextual_candidate("mem-runner", "runner"),
+            _contextual_candidate("mem-third", "third"),
+        ],
+        decision_reader=lambda *_args: {
+            "requestCount": 1, "questionCount": 1, "decisionId": "d",
+            "provider": "TypeSafe", "requestedModel": engraphis.JEV_MODEL,
+            "resolvedModel": engraphis.JEV_MODEL, "usage": {},
+            "sides": {
+                "think": {"status": "selected", "nativeIds": ["mem-win"], "candidateCount": 2},
+                "know": {"status": "empty", "candidateCount": 0},
+            },
+        },
+    )
+    assert result["sides"]["think"] == {
+        "status": "hydration_failed", "candidateCount": 2,
+        "selectedNativeIds": ["mem-win"],
+        "hydrationFailedNativeIds": ["mem-win"],
+        "errorCode": "contextual_node_hydration_failed",
+    }
+    assert result["dataAnchors"] == []
+    assert "mem-runner" not in json.dumps(result)
 
 
 def test_knowgraph_attention_search_maps_nodes_and_fact_endpoints_without_hydration():
@@ -370,6 +768,51 @@ class _FakeNeo4jDriver:
 
     def close(self):
         self.closed = True
+
+
+def test_contextual_know_candidates_read_complete_direct_facts_and_sources() -> None:
+    driver = _FakeNeo4jDriver([[
+        {
+            "nativeId": "fact-2", "relationshipType": "QUALIFIES",
+            "properties": {"fact": "Older qualifying fact.", "episodes": ["episode-2"],
+                           "valid_at": "2024-01-01T00:00:00Z"},
+            "sourceNativeId": "entity-a", "targetNativeId": "entity-b",
+            "sourceName": "Alpha", "targetName": "Beta",
+        },
+        {
+            "nativeId": "fact-1", "relationshipType": "SUPPORTS",
+            "properties": {"fact": "Current supporting fact.", "episodes": ["episode-1"]},
+            "sourceNativeId": "entity-c", "targetNativeId": "entity-a",
+            "sourceName": "Gamma", "targetName": "Alpha",
+        },
+        # Exact UUID deduplication, not fact-text merging.
+        {
+            "nativeId": "fact-1", "relationshipType": "SUPPORTS",
+            "properties": {"fact": "duplicate row"},
+            "sourceNativeId": "entity-c", "targetNativeId": "entity-a",
+            "sourceName": "Gamma", "targetName": "Alpha",
+        },
+    ]])
+    episodes = {
+        "episode-1": {"uuid": "episode-1", "source_url": "https://one.test"},
+        "episode-2": {"uuid": "episode-2", "source_url": "https://two.test"},
+    }
+    candidates = list_contextual_know_candidates(
+        "project-1",
+        ["entity-a"],
+        driver_factory=lambda: driver,
+        episode_reader=lambda _project, ids: [episodes[item] for item in ids],
+    )
+
+    assert [candidate["nativeId"] for candidate in candidates] == ["fact-2", "fact-1"]
+    assert candidates[0]["fact"] == "Older qualifying fact."
+    assert candidates[0]["dates"]["validAt"] == "2024-01-01T00:00:00Z"
+    assert candidates[1]["supportingEpisodes"] == [episodes["episode-1"]]
+    query, params = driver.calls[0]
+    assert "MATCH (a)-[r]->(b)" in query
+    assert "LIMIT" not in query.upper()
+    assert params["nativeIds"] == ["entity-a"]
+    assert driver.closed is True
 
 
 def test_knowgraph_exact_read_preserves_project_native_identity_and_provenance() -> None:

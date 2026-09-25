@@ -409,7 +409,7 @@ describe('native authority graph surfaces', () => {
     expect(graph.setPreset).toHaveBeenLastCalledWith('radial');
   });
 
-  it('inspects exact duplicate members, defaults shared nodes to Think, and discloses attention members', () => {
+  it('reads a shared node once, shows up to two native items per side, and keeps the canvas stable across tabs', async () => {
     const think = {
       ...empty('thinkgraph'),
       nodes: [
@@ -437,10 +437,76 @@ describe('native authority graph surfaces', () => {
     };
     const onExpand = vi.fn().mockResolvedValue(undefined);
     const onUse = vi.fn();
+    const onRead = vi.fn(async (request) => ({
+      schemaVersion: 'contextual-node-read.v1' as const,
+      status: 'success' as const,
+      sourceRevision: request.sourceRevision,
+      clientContextRevision: request.clientContextRevision,
+      operationId: 'decision-1',
+      contextLabel: 'What matters for this shared subject?',
+      requestCount: 1,
+      questionCount: 2,
+      provider: 'TypeSafe',
+      requestedModel: 'google/gemini-2.5-flash-lite',
+      resolvedModel: 'google/gemini-2.5-flash-lite',
+      usage: {},
+      sides: {
+        think: {
+          status: 'selected' as const,
+          selectedNativeIds: ['memory-1', 'memory-2'],
+          items: [
+            {
+              nativeId: 'memory-1',
+              block: { nativeId: 'memory-1', metadata: { structured_extraction: { think: {
+                kind: 'OBSERVATION', summary: 'First Think.', propositions: [], relationship_observations: [],
+              } } } },
+              dataAnchor: { authority: 'ThinkGraph' as const, nativeId: 'memory-1', reason: 'selected', order: 0, boundedExpansion: 0, resultLimit: 1, required: true },
+              reference: { authority: 'ThinkGraph', nativeId: 'memory-1' },
+            },
+            {
+              nativeId: 'memory-2',
+              block: { nativeId: 'memory-2', metadata: { structured_extraction: { think: {
+                kind: 'DECISION', summary: 'Second Think.', propositions: [], relationship_observations: [],
+              } } } },
+              dataAnchor: { authority: 'ThinkGraph' as const, nativeId: 'memory-2', reason: 'selected', order: 1, boundedExpansion: 0, resultLimit: 1, required: true },
+              reference: { authority: 'ThinkGraph', nativeId: 'memory-2' },
+            },
+          ],
+        },
+        know: {
+          status: 'selected' as const,
+          selectedNativeIds: ['fact-1', 'fact-2'],
+          items: [
+            {
+              nativeId: 'fact-1',
+              block: { nativeId: 'fact-1', know: { fact: 'Sourced Know.', nativeFactUuid: 'fact-1', supportingEpisodes: [] } },
+              dataAnchor: { authority: 'KnowGraph' as const, nativeId: 'fact-1', reason: 'selected', order: 2, boundedExpansion: 0, resultLimit: 1, required: true },
+              reference: { authority: 'KnowGraph', nativeId: 'fact-1' },
+            },
+            {
+              nativeId: 'fact-2',
+              block: { nativeId: 'fact-2', know: { fact: 'Qualifying Know.', nativeFactUuid: 'fact-2', supportingEpisodes: [] } },
+              dataAnchor: { authority: 'KnowGraph' as const, nativeId: 'fact-2', reason: 'selected', order: 3, boundedExpansion: 0, resultLimit: 1, required: true },
+              reference: { authority: 'KnowGraph', nativeId: 'fact-2' },
+            },
+          ],
+        },
+      },
+      dataAnchors: [
+        { authority: 'ThinkGraph' as const, nativeId: 'memory-1', reason: 'selected', order: 0, boundedExpansion: 0, resultLimit: 1, required: true },
+        { authority: 'ThinkGraph' as const, nativeId: 'memory-2', reason: 'selected', order: 1, boundedExpansion: 0, resultLimit: 1, required: true },
+        { authority: 'KnowGraph' as const, nativeId: 'fact-1', reason: 'selected', order: 2, boundedExpansion: 0, resultLimit: 1, required: true },
+        { authority: 'KnowGraph' as const, nativeId: 'fact-2', reason: 'selected', order: 3, boundedExpansion: 0, resultLimit: 1, required: true },
+      ],
+      selectedReferences: [],
+      modelContext: 'four exact native blocks',
+    }));
     render(<NativeCombinedGraphSurface
       projections={{ thinkgraph: think, knowgraph: know }}
       onExpand={onExpand}
-      onUseAsContext={onUse}
+      onReadContextualNode={onRead}
+      contextualReaderRevision="conversation-r1"
+      onUseContextualNodeRead={onUse}
     />);
     const graph = forceGraphMocks.instances.at(-1);
     const shared = graph.data.nodes.find((node: any) => node.label === 'Shared');
@@ -449,32 +515,45 @@ describe('native authority graph surfaces', () => {
     const edgeIds = graph.data.links.map((edge: any) => edge.id);
     shared.x = 18; shared.y = -7;
 
+    await waitFor(() => expect(onRead).toHaveBeenCalledTimes(1));
+    expect(onRead.mock.calls[0][0].nativeMembers).toEqual([
+      { authority: 'ThinkGraph', nativeId: 'think-1' },
+      { authority: 'ThinkGraph', nativeId: 'think-2' },
+      { authority: 'KnowGraph', nativeId: 'know-1' },
+    ]);
     expect(screen.getByRole('tab', { name: 'Think' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Know' }).getAttribute('aria-selected')).toBe('false');
-    expect(screen.getByText('First Think.')).toBeTruthy();
+    expect(await screen.findByText('First Think.')).toBeTruthy();
+    expect(screen.getByText('Second Think.')).toBeTruthy();
     const members = screen.getByRole('combobox', { name: 'Think native member' }) as HTMLSelectElement;
     expect(Array.from(members.options).map(option => option.textContent)).toEqual([
       'Think · think-1', 'Think · think-2',
     ]);
     fireEvent.change(members, { target: { value: 'thinkgraph:think-2' } });
-    expect(screen.getByText('Second Think.')).toBeTruthy();
+    expect(onRead).toHaveBeenCalledTimes(1);
     const attention = screen.getByTestId('combined-attention-members');
     expect(attention.textContent).toContain('ThinkGraph · think-1');
     expect(attention.textContent).toContain('KnowGraph · know-1');
 
     fireEvent.click(screen.getByRole('tab', { name: 'Know' }));
     expect(screen.getByText('Sourced Know.')).toBeTruthy();
+    expect(screen.getByText('Qualifying Know.')).toBeTruthy();
+    expect(onRead).toHaveBeenCalledTimes(1);
     expect(graph.setData).toHaveBeenCalledTimes(dataCalls);
     expect(graph.data.links.map((edge: any) => edge.id)).toEqual(edgeIds);
     expect(shared).toMatchObject({ x: 18, y: -7 });
     expect(graph.setLayers).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Use in chat' }));
-    expect(onUse).toHaveBeenCalledWith('knowgraph', know.nodes[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Use selected in chat' }));
+    expect(onUse).toHaveBeenCalledWith(
+      expect.objectContaining({ operationId: 'decision-1' }),
+      expect.objectContaining({ label: 'Shared' }),
+    );
 
     act(() => graph.linkClick(graph.data.links[0]));
     fireEvent.click(screen.getByRole('button', { name: 'Shared' }));
     expect((screen.getByRole('combobox', { name: 'Think native member' }) as HTMLSelectElement).value)
       .toBe('thinkgraph:think-1');
+    await waitFor(() => expect(onRead).toHaveBeenCalledTimes(2));
     expect(screen.getByText('First Think.')).toBeTruthy();
   });
 

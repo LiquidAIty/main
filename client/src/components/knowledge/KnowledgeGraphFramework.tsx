@@ -41,12 +41,18 @@ type Props = {
   attentionStatuses?: Partial<Record<KnowledgeGraphKind, 'idle' | 'loading' | 'ready' | 'error'>>;
   jevAttentionVisual?: import('./NativeAuthorityGraphSurface').JevAttentionVisualDescriptorView | null;
   onReadNativeFocusNeighborhood?: import('./NativeAuthorityGraphSurface').ReadNativeFocusNeighborhood;
+  onReadContextualNode?: import('./NativeAuthorityGraphSurface').ReadContextualNode;
+  contextualReaderRevision?: string;
   onExpandAttentionNode: (
     authority: KnowledgeGraphKind,
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
   ) => Promise<void>;
   onUseAttentionNode: (
     authority: KnowledgeGraphKind,
+    node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
+  ) => void;
+  onUseContextualNodeRead?: (
+    result: import('./NativeAuthorityGraphSurface').ContextualNodeReadView,
     node: import('./NativeAuthorityGraphSurface').GraphProjectionNode,
   ) => void;
   onKindChange: (kind: KnowledgeSurfaceKind) => void;
@@ -64,8 +70,11 @@ export default function KnowledgeGraphFramework({
   attentionStatuses,
   jevAttentionVisual,
   onReadNativeFocusNeighborhood,
+  onReadContextualNode,
+  contextualReaderRevision,
   onExpandAttentionNode,
   onUseAttentionNode,
+  onUseContextualNodeRead,
   onKindChange,
   onRemoveThinkGraphEvidence,
 }: Props) {
@@ -159,8 +168,11 @@ export default function KnowledgeGraphFramework({
             }}
             jevAttentionVisual={jevAttentionVisual}
             onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
+            onReadContextualNode={onReadContextualNode}
+            contextualReaderRevision={contextualReaderRevision}
             onExpand={onExpandAttentionNode}
             onUseAsContext={onUseAttentionNode}
+            onUseContextualNodeRead={onUseContextualNodeRead}
             onRemoveThinkGraphEvidence={onRemoveThinkGraphEvidence}
           />
         ) : kind === 'knowgraph' ? (
