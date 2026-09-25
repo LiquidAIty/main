@@ -22,7 +22,9 @@ import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
 import AgentBuilderWorkspace from '../features/agentbuilder/core/AgentBuilderWorkspace';
 import useAgentBuilderWorkspaceLayout from '../features/agentbuilder/core/useAgentBuilderWorkspaceLayout';
 import CompanionSurfaceHost from '../features/agentbuilder/core/CompanionSurfaceHost';
-import KnowledgeGraphFramework from '../components/knowledge/KnowledgeGraphFramework';
+import KnowledgeGraphFramework, {
+  type KnowledgeSurfaceKind,
+} from '../components/knowledge/KnowledgeGraphFramework';
 import type {
   GraphProjectionNode,
 } from '../components/knowledge/NativeAuthorityGraphSurface';
@@ -94,7 +96,6 @@ import type {
   AgentCardInstance,
   DeckEdge,
   DeckDocument,
-  KnowledgeGraphKind,
 } from '../types/agentgraph';
 
 const loadAgentManager = () => import('../components/AgentManager');
@@ -225,10 +226,8 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   }
   return card.id;
 }
-// Hermes owns one project-intelligence canvas. Its three tabs are authorities,
-// not agent-card capabilities: card/bus wiring must never hide project
-// reasoning, external evidence, or repository reality from that canvas.
-type KnowledgeSurfaceKind = KnowledgeGraphKind;
+// Hermes owns one project-intelligence canvas. ThinkGraph, KnowGraph, and
+// CodeGraph remain native authorities; Combined is a presentation-only view.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -410,7 +409,7 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeSurfaceKind>('knowgraph');
+    useState<KnowledgeSurfaceKind>('combined');
   // Resolve existing conversation links once; continuity stays project-owned,
   // without conversation navigation controls or a URL-driven swap mid-turn.
   const [conversationId] = useState(() => (
@@ -1335,6 +1334,8 @@ export default function AgentBuilder(): React.ReactElement {
             onRemoveThinkGraphEvidence={graphAttention.removeThinkGraphEvidence}
             attentionErrors={graphAttention.errors}
             attentionStatuses={graphAttention.statuses}
+            jevAttentionVisual={graphAttention.jevAttentionVisual}
+            onReadNativeFocusNeighborhood={graphAttention.readNativeNeighborhood}
             onExpandAttentionNode={(authority, node) => graphAttention.expandNode({
               authority,
               node,
@@ -1368,7 +1369,7 @@ export default function AgentBuilder(): React.ReactElement {
   const showKnowledgeWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('knowgraph');
+    setKnowledgeGraphKind('combined');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(

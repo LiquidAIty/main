@@ -9,6 +9,7 @@ import { applyJevGraphPhysics } from '../../../components/knowledge/jevGraphPhys
 import { callCbmTool, CANONICAL_CBM_PROJECT_NAME } from '../../../components/codegraph/resolveCodeGraphProjectIdentity';
 import {
   isJevAttentionEvent,
+  type JevAttentionCandidate,
   type JevAttentionEvent,
 } from '../console/mainSessionClient';
 import type {
@@ -18,6 +19,35 @@ import type {
 } from '../console/useAgentBuilderMainChat';
 
 export type GraphAttentionAuthority = 'thinkgraph' | 'knowgraph' | 'codegraph';
+export type NativeNeighborhoodAuthority = Extract<GraphAttentionAuthority, 'thinkgraph' | 'knowgraph'>;
+
+export type JevAttentionVisualPhase = 'attention_space' | 'local_relational';
+export type JevAttentionVisualResolution = 'resolving' | 'resolved' | 'unavailable';
+
+export type JevAttentionVisualSubject = {
+  choiceId: string;
+  authority: JevAttentionCandidate['authority'];
+  nativeId: string;
+  title: string;
+  probability: number;
+  selected: true;
+  hydrated: boolean;
+  resolution: JevAttentionVisualResolution;
+};
+
+export type JevAttentionVisualDescriptor = {
+  decisionId: string;
+  resultIdentity: string;
+  clientRunId: string;
+  runId: string;
+  cardId: string;
+  phase: JevAttentionVisualPhase;
+  active: boolean;
+  terminalStatus: MainChatTurnFinished['status'] | null;
+  distribution: Record<string, number>;
+  candidates: JevAttentionCandidate[];
+  selectedSubjects: JevAttentionVisualSubject[];
+};
 
 type AttentionContext = {
   actorCardId: string | null;
@@ -108,6 +138,7 @@ export type GraphAttentionState = {
   projections: Record<GraphAttentionAuthority, GraphProjectionV1>;
   errors: Partial<Record<GraphAttentionAuthority, string>>;
   statuses: Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>;
+  jevAttentionVisual: JevAttentionVisualDescriptor | null;
   startAttentionScope: (turn: MainChatTurnStarted) => void;
   observeNativeTurnEvent: (turn: MainChatTurnEvent) => void;
   finishAttentionScope: (turn: MainChatTurnFinished) => void;
@@ -115,6 +146,11 @@ export type GraphAttentionState = {
   observeAttentionSession: (session: NativeAttentionSession) => void;
   observeThinkGraphRevision: (event: ThinkGraphRevisionEvent) => void;
   observeThinkGraphFailure: (event: ThinkGraphLifecycleError) => void;
+  readNativeNeighborhood: (
+    authority: NativeNeighborhoodAuthority,
+    nativeId: string,
+    signal?: AbortSignal,
+  ) => Promise<GraphProjectionV1>;
   expandNode: (request: ExpandRequest) => Promise<void>;
 };
 
@@ -188,6 +224,28 @@ export function knowGraphProjection(payload: Record<string, any>, projectId: str
   ));
 }
 
+function exactThinkGraphProjection(
+  payload: Record<string, any>,
+  projectId: string,
+  nativeId: string,
+): GraphProjectionV1 | null {
+  if (payload.schemaVersion !== 'thinkgraph.engraphis.v1'
+    || payload.authority !== 'engraphis'
+    || payload.projectId !== projectId
+    || !Array.isArray(payload.nodes)
+    || !Array.isArray(payload.edges)
+    || payload.nodes.some((node: unknown) => !isRecord(node)
+      || typeof node.id !== 'string' || !node.id
+      || typeof node.label !== 'string' || !node.label)
+    || payload.edges.some((edge: unknown) => !isRecord(edge)
+      || typeof edge.id !== 'string' || !edge.id
+      || typeof edge.source !== 'string' || !edge.source
+      || typeof edge.target !== 'string' || !edge.target
+      || typeof edge.predicate !== 'string' || !edge.predicate)) return null;
+  const projection = payload as GraphProjectionV1;
+  return projection.nodes.some((node) => node.id === nativeId) ? projection : null;
+}
+
 export function mergeAttentionProjection(
   current: GraphProjectionV1,
   incoming: GraphProjectionV1,
@@ -212,11 +270,49 @@ export function mergeAttentionProjection(
     : merged;
 }
 
+function mergeMissingAttentionProjection(
+  current: GraphProjectionV1,
+  incoming: GraphProjectionV1,
+): GraphProjectionV1 {
+  const nodeIds = new Set(current.nodes.map((node) => node.id));
+  const nodes = [
+    ...current.nodes,
+    ...incoming.nodes.filter((node) => !nodeIds.has(node.id)),
+  ];
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const edgeIds = new Set(current.edges.map((edge) => edge.id));
+  const edges = [
+    ...current.edges,
+    ...incoming.edges.filter((edge) => !edgeIds.has(edge.id)
+      && visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)),
+  ];
+  const merged = {
+    ...current,
+    nodes,
+    edges,
+    counts: { nodes: nodes.length, edges: edges.length },
+  };
+  return merged.authority === 'knowgraph'
+    ? applyKnowGraphJevPhysics(merged)
+    : merged;
+}
+
 type GraphHighlight = {
   nodeIds: readonly string[];
   edgeIds: readonly string[];
   context: AttentionContext;
   active?: boolean;
+};
+
+type JevAttentionGraphAuthority = 'thinkgraph' | 'knowgraph';
+
+type ExactJevAttentionOverlay = {
+  scopeGeneration: number;
+  clientRunId: string;
+  serverRunId: string;
+  refreshGeneration: number;
+  projection: GraphProjectionV1;
+  highlight: GraphHighlight;
 };
 
 export function overlayAuthoritativeGraphAttention(
@@ -316,6 +412,8 @@ export default function useAgentBuilderGraphAttention({
   const [statuses, setStatuses] = useState<Record<GraphAttentionAuthority, 'idle' | 'loading' | 'ready' | 'error'>>({
     thinkgraph: 'loading', knowgraph: 'loading', codegraph: 'ready',
   });
+  const [jevAttentionVisual, setJevAttentionVisual] = useState<JevAttentionVisualDescriptor | null>(null);
+  const jevAttentionVisualRef = useRef<JevAttentionVisualDescriptor | null>(null);
   const activeScopeRef = useRef<{ clientRunId: string; serverRunId: string | null } | null>(null);
   const seenEventIdsRef = useRef(new Set<string>());
   const selectedRunRef = useRef<string | null>(null);
@@ -326,6 +424,96 @@ export default function useAgentBuilderGraphAttention({
   const authoritativeKnowGraphRef = useRef<GraphProjectionV1>(projection('knowgraph', projectId));
   const knowGraphRequestRef = useRef(0);
   const codeGraphScopeRef = useRef(0);
+  const graphScopeGenerationRef = useRef(0);
+  const pendingJevAttentionLoadsRef = useRef(new Set<string>());
+  const exactJevAttentionOverlaysRef = useRef<Record<
+    JevAttentionGraphAuthority,
+    Map<string, ExactJevAttentionOverlay>
+  >>({ thinkgraph: new Map(), knowgraph: new Map() });
+
+  const replaceJevAttentionVisual = useCallback((next: JevAttentionVisualDescriptor | null) => {
+    jevAttentionVisualRef.current = next;
+    setJevAttentionVisual(next);
+  }, []);
+
+  const updateJevAttentionVisual = useCallback((
+    update: (current: JevAttentionVisualDescriptor | null) => JevAttentionVisualDescriptor | null,
+  ) => {
+    const current = jevAttentionVisualRef.current;
+    const next = update(current);
+    if (next === current) return;
+    jevAttentionVisualRef.current = next;
+    setJevAttentionVisual(next);
+  }, []);
+
+  const updateJevAttentionResolution = useCallback(({
+    clientRunId,
+    serverRunId,
+    decisionId,
+    authority,
+    nativeId,
+    resolution,
+    scopeGeneration,
+  }: {
+    clientRunId: string;
+    serverRunId: string;
+    decisionId: string;
+    authority: JevAttentionCandidate['authority'];
+    nativeId: string;
+    resolution: JevAttentionVisualResolution;
+    scopeGeneration: number;
+  }) => {
+    if (scopeGeneration !== graphScopeGenerationRef.current) return;
+    updateJevAttentionVisual((current) => {
+      if (!current
+        || current.clientRunId !== clientRunId
+        || current.runId !== serverRunId
+        || current.decisionId !== decisionId) return current;
+      let changed = false;
+      const selectedSubjects = current.selectedSubjects.map((subject) => {
+        if (subject.authority !== authority
+          || subject.nativeId !== nativeId
+          || subject.resolution === resolution) return subject;
+        changed = true;
+        return { ...subject, resolution };
+      });
+      return changed ? { ...current, selectedSubjects } : current;
+    });
+  }, [updateJevAttentionVisual]);
+
+  const transitionJevAttentionToLocal = useCallback((
+    clientRunId: string,
+    serverRunId: string | null,
+  ) => {
+    if (!serverRunId) return;
+    updateJevAttentionVisual((current) => current
+      && current.active
+      && current.clientRunId === clientRunId
+      && current.runId === serverRunId
+      && current.phase === 'attention_space'
+      ? { ...current, phase: 'local_relational' }
+      : current);
+  }, [updateJevAttentionVisual]);
+
+  useEffect(() => {
+    const generation = graphScopeGenerationRef.current + 1;
+    graphScopeGenerationRef.current = generation;
+    pendingJevAttentionLoadsRef.current.clear();
+    exactJevAttentionOverlaysRef.current.thinkgraph.clear();
+    exactJevAttentionOverlaysRef.current.knowgraph.clear();
+    return () => {
+      if (graphScopeGenerationRef.current === generation) {
+        graphScopeGenerationRef.current = generation + 1;
+      }
+      pendingJevAttentionLoadsRef.current.clear();
+      exactJevAttentionOverlaysRef.current.thinkgraph.clear();
+      exactJevAttentionOverlaysRef.current.knowgraph.clear();
+    };
+  }, [projectId, deckId, conversationId]);
+
+  useEffect(() => {
+    replaceJevAttentionVisual(null);
+  }, [conversationId, deckId, projectId, replaceJevAttentionVisual, selectedCardId]);
 
   useEffect(() => {
     codeGraphScopeRef.current += 1;
@@ -374,6 +562,28 @@ export default function useAgentBuilderGraphAttention({
     setErrors((current) => ({ ...current, [authority]: undefined }));
   }, []);
 
+  const applyExactJevAttentionOverlays = useCallback((
+    authority: JevAttentionGraphAuthority,
+    authoritative: GraphProjectionV1,
+    refreshGeneration?: number,
+  ): GraphProjectionV1 => {
+    const activeScope = activeScopeRef.current;
+    if (!activeScope) return authoritative;
+    let display = authoritative;
+    for (const overlay of exactJevAttentionOverlaysRef.current[authority].values()) {
+      if (overlay.scopeGeneration !== graphScopeGenerationRef.current
+        || overlay.clientRunId !== activeScope.clientRunId
+        || overlay.serverRunId !== activeScope.serverRunId
+        || (refreshGeneration !== undefined
+          && overlay.refreshGeneration > refreshGeneration)) continue;
+      display = overlayAuthoritativeGraphAttention(
+        mergeMissingAttentionProjection(display, overlay.projection),
+        overlay.highlight,
+      );
+    }
+    return display;
+  }, []);
+
   const refreshThinkGraph = useCallback(async (
     revision?: ThinkGraphRevisionEvent,
     attention?: GraphHighlight,
@@ -402,15 +612,18 @@ export default function useAgentBuilderGraphAttention({
         ? overlayThinkGraphTurnActivity(payload as GraphProjectionV1, revision)
         : payload as GraphProjectionV1;
       authoritativeThinkGraphRef.current = authoritative;
-      setProjections((current) => ({
-        ...current,
-        thinkgraph: attention
+      setProjections((current) => {
+        const retained = attention
           ? overlayAuthoritativeGraphAttention(
               overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph),
               attention,
             )
-          : overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph),
-      }));
+          : overlayAuthoritativeGraphAttention(authoritative, current.thinkgraph);
+        return {
+          ...current,
+          thinkgraph: applyExactJevAttentionOverlays('thinkgraph', retained, requestId),
+        };
+      });
       setErrors((current) => ({ ...current, thinkgraph: undefined }));
       setStatuses((current) => ({ ...current, thinkgraph: 'ready' }));
     } catch (caught) {
@@ -421,7 +634,7 @@ export default function useAgentBuilderGraphAttention({
       }));
       setStatuses((current) => ({ ...current, thinkgraph: 'error' }));
     }
-  }, [projectId]);
+  }, [applyExactJevAttentionOverlays, projectId]);
 
   useEffect(() => {
     void refreshThinkGraph();
@@ -443,11 +656,14 @@ export default function useAgentBuilderGraphAttention({
       // IDs only; receipts and stale references never create knowledge nodes.
       const native = knowGraphProjection(payload, projectId);
       authoritativeKnowGraphRef.current = native;
-      setProjections((current) => ({ ...current,
-        knowgraph: attention
+      setProjections((current) => {
+        const retained = attention
           ? overlayAuthoritativeGraphAttention(overlayAuthoritativeGraphAttention(native, current.knowgraph), attention)
-          : overlayAuthoritativeGraphAttention(native, current.knowgraph),
-      }));
+          : overlayAuthoritativeGraphAttention(native, current.knowgraph);
+        return { ...current,
+          knowgraph: applyExactJevAttentionOverlays('knowgraph', retained, requestId),
+        };
+      });
       setErrors((current) => ({ ...current, knowgraph: undefined }));
       setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
     } catch (caught) {
@@ -455,7 +671,106 @@ export default function useAgentBuilderGraphAttention({
       setErrors((current) => ({ ...current, knowgraph: caught instanceof Error ? caught.message : String(caught) }));
       setStatuses((current) => ({ ...current, knowgraph: 'error' }));
     }
-  }, [projectId]);
+  }, [applyExactJevAttentionOverlays, projectId]);
+
+  const loadExactJevAttentionNode = useCallback(async ({
+    authority,
+    nativeId,
+    context,
+    clientRunId,
+    serverRunId,
+    decisionId,
+    scopeGeneration,
+    refreshGeneration,
+  }: {
+    authority: JevAttentionGraphAuthority;
+    nativeId: string;
+    context: AttentionContext;
+    clientRunId: string;
+    serverRunId: string;
+    decisionId: string;
+    scopeGeneration: number;
+    refreshGeneration: number;
+  }) => {
+    const loadKey = `${scopeGeneration}\u0000${clientRunId}\u0000${serverRunId}\u0000${decisionId}\u0000${authority}\u0000${nativeId}`;
+    if (pendingJevAttentionLoadsRef.current.has(loadKey)) return;
+    pendingJevAttentionLoadsRef.current.add(loadKey);
+    let resolution: JevAttentionVisualResolution = 'unavailable';
+    try {
+      let incoming: GraphProjectionV1 | null = null;
+      if (authority === 'thinkgraph') {
+        const query = new URLSearchParams({ projectId, canonicalId: nativeId });
+        const response = await fetch(`/api/thinkgraph/neighborhood?${query.toString()}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !isRecord(payload)) return;
+        incoming = exactThinkGraphProjection(payload, projectId, nativeId);
+      } else {
+        const query = new URLSearchParams({ projectId, nodeId: nativeId, limit: '50', depth: '1' });
+        const response = await fetch(`/api/knowgraph/expand?${query.toString()}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !isRecord(payload)) return;
+        try {
+          const projected = knowGraphProjection(payload, projectId);
+          incoming = projected.nodes.some((node) => node.id === nativeId) ? projected : null;
+        } catch {
+          return;
+        }
+      }
+      if (!incoming) return;
+      const activeScope = activeScopeRef.current;
+      if (scopeGeneration !== graphScopeGenerationRef.current
+        || !activeScope
+        || activeScope.clientRunId !== clientRunId
+        || activeScope.serverRunId !== serverRunId) return;
+      const highlight: GraphHighlight = {
+        nodeIds: [nativeId],
+        edgeIds: [],
+        context,
+        active: true,
+      };
+      exactJevAttentionOverlaysRef.current[authority].set(nativeId, {
+        scopeGeneration,
+        clientRunId,
+        serverRunId,
+        refreshGeneration,
+        projection: incoming,
+        highlight,
+      });
+      if (authority === 'thinkgraph') {
+        authoritativeThinkGraphRef.current = mergeAttentionProjection(
+          authoritativeThinkGraphRef.current,
+          incoming,
+        );
+      } else {
+        authoritativeKnowGraphRef.current = mergeAttentionProjection(
+          authoritativeKnowGraphRef.current,
+          incoming,
+        );
+      }
+      setProjections((current) => ({
+        ...current,
+        [authority]: overlayAuthoritativeGraphAttention(
+          mergeAttentionProjection(current[authority], incoming),
+          highlight,
+        ),
+      }));
+      resolution = 'resolved';
+    } catch {
+      // Attention availability is optional. Main continues without a synthetic
+      // node or a false highlight when the exact native read is unavailable.
+    } finally {
+      pendingJevAttentionLoadsRef.current.delete(loadKey);
+      updateJevAttentionResolution({
+        clientRunId,
+        serverRunId,
+        decisionId,
+        authority: authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph',
+        nativeId,
+        resolution,
+        scopeGeneration,
+      });
+    }
+  }, [projectId, updateJevAttentionResolution]);
 
   useEffect(() => {
     void refreshKnowGraph();
@@ -622,8 +937,10 @@ export default function useAgentBuilderGraphAttention({
 
   const startAttentionScope = useCallback((turn: MainChatTurnStarted) => {
     if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
+    replaceJevAttentionVisual(null);
     activeScopeRef.current = { clientRunId: turn.runId, serverRunId: null };
-    setErrors({});
+    exactJevAttentionOverlaysRef.current.thinkgraph.clear();
+    exactJevAttentionOverlaysRef.current.knowgraph.clear();
     // A new Main turn must not erase another independently running Card.
     const actor = mainActorRef.current;
     if (actor && (!selectedCardId || actor === selectedCardId)) {
@@ -636,7 +953,7 @@ export default function useAgentBuilderGraphAttention({
           value.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)))];
       })) as typeof current);
     }
-  }, [conversationId, projectId, selectedCardId]);
+  }, [conversationId, projectId, replaceJevAttentionVisual, selectedCardId]);
 
   const observeNativeTurnEvent = useCallback((turn: MainChatTurnEvent) => {
     const scope = activeScopeRef.current;
@@ -657,6 +974,9 @@ export default function useAgentBuilderGraphAttention({
       ) {
         if (session.kind === 'run' || !scope.serverRunId) scope.serverRunId = serverRunId;
       }
+      if (session.kind === 'session') {
+        transitionJevAttentionToLocal(scope.clientRunId, scope.serverRunId);
+      }
       return;
     }
     if (session.kind === 'jev_attention') {
@@ -674,6 +994,46 @@ export default function useAgentBuilderGraphAttention({
       seenEventIdsRef.current.add(key);
       mainActorRef.current = event.cardId;
       if (event.status !== 'success') return;
+      const candidates = event.candidates.map((candidate) => ({ ...candidate }));
+      const availableNodeIds = {
+        thinkgraph: new Set(authoritativeThinkGraphRef.current.nodes.map((node) => node.id)),
+        knowgraph: new Set(authoritativeKnowGraphRef.current.nodes.map((node) => node.id)),
+      };
+      const selectedSubjects = candidates
+        .filter((candidate) => candidate.selected)
+        .map((candidate): JevAttentionVisualSubject => {
+          const authority = candidate.authority === 'ThinkGraph' ? 'thinkgraph' : 'knowgraph';
+          return {
+            choiceId: candidate.choiceId,
+            authority: candidate.authority,
+            nativeId: candidate.nativeId,
+            title: candidate.title,
+            probability: Number(candidate.probability),
+            selected: true,
+            hydrated: candidate.hydrated,
+            resolution: !candidate.hydrated
+              ? 'unavailable'
+              : availableNodeIds[authority].has(candidate.nativeId)
+                ? 'resolved'
+                : 'resolving',
+          };
+        })
+        .sort((left, right) => right.probability - left.probability)
+        .slice(0, 3);
+      if (!selectedSubjects.length) return;
+      replaceJevAttentionVisual({
+        decisionId: event.decisionId,
+        resultIdentity,
+        clientRunId: scope.clientRunId,
+        runId: event.runId,
+        cardId: event.cardId,
+        phase: 'attention_space',
+        active: true,
+        terminalStatus: null,
+        distribution: { ...event.distribution },
+        candidates,
+        selectedSubjects,
+      });
       const nodeIds = {
         thinkgraph: new Set<string>(),
         knowgraph: new Set<string>(),
@@ -704,7 +1064,28 @@ export default function useAgentBuilderGraphAttention({
           nodeIds: [...nodeIds.knowgraph], edgeIds: [], context, active: true,
         }),
       }));
+      for (const authority of ['thinkgraph', 'knowgraph'] as const) {
+        for (const nativeId of nodeIds[authority]) {
+          if (availableNodeIds[authority].has(nativeId)) continue;
+          void loadExactJevAttentionNode({
+            authority,
+            nativeId,
+            context,
+            clientRunId: scope.clientRunId,
+            serverRunId: event.runId,
+            decisionId: event.decisionId,
+            scopeGeneration: graphScopeGenerationRef.current,
+            refreshGeneration: authority === 'thinkgraph'
+              ? thinkGraphRequestRef.current
+              : knowGraphRequestRef.current,
+          });
+        }
+      }
       return;
+    }
+    if (['text', 'reasoning', 'tool_start', 'tool_result', 'permission', 'done', 'end']
+      .includes(String(session.kind || ''))) {
+      transitionJevAttentionToLocal(scope.clientRunId, scope.serverRunId);
     }
     const event = turn.event as NativeAttentionEvent;
     if (event.kind !== 'native_attention') return;
@@ -713,17 +1094,66 @@ export default function useAgentBuilderGraphAttention({
       || event.conversationId !== conversationId || event.runId !== scope.serverRunId) return;
     mainActorRef.current = event.cardId;
     observeAttentionEvent(event);
-  }, [conversationId, deckId, observeAttentionEvent, projectId]);
+  }, [
+    conversationId,
+    deckId,
+    loadExactJevAttentionNode,
+    observeAttentionEvent,
+    projectId,
+    replaceJevAttentionVisual,
+    transitionJevAttentionToLocal,
+  ]);
 
   const finishAttentionScope = useCallback((turn: MainChatTurnFinished) => {
     if (turn.projectId !== projectId || turn.conversationId !== conversationId) return;
-    if (activeScopeRef.current?.clientRunId === turn.runId) activeScopeRef.current = null;
-  }, [projectId, conversationId]);
+    if (activeScopeRef.current?.clientRunId !== turn.runId) return;
+    updateJevAttentionVisual((current) => current?.clientRunId === turn.runId
+      ? {
+          ...current,
+          phase: 'local_relational',
+          active: false,
+          terminalStatus: turn.status,
+          selectedSubjects: current.selectedSubjects.map((subject) => subject.resolution === 'resolving'
+            ? { ...subject, resolution: 'unavailable' }
+            : subject),
+        }
+      : current);
+    activeScopeRef.current = null;
+  }, [projectId, conversationId, updateJevAttentionVisual]);
+
+  const readNativeNeighborhood = useCallback(async (
+    authority: NativeNeighborhoodAuthority,
+    nativeId: string,
+    signal?: AbortSignal,
+  ): Promise<GraphProjectionV1> => {
+    const query = authority === 'thinkgraph'
+      ? new URLSearchParams({ projectId, canonicalId: nativeId })
+      : new URLSearchParams({ projectId, nodeId: nativeId, limit: '50', depth: '1' });
+    const url = authority === 'thinkgraph'
+      ? `/api/thinkgraph/neighborhood?${query.toString()}`
+      : `/api/knowgraph/expand?${query.toString()}`;
+    const response = signal
+      ? await fetch(url, { signal })
+      : await fetch(url);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !isRecord(payload)) {
+      const detail = authority === 'knowgraph'
+        ? payload?.error?.message || payload?.error
+        : payload?.error;
+      throw new Error(String(detail || `HTTP ${response.status}`));
+    }
+    if (authority === 'thinkgraph') {
+      if (!Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
+        throw new Error('invalid_thinkgraph_projection');
+      }
+      return payload as GraphProjectionV1;
+    }
+    return knowGraphProjection(payload, projectId);
+  }, [projectId]);
 
   const expandNode = useCallback(async ({
     authority,
     node,
-    projectId,
     codeGraphProject,
     readerCardId,
   }: ExpandRequest) => {
@@ -732,21 +1162,12 @@ export default function useAgentBuilderGraphAttention({
       if (selectedCardId) throw new Error('Deselect the Card to expand the overall graph.');
       let incoming: GraphProjectionV1 | null = null;
       if (authority === 'thinkgraph') {
-        const query = new URLSearchParams({
-          projectId,
-          canonicalId: String(node.canonicalId || node.id),
-        });
-        const response = await fetch(`/api/thinkgraph/neighborhood?${query.toString()}`);
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !isRecord(payload)) throw new Error(String(payload?.error || `HTTP ${response.status}`));
-        if (!Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) throw new Error('invalid_thinkgraph_projection');
-        incoming = payload as GraphProjectionV1;
+        incoming = await readNativeNeighborhood(
+          authority,
+          String(node.canonicalId || node.id),
+        );
       } else if (authority === 'knowgraph') {
-        const query = new URLSearchParams({ projectId, nodeId: node.id, limit: '50', depth: '1' });
-        const response = await fetch(`/api/knowgraph/expand?${query.toString()}`);
-        const payload = await response.json().catch(() => null);
-        if (!response.ok || !isRecord(payload)) throw new Error(String(payload?.error?.message || payload?.error || `HTTP ${response.status}`));
-        incoming = knowGraphProjection(payload, projectId);
+        incoming = await readNativeNeighborhood(authority, node.id);
       } else {
         if (codeGraphProject !== CANONICAL_CBM_PROJECT_NAME || !readerCardId) {
           throw new Error('CodeGraph requires the current saved workspace');
@@ -762,7 +1183,7 @@ export default function useAgentBuilderGraphAttention({
       }));
       throw error;
     }
-  }, [merge, selectedCardId, readCodeGraph]);
+  }, [merge, selectedCardId, readCodeGraph, readNativeNeighborhood]);
 
   const removeThinkGraphEvidence = useCallback(async (memoryId: string) => {
     const response = await fetch('/api/thinkgraph/retire', {
@@ -776,6 +1197,7 @@ export default function useAgentBuilderGraphAttention({
   return {
     refreshThinkGraph,
     projections,
+    jevAttentionVisual,
     removeThinkGraphEvidence,
     errors,
     statuses,
@@ -786,6 +1208,7 @@ export default function useAgentBuilderGraphAttention({
     observeAttentionSession,
     observeThinkGraphRevision,
     observeThinkGraphFailure,
+    readNativeNeighborhood,
     expandNode,
   };
 }

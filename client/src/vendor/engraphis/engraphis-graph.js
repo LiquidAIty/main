@@ -8,6 +8,37 @@
    accepts the renderer-friendly `name`, `source` and `target` aliases so it can be used
    with both the dashboard adapter and standalone scene payloads. */
 (function () {
+  const NODE_DOUBLE_CLICK_WINDOW_MS = 420;
+  function createNodeClickArbiter(onNodeClick, onNodeDoubleClick,
+    windowMs = NODE_DOUBLE_CLICK_WINDOW_MS) {
+    let timer = 0, pending = null;
+    const cancel = () => {
+      clearTimeout(timer);
+      timer = 0;
+      pending = null;
+    };
+    const click = node => {
+      if (!onNodeDoubleClick) {
+        if (onNodeClick) onNodeClick(node);
+        return;
+      }
+      if (pending && String(pending.id) === String(node.id)) {
+        cancel();
+        onNodeDoubleClick(node);
+        return;
+      }
+      if (pending && onNodeClick) onNodeClick(pending);
+      cancel();
+      pending = node;
+      timer = setTimeout(() => {
+        const selected = pending;
+        timer = 0;
+        pending = null;
+        if (selected && onNodeClick) onNodeClick(selected);
+      }, windowMs);
+    };
+    return { click, cancel };
+  }
   const PRESETS = {
     galaxy: { label: 'Galaxy gravity', repel: 100, link: 8, gravity: 96, font: 12, size: 3, linkw: 0.72, labelDensity: 24, curve: 0.12, particles: 0 },
     original: { label: 'Original force', repel: 120, link: 30, gravity: 14, font: 13, size: 3, linkw: 1, labelDensity: 40, curve: 0, particles: 0 },
@@ -6820,6 +6851,61 @@
     });
   }
 
+  const SOLARPUNK_MATERIAL_ROLES = {
+    THINK_MATERIAL: 'think',
+    KNOW_MATERIAL: 'know',
+    PAIRED_SOLARPUNK_MATERIAL: 'paired'
+  };
+
+  /* This is a transient render recipe, not another public graph style. Only explicitly
+     annotated render nodes enter it; every other node continues through materialRecipe(). */
+  function solarpunkMaterialRecipe(node, themeColors, identity) {
+    if (!node || node.material_kind !== 'solarpunk') return null;
+    const materialRole = String(node.material_role || '');
+    const modality = SOLARPUNK_MATERIAL_ROLES[materialRole];
+    if (!modality) return null;
+    const theme = themeColors && typeof themeColors === 'object' ? themeColors : {};
+    const blue = rgbString(node.material_blue || theme.material_blue
+      || theme.blue || theme.accent || identity || '#37adaa');
+    const orange = rgbString(node.material_orange || theme.material_orange
+      || theme.orange || '#f2a64a');
+    const surface = rgbString(node.material_surface || theme.material_surface
+      || theme.surface || theme.canvas || '#0b0e12');
+    const thinkActive = node.material_think_active === true;
+    const knowActive = node.material_know_active === true;
+    const turnHeatActive = node.turn_heat_active === true;
+    const turnHeat = turnHeatIntensity(node);
+    const activeExposure = Math.min(1,
+      (thinkActive ? 0.14 : 0) + (knowActive ? 0.14 : 0) + turnHeat * 0.48);
+    const dominant = modality === 'know' ? orange : blue;
+    const identityColour = modality === 'paired'
+      ? mixColours(blue, orange, 0.48) : dominant;
+    const substrate = mixColours(surface, '#020508', 0.76);
+    const face = modality === 'paired'
+      ? mixColours(surface, '#101923', 0.42)
+      : mixColours(surface, dominant, 0.26);
+    const activeKey = [
+      thinkActive ? 1 : 0, knowActive ? 1 : 0, turnHeatActive ? 1 : 0,
+      Math.round(turnHeat * 100), Math.round(activeExposure * 100)
+    ].join(',');
+    return {
+      paletteName: 'transient-node-material', family: 'solarpunk',
+      materialRole, modality, surfaceModel: modality === 'paired'
+        ? 'unified-dark-gloss' : 'unified-gloss',
+      splitSurface: false, dualBloom: modality === 'paired',
+      materialBlue: blue, materialOrange: orange, materialSurface: surface,
+      blueKey: colourKey(blue), orangeKey: colourKey(orange), surfaceKey: colourKey(surface),
+      thinkActive, knowActive, turnHeatActive, turnHeat, activeExposure, activeKey,
+      substrate, substrateKey: colourKey(substrate), face,
+      identity: identityColour, identityKey: colourKey(identityColour),
+      dominant, innerLight: blue, solarRim: orange,
+      outer: mixColours(substrate, '#010305', 0.80),
+      bezel: mixColours(substrate, surface, 0.34),
+      edge: modality === 'think' ? blue : orange,
+      sheen: modality === 'know' ? orange : blue
+    };
+  }
+
   function fillCircle(ctx, x, y, r, fill) {
     ctx.beginPath(); ctx.arc(x, y, Math.max(0.1, r), 0, 6.2832); ctx.fillStyle = fill; ctx.fill();
   }
@@ -7046,9 +7132,83 @@
     identityRing(ctx, x, y, r, recipe, 0.62);
   }
 
+  function paintSolarpunkMaterial(ctx, x, y, r, recipe, tier) {
+    const blue = recipe.materialBlue, orange = recipe.materialOrange;
+    const paired = recipe.modality === 'paired';
+    const primary = recipe.modality === 'know' ? orange : blue;
+    const secondary = recipe.modality === 'know' ? blue : orange;
+    const exposure = recipe.activeExposure || 0;
+    /* Every modality uses the same circular geometry and top-left light direction. Paired
+       material remains one dark glossy body: radial spectral light and rims never divide it. */
+    materialHalo(ctx, x, y, r, tier, blue,
+      (paired ? 0.17 : recipe.modality === 'think' ? 0.20 : 0.065)
+        + (recipe.thinkActive ? 0.07 : 0) + exposure * 0.035,
+      -0.14, -0.12);
+    materialHalo(ctx, x, y, r, tier, orange,
+      (paired ? 0.16 : recipe.modality === 'know' ? 0.20 : 0.055)
+        + (recipe.knowActive ? 0.07 : 0) + exposure * 0.035,
+      -0.08, -0.10);
+    fillCircle(ctx, x, y, r, recipe.outer);
+    fillCircle(ctx, x, y, r * 0.94, recipe.bezel);
+    if (tier === 'signature') {
+      const signatureFace = paired
+        ? mixColours(recipe.materialSurface, blue, 0.34)
+        : mixColours(recipe.face, primary, 0.38 + exposure * 0.12);
+      fillCircle(ctx, x, y, r * 0.79, signatureFace);
+      strokeCircle(ctx, x, y, r * 0.85, alpha(paired ? orange : primary, 0.88),
+        Math.max(0.36, r * 0.085));
+      if (paired) strokeCircle(ctx, x, y, r * 0.76, alpha(blue, 0.72),
+        Math.max(0.28, r * 0.045));
+      return;
+    }
+    const rim = gradient(ctx, 'createRadialGradient', [
+      x - r * 0.28, y - r * 0.32, r * 0.03, x, y, r * 0.92
+    ], [
+      [0, mixColours(paired ? orange : primary, '#ffffff', 0.22 + exposure * 0.16)],
+      [0.58, paired ? orange : primary],
+      [1, mixColours(recipe.substrate, paired ? orange : secondary, paired ? 0.34 : 0.18)]
+    ]);
+    fillCircle(ctx, x, y, r * 0.89, rim);
+    const face = gradient(ctx, 'createRadialGradient', [
+      x - r * 0.28, y - r * 0.32, r * 0.025, x, y, r * 0.84
+    ], paired ? [
+      [0, mixColours(blue, '#ffffff', 0.22 + exposure * 0.20)],
+      [0.24, mixColours(recipe.face, blue, 0.52 + exposure * 0.10)],
+      [0.58, mixColours(recipe.face, blue, 0.18)],
+      [0.82, recipe.face], [1, mixColours(recipe.face, '#010306', 0.72)]
+    ] : [
+      [0, mixColours(primary, '#ffffff', 0.24 + exposure * 0.20)],
+      [0.25, mixColours(recipe.face, primary, 0.58 + exposure * 0.10)],
+      [0.62, mixColours(recipe.face, primary, 0.24)],
+      [1, mixColours(recipe.face, '#010306', 0.68)]
+    ]);
+    fillCircle(ctx, x, y, r * 0.81, face);
+    const gloss = gradient(ctx, 'createRadialGradient', [
+      x - r * 0.31, y - r * 0.36, r * 0.02, x, y, r * 0.80
+    ], [
+      [0, alpha('#ffffff', 0.34 + exposure * 0.22)],
+      [0.20, alpha('#ffffff', 0.08 + exposure * 0.08)],
+      [0.56, alpha(primary, 0.035 + exposure * 0.045)],
+      [1, alpha('#020406', 0.34)]
+    ]);
+    fillCircle(ctx, x, y, r * 0.80, gloss);
+    if (paired) {
+      strokeCircle(ctx, x, y, r * 0.88, alpha(orange, 0.94), Math.max(0.40, r * 0.052));
+      strokeCircle(ctx, x, y, r * 0.83, alpha(blue, 0.72 + exposure * 0.14),
+        Math.max(0.30, r * 0.030));
+    } else {
+      strokeCircle(ctx, x, y, r * 0.88, alpha(primary, 0.88), Math.max(0.38, r * 0.048));
+      strokeCircle(ctx, x, y, r * 0.83, alpha(secondary, 0.24), Math.max(0.26, r * 0.025));
+    }
+    ctx.lineWidth = Math.max(0.34, r * 0.026);
+    ctx.strokeStyle = alpha('#f5fbff', 0.34 + exposure * 0.24);
+    ctx.beginPath(); ctx.arc(x, y, r * 0.73, -2.70, -1.16); ctx.stroke();
+  }
+
   function paintMaterialDirect(ctx, x, y, r, recipe, tier) {
     const detail = tier || 'full';
-    if (recipe.family === 'iridescent-pvd') paintCyberMaterial(ctx, x, y, r, recipe, detail);
+    if (recipe.family === 'solarpunk') paintSolarpunkMaterial(ctx, x, y, r, recipe, detail);
+    else if (recipe.family === 'iridescent-pvd') paintCyberMaterial(ctx, x, y, r, recipe, detail);
     else if (recipe.family === 'anodized-alloy') paintGalaxyMaterial(ctx, x, y, r, recipe, detail);
     else if (recipe.family === 'brushed-copper') paintSolarMaterial(ctx, x, y, r, recipe, detail);
     else paintClassicMaterial(ctx, x, y, r, recipe, detail);
@@ -7096,6 +7256,13 @@
     return normalDpr(typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1);
   }
   function materialCacheKey(recipe, tier, dpr) {
+    if (recipe.family === 'solarpunk') {
+      return [
+        recipe.family, recipe.materialRole, recipe.modality,
+        recipe.blueKey, recipe.orangeKey, recipe.surfaceKey, recipe.activeKey,
+        tier, normalDpr(dpr)
+      ].join('|');
+    }
     return [
       recipe.styleName, recipe.substrateKey, recipe.identityKey,
       tier, normalDpr(dpr)
@@ -7606,6 +7773,12 @@
     let seeded = null;
     let clusterExpandTimer = 0;
     let destroyed = false, running = true, fitTimer = 0, suspended = 0, pendingRender = null;
+    const nodeClickArbiter = createNodeClickArbiter(
+      node => { if (!destroyed && opts.onNodeClick) opts.onNodeClick(node); },
+      opts.onNodeDoubleClick
+        ? node => { if (!destroyed) opts.onNodeDoubleClick(node); }
+        : null,
+    );
     let physicsFrame = 0, physicsReheatPending = false;
     let galaxyFrame = 0, galaxyLastFrameTime = null, galaxyAccumulator = 0;
     let galaxyFrames = 0, galaxySteps = 0, galaxyLastSubsteps = 0;
@@ -8506,15 +8679,25 @@
          fallback preserves them when detached canvases are unavailable, while a large graph
          forces the gradient-free signature tier. */
       let nodeMaterial;
+      const currentTurnHeat = turnHeatIntensity(node);
+      const solarpunkMaterial = solarpunkMaterialRecipe(node, state.themeColors, col);
       const galaxyAnchor = state.settings.mode === 'galaxy'
         && galaxyAnchorAdornmentEligible(node, galaxyVisibleStarIds);
       const galaxyPrimary = state.settings.mode === 'galaxy'
         && (node.anchor_role === 'global' || galaxyPrimaryNodeIds.has(String(node.id)));
       const communityStar = galaxyAnchor && node.anchor_role === 'community';
+      const galaxyAccent = solarpunkMaterial
+        ? (solarpunkMaterial.modality === 'know'
+          ? solarpunkMaterial.materialOrange : solarpunkMaterial.materialBlue)
+        : state.themeColors.accent || col;
       if (galaxyAnchor) paintGalaxyAnchorAdornment(
-        ctx, node, scale, state.themeColors.accent || col, false
+        ctx, node, scale, galaxyAccent, false
       );
-      if (communityStar) {
+      if (solarpunkMaterial) {
+        nodeMaterial = solarpunkMaterial;
+        paintMaterialSurface(ctx, node.x, node.y, r, scale, nodeMaterial,
+          materialLow, galaxyPrimary);
+      } else if (communityStar) {
         /* A real multi-planet star gets the same oversampled gradient/grain/bezel pipeline as
            every premium node surface. Only its recipe changes; geometry and hit area do not. */
         const stellarIdentity = mixColours(col, '#ffd166', 0.72);
@@ -8547,9 +8730,8 @@
         if (node.hub) { ctx.lineWidth = 0.8 / scale; ctx.strokeStyle = node.stroke; ctx.stroke(); }
       }
       if (galaxyAnchor) paintGalaxyAnchorAdornment(
-        ctx, node, scale, state.themeColors.accent || nodeMaterial.identity, true
+        ctx, node, scale, galaxyAccent || nodeMaterial.identity, true
       );
-      const currentTurnHeat = turnHeatIntensity(node);
       if (currentTurnHeat > 0) {
         /* Current-turn heat is a transient UI overlay from the authoritative graph revision.
            It does not alter node mass, radius, or the saved graph. */
@@ -9764,6 +9946,10 @@
       if (opts.onStats) opts.onStats({ nodes: data.nodes.length, links: data.links.length, total: raw.nodes.length, totalLinks: raw.links.length, preset: (PRESETS[state.settings.mode] || PRESETS.compact).label, collapsed: collapsed, ghosts: data.nodes.filter(n => n.ghost).length, bridges: data.links.filter(l => l.bridge).length, suggested: data.links.filter(l => l.suggested).length });
     }
 
+    function cancelPendingNodeClick() {
+      nodeClickArbiter.cancel();
+    }
+
     function handleNodeClick(node) {
       if (suppressNodeClickAfterDrag) {
         suppressNodeClickAfterDrag = false;
@@ -9778,7 +9964,7 @@
         if (opts.onCollapseChange) opts.onCollapseChange(false);
         return;
       }
-      if (opts.onNodeClick) opts.onNodeClick(node);
+      nodeClickArbiter.click(node);
     }
 
     function dragNodeEligible(node) {
@@ -10015,8 +10201,14 @@
         invalidate();
       })
       .onNodeClick(handleNodeClick)
-      .onLinkClick(link => { if (opts.onLinkClick) opts.onLinkClick(link); })
-      .onBackgroundClick(() => { if (opts.onBackgroundClick) opts.onBackgroundClick(); })
+      .onLinkClick(link => {
+        cancelPendingNodeClick();
+        if (opts.onLinkClick) opts.onLinkClick(link);
+      })
+      .onBackgroundClick(() => {
+        cancelPendingNodeClick();
+        if (opts.onBackgroundClick) opts.onBackgroundClick();
+      })
       .onZoom(z => {
         zoom = z.k || 1;
         if (state.collapse !== 'auto') return;
@@ -10916,6 +11108,7 @@
       softAlphaTimer = 0;
       clearTimeout(clusterExpandTimer);
       clusterExpandTimer = 0;
+      cancelPendingNodeClick();
       cancelFrame(initialFitFrame);
       initialFitFrame = 0;
       cancelFrame(dragClickFrame);
@@ -10988,6 +11181,7 @@
        Nothing in the dashboard uses these; treat them as the engine's unit-test seam. */
     _internals: {
       esc, hexRgb, alpha, contrastOn, communities, betweenness, findBridges, maxOf,
+      createNodeClickArbiter,
       graphNodeRadius, evidenceNodeRadius, sanitizeEvidenceMetrics, fallbackGravityMass,
       radiusFromGravityMass, galaxyGravityConstant, galaxyGravityMaximum: GALAXY_GRAVITY_MAXIMUM,
       galaxyGravityStrengthMultiplier,
@@ -11040,7 +11234,7 @@
       semanticRelationshipDistance, semanticRelationshipSpring,
       turnHeatIntensity, preserveRefreshPosition,
       fallbackCommunityBridges, paintFlowArrow,
-      nodeName, linkEndpoint, asOfValue, materialRecipe, materialTier,
+      nodeName, linkEndpoint, asOfValue, materialRecipe, solarpunkMaterialRecipe, materialTier,
       paintMaterialDirect, paintMaterialSurface, paintGalaxyAnchorAdornment,
       galaxyOrbitLaneGeometry, paintGalaxyOrbitLanes, galaxyOrbitalLinkRole,
       galaxyAnchorAdornmentEligible, galaxyStarAnchorIds, galaxyPrimaryAnchorIds,

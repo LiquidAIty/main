@@ -19,6 +19,7 @@ import tradingRoutes from './trading.routes';
 import worldviewRoutes from './worldview.routes';
 import agentTerminalRoutes from './agentTerminal.routes';
 import hermesCardToolsRoutes from './hermesCardTools.routes';
+import graphRoutes from './graph.routes';
 
 const router = Router();
 
@@ -37,6 +38,7 @@ router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor, cardRuntime);
 router.use('/main', authMiddleware, mainRoutes);
 router.use('/idd', authMiddleware, iddRoutes);
+router.use('/graph', authMiddleware, graphRoutes);
 router.use('/codegraph', authMiddleware, codegraph);
 router.use('/knowgraph', authMiddleware, knowgraphRoutes);
 router.use('/thinkgraph', authMiddleware, thinkgraphRoutes);

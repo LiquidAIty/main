@@ -74,9 +74,169 @@ function knowledgeResponse(nodes: Array<Record<string, unknown>> = [], relations
   return { ok: true, status: 200, json: async () => ({ nodes, relationships }) };
 }
 
+type TestJevCandidate = {
+  choiceId: string;
+  authority: 'ThinkGraph' | 'KnowGraph';
+  nativeId: string;
+  title: string;
+  probability: number;
+  selected: boolean;
+  hydrated: boolean;
+};
+
+function mainRunTurn(runId: string, conversationId = 'main') {
+  return {
+    ...turn,
+    conversationId,
+    runId,
+    event: {
+      kind: 'run', projectId: 'project-1', deckId: 'deck_builder', conversationId,
+      cardId: 'card_main_chat', runId, directAddressed: false,
+    },
+  };
+}
+
+function jevAttentionTurn(
+  runId: string,
+  decisionId: string,
+  candidates: TestJevCandidate[],
+  conversationId = 'main',
+) {
+  return {
+    ...turn,
+    conversationId,
+    runId,
+    event: {
+      kind: 'jev_attention', schemaVersion: 'jev-attention.v1', status: 'success',
+      decisionId, resultIdentity: `result-${decisionId}`,
+      projectId: 'project-1', deckId: 'deck_builder', conversationId,
+      cardId: 'card_main_chat', runId, directAddressed: false,
+      candidates,
+      distribution: Object.fromEntries(candidates.map((candidate) => [
+        candidate.choiceId, candidate.probability,
+      ])),
+      selectedReferences: candidates
+        .filter((candidate) => candidate.selected && candidate.hydrated)
+        .map((candidate) => ({ authority: candidate.authority, nativeId: candidate.nativeId })),
+    },
+  };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('creates no visual state before one real successful Jev distribution', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? thinkgraphResponse() : knowledgeResponse()));
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    expect(result.current.jevAttentionVisual).toBeNull();
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'no-jev' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('no-jev')));
+    expect(result.current.jevAttentionVisual).toBeNull();
+
+    const unavailable = jevAttentionTurn('no-jev', 'decision-unavailable', []);
+    act(() => result.current.observeNativeTurnEvent({
+      ...unavailable,
+      event: { ...unavailable.event, status: 'unavailable' },
+    }));
+    expect(result.current.jevAttentionVisual).toBeNull();
+  });
+
+  it('retains the full Jev distribution and resolves ordered selected subjects without inventing nodes', async () => {
+    let finishExactRead!: (value: ReturnType<typeof thinkgraphResponse>) => void;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return Promise.resolve(thinkgraphResponse([
+          { id: 'think-existing', canonicalId: 'think-existing', label: 'Existing thought', properties: {} },
+        ]));
+      }
+      if (url.startsWith('/api/thinkgraph/neighborhood')) {
+        return new Promise<ReturnType<typeof thinkgraphResponse>>((resolve) => {
+          finishExactRead = resolve;
+        });
+      }
+      return Promise.resolve(knowledgeResponse());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    const event = jevAttentionTurn('visual-run', 'visual-decision', [
+      { choiceId: 'missing', authority: 'ThinkGraph', nativeId: 'think-missing',
+        title: 'Missing thought', probability: 0.5, selected: true, hydrated: true },
+      { choiceId: 'existing', authority: 'ThinkGraph', nativeId: 'think-existing',
+        title: 'Existing thought', probability: 0.25, selected: true, hydrated: true },
+      { choiceId: 'unavailable', authority: 'KnowGraph', nativeId: 'know-unavailable',
+        title: 'Unavailable source', probability: 0.15, selected: true, hydrated: false },
+      { choiceId: 'unselected', authority: 'KnowGraph', nativeId: 'know-unselected',
+        title: 'Unselected source', probability: 0.1, selected: false, hydrated: true },
+    ]);
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'visual-run' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('visual-run')));
+    act(() => result.current.observeNativeTurnEvent(event));
+
+    expect(result.current.jevAttentionVisual).toMatchObject({
+      decisionId: 'visual-decision',
+      resultIdentity: 'result-visual-decision',
+      clientRunId: 'visual-run',
+      runId: 'visual-run',
+      phase: 'attention_space',
+      active: true,
+      terminalStatus: null,
+      distribution: { missing: 0.5, existing: 0.25, unavailable: 0.15, unselected: 0.1 },
+      candidates: event.event.candidates,
+      selectedSubjects: [
+        expect.objectContaining({ choiceId: 'missing', probability: 0.5, resolution: 'resolving' }),
+        expect.objectContaining({ choiceId: 'existing', probability: 0.25, resolution: 'resolved' }),
+        expect.objectContaining({
+          choiceId: 'unavailable', probability: 0.15, hydrated: false, resolution: 'unavailable',
+        }),
+      ],
+    });
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes('nodeId=know-unavailable'),
+    )).toBe(false);
+    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+
+    // A duplicate decision/result cannot replace the first visual descriptor.
+    act(() => result.current.observeNativeTurnEvent(event));
+    expect(result.current.jevAttentionVisual?.candidates).toEqual(event.event.candidates);
+
+    await act(async () => finishExactRead(thinkgraphResponse([
+      { id: 'think-missing', canonicalId: 'think-missing', label: 'Missing thought', properties: {} },
+    ])));
+    await waitFor(() => expect(
+      result.current.jevAttentionVisual?.selectedSubjects[0].resolution,
+    ).toBe('resolved'));
+
+    act(() => result.current.observeNativeTurnEvent({
+      ...turn,
+      runId: 'visual-run',
+      event: {
+        kind: 'session', runId: 'visual-run', projectId: 'project-1',
+        deckId: 'deck_builder', conversationId: 'main',
+      },
+    }));
+    expect(result.current.jevAttentionVisual?.phase).toBe('local_relational');
+    expect(result.current.jevAttentionVisual?.active).toBe(true);
+
+    act(() => result.current.finishAttentionScope({
+      ...turn, runId: 'visual-run', status: 'completed',
+    }));
+    expect(result.current.jevAttentionVisual).toMatchObject({
+      phase: 'local_relational', active: false, terminalStatus: 'completed',
+    });
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'next-run' }));
+    expect(result.current.jevAttentionVisual).toBeNull();
+  });
+
   it('illuminates only selected hydrated Jev candidates in their exact native authority scope', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? thinkgraphResponse([
@@ -193,6 +353,416 @@ describe('attention-activated native graph projection', () => {
     expect(result.current.projections.thinkgraph.nodes[1].properties).toMatchObject({
       attentionActive: true, attentionToolName: 'engraphis_recall_context',
     });
+  });
+
+  it('loads an absent selected hydrated native node exactly once without lighting an exact-name peer', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) return thinkgraphResponse();
+      if (url.startsWith('/api/thinkgraph/neighborhood')) return thinkgraphResponse([
+        { id: 'think-missing', canonicalId: 'think-missing', label: 'Shared entity', properties: {} },
+        { id: 'think-neighbor', canonicalId: 'think-neighbor', label: 'Native neighbor', properties: {} },
+      ], [
+        { id: 'think-edge', source: 'think-missing', target: 'think-neighbor', predicate: 'SUPPORTS' },
+      ]);
+      if (url.startsWith('/api/knowgraph/graph')) return knowledgeResponse([
+        { id: 'know-peer', label: 'Shared entity', properties: {} },
+      ]);
+      return knowledgeResponse();
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    const attentionTurn = jevAttentionTurn('client-missing', 'decision-missing', [{
+      choiceId: 'think-missing-choice', authority: 'ThinkGraph', nativeId: 'think-missing',
+      title: 'Shared entity', probability: 1, selected: true, hydrated: true,
+    }]);
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-missing' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('client-missing')));
+    act(() => {
+      result.current.observeNativeTurnEvent(attentionTurn);
+      result.current.observeNativeTurnEvent(attentionTurn);
+    });
+
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+    await waitFor(() => expect(
+      result.current.projections.thinkgraph.nodes.find((node) => node.id === 'think-missing')
+        ?.properties?.attentionActive,
+    ).toBe(true));
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-missing', 'think-neighbor',
+    ]);
+    expect(result.current.projections.thinkgraph.nodes[1].properties?.attentionActive).toBeUndefined();
+    expect(result.current.projections.thinkgraph.edges.map((edge) => edge.id)).toEqual(['think-edge']);
+    expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/neighborhood'),
+    )).toHaveLength(1);
+
+    act(() => result.current.finishAttentionScope({
+      ...turn, runId: 'client-missing', status: 'completed',
+    }));
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-next' }));
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-missing', 'think-neighbor',
+    ]);
+    expect(result.current.projections.thinkgraph.nodes.every(
+      (node) => node.properties?.attentionActive === undefined,
+    )).toBe(true);
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+  });
+
+  it('does not invent nodes or highlights when exact attention reads fail or candidates were not hydrated', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) return thinkgraphResponse();
+      if (url.startsWith('/api/thinkgraph/neighborhood')) return thinkgraphResponse([
+        { id: 'different-think', canonicalId: 'different-think', label: 'Different native node', properties: {} },
+      ]);
+      if (url.startsWith('/api/knowgraph/graph')) return knowledgeResponse();
+      if (url.includes('nodeId=know-missing')) {
+        return { ok: false, status: 503, json: async () => ({ error: 'unavailable' }) };
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-fallback' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('client-fallback')));
+    act(() => result.current.observeNativeTurnEvent(jevAttentionTurn(
+      'client-fallback',
+      'decision-fallback',
+      [
+        { choiceId: 'think-missing', authority: 'ThinkGraph', nativeId: 'think-missing',
+          title: 'Missing Think', probability: 0.34, selected: true, hydrated: true },
+        { choiceId: 'know-missing', authority: 'KnowGraph', nativeId: 'know-missing',
+          title: 'Missing Know', probability: 0.33, selected: true, hydrated: true },
+        { choiceId: 'know-unhydrated', authority: 'KnowGraph', nativeId: 'know-unhydrated',
+          title: 'Unhydrated Know', probability: 0.33, selected: true, hydrated: false },
+      ],
+    )));
+
+    await waitFor(() => expect(fetchMock.mock.calls.filter(
+      ([url]) => String(url).startsWith('/api/thinkgraph/neighborhood')
+        || String(url).startsWith('/api/knowgraph/expand'),
+    )).toHaveLength(2));
+    expect(fetchMock.mock.calls.some(
+      ([url]) => String(url).includes('nodeId=know-unhydrated'),
+    )).toBe(false);
+    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+    expect(result.current.errors.thinkgraph).toBeUndefined();
+    expect(result.current.errors.knowgraph).toBeUndefined();
+    expect(result.current.statuses.thinkgraph).toBe('ready');
+    expect(result.current.statuses.knowgraph).toBe('ready');
+    await waitFor(() => expect(
+      result.current.jevAttentionVisual?.selectedSubjects.map((subject) => subject.resolution),
+    ).toEqual(['unavailable', 'unavailable', 'unavailable']));
+  });
+
+  it('discards an exact attention read that resolves after the next Main turn begins', async () => {
+    let finishExactRead!: (value: ReturnType<typeof thinkgraphResponse>) => void;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return Promise.resolve(thinkgraphResponse());
+      }
+      if (url.startsWith('/api/thinkgraph/neighborhood')) {
+        return new Promise<ReturnType<typeof thinkgraphResponse>>((resolve) => {
+          finishExactRead = resolve;
+        });
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return Promise.resolve(knowledgeResponse([
+          { id: 'stable-know', label: 'Stable Know', properties: {} },
+        ]));
+      }
+      return Promise.resolve(knowledgeResponse());
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-old' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('client-old')));
+    act(() => result.current.observeNativeTurnEvent(jevAttentionTurn(
+      'client-old',
+      'decision-old',
+      [{ choiceId: 'late-think', authority: 'ThinkGraph', nativeId: 'late-think',
+        title: 'Late Think', probability: 1, selected: true, hydrated: true }],
+    )));
+    await waitFor(() => expect(finishExactRead).toBeDefined());
+
+    act(() => result.current.finishAttentionScope({
+      ...turn, runId: 'client-old', status: 'completed',
+    }));
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'client-new' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('client-new')));
+    await act(async () => finishExactRead(thinkgraphResponse([
+      { id: 'late-think', canonicalId: 'late-think', label: 'Late Think', properties: {} },
+    ])));
+
+    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+    expect(result.current.projections.knowgraph.nodes.map((node) => node.id)).toEqual(['stable-know']);
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+    expect(result.current.errors.thinkgraph).toBeUndefined();
+    expect(result.current.statuses.thinkgraph).toBe('ready');
+    expect(result.current.jevAttentionVisual).toBeNull();
+  });
+
+  it('keeps an exact selected KnowGraph node visible when an older full refresh finishes later', async () => {
+    let finishFullRead!: (value: ReturnType<typeof knowledgeResponse>) => void;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return Promise.resolve(thinkgraphResponse());
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return new Promise<ReturnType<typeof knowledgeResponse>>((resolve) => {
+          finishFullRead = resolve;
+        });
+      }
+      if (url.startsWith('/api/knowgraph/expand')) {
+        return Promise.resolve(knowledgeResponse([
+          { id: 'know-selected-exact', label: 'Exact selected knowledge', properties: {} },
+        ]));
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(finishFullRead).toBeDefined());
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'refresh-race-know' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('refresh-race-know')));
+    act(() => result.current.observeNativeTurnEvent(jevAttentionTurn(
+      'refresh-race-know',
+      'decision-refresh-race-know',
+      [{
+        choiceId: 'know-selected-exact', authority: 'KnowGraph', nativeId: 'know-selected-exact',
+        title: 'Exact selected knowledge', probability: 1, selected: true, hydrated: true,
+      }],
+    )));
+    await waitFor(() => expect(
+      result.current.projections.knowgraph.nodes.find((node) => node.id === 'know-selected-exact')
+        ?.properties?.attentionActive,
+    ).toBe(true));
+
+    await act(async () => finishFullRead(knowledgeResponse([
+      { id: 'know-full-base', label: 'Full refresh knowledge', properties: {} },
+    ])));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+    expect(result.current.projections.knowgraph.nodes.map((node) => node.id)).toEqual([
+      'know-full-base', 'know-selected-exact',
+    ]);
+    expect(result.current.projections.knowgraph.nodes.find(
+      (node) => node.id === 'know-selected-exact',
+    )?.properties?.attentionActive).toBe(true);
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'after-refresh-race-know' }));
+    expect(result.current.projections.knowgraph.nodes.map((node) => node.id)).toEqual([
+      'know-full-base',
+    ]);
+    expect(result.current.projections.knowgraph.nodes[0].properties?.attentionActive).toBeUndefined();
+  });
+
+  it('merges an exact selected ThinkGraph node after a newer full refresh without erasing that refresh', async () => {
+    let finishExactRead!: (value: ReturnType<typeof thinkgraphResponse>) => void;
+    let fullReadCount = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        fullReadCount += 1;
+        return Promise.resolve(fullReadCount === 1
+          ? thinkgraphResponse()
+          : thinkgraphResponse([
+              { id: 'think-full-base', canonicalId: 'think-full-base', label: 'Full refresh thought', properties: {} },
+            ]));
+      }
+      if (url.startsWith('/api/thinkgraph/neighborhood')) {
+        return new Promise<ReturnType<typeof thinkgraphResponse>>((resolve) => {
+          finishExactRead = resolve;
+        });
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return Promise.resolve(knowledgeResponse());
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'refresh-race-think' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('refresh-race-think')));
+    act(() => result.current.observeNativeTurnEvent(jevAttentionTurn(
+      'refresh-race-think',
+      'decision-refresh-race-think',
+      [{
+        choiceId: 'think-selected-exact', authority: 'ThinkGraph', nativeId: 'think-selected-exact',
+        title: 'Exact selected thought', probability: 1, selected: true, hydrated: true,
+      }],
+    )));
+    await waitFor(() => expect(finishExactRead).toBeDefined());
+
+    await act(async () => result.current.refreshThinkGraph());
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-full-base',
+    ]);
+
+    await act(async () => finishExactRead(thinkgraphResponse([
+      {
+        id: 'think-selected-exact', canonicalId: 'think-selected-exact',
+        label: 'Exact selected thought', properties: {},
+      },
+    ])));
+    await waitFor(() => expect(
+      result.current.projections.thinkgraph.nodes.find((node) => node.id === 'think-selected-exact')
+        ?.properties?.attentionActive,
+    ).toBe(true));
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-full-base', 'think-selected-exact',
+    ]);
+  });
+
+  it('discards an old graph-scope exact read even when the next conversation reuses both run IDs', async () => {
+    let finishExactRead!: (value: ReturnType<typeof thinkgraphResponse>) => void;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return Promise.resolve(thinkgraphResponse());
+      }
+      if (url.startsWith('/api/thinkgraph/neighborhood')) {
+        return new Promise<ReturnType<typeof thinkgraphResponse>>((resolve) => {
+          finishExactRead = resolve;
+        });
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return Promise.resolve(knowledgeResponse());
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result, rerender } = renderHook(
+      ({ conversationId }) => useAgentBuilderGraphAttention({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId,
+      }),
+      { initialProps: { conversationId: 'main' } },
+    );
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'reused-client-run' }));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('reused-client-run')));
+    act(() => result.current.observeNativeTurnEvent(jevAttentionTurn(
+      'reused-client-run',
+      'decision-old-scope',
+      [{
+        choiceId: 'think-old-scope', authority: 'ThinkGraph', nativeId: 'think-old-scope',
+        title: 'Old-scope thought', probability: 1, selected: true, hydrated: true,
+      }],
+    )));
+    await waitFor(() => expect(finishExactRead).toBeDefined());
+
+    rerender({ conversationId: 'other' });
+    const reusedTurn = { ...turn, conversationId: 'other', runId: 'reused-client-run' };
+    act(() => result.current.startAttentionScope(reusedTurn));
+    act(() => result.current.observeNativeTurnEvent(mainRunTurn('reused-client-run', 'other')));
+    await act(async () => finishExactRead(thinkgraphResponse([
+      {
+        id: 'think-old-scope', canonicalId: 'think-old-scope',
+        label: 'Old-scope thought', properties: {},
+      },
+    ])));
+
+    expect(result.current.projections.thinkgraph.nodes).toEqual([]);
+    expect(result.current.projections.knowgraph.nodes).toEqual([]);
+  });
+
+  it('lets a project-level full refresh finish across a conversation-only scope change', async () => {
+    let finishFullRead!: (value: ReturnType<typeof thinkgraphResponse>) => void;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return new Promise<ReturnType<typeof thinkgraphResponse>>((resolve) => {
+          finishFullRead = resolve;
+        });
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return Promise.resolve(knowledgeResponse());
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result, rerender } = renderHook(
+      ({ conversationId }) => useAgentBuilderGraphAttention({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId,
+      }),
+      { initialProps: { conversationId: 'main' } },
+    );
+    await waitFor(() => expect(finishFullRead).toBeDefined());
+
+    rerender({ conversationId: 'other' });
+    await act(async () => finishFullRead(thinkgraphResponse([
+      {
+        id: 'think-project-native', canonicalId: 'think-project-native',
+        label: 'Project-native thought', properties: {},
+      },
+    ])));
+
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-project-native',
+    ]);
+  });
+
+  it('keeps authority load errors through attention start until a successful authority refresh', async () => {
+    let thinkGraphHealthy = false;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith('/api/thinkgraph/projection')) {
+        return Promise.resolve(thinkGraphHealthy
+          ? thinkgraphResponse([
+              { id: 'think-recovered', canonicalId: 'think-recovered', label: 'Recovered thought', properties: {} },
+            ])
+          : {
+              ok: false,
+              status: 503,
+              json: async () => ({ error: 'ThinkGraph unavailable' }),
+            });
+      }
+      if (url.startsWith('/api/knowgraph/graph')) {
+        return Promise.resolve(knowledgeResponse());
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('error'));
+    expect(result.current.errors.thinkgraph).toBe('ThinkGraph unavailable');
+
+    act(() => result.current.startAttentionScope({ ...turn, runId: 'error-preservation' }));
+    expect(result.current.statuses.thinkgraph).toBe('error');
+    expect(result.current.errors.thinkgraph).toBe('ThinkGraph unavailable');
+
+    thinkGraphHealthy = true;
+    await act(async () => result.current.refreshThinkGraph());
+    expect(result.current.statuses.thinkgraph).toBe('ready');
+    expect(result.current.errors.thinkgraph).toBeUndefined();
+    expect(result.current.projections.thinkgraph.nodes.map((node) => node.id)).toEqual([
+      'think-recovered',
+    ]);
   });
 
   it('uses persisted Jev winner probabilities for live incident node mass', () => {
@@ -575,6 +1145,85 @@ describe('attention-activated native graph projection', () => {
     nativeNodes = [];
     act(() => result.current.observeAttentionEvent({ ...event, eventId: 'delete', change: 'delete', phase: 'completed' }));
     await waitFor(() => expect(result.current.projections.knowgraph.nodes).toEqual([]));
+  });
+
+  it('reads exact bounded Think and Know neighborhoods without mutating graph state', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/thinkgraph/projection?projectId=project-1') {
+        return thinkgraphResponse([
+          { id: 'think-base', canonicalId: 'think-base', label: 'Base thought', properties: {} },
+        ]);
+      }
+      if (url === '/api/knowgraph/graph?projectId=project-1&limit=200') {
+        return knowledgeResponse([
+          { id: 'know-base', label: 'Base knowledge', properties: {} },
+        ]);
+      }
+      if (url === '/api/thinkgraph/neighborhood?projectId=project-1&canonicalId=think+id%2F1') {
+        return thinkgraphResponse([
+          { id: 'think id/1', canonicalId: 'think id/1', label: 'Focused thought', properties: {} },
+          { id: 'think-neighbor', canonicalId: 'think-neighbor', label: 'Thought neighbor', properties: {} },
+        ], [
+          { id: 'think-edge', source: 'think id/1', target: 'think-neighbor', predicate: 'SUPPORTS' },
+        ]);
+      }
+      if (url === '/api/knowgraph/expand?projectId=project-1&nodeId=know%3Aid%3F1&limit=50&depth=1') {
+        return knowledgeResponse([
+          { id: 'know:id?1', label: 'Focused knowledge', properties: {} },
+          { id: 'know-neighbor', label: 'Knowledge neighbor', properties: {} },
+        ], [
+          { id: 'know-edge', from: 'know:id?1', to: 'know-neighbor', type: 'CITES' },
+        ]);
+      }
+      throw new Error(`Unexpected native read: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useAgentBuilderGraphAttention({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+    }));
+    await waitFor(() => expect(result.current.statuses.thinkgraph).toBe('ready'));
+    await waitFor(() => expect(result.current.statuses.knowgraph).toBe('ready'));
+    const stateBeforeRead = {
+      thinkgraph: result.current.projections.thinkgraph,
+      knowgraph: result.current.projections.knowgraph,
+      errors: result.current.errors,
+      statuses: result.current.statuses,
+      jevAttentionVisual: result.current.jevAttentionVisual,
+    };
+
+    const think = await result.current.readNativeNeighborhood(
+      'thinkgraph',
+      'think id/1',
+      controller.signal,
+    );
+    const know = await result.current.readNativeNeighborhood(
+      'knowgraph',
+      'know:id?1',
+      controller.signal,
+    );
+
+    expect(think.nodes.map((node) => node.id)).toEqual(['think id/1', 'think-neighbor']);
+    expect(think.edges.map((edge) => edge.id)).toEqual(['think-edge']);
+    expect(know.nodes.map((node) => node.id)).toEqual(['know:id?1', 'know-neighbor']);
+    expect(know.edges).toEqual([
+      expect.objectContaining({
+        id: 'know-edge', source: 'know:id?1', target: 'know-neighbor', predicate: 'CITES',
+      }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/thinkgraph/neighborhood?projectId=project-1&canonicalId=think+id%2F1',
+      { signal: controller.signal },
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/knowgraph/expand?projectId=project-1&nodeId=know%3Aid%3F1&limit=50&depth=1',
+      { signal: controller.signal },
+    );
+    expect(result.current.projections.thinkgraph).toBe(stateBeforeRead.thinkgraph);
+    expect(result.current.projections.knowgraph).toBe(stateBeforeRead.knowgraph);
+    expect(result.current.errors).toBe(stateBeforeRead.errors);
+    expect(result.current.statuses).toBe(stateBeforeRead.statuses);
+    expect(result.current.jevAttentionVisual).toBe(stateBeforeRead.jevAttentionVisual);
   });
 
   it('expands a visible ThinkGraph memory through the native neighborhood route', async () => {

@@ -168,6 +168,31 @@ async def graph_relationship_vocabulary_read(payload: dict[str, Any]):
         raise HTTPException(status_code=502, detail=str(err)) from err
 
 
+@app.post("/graph/jev-focus")
+async def graph_jev_focus(payload: dict[str, Any]):
+    """Rerank one bounded client-supplied native-subject neighborhood."""
+    from app.python_models.engraphis import JevAttentionError, decide_graph_focus
+    import asyncio
+
+    source_revision = (
+        payload.get("sourceRevision")
+        if isinstance(payload, dict) and isinstance(payload.get("sourceRevision"), str)
+        else ""
+    )
+    try:
+        return await asyncio.to_thread(decide_graph_focus, payload)
+    except JevAttentionError as err:
+        return {
+            "schemaVersion": "jev-focus.v1",
+            "sourceRevision": source_revision,
+            "status": err.status,
+            "decisionId": None,
+            "errorCode": err.error_code,
+            "distribution": {},
+            "candidates": [],
+        }
+
+
 @app.post("/codegraph/read")
 def codegraph_read(payload: dict[str, Any]):
     from app.python_models.data_anchor import read_codegraph_tool

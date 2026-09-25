@@ -78,6 +78,27 @@ function boundedProbability(value: unknown): number | null {
   return Number.isFinite(numeric) ? clamp(numeric, 0, 1) : null;
 }
 
+/**
+ * Maps this turn's JevAttention Choice probability into the existing Galaxy
+ * evidence-mass contract. This is presentation-only: it neither changes the
+ * Choice distribution nor reuses a node probability as an edge weight.
+ */
+export function mapJevAttentionProminence(value: unknown): {
+  probability: number;
+  gravityMass: number;
+  visualRadius: number;
+} {
+  const probability = boundedProbability(value) ?? 0;
+  const gravityMass = 2 + (30 * probability);
+  return {
+    probability,
+    gravityMass,
+    // Matches the renderer's bounded evidence-mass radius curve. The renderer
+    // remains authoritative and recomputes this value after setData.
+    visualRadius: Math.min(64, 1.2 * (1.5 + (2 * Math.pow(gravityMass, 2 / 3)))),
+  };
+}
+
 function record(value: unknown): Record<string, any> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, any>
@@ -174,13 +195,24 @@ function applyToRecords(
   });
   const mappedNodes = nodes.map((node) => {
     const semanticMass = incidentMass.get(node.id) || 0;
+    const nodeProperties = record(node.properties);
+    if (nodeProperties.jevAttentionPresentation === 'attention_space') {
+      return {
+        ...node,
+        properties: {
+          ...nodeProperties,
+          semantic_mass: semanticMass,
+          incident_relationship_weight: semanticMass,
+        },
+      };
+    }
     return {
       ...node,
       semantic_mass: semanticMass,
       gravity_mass: 1 + (4 * Math.log1p(semanticMass)),
       visual_radius: mapJevGraphPhysics(profile, 0, semanticMass).nodeRadius,
       properties: {
-        ...record(node.properties),
+        ...nodeProperties,
         semantic_mass: semanticMass,
         incident_relationship_weight: semanticMass,
       },

@@ -412,12 +412,28 @@ def _bounded_graph_snapshot(
         if len(ids) >= 8:
             break
     if not ids:
-        return {"nodes": [], "thinks": [], "incident_edges": []}
+        return {
+            "nodes": [], "thinks": [], "incident_edges": [],
+            "truncated": False, "incomplete": False,
+            "limits": {
+                "edge_limit": edge_limit, "think_limit": think_limit,
+                "edge_source_limit_hit": False,
+                "think_source_limit_hit": False,
+            },
+        }
     flt = SearchFilter(workspace_id=workspace_id)
-    edges = [] if edge_limit <= 0 else [
-        edge for edge in store.neighbors(ids, flt=flt, limit=max(128, edge_limit * 4))
-        if _jev_edge(edge) is not None
-    ][:edge_limit]
+    edge_source_limit = max(128, edge_limit * 4)
+    raw_edges = [] if edge_limit <= 0 else list(
+        store.neighbors(ids, flt=flt, limit=edge_source_limit)
+    )
+    eligible_edges = sorted([
+        edge for edge in raw_edges if _jev_edge(edge) is not None
+    ], key=lambda edge: (
+        str(edge.id), str(edge.src), str(edge.dst), str(edge.relation),
+    ))
+    edges = eligible_edges[:edge_limit]
+    edge_source_limit_hit = len(raw_edges) >= edge_source_limit
+    edge_result_limit_hit = len(eligible_edges) > edge_limit
     neighbor_ids = list(dict.fromkeys([
         *ids,
         *(_canonical_entity_id(store, edge.src) or edge.src for edge in edges),
@@ -437,6 +453,8 @@ def _bounded_graph_snapshot(
         "focus": str(row["id"]) in ids,
     } for row in rows]
     thinks: list[dict[str, Any]] = []
+    think_source_limit_hit = False
+    think_result_limit_hit = False
     if think_limit > 0:
         focus_marks = ",".join("?" for _ in ids)
         member_rows = store.conn.execute(
@@ -453,9 +471,11 @@ def _bounded_graph_snapshot(
             member for member, canonical in canonical_by_member.items()
             if canonical in ids
         ]
+        think_source_limit = max(think_limit * 8, 128)
         incidences = store.list_memory_entities(
-            flt, entity_ids=focus_members, limit=max(think_limit * 8, 128),
+            flt, entity_ids=focus_members, limit=think_source_limit,
         )
+        think_source_limit_hit = len(incidences) >= think_source_limit
         memories = store.get_memories(
             list(dict.fromkeys(str(row["memory_id"]) for row in incidences))
         )
@@ -492,7 +512,9 @@ def _bounded_graph_snapshot(
                 "ingested_at": memory.ingested_at,
                 "expired_at": memory.expired_at,
             })
-        thinks = sorted(thinks, key=_newest_think_key)[:think_limit]
+        thinks = sorted(thinks, key=_newest_think_key)
+        think_result_limit_hit = len(thinks) > think_limit
+        thinks = thinks[:think_limit]
     incident_edges = []
     for edge in edges:
         jev = _jev_edge(edge)
@@ -513,7 +535,21 @@ def _bounded_graph_snapshot(
             "label_confidence": jev.get("label_confidence"),
             "distribution": deepcopy(jev.get("distribution") or {}),
         })
-    return {"nodes": nodes, "thinks": thinks, "incident_edges": incident_edges}
+    truncated = edge_result_limit_hit or think_result_limit_hit
+    incomplete = truncated or edge_source_limit_hit or think_source_limit_hit
+    return {
+        "nodes": nodes,
+        "thinks": thinks,
+        "incident_edges": incident_edges,
+        "truncated": truncated,
+        "incomplete": incomplete,
+        "limits": {
+            "edge_limit": edge_limit,
+            "think_limit": think_limit,
+            "edge_source_limit_hit": edge_source_limit_hit,
+            "think_source_limit_hit": think_source_limit_hit,
+        },
+    }
 
 
 def _bounded_relationship_context(
@@ -785,6 +821,215 @@ def _attention_choice_id(authority: str, native_id: str) -> str:
 
     identity = f"{authority}\0{native_id}".encode("utf-8")
     return f"choice_{hashlib.sha256(identity).hexdigest()[:24]}"
+
+
+def _focus_choice_id(authority: str, native_id: str) -> str:
+    """Identify one native subject inside a single read-only JevFocus Choice."""
+
+    identity = f"{authority}\0{native_id}".encode("utf-8")
+    return f"focus_{hashlib.sha256(identity).hexdigest()[:24]}"
+
+
+def _focus_text(
+    value: Any,
+    *,
+    maximum: int,
+    required: bool = True,
+) -> str:
+    if not isinstance(value, str) or len(value) > maximum:
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    if required and not value.strip():
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    return value
+
+
+def _focus_description(value: Any) -> str | None:
+    if value is None:
+        return None
+    return _focus_text(value, maximum=2_000, required=False)
+
+
+def _focus_exact_keys(
+    value: dict[str, Any],
+    required: set[str],
+    optional: set[str] | None = None,
+) -> None:
+    keys = set(value)
+    if not required.issubset(keys) or not keys.issubset(required | (optional or set())):
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+
+
+def _validated_focus_request(
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Validate the bounded client projection without reading either native graph."""
+
+    if not isinstance(payload, dict):
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    _focus_exact_keys(
+        payload,
+        {"schemaVersion", "sourceRevision", "projectId", "center", "candidates"},
+    )
+    if payload.get("schemaVersion") != "jev-focus.request.v1":
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    source_revision = _focus_text(payload.get("sourceRevision"), maximum=512)
+    _focus_text(payload.get("projectId"), maximum=256)
+
+    center_value = payload.get("center")
+    if not isinstance(center_value, dict):
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    _focus_exact_keys(center_value, {"visualId", "title", "nativeMembers"})
+    center_visual_id = _focus_text(center_value.get("visualId"), maximum=512)
+    center_title = _focus_text(center_value.get("title"), maximum=256)
+    raw_members = center_value.get("nativeMembers")
+    if (
+        not isinstance(raw_members, list)
+        or not 1 <= len(raw_members) <= 16
+        or any(not isinstance(member, dict) for member in raw_members)
+    ):
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    center_members: list[dict[str, Any]] = []
+    center_member_keys: set[tuple[str, str]] = set()
+    for raw_member in raw_members:
+        _focus_exact_keys(
+            raw_member,
+            {"authority", "nativeId", "title"},
+            {"description"},
+        )
+        authority = _focus_text(raw_member.get("authority"), maximum=32)
+        native_id = _focus_text(raw_member.get("nativeId"), maximum=512)
+        if authority not in {"ThinkGraph", "KnowGraph"}:
+            raise JevAttentionError("invalid", "jev_focus_request_invalid")
+        member_key = (authority, native_id)
+        if member_key in center_member_keys:
+            raise JevAttentionError("invalid", "jev_focus_request_invalid")
+        center_member_keys.add(member_key)
+        member = {
+            "authority": authority,
+            "nativeId": native_id,
+            "title": _focus_text(raw_member.get("title"), maximum=256),
+        }
+        if "description" in raw_member:
+            member["description"] = _focus_description(raw_member.get("description"))
+        center_members.append(member)
+
+    raw_candidates = payload.get("candidates")
+    if (
+        not isinstance(raw_candidates, list)
+        or not 1 <= len(raw_candidates) <= 12
+        or any(not isinstance(candidate, dict) for candidate in raw_candidates)
+    ):
+        raise JevAttentionError("invalid", "jev_focus_request_invalid")
+    candidates: list[dict[str, Any]] = []
+    candidate_keys: set[tuple[str, str]] = set()
+    relationship_keys: set[tuple[str, str]] = set()
+    for raw_candidate in raw_candidates:
+        _focus_exact_keys(
+            raw_candidate,
+            {
+                "visualId", "authority", "nativeId", "title", "description",
+                "incidentRelationships",
+            },
+        )
+        visual_id = _focus_text(raw_candidate.get("visualId"), maximum=512)
+        authority = _focus_text(raw_candidate.get("authority"), maximum=32)
+        native_id = _focus_text(raw_candidate.get("nativeId"), maximum=512)
+        if (
+            authority not in {"ThinkGraph", "KnowGraph"}
+            or visual_id == center_visual_id
+            or (authority, native_id) in center_member_keys
+            or (authority, native_id) in candidate_keys
+        ):
+            raise JevAttentionError("invalid", "jev_focus_request_invalid")
+        candidate_keys.add((authority, native_id))
+        relationships = raw_candidate.get("incidentRelationships")
+        if (
+            not isinstance(relationships, list)
+            or not 1 <= len(relationships) <= 24
+            or any(not isinstance(relationship, dict) for relationship in relationships)
+        ):
+            raise JevAttentionError("invalid", "jev_focus_request_invalid")
+        validated_relationships: list[dict[str, Any]] = []
+        for relationship in relationships:
+            _focus_exact_keys(
+                relationship,
+                {
+                    "edgeId", "nativeEdgeId", "sourceVisualId", "sourceId",
+                    "sourceTitle", "targetVisualId", "targetId", "targetTitle",
+                    "predicate", "direction", "relationshipWeight",
+                },
+            )
+            native_edge_id = _focus_text(
+                relationship.get("nativeEdgeId"), maximum=512,
+            )
+            relationship_key = (authority, native_edge_id)
+            if relationship_key in relationship_keys:
+                raise JevAttentionError("invalid", "jev_focus_request_invalid")
+            relationship_keys.add(relationship_key)
+            source_visual_id = _focus_text(
+                relationship.get("sourceVisualId"), maximum=512,
+            )
+            target_visual_id = _focus_text(
+                relationship.get("targetVisualId"), maximum=512,
+            )
+            source_id = _focus_text(relationship.get("sourceId"), maximum=512)
+            target_id = _focus_text(relationship.get("targetId"), maximum=512)
+            direction = _focus_text(relationship.get("direction"), maximum=16)
+            outgoing = (
+                source_visual_id == center_visual_id
+                and target_visual_id == visual_id
+                and (authority, source_id) in center_member_keys
+                and target_id == native_id
+                and direction == "outgoing"
+            )
+            incoming = (
+                source_visual_id == visual_id
+                and target_visual_id == center_visual_id
+                and source_id == native_id
+                and (authority, target_id) in center_member_keys
+                and direction == "incoming"
+            )
+            if not (outgoing or incoming):
+                raise JevAttentionError("invalid", "jev_focus_request_invalid")
+            weight = relationship.get("relationshipWeight")
+            if weight is not None:
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                    raise JevAttentionError("invalid", "jev_focus_request_invalid")
+                weight = float(weight)
+                if not math.isfinite(weight) or not 0.0 <= weight <= 1.0:
+                    raise JevAttentionError("invalid", "jev_focus_request_invalid")
+            validated_relationships.append({
+                "edgeId": _focus_text(relationship.get("edgeId"), maximum=512),
+                "nativeEdgeId": native_edge_id,
+                "sourceVisualId": source_visual_id,
+                "sourceId": source_id,
+                "sourceTitle": _focus_text(
+                    relationship.get("sourceTitle"), maximum=256,
+                ),
+                "targetVisualId": target_visual_id,
+                "targetId": target_id,
+                "targetTitle": _focus_text(
+                    relationship.get("targetTitle"), maximum=256,
+                ),
+                "predicate": _focus_text(
+                    relationship.get("predicate"), maximum=256,
+                ),
+                "direction": direction,
+                "relationshipWeight": weight,
+            })
+        candidates.append({
+            "visualId": visual_id,
+            "authority": authority,
+            "nativeId": native_id,
+            "title": _focus_text(raw_candidate.get("title"), maximum=256),
+            "description": _focus_description(raw_candidate.get("description")),
+            "incidentRelationships": validated_relationships,
+        })
+    return source_revision, {
+        "visualId": center_visual_id,
+        "title": center_title,
+        "nativeMembers": center_members,
+    }, candidates
 
 
 def recall_thinkgraph_attention_candidates(
@@ -1087,6 +1332,188 @@ def decide_main_graph_attention(
     if not isinstance(response, dict):
         raise JevAttentionError("invalid", "jev_attention_response_invalid")
     return _validate_jev_attention_response(response, tuple(choice_ids))
+
+
+def _validate_jev_focus_response(
+    response: dict[str, Any],
+    choice_ids: tuple[str, ...],
+) -> tuple[str, dict[str, float]]:
+    """Return Jev's complete, unmodified probability distribution."""
+
+    try:
+        raw_decision_id = response["id"]
+        if not isinstance(raw_decision_id, str):
+            raise ValueError("decision")
+        decision_id = raw_decision_id.strip()
+        answer = response["answers"]["focus"]
+        if not decision_id or not isinstance(answer, dict):
+            raise ValueError("decision")
+        if answer.get("type") != "choice":
+            raise ValueError("answer type")
+        winner = str(answer["choice"])
+        if winner not in choice_ids:
+            raise ValueError("winner")
+        raw = answer["probabilities"]
+        if not isinstance(raw, dict) or set(raw) != set(choice_ids):
+            raise ValueError("probability keys")
+        if any(isinstance(raw[choice_id], bool) for choice_id in choice_ids):
+            raise ValueError("probability values")
+        probabilities = {choice_id: float(raw[choice_id]) for choice_id in choice_ids}
+        if any(
+            not math.isfinite(value) or value < 0.0 or value > 1.0
+            for value in probabilities.values()
+        ):
+            raise ValueError("probability values")
+        if not math.isclose(
+            sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=0.000001,
+        ):
+            raise ValueError("probability total")
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise JevAttentionError("invalid", "jev_focus_response_invalid") from error
+    return decision_id, probabilities
+
+
+def decide_graph_focus(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run one read-only Choice over bounded connected native subjects."""
+
+    source_revision, center, candidates = _validated_focus_request(payload)
+    options: list[dict[str, Any]] = []
+    choice_ids: list[str] = []
+    for candidate in candidates:
+        choice_id = _focus_choice_id(
+            str(candidate["authority"]), str(candidate["nativeId"]),
+        )
+        choice_ids.append(choice_id)
+        relationships = [{
+            "native_edge_id": relationship["nativeEdgeId"],
+            "source_native_id": relationship["sourceId"],
+            "source_title": relationship["sourceTitle"],
+            "target_native_id": relationship["targetId"],
+            "target_title": relationship["targetTitle"],
+            "predicate": relationship["predicate"],
+            "direction_from_center": relationship["direction"],
+        } for relationship in candidate["incidentRelationships"]]
+        options.append({
+            "choice_id": choice_id,
+            "authority": candidate["authority"],
+            "native_id": candidate["nativeId"],
+            "title": candidate["title"],
+            "description": candidate["description"],
+            "incident_relationships": relationships,
+        })
+
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise JevAttentionError(
+            "unavailable", "jev_focus_openrouter_key_unavailable"
+        )
+    criteria = {
+        option["choice_id"]: (
+            "Rank this exact connected native subject by how useful its supplied stored "
+            "content and real incident relationships are for understanding the fixed center."
+        )
+        for option in options
+    }
+    body = {
+        "model": JEV_MODEL,
+        "state": {
+            "description": (
+                "One fixed user-selected graph subject and at most twelve directly connected "
+                "native subject candidates with bounded stored content and real relationships."
+            ),
+            "fixed_center": {
+                "visual_id": center["visualId"],
+                "title": center["title"],
+                "native_members": [{
+                    "authority": member["authority"],
+                    "native_id": member["nativeId"],
+                    "title": member["title"],
+                    **({"description": member["description"]}
+                       if "description" in member else {}),
+                } for member in center["nativeMembers"]],
+            },
+            "connected_subject_options": options,
+        },
+        "questions": {
+            "focus": {
+                "type": "choice",
+                "instructions": (
+                    "The user is exploring the fixed center. The center is not a candidate. "
+                    "Rank the supplied connected subjects by how useful they are for "
+                    "understanding the center, using only their supplied native content and "
+                    "real relationships. Prioritize direct explanatory relevance over generic "
+                    "popularity, graph degree, on-screen distance, or persisted edge weights. "
+                    "Retain contrary or qualifying context when useful. Return a full "
+                    "probability distribution across every opaque choice id. Do not invent "
+                    "facts, nodes, edges, permissions, or probabilities. This is relative "
+                    "focus relevance, not truth."
+                ),
+                "criteria": criteria,
+            }
+        },
+    }
+    try:
+        with httpx.Client(timeout=45.0, follow_redirects=False) as client:
+            result = client.post(
+                JEV_ENDPOINT,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+            )
+            result.raise_for_status()
+            response = result.json()
+    except httpx.TimeoutException as error:
+        raise JevAttentionError("timeout", "jev_focus_timeout") from error
+    except httpx.HTTPError as error:
+        raise JevAttentionError("unavailable", "jev_focus_unavailable") from error
+    except (json.JSONDecodeError, ValueError) as error:
+        raise JevAttentionError("invalid", "jev_focus_response_invalid") from error
+    except Exception as error:
+        raise JevAttentionError("error", "jev_focus_request_error") from error
+    if not isinstance(response, dict):
+        raise JevAttentionError("invalid", "jev_focus_response_invalid")
+
+    decision_id, distribution = _validate_jev_focus_response(
+        response, tuple(choice_ids),
+    )
+    ranked_indexes = sorted(
+        range(len(candidates)),
+        key=lambda index: (
+            -distribution[choice_ids[index]],
+            str(candidates[index]["authority"]),
+            str(candidates[index]["nativeId"]),
+        ),
+    )
+    rank_by_index = {
+        candidate_index: rank
+        for rank, candidate_index in enumerate(ranked_indexes, start=1)
+    }
+    selected_visual_ids: set[str] = set()
+    for candidate_index in ranked_indexes:
+        visual_id = str(candidates[candidate_index]["visualId"])
+        if visual_id in selected_visual_ids:
+            continue
+        if len(selected_visual_ids) >= 8:
+            break
+        selected_visual_ids.add(visual_id)
+    response_candidates = [{
+        **candidate,
+        "choiceId": choice_ids[index],
+        "probability": distribution[choice_ids[index]],
+        "rank": rank_by_index[index],
+        "selected": candidate["visualId"] in selected_visual_ids,
+    } for index, candidate in enumerate(candidates)]
+    return {
+        "schemaVersion": "jev-focus.v1",
+        "sourceRevision": source_revision,
+        "status": "success",
+        "decisionId": decision_id,
+        "errorCode": None,
+        "distribution": distribution,
+        "candidates": response_candidates,
+    }
 
 
 def _winner_probability(decision: dict[str, Any]) -> float:
@@ -3034,9 +3461,195 @@ def private_operation(project: str, operation: str, arguments: dict) -> dict:
         return inspect(project, native_id)
 
 
+def _bounded_entity_projection(
+    service: Any,
+    *,
+    project: str,
+    native_id: str,
+) -> dict[str, Any]:
+    """Project one exact entity plus at most 24 direct native relationships."""
+
+    store = service.store
+    workspace = store.conn.execute(
+        "SELECT id FROM workspaces WHERE name=?", (project,),
+    ).fetchone()
+    workspace_id = str(workspace["id"]) if workspace is not None else ""
+    snapshot = _bounded_graph_snapshot(
+        store,
+        workspace_id=workspace_id,
+        entity_ids=[native_id],
+        edge_limit=24,
+        think_limit=0,
+    ) if workspace_id else {
+        "nodes": [], "incident_edges": [], "truncated": False,
+        "incomplete": False,
+        "limits": {
+            "edge_limit": 24, "think_limit": 0,
+            "edge_source_limit_hit": False,
+            "think_source_limit_hit": False,
+        },
+    }
+    ordered_native_nodes = sorted(
+        snapshot["nodes"],
+        key=lambda node: (not bool(node.get("focus")), str(node.get("id") or "")),
+    )
+    latest_thinks: list[dict[str, Any]] = []
+    for node in ordered_native_nodes:
+        think = _latest_endpoint_think(
+            store,
+            workspace_id=workspace_id,
+            canonical_id=str(node["id"]),
+        )
+        if think is not None:
+            latest_thinks.append(think)
+    think_limit_hit = len(latest_thinks) > 24
+    latest_thinks = latest_thinks[:24]
+    think_by_entity = {
+        str(think["native_id"]): think for think in latest_thinks
+    }
+
+    nodes: list[dict[str, Any]] = []
+    for native_node in ordered_native_nodes:
+        entity_id = str(native_node["id"])
+        title = str(native_node.get("name") or entity_id)
+        think = think_by_entity.get(entity_id)
+        evidence = []
+        if think is not None:
+            think_metadata = {
+                key: deepcopy(think.get(key))
+                for key in (
+                    "kind", "properties", "concepts", "propositions", "questions",
+                    "predictions", "assumptions", "preferences", "corrections",
+                    "relationship_observations",
+                )
+                if think.get(key) not in (None, [], {})
+            }
+            evidence.append({
+                "id": think["memory_id"],
+                "title": title,
+                "summary": think["content"],
+                "content": think["content"],
+                "metadata": {"structured_extraction": {"think": think_metadata}},
+                "validFrom": think.get("valid_from"),
+                "validTo": think.get("valid_to"),
+                "ingestedAt": think.get("ingested_at"),
+            })
+        nodes.append({
+            "id": entity_id,
+            "canonicalId": str(native_node.get("canonical_id") or entity_id),
+            "label": title,
+            "title": title,
+            "type": str(native_node.get("type") or "Concept"),
+            "authority": "engraphis",
+            "projectId": project,
+            "member_ids": [entity_id],
+            "focus": bool(native_node.get("focus")),
+            "mentionCount": len(evidence),
+            "properties": {
+                "nodeType": str(native_node.get("type") or "Concept"),
+                "focus": bool(native_node.get("focus")),
+                "evidence": evidence,
+            },
+        })
+
+    edges: list[dict[str, Any]] = []
+    for native_edge in snapshot["incident_edges"]:
+        strength_value = native_edge.get("relationship_strength")
+        try:
+            strength = float(strength_value)
+        except (TypeError, ValueError, OverflowError):
+            strength = None
+        if strength is not None and not math.isfinite(strength):
+            strength = None
+        relation = str(native_edge.get("relation") or "")
+        label = relation
+        if strength is not None:
+            label = f"{relation} · {strength:.2f}".replace(" 0.", " .")
+        jev = {
+            "distribution": deepcopy(native_edge.get("distribution") or {}),
+            "label_confidence": native_edge.get("label_confidence"),
+            "relationship_strength": strength,
+        }
+        edge = {
+            "id": str(native_edge["id"]),
+            "source": str(native_edge["source_id"]),
+            "target": str(native_edge["target_id"]),
+            "predicate": relation,
+            "relation": relation,
+            "label": label,
+            "directed": True,
+            "properties": {
+                "directed": True,
+                "relationship_strength": strength,
+                "label_confidence": native_edge.get("label_confidence"),
+                "jev": jev,
+            },
+        }
+        if strength is not None:
+            edge.update({
+                "relationship_strength": strength,
+                "label_confidence": native_edge.get("label_confidence"),
+                "strength": strength,
+                "spring_strength": 0.035 + (0.17 * strength),
+                "rest_length": max(14.0, min(34.0, 26.0 - (12.0 * strength))),
+            })
+        edges.append(edge)
+
+    incomplete = bool(snapshot.get("incomplete")) or think_limit_hit
+    truncated = bool(snapshot.get("truncated")) or think_limit_hit
+    bounds = {
+        "scope": "direct-native-neighborhood",
+        "neighborLimit": 24,
+        "edgeLimit": 24,
+        "thinkLimit": 24,
+        "edgeSourceLimitHit": bool(
+            snapshot.get("limits", {}).get("edge_source_limit_hit")
+        ),
+        "thinkLimitHit": think_limit_hit,
+    }
+    revision = hashlib.sha256(
+        json.dumps([nodes, edges, bounds], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    scene = {
+        "nodes": deepcopy(nodes),
+        "edges": deepcopy(edges),
+        "links": deepcopy(edges),
+        "meta": {
+            "truncated": truncated,
+            "incomplete": incomplete,
+            "bounds": bounds,
+        },
+    }
+    return {
+        "schemaVersion": "thinkgraph.engraphis.v1",
+        "authority": "engraphis",
+        "projectId": project,
+        "revision": revision,
+        "nodes": nodes,
+        "edges": edges,
+        "scene": scene,
+        "counts": {"nodes": len(nodes), "edges": len(edges)},
+        "truncated": truncated,
+        "incomplete": incomplete,
+        "bounds": bounds,
+        "embedding": {
+            "state": "ready"
+            if service.stats(workspace=project).get("embedding", {}).get("ready")
+            else "unavailable"
+        },
+        "runtime": {"engine": "engraphis", "version": "1.7.4"},
+    }
+
+
 def projection(project: str, native_id: str | None = None) -> dict:
     service = get_service()
     project = project_id(project)
+    if native_id:
+        return _bounded_entity_projection(
+            service,
+            project=project,
+            native_id=str(native_id),
+        )
     # Engraphis supplies the scene. This adapter only adds display field aliases
     # and resolves evidence IDs returned by the engine.
     scene = service.graph_scene(workspace=project, level="complete", presentation="quality",
