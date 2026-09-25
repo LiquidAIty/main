@@ -10,6 +10,7 @@ post-turn follow-ups (queued prompt, goal continuation, notifications).
 from __future__ import annotations
 
 import dataclasses
+import json
 
 from .method_ctx import HandlerRegistry, bind_module
 
@@ -472,6 +473,61 @@ class _TurnRun:
     prompt_text: str = ""
     marker_key: str = ""
     receipt_attempted: bool = False
+    tool_restore: Any = None
+    exposed_tools: list[str] = dataclasses.field(default_factory=list)
+
+
+def _apply_turn_tool_selection(agent, managed_tools, allowed_tools):
+    """Narrow only the named Card-controlled tools for this one native turn."""
+    if managed_tools is None and allowed_tools is None:
+        return None, sorted(getattr(agent, "valid_tool_names", set()) or set())
+    if not isinstance(managed_tools, list) or not isinstance(allowed_tools, list):
+        raise ValueError("turn_tool_selection_invalid")
+    if (
+        len(managed_tools) > 512 or len(allowed_tools) > 512
+        or any(not isinstance(name, str) or not name or len(name) > 128 for name in [*managed_tools, *allowed_tools])
+    ):
+        raise ValueError("turn_tool_selection_invalid")
+    managed = set(managed_tools)
+    allowed = set(allowed_tools)
+    if len(managed) != len(managed_tools) or len(allowed) != len(allowed_tools) or not allowed <= managed:
+        raise ValueError("turn_tool_selection_invalid")
+    tools = list(getattr(agent, "tools", None) or [])
+    actual = {
+        str((tool.get("function") or {}).get("name") or "")
+        for tool in tools if isinstance(tool, dict)
+    }
+    missing = allowed - actual
+    if missing:
+        raise ValueError(f"turn_tool_selection_unavailable:{sorted(missing)[0]}")
+    snapshot = {
+        "tools": tools,
+        "valid_tool_names": set(getattr(agent, "valid_tool_names", set()) or set()),
+        "cached_system_prompt": getattr(agent, "_cached_system_prompt", None),
+        "cached_system_prompt_static": getattr(agent, "_cached_system_prompt_static", None),
+    }
+    filtered = [
+        tool for tool in tools
+        if str((tool.get("function") or {}).get("name") or "") not in managed
+        or str((tool.get("function") or {}).get("name") or "") in allowed
+    ]
+    agent.tools = filtered
+    agent.valid_tool_names = {
+        str((tool.get("function") or {}).get("name") or "")
+        for tool in filtered if isinstance(tool, dict)
+    } - {""}
+    agent._cached_system_prompt = None
+    agent._cached_system_prompt_static = None
+    return snapshot, sorted(agent.valid_tool_names)
+
+
+def _restore_turn_tool_selection(agent, snapshot) -> None:
+    if not snapshot or agent is None:
+        return
+    agent.tools = snapshot["tools"]
+    agent.valid_tool_names = snapshot["valid_tool_names"]
+    agent._cached_system_prompt = snapshot["cached_system_prompt"]
+    agent._cached_system_prompt_static = snapshot["cached_system_prompt_static"]
 
 
 def _prepare_turn_input(sid: str, session: dict, st: _TurnRun, text: Any, images: list[str]):
@@ -674,6 +730,59 @@ def _absorb_turn_result(
     return status_note
 
 
+def _observable_turn_evidence(st: _TurnRun):
+    """Return exact current-turn tool calls/results or an explicit incomplete state.
+
+    Provider-private reasoning and ordinary assistant prose are deliberately
+    excluded.  If history was compacted/replaced or the exact JSON evidence is
+    too large, the application must leave the later semantic assessment
+    unscored rather than grading a partial transcript.
+    """
+    result = st.result
+    messages = result.get("messages") if isinstance(result, dict) else None
+    prior = st.history if isinstance(st.history, list) else None
+    if not isinstance(messages, list) or prior is None:
+        return [], False, "execution_evidence_unavailable"
+    if len(messages) < len(prior) or messages[:len(prior)] != prior:
+        return [], False, "execution_evidence_history_changed"
+    evidence = []
+    for message in messages[len(prior):]:
+        if not isinstance(message, dict):
+            return [], False, "execution_evidence_invalid"
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls") is not None:
+            calls = message.get("tool_calls")
+            if not isinstance(calls, list):
+                return [], False, "execution_evidence_invalid"
+            for call in calls:
+                if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                    return [], False, "execution_evidence_invalid"
+                function = call["function"]
+                evidence.append({
+                    "kind": "tool_call",
+                    "toolCallId": str(call.get("id") or ""),
+                    "name": str(function.get("name") or ""),
+                    "arguments": function.get("arguments"),
+                })
+        elif role == "tool":
+            evidence.append({
+                "kind": "tool_result",
+                "toolCallId": str(message.get("tool_call_id") or ""),
+                "name": str(message.get("name") or ""),
+                "content": message.get("content"),
+            })
+    try:
+        encoded = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return [], False, "execution_evidence_invalid"
+    if len(encoded) > 120_000:
+        return [], False, "execution_evidence_input_limit"
+    return evidence, True, None
+
+
 def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None, cols: int):
     """``(payload, raw, status)`` for message.complete; retains/clears the inflight turn and
     settles the hosted-room terminal receipt."""
@@ -693,6 +802,14 @@ def _complete_turn_payload(session: dict, st: _TurnRun, status_note: str | None,
     if _is_bot_mode_session(session):
         raw = _bot_mode_delivery_text(raw, successful=status == "complete")
     payload = {"text": raw, "usage": _get_usage(agent), "status": status}
+    payload["actualProvider"] = str(getattr(agent, "provider", "") or "")
+    payload["actualModel"] = str(getattr(agent, "model", "") or "")
+    payload["exposedTools"] = list(st.exposed_tools)
+    evidence, evidence_complete, evidence_error = _observable_turn_evidence(st)
+    payload["executionEvidence"] = evidence
+    payload["executionEvidenceComplete"] = evidence_complete
+    if evidence_error:
+        payload["executionEvidenceError"] = evidence_error
     # Codex App Server owns the provider-native thread and turn identities.  They
     # already ride the turn result; preserve them on the terminal completion so
     # application callers can persist a truthful native receipt instead of
@@ -802,6 +919,12 @@ def _finish_turn(sid: str, session: dict, st: _TurnRun) -> None:
             _persist_live_session_system_prompt(session)
         except Exception:
             logger.debug("TUI one-turn model restore failed", exc_info=True)
+    if st.tool_restore:
+        try:
+            _restore_turn_tool_selection(st.agent, st.tool_restore)
+            _persist_live_session_system_prompt(session)
+        except Exception:
+            logger.exception("TUI one-turn tool restore failed")
     scopes = st.scopes
     with contextlib.suppress(Exception):
         if scopes.approval is not None:
@@ -853,7 +976,9 @@ def _run_prompt_submit(
     display_metadata: dict | None = None, image_paths: list[str] | None = None,
     queued_prompt_generation: int | None = None,
     terminal_callback: Callable[[dict[str, Any]], None] | None = None,
-    turn_author: dict | None = None) -> bool:
+    turn_author: dict | None = None,
+    managed_tools: list[str] | None = None,
+    allowed_tools: list[str] | None = None) -> bool:
     # Every dispatch binds the session's own row (session_key, real source) before the turn writes:
     # the synthesized turns that enter here directly (crash auto-continue, queued-prompt drain,
     # wake-ups) bypass prompt.submit's persist, and a row-less turn is otherwise materialized by
@@ -901,6 +1026,9 @@ def _run_prompt_submit(
                         "status": "failed", "text": "", "error": "Context injection refused."})
                     st.receipt_committed = True
                 return
+            st.tool_restore, st.exposed_tools = _apply_turn_tool_selection(
+                st.agent, managed_tools, allowed_tools,
+            )
             prompt, run_message, cols, streamer = prepared
             _invoke_agent(
                 sid, session, st, prompt, run_message, streamer, images, display_kind,

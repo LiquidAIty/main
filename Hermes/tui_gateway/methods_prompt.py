@@ -485,7 +485,10 @@ def _persist_session_row_for_submit(rid, session):
     return error
 
 
-def _run_after_agent_ready(rid, sid, session, text, display_kind, hosted_terminal_callback, turn_author=None):
+def _run_after_agent_ready(
+    rid, sid, session, text, display_kind, hosted_terminal_callback,
+    turn_author=None, managed_tools=None, allowed_tools=None, model_once=None,
+):
     """Turn thread body: patient wait for a deferred build (a slow build must not eat the
     accepted in-flight message), then run."""
     # The wait delivers the prompt when the still-running build completes, honors a cancel promptly, notices
@@ -513,9 +516,64 @@ def _run_after_agent_ready(rid, sid, session, text, display_kind, hosted_termina
                 if session.get("_turn_cancel_requested")
                 else "Session no longer running before the agent was ready")})
             return
-    _run_prompt_submit(
+    if model_once is not None:
+        provider = str(model_once.get("provider") or "").strip()
+        model = str(model_once.get("model") or "").strip()
+        reasoning = str(model_once.get("reasoning_effort") or "").strip()
+        safe = frozenset(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-"
+        )
+        if (
+            not provider or not model or len(provider) > 128 or len(model) > 256
+            or any(char not in safe for char in provider + model)
+            or reasoning not in {"", "low", "medium", "high", "xhigh", "max", "ultra"}
+        ):
+            _emit_terminal_turn_error(
+                sid, session, "Invalid turn-scoped model selection",
+                error_surface={"layer": "runtime", "code": "model_once_invalid", "retryable": False})
+            with session["history_lock"]:
+                session["running"] = False
+                _clear_inflight_turn(session)
+            return
+        raw_model = f"{model} --provider {provider} --once"
+        if reasoning:
+            raw_model += f" --reasoning {reasoning}"
+        try:
+            with _session_profile_runtime_scope(session):
+                _apply_model_switch(
+                    sid, session, raw_model, confirm_expensive_model=True,
+                    pin_session_override=False)
+        except Exception as exc:
+            restore = session.pop("one_turn_model_restore", None)
+            if restore:
+                try:
+                    with _session_profile_runtime_scope(session):
+                        _restore_agent_model_runtime(session.get("agent"), restore)
+                        _restart_slash_worker(sid, session)
+                        _persist_live_session_runtime(session)
+                        _persist_live_session_system_prompt(session)
+                except Exception:
+                    logger.exception(
+                        "turn-scoped model restore failed after model selection error"
+                    )
+            _emit_terminal_turn_error(
+                sid, session, exc,
+                error_surface={"layer": "runtime", "code": "model_once_failed", "retryable": True})
+            with session["history_lock"]:
+                session["running"] = False
+                _clear_inflight_turn(session)
+            return
+    started = _run_prompt_submit(
         rid, sid, session, text, display_kind=display_kind,
-        terminal_callback=hosted_terminal_callback, turn_author=turn_author)
+        terminal_callback=hosted_terminal_callback, turn_author=turn_author,
+        managed_tools=managed_tools, allowed_tools=allowed_tools)
+    if not started and session.get("one_turn_model_restore"):
+        restore = session.pop("one_turn_model_restore", None)
+        with contextlib.suppress(Exception), _session_profile_runtime_scope(session):
+            _restore_agent_model_runtime(session.get("agent"), restore)
+            _restart_slash_worker(sid, session)
+            _persist_live_session_runtime(session)
+            _persist_live_session_system_prompt(session)
 
 
 _TRUNCATION_PARAMS = (
@@ -625,6 +683,10 @@ def _(rid, params: dict) -> dict:
         with session["history_lock"]:
             if not session.get("running"):
                 break
+            if any(params.get(name) is not None for name in (
+                "managed_tools", "allowed_tools", "model_once",
+            )):
+                return _err(rid, 4091, "turn-scoped routing requires an idle session")
             if internal_hosted_submit:
                 return _err(rid, 4091, "hosted room member session is busy")
             busy_transport = t or session.get("transport")
@@ -668,7 +730,8 @@ def _(rid, params: dict) -> dict:
         _start_agent_build(sid, session)
     run_thread = threading.Thread(
         target=lambda: _run_after_agent_ready(
-            rid, sid, session, text, display_kind, hosted_terminal_callback, turn_author),
+            rid, sid, session, text, display_kind, hosted_terminal_callback, turn_author,
+            params.get("managed_tools"), params.get("allowed_tools"), params.get("model_once")),
         daemon=True)
     # Handle lets session.interrupt tell a live turn from a stuck `running` flag.
     session["_run_thread"] = run_thread

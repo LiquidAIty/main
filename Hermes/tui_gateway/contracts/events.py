@@ -185,6 +185,12 @@ class MessageCompletePayload(Payload):
     partial: bool | None = None
     nativeRootId: str | None = None
     nativeRunId: str | None = None
+    actualProvider: str | None = None
+    actualModel: str | None = None
+    exposedTools: list[str] | None = None
+    executionEvidence: list[JsonValue] | None = None
+    executionEvidenceComplete: bool | None = None
+    executionEvidenceError: str | None = None
 
 
 event("message.complete", MessageCompletePayload, doc="The turn ended: final text, usage and outcome.")

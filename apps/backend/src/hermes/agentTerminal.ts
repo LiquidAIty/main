@@ -16,7 +16,10 @@ import { BUILDER_CARD_ID } from '../decks/store';
 import { resolveProductChatWorkingDirectory, resolveRepoRoot } from '../services/workspaceRoot';
 import { withoutInternalMcpSecret } from '../services/mcp/internalMcpAuth';
 import { resolvePythonAgentMcpServerSpec } from '../services/mcp/pythonAgentMcpClient';
-import { agentTerminalExecution } from './agentTerminalExecution';
+import {
+  agentTerminalExecution,
+  type AgentTerminalTurnRouting,
+} from './agentTerminalExecution';
 import {
   configureHermesCardInstructions,
   configureHermesCardModelRuntime,
@@ -30,6 +33,7 @@ import { readSavedSubagentModel } from './subagentModel';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import {
   HERMES_CARD_TOOLS_TOOLSET,
+  hermesExternalMcpToolName,
   materializeHermesApplicationMcpServers,
   materializeHermesExternalMcpTools,
   materializeHermesCardToolsPlugin,
@@ -213,6 +217,45 @@ type PendingStart = {
   fingerprint: string;
   promise: Promise<AgentTerminalState>;
 };
+
+type NativeTurnRouting = {
+  managedTools: string[];
+  allowedTools: string[];
+  modelOnce: AgentTerminalTurnRouting['modelOnce'];
+};
+
+function nativeToolName(configuration: HermesCardTools, canonicalName: string): string | null {
+  if (configuration.nativeTools.includes(canonicalName)) return canonicalName;
+  const plugin = configuration.pluginTools.find((tool) => tool.canonicalName === canonicalName);
+  if (plugin) return plugin.hermesName;
+  const external = configuration.externalMcpTools.find(
+    (tool) => tool.canonicalName === canonicalName,
+  );
+  return external
+    ? hermesExternalMcpToolName(external.connectionId, external.nativeName)
+    : null;
+}
+
+function nativeTurnRouting(
+  configuration: HermesCardTools,
+  routing: AgentTerminalTurnRouting,
+): NativeTurnRouting {
+  const mapExact = (names: string[]) => names.map((name) => {
+    const native = nativeToolName(configuration, name);
+    if (!native) throw new Error(`agent_terminal_turn_tool_unavailable:${name}`);
+    return native;
+  });
+  const managedTools = mapExact(routing.managedCanonicalTools);
+  const allowedTools = mapExact(routing.allowedCanonicalTools);
+  if (
+    new Set(managedTools).size !== managedTools.length
+    || new Set(allowedTools).size !== allowedTools.length
+    || !allowedTools.every((name) => managedTools.includes(name))
+  ) {
+    throw new Error('agent_terminal_turn_tools_invalid');
+  }
+  return { managedTools, allowedTools, modelOnce: routing.modelOnce };
+}
 
 function sameSavedCardToolAuthority(left: HermesCardTools, right: HermesCardTools): boolean {
   const stableAuthority = (value: HermesCardTools) => JSON.stringify({
@@ -1510,6 +1553,7 @@ export class AgentTerminalManager {
     const registered = session.cardTools.pluginTools.find(
       (candidate) => candidate.hermesName === tool,
     );
+    const active = this.resolveActiveContext(session.state.sessionId);
     if (
       value.version !== 1
       || !Number.isSafeInteger(expiresAt)
@@ -1518,6 +1562,7 @@ export class AgentTerminalManager {
       || !/^[a-f0-9]{32,128}$/i.test(nonce)
       || !sourceSessionKnown
       || !registered
+      || (active !== null && !active.authorizedCanonicalTools.includes(registered.canonicalName))
     ) throw new Error('hermes_card_tool_authentication_failed');
     for (const [usedNonce, expiry] of session.cardToolNonces) {
       if (expiry < now) session.cardToolNonces.delete(usedNonce);
@@ -1663,6 +1708,7 @@ export class AgentTerminalManager {
       timeoutMs?: number;
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
       surface?: 'card-shared-chat';
+      routing?: AgentTerminalTurnRouting;
     } = {},
   ): Promise<AgentTerminalTurnResult> {
     if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
@@ -1670,7 +1716,13 @@ export class AgentTerminalManager {
     const execute = async () => {
       const externalConfiguration = await this.refreshOptionalCardTools(session);
       try {
-        return await this.submitNow(session, text, options);
+        const resolvedRouting = options.routing
+          ? nativeTurnRouting(session.cardTools, options.routing)
+          : null;
+        return await this.submitNow(session, text, {
+          ...options,
+          ...(resolvedRouting || {}),
+        });
       } finally {
         if (externalConfiguration) {
           await this.releaseOptionalCardTools(session, externalConfiguration);
@@ -1853,6 +1905,10 @@ export class AgentTerminalManager {
       timeoutMs?: number;
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
       surface?: 'card-shared-chat';
+      routing?: AgentTerminalTurnRouting;
+      managedTools?: string[];
+      allowedTools?: string[];
+      modelOnce?: AgentTerminalTurnRouting['modelOnce'];
     },
   ): Promise<AgentTerminalTurnResult> {
     if (session.state.status !== 'running') throw new Error('agent_terminal_not_running');
@@ -1882,6 +1938,20 @@ export class AgentTerminalManager {
           if (status === 'error' || status === 'failed') {
             finish(new Error(String(event.payload?.error || textValue || 'agent_terminal_turn_failed')));
           } else {
+            if (options.managedTools && options.allowedTools) {
+              const exposed = event.payload?.exposedTools;
+              if (
+                !Array.isArray(exposed)
+                || exposed.some((name) => typeof name !== 'string')
+                || !options.allowedTools.every((name) => exposed.includes(name))
+                || options.managedTools.some(
+                  (name) => !options.allowedTools!.includes(name) && exposed.includes(name),
+                )
+              ) {
+                finish(new Error('agent_terminal_actual_tool_exposure_mismatch'));
+                return;
+              }
+            }
             finish(undefined, { text: textValue, status, event });
           }
         } else if (event.type === 'error') {
@@ -1912,6 +1982,15 @@ export class AgentTerminalManager {
           text,
           profile: session.state.profile,
           ...(options.surface ? { surface: options.surface } : {}),
+          ...(options.managedTools ? { managed_tools: options.managedTools } : {}),
+          ...(options.allowedTools ? { allowed_tools: options.allowedTools } : {}),
+          ...(options.modelOnce ? { model_once: {
+            provider: options.modelOnce.provider,
+            model: options.modelOnce.model,
+            ...(options.modelOnce.reasoningEffort
+              ? { reasoning_effort: options.modelOnce.reasoningEffort }
+              : {}),
+          } } : {}),
         },
         timeoutMs,
         options.signal,

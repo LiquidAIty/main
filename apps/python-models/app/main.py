@@ -17,6 +17,7 @@ from app.python_models.card_domain import (
     resolve_hermes_card_tools,
     begin_main_chat_run,
     begin_run,
+    assess_run_request_fulfillment,
     describe_magentic_agents,
     delete_card,
     finish_run,
@@ -618,6 +619,14 @@ def domain_main_run_begin(payload: dict[str, Any]):
 def domain_run_finish(payload: dict[str, Any]):
     try:
         return finish_run(payload)
+    except CardDomainError as err:
+        raise HTTPException(status_code=409, detail=str(err)) from err
+
+
+@app.post("/domain/runs/request-fulfillment")
+def domain_run_request_fulfillment(payload: dict[str, Any]):
+    try:
+        return assess_run_request_fulfillment(payload)
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

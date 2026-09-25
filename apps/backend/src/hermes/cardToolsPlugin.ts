@@ -838,7 +838,7 @@ export function requireHermesCardToolsReadback(
       });
     const expectedTools = configuration.externalMcpTools
       .filter((tool) => tool.connectionId === connectionId)
-      .map((tool) => `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(tool.nativeName)}`);
+      .map((tool) => hermesExternalMcpToolName(connectionId, tool.nativeName));
     const expected = new Set(expectedTools);
     const extra = actual.filter((name) => !expected.has(name));
     if (extra.length) {
@@ -848,13 +848,17 @@ export function requireHermesCardToolsReadback(
     for (const tool of configuration.externalMcpTools.filter(
       (candidate) => candidate.connectionId === connectionId,
     )) {
-      const expectedName = `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(tool.nativeName)}`;
+      const expectedName = hermesExternalMcpToolName(connectionId, tool.nativeName);
       if (!actualNames.has(expectedName)) {
         unavailableToolReasons[tool.canonicalName] = 'external_mcp_tool_unavailable';
       }
     }
   }
   return unavailableToolReasons;
+}
+
+export function hermesExternalMcpToolName(connectionId: string, nativeName: string): string {
+  return `mcp__${mcpNameComponent(connectionId)}__${mcpNameComponent(nativeName)}`;
 }
 
 function mcpNameComponent(value: string): string {

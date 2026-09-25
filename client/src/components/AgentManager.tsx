@@ -428,6 +428,8 @@ export function AgentManager({
   const [{ key: modelKey, providerModelId }, setModel] = useState<{
     key: string; providerModelId?: string | null;
   }>({ key: '' });
+  const [autoSelect, setAutoSelect] = useState(false);
+  const [autoTools, setAutoTools] = useState(false);
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [subagentType, setSubagentType] = useState<SavedSubagentType>('none');
   const [subagentTouched, setSubagentTouched] = useState(false);
@@ -545,6 +547,8 @@ export function AgentManager({
     );
     setModel({ key: localConfig.model_key || '',
       providerModelId: localConfig.runtime_options?.providerModelId });
+    setAutoSelect(localConfig.runtime_options?.autoSelect === true);
+    setAutoTools(localConfig.runtime_options?.autoTools === true);
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
     const savedSubagentType = localConfig.runtime_options?.subagentType;
     setSubagentType(
@@ -756,6 +760,7 @@ export function AgentManager({
               : {}
         ),
         ...(providerModelId !== undefined ? { providerModelId } : {}),
+        ...(runtimeKind === 'hermes' ? { autoSelect, autoTools } : {}),
         ...(subagentTouched ? { subagentModel } : {}),
         ...(
           localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
@@ -777,6 +782,8 @@ export function AgentManager({
     accessMode,
     modelKey,
     providerModelId,
+    autoSelect,
+    autoTools,
     subagentModel,
     subagentTouched,
     subagentType,
@@ -1427,6 +1434,7 @@ export function AgentManager({
                       const selected = availableModels.find((model) => model.key === key);
                       if (key && !selected) return;
                       setModel({ key, providerModelId: selected?.providerModelId ?? null });
+                      setAutoSelect(false);
                       markDraftDirty();
                     }}
                   >
@@ -1442,6 +1450,20 @@ export function AgentManager({
                     <div role="status" style={{ color: '#80969F', fontSize: 11 }}>
                       No configured models available for this provider. Saved selection is unchanged.
                     </div>
+                  ) : null}
+                  {runtimeKind === 'hermes' ? (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, color: '#91A9B8', fontSize: 11 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Auto-select model with Jev"
+                        checked={autoSelect}
+                        onChange={(event) => {
+                          setAutoSelect(event.target.checked);
+                          markDraftDirty();
+                        }}
+                      />
+                      Auto-select with Jev
+                    </label>
                   ) : null}
                 </div>
                 {runtimeKind === 'hermes'
@@ -1589,6 +1611,20 @@ export function AgentManager({
           <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
             Application capabilities
           </div>
+          {runtimeKind === 'hermes' ? (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#91A9B8', fontSize: 11 }}>
+              <input
+                type="checkbox"
+                aria-label="Auto-tools with Jev"
+                checked={autoTools}
+                onChange={(event) => {
+                  setAutoTools(event.target.checked);
+                  markDraftDirty();
+                }}
+              />
+              Auto-tools · choose only from this Card's selected authorized tools
+            </label>
+          ) : null}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
             <input
               value={toolDictionaryQuery}

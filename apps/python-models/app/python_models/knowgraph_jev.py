@@ -10,7 +10,6 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import json
-import math
 import os
 from typing import Any, Callable
 
@@ -25,6 +24,10 @@ from .engraphis import (
     PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
     relationship_choice_plan,
     relationship_vocabulary_hash,
+)
+from .jev_validation import (
+    validate_rounded_choice_winner,
+    validate_rounded_probability_distribution,
 )
 
 
@@ -51,7 +54,10 @@ def _utc_now() -> str:
 
 
 def _bounded_text(value: Any, limit: int) -> str:
-    return str(value or "").strip()[:limit]
+    text = str(value or "").strip()
+    if len(text) > limit:
+        raise KnowGraphJevError("knowgraph_jev_input_limit")
+    return text
 
 
 def _entity(value: Any) -> dict[str, str]:
@@ -64,8 +70,10 @@ def _entity(value: Any) -> dict[str, str]:
 
 def _episode_context(value: Any) -> list[dict[str, Any]]:
     episodes = value if isinstance(value, list) else []
+    if len(episodes) > 8:
+        raise KnowGraphJevError("knowgraph_jev_episode_context_limit")
     bounded: list[dict[str, Any]] = []
-    for raw in episodes[:8]:
+    for raw in episodes:
         item = raw if isinstance(raw, dict) else {}
         content = item.get("content_preview", item.get("content", item.get("snippet", "")))
         bounded.append({
@@ -82,19 +90,23 @@ def _episode_context(value: Any) -> list[dict[str, Any]]:
 
 def _nearby_context(value: Any) -> list[dict[str, Any]]:
     facts = value if isinstance(value, list) else []
+    if len(facts) > 8:
+        raise KnowGraphJevError("knowgraph_jev_nearby_context_limit")
     return [{
         "native_fact_uuid": _bounded_text(item.get("nativeFactUuid"), 512),
         "source": _entity(item.get("sourceEntity")),
         "target": _entity(item.get("targetEntity")),
         "native_relation": _bounded_text(item.get("nativeRelation"), 1_000),
         "fact": _bounded_text(item.get("fact"), 2_000),
-    } for item in facts[:8] if isinstance(item, dict)]
+    } for item in facts if isinstance(item, dict)]
 
 
 def _failure_status(error: Exception) -> str:
     message = str(error)
     if "timeout" in message:
         return "timeout"
+    if "limit" in message:
+        return "unavailable"
     if "response_invalid" in message or "input_invalid" in message:
         return "invalid"
     if "unavailable" in message or "key_unavailable" in message:
@@ -119,14 +131,9 @@ def _validate_jev_response(
         raw = answer["probabilities"]
         if not isinstance(raw, dict) or set(raw) != set(choices):
             raise ValueError("probability keys")
-        probabilities = {name: float(raw[name]) for name in choices}
-        if any(not math.isfinite(value) or value < 0 or value > 1
-               for value in probabilities.values()):
-            raise ValueError("probability values")
-        total = sum(probabilities.values())
-        if total <= 0:
-            raise ValueError("probability total")
-        distribution = {name: value / total for name, value in probabilities.items()}
+        probabilities = validate_rounded_probability_distribution(raw, choices)
+        validate_rounded_choice_winner(winner, probabilities)
+        distribution = probabilities
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise KnowGraphJevError("knowgraph_jev_response_invalid") from error
     common = {
@@ -251,6 +258,8 @@ def classify_knowgraph_fact(
         body["state"]["optional_novel_relationship_candidate"] = (
             choice_plan["novel_candidate"]
         )
+    if len(json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")) > 240_000:
+        raise KnowGraphJevError("knowgraph_jev_input_limit")
 
     if transport is None:
         api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
@@ -310,7 +319,7 @@ def classify_knowgraph_facts(
         }
         for future in as_completed(future_indexes):
             index = future_indexes[future]
-            native_id = _bounded_text(facts[index].get("nativeFactUuid"), 512)
+            native_id = str(facts[index].get("nativeFactUuid") or "").strip()
             try:
                 results[index] = {"nativeFactUuid": native_id, **future.result()}
             except Exception as error:

@@ -575,9 +575,9 @@ function boundedNativeDescription(node: GraphProjectionNode): string | null {
 }
 
 /**
- * Builds the bounded, already-loaded, real relationship vocabulary sent to one
- * JevFocus Choice. Existing numeric weights only bound the candidate window;
- * they do not stand in for JevFocus's semantic distribution.
+ * Builds the complete already-loaded local relationship vocabulary considered
+ * for one JevFocus Choice. The caller refuses an oversized or partially read
+ * neighborhood instead of silently dropping native subjects.
  */
 export function buildJevFocusCandidates(
   projection: GraphProjectionV1,
@@ -641,7 +641,6 @@ export function buildJevFocusCandidates(
     .sort((left, right) => (
       left.authority.localeCompare(right.authority) || left.nativeId.localeCompare(right.nativeId)
     ))
-    .slice(0, MAX_JEV_FOCUS_CANDIDATES)
     .map(candidate => ({
       ...candidate,
       incidentRelationships: [...candidate.incidentRelationships]
@@ -851,7 +850,15 @@ function parseJevFocusDecision(
     }
     normalizedDistribution[choiceId] = probability;
   }
-  const total = Object.values(normalizedDistribution).reduce((sum, probability) => sum + probability, 0);
+  const probabilityValues = Object.values(normalizedDistribution);
+  const roundingHalfStep = 0.005;
+  const roundedTotalCanEqualOne = probabilityValues.some(probability => probability !== 0)
+    && probabilityValues.reduce(
+      (sum, probability) => sum + Math.max(0, probability - roundingHalfStep), 0,
+    ) <= 1 + Number.EPSILON
+    && probabilityValues.reduce(
+      (sum, probability) => sum + Math.min(1, probability + roundingHalfStep), 0,
+    ) >= 1 - Number.EPSILON;
   const ranked = [...candidates].sort((left, right) => (
     right.probability - left.probability
       || left.authority.localeCompare(right.authority)
@@ -864,7 +871,7 @@ function parseJevFocusDecision(
     selectedVisualIds.add(candidate.visualId);
   }
   const decisionId = typeof raw.decisionId === 'string' ? raw.decisionId.trim() : '';
-  if (Math.abs(total - 1) > 0.000001
+  if (!roundedTotalCanEqualOne
     || !decisionId
     || ranks.size !== candidates.length
     || candidates.some(candidate => candidate.rank < 1 || candidate.rank > candidates.length)
@@ -1883,6 +1890,28 @@ export function NativeGraphProjectionSurface({
       const readWarning = failures.length
         ? `Native neighborhood partial: ${failures.join(' · ')}`
         : null;
+      if (failures.length || candidates.length > MAX_JEV_FOCUS_CANDIDATES) {
+        const decision = failedDecision(
+          'unavailable',
+          failures.length
+            ? 'jev_focus_native_read_partial'
+            : 'jev_focus_candidate_limit',
+        );
+        setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
+          ? {
+            ...item,
+            presentation: focusPresentation,
+            candidates,
+            status: decision.status,
+            decision,
+            readWarning: readWarning || (
+              `Native neighborhood has ${candidates.length} subjects; `
+              + `JevFocus accepts at most ${MAX_JEV_FOCUS_CANDIDATES}.`
+            ),
+          }
+          : item));
+        return;
+      }
       setFocusTrail(history => history.map(item => item.requestIdentity === requestIdentity
         ? { ...item, presentation: focusPresentation, candidates, status: 'loading', readWarning }
         : item));

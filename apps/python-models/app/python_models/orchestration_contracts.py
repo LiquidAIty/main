@@ -69,12 +69,14 @@ class CardConfiguration(BaseModel):
     provider: str = ""
     accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str = ""
+    autoSelect: bool = False
     openaiRuntime: Literal["codex_app_server"] | None = None
     reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
     temperature: float | None = Field(default=None, ge=0)
     maxTokens: int | None = Field(default=None, ge=1)
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
+    autoTools: bool = False
     subagentModel: CardSubagentModel | None = None
 
 

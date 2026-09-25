@@ -1501,7 +1501,7 @@ def test_optional_editor_review_never_materializes_an_idf(
     monkeypatch.setattr(
         card_domain,
         "_resolve_invocation_components",
-        lambda _payload: components,
+        lambda _payload, **_kwargs: components,
     )
     monkeypatch.setattr(
         card_domain,
@@ -3237,8 +3237,8 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
     )
     decision_calls = []
 
-    def decide(query, candidates):
-        decision_calls.append((query, candidates))
+    def decide(query, candidates, *, effective_request=None):
+        decision_calls.append((query, candidates, effective_request))
         probabilities = [0.45, 0.25, 0.15]
         tail = 0.15 / (len(candidates) - len(probabilities))
         distribution = {
@@ -3264,11 +3264,13 @@ def test_main_attention_dedupes_by_authority_and_id_and_applies_mass_policy(
         deck_id="deck-one",
         card_id="main",
         query="Current user message",
+        effective_assignment="Earlier shared context.\n\nCurrent user message",
         excluded_identities={("ThinkGraph", "explicit")},
     )
 
     assert len(decision_calls) == 1
     assert decision_calls[0][0] == "Current user message"
+    assert decision_calls[0][2] == "Earlier shared context.\n\nCurrent user message"
     offered = decision_calls[0][1]
     assert len(offered) <= 16
     identities = [
@@ -3337,7 +3339,8 @@ def _main_attention_materialization_payload(
     return payload
 
 
-def _attention_decision(_query, candidates):
+def _attention_decision(_query, candidates, *, effective_request=None):
+    assert effective_request == "Shared transcript supplied to Main."
     assert len(candidates) == 2
     return {
         "decisionId": "decision-hydration",
@@ -4179,3 +4182,206 @@ def test_builder_input_is_independent_of_changed_or_missing_plan(monkeypatch):
 def test_invocation_rejects_retired_operation_fields(field):
     with pytest.raises(card_domain.CardDomainError, match="invocation_context_field_forbidden"):
         card_domain._reject_non_graph_invocation_context({field: {"mode": "create"}})
+
+
+def _request_fulfillment_answer(
+    *,
+    score: float = 1.0,
+    probabilities: dict[str, float] | None = None,
+) -> dict:
+    values = probabilities or {
+        "0": 0.33, "1": 0.33, "2": 0.33, "3": 0.0, "4": 0.0,
+    }
+    return {
+        "type": "score",
+        "score": score,
+        "confidence": 0.2,
+        "legend": {
+            str(index): description
+            for index, description in enumerate(
+                card_domain._REQUEST_FULFILLMENT_LEVELS
+            )
+        },
+        "probabilities": values,
+    }
+
+
+def test_card_jev_choice_accepts_possible_two_decimal_rounded_total() -> None:
+    result = card_domain._validated_choice_answer(
+        {
+            "type": "choice",
+            "choice": "alpha",
+            "confidence": 0.0,
+            "probabilities": {"alpha": 0.33, "beta": 0.33, "gamma": 0.33},
+        },
+        ("alpha", "beta", "gamma"),
+        error_code="test_invalid",
+    )
+
+    assert result["winner"] == "alpha"
+    assert result["probabilities"] == {
+        "alpha": 0.33, "beta": 0.33, "gamma": 0.33,
+    }
+
+
+def test_card_jev_choice_rejects_impossible_rounded_total() -> None:
+    with pytest.raises(card_domain._CardJevError, match="test_invalid"):
+        card_domain._validated_choice_answer(
+            {
+                "type": "choice",
+                "choice": "alpha",
+                "confidence": 0.0,
+                "probabilities": {"alpha": 0.30, "beta": 0.20},
+            },
+            ("alpha", "beta"),
+            error_code="test_invalid",
+        )
+
+
+def test_request_fulfillment_score_accepts_rounding_consistent_raw_values() -> None:
+    result = card_domain._validated_request_fulfillment_answer(
+        _request_fulfillment_answer()
+    )
+
+    assert result["rawScore"] == 1.0
+    assert result["normalizedScore100"] == 25.0
+    assert sum(result["probabilities"].values()) == pytest.approx(0.99)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        _request_fulfillment_answer(
+            probabilities={
+                "0": 0.30, "1": 0.20, "2": 0.0, "3": 0.0, "4": 0.0,
+            },
+        ),
+        _request_fulfillment_answer(score=4.0),
+        _request_fulfillment_answer(
+            probabilities={
+                "0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 0.0,
+            },
+        ),
+    ],
+)
+def test_request_fulfillment_score_rejects_unusable_numeric_payloads(answer) -> None:
+    with pytest.raises(
+        card_domain._CardJevError,
+        match="request_fulfillment_response_invalid",
+    ):
+        card_domain._validated_request_fulfillment_answer(answer)
+
+
+def test_auto_tools_preserves_provider_winner_when_tie_is_applied_as_omit(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(card_domain, "_jev_request", lambda *_args, **_kwargs: {
+        "model": "typesafe/jev-1.13-test",
+        "answers": {
+            "tool_" + card_domain._sha("native.read")[:24]: {
+                "type": "choice",
+                "choice": "USE",
+                "confidence": 0.0,
+                "probabilities": {"USE": 0.5, "OMIT": 0.5},
+            },
+        },
+        "usage": {},
+    })
+
+    selected, receipt = card_domain._decide_card_auto_tools(
+        {"effective_request": "Inspect the saved native record."},
+        [{
+            "canonicalId": "native.read",
+            "displayName": "Native read",
+            "shortDescription": "Read one native record.",
+            "effects": ["read"],
+            "contracts": [{
+                "sourceId": "python_runtime",
+                "connectionKind": "private-runtime",
+                "nativeName": "native.read",
+                "description": "Read one native record.",
+                "inputSchema": {"type": "object"},
+                "effects": ["read"],
+                "available": True,
+            }],
+        }],
+    )
+
+    assert selected == []
+    decision = receipt["decisions"]["native.read"]
+    assert decision["winner"] == "USE"
+    assert decision["providerWinner"] == "USE"
+    assert decision["effectiveDecision"] == "OMIT"
+    assert decision["probabilities"] == {"USE": 0.5, "OMIT": 0.5}
+
+
+def test_request_fulfillment_missing_idf_persists_explicit_unavailable(
+    monkeypatch,
+) -> None:
+    run_row = {
+        "project_id": "project-one",
+        "deck_id": "deck-one",
+        "target_card_revision_id": "revision-one",
+        "state": "completed",
+        "final_result": "The completed answer.",
+        "effective_provider": "openrouter",
+        "provider_model_id": "configured/model",
+        "request_fulfillment": None,
+        "card_id": "main",
+    }
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, *_args):
+            return None
+
+        def fetchone(self):
+            return run_row
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    stored: list[dict] = []
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_input_file_descriptor_for_run", lambda _run_id: None)
+    monkeypatch.setattr(
+        card_domain,
+        "_persist_request_fulfillment",
+        lambda _run_id, value: stored.append(value) or value,
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "_jev_request",
+        lambda *_args, **_kwargs: pytest.fail("Jev must not run without the exact IDF"),
+    )
+
+    result = card_domain.assess_run_request_fulfillment({
+        "runId": "run-one",
+        "actualProvider": "openrouter",
+        "actualModel": "configured/model",
+        "exposedTools": ["native.read"],
+        "executionEvidence": [],
+        "executionEvidenceComplete": True,
+    })
+
+    assessment = result["assessment"]
+    assert assessment["status"] == "unavailable"
+    assert assessment["failureReason"] == "request_fulfillment_input_file_unavailable"
+    assert assessment["requestCount"] == 0
+    assert assessment["questionCount"] == 0
+    assert "idfSha256" not in assessment
+    assert assessment["executionEvidenceComplete"] is True
+    assert assessment["executionEvidenceError"] is None
+    assert stored == [assessment]

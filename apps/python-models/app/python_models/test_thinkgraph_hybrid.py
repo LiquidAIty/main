@@ -72,7 +72,77 @@ def decision(
     }
 
 
-def payload(run_id: str = "run-one") -> dict[str, str]:
+def source_response_fit(run_id: str) -> dict[str, Any]:
+    return {
+        "schemaVersion": "request-fulfillment-assessment.v1",
+        "metric": "request_fulfillment",
+        "rubricVersion": "request-fulfillment.v1",
+        "status": "unavailable",
+        "runId": run_id,
+        "executionEvidenceComplete": False,
+        "executionEvidenceError": "test_fixture_execution_evidence_unavailable",
+        "failureReason": "test_fixture_execution_evidence_unavailable",
+        "requestCount": 0,
+        "questionCount": 0,
+    }
+
+
+def scored_source_response_fit(run_id: str) -> dict[str, Any]:
+    return {
+        "schemaVersion": "request-fulfillment-assessment.v1",
+        "metric": "request_fulfillment",
+        "rubricVersion": "request-fulfillment.v1",
+        "status": "scored",
+        "runId": run_id,
+        "cardRevisionId": "revision-one",
+        "idfSha256": "a" * 64,
+        "outputSha256": "b" * 64,
+        "executionEvidenceSha256": "c" * 64,
+        "executionEvidenceComplete": True,
+        "executionEvidenceError": None,
+        "actualProvider": "openrouter",
+        "actualModel": "configured/model",
+        "requestedModel": "typesafe/jev-1.13",
+        "scale": {"minimum": 0.0, "maximum": 4.0},
+        "evaluatedAt": "2026-09-25T12:00:00Z",
+        "rawScore": 1.0,
+        "normalizedScore100": 25.0,
+        "probabilities": {
+            "0": 0.33, "1": 0.33, "2": 0.33, "3": 0.0, "4": 0.0,
+        },
+        "confidence": 0.2,
+        "provider": "TypeSafe",
+        "resolvedModel": "typesafe/jev-1.13-test",
+        "usage": {},
+        "requestCount": 1,
+        "questionCount": 1,
+        "timingMs": 12.0,
+    }
+
+
+def test_source_response_fit_accepts_exact_scored_receipt_without_normalizing():
+    receipt = scored_source_response_fit("run-one")
+
+    assert adapter._validate_source_response_fit(receipt, "run-one") == receipt
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"failureReason": "must-not-coexist"},
+        {"executionEvidenceComplete": False},
+        {"requestCount": 0},
+        {"idfSha256": None},
+    ],
+)
+def test_source_response_fit_rejects_incomplete_scored_receipt(mutation):
+    receipt = {**scored_source_response_fit("run-one"), **mutation}
+
+    with pytest.raises(ValueError, match="thinkgraph_source_response_fit_invalid"):
+        adapter._validate_source_response_fit(receipt, "run-one")
+
+
+def payload(run_id: str = "run-one") -> dict[str, Any]:
     return {
         "projectId": "project-one",
         "deckId": "agent-builder",
@@ -83,6 +153,7 @@ def payload(run_id: str = "run-one") -> dict[str, str]:
         "completedAt": "2026-09-23T12:00:00Z",
         "userMessage": "Jev evaluates ThinkGraph relationship semantics.",
         "mainResponse": "ThinkGraph uses Jev before durable semantic edges are written.",
+        "sourceResponseFit": source_response_fit(run_id),
     }
 
 
@@ -159,7 +230,7 @@ def settle_payload(
     preparation: dict,
     *,
     output: dict | None = None,
-    completed: dict[str, str] | None = None,
+    completed: dict[str, Any] | None = None,
 ) -> dict:
     return {
         **(completed or payload()),
@@ -419,8 +490,11 @@ def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
     }
     assert set(prepared["enrichmentInput"]) == {
         "exact_user_message", "exact_main_response", "current_graph_shape",
-        "current_project_relationship_vocabulary",
+        "current_project_relationship_vocabulary", "source_response_fit",
     }
+    assert prepared["enrichmentInput"]["source_response_fit"] == (
+        payload()["sourceResponseFit"]
+    )
     assert prepared["enrichmentInput"][
         "current_project_relationship_vocabulary"
     ] == list(SHARED_JEV_RELATIONSHIPS)
@@ -431,7 +505,7 @@ def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
         ),
         "labels": list(SHARED_JEV_RELATIONSHIPS),
         "count": 20,
-        "maximum": 255,
+        "maximum": 252,
         "atMaximum": False,
     }
     entities, edges = entities_and_edges(hybrid)
@@ -599,13 +673,13 @@ def test_novel_proposal_does_not_expand_vocabulary_unless_it_wins(
     )["labels"]
 
 
-def test_project_relationship_vocabulary_stops_at_255(hybrid):
+def test_project_relationship_vocabulary_reserves_control_choice_capacity(hybrid):
     service = hybrid.get_service()
     workspace_id = service.store.get_or_create_workspace("project-one")
     with service.store._write_operation(
         "test_relationship_vocabulary_ceiling", commit=True,
     ):
-        for index in range(235):
+        for index in range(232):
             hybrid._promote_project_relationship_label(
                 service.store,
                 workspace_id=workspace_id,
@@ -615,11 +689,19 @@ def test_project_relationship_vocabulary_stops_at_255(hybrid):
     vocabulary = tuple(
         hybrid.read_project_relationship_vocabulary("project-one")["labels"]
     )
-    assert len(vocabulary) == 255
+    assert len(vocabulary) == 252
     plan = hybrid.relationship_choice_plan("over performs", vocabulary)
     assert plan["proposal_status"] == "novel_blocked_at_ceiling"
     assert plan["novel_candidate"] == ""
     assert "OVER_PERFORMS" not in plan["choices"]
+    assert len(plan["choices"]) == 255
+    reused, promoted = hybrid._promote_project_relationship_label(
+        service.store,
+        workspace_id=workspace_id,
+        label=vocabulary[-1],
+    )
+    assert promoted is False
+    assert reused == vocabulary
     with pytest.raises(
         hybrid.ThinkGraphIntakeError,
         match="thinkgraph_relationship_vocabulary_ceiling",
@@ -627,6 +709,87 @@ def test_project_relationship_vocabulary_stops_at_255(hybrid):
         hybrid.promote_project_relationship_label(
             "project-one", "OVER_PERFORMS",
         )
+
+
+def test_relationship_choice_capacity_supports_251_plus_novel_and_252_reuse():
+    vocabulary_251 = (
+        *SHARED_JEV_RELATIONSHIPS,
+        *(f"REL_{index:03d}" for index in range(231)),
+    )
+    novel = adapter.relationship_choice_plan("amplifies", vocabulary_251)
+    assert len(vocabulary_251) == 251
+    assert novel["novel_candidate"] == "AMPLIFIES"
+    assert len(novel["choices"]) == 255
+
+    vocabulary_252 = (*vocabulary_251, "AMPLIFIES")
+    reused = adapter.relationship_choice_plan("amplifies", vocabulary_252)
+    assert reused["proposal_status"] == "reused_canonical"
+    assert reused["novel_candidate"] == ""
+    assert len(reused["choices"]) == 255
+
+
+def test_oversized_legacy_vocabulary_is_readable_but_not_classified(hybrid):
+    from app.python_models import knowgraph_jev
+
+    service = hybrid.get_service()
+    workspace_id = service.store.get_or_create_workspace("project-one")
+    legacy_labels = [f"REL_{index:03d}" for index in range(235)]
+    settings = hybrid._workspace_settings(service.store, workspace_id)
+    settings[hybrid._PROJECT_RELATIONSHIP_VOCABULARY_SETTING] = {
+        "version": hybrid.PROJECT_RELATIONSHIP_VOCABULARY_VERSION,
+        "labels": legacy_labels,
+    }
+    with service.store._write_operation("test_legacy_vocabulary", commit=True):
+        service.store.conn.execute(
+            "UPDATE workspaces SET settings=? WHERE id=?",
+            (json.dumps(settings), workspace_id),
+        )
+
+    state = hybrid.read_project_relationship_vocabulary("project-one")
+    vocabulary = tuple(state["labels"])
+    assert state["count"] == 255
+    assert state["atMaximum"] is True
+
+    called = False
+
+    def classifier(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return decision()
+
+    think_results = hybrid._classify_opportunities(
+        service.store,
+        workspace_id=workspace_id,
+        payload=payload("legacy-capacity"),
+        opportunities=[{
+            "id": "legacy-pair",
+            "source": {"name": "Alpha", "type": "person_or_concept"},
+            "target": {"name": "Beta", "type": "person_or_concept"},
+            "native_relation": "AFFECTS",
+            "native_weight": 0.0,
+            "provenance": {},
+        }],
+        classifier=classifier,
+        relationship_vocabulary=vocabulary,
+    )
+    assert called is False
+    assert think_results[0]["status"] == "jev_failed"
+    assert think_results[0]["error"] == "thinkgraph_relationship_choice_capacity_exceeded"
+
+    know_results = knowgraph_jev.classify_knowgraph_facts(
+        [{
+            "nativeFactUuid": "legacy-fact",
+            "sourceEntity": {"uuid": "a", "name": "Alpha"},
+            "targetEntity": {"uuid": "b", "name": "Beta"},
+            "nativeRelation": "AFFECTS",
+            "fact": "Alpha affects Beta.",
+        }],
+        relationship_vocabulary=vocabulary,
+    )
+    assert know_results[0]["status"] == "error"
+    assert know_results[0]["failure_reason"] == (
+        "thinkgraph_relationship_choice_capacity_exceeded"
+    )
 
 
 def test_novel_vocabulary_promotion_rolls_back_with_failed_edge_write(
@@ -919,6 +1082,7 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
         "exact_main_response",
         "current_graph_shape",
         "current_project_relationship_vocabulary",
+        "source_response_fit",
     }
     assert "Alpha already has durable project context." not in prepared["enrichmentPrompt"]
     graph_shape = enrichment["current_graph_shape"]
@@ -1440,6 +1604,7 @@ def test_structured_writer_gets_shape_not_prior_think_bodies_or_edge_reclassific
         "exact_main_response",
         "current_graph_shape",
         "current_project_relationship_vocabulary",
+        "source_response_fit",
     }
     assert "Jev normalizes expressive graph relations." not in prepared["enrichmentPrompt"]
     shape = prepared["enrichmentInput"]["current_graph_shape"]

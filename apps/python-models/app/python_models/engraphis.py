@@ -30,6 +30,11 @@ from .jev_edge_ontology import (
     SHARED_JEV_RELATIONSHIP_CRITERIA,
     SHARED_JEV_RELATIONSHIP_SCHEMA_HASH,
 )
+from .jev_validation import (
+    validate_rounded_choice_winner,
+    validate_rounded_probability_distribution,
+    validate_rounded_weighted_score,
+)
 
 DATABASE = Path(__file__).resolve().parents[4] / "db" / "thinkgraph.sqlite"
 MODEL = "local:sentence-transformers/all-MiniLM-L6-v2"
@@ -47,6 +52,7 @@ MAX_JEV_CONCURRENCY = 4
 CONTEXTUAL_NODE_MAX_REAL_OPTIONS = 254
 CONTEXTUAL_NODE_STATE_TOKEN_LIMIT = 26_000
 CONTEXTUAL_NODE_NONE_RELEVANT = "NONE_RELEVANT"
+CONTEXTUAL_NODE_VISIBLE_PER_SIDE = 2
 SEMANTIC_ADMISSION_MINIMUM = 0.60
 THINKGRAPH_CONTROL_OUTCOMES = (
     "INVALID_NODE_PAIR", "NONE", "INSUFFICIENT_CONTEXT",
@@ -56,7 +62,15 @@ _THINK_INCIDENCE_KIND = "structured_extractor"
 _TRUSTED_STRUCTURED_GRAPH_KEYS = frozenset(
     ("entities", "relations", "structured_extraction")
 )
-PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM = 255
+# TypeSafe Choice accepts at most 255 options.  ThinkGraph must always retain
+# its three control outcomes, and a vocabulary that is not yet full may add one
+# novel proposal to the same Choice.  A 252-label durable ceiling therefore
+# uses all 255 slots at the ceiling, while 251 labels plus one proposal and the
+# three controls also uses exactly 255.  No live label or control is truncated.
+JEV_CHOICE_OPTION_MAXIMUM = 255
+PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM = (
+    JEV_CHOICE_OPTION_MAXIMUM - len(THINKGRAPH_CONTROL_OUTCOMES)
+)
 PROJECT_RELATIONSHIP_VOCABULARY_VERSION = (
     "project.relationship-vocabulary.v1"
 )
@@ -154,10 +168,10 @@ def _project_relationship_vocabulary(
             )
         if label not in labels:
             labels.append(label)
-    if len(labels) > PROJECT_RELATIONSHIP_VOCABULARY_MAXIMUM:
-        raise ThinkGraphIntakeError(
-            "thinkgraph_relationship_vocabulary_invalid"
-        )
+    # Legacy vocabularies remain readable even when an older build allowed
+    # more labels than one current Choice can carry.  Classification fails
+    # explicitly at the provider boundary; durable graph data is never hidden
+    # or deleted to make a request fit.
     return tuple(labels)
 
 
@@ -216,6 +230,15 @@ def relationship_choice_plan(
     else:
         status = "novel_candidate"
         candidate = normalized
+    choices = (
+        *vocabulary,
+        *((candidate,) if candidate else ()),
+        *control_outcomes,
+    )
+    if len(choices) > JEV_CHOICE_OPTION_MAXIMUM:
+        raise ThinkGraphIntakeError(
+            "thinkgraph_relationship_choice_capacity_exceeded"
+        )
     return {
         "raw_proposal": str(relationship_proposal or ""),
         "normalized_proposal": normalized,
@@ -224,11 +247,7 @@ def relationship_choice_plan(
         "vocabulary": vocabulary,
         "vocabulary_hash": relationship_vocabulary_hash(vocabulary),
         "vocabulary_at_maximum": at_maximum,
-        "choices": (
-            *vocabulary,
-            *((candidate,) if candidate else ()),
-            *control_outcomes,
-        ),
+        "choices": choices,
     }
 
 
@@ -310,6 +329,87 @@ def _source_pair(payload: dict[str, Any]) -> dict[str, Any]:
         "user_sha256": _text_hash(payload["userMessage"]),
         "main_sha256": _text_hash(payload["mainResponse"]),
     }
+
+
+def _validate_source_response_fit(value: Any, run_id: str) -> dict[str, Any]:
+    """Validate one response-scoped assessment without recomputing its numbers."""
+
+    if not isinstance(value, dict):
+        raise ValueError("thinkgraph_source_response_fit_invalid")
+    allowed = {
+        "schemaVersion", "metric", "rubricVersion", "status", "runId",
+        "cardRevisionId", "idfSha256", "outputSha256",
+        "executionEvidenceSha256", "executionEvidenceComplete",
+        "executionEvidenceError", "actualProvider", "actualModel",
+        "requestedModel", "scale", "evaluatedAt", "failureReason",
+        "requestCount", "questionCount", "timingMs", "rawScore",
+        "normalizedScore100", "probabilities", "confidence", "provider",
+        "resolvedModel", "usage",
+    }
+    if set(value) - allowed:
+        raise ValueError("thinkgraph_source_response_fit_invalid")
+    result = deepcopy(value)
+    if (
+        result.get("schemaVersion") != "request-fulfillment-assessment.v1"
+        or result.get("metric") != "request_fulfillment"
+        or result.get("rubricVersion") != "request-fulfillment.v1"
+        or result.get("status") not in {"scored", "unavailable"}
+        or str(result.get("runId") or "") != run_id
+    ):
+        raise ValueError("thinkgraph_source_response_fit_invalid")
+    for field in ("idfSha256", "outputSha256", "executionEvidenceSha256"):
+        if field in result and not re.fullmatch(r"[a-f0-9]{64}", str(result[field])):
+            raise ValueError("thinkgraph_source_response_fit_invalid")
+    if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 100_000:
+        raise ValueError("thinkgraph_source_response_fit_invalid")
+    if result["status"] == "scored":
+        probabilities = result.get("probabilities")
+        if not isinstance(probabilities, dict) or set(probabilities) != {
+            "0", "1", "2", "3", "4"
+        }:
+            raise ValueError("thinkgraph_source_response_fit_invalid")
+        try:
+            normalized = float(result["normalizedScore100"])
+            confidence = float(result["confidence"])
+            values = validate_rounded_probability_distribution(
+                probabilities, ("0", "1", "2", "3", "4"),
+            )
+            raw_score = validate_rounded_weighted_score(
+                result["rawScore"], values, ("0", "1", "2", "3", "4"),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError) as error:
+            raise ValueError("thinkgraph_source_response_fit_invalid") from error
+        required_text = (
+            "cardRevisionId", "idfSha256", "outputSha256",
+            "executionEvidenceSha256", "actualProvider", "actualModel",
+            "requestedModel", "evaluatedAt", "provider", "resolvedModel",
+        )
+        scale = result.get("scale")
+        if (
+            not math.isfinite(raw_score) or not 0.0 <= raw_score <= 4.0
+            or not math.isclose(normalized, raw_score * 25.0, rel_tol=0.0, abs_tol=0.000001)
+            or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0
+            or any(not math.isfinite(item) or not 0.0 <= item <= 1.0 for item in values.values())
+            or any(not str(result.get(field) or "").strip() for field in required_text)
+            or scale != {"minimum": 0.0, "maximum": 4.0}
+            or result.get("executionEvidenceComplete") is not True
+            or result.get("executionEvidenceError") is not None
+            or "failureReason" in result
+            or result.get("requestCount") != 1
+            or result.get("questionCount") != 1
+            or not isinstance(result.get("usage"), dict)
+        ):
+            raise ValueError("thinkgraph_source_response_fit_invalid")
+    else:
+        if (
+            not str(result.get("failureReason") or "")
+            or not isinstance(result.get("executionEvidenceComplete"), bool)
+        ):
+            raise ValueError("thinkgraph_source_response_fit_invalid")
+        for field in ("rawScore", "normalizedScore100", "probabilities", "confidence"):
+            if field in result:
+                raise ValueError("thinkgraph_source_response_fit_invalid")
+    return result
 
 
 def _edge_memory_ids(edge: Any) -> list[str]:
@@ -618,6 +718,26 @@ def _latest_endpoint_think(
     canonical_id: str,
 ) -> dict[str, Any] | None:
     """Read exactly one newest direct ThinkGraph Think for one endpoint."""
+    values = _endpoint_thinks(
+        store,
+        workspace_id=workspace_id,
+        canonical_id=canonical_id,
+        limit=1,
+    )
+    return values[0] if values else None
+
+
+def _endpoint_thinks(
+    store: Any,
+    *,
+    workspace_id: str,
+    canonical_id: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read newest direct native Thinks without admitting text mentions."""
+
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 24:
+        raise ValueError("think_endpoint_limit_invalid")
     canonical_id = _canonical_entity_id(store, canonical_id) or canonical_id
     member_rows = store.conn.execute(
         "SELECT id FROM entities WHERE workspace_id=? "
@@ -626,9 +746,9 @@ def _latest_endpoint_think(
     ).fetchall()
     member_ids = [str(row["id"]) for row in member_rows]
     if not member_ids:
-        return None
+        return []
     marks = ",".join("?" for _ in member_ids)
-    row = store.conn.execute(
+    rows = store.conn.execute(
         "SELECT m.id FROM memory_entities me "
         "JOIN memories m ON m.id=me.memory_id "
         f"WHERE me.workspace_id=? AND me.entity_id IN ({marks}) "
@@ -636,40 +756,41 @@ def _latest_endpoint_think(
         "AND me.valid_to IS NULL AND me.expired_at IS NULL "
         "AND m.valid_to IS NULL AND m.expired_at IS NULL "
         "ORDER BY COALESCE(m.ingested_at,me.ingested_at,0) DESC, m.id DESC "
-        "LIMIT 1",
-        (workspace_id, *member_ids, _THINK_INCIDENCE_KIND),
-    ).fetchone()
-    if row is None:
-        return None
-    memory = store.get_memory(str(row["id"]))
-    if memory is None:
-        return None
-    think = _think_metadata(memory)
-    if think is None:
-        return None
+        "LIMIT ?",
+        (workspace_id, *member_ids, _THINK_INCIDENCE_KIND, limit),
+    ).fetchall()
     entity = _entity_row(store, canonical_id) or {}
-    return {
-        "native_id": canonical_id,
-        "canonical_name": str(entity.get("name") or ""),
-        "memory_id": memory.id,
-        "kind": think.get("kind"),
-        "content": memory.content[:1_200],
-        "keywords": list(memory.keywords)[:16],
-        "properties": list(think.get("properties") or [])[:16],
-        "concepts": list(think.get("concepts") or [])[:16],
-        "propositions": list(think.get("propositions") or [])[:16],
-        "questions": list(think.get("questions") or [])[:16],
-        "predictions": list(think.get("predictions") or [])[:16],
-        "assumptions": list(think.get("assumptions") or [])[:16],
-        "preferences": list(think.get("preferences") or [])[:16],
-        "corrections": list(think.get("corrections") or [])[:16],
-        "relationship_observations": list(
-            think.get("relationship_observations") or []
-        )[:16],
-        "ingested_at": memory.ingested_at,
-        "valid_from": memory.valid_from,
-        "valid_to": memory.valid_to,
-    }
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        memory = store.get_memory(str(row["id"]))
+        if memory is None:
+            continue
+        think = _think_metadata(memory)
+        if think is None:
+            continue
+        result.append({
+            "native_id": canonical_id,
+            "canonical_name": str(entity.get("name") or ""),
+            "memory_id": memory.id,
+            "kind": think.get("kind"),
+            "content": memory.content[:1_200],
+            "keywords": list(memory.keywords)[:16],
+            "properties": list(think.get("properties") or [])[:16],
+            "concepts": list(think.get("concepts") or [])[:16],
+            "propositions": list(think.get("propositions") or [])[:16],
+            "questions": list(think.get("questions") or [])[:16],
+            "predictions": list(think.get("predictions") or [])[:16],
+            "assumptions": list(think.get("assumptions") or [])[:16],
+            "preferences": list(think.get("preferences") or [])[:16],
+            "corrections": list(think.get("corrections") or [])[:16],
+            "relationship_observations": list(
+                think.get("relationship_observations") or []
+            )[:16],
+            "ingested_at": memory.ingested_at,
+            "valid_from": memory.valid_from,
+            "valid_to": memory.valid_to,
+        })
+    return result
 
 
 def _bounded_structured_graph_shape(
@@ -765,29 +886,14 @@ def _turn_start_prior_think_snapshot(
 
 
 def _bounded_jev_text(text: str, source: str, target: str) -> str:
-    """Use Engraphis's chunker only when a pair exceeds Jev's safe state budget."""
-    from engraphis.backends.extractor import ChunkingExtractor
+    """Reject an incomplete relationship judgment instead of sampling evidence."""
     from engraphis.core.context import RegexTokenCounter
 
     counter = RegexTokenCounter()
     if counter(text) <= 26_000:
         return text
-    chunker = ChunkingExtractor(
-        target_tokens=4_800,
-        overlap_tokens=64,
-        max_chunks=12,
-        token_counter=counter,
-        token_counter_identity=counter.identity,
-    )
-    chunks = chunker.extract(text)
-    names = (source.casefold(), target.casefold())
-    selected = [
-        fact.content for fact in chunks
-        if any(name and name in fact.content.casefold() for name in names)
-    ]
-    if not selected:
-        selected = [fact.content for fact in chunks[:5]]
-    return "\n\n[ENGRAPHIS CHUNK]\n\n".join(selected[:5])
+    del source, target
+    raise JevRelationshipError("jev_relationship_input_limit")
 
 
 def _validate_jev_response(
@@ -804,14 +910,8 @@ def _validate_jev_response(
         raw = answer["probabilities"]
         if not isinstance(raw, dict) or set(raw) != set(choices):
             raise ValueError("probability keys")
-        probabilities = {name: float(raw[name]) for name in choices}
-        if any(not math.isfinite(value) or value < 0 or value > 1
-               for value in probabilities.values()):
-            raise ValueError("probability values")
-        total = sum(probabilities.values())
-        if total <= 0:
-            raise ValueError("probability total")
-        probabilities = {name: value / total for name, value in probabilities.items()}
+        probabilities = validate_rounded_probability_distribution(raw, choices)
+        validate_rounded_choice_winner(winner, probabilities)
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevRelationshipError("jev_relationship_response_invalid") from error
     return {
@@ -1045,38 +1145,9 @@ def _validate_contextual_choice_answer(
             raise ValueError("probability keys")
         if any(isinstance(raw[choice], bool) for choice in choice_ids):
             raise ValueError("probability values")
-        probabilities = {choice: float(raw[choice]) for choice in choice_ids}
-        if any(
-            not math.isfinite(probability)
-            or probability < 0.0
-            or probability > 1.0
-            for probability in probabilities.values()
-        ):
-            raise ValueError("probability values")
-        if not math.isclose(
-            sum(probabilities.values()), 1.0,
-            rel_tol=0.0,
-            abs_tol=0.000001,
-        ):
-            raise ValueError("probability total")
-        maximum = max(probabilities.values())
-        tied = [
-            choice for choice in choice_ids
-            if math.isclose(
-                probabilities[choice], maximum,
-                rel_tol=0.0,
-                abs_tol=0.000000000001,
-            )
-        ]
-        if provider_winner not in tied:
-            raise ValueError("winner probability")
-        winner = sorted(
-            tied,
-            key=lambda choice: (
-                choice == CONTEXTUAL_NODE_NONE_RELEVANT,
-                choices.get(choice, choice),
-            ),
-        )[0]
+        probabilities = validate_rounded_probability_distribution(raw, choice_ids)
+        validate_rounded_choice_winner(provider_winner, probabilities)
+        winner = provider_winner
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError(
             "invalid", f"contextual_node_{side}_response_invalid"
@@ -1110,8 +1181,10 @@ def decide_contextual_node_items(
 ) -> dict[str, Any]:
     """Run one Jev request with independent Think and Know Choices.
 
-    Full distributions remain inside this Python operation.  Callers must not
-    serialize them into the node panel, Data Anchors, or model input.
+    Full distributions for actually judged (>2) sides remain in the shared
+    transient result for inspection/telemetry. They are never copied into
+    hydrated Data Anchors or model input. Sparse sides have no distribution
+    because no Jev decision occurred.
     """
 
     supplied_context_status = (
@@ -1156,6 +1229,13 @@ def decide_contextual_node_items(
             continue
         if not candidates:
             side_states[side] = {"status": "empty", "candidateCount": 0}
+            continue
+        if len(candidates) <= CONTEXTUAL_NODE_VISIBLE_PER_SIDE:
+            side_states[side] = {
+                "status": "selected",
+                "candidateCount": len(candidates),
+                "nativeIds": identities,
+            }
             continue
         if len(candidates) > CONTEXTUAL_NODE_MAX_REAL_OPTIONS:
             side_states[side] = {
@@ -1737,18 +1817,8 @@ def _validate_jev_attention_response(
         raw = answer["probabilities"]
         if not isinstance(raw, dict) or set(raw) != set(choice_ids):
             raise ValueError("probability keys")
-        probabilities = {choice: float(raw[choice]) for choice in choice_ids}
-        if any(
-            not math.isfinite(value) or value < 0.0 or value > 1.0
-            for value in probabilities.values()
-        ):
-            raise ValueError("probability values")
-        total = sum(probabilities.values())
-        if total <= 0.0:
-            raise ValueError("probability total")
-        probabilities = {
-            choice: value / total for choice, value in probabilities.items()
-        }
+        probabilities = validate_rounded_probability_distribution(raw, choice_ids)
+        validate_rounded_choice_winner(winner, probabilities)
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError(
             "invalid", "jev_attention_response_invalid"
@@ -1767,12 +1837,17 @@ def _validate_jev_attention_response(
 def decide_main_graph_attention(
     query: str,
     candidates: list[dict[str, Any]],
+    *,
+    effective_request: str | None = None,
 ) -> dict[str, Any]:
     """Ask Jev exactly one bounded read-only Choice over canonical graph entities."""
 
     query = str(query or "")
     if not query.strip():
         raise JevAttentionError("invalid", "jev_attention_query_required")
+    effective_request = str(effective_request or query)
+    if not effective_request.strip():
+        raise JevAttentionError("invalid", "jev_attention_context_required")
     if not candidates or len(candidates) > 16:
         raise JevAttentionError("invalid", "jev_attention_candidates_invalid")
     choice_ids: list[str] = []
@@ -1820,10 +1895,12 @@ def decide_main_graph_attention(
         "model": JEV_MODEL,
         "state": {
             "description": (
-                "The current visible Main user message and at most sixteen canonical entity "
-                "candidates retrieved read-only from ThinkGraph and KnowGraph."
+                "The complete bounded effective Main assignment, including the current visible "
+                "user message and any supplied shared conversation, plus at most sixteen "
+                "canonical entity candidates retrieved read-only from ThinkGraph and KnowGraph."
             ),
             "current_user_message": query,
+            "effective_main_assignment": effective_request,
             "canonical_entity_options": options,
         },
         "questions": {
@@ -1889,16 +1966,8 @@ def _validate_jev_focus_response(
             raise ValueError("probability keys")
         if any(isinstance(raw[choice_id], bool) for choice_id in choice_ids):
             raise ValueError("probability values")
-        probabilities = {choice_id: float(raw[choice_id]) for choice_id in choice_ids}
-        if any(
-            not math.isfinite(value) or value < 0.0 or value > 1.0
-            for value in probabilities.values()
-        ):
-            raise ValueError("probability values")
-        if not math.isclose(
-            sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=0.000001,
-        ):
-            raise ValueError("probability total")
+        probabilities = validate_rounded_probability_distribution(raw, choice_ids)
+        validate_rounded_choice_winner(winner, probabilities)
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise JevAttentionError("invalid", "jev_focus_response_invalid") from error
     return decision_id, probabilities
@@ -2126,6 +2195,10 @@ def classify_relationship(
           else ()),
         *THINKGRAPH_CONTROL_OUTCOMES,
     )
+    if len(choices) > JEV_CHOICE_OPTION_MAXIMUM:
+        raise JevRelationshipError(
+            "thinkgraph_relationship_choice_capacity_exceeded"
+        )
     criteria = {
         name: SHARED_JEV_RELATIONSHIP_CRITERIA.get(
             name,
@@ -2625,6 +2698,10 @@ def _classify_opportunities(
 ) -> list[dict[str, Any]]:
     """Build bounded contexts first, then run at most four Jev calls concurrently."""
     work: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = [
+        {"status": "jev_failed", "error": "jev_relationship_unavailable"}
+        for _ in opportunities
+    ]
     for index, opportunity in enumerate(opportunities):
         source = opportunity["source"]
         target = opportunity["target"]
@@ -2645,10 +2722,19 @@ def _classify_opportunities(
         relationship_proposal = str(
             (relationship_proposals or {}).get(index) or ""
         )
-        choice_plan = relationship_choice_plan(
-            relationship_proposal,
-            relationship_vocabulary,
-        )
+        try:
+            choice_plan = relationship_choice_plan(
+                relationship_proposal,
+                relationship_vocabulary,
+            )
+        except Exception as error:
+            results[index] = {
+                "status": "jev_failed",
+                "error": _decision_failure(error),
+                "source_id": source_id,
+                "target_id": target_id,
+            }
+            continue
         work.append({
             "index": index,
             "opportunity": opportunity,
@@ -2668,10 +2754,6 @@ def _classify_opportunities(
             "relationship_choice_plan": choice_plan,
         })
 
-    results: list[dict[str, Any]] = [
-        {"status": "jev_failed", "error": "jev_relationship_unavailable"}
-        for _ in work
-    ]
     if not work:
         return results
 
@@ -3077,6 +3159,13 @@ def _llm_structured_contract(
         "natural directed relationships that actually occur in this pair. Do not browse, "
         "research, continue the thesis, read historical Think bodies, or split the pair "
         "into multiple memories.\n"
+        "SOURCE RESPONSE ASSESSMENT:\n"
+        "source_response_fit concerns only the Main response's fulfillment of its source "
+        "request. It is not a score of the user, a truth judgment, or a grade of the new "
+        "Think. Preserve explicit user intentions, preferences, constraints, and corrections "
+        "regardless of this status or score. Do not turn a high score into factual certainty "
+        "or a low score into blanket rejection. Application code attaches the original typed "
+        "assessment to the resulting Think; do not copy, average, improve, or recompute it.\n"
     )
     return extractor._output_schema(), prompt
 
@@ -3212,6 +3301,7 @@ def _save_think_memory(
     pair_reference: str,
 ) -> dict[str, Any]:
     logical = output.think.model_dump(mode="json")
+    source_response_fit = deepcopy(completed["sourceResponseFit"])
     kind_value = (
         output.think.kind.value
         if isinstance(output.think.kind, Enum)
@@ -3226,7 +3316,9 @@ def _save_think_memory(
             "think": deepcopy(logical),
             "entities": list(output.entities),
             "relations": relations,
+            "source_response_fit": deepcopy(source_response_fit),
         },
+        "source_response_fit": source_response_fit,
         # Native Engraphis episodic consolidation must not digest or archive the
         # authoritative append-only Think history.
         "consolidation_exempt": True,
@@ -3322,11 +3414,12 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "sourceResponseFit",
     }
     if set(payload) - allowed:
         raise ValueError("thinkgraph_completed_pair_payload_invalid")
     cleaned = dict(payload)
-    for key in allowed:
+    for key in allowed - {"sourceResponseFit"}:
         if key in cleaned and not isinstance(cleaned[key], str):
             raise ValueError("thinkgraph_completed_pair_payload_invalid")
     cleaned["projectId"] = project_id(str(cleaned.get("projectId") or ""))
@@ -3334,6 +3427,9 @@ def _validate_completed_pair_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned["mainResponse"] = str(cleaned.get("mainResponse") or "")
     if not cleaned["userMessage"].strip() or not cleaned["mainResponse"].strip():
         raise ValueError("thinkgraph_completed_pair_text_required")
+    cleaned["sourceResponseFit"] = _validate_source_response_fit(
+        cleaned.get("sourceResponseFit"), str(cleaned.get("runId") or "")
+    )
     return cleaned
 
 
@@ -3381,6 +3477,7 @@ def prepare_completed_pair(payload: dict[str, Any]) -> dict[str, Any]:
             "current_project_relationship_vocabulary": list(
                 relationship_vocabulary
             ),
+            "source_response_fit": deepcopy(payload["sourceResponseFit"]),
         }
         enrichment_schema, enrichment_prompt = _llm_structured_contract(
             pair_text,
@@ -3417,6 +3514,7 @@ def _validate_settle_payload(
     completed_keys = {
         "projectId", "deckId", "conversationId", "runId", "cardId",
         "nativeSessionRef", "completedAt", "userMessage", "mainResponse",
+        "sourceResponseFit",
     }
     extras = {"pairMemoryId", "structuredOutput", "cardRun"}
     if set(payload) - completed_keys - extras:
@@ -3481,6 +3579,7 @@ def settle_completed_pair(
         structured_context = {
             "exact_user_message": completed["userMessage"],
             "exact_main_response": completed["mainResponse"],
+            "source_response_fit": deepcopy(completed["sourceResponseFit"]),
         }
         facts = _extract_saved_card_facts(
             card_output,
@@ -4028,26 +4127,25 @@ def _bounded_entity_projection(
     )
     latest_thinks: list[dict[str, Any]] = []
     for node in ordered_native_nodes:
-        think = _latest_endpoint_think(
+        latest_thinks.extend(_endpoint_thinks(
             store,
             workspace_id=workspace_id,
             canonical_id=str(node["id"]),
-        )
-        if think is not None:
-            latest_thinks.append(think)
+            limit=CONTEXTUAL_NODE_VISIBLE_PER_SIDE,
+        ))
     think_limit_hit = len(latest_thinks) > 24
     latest_thinks = latest_thinks[:24]
-    think_by_entity = {
-        str(think["native_id"]): think for think in latest_thinks
-    }
+    think_by_entity: dict[str, list[dict[str, Any]]] = {}
+    for think in latest_thinks:
+        think_by_entity.setdefault(str(think["native_id"]), []).append(think)
 
     nodes: list[dict[str, Any]] = []
     for native_node in ordered_native_nodes:
         entity_id = str(native_node["id"])
         title = str(native_node.get("name") or entity_id)
-        think = think_by_entity.get(entity_id)
+        thinks = think_by_entity.get(entity_id, [])
         evidence = []
-        if think is not None:
+        for think in thinks:
             think_metadata = {
                 key: deepcopy(think.get(key))
                 for key in (

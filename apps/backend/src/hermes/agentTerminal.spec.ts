@@ -225,10 +225,22 @@ class FakeGatewayClient {
     }
     if (method === 'prompt.submit') {
       const sessionId = String(params.session_id || '');
+      const modelOnce = params.model_once && typeof params.model_once === 'object'
+        ? params.model_once as Record<string, unknown>
+        : {};
+      const allowedTools = Array.isArray(params.allowed_tools)
+        ? params.allowed_tools as string[]
+        : ['card__canvas_inspect'];
       queueMicrotask(() => this.emitEvent({
         type: 'message.complete',
         session_id: sessionId,
-        payload: { text: `reply:${String(params.text || '')}`, status: 'completed' },
+        payload: {
+          text: `reply:${String(params.text || '')}`,
+          status: 'completed',
+          actualProvider: String(modelOnce.provider || 'openai-codex'),
+          actualModel: String(modelOnce.model || 'gpt-5.6-sol'),
+          exposedTools: ['memory', ...allowedTools],
+        },
       }));
       return { status: 'streaming' } as T;
     }
@@ -397,6 +409,7 @@ function fixture(extraProfileNames: string[] = []) {
   const resolveActiveContext = vi.fn(() => ({
     runId: 'run-one',
     conversationId: 'conversation-one',
+    authorizedCanonicalTools: ['canvas.inspect'],
   }));
   const resolveMcpServerSpec = vi.fn(() => ({
     type: 'http' as const,
@@ -1068,6 +1081,38 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.resolveMcpServerSpec).not.toHaveBeenCalled();
     expect(f.clients[0].requests.map((request) => request.method)).not.toContain('reload.mcp');
     expect(f.manager.state(f.owners[0], state.sessionId).status).toBe('running');
+  });
+
+  it('submits exact turn-scoped tool narrowing and model route without changing saved Card state', async () => {
+    const f = fixture();
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'routed turn', {
+      routing: {
+        managedCanonicalTools: ['canvas.inspect'],
+        allowedCanonicalTools: [],
+        authorizedCanonicalTools: [],
+        modelOnce: {
+          provider: 'openai-codex', model: 'gpt-5.6-luna', reasoningEffort: 'low',
+        },
+      },
+    })).resolves.toMatchObject({ text: 'reply:routed turn' });
+
+    const submit = f.clients[0].requests.find((request) => request.method === 'prompt.submit');
+    expect(submit?.params).toEqual(expect.objectContaining({
+      managed_tools: ['card__canvas_inspect'],
+      allowed_tools: [],
+      model_once: {
+        provider: 'openai-codex', model: 'gpt-5.6-luna', reasoning_effort: 'low',
+      },
+    }));
+    expect(f.cards[0].runtimeOptions).toEqual(expect.objectContaining({
+      modelKey: 'gpt-5.6-sol',
+      providerModelId: 'gpt-5.6-sol',
+      tools: ['canvas.inspect'],
+    }));
   });
 
   it('still rejects a changed saved Card tool authority', async () => {

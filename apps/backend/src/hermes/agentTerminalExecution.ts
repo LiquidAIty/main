@@ -9,6 +9,7 @@ type StagedAgentTerminalRun = {
   runId: string;
   conversationId: string;
   message: string;
+  routing: AgentTerminalTurnRouting;
   started: number;
   cancelRequested?: boolean;
 };
@@ -18,6 +19,11 @@ export type AgentTerminalGatewayCompletion = {
   nativeRootId: string | null;
   nativeRunId: string | null;
   effectiveProvider: string | null;
+  actualModel: string | null;
+  exposedTools: string[];
+  executionEvidence: unknown[];
+  executionEvidenceComplete: boolean;
+  executionEvidenceError: string | null;
   providerApiMode: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -26,8 +32,87 @@ export type AgentTerminalGatewayCompletion = {
   costUsd: number | null;
 };
 
+export type AgentTerminalTurnRouting = {
+  managedCanonicalTools: string[];
+  allowedCanonicalTools: string[];
+  authorizedCanonicalTools: string[];
+  modelOnce: {
+    provider: string;
+    model: string;
+    reasoningEffort?: string;
+  } | null;
+};
+
 function optionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function exactStringList(value: unknown, error: string): string[] {
+  if (!Array.isArray(value) || value.length > 512) throw new Error(error);
+  const result = value.map((item) => String(item || '').trim());
+  if (result.some((item) => !item || item.length > 256) || new Set(result).size !== result.length) {
+    throw new Error(error);
+  }
+  return result;
+}
+
+function resolveTurnRouting(prepared: any, input: any): AgentTerminalTurnRouting {
+  const autoTools = prepared?.jevAutoTools;
+  const toolReceipt = autoTools && typeof autoTools === 'object' && !Array.isArray(autoTools)
+    ? autoTools
+    : {};
+  const managedCanonicalTools = exactStringList(
+    Object.prototype.hasOwnProperty.call(toolReceipt, 'normalAuthorizedTools')
+      ? toolReceipt.normalAuthorizedTools
+      : input?.presentedTools || [],
+    'agent_terminal_turn_tools_invalid',
+  );
+  const allowedCanonicalTools = exactStringList(
+    input?.presentedTools || [],
+    'agent_terminal_turn_tools_invalid',
+  );
+  if (!allowedCanonicalTools.every((name) => managedCanonicalTools.includes(name))) {
+    throw new Error('agent_terminal_turn_tools_broadened');
+  }
+  const authorizedCanonicalTools = exactStringList(
+    Array.isArray(toolReceipt.selectedTools)
+      ? toolReceipt.selectedTools
+      : allowedCanonicalTools,
+    'agent_terminal_turn_tools_invalid',
+  );
+  if (!authorizedCanonicalTools.every((name) => managedCanonicalTools.includes(name))) {
+    throw new Error('agent_terminal_turn_tools_broadened');
+  }
+
+  const router = prepared?.jevModelRouter;
+  const routerReceipt = router && typeof router === 'object' && !Array.isArray(router)
+    ? router
+    : {};
+  const saved = routerReceipt.savedModel && typeof routerReceipt.savedModel === 'object'
+    ? routerReceipt.savedModel as Record<string, unknown>
+    : {};
+  const selected = routerReceipt.selectedModel && typeof routerReceipt.selectedModel === 'object'
+    ? routerReceipt.selectedModel as Record<string, unknown>
+    : {};
+  const routeChanged = routerReceipt.enabled === true
+    && ['selected', 'deterministic'].includes(String(routerReceipt.status || ''))
+    && (
+      String(saved.provider || '') !== String(selected.provider || '')
+      || String(saved.modelKey || '') !== String(selected.modelKey || '')
+      || String(saved.providerModelId || '') !== String(selected.providerModelId || '')
+    );
+  const resolved = resolvePreparedHermesProvider(input);
+  const reasoningEffort = optionalText(input?.runtimeOptions?.reasoningEffort);
+  return {
+    managedCanonicalTools,
+    allowedCanonicalTools,
+    authorizedCanonicalTools,
+    modelOnce: routeChanged ? {
+      provider: resolved.provider,
+      model: resolved.model,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    } : null,
+  };
 }
 
 function optionalNonNegativeInteger(...values: unknown[]): number | null {
@@ -63,7 +148,7 @@ function resolveStagedRun(
   owner: AgentTerminalOwner,
   profile: string,
   prepared: any,
-): { runId: string; message: string } {
+): { runId: string; message: string; routing: AgentTerminalTurnRouting } {
   const transport = prepared?.hermesTransport;
   const identity = transport?.cardIdentity;
   const input = transport?.request;
@@ -114,7 +199,7 @@ function resolveStagedRun(
   }
   // Validate the exact saved provider before any text reaches the native session.
   resolvePreparedHermesProvider(input);
-  return { runId, message };
+  return { runId, message, routing: resolveTurnRouting(prepared, input) };
 }
 
 /**
@@ -133,11 +218,11 @@ export class AgentTerminalExecution {
     profile: string,
     prepared: any,
     conversationId = '',
-  ): { runId: string; message: string } {
+  ): { runId: string; message: string; routing: AgentTerminalTurnRouting } {
     if (this.staged.has(terminalSessionId)) {
       throw new Error('agent_terminal_turn_already_running');
     }
-    const { runId, message } = resolveStagedRun(owner, profile, prepared);
+    const { runId, message, routing } = resolveStagedRun(owner, profile, prepared);
     this.staged.set(terminalSessionId, {
       owner: { ...owner },
       profile,
@@ -145,9 +230,10 @@ export class AgentTerminalExecution {
       runId,
       conversationId,
       message,
+      routing,
       started: Date.now(),
     });
-    return { runId, message };
+    return { runId, message, routing };
   }
 
   /** Persist the exact native Gateway completion for an application-submitted turn. */
@@ -169,12 +255,33 @@ export class AgentTerminalExecution {
     const selectedProvider = resolvePreparedHermesProvider(
       staged.prepared.hermesTransport.request,
     );
+    const actualProvider = optionalText(payload.actualProvider ?? payload.actual_provider);
+    const actualModel = optionalText(payload.actualModel ?? payload.actual_model);
+    if (!actualProvider || !actualModel) {
+      throw new Error('agent_terminal_actual_model_missing');
+    }
+    const exposedTools = exactStringList(
+      payload.exposedTools ?? payload.exposed_tools ?? [],
+      'agent_terminal_completion_tools_invalid',
+    );
+    const executionEvidence = Array.isArray(payload.executionEvidence)
+      ? payload.executionEvidence
+      : [];
+    const executionEvidenceComplete = payload.executionEvidenceComplete === true;
+    const executionEvidenceError = optionalText(payload.executionEvidenceError);
+    if (actualProvider !== selectedProvider.provider || actualModel !== selectedProvider.model) {
+      throw new Error('agent_terminal_actual_model_mismatch');
+    }
     const completion: AgentTerminalGatewayCompletion = {
       hermesSessionId: nativeSessionId,
       nativeRootId: optionalText(payload.nativeRootId ?? payload.native_root_id),
       nativeRunId: optionalText(payload.nativeRunId ?? payload.native_run_id),
-      effectiveProvider: optionalText(payload.effectiveProvider ?? payload.effective_provider)
-        ?? selectedProvider.provider,
+      effectiveProvider: actualProvider,
+      actualModel,
+      exposedTools,
+      executionEvidence,
+      executionEvidenceComplete,
+      executionEvidenceError,
       providerApiMode: optionalText(payload.providerApiMode ?? payload.provider_api_mode)
         ?? selectedProvider.apiMode,
       inputTokens: optionalNonNegativeInteger(
@@ -258,9 +365,17 @@ export class AgentTerminalExecution {
     return this.staged.get(terminalSessionId)?.runId || null;
   }
 
-  activeContext(terminalSessionId: string): { runId: string; conversationId: string } | null {
+  activeContext(terminalSessionId: string): {
+    runId: string;
+    conversationId: string;
+    authorizedCanonicalTools: string[];
+  } | null {
     const staged = this.staged.get(terminalSessionId);
-    return staged ? { runId: staged.runId, conversationId: staged.conversationId } : null;
+    return staged ? {
+      runId: staged.runId,
+      conversationId: staged.conversationId,
+      authorizedCanonicalTools: [...staged.routing.authorizedCanonicalTools],
+    } : null;
   }
 
   requestCancellation(terminalSessionId: string, runId: string): void {

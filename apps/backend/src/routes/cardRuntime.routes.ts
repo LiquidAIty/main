@@ -139,6 +139,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isRoundedDecisionDistribution(values: number[]): boolean {
+  if (values.length === 0 || values.every((value) => value === 0)) return false;
+  const halfStep = 0.005;
+  const lower = values.reduce((sum, value) => sum + Math.max(0, value - halfStep), 0);
+  const upper = values.reduce((sum, value) => sum + Math.min(1, value + halfStep), 0);
+  return lower <= 1 + Number.EPSILON && upper >= 1 - Number.EPSILON;
+}
+
 function preparedJevAttention(value: unknown): JevAttentionDecision | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)
@@ -187,17 +195,16 @@ function preparedJevAttention(value: unknown): JevAttentionDecision | null {
     const candidates = value.candidates as JevAttentionDecision['candidates'];
     const distribution = value.distribution as Record<string, number>;
     const distributionKeys = Object.keys(distribution);
-    const probabilitySum = candidates.reduce((sum, candidate) => {
+    candidates.forEach((candidate) => {
       if (candidate.probability === undefined
         || !(candidate.choiceId in distribution)
         || Math.abs(distribution[candidate.choiceId] - candidate.probability) > 1e-9) {
         throw new Error('main_jev_attention_invalid');
       }
-      return sum + candidate.probability;
-    }, 0);
+    });
     if (distributionKeys.length !== candidates.length
       || distributionKeys.some((choiceId) => !choiceIds.has(choiceId))
-      || Math.abs(probabilitySum - 1) > 1e-6) {
+      || !isRoundedDecisionDistribution(candidates.map((candidate) => candidate.probability!))) {
       throw new Error('main_jev_attention_invalid');
     }
     const selectedCandidateRefs = new Set(candidates
@@ -253,7 +260,7 @@ type CompletedPairThinkGraphLifecycleArgs = {
   conversationId: string;
   authority: SharedChatAuthority;
   originatingRunId: string;
-  completedPair: Record<string, string>;
+  completedPair: Record<string, unknown>;
 };
 
 // A saved ThinkGraph Card/profile has one native terminal session. Keep completed
@@ -817,6 +824,39 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       savedDeck: run.savedDeck,
       savedCard: run.savedCard,
     });
+    const requestFulfillment = await assessGatewayRunCompletion(
+      run.runId,
+      result.nativeCompletion,
+    );
+    try {
+      const authority = await resolveSharedChatAuthority(projectId, deckId);
+      setImmediate(() => {
+        void enqueueCompletedPairThinkGraphLifecycle({
+          req,
+          projectId,
+          deckId,
+          conversationId,
+          authority,
+          originatingRunId: run.runId,
+          completedPair: {
+            projectId,
+            deckId,
+            conversationId,
+            runId: run.runId,
+            cardId: mainCardId,
+            nativeSessionRef: result.nativeSessionId,
+            completedAt: new Date().toISOString(),
+            userMessage: message,
+            mainResponse: result.text,
+            sourceResponseFit: requestFulfillment,
+          },
+        });
+      });
+    } catch (error) {
+      logHarnessTrace(
+        `[thinkgraph] external Main intake unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     return res.json({
       ok: true,
       runId: run.runId,
@@ -826,6 +866,7 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       finalText: result.text,
       nativeSessionId: result.nativeSessionId,
       nativeTurnId: result.nativeCompletion.nativeRunId,
+      requestFulfillment,
       configuration: {
         subagentModel: run.prepared.hermesTransport.request.runtimeOptions?.subagentModel || null,
       },
@@ -1539,6 +1580,44 @@ type GatewayCardExecution = {
   text: string;
 };
 
+async function assessGatewayRunCompletion(
+  runId: string,
+  completion: GatewayCardExecution['nativeCompletion'],
+): Promise<Record<string, unknown>> {
+  try {
+    const result: any = await requestPythonRailsJson('/domain/runs/request-fulfillment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        runId,
+        actualProvider: completion.effectiveProvider,
+        actualModel: completion.actualModel,
+        exposedTools: completion.exposedTools,
+        executionEvidence: completion.executionEvidence,
+        executionEvidenceComplete: completion.executionEvidenceComplete,
+        executionEvidenceError: completion.executionEvidenceError,
+      }),
+    });
+    if (!result?.assessment || typeof result.assessment !== 'object') {
+      throw new Error('request_fulfillment_receipt_invalid');
+    }
+    return result.assessment as Record<string, unknown>;
+  } catch (error) {
+    return {
+      schemaVersion: 'request-fulfillment-assessment.v1',
+      metric: 'request_fulfillment',
+      rubricVersion: 'request-fulfillment.v1',
+      status: 'unavailable',
+      runId,
+      failureReason: error instanceof Error
+        ? error.message
+        : 'request_fulfillment_unavailable',
+      requestCount: 0,
+      questionCount: 0,
+    };
+  }
+}
+
 async function executePreparedGatewayCardRun(args: {
   owner: AgentTerminalOwner;
   conversationId: string;
@@ -1625,7 +1704,11 @@ async function executePreparedGatewayCardRun(args: {
       args.owner,
       terminal.sessionId,
       preparedTurn.message,
-      { onEvent: args.onEvent, ...(args.surface ? { surface: args.surface } : {}) },
+      {
+        onEvent: args.onEvent,
+        routing: preparedTurn.routing,
+        ...(args.surface ? { surface: args.surface } : {}),
+      },
     );
     args.onSubmitted?.();
     const result = await pending;
@@ -2109,6 +2192,7 @@ router.post('/run', async (req, res) => {
     let providerInputTokens: number | null = null;
     let providerOutputTokens: number | null = null;
     let totalCostUsd: number | null = null;
+    let gatewayCompletion: GatewayCardExecution['nativeCompletion'] | null = null;
     let magenticStatus: MagenticExecutionStatus | null = null;
     const magenticAcceptance: { status: MagenticExecutionStatus | null } = { status: null };
     let magenticProgressBound = false;
@@ -2125,6 +2209,7 @@ router.post('/run', async (req, res) => {
           onSubmitted: acceptBackground,
         });
         output = execution.text;
+        gatewayCompletion = execution.nativeCompletion;
         transport = {
           threadId: execution.nativeCompletion.nativeRootId,
           turnId: execution.nativeCompletion.nativeRunId,
@@ -2212,6 +2297,9 @@ router.post('/run', async (req, res) => {
           finalResult: output,
         }) as any;
       }
+      const requestFulfillment = gatewayCompletion
+        ? await assessGatewayRunCompletion(runId, gatewayCompletion)
+        : null;
       if (res.destroyed || res.writableEnded) return undefined;
       return res.json({
         ok: true,
@@ -2237,6 +2325,7 @@ router.post('/run', async (req, res) => {
             cardIdentity: prepared.cardIdentity,
           },
           output,
+          ...(requestFulfillment ? { requestFulfillment } : {}),
           transport,
           receipt: finished?.receipt || null,
         },
@@ -2854,12 +2943,13 @@ mainRoutes.post('/session/chat', async (req, res) => {
   let magenticProgressBound = false;
   let magenticOuterRunFinalized = false;
   let completedPairLifecycle: {
-    completedPair: Record<string, string>;
+    completedPair: Record<string, unknown>;
     originatingRunId: string;
   } | null = null;
   try {
     let resultText = '';
     let continuationRef = '';
+    let gatewayCompletion: GatewayCardExecution['nativeCompletion'] | null = null;
     let usage = {
       providerInputTokens: null as number | null,
       providerOutputTokens: null as number | null,
@@ -2945,6 +3035,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       });
       resultText = result.text;
       continuationRef = result.nativeSessionId;
+      gatewayCompletion = result.nativeCompletion;
       usage = {
         providerInputTokens: result.nativeCompletion.inputTokens,
         providerOutputTokens: result.nativeCompletion.outputTokens,
@@ -2987,6 +3078,30 @@ mainRoutes.post('/session/chat', async (req, res) => {
     } catch {
       throw new Error('shared_conversation_persistence_failed');
     }
+    writeSse('done', {
+      fullText: resultText,
+      turnOwner: directAddressed ? 'addressed_card' : 'main',
+      ...(directAddressed ? {} : {
+        contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
+      }),
+      usage,
+    });
+    const requestFulfillment = gatewayCompletion
+      ? await assessGatewayRunCompletion(run.runId, gatewayCompletion)
+      : {
+        schemaVersion: 'request-fulfillment-assessment.v1',
+        metric: 'request_fulfillment',
+        rubricVersion: 'request-fulfillment.v1',
+        status: 'unavailable',
+        runId: run.runId,
+        failureReason: 'request_fulfillment_execution_evidence_unavailable',
+        requestCount: 0,
+        questionCount: 0,
+      };
+    writeSse('request_fulfillment', {
+      kind: 'request_fulfillment',
+      assessment: requestFulfillment,
+    });
     if (!directAddressed) completedPairLifecycle = {
       originatingRunId: run.runId,
       completedPair: {
@@ -2999,16 +3114,9 @@ mainRoutes.post('/session/chat', async (req, res) => {
         completedAt: new Date().toISOString(),
         userMessage: message,
         mainResponse: resultText,
+        sourceResponseFit: requestFulfillment,
       },
     };
-    writeSse('done', {
-      fullText: resultText,
-      turnOwner: directAddressed ? 'addressed_card' : 'main',
-      ...(directAddressed ? {} : {
-        contextAuthorityMode: contextAuthorityModeForDriver('internal_chat'),
-      }),
-      usage,
-    });
   } catch (error) {
     const reason = error instanceof Error ? error.message : (
       directAddressed ? 'addressed_card_turn_failed' : 'main_gateway_turn_failed'

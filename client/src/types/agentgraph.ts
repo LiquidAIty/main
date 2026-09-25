@@ -79,6 +79,12 @@ export type AgentCardRuntimeOptions = {
   accessMode?: 'chatgpt-account' | 'openai-api' | 'openrouter-api' | null;
   modelKey?: string | null;
   providerModelId?: string | null;
+  /** Let one Run-scoped Jev Choice select among eligible configured models.
+   * The saved model remains the durable default and is never overwritten. */
+  autoSelect?: boolean;
+  /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
+   * It never grants tools or changes the saved selection. */
+  autoTools?: boolean;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded native Hermes delegated children and
    * background skill review. Native profile/readback remains effective truth. */

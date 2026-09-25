@@ -20,12 +20,14 @@ function prepared(overrides: Record<string, unknown> = {}) {
         runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal' },
         provider: {
           provider: 'openai', accessMode: 'chatgpt-account', modelKey: 'saved-model',
+          providerModelId: 'saved-model',
         },
         message: 'Reloaded canonical IDF request',
         runtimeOptions: {
           executionAuthorityFingerprint: authorityFingerprint,
           openaiRuntime: 'codex_app_server',
         },
+        presentedTools: [],
       },
     },
     ...overrides,
@@ -41,7 +43,16 @@ describe('Gateway Card Run receipt binding', () => {
   it('stages one already-materialized Run without creating another authority', () => {
     const { execution, request } = fixture();
     expect(execution.stage(owner, 'terminal-signal', 'signal', prepared(), 'conversation-1'))
-      .toEqual({ runId: 'prepared-run', message: 'Reloaded canonical IDF request' });
+      .toEqual({
+        runId: 'prepared-run',
+        message: 'Reloaded canonical IDF request',
+        routing: {
+          managedCanonicalTools: [],
+          allowedCanonicalTools: [],
+          authorizedCanonicalTools: [],
+          modelOnce: null,
+        },
+      });
     expect(execution.activeRunId('terminal-signal')).toBe('prepared-run');
     expect(execution.ownsRun('terminal-signal', 'prepared-run')).toBe(true);
     expect(request).not.toHaveBeenCalled();
@@ -96,6 +107,11 @@ describe('Gateway Card Run receipt binding', () => {
         payload: {
           native_root_id: 'native-root',
           native_run_id: 'native-turn',
+          actualProvider: 'openai-codex',
+          actualModel: 'saved-model',
+          exposedTools: ['native-session-tool'],
+          executionEvidence: [{ kind: 'tool_result', content: 'done' }],
+          executionEvidenceComplete: true,
           usage: {
             input_tokens: 17,
             output_tokens: 9,
@@ -110,6 +126,11 @@ describe('Gateway Card Run receipt binding', () => {
       nativeRootId: 'native-root',
       nativeRunId: 'native-turn',
       effectiveProvider: 'openai-codex',
+      actualModel: 'saved-model',
+      exposedTools: ['native-session-tool'],
+      executionEvidence: [{ kind: 'tool_result', content: 'done' }],
+      executionEvidenceComplete: true,
+      executionEvidenceError: null,
       providerApiMode: 'codex_app_server',
       inputTokens: 17,
       outputTokens: 9,
@@ -137,6 +158,58 @@ describe('Gateway Card Run receipt binding', () => {
     expect(execution.activeRunId('terminal-signal')).toBeNull();
   });
 
+  it('stages exact Auto-tools narrowing and one changed model route without mutating authority', () => {
+    const { execution } = fixture();
+    const value = prepared({
+      jevAutoTools: {
+        enabled: true,
+        status: 'selected',
+        normalAuthorizedTools: ['card.create', 'graphiti.search_nodes'],
+        selectedTools: ['graphiti.search_nodes'],
+      },
+      jevModelRouter: {
+        enabled: true,
+        status: 'selected',
+        savedModel: {
+          provider: 'openai', modelKey: 'gpt-5.6-sol', providerModelId: 'gpt-5.6-sol',
+        },
+        selectedModel: {
+          provider: 'openai', modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+        },
+      },
+      hermesTransport: {
+        ...prepared().hermesTransport,
+        request: {
+          ...prepared().hermesTransport.request,
+          provider: {
+            provider: 'openai', accessMode: 'chatgpt-account',
+            modelKey: 'gpt-5.6-luna', providerModelId: 'gpt-5.6-luna',
+          },
+          runtimeOptions: {
+            ...prepared().hermesTransport.request.runtimeOptions,
+            reasoningEffort: 'low',
+          },
+          presentedTools: ['graphiti.search_nodes'],
+        },
+      },
+    });
+
+    expect(execution.stage(owner, 'terminal-signal', 'signal', value, 'conversation-1').routing)
+      .toEqual({
+        managedCanonicalTools: ['card.create', 'graphiti.search_nodes'],
+        allowedCanonicalTools: ['graphiti.search_nodes'],
+        authorizedCanonicalTools: ['graphiti.search_nodes'],
+        modelOnce: {
+          provider: 'openai-codex', model: 'gpt-5.6-luna', reasoningEffort: 'low',
+        },
+      });
+    expect(execution.activeContext('terminal-signal')).toEqual({
+      runId: 'prepared-run',
+      conversationId: 'conversation-1',
+      authorizedCanonicalTools: ['graphiti.search_nodes'],
+    });
+  });
+
   it('refuses concurrent staging and cancels an unconsumed Run exactly once', async () => {
     const { execution, request } = fixture();
     execution.stage(owner, 'terminal-signal', 'signal', prepared());
@@ -160,7 +233,9 @@ describe('Gateway Card Run receipt binding', () => {
     await expect(execution.completeStaged('terminal-signal', 'native-session', {
       text: 'Provider completed before receipt persistence failed',
       status: 'complete',
-      event: { type: 'message.complete', payload: {} },
+      event: { type: 'message.complete', payload: {
+        actualProvider: 'openai-codex', actualModel: 'saved-model', exposedTools: [],
+      } },
     })).rejects.toThrow('run_native_transport_evidence_incomplete');
     expect(execution.activeRunId('terminal-signal')).toBe('prepared-run');
 
@@ -184,7 +259,9 @@ describe('Gateway Card Run receipt binding', () => {
     await expect(execution.completeStaged('terminal-signal', 'native-session', {
       text: 'Late answer',
       status: 'complete',
-      event: { type: 'message.complete', payload: {} },
+      event: { type: 'message.complete', payload: {
+        actualProvider: 'openai-codex', actualModel: 'saved-model', exposedTools: [],
+      } },
     })).rejects.toThrow('hermes_turn_cancelled');
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
       runId: 'prepared-run', state: 'cancelled', errorSummary: 'hermes_turn_cancelled',

@@ -62,7 +62,10 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
     observed = []
     think_a = engraphis._contextual_node_choice_id("think", "mem-a")
     think_b = engraphis._contextual_node_choice_id("think", "mem-b")
+    think_c = engraphis._contextual_node_choice_id("think", "mem-c")
     know_a = engraphis._contextual_node_choice_id("know", "fact-a")
+    know_b = engraphis._contextual_node_choice_id("know", "fact-b")
+    know_c = engraphis._contextual_node_choice_id("know", "fact-c")
 
     class Response:
         def raise_for_status(self):
@@ -77,10 +80,11 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
                 "answers": {
                     "think": {
                         "type": "choice",
-                        "choice": think_b,
+                        "choice": think_a,
                         "probabilities": {
                             think_a: 0.45,
-                            think_b: 0.45,
+                            think_b: 0.30,
+                            think_c: 0.15,
                             "NONE_RELEVANT": 0.10,
                         },
                     },
@@ -89,7 +93,9 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
                         "choice": "NONE_RELEVANT",
                         "probabilities": {
                             know_a: 0.25,
-                            "NONE_RELEVANT": 0.75,
+                            know_b: 0.10,
+                            know_c: 0.05,
+                            "NONE_RELEVANT": 0.60,
                         },
                     },
                 },
@@ -123,19 +129,105 @@ def test_contextual_node_jev_uses_one_request_with_two_independent_choices(
         [
             _contextual_candidate("mem-b", "Newer but off-topic."),
             _contextual_candidate("mem-a", "Older applicable constraint."),
+            _contextual_candidate("mem-c", "A qualifying constraint."),
         ],
-        [_contextual_candidate("fact-a", "Unrelated sourced fact.")],
+        [
+            _contextual_candidate("fact-a", "Unrelated sourced fact."),
+            _contextual_candidate("fact-b", "Another sourced fact."),
+            _contextual_candidate("fact-c", "A third sourced fact."),
+        ],
     )
 
     assert len(observed) == 1
     assert set(observed[0][1]["json"]["questions"]) == {"think", "know"}
     assert result["requestCount"] == 1
     assert result["questionCount"] == 2
-    # Exact ties are deterministic by native identity, not provider ordering.
     assert result["sides"]["think"]["nativeIds"] == ["mem-a", "mem-b"]
     assert result["sides"]["know"]["status"] == "none_relevant"
     assert set(result["sides"]["think"]["distribution"]) == {
-        think_a, think_b, "NONE_RELEVANT",
+        think_a, think_b, think_c, "NONE_RELEVANT",
+    }
+
+
+def test_contextual_node_jev_only_questions_the_overflowing_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = []
+    choice_a = engraphis._contextual_node_choice_id("think", "mem-a")
+    choice_b = engraphis._contextual_node_choice_id("think", "mem-b")
+    choice_c = engraphis._contextual_node_choice_id("think", "mem-c")
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "decision-mixed",
+                "provider": "TypeSafe",
+                "model": engraphis.JEV_MODEL,
+                "usage": {},
+                "answers": {
+                    "think": {
+                        "type": "choice",
+                        "choice": choice_a,
+                        "probabilities": {
+                            choice_a: 0.55,
+                            choice_b: 0.25,
+                            choice_c: 0.15,
+                            "NONE_RELEVANT": 0.05,
+                        },
+                    },
+                },
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            observed.append((url, kwargs))
+            return Response()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only")
+    monkeypatch.setattr(engraphis.httpx, "Client", Client)
+    result = engraphis.decide_contextual_node_items(
+        {
+            "status": "ready",
+            "activeRequest": "Which context matters?",
+            "messages": [{"role": "user", "content": "Which context matters?"}],
+        },
+        [
+            _contextual_candidate("mem-a", "first think"),
+            _contextual_candidate("mem-b", "second think"),
+            _contextual_candidate("mem-c", "third think"),
+        ],
+        [
+            _contextual_candidate("fact-a", "first know"),
+            _contextual_candidate("fact-b", "second know"),
+        ],
+    )
+
+    assert len(observed) == 1
+    request = observed[0][1]["json"]
+    assert set(request["questions"]) == {"think"}
+    assert [item["native_id"] for item in request["state"]["think_options"]] == [
+        "mem-a", "mem-b", "mem-c",
+    ]
+    assert "know_options" not in request["state"]
+    assert result["requestCount"] == 1
+    assert result["questionCount"] == 1
+    assert result["sides"]["think"]["nativeIds"] == ["mem-a", "mem-b"]
+    assert result["sides"]["know"] == {
+        "status": "selected",
+        "candidateCount": 2,
+        "nativeIds": ["fact-a", "fact-b"],
     }
 
 
@@ -332,7 +424,12 @@ def test_contextual_node_public_result_contains_only_hydrated_winners(
     assert "fact-second" in result["modelContext"]
     assert "mem-runner" not in serialized
     assert "fact-runner" not in serialized
-    assert "distribution" not in serialized
+    assert result["sides"]["think"]["distribution"] == {
+        "winner": 0.6, "second": 0.3, "runner": 0.1,
+    }
+    assert result["sides"]["know"]["distribution"] == {
+        "winner": 0.55, "second": 0.35, "runner": 0.1,
+    }
     assert len(result["sides"]["think"]["items"]) == 2
     assert len(result["sides"]["know"]["items"]) == 2
     assert result["sides"]["know"]["items"][0]["block"]["provenance"]["episodes"][0][
@@ -433,13 +530,13 @@ def test_contextual_node_hydration_failure_has_no_runner_up_fallback(
             "provider": "TypeSafe", "requestedModel": engraphis.JEV_MODEL,
             "resolvedModel": engraphis.JEV_MODEL, "usage": {},
             "sides": {
-                "think": {"status": "selected", "nativeIds": ["mem-win"], "candidateCount": 2},
+                "think": {"status": "selected", "nativeIds": ["mem-win"], "candidateCount": 3},
                 "know": {"status": "empty", "candidateCount": 0},
             },
         },
     )
     assert result["sides"]["think"] == {
-        "status": "hydration_failed", "candidateCount": 2,
+        "status": "hydration_failed", "candidateCount": 3,
         "selectedNativeIds": ["mem-win"],
         "hydrationFailedNativeIds": ["mem-win"],
         "errorCode": "contextual_node_hydration_failed",

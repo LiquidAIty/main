@@ -2134,6 +2134,15 @@ export interface PromptSubmitParams {
   confirm_truncate?: boolean | null
   confirm_empty_truncate?: boolean | null
   rebind_survivor_row_ids?: number[] | null
+  managed_tools?: string[] | null
+  allowed_tools?: string[] | null
+  model_once?: PromptModelOnce | null
+}
+/** One native turn-scoped model route; never saved into profile authority. */
+export interface PromptModelOnce {
+  provider: string
+  model: string
+  reasoning_effort?: string | null
 }
 /** ``status`` is absent only on the typed-stop-phrase reply (``voice_stopped``). After a truncation the survivor row ids let the client rebind its cached ``rowId``s (``None`` map entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch. */
 export interface PromptSubmitResult {
@@ -3882,6 +3891,11 @@ export interface MessageCompletePayload {
   recoverable?: boolean | null
   error_surface?: ErrorSurface | null
   partial?: boolean | null
+  nativeRootId?: string | null
+  nativeRunId?: string | null
+  actualProvider?: string | null
+  actualModel?: string | null
+  exposedTools?: string[] | null
 }
 /** ``prompt_turn._result_status``. */
 export type TurnStatus = 'complete' | 'error' | 'interrupted'

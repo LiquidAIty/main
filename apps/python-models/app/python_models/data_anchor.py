@@ -1901,6 +1901,10 @@ def contextual_node_read(
                if isinstance(candidate_count, int) and candidate_count >= 0 else {}),
             **({"errorCode": str(outcome["errorCode"])}
                if outcome.get("errorCode") else {}),
+            **({"winnerChoiceId": str(outcome["winnerChoiceId"])}
+               if outcome.get("winnerChoiceId") else {}),
+            **({"distribution": dict(outcome["distribution"])}
+               if isinstance(outcome.get("distribution"), dict) else {}),
         }
         raw_native_ids = outcome.get("nativeIds")
         if isinstance(raw_native_ids, list):

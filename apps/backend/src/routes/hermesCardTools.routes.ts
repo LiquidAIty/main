@@ -33,7 +33,11 @@ type InternalCardToolRequest = {
 
 type Dependencies = {
   agentTerminalManager: CardToolManager;
-  activeContext(sessionId: string): { runId: string; conversationId: string } | null;
+  activeContext(sessionId: string): {
+    runId: string;
+    conversationId: string;
+    authorizedCanonicalTools: string[];
+  } | null;
   execute(request: InternalCardToolRequest): Promise<{ ok: true; output: string }>;
   isLoopbackSocketRequest: typeof isLoopbackSocketRequest;
 };

@@ -41,7 +41,7 @@ def choice_response(
     winner: str = "PROVIDES",
     choices: tuple[str, ...] = KNOWGRAPH_JEV_CHOICES,
 ) -> dict:
-    probability = 0.01
+    probability = (1.0 - 0.75) / (len(choices) - 1)
     probabilities = {name: probability for name in choices}
     probabilities[winner] = 0.75
     return {
@@ -87,6 +87,35 @@ def test_choice_uses_exact_vocabulary_and_preserves_native_fact() -> None:
     assert result["vocabulary_version"] == PROJECT_RELATIONSHIP_VOCABULARY_VERSION
     assert result["relationship_proposal_status"] == "invalid_novel_label"
     assert result["novel_relationship_candidate"] == ""
+
+
+def test_materially_malformed_probability_total_is_rejected() -> None:
+    response = choice_response()
+    response["answers"]["relationship"]["probabilities"]["PROVIDES"] = 0.50
+
+    try:
+        classify_knowgraph_fact(native_fact(), transport=lambda _body: response)
+    except Exception as error:
+        assert str(error) == "knowgraph_jev_response_invalid"
+    else:
+        raise AssertionError("malformed provider probabilities must not be repaired")
+
+
+def test_possible_two_decimal_probability_total_is_preserved() -> None:
+    choices = ("PROVIDES", "QUALIFIES", "INSUFFICIENT_CONTEXT")
+    response = choice_response(winner="PROVIDES", choices=choices)
+    response["answers"]["relationship"]["probabilities"] = {
+        choice: 0.33 for choice in choices
+    }
+
+    result = classify_knowgraph_fact(
+        native_fact(),
+        relationship_vocabulary=("PROVIDES", "QUALIFIES"),
+        transport=lambda _body: response,
+    )
+
+    assert result["winner"] == "PROVIDES"
+    assert result["distribution"] == {choice: 0.33 for choice in choices}
 
 
 def test_concise_native_relation_competes_as_one_optional_novel_candidate() -> None:

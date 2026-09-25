@@ -215,11 +215,13 @@ fields = [
   { name = "subagentType", label = "Subagents", section = "Runtime", path = "runtimeOptions.subagentType", source = "CardConfiguration.subagentType", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "accessMode", label = "Access", section = "Runtime", path = "runtimeOptions.accessMode", source = "CardConfiguration.accessMode", allowUnset = false },
   { name = "modelKey", label = "Model", section = "Runtime", path = "runtimeOptions.modelKey", source = "CardConfiguration.modelKey", catalog = "configured-models", control = "catalog-select", filteredBy = "provider" },
+  { name = "autoSelect", label = "Auto-select model", section = "Runtime", path = "runtimeOptions.autoSelect", source = "CardConfiguration.autoSelect", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "reasoningEffort", label = "Reasoning", section = "Runtime", path = "runtimeOptions.reasoningEffort", source = "CardConfiguration.reasoningEffort" },
   { name = "temperature", label = "Temperature", section = "Runtime", path = "runtimeOptions.temperature", source = "CardConfiguration.temperature", step = 0.1 },
   { name = "maxTokens", label = "Max tokens", section = "Runtime", path = "runtimeOptions.maxTokens", source = "CardConfiguration.maxTokens", step = 1 },
   { name = "maxTurns", label = "Max turns", section = "Runtime", path = "runtimeOptions.maxTurns", source = "CardConfiguration.maxTurns", step = 1 },
   { name = "tools", label = "Tools", section = "Tools", path = "runtimeOptions.tools", source = "CardConfiguration.tools", catalog = "native-tools", control = "catalog-multiselect" },
+  { name = "autoTools", label = "Auto-tools", section = "Tools", path = "runtimeOptions.autoTools", source = "CardConfiguration.autoTools", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "subagentModel", label = "Subagent model", section = "Runtime", path = "runtimeOptions.subagentModel", source = "CardConfiguration.subagentModel", catalog = "configured-models", control = "catalog-select", visibleWhen = { runtimeKind = "hermes" } },
 ]
 
