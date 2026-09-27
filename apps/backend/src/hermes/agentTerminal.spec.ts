@@ -6,6 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import type { IPty, IPtyForkOptions, IWindowsPtyForkOptions } from 'node-pty';
 import {
   AgentTerminalManager,
+  agentTerminalNativeSessionTitle,
   createNativeGatewayClient,
   requireAgentTerminalCard,
   type AgentTerminalGatewayEvent,
@@ -1167,9 +1168,10 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.ptys[0].resize).not.toHaveBeenCalled();
   });
 
-  it('materializes Card tools before Gateway start and owns one canonical Bot Chat', async () => {
+  it('materializes Card tools before Gateway start and owns one scoped native session', async () => {
     const f = fixture();
     const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const title = agentTerminalNativeSessionTitle(f.owners[0]);
     expect(f.materializeCardToolsPlugin).toHaveBeenCalledWith(
       'C:\\profiles\\signal-analyst',
       expect.objectContaining({
@@ -1187,9 +1189,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const creates = f.clients[0].requests.filter((request) => request.method === 'session.create');
     expect(creates).toHaveLength(1);
     expect(creates[0].params).toEqual(expect.objectContaining({
-      title: 'Bot Chat', hidden: true, follow_profile_config: true, close_on_disconnect: false,
+      title, hidden: true, follow_profile_config: true, close_on_disconnect: false,
     }));
-    expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
+    expect(f.durableByTitle.get(`signal-analyst\u0000${title}`)).toBe(state.storedSessionId);
   });
 
   it('fails before Gateway spawn when Card-plugin replacement or retirement is unverified', async () => {
@@ -1206,15 +1208,73 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.clients).toHaveLength(0);
   });
 
-  it('ignores obsolete Card runtime sessions and owns only canonical Bot Chat', async () => {
+  it('ignores obsolete Card runtime sessions and owns only its scoped native session', async () => {
     const f = fixture();
     f.durableByTitle.set('signal-analyst\u0000Card runtime: signal @ old', 'stored-old');
     const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const title = agentTerminalNativeSessionTitle(f.owners[0]);
 
     expect(state.storedSessionId).not.toBe('stored-old');
     expect(f.clients[0].requests.filter((request) => request.method === 'session.create')).toHaveLength(1);
-    expect(f.durableByTitle.get('signal-analyst\u0000Bot Chat')).toBe(state.storedSessionId);
+    expect(f.durableByTitle.get(`signal-analyst\u0000${title}`)).toBe(state.storedSessionId);
     expect(f.durableByTitle.get('signal-analyst\u0000Card runtime: signal @ old')).toBe('stored-old');
+  });
+
+  it('derives opaque collision-safe titles from the complete application session scope', () => {
+    const base: AgentTerminalOwner = {
+      userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'signal', conversationId: 'one',
+    };
+    const titles = [
+      base,
+      { ...base, userId: 'other-owner' },
+      { ...base, projectId: 'other-project' },
+      { ...base, deckId: 'other-deck' },
+      { ...base, cardId: 'other-card' },
+      { ...base, conversationId: 'two' },
+    ].map(agentTerminalNativeSessionTitle);
+    expect(agentTerminalNativeSessionTitle({ ...base })).toBe(titles[0]);
+    expect(new Set(titles)).toHaveProperty('size', titles.length);
+    for (const title of titles) expect(title).toMatch(/^Bot Chat:[a-f0-9]{64}$/);
+    expect(titles.join(' ')).not.toContain('owner');
+    expect(titles.join(' ')).not.toContain('project');
+    expect(titles.join(' ')).not.toContain('signal');
+  });
+
+  it('isolates concurrent conversations on one unchanged saved profile and resumes each exactly', async () => {
+    const f = fixture();
+    const ownerA = { ...f.owners[0], conversationId: 'conversation-a' };
+    const ownerB = { ...f.owners[0], conversationId: 'conversation-b' };
+    const [a, b] = await Promise.all([
+      f.manager.open(ownerA, f.cards[0], f.deck, 80, 24, { attachTui: false }),
+      f.manager.open(ownerB, f.cards[0], f.deck, 80, 24, { attachTui: false }),
+    ]);
+
+    expect(a.profile).toBe('signal-analyst');
+    expect(b.profile).toBe('signal-analyst');
+    expect(a.sessionId).not.toBe(b.sessionId);
+    expect(a.storedSessionId).not.toBe(b.storedSessionId);
+    expect(agentTerminalNativeSessionTitle(ownerA)).not.toBe(agentTerminalNativeSessionTitle(ownerB));
+    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-a')?.state.sessionId)
+      .toBe(a.sessionId);
+    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-b')?.state.sessionId)
+      .toBe(b.sessionId);
+
+    await f.manager.submit(ownerA, a.sessionId, 'a-one');
+    await f.manager.submit(ownerB, b.sessionId, 'b-one');
+    await f.manager.submit(ownerA, a.sessionId, 'a-two');
+    expect(f.clients[0].requests.filter(({ method }) => method === 'prompt.submit')
+      .map(({ params }) => params.session_id)).toEqual([a.nativeSessionId, a.nativeSessionId]);
+    expect(f.clients[1].requests.filter(({ method }) => method === 'prompt.submit')
+      .map(({ params }) => params.session_id)).toEqual([b.nativeSessionId]);
+
+    f.manager.stop(ownerA, a.sessionId);
+    const resumedA = await f.manager.open(
+      ownerA, f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    expect(resumedA.storedSessionId).toBe(a.storedSessionId);
+    expect(f.manager.findCard('project', 'deck', 'signal', 'conversation-b')?.state.sessionId)
+      .toBe(b.sessionId);
+    expect(f.clients[2].requests.map(({ method }) => method)).toContain('session.resume');
   });
 
   it('derives one registered Card tool from the signed live runtime and rejects replay', async () => {
@@ -1262,6 +1322,28 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       unknownPayload,
       createHmac('sha256', token).update(unknownPayload).digest('hex'),
     )).rejects.toThrow('hermes_card_tool_authentication_failed');
+
+    const rosterPayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: 'a'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'project_roster.resolve',
+      arguments: { target: '@KnowGraph' },
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      rosterPayload,
+      createHmac('sha256', token).update(rosterPayload).digest('hex'),
+    )).resolves.toEqual(expect.objectContaining({
+      owner: f.owners[0],
+      state,
+      canonicalToolName: 'project_roster.resolve',
+      request: expect.objectContaining({
+        tool: 'project_roster.resolve',
+        arguments: { target: '@KnowGraph' },
+      }),
+    }));
   });
 
   it('resolves a verified native Magnetic worker claim to one existing saved Card authority', async () => {
@@ -1426,7 +1508,48 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(() => requireAgentTerminalCard(missing, { ...frozenDeck(missing) })).toThrow('profile_missing');
   });
 
-  it('materializes a Main-owned native roster and revokes it before stopping target demand', async () => {
+  it('shares one stable profile only across the same exact saved Card authority', async () => {
+    const f = fixture();
+    const ownerA = { ...f.owners[0], projectId: 'project-a', conversationId: 'conversation-a' };
+    const ownerB = {
+      ...f.owners[0], projectId: 'project-b', deckId: 'deck-b', conversationId: 'conversation-b',
+    };
+    const deckB = { ...frozenDeck(f.cards[0]), id: 'deck-b' };
+    const [a, b] = await Promise.all([
+      f.manager.open(ownerA, f.cards[0], f.deck, 80, 24, { attachTui: false }),
+      f.manager.open(ownerB, f.cards[0], deckB, 80, 24, { attachTui: false }),
+    ]);
+    expect(a.profile).toBe('signal-analyst');
+    expect(b.profile).toBe('signal-analyst');
+    expect(a.sessionId).not.toBe(b.sessionId);
+
+    const otherCard = card('other-card', 'signal-analyst');
+    const otherOwner: AgentTerminalOwner = {
+      userId: 'owner', projectId: 'project-c', deckId: 'deck-c', cardId: otherCard.id,
+      conversationId: 'conversation-c',
+    };
+    await expect(f.manager.open(
+      otherOwner, otherCard, { ...frozenDeck(otherCard), id: 'deck-c' }, 80, 24,
+      { attachTui: false },
+    )).rejects.toThrow('agent_terminal_profile_card_identity_mismatch');
+
+    const divergent = {
+      ...f.cards[0],
+      _cardRevisionId: 'revision-signal-divergent',
+      _cardRevisionSha256: 'b'.repeat(64),
+    };
+    const divergentOwner: AgentTerminalOwner = {
+      userId: 'owner', projectId: 'project-d', deckId: 'deck-d', cardId: divergent.id,
+      conversationId: 'conversation-d',
+    };
+    await expect(f.manager.open(
+      divergentOwner, divergent, { ...frozenDeck(divergent), id: 'deck-d' }, 80, 24,
+      { attachTui: false },
+    )).rejects.toThrow('agent_terminal_profile_card_identity_mismatch');
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps Project rosters out of stable profile configuration', async () => {
     const f = fixture();
     f.cards[0].runtime = { kind: 'hermes', mode: 'main', profile: 'signal-analyst' };
     const desired = f.cards.map((selected, index) => ({
@@ -1451,30 +1574,23 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
     const configured = f.clients.flatMap((client) => client.requests)
       .filter((request) => request.method === 'profiles.configure');
-    expect(configured).toEqual(expect.arrayContaining([
-      expect.objectContaining({ params: expect.objectContaining({
-        name: 'signal-analyst', bot_mode_roster: ['quant-analyst'],
-      }) }),
-      expect.objectContaining({ params: expect.objectContaining({
-        name: 'quant-analyst', bot_mode_roster: [],
-      }) }),
-    ]));
+    expect(configured.some((request) => (
+      Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
+    ))).toBe(false);
 
     const revoked = projected.map((target) => ({
       ...target,
       projection: { ...target.projection, roster: [] },
     }));
     await f.manager.reconcile([desired[0]], { cols: 120, rows: 36 }, revoked);
-    const mainWrites = f.clients.flatMap((client) => client.requests)
-      .filter((request) => request.method === 'profiles.configure'
-        && request.params.name === 'signal-analyst');
-    expect(mainWrites.some((request) => (
-      JSON.stringify(request.params.bot_mode_roster) === '[]'
-    ))).toBe(true);
+    expect(f.clients.flatMap((client) => client.requests).some((request) => (
+      request.method === 'profiles.configure'
+      && Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
+    ))).toBe(false);
     expect(f.manager.find(f.owners[1])).toBeNull();
   });
 
-  it('materializes a newly added saved profile before publishing it in an existing Bot roster', async () => {
+  it('materializes a newly added saved profile without publishing Project roster to it', async () => {
     const f = fixture();
     const main = f.cards[0];
     main.runtime = { kind: 'hermes', mode: 'main', profile: 'signal-analyst' };
@@ -1524,12 +1640,10 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
 
     expect(f.configureCardInstructions).toHaveBeenCalledWith('knowgraph', 'Prompt card_knowgraph');
     expect(states.some((state) => state.cardId === added.id && state.profile === 'knowgraph')).toBe(true);
-    expect(f.clients[0].requests).toContainEqual(expect.objectContaining({
-      method: 'profiles.configure',
-      params: expect.objectContaining({
-        name: 'signal-analyst', bot_mode_roster: ['knowgraph'],
-      }),
-    }));
+    expect(f.clients.flatMap((client) => client.requests).some((request) => (
+      request.method === 'profiles.configure'
+      && Object.prototype.hasOwnProperty.call(request.params, 'bot_mode_roster')
+    ))).toBe(false);
   });
 
   it('does not claim or rewrite an unprojected standalone native Bot profile', async () => {
@@ -1578,6 +1692,75 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.ptys[0].kill).toHaveBeenCalledOnce();
     expect(f.spawnGateway).toHaveBeenCalledTimes(3);
     expect(b.cardId).toBe('quant');
+  });
+
+  it('keeps shared-profile Project authority without eagerly opening every presentation session', async () => {
+    const f = fixture();
+    const eager = {
+      owner: { ...f.owners[0], projectId: 'project-a', deckId: 'deck-a' },
+      card: f.cards[0],
+      deck: { ...frozenDeck(f.cards[0]), id: 'deck-a' },
+      attachTui: false,
+      openAtReconcile: true,
+    };
+    const lazy = {
+      owner: { ...f.owners[0], projectId: 'project-b', deckId: 'deck-b' },
+      card: f.cards[0],
+      deck: { ...frozenDeck(f.cards[0]), id: 'deck-b' },
+      attachTui: false,
+      openAtReconcile: false,
+    };
+
+    const opened = await f.manager.reconcile([eager, lazy]);
+    expect(opened).toHaveLength(1);
+    expect(f.manager.find(eager.owner)?.sessionId).toBe(opened[0].sessionId);
+    expect(f.manager.find(lazy.owner)).toBeNull();
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+
+    const onDemand = await f.manager.open(
+      lazy.owner, lazy.card, lazy.deck, 120, 36, { attachTui: false },
+    );
+    await f.manager.reconcile([eager, lazy]);
+    expect(f.manager.find(lazy.owner)?.sessionId).toBe(onDemand.sessionId);
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves an unrelated Project conversation during reconcile and stops an explicit detach', async () => {
+    const f = fixture();
+    const conversationOwner: AgentTerminalOwner = {
+      ...f.owners[0], projectId: 'project-a', deckId: 'deck-a', conversationId: 'conversation-a',
+    };
+    const conversation = await f.manager.open(
+      conversationOwner,
+      f.cards[0],
+      { ...frozenDeck(f.cards[0]), id: 'deck-a' },
+      80,
+      24,
+      { attachTui: false },
+    );
+    const projectB: AgentTerminalOwner = {
+      ...f.owners[0], projectId: 'project-b', deckId: 'deck-b',
+    };
+    await f.manager.reconcile([{
+      owner: projectB,
+      card: f.cards[0],
+      deck: { ...frozenDeck(f.cards[0]), id: 'deck-b' },
+      attachTui: false,
+    }]);
+    expect(f.manager.state(conversationOwner, conversation.sessionId).status).toBe('running');
+    expect(f.gateways[0].kill).not.toHaveBeenCalled();
+
+    const replacementOwner: AgentTerminalOwner = {
+      ...f.owners[1], projectId: 'project-a', deckId: 'deck-a',
+    };
+    await f.manager.reconcile([{
+      owner: replacementOwner,
+      card: f.cards[1],
+      deck: { ...frozenDeck(f.cards[1]), id: 'deck-a' },
+      attachTui: false,
+    }]);
+    expect(f.manager.state(conversationOwner, conversation.sessionId).status).toBe('exited');
+    expect(f.gateways[0].kill).toHaveBeenCalledOnce();
   });
 
   it('converges a simultaneous disconnected Run start and new wire demand on one Card runtime', async () => {

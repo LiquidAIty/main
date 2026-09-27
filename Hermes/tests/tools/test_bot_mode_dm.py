@@ -111,6 +111,14 @@ def test_injects_only_into_bot_chat_on_managed_install(tmp_path):
     assert len(agent.tools) == 1
 
 
+def test_injects_into_application_scoped_bot_chat_without_changing_profile(tmp_path):
+    home = _managed_home(tmp_path)
+    agent = _FakeAgent(home, title="Bot Chat:" + "a" * 64)
+
+    assert bot_mode_dm.ensure_message_agent_tool(agent) is True
+    assert [tool["function"]["name"] for tool in agent.tools] == ["message_agent"]
+
+
 @pytest.mark.parametrize(
     "title",
     ["", "My research chat", "Group: room-abc123", "handoff-12ab34cd"],
@@ -202,6 +210,57 @@ def test_live_but_unwired_profile_is_rejected(tmp_path):
 
     assert "error" in result
     assert result["teammates"] == ["wired"]
+
+
+def test_project_resolver_pins_delivery_to_exact_target_session(tmp_path, monkeypatch):
+    home = _managed_home(tmp_path)
+    agent = _FakeAgent(home, title="Bot Chat:" + "b" * 64)
+    import hermes_cli.plugins as plugins
+
+    monkeypatch.setattr(plugins, "has_hook", lambda name: name == "resolve_message_agent_target")
+    monkeypatch.setattr(plugins, "invoke_hook", lambda name, **kwargs: [{
+        "profile": "researcher",
+        "roster": ["researcher"],
+        "stored_session_id": "stored-project-target",
+    }])
+    captured = {}
+
+    def deliver(argv, content, label, **kwargs):
+        captured.update(argv=argv, content=content, label=label, kwargs=kwargs)
+        return json.dumps({"status": "sent"})
+
+    monkeypatch.setattr(bot_mode_dm, "_start_delivery", deliver)
+
+    assert json.loads(bot_mode_dm.message_agent_tool(
+        target="KnowGraph", message="Inspect this", agent=agent,
+    )) == {"status": "sent"}
+    assert captured["argv"] == [
+        bot_relay._hermes_cli(), "-p", "researcher", "chat", "--in", "~",
+        "--resume", "stored-project-target", "-Q",
+    ]
+    assert captured["kwargs"]["stored_session_id"] == "stored-project-target"
+
+
+def test_registered_project_resolver_failure_never_falls_back_to_native_roster(
+    tmp_path, monkeypatch,
+):
+    home = _managed_home(tmp_path)
+    agent = _FakeAgent(home, title="Bot Chat:" + "c" * 64)
+    import hermes_cli.plugins as plugins
+
+    monkeypatch.setattr(plugins, "has_hook", lambda name: name == "resolve_message_agent_target")
+    monkeypatch.setattr(plugins, "invoke_hook", lambda _name, **_kwargs: [])
+    monkeypatch.setattr(
+        bot_mode_probe,
+        "resolve_bot_roster",
+        lambda _home: pytest.fail("must not fall back to native profile roster"),
+    )
+
+    result = json.loads(bot_mode_dm.message_agent_tool(
+        target="researcher", message="Inspect this", agent=agent,
+    ))
+
+    assert "authorization is unavailable" in result["error"]
 
 
 def test_cannot_message_self(tmp_path):

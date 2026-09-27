@@ -58,6 +58,9 @@ describe('Main chat live observation callbacks', () => {
     }));
 
     await waitFor(() => expect(result.current.mainDriverSource).toBe('external_plugin'));
+    expect(mocks.loadMainDriverStatus).toHaveBeenCalledWith(
+      'project-1', 'deck_builder', 'main', expect.any(AbortSignal),
+    );
   });
 
   it('waits for the real Main runtime before requesting its history', async () => {

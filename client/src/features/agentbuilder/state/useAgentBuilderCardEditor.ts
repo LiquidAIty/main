@@ -18,6 +18,8 @@ type UseAgentBuilderCardEditorArgs = {
   selectedCardId: string | null;
   setDeck: Dispatch<SetStateAction<DeckDocument>>;
   persistDeck: (document: DeckDocument) => Promise<void>;
+  prepareDeckForCardSave?: (document: DeckDocument, cardId: string) => DeckDocument;
+  onCardPersisted?: (cardId: string) => void;
 };
 
 function normalizeStringList(value: unknown): string[] {
@@ -35,6 +37,8 @@ export default function useAgentBuilderCardEditor({
   selectedCardId,
   setDeck,
   persistDeck,
+  prepareDeckForCardSave,
+  onCardPersisted,
 }: UseAgentBuilderCardEditorArgs) {
   const selectedCard = useMemo(
     () => deck.nodes.find((node) => node.id === selectedCardId) || null,
@@ -166,11 +170,25 @@ export default function useAgentBuilderCardEditor({
           ),
         };
       };
-      await persistDeck(update(deck));
+      const updatedDeck = update(deck);
+      await persistDeck(
+        prepareDeckForCardSave
+          ? prepareDeckForCardSave(updatedDeck, selectedCard.id)
+          : updatedDeck,
+      );
       recordDeckWriteReason('card-editor');
       setDeck(update);
+      onCardPersisted?.(selectedCard.id);
     },
-    [deck, persistDeck, recordDeckWriteReason, selectedCard, setDeck],
+    [
+      deck,
+      onCardPersisted,
+      persistDeck,
+      prepareDeckForCardSave,
+      recordDeckWriteReason,
+      selectedCard,
+      setDeck,
+    ],
   );
 
   const handleRenameSelectedCard = useCallback(

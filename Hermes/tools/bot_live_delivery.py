@@ -29,8 +29,15 @@ _OWNER_KEYS = ("profile_home", "session_id", "lease_id", "live_session_id")
 _TERMINAL = frozenset({"settled", "failed", "cancelled", "ambiguous"})
 
 
-def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
-    """Return the exact Bot Chat tip's lease, including unsupported CLI owners."""
+def find_canonical_owner(
+    profile_home: Path | str,
+    stored_session_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Return one exact stored session tip's lease.
+
+    Omission preserves stock Hermes' canonical ``Bot Chat`` lookup. Embedders
+    pass the already-authorized stored id and never select a live owner by title.
+    """
     from hermes_cli.active_sessions import active_session_registry_snapshot
     from hermes_state import SessionDB
 
@@ -39,8 +46,12 @@ def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
         return None
     db = SessionDB(db_path=home / "state.db", read_only=True)
     try:
-        row = db.get_session_by_title("Bot Chat")
-        session_id = db.get_compression_tip(row["id"]) if row else None
+        if stored_session_id:
+            resolved = db.resolve_resume_session_id(stored_session_id)
+            session_id = db.get_compression_tip(resolved) if resolved else None
+        else:
+            row = db.get_session_by_title("Bot Chat")
+            session_id = db.get_compression_tip(row["id"]) if row else None
     finally:
         db.close()
     if not session_id:
@@ -51,9 +62,12 @@ def find_canonical_owner(profile_home: Path | str) -> dict[str, Any] | None:
     return None
 
 
-def find_canonical_live_owner(profile_home: Path | str) -> dict[str, Any] | None:
+def find_canonical_live_owner(
+    profile_home: Path | str,
+    stored_session_id: str | None = None,
+) -> dict[str, Any] | None:
     """Only advertised consumers may receive owner-pinned mailbox deliveries."""
-    entry = find_canonical_owner(profile_home)
+    entry = find_canonical_owner(profile_home, stored_session_id)
     meta = (entry or {}).get("metadata") or {}
     if entry and meta.get("bot_live_delivery_consumer") is True and meta.get("live_session_id"):
         return {key: entry[key] for key in ("profile_home", "session_id", "lease_id")} | {

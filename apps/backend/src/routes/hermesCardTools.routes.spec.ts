@@ -39,6 +39,8 @@ function dependencies() {
     },
     activeContext: vi.fn().mockReturnValue(null),
     execute: vi.fn().mockResolvedValue({ ok: true, output: '{"ok":true}' }),
+    resolveProjectRosters: vi.fn().mockResolvedValue([]),
+    openProjectRosterTarget: vi.fn().mockResolvedValue('stored-target-conversation'),
     isLoopbackSocketRequest: vi.fn().mockReturnValue(true),
   };
 }
@@ -136,6 +138,93 @@ describe('managed Hermes Card-tools host route', () => {
       conversationId: '',
       parentRunId: 'outer-magnetic-run',
     }));
+  });
+
+  it('returns only the signed session Project orange-flow roster', async () => {
+    const deps = dependencies();
+    deps.authenticated.canonicalToolName = 'project_roster.resolve';
+    deps.authenticated.request.tool = 'project_roster.resolve';
+    deps.resolveProjectRosters.mockResolvedValue([
+      {
+        cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
+        title: 'Builder', botEnabled: true, roster: ['knowgraph'],
+      },
+      {
+        cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
+        title: 'KnowGraph', botEnabled: true, roster: [],
+      },
+      {
+        cardId: 'magnetic', cardRevisionId: 'revision-three', profile: 'magnetic',
+        title: 'Magnetic', botEnabled: true, roster: [],
+      },
+    ]);
+
+    const response = await post(deps);
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse((response.body as { output: string }).output)).toEqual({
+      targets: [{ title: 'KnowGraph', profile: 'knowgraph' }],
+    });
+    expect(deps.resolveProjectRosters).toHaveBeenCalledExactlyOnceWith(
+      'project-one', 'deck-one',
+    );
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it('binds an authorized visible target to its exact Project conversation session', async () => {
+    const deps = dependencies();
+    deps.authenticated.canonicalToolName = 'project_roster.resolve';
+    Object.assign(deps.authenticated.owner, { conversationId: 'conversation-one' });
+    deps.authenticated.request.tool = 'project_roster.resolve';
+    Object.assign(deps.authenticated.request.arguments, { target: 'KnowGraph' });
+    const source = {
+      cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
+      title: 'Builder', botEnabled: true, roster: ['knowgraph'],
+    };
+    const target = {
+      cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
+      title: 'KnowGraph', botEnabled: true, roster: [],
+    };
+    deps.resolveProjectRosters.mockResolvedValue([source, target]);
+
+    const response = await post(deps);
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse((response.body as { output: string }).output)).toEqual({
+      targets: [{ title: 'KnowGraph', profile: 'knowgraph' }],
+      resolved: { profile: 'knowgraph', storedSessionId: 'stored-target-conversation' },
+    });
+    expect(deps.openProjectRosterTarget).toHaveBeenCalledExactlyOnceWith(
+      deps.authenticated,
+      target,
+    );
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not normalize another address prefix at the signed authority boundary', async () => {
+    const deps = dependencies();
+    deps.authenticated.canonicalToolName = 'project_roster.resolve';
+    deps.authenticated.request.tool = 'project_roster.resolve';
+    Object.assign(deps.authenticated.request.arguments, { target: '@KnowGraph' });
+    deps.resolveProjectRosters.mockResolvedValue([
+      {
+        cardId: 'builder', cardRevisionId: 'revision-one', profile: 'builder',
+        title: 'Builder', botEnabled: true, roster: ['knowgraph'],
+      },
+      {
+        cardId: 'knowgraph', cardRevisionId: 'revision-two', profile: 'knowgraph',
+        title: 'KnowGraph', botEnabled: true, roster: [],
+      },
+    ]);
+
+    const response = await post(deps);
+
+    expect(response).toEqual({
+      status: 403,
+      body: { error: 'hermes_project_roster_target_forbidden' },
+    });
+    expect(deps.openProjectRosterTarget).not.toHaveBeenCalled();
+    expect(deps.execute).not.toHaveBeenCalled();
   });
 
   it('maps every authentication rejection to one secret-free response', async () => {

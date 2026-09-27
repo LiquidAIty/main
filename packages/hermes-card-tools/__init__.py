@@ -24,6 +24,7 @@ MAX_REQUEST_BYTES = 512 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 VISIBLE_CARD_TARGETS_SECTION = "card-tools.visible-card-targets"
 VISIBLE_CARD_TARGETS_MAX_CHARS = 4_000
+PROJECT_ROSTER_TOOL = "project_roster.resolve"
 _VISIBLE_CARD_TITLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", re.ASCII)
 _WORKER_AUTH_ENV = (
     "HERMES_KANBAN_TASK",
@@ -218,90 +219,133 @@ def _handler(hermes_name: str) -> Callable[..., str]:
     return invoke
 
 
-def _process_profile_home() -> Path | None:
-    """Return this profile-scoped plugin process's Hermes home, if available."""
-    try:
-        from hermes_constants import get_process_hermes_home
+def _request_project_roster_payload(
+    source_stored_session_id: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve the current Project roster through the signed Card-session seam.
 
-        return Path(get_process_hermes_home())
-    except Exception:
-        return None
-
-
-def _resolve_bot_roster(profile_home: Path) -> list[tuple[str, Path]]:
-    """Call Hermes' one native, profile-scoped Bot authority resolver."""
-    from tools.bot_mode_probe import resolve_bot_roster
-
-    return resolve_bot_roster(profile_home)
-
-
-def _read_profile_meta(target_home: Path) -> dict[str, Any]:
-    """Read one roster target's native profile metadata."""
-    from hermes_cli.profiles import read_profile_meta
-
-    return read_profile_meta(target_home)
-
-
-def _visible_card_targets(profile_home: Path | None) -> list[tuple[str, str]]:
-    """Return ordered ``(visible title, stable profile)`` pairs for this exact roster.
-
-    Visible addressing is only an alias over Hermes' already-authorized Bot roster. Any
-    malformed or case-insensitively duplicate title invalidates the whole projection so
-    a partial alias set cannot misrepresent the saved Card topology.
+    The backend owns Project/deck/Card topology.  The plugin supplies only the exact
+    Hermes stored-session identity and never reads or unions profile-global config.
     """
-    if profile_home is None:
+    if os.getenv("CARD_TOOLS_MANAGED") != "1" or not source_stored_session_id:
+        raise ValueError("managed project session required")
+    host_url = os.getenv("CARD_TOOLS_HOST_URL", "").strip()
+    token = os.getenv("HERMES_DASHBOARD_SESSION_TOKEN", "")
+    if not host_url or not token:
+        raise ValueError("managed project session credential missing")
+    payload = _json({
+        "version": 1,
+        "expiresAt": int(time.time()) + REQUEST_TTL_SECONDS,
+        "nonce": secrets.token_hex(16),
+        "sourceStoredSessionId": source_stored_session_id,
+        "tool": PROJECT_ROSTER_TOOL,
+        "arguments": arguments,
+    })
+    status, response = _post_once(host_url, _signed_envelope(token, payload))
+    output = response.get("output")
+    if status != 200 or response.get("ok") is not True or not isinstance(output, str):
+        raise ValueError("project roster unavailable")
+    decoded = json.loads(output)
+    if not isinstance(decoded, dict):
+        raise ValueError("project roster response invalid")
+    return decoded
+
+
+def _validated_project_roster(decoded: dict[str, Any]) -> list[tuple[str, str]]:
+    raw_targets = decoded["targets"]
+    if not isinstance(raw_targets, list):
+        raise ValueError("project roster response invalid")
+    targets: list[tuple[str, str]] = []
+    seen_titles: set[str] = set()
+    seen_profiles: set[str] = set()
+    for raw in raw_targets:
+        if not isinstance(raw, dict) or set(raw) != {"profile", "title"}:
+            raise ValueError("project roster response invalid")
+        title, profile = raw.get("title"), raw.get("profile")
+        if (
+            not isinstance(title, str) or not _VISIBLE_CARD_TITLE_RE.fullmatch(title)
+            or not isinstance(profile, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", profile, re.ASCII)
+            or title.casefold() in seen_titles
+            or profile in seen_profiles
+        ):
+            raise ValueError("project roster response invalid")
+        seen_titles.add(title.casefold())
+        seen_profiles.add(profile)
+        targets.append((title, profile))
+    return targets
+
+
+def _request_project_roster(source_stored_session_id: str) -> list[tuple[str, str]]:
+    decoded = _request_project_roster_payload(source_stored_session_id, {})
+    if set(decoded) != {"targets"}:
+        raise ValueError("project roster response invalid")
+    return _validated_project_roster(decoded)
+
+
+def _request_project_target(
+    source_stored_session_id: str,
+    visible_target: str,
+) -> tuple[list[tuple[str, str]], str, str]:
+    decoded = _request_project_roster_payload(
+        source_stored_session_id, {"target": visible_target},
+    )
+    if set(decoded) != {"resolved", "targets"} or not isinstance(decoded["resolved"], dict):
+        raise ValueError("project roster response invalid")
+    targets = _validated_project_roster(decoded)
+    resolved = decoded["resolved"]
+    if set(resolved) != {"profile", "storedSessionId"}:
+        raise ValueError("project roster response invalid")
+    profile, stored_session_id = resolved.get("profile"), resolved.get("storedSessionId")
+    if (
+        not isinstance(profile, str)
+        or profile not in {target_profile for _title, target_profile in targets}
+        or not isinstance(stored_session_id, str)
+        or not stored_session_id
+        or len(stored_session_id) > 512
+    ):
+        raise ValueError("project roster response invalid")
+    return targets, profile, stored_session_id
+
+
+def _visible_card_targets(source_stored_session_id: str | None) -> list[tuple[str, str]]:
+    """Return exact ``(visible title, stable profile)`` pairs for one Project session."""
+    if not source_stored_session_id:
         return []
     try:
-        targets: list[tuple[str, str]] = []
-        seen_titles: set[str] = set()
-        for stable_profile, target_home in _resolve_bot_roster(profile_home):
-            if not isinstance(stable_profile, str) or not stable_profile:
-                return []
-            metadata = _read_profile_meta(Path(target_home))
-            title = metadata.get("bot_title") if isinstance(metadata, dict) else None
-            if not isinstance(title, str) or not _VISIBLE_CARD_TITLE_RE.fullmatch(title):
-                return []
-            folded = title.casefold()
-            if folded in seen_titles:
-                return []
-            seen_titles.add(folded)
-            targets.append((title, stable_profile))
-        return targets
+        return _request_project_roster(source_stored_session_id)
     except Exception:
         return []
 
 
-def _rewrite_message_agent_target(
-    profile_home: Path | None,
+def _resolve_message_agent_target(
     *,
-    tool_name: str = "",
-    args: Any = None,
+    target: Any = None,
+    session_id: str = "",
     **_context: Any,
-) -> dict[str, Any] | None:
-    """Translate one exact visible Card title while leaving every other target native."""
-    if tool_name != "message_agent" or not isinstance(args, dict):
-        return None
-    raw_target = args.get("target")
-    if not isinstance(raw_target, str):
-        return None
-    visible_target = raw_target.strip()
+) -> dict[str, Any]:
+    """Resolve one visible Card title through one authenticated Project session."""
+    if not isinstance(target, str) or not session_id:
+        raise ValueError("project roster request invalid")
+    visible_target = target.strip()
     if visible_target.startswith("@"):
         visible_target = visible_target[1:]
     if not visible_target:
-        return None
-    by_title = {
-        title.casefold(): stable_profile
-        for title, stable_profile in _visible_card_targets(profile_home)
+        raise ValueError("project roster request invalid")
+    targets, stable_profile, stored_session_id = _request_project_target(
+        session_id, visible_target,
+    )
+    return {
+        "profile": stable_profile,
+        "roster": [profile for _title, profile in targets],
+        "stored_session_id": stored_session_id,
     }
-    stable_profile = by_title.get(visible_target.casefold())
-    if stable_profile is None:
-        return None
-    return {"action": "modify", "args": {"target": stable_profile}}
 
 
-def _visible_card_targets_prompt(profile_home: Path | None) -> str:
+def _visible_card_targets_prompt(source_stored_session_id: str | None) -> str:
     """Render only exact public Card addresses; stable runtime identities stay private."""
-    targets = _visible_card_targets(profile_home)
+    targets = _visible_card_targets(source_stored_session_id)
     if not targets:
         return ""
     prompt = (
@@ -324,13 +368,14 @@ def register(ctx: Any) -> None:
             handler=_handler(tool["hermesName"]),
             description=tool["description"],
         )
-    profile_home = _process_profile_home()
     ctx.register_hook(
-        "pre_tool_call",
-        lambda **kwargs: _rewrite_message_agent_target(profile_home, **kwargs),
+        "resolve_message_agent_target",
+        _resolve_message_agent_target,
     )
     ctx.register_system_prompt_section(
         VISIBLE_CARD_TARGETS_SECTION,
-        lambda _session_info: _visible_card_targets_prompt(profile_home),
+        lambda session_info: _visible_card_targets_prompt(
+            str(session_info.get("session_id") or ""),
+        ),
         max_chars=VISIBLE_CARD_TARGETS_MAX_CHARS,
     )

@@ -119,11 +119,11 @@ def message_agent_authorized(agent: Any) -> bool:
     try:
         if not getattr(agent, "_bot_mode_protocol", True):
             return False
-        from tools.bot_mode_probe import BOT_CHAT_TITLE, is_bot_mode_managed
+        from tools.bot_mode_probe import is_bot_chat_title, is_bot_mode_managed
 
         # Managed-install check, NOT section non-emptiness: a SOUL.md carrying the
         # legacy protocol text gets an empty section but must still get the tool.
-        return _session_title(agent) == BOT_CHAT_TITLE and is_bot_mode_managed(_agent_home(agent))
+        return is_bot_chat_title(_session_title(agent)) and is_bot_mode_managed(_agent_home(agent))
     except Exception:  # pragma: no cover — must never break a turn
         logger.debug("message_agent_authorized failed", exc_info=True)
         return False
@@ -175,6 +175,66 @@ def _err(message: str, *, roster: list[str] | None = None, peers: list[str] | No
     return json.dumps(payload)
 
 
+def _resolved_message_agent_roster(
+    agent: Any,
+    target: str,
+    root: Path,
+) -> tuple[dict[str, Path] | None, str | None, str | None, str | None]:
+    """Resolve an embedder-owned exact roster at the native delivery boundary.
+
+    ``None`` roster means no resolver is registered and stock Hermes should use
+    its native profile roster. Once a resolver exists, missing, malformed, or
+    non-live results fail closed and never broaden back to profile discovery.
+    """
+    try:
+        from hermes_cli.plugins import has_hook, invoke_hook
+        from tools.bot_mode_probe import resolve_live_profile_home
+
+        if not has_hook("resolve_message_agent_target"):
+            return None, None, None, None
+        results = invoke_hook(
+            "resolve_message_agent_target",
+            target=target,
+            session_id=str(getattr(agent, "session_id", None) or ""),
+            profile_name=_profile_name_for_agent(agent),
+        )
+        if len(results) != 1 or not isinstance(results[0], dict):
+            return {}, None, None, "Project roster authorization is unavailable. Nothing was submitted."
+        result = results[0]
+        if set(result) != {"profile", "roster", "stored_session_id"}:
+            return {}, None, None, "Project roster authorization is invalid. Nothing was submitted."
+        profile = result.get("profile")
+        roster = result.get("roster")
+        stored_session_id = result.get("stored_session_id")
+        if (
+            not isinstance(profile, str)
+            or not isinstance(roster, list)
+            or profile not in roster
+            or not isinstance(stored_session_id, str)
+            or not stored_session_id
+            or len(stored_session_id) > 512
+        ):
+            return {}, None, None, "Project roster authorization is invalid. Nothing was submitted."
+        homes: dict[str, Path] = {}
+        for raw_name in roster:
+            if not isinstance(raw_name, str) or raw_name in homes:
+                return {}, None, None, "Project roster authorization is invalid. Nothing was submitted."
+            target_home = resolve_live_profile_home(root, raw_name)
+            if target_home is None:
+                return {}, None, None, "Project roster target is not a live saved profile. Nothing was submitted."
+            homes[raw_name] = target_home
+        return homes, profile, stored_session_id, None
+    except Exception:
+        logger.debug("resolve_message_agent_target failed", exc_info=True)
+        return {}, None, None, "Project roster authorization is unavailable. Nothing was submitted."
+
+
+def _profile_name_for_agent(agent: Any) -> str:
+    from tools.bot_mode_probe import _profile_name
+
+    return _profile_name(Path(_agent_home(agent)))
+
+
 def message_agent_tool(
     target: str = "",
     message: str = "",
@@ -187,13 +247,13 @@ def message_agent_tool(
     home = _agent_home(agent)
     try:
         from tools.bot_mode_probe import (
-            BOT_CHAT_TITLE, _handle, _hermes_root, _peers, _profile_name as _self_profile_name,
-            is_bot_mode_managed,
+            _handle, _hermes_root, _peers, _profile_name as _self_profile_name,
+            is_bot_chat_title, is_bot_mode_managed,
             resolve_bot_roster,
         )
         from tools.bot_relay import BOT_CHAT_TURN_ARGS, _hermes_cli
 
-        if _session_title(agent) != BOT_CHAT_TITLE:
+        if not is_bot_chat_title(_session_title(agent)):
             return _err("message_agent is only available in a Bot Mode 'Bot Chat' session. "
                         "This session is not one; do not retry.")
         if not is_bot_mode_managed(home):
@@ -203,7 +263,14 @@ def message_agent_tool(
         return _err(f"Bot Mode gate check failed: {exc}")
 
     root, me = _hermes_root(Path(home)), _self_profile_name(Path(home))
-    roster_homes = dict(resolve_bot_roster(home))
+    project_roster, project_target, target_stored_session_id, project_error = _resolved_message_agent_roster(
+        agent, str(target or "").strip(), root,
+    )
+    if project_error:
+        return _err(project_error)
+    roster_homes = (
+        dict(resolve_bot_roster(home)) if project_roster is None else project_roster
+    )
     roster = list(roster_homes)
     peers = _peers(root)
     teammates = [_handle(n) for n in roster if n != me]
@@ -253,7 +320,11 @@ def message_agent_tool(
     if not is_local_shape and "@" not in raw_target:
         return _roster_err(f"Invalid target: {raw_target!r}.")
     targets_self = raw_target.lower() in {me.lower(), _handle(me).lower()}
-    resolved = me if targets_self else (_resolve_local_name(raw_target, roster) if is_local_shape else None)
+    resolved = (
+        me if targets_self
+        else project_target if project_roster is not None
+        else (_resolve_local_name(raw_target, roster) if is_local_shape else None)
+    )
     if resolved is None or resolved == me:
         # Unknown locally, or same-name target on ANOTHER connection (this gateway's 'default'
         # messaging the cloud 'default'): every Desktop-connected gateway is reachable via the
@@ -286,8 +357,13 @@ def message_agent_tool(
             tool_call_id=tool_call_id,
             agent=agent,
         )
-    return _start_delivery([_hermes_cli(), "-p", resolved, *BOT_CHAT_TURN_ARGS], content, f"@{_handle(resolved)}",
-                           stdin_file=False, profile_home=roster_homes[resolved], author=author, **delivery)
+    target_turn_args = (
+        ("chat", "--in", "~", "--resume", target_stored_session_id, "-Q")
+        if target_stored_session_id is not None else BOT_CHAT_TURN_ARGS
+    )
+    return _start_delivery([_hermes_cli(), "-p", resolved, *target_turn_args], content, f"@{_handle(resolved)}",
+                           stdin_file=False, profile_home=roster_homes[resolved], author=author,
+                           stored_session_id=target_stored_session_id, **delivery)
 
 
 def _start_team_task(
@@ -559,7 +635,12 @@ def _run_local_turn(argv: list[str], dm_file: str, *, env: Optional[dict[str, st
     return proc.returncode
 
 
-def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dict] = None) -> dict | None:
+def _admit_live_dm(
+    profile_home: Path | None,
+    dm_file: str,
+    author: Optional[dict] = None,
+    stored_session_id: str | None = None,
+) -> dict | None:
     """Pin intent before admission; retries may inspect, never change transport."""
     from tools.bot_live_delivery import deliver_to_live_owner, find_canonical_live_owner, read_delivery_result
     from utils import fsync_directory
@@ -570,7 +651,11 @@ def _admit_live_dm(profile_home: Path | None, dm_file: str, author: Optional[dic
         intent = json.loads(intent_path.read_text(encoding="utf-8"))
     else:
         assert profile_home is not None
-        owner = find_canonical_live_owner(profile_home)
+        owner = (
+            find_canonical_live_owner(profile_home)
+            if stored_session_id is None
+            else find_canonical_live_owner(profile_home, stored_session_id)
+        )
         if owner is None:
             return None
         intent = dict(owner=owner, message=Path(dm_file).read_text(encoding="utf-8"),
@@ -628,7 +713,8 @@ def _local_delivery_home(argv: list[str]) -> Path | None:
 
 
 def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
-                  profile_home: Path | None = None, author: Optional[dict] = None) -> int:
+                  profile_home: Path | None = None, author: Optional[dict] = None,
+                  stored_session_id: str | None = None) -> int:
     """Route to the live owner before attempting a CLI transport. Live deliveries
     retain their intent/payload and immutable receipt; only CLI/peer payloads are
     removed after consumption. The CLI turn window holds the profile lock, so two
@@ -646,7 +732,7 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
         home = profile_home or _local_delivery_home(argv)
         if home is not None or Path(dm_file + ".live.json").exists():
             try:
-                record = _admit_live_dm(home, dm_file, author)
+                record = _admit_live_dm(home, dm_file, author, stored_session_id)
             except Exception as exc:
                 print(json.dumps({"status": "ambiguous", "delivery_id": hashlib.sha256(
                     str(Path(dm_file).resolve()).encode()).hexdigest(),
@@ -671,13 +757,16 @@ def _run_delivery(argv: list[str], dm_file: str, *, stdin_file: bool,
 
 
 def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
-                      profile_home: Path | None = None, author: Optional[dict] = None) -> str:
+                      profile_home: Path | None = None, author: Optional[dict] = None,
+                      stored_session_id: str | None = None) -> str:
     """Build an argv-safe command for the cleanup-owning background runner:
     ``--run-delivery [--author <json>] <mode> <dm_file> [--profile-home <path>] <argv...>``."""
     runner_argv = [sys.executable, str(Path(__file__).resolve()), "--run-delivery",
                    "stdin" if stdin_file else "query-file", dm_file]
     if profile_home is not None:
         runner_argv.extend(["--profile-home", str(Path(profile_home).resolve())])
+    if stored_session_id is not None:
+        runner_argv.extend(["--stored-session-id", stored_session_id])
     runner_argv.extend(argv)
     if sys.platform == "win32":
         # The tracked local backend uses Git Bash on native Windows: forward slashes keep drive
@@ -691,19 +780,23 @@ def _delivery_command(argv: list[str], dm_file: str, *, stdin_file: bool,
 
 def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bool,
                     task_id: Optional[str], agent: Any, profile_home: Path | None = None,
-                    author: Optional[dict] = None) -> str:
+                    author: Optional[dict] = None,
+                    stored_session_id: str | None = None) -> str:
     """Create a DM file and transfer its cleanup ownership to the runner."""
     dm_file = _write_dm_file(content)
     if profile_home is not None:
         try:
-            record = _admit_live_dm(profile_home, dm_file, author)
+            record = _admit_live_dm(profile_home, dm_file, author, stored_session_id)
         except Exception as exc:
             return json.dumps({"status": "ambiguous", "delivery_id": hashlib.sha256(
                 str(Path(dm_file).resolve()).encode()).hexdigest(),
                 "error": f"Live delivery admission could not be confirmed: {exc}. Do not resend.",
                 "evidence_file": dm_file})
         if record is not None:
-            command = _delivery_command(argv, dm_file, stdin_file=False, profile_home=profile_home, author=author)
+            command = _delivery_command(
+                argv, dm_file, stdin_file=False, profile_home=profile_home,
+                author=author, stored_session_id=stored_session_id,
+            )
             notification = json.loads(_spawn_delivery(command, label, task_id=task_id, agent=agent))
             result = dict(status=record["status"], delivery_id=record["delivery_id"], to=label,
                           detail="Durably queued for the live Bot Chat owner. Do NOT wait or resend; finish your turn.")
@@ -713,7 +806,10 @@ def _start_delivery(argv: list[str], content: str, label: str, *, stdin_file: bo
                 result["process_id"] = notification["process_id"]
             return json.dumps(result)
     try:
-        command = _delivery_command(argv, dm_file, stdin_file=stdin_file, profile_home=profile_home, author=author)
+        command = _delivery_command(
+            argv, dm_file, stdin_file=stdin_file, profile_home=profile_home,
+            author=author, stored_session_id=stored_session_id,
+        )
     except BaseException:
         _unlink_dm_file(dm_file)
         raise
@@ -780,10 +876,15 @@ def _delivery_main(args: list[str]) -> int:
     if len(rest) < 2 or rest[0] not in ("stdin", "query-file"):
         return 2
     try:
-        argv, profile_home = rest[2:], None
+        argv, profile_home, stored_session_id = rest[2:], None, None
         if len(argv) >= 2 and argv[0] == "--profile-home":
             profile_home, argv = Path(argv[1]), argv[2:]
-        return _run_delivery(argv, rest[1], stdin_file=rest[0] == "stdin", profile_home=profile_home, author=author)
+        if len(argv) >= 2 and argv[0] == "--stored-session-id":
+            stored_session_id, argv = argv[1], argv[2:]
+        return _run_delivery(
+            argv, rest[1], stdin_file=rest[0] == "stdin", profile_home=profile_home,
+            author=author, stored_session_id=stored_session_id,
+        )
     except Exception as exc:
         # 'target_busy': the queued delivery gave up after its bounded wait — surface the
         # structured payload on stdout so the completion notification carries it back.

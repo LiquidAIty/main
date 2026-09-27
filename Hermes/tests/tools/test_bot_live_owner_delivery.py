@@ -95,6 +95,39 @@ def test_only_canonical_capable_owner_receives_across_compression(tmp_path, capa
         db.close()
 
 
+def test_explicit_stored_session_selects_only_its_live_owner(tmp_path):
+    from hermes_state import SessionDB
+    from hermes_cli.active_sessions import try_acquire_active_session
+    from tools import bot_live_delivery as mailbox
+
+    db = SessionDB(db_path=tmp_path / "state.db")
+    leases = []
+    meta = dict(live_session_id="live", bot_live_delivery_consumer=True)
+    try:
+        for session_id, suffix in (("source", "a"), ("target", "b")):
+            db.create_session(session_id=session_id, source="cli")
+            db.set_session_title(session_id, f"Bot Chat:{suffix * 64}")
+            lease, refusal = try_acquire_active_session(
+                session_id=session_id,
+                surface="desktop",
+                config={},
+                registry_home=tmp_path,
+                metadata={**meta, "live_session_id": f"live-{session_id}"},
+            )
+            assert refusal is None
+            leases.append(lease)
+
+        owner = mailbox.find_canonical_live_owner(tmp_path, "target")
+
+        assert owner is not None
+        assert owner["session_id"] == "target"
+        assert owner["live_session_id"] == "live-target"
+    finally:
+        for lease in leases:
+            lease.release()
+        db.close()
+
+
 def test_delivery_keeps_the_sender_and_refuses_a_different_one_under_the_same_id(tmp_path):
     from tools import bot_live_delivery as mailbox
 

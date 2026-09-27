@@ -101,7 +101,9 @@ const deckMocks = vi.hoisted(() => ({
 }));
 
 const agentTerminalMocks = vi.hoisted(() => {
-  const staged = new Map<string, { runId: string; message: string; cardId: string }>();
+  const staged = new Map<string, {
+    runId: string; message: string; cardId: string; owner: any;
+  }>();
   const completed = new Map<string, Record<string, unknown>>();
   const cancelled = new Set<string>();
   const gatewayListeners = new Set<(event: Record<string, unknown>) => void>();
@@ -112,22 +114,28 @@ const agentTerminalMocks = vi.hoisted(() => {
     : cardId === 'builder' ? 'builder'
       : cardId === 'card_thinkgraph' ? 'thinkgraph'
       : cardId === 'card_hermes_steward' ? 'liquidaity-hermes-steward' : 'delegate';
-  const stateFor = (owner: any) => ({
-    sessionId: `terminal:${owner.cardId}`,
+  const stateFor = (owner: any) => {
+    const conversationId = String(owner.conversationId || 'card-terminal');
+    const conversationSuffix = ['main', 'card-terminal'].includes(conversationId)
+      ? ''
+      : `:${conversationId}`;
+    return ({
+    sessionId: `terminal:${owner.cardId}${conversationSuffix}`,
     cardId: owner.cardId,
     profile: profileFor(owner.cardId),
     pid: 9000,
     gatewayPid: 9000,
     tuiPid: 9001,
     ptyId: `pty:${owner.cardId}`,
-    nativeSessionId: `native:${profileFor(owner.cardId)}`,
-    storedSessionId: `native:${profileFor(owner.cardId)}`,
+    nativeSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
+    storedSessionId: `native:${profileFor(owner.cardId)}${conversationSuffix}`,
     hermesHome: `C:\\profiles\\${profileFor(owner.cardId)}`,
     unavailableToolReasons: {},
     status: 'running',
     cols: 120,
     rows: 36,
   });
+  };
   const find = vi.fn((owner: any): ReturnType<typeof stateFor> | null => stateFor(owner));
   const open = vi.fn(async (owner: any) => stateFor(owner));
   const magenticCardToolAuthority = vi.fn((owner: any) => ({
@@ -137,9 +145,9 @@ const agentTerminalMocks = vi.hoisted(() => {
     configurationFingerprint: 'a'.repeat(64),
   }));
   const findCard = vi.fn((
-    projectId: string, deckId: string, cardId: string,
+    projectId: string, deckId: string, cardId: string, conversationId?: string,
   ): { owner: any; state: ReturnType<typeof stateFor> } | null => {
-    const owner = { userId: 'owner-user', projectId, deckId, cardId };
+    const owner = { userId: 'owner-user', projectId, deckId, cardId, ...(conversationId ? { conversationId } : {}) };
     return { owner, state: stateFor(owner) };
   });
   const history = vi.fn(async () => ({ count: 0, messages: [] as Array<Record<string, unknown>> }));
@@ -172,7 +180,7 @@ const agentTerminalMocks = vi.hoisted(() => {
   ) => completed.set(runId, {
     state: 'completed',
     finalResult: text,
-    hermesSessionId: `native:${profileFor(owner.cardId)}`,
+    hermesSessionId: stateFor(owner).nativeSessionId,
     nativeRootId: null,
     nativeRunId: null,
     effectiveProvider: 'openai-codex',
@@ -190,6 +198,7 @@ const agentTerminalMocks = vi.hoisted(() => {
       runId: String(prepared.runId),
       message: String(prepared.hermesTransport.request.message),
       cardId: owner.cardId,
+      owner,
     };
     staged.set(sessionId, record);
     return { runId: record.runId, message: record.message };
@@ -219,10 +228,10 @@ const agentTerminalMocks = vi.hoisted(() => {
     } : overrides;
     options?.onEvent?.({
       type: 'message.delta',
-      session_id: `native:${profileFor(owner.cardId)}`,
+      session_id: stateFor(owner).nativeSessionId,
       payload: { text },
     });
-    const event = { type: 'message.complete', session_id: `native:${profileFor(owner.cardId)}`,
+    const event = { type: 'message.complete', session_id: stateFor(owner).nativeSessionId,
       payload: {
         status: 'complete',
         text,
@@ -259,7 +268,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     const record = staged.get(sessionId);
     if (!record) throw new Error('agent_terminal_staged_run_missing');
     staged.delete(sessionId);
-    const owner = { cardId: record.cardId };
+    const owner = record.owner;
     const usage = result.event?.payload?.usage || {};
     complete(record.runId, owner, result.text, usage);
     return {
@@ -768,7 +777,7 @@ const dbMocks = vi.hoisted(() => ({
     const projectId = String(params?.[0] || '');
     const ownerMatches = !sql.includes('owner_user_id = $2') || params?.[1] === 'owner-user';
     return {
-      rows: projectId === 'project-1' && ownerMatches
+      rows: ['project-1', 'project-one', 'terminal-project-shared'].includes(projectId) && ownerMatches
         ? [{ id: projectId, name: 'Owned project', code: null, status: 'active',
             project_type: 'agent', owner_user_id: 'owner-user' }]
         : [],
@@ -906,7 +915,42 @@ describe('saved Card routes', () => {
       } finally { await closeServer(server); }
     });
 
-  it('projects only user and assistant messages from the one native Main Card session', async () => {
+  it('refuses an authenticated non-owner before resolving either Main or Card runtime sessions', async () => {
+    agentTerminalMocks.manager.findCard.mockClear();
+    agentTerminalMocks.manager.history.mockClear();
+    agentTerminalMocks.manager.open.mockClear();
+    agentTerminalMocks.manager.submit.mockClear();
+    const { server, baseUrl } = await createApiServer('different-user');
+    try {
+      const history = await fetch(
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
+      );
+      expect(history.status).toBe(403);
+      await expect(history.json()).resolves.toEqual({
+        ok: false, error: 'main_project_access_denied',
+      });
+
+      const run = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder',
+          correlationId: 'cross-user-refusal', conversationId: 'main',
+          input: 'Must not reach Hermes.', action: 'execute',
+        }),
+      });
+      expect(run.status).toBe(502);
+      await expect(run.json()).resolves.toMatchObject({
+        ok: false, error: 'agent_terminal_project_access_denied',
+      });
+      expect(agentTerminalMocks.manager.findCard).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.open).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+    } finally { await closeServer(server); }
+  });
+
+  it('projects only user and assistant messages from the selected native Main conversation session', async () => {
     agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 3, messages: [
       { role: 'user', text: 'Question' },
       { role: 'tool', text: 'private tool event' },
@@ -919,8 +963,8 @@ describe('saved Card routes', () => {
       const payload = await response.json();
       expect(payload).toMatchObject({
         ok: true,
-        sessionId: 'native:default',
-        runtimeSessionId: 'terminal:card_main_chat',
+        sessionId: 'native:default:other',
+        runtimeSessionId: 'terminal:card_main_chat:other',
         mainCardId: 'card_main_chat',
         messages: [
           { role: 'user', text: 'Question', speaker: { kind: 'user', label: 'You' },
@@ -936,9 +980,40 @@ describe('saved Card routes', () => {
         }),
       ]));
       expect(agentTerminalMocks.manager.history).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
-        'terminal:card_main_chat',
+        {
+          userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_main_chat', conversationId: 'other',
+        },
+        'terminal:card_main_chat:other',
       );
+    } finally { await closeServer(server); }
+  });
+
+  it('resolves Main history A to B to A without crossing conversation sessions', async () => {
+    agentTerminalMocks.manager.findCard.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const runtimeIds: string[] = [];
+      for (const conversationId of ['conversation-a', 'conversation-b', 'conversation-a']) {
+        const response = await fetch(
+          `${baseUrl}/main/session/history?projectId=project-1&conversationId=${conversationId}`,
+        );
+        expect(response.status).toBe(200);
+        const payload = await response.json();
+        runtimeIds.push(payload.runtimeSessionId);
+      }
+      expect(runtimeIds).toEqual([
+        'terminal:card_main_chat:conversation-a',
+        'terminal:card_main_chat:conversation-b',
+        'terminal:card_main_chat:conversation-a',
+      ]);
+      const selectedConversations = agentTerminalMocks.manager.findCard.mock.calls
+        .filter((call: unknown[]) => call[2] === 'card_main_chat')
+        .map((call: unknown[]) => call[3]);
+      expect(selectedConversations).toEqual(expect.arrayContaining([
+        'conversation-a', 'conversation-b',
+      ]));
+      expect(selectedConversations.at(-1)).toBe('conversation-a');
     } finally { await closeServer(server); }
   });
 
@@ -1031,7 +1106,10 @@ describe('saved Card routes', () => {
         mainCardId: 'card_main_chat',
       });
       expect(agentTerminalMocks.manager.open).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+        {
+          userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_main_chat', conversationId: 'main',
+        },
         expect.objectContaining({ id: 'card_main_chat' }),
         expect.any(Object),
         120,
@@ -1104,7 +1182,7 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/event-stream');
       expect(agentTerminalMocks.manager.subscribeGatewayEvents).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'main' },
         'terminal:card_main_chat',
         expect.any(Function),
       );
@@ -1174,7 +1252,9 @@ describe('saved Card routes', () => {
     const { server, baseUrl } = await createApiServer();
     const origin = new URL(baseUrl).origin;
     try {
-      const response = await fetch(`${origin}/api/main/session/driver?projectId=project-1`);
+      const response = await fetch(
+        `${origin}/api/main/session/driver?projectId=project-1&conversationId=main`,
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ ok: true });
     } finally {
@@ -1724,7 +1804,7 @@ describe('saved Card routes', () => {
         },
       });
       expect(agentTerminalMocks.execution.stage).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'main' },
         'terminal:card_main_chat',
         'default',
         expect.objectContaining({ runId: 'corr-main-1' }),
@@ -1892,7 +1972,7 @@ describe('saved Card routes', () => {
       });
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledOnce();
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'main' },
         'terminal:builder',
         'Update the selected Card prompt and explicit tools.',
         expect.any(Object),
@@ -2185,7 +2265,7 @@ describe('saved Card routes', () => {
 
       expect(response.status).toBe(200);
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate' },
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate', conversationId: 'main' },
         'terminal:card_test_delegate',
         '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect the bounded code slice.',
         expect.any(Object),
@@ -2494,7 +2574,7 @@ describe('saved Card routes', () => {
         'corr-delegate-stopped',
       );
       expect(agentTerminalMocks.manager.interrupt).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate' },
+        { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_test_delegate', conversationId: 'main' },
         'terminal:card_test_delegate',
       );
       await request;
@@ -2527,7 +2607,7 @@ describe('saved Card routes', () => {
       });
       expect(response.status).toBe(200);
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'builder' },
+        { userId: 'owner-user', projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'builder', conversationId: 'main' },
         'terminal:builder',
         'Inspect the selected Card.',
         expect.any(Object),
@@ -2568,7 +2648,7 @@ describe('saved Card routes', () => {
       });
       expect(assignedResponse.status, await assignedResponse.text()).toBe(200);
       expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-        { userId: 'owner-user', projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'card_test_delegate' },
+        { userId: 'owner-user', projectId: 'terminal-project-shared', deckId: 'deck_builder', cardId: 'card_test_delegate', conversationId: 'main' },
         'terminal:card_test_delegate',
         '## Resolved CodeGraph\n- pkg.materialize_idf\n\nInspect a different bounded symbol.',
         expect.any(Object),
@@ -3509,7 +3589,7 @@ describe('saved Card routes', () => {
 
     it('streams structured public text from Main\'s exact Gateway runtime with saved Card identity', async () => {
       agentTerminalMocks.manager.submit.mockClear();
-      const { server, baseUrl } = await createApiServer('rotated-local-user');
+      const { server, baseUrl } = await createApiServer();
       try {
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
@@ -3526,18 +3606,18 @@ describe('saved Card routes', () => {
         expect(body).not.toContain('event: tool_result');
         const sessionFrame = body.split('\n\n').find((frame) => frame.startsWith('event: session'))!;
         const session = JSON.parse(sessionFrame.split('\ndata: ')[1]);
-        expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native:default',
+        expect(session).toMatchObject({ cardId: 'card_main_chat', sessionId: 'native:default:attention',
           driverSource: 'internal_chat',
           contextAuthorityMode: 'main_native_honcho',
           configuration: { profile: 'default', provider: 'openai', model: 'gpt-5.6-luna' } });
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
-          'terminal:card_main_chat',
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'attention' },
+          'terminal:card_main_chat:attention',
           'inspect',
           expect.any(Object),
         );
         expect(agentTerminalMocks.completed.get(session.runId)).toMatchObject({
-          state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default',
+          state: 'completed', finalResult: 'Real assistant reply.', hermesSessionId: 'native:default:attention',
         });
       } finally {
         await closeServer(server);
@@ -3717,8 +3797,8 @@ describe('saved Card routes', () => {
         });
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
-          'terminal:builder',
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'direct-builder' },
+          'terminal:builder:direct-builder',
           exactMessage,
           expect.objectContaining({ surface: 'card-shared-chat' }),
         );
@@ -3737,7 +3817,8 @@ describe('saved Card routes', () => {
           ],
         }));
         expect(agentTerminalMocks.completed.get(runEvent.runId)).toMatchObject({
-          state: 'completed', finalResult: fullReply, hermesSessionId: 'native:builder',
+          state: 'completed', finalResult: fullReply,
+          hermesSessionId: 'native:builder:direct-builder',
         });
       } finally {
         await closeServer(server);
@@ -3797,7 +3878,7 @@ describe('saved Card routes', () => {
           expect(request).toMatchObject({
             runId: preparedRunId,
             orchestrator: { cardId: 'card_magentic', nativeIdentity: 'card_magentic' },
-            notifySession: { sessionKey: 'native:default', profile: 'default' },
+            notifySession: { sessionKey: 'native:default:direct-magnetic', profile: 'default' },
           });
           return {
             ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_shared_magnetic',
@@ -3891,8 +3972,8 @@ describe('saved Card routes', () => {
           ([endpoint]) => endpoint === '/domain/main/runs/begin',
         )).toHaveLength(0);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder' },
-          'terminal:builder',
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'direct-builder-failure' },
+          'terminal:builder:direct-builder-failure',
           exactMessage,
           expect.any(Object),
         );
@@ -4240,7 +4321,7 @@ describe('saved Card routes', () => {
           conversationId: 'chat',
           runId: expect.stringMatching(/^req_/),
           cardId: 'card_main_chat',
-          nativeSessionRef: 'native:default',
+          nativeSessionRef: 'native:default:chat',
           completedAt: expect.any(String),
           userMessage: exactMessage,
           mainResponse: 'Real assistant reply.',
@@ -4315,7 +4396,7 @@ describe('saved Card routes', () => {
             cardId: 'card_thinkgraph',
             revisionId: 'revision:card_thinkgraph',
             profile: 'thinkgraph',
-            nativeSessionRef: 'native:thinkgraph',
+            nativeSessionRef: 'native:thinkgraph:chat',
             resolvedModel: 'gpt-5.6-luna',
           },
         });
@@ -4436,7 +4517,7 @@ describe('saved Card routes', () => {
           driverSource: 'external_plugin',
           contextAuthorityMode: 'plugin_context_only',
           finalText: 'Real assistant reply.',
-          nativeSessionId: 'native:default',
+          nativeSessionId: 'native:default:external-mcp:grant-1',
           requestFulfillmentDeferred: true,
         });
         expect(scoreStarted).toBe(true);
@@ -4453,8 +4534,10 @@ describe('saved Card routes', () => {
           message: 'hello from the connector',
         });
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
-          expect.objectContaining({ cardId: 'card_main_chat' }),
-          'terminal:card_main_chat',
+          expect.objectContaining({
+            cardId: 'card_main_chat', conversationId: 'external-mcp:grant-1',
+          }),
+          'terminal:card_main_chat:external-mcp:grant-1',
           'hello from the connector',
           expect.any(Object),
         );
@@ -4522,7 +4605,7 @@ describe('saved Card routes', () => {
 
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
         expect(agentTerminalMocks.manager.submit.mock.calls[0].slice(0, 3)).toEqual([
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'main' },
           'terminal:card_main_chat',
           'materialize exactly once',
         ]);
@@ -4659,23 +4742,25 @@ describe('saved Card routes', () => {
         const stopResponse = await fetch(`${baseUrl}/main/session/stop`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', expectedRunId: activeRunId }),
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'stop-main', expectedRunId: activeRunId,
+          }),
         });
         const stopped = await stopResponse.json() as any;
         expect(stopResponse.status, JSON.stringify(stopped)).toBe(202);
         expect(stopped).toMatchObject({ ok: true, runId: activeRunId, state: 'stopping' });
         expect(agentTerminalMocks.execution.requestCancellation).toHaveBeenCalledWith(
-          'terminal:card_main_chat', activeRunId,
+          'terminal:card_main_chat:stop-main', activeRunId,
         );
         expect(agentTerminalMocks.manager.interrupt).toHaveBeenCalledWith(
-          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat' },
-          'terminal:card_main_chat',
+          { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_main_chat', conversationId: 'stop-main' },
+          'terminal:card_main_chat:stop-main',
         );
         const stream = await chatResponse.text();
         expect(stream).toContain('hermes_turn_cancelled');
         expect(stream).toContain('event: end');
         expect(agentTerminalMocks.execution.cancelStaged).toHaveBeenCalledWith(
-          'terminal:card_main_chat', 'hermes_turn_cancelled', 'cancelled',
+          'terminal:card_main_chat:stop-main', 'hermes_turn_cancelled', 'cancelled',
         );
       } finally {
         await closeServer(server);
@@ -4725,6 +4810,7 @@ describe('saved Card routes', () => {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             projectId: 'project-1', deckId: 'deck_builder',
+            conversationId: 'magnetic-stop',
             expectedRunId: runId, expectedCardId: 'card_magentic',
           }),
         });

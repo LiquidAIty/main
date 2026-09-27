@@ -119,10 +119,11 @@ KNOWN_CARD_FIELDS = {
 
 PROTECTED_CARD_IDS = frozenset({
     "card_main_chat",
+    "builder",
+    "card_thinkgraph",
     "card_knowgraph",
     "card_magentic",
-    "card_trading_workbench",
-    "card_worldsignals_agent",
+    "card_team",
 })
 
 _CARD_JEV_MAX_STATE_BYTES = 240_000
@@ -1126,6 +1127,60 @@ def _stable_card(card: dict[str, Any]) -> dict[str, Any]:
     return stable
 
 
+def _validate_immutable_runtime_profile(
+    previous: dict[str, Any],
+    incoming: dict[str, Any],
+) -> None:
+    """Keep one saved Hermes Card permanently bound to its original profile."""
+    previous_runtime = _json_object(previous.get("runtime"), "runtime")
+    if previous_runtime.get("kind") != "hermes":
+        return
+    incoming_runtime = _json_object(incoming.get("runtime"), "runtime")
+    if incoming_runtime.get("profile") != previous_runtime.get("profile"):
+        raise CardDomainError("card_runtime_profile_immutable")
+
+
+def _lock_and_validate_hermes_profile_bindings(
+    cursor: Any,
+    cards: list[dict[str, Any]],
+) -> None:
+    """Serialize and enforce the permanent global Hermes profile binding.
+
+    The same stable Card identity may be present in multiple Projects, but one
+    native profile can never become authority for a different Card identity.
+    Lock every profile in sorted order before reading any binding so concurrent
+    Project saves and backend Card attachment share one race-free boundary.
+    """
+    bindings = {
+        _card_runtime(card)["profile"].strip().lower(): _required_text(
+            card.get("id"), "card_id",
+        )
+        for card in cards
+        if _card_runtime(card).get("kind") == "hermes"
+    }
+    for profile in sorted(bindings):
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"card-profile:{profile}",),
+        )
+    for profile in sorted(bindings):
+        card_id = bindings[profile]
+        cursor.execute(
+            """
+            SELECT card_id
+            FROM ag_catalog.agent_card_revisions
+            WHERE runtime_kind='hermes'
+              AND LOWER(runtime_profile)=%s
+              AND card_id<>%s
+            ORDER BY card_id
+            LIMIT 1
+            """,
+            (profile, card_id),
+        )
+        if cursor.fetchone() is not None:
+            raise CardDomainError(f"card_profile_duplicate:{profile}")
+
+
 def _subagent_model_selection(value: Any) -> dict[str, str] | None:
     """Validate the saved desired child-model selector without consulting availability.
 
@@ -2041,11 +2096,13 @@ def save_deck(
         with connection.cursor(row_factory=dict_row) as cursor:
             project = _resolve_project(cursor, project_ref)
             project_id = str(project["id"])
+            _lock_and_validate_hermes_profile_bindings(cursor, incoming_nodes)
             cursor.execute(
                 "SELECT 1 FROM ag_catalog.agent_decks WHERE project_id=%s AND deck_id=%s FOR UPDATE",
                 (project_id, deck_id),
             )
-            if cursor.fetchone() is None:
+            deck_exists = cursor.fetchone() is not None
+            if not deck_exists:
                 if expected_revision:
                     raise CardDomainError("deck_conflict")
                 _validate_changed_flow_edges(incoming_nodes, incoming_edges, [])
@@ -2113,12 +2170,22 @@ def save_deck(
                 raise CardDomainError("deck_conflict")
             _validate_changed_flow_edges(incoming_nodes, incoming_edges, current["deck"]["edges"])
             current_by_id = {node["id"]: node for node in current["deck"]["nodes"]}
-            incoming_by_id = {_required_text(node.get("id"), "card_id"): node for node in incoming_nodes}
+            incoming_by_id = {
+                _required_text(node.get("id"), "card_id"): node
+                for node in incoming_nodes
+            }
             if set(current_by_id) - set(incoming_by_id):
                 raise CardDomainError("card_deletion_requires_explicit_operation")
+            propagated_decks: set[tuple[str, str]] = set()
             for ordinal, node in enumerate(incoming_nodes):
                 card_id = node["id"]
                 previous = current_by_id.get(card_id)
+                # Project creation and saved-Card attachment may establish the
+                # relational membership first while reusing an existing immutable
+                # Card revision.  AGE owns only this Project-local canvas presence,
+                # so ensure the scoped vertex on every save, not only when a new
+                # Card definition is inserted.
+                _ensure_age_card(cursor, project_id, deck_id, card_id)
                 if previous is None:
                     cursor.execute(
                         "INSERT INTO ag_catalog.agent_cards (project_id, deck_id, card_id) VALUES (%s,%s,%s)",
@@ -2126,19 +2193,63 @@ def save_deck(
                     )
                     revision_number = 1
                     revision_id = _insert_revision(cursor, project_id, deck_id, node, revision_number)
-                    _ensure_age_card(cursor, project_id, deck_id, card_id)
+                    cursor.execute(
+                        "UPDATE ag_catalog.agent_cards SET current_revision_id=%s WHERE project_id=%s AND deck_id=%s AND card_id=%s",
+                        (revision_id, project_id, deck_id, card_id),
+                    )
                 else:
                     next_stable = _stable_card(node)
                     previous_stable = _stable_card(previous)
+                    _validate_immutable_runtime_profile(previous_stable, next_stable)
                     if _canonical_json(next_stable) == _canonical_json(previous_stable):
                         revision_id = previous["_cardRevisionId"]
+                        cursor.execute(
+                            "UPDATE ag_catalog.agent_cards SET current_revision_id=%s WHERE project_id=%s AND deck_id=%s AND card_id=%s",
+                            (revision_id, project_id, deck_id, card_id),
+                        )
                     else:
-                        revision_number = int(previous["_cardRevision"]) + 1
-                        revision_id = _insert_revision(cursor, project_id, deck_id, node, revision_number)
-                cursor.execute(
-                    "UPDATE ag_catalog.agent_cards SET current_revision_id=%s WHERE project_id=%s AND deck_id=%s AND card_id=%s",
-                    (revision_id, project_id, deck_id, card_id),
-                )
+                        previous_revision_id = str(previous["_cardRevisionId"])
+                        cursor.execute(
+                            """
+                            SELECT revision.project_id::text, revision.deck_id,
+                                   revision.card_id,
+                                   MAX(lineage.revision_number) AS latest_revision_number
+                            FROM ag_catalog.agent_card_revisions AS revision
+                            JOIN ag_catalog.agent_card_revisions AS lineage
+                              ON lineage.project_id=revision.project_id
+                             AND lineage.deck_id=revision.deck_id
+                             AND lineage.card_id=revision.card_id
+                            WHERE revision.revision_id=%s
+                            GROUP BY revision.project_id, revision.deck_id, revision.card_id
+                            """,
+                            (previous_revision_id,),
+                        )
+                        revision_owner = cursor.fetchone()
+                        if revision_owner is None:
+                            raise CardDomainError("card_revision_not_found")
+                        revision_id = _insert_revision(
+                            cursor,
+                            str(revision_owner["project_id"]),
+                            str(revision_owner["deck_id"]),
+                            node,
+                            int(revision_owner["latest_revision_number"]) + 1,
+                        )
+                        cursor.execute(
+                            """
+                            UPDATE ag_catalog.agent_cards
+                            SET current_revision_id=%s
+                            WHERE card_id=%s AND current_revision_id=%s
+                            RETURNING project_id::text, deck_id
+                            """,
+                            (revision_id, card_id, previous_revision_id),
+                        )
+                        advanced_decks = {
+                            (str(row["project_id"]), str(row["deck_id"]))
+                            for row in cursor.fetchall()
+                        }
+                        if not advanced_decks:
+                            raise CardDomainError("card_revision_stale")
+                        propagated_decks.update(advanced_decks)
                 position = _json_object(node.get("position"), "card_position")
                 cursor.execute(
                     """
@@ -2182,7 +2293,27 @@ def save_deck(
                       (project_id, deck_id, template_id, ordinal, content)
                     VALUES (%s,%s,%s,%s,%s)
                     """,
-                    (project_id, deck_id, template["id"], ordinal, str(template.get("content") or "")),
+                    (
+                        project_id,
+                        deck_id,
+                        template["id"],
+                        ordinal,
+                        str(template.get("content") or ""),
+                    ),
+                )
+            propagated_decks.discard((project_id, deck_id))
+            for propagated_project_id, propagated_deck_id in propagated_decks:
+                propagated_at = _now()
+                cursor.execute(
+                    """
+                    UPDATE ag_catalog.agent_decks
+                    SET revision=%s, saved_at=%s, updated_at=%s
+                    WHERE project_id=%s AND deck_id=%s
+                    """,
+                    (
+                        str(uuid4()), propagated_at, propagated_at,
+                        propagated_project_id, propagated_deck_id,
+                    ),
                 )
             revision = str(uuid4())
             saved_at = _now()
@@ -2211,7 +2342,12 @@ def delete_card(
     expected_card_revision_id: str,
     deletion_intent: str,
 ) -> dict[str, Any]:
-    """Delete one exact saved Card after explicit optimistic-lock confirmation."""
+    """Detach one Card from this Project after optimistic-lock confirmation.
+
+    The saved Card revision/profile remains canonical and reusable.  Only this
+    Project's membership, active canvas topology, and (when it has no historic
+    telemetry) scoped AGE presentation vertex are removed.
+    """
     project_ref = _required_text(project_ref, "project_id")
     deck_id = _required_text(deck_id, "deck_id")
     card_id = _required_text(card_id, "card_id")
@@ -2267,63 +2403,14 @@ def delete_card(
             if target is None or str(target.get("_cardRevisionId") or "") != expected_card_revision_id:
                 raise CardDomainError("card_revision_conflict")
 
-            cursor.execute(
-                """
-                SELECT 1
-                FROM ag_catalog.agent_runs AS run
-                JOIN ag_catalog.agent_card_revisions AS revision
-                  ON revision.revision_id=run.target_card_revision_id
-                WHERE revision.project_id=%s AND revision.deck_id=%s AND revision.card_id=%s
-                LIMIT 1
-                """,
-                (project_id, deck_id, card_id),
-            )
-            if cursor.fetchone() is not None:
-                raise CardDomainError("card_deletion_references_present:runs")
-
-            cursor.execute(
-                """
-                SELECT 1 FROM ag_catalog.card_run_traces
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                LIMIT 1
-                """,
-                (project_id, deck_id, card_id),
-            )
-            if cursor.fetchone() is not None:
-                raise CardDomainError("card_deletion_references_present:run_traces")
-
-            cursor.execute(
-                """
-                SELECT 1 FROM ag_catalog.trading_jobs
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                LIMIT 1
-                """,
-                (project_id, deck_id, card_id),
-            )
-            if cursor.fetchone() is not None:
-                raise CardDomainError("card_deletion_references_present:trading_jobs")
-            cursor.execute(
-                """
-                SELECT 1 FROM ag_catalog.trading_lifecycle_runs
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                LIMIT 1
-                """,
-                (project_id, deck_id, card_id),
-            )
-            if cursor.fetchone() is not None:
-                raise CardDomainError(
-                    "card_deletion_references_present:trading_lifecycle_runs"
-                )
-            if _card_has_telemetry_edges(cursor, project_id, deck_id, card_id):
-                raise CardDomainError("card_deletion_references_present:agentgraph")
-
             connected_edges = [
                 edge for edge in current["deck"]["edges"]
                 if edge["source"] == card_id or edge["target"] == card_id
             ]
             for edge in connected_edges:
                 _delete_age_edge(cursor, project_id, deck_id, edge)
-            _delete_age_card(cursor, project_id, deck_id, card_id)
+            if not _card_has_telemetry_edges(cursor, project_id, deck_id, card_id):
+                _delete_age_card(cursor, project_id, deck_id, card_id)
 
             cursor.execute(
                 """
@@ -2337,28 +2424,7 @@ def delete_card(
                 raise CardDomainError("deck_integrity_membership_missing")
             cursor.execute(
                 """
-                UPDATE ag_catalog.agent_cards SET current_revision_id=NULL
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                """,
-                (project_id, deck_id, card_id),
-            )
-            cursor.execute(
-                """
                 DELETE FROM ag_catalog.deck_card_memberships
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                """,
-                (project_id, deck_id, card_id),
-            )
-            cursor.execute(
-                """
-                DELETE FROM ag_catalog.agent_card_revisions
-                WHERE project_id=%s AND deck_id=%s AND card_id=%s
-                """,
-                (project_id, deck_id, card_id),
-            )
-            cursor.execute(
-                """
-                DELETE FROM ag_catalog.agent_cards
                 WHERE project_id=%s AND deck_id=%s AND card_id=%s
                 """,
                 (project_id, deck_id, card_id),
@@ -2391,15 +2457,23 @@ def _card_enabled(card: dict[str, Any]) -> bool:
     return card.get("enabled") is not False and option_enabled is not False
 
 
-def _card_has_main_bot_authority(card: dict[str, Any]) -> bool:
-    """Return outbound orange Bot authority for the Hermes Main mode only."""
+def _card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
+    """Return saved outbound orange authority for one non-Magnetic Hermes Card."""
     if card.get("kind") != "agent" or not _card_enabled(card):
         return False
     try:
         runtime = _card_runtime(card)
     except CardDomainError:
         return False
-    return runtime.get("kind") == "hermes" and runtime.get("mode") == "main"
+    options = card.get("runtimeOptions")
+    explicitly_enabled = (
+        isinstance(options, dict) and options.get("orchestrator") is True
+    )
+    return (
+        runtime.get("kind") == "hermes"
+        and not _is_magentic_runtime(runtime)
+        and (runtime.get("mode") == "main" or explicitly_enabled)
+    )
 
 
 def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
@@ -2410,7 +2484,7 @@ def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
         return False
     return (
         not _is_magentic_runtime(runtime)
-        and not _card_has_main_bot_authority(card)
+        and not _card_has_orchestrator_authority(card)
         and _card_enabled(card)
     )
 
@@ -2434,7 +2508,7 @@ def _validate_single_master_topology(
             if (
                 source is not None
                 and target is not None
-                and _card_has_main_bot_authority(source)
+                and _card_has_orchestrator_authority(source)
                 and not _is_magentic_runtime(_card_runtime(target))
             ):
                 masters.setdefault(target_id, set()).add(source_id)
@@ -2449,7 +2523,7 @@ def _validate_single_master_topology(
                 continue
             master_id = source_id if source_is_magnetic else target_id
             worker_id = target_id if source_is_magnetic else source_id
-            if _card_has_main_bot_authority(cards[worker_id]):
+            if _card_has_orchestrator_authority(cards[worker_id]):
                 raise CardDomainError(f"card_master_conflict:{worker_id}")
             masters.setdefault(worker_id, set()).add(master_id)
     for card_id, master_ids in masters.items():
@@ -2601,9 +2675,9 @@ def _direct_card_targets(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Project one Main Card's Bots from its outbound FLOW edges."""
+    """Project one saved orchestrator Card's Bots from outbound FLOW edges."""
     source = cards.get(card_id)
-    if source is None or not _card_has_main_bot_authority(source):
+    if source is None or not _card_has_orchestrator_authority(source):
         return []
     return _connected_hermes_card_targets(
         card_id,
@@ -2618,7 +2692,7 @@ _PUBLIC_CARD_ADDRESS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def _project_hermes_bot_rosters(deck: dict[str, Any]) -> list[dict[str, Any]]:
-    """Compile Main's outbound Bot roster from saved orange topology."""
+    """Compile each saved orchestrator's outbound roster from orange topology."""
     nodes = deck.get("nodes")
     edges = deck.get("edges")
     if not isinstance(nodes, list) or not isinstance(edges, list):
@@ -3243,7 +3317,7 @@ def _prepare_invocation(
             authorized = (
                 sender_runtime is not None
                 and sender_runtime.get("kind") == "hermes"
-                and _card_has_main_bot_authority(sender)
+                and _card_has_orchestrator_authority(sender)
                 and any(
                     target["cardId"] == card_id
                     for target in _direct_card_targets(

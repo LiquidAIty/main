@@ -272,7 +272,7 @@ export default function useAgentBuilderMainChat({
             route: '/api/health',
           });
         }
-        return loadMainDriverStatus(projectId, controller.signal);
+        return loadMainDriverStatus(projectId, deckId, conversationId, controller.signal);
       })
       .then((status) => {
         if (cancelled || !status) return undefined;

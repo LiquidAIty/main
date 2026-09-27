@@ -81,7 +81,7 @@ function ProductGraphsHarness() {
         onShowWorldsignalWorkspace={vi.fn()}
         onShowWorldviewWorkspace={vi.fn()}
         onShowCanvasWorkspace={() => setWorkspaceView('canvas')}
-        onQuickAddAssistNode={vi.fn()}
+        onOpenAddAgent={vi.fn()}
         onShowKnowledgeWorkspace={() => setWorkspaceView('knowledge')}
         onShowTradingWorkspace={vi.fn()}
         onOpenNavigationDrawer={vi.fn()}

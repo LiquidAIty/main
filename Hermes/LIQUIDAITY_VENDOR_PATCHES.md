@@ -2,7 +2,7 @@
 
 This vendored tree is the official Hermes Agent source at the pinned base below,
 plus exactly nine LiquidAIty-owned runtime extensions: durable Team delegation,
-profile-scoped native Bot rosters projected from saved Card topology, a nullable
+execution-scoped native Bot target and exact-session resolution, a nullable
 root-scoped assignee ceiling used by headless Mag One execution, Codex-owned
 authentication for detached workers whose saved profile selects the native app-server
 runtime, exact saved-profile toolset pins for native CLI execution, saved-SOUL
@@ -28,8 +28,8 @@ This register describes source scope; loaded product acceptance is reported sepa
 Upstream Hermes owns Bot delivery, Gateway and session ownership, native queueing,
 delivery and receipts, `prompt.submit`, CLI/TUI behavior, tools, plugins, memory,
 profiles, and lifecycle. Upstream ACP source remains present but is not a
-LiquidAIty Card runtime boundary. The roster extension below changes only native
-target authority and prompt presentation; no LiquidAIty Bot delivery, Gateway,
+LiquidAIty Card runtime boundary. The target-resolution extension below changes only native
+target/session authority and prompt presentation; no LiquidAIty Bot delivery, Gateway,
 ACP, credential, completion-correlation, queue, or lifecycle patch is retained.
 
 Any production difference outside the entries below is unexplained residue
@@ -103,74 +103,73 @@ propagation/worker marker/synthesis hunks, Bot/task entry branches, and
 corresponding tests together. Leave upstream temporary delegation and ordinary
 Kanban intact.
 
-## 2. Profile-scoped native Bot roster
+## 2. Execution-scoped native Bot target and exact session
 
 VENDORED PROJECT: `NousResearch/hermes-agent` 0.21.3 at
 `73521a8e375a867fae14ec0579f2dfb47aa0017e`.
 
-PURPOSE: make one profile's explicit `bot_mode.roster` the sole local
-`message_agent` target authority. LiquidAIty projects each saved, enabled,
-non-Magnetic orchestrator Card's ordered outbound orange targets into this field;
-targets receive no reverse roster unless their own saved setting and outbound edges grant one. Hermes owns Bot Chat
-sessions, live-owner/offline selection, delivery, receipts, replies, retries, and
-notifications.
+PURPOSE: let an embedding application resolve one `message_agent` target at the
+actual native delivery boundary from the calling stored session, then pin both
+live-owner and cold-CLI delivery to the resolved target's exact stored session.
+LiquidAIty's signed Card-tools plugin supplies Project/deck/Card/conversation
+authority; orange outbound `flow` is the only roster source. Stable profiles are
+never cloned and blue Magnetic membership never enters this hook. Hermes retains
+delivery, receipts, replies, retries, and notifications.
 
-EXTERNAL ALTERNATIVE CHECK: pinned Hermes 0.21.3 derives local Bot teammates by
-enumerating every live profile directory and exposes no public profile-scoped
-roster provider. Keeping application middleware authorization would leave two
-target authorities, so the smallest coherent change is one native config field,
-one resolver, and the existing public profile configure/describe RPCs.
+EXTERNAL ALTERNATIVE CHECK: pinned Hermes 0.21.3 resolves local delivery from a
+profile roster and canonical `Bot Chat` title. Profile configuration cannot
+represent concurrent Projects or conversations sharing one stable profile, and a
+model-argument rewrite is forgeable. The smallest generic extension is one native
+resolver hook plus exact stored-session live/cold selection.
 
 FILES AND SYMBOLS:
 
-- `hermes_cli/config_defaults.py`: Bot relay defaults deliberately omit the optional
-  `roster` key so absence remains distinguishable from explicit `[]`.
-- `tools/bot_mode_probe.py`: presence-sensitive ordered `resolve_bot_roster`, exact
-  live-profile resolution, and stock all-live-profile discovery only when the key is absent.
-- `tools/bot_mode_dm.py`: prompt-independent stock `message_agent` validation and
-  local target-home lookup use the native resolver without changing delivery.
-- `tui_gateway/methods_profiles.py` and
-  `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py`: typed
-  profile configure/describe write and readback contract.
-- `tui_gateway/methods_bot_relay.py`: inbound delivery resolves one exact live
-  target profile without treating profile enumeration as sender authority.
-- `hermes_cli/config_migrations.py`: legacy install-wide cleanup explicitly uses
-  the lifecycle-only profile enumerator.
+- `hermes_cli/plugins.py`: declares the value-returning
+  `resolve_message_agent_target` Python-plugin hook; shell hooks cannot register it.
+- `tools/bot_mode_probe.py`: recognizes stock `Bot Chat` and deterministic suffixed
+  application Bot Chat titles without making a title an authority source.
+- `tools/bot_mode_dm.py`: invokes the resolver at the native delivery boundary,
+  validates one exact live saved profile and target stored session, fails closed
+  when a registered resolver is unavailable, and forwards the stored identity
+  through live and cold delivery.
+- `tools/bot_live_delivery.py`: selects an advertised live owner by the authorized
+  stored session and its compression tip rather than by canonical title.
 
-UPSTREAM BEHAVIOR PRESERVED: canonical Bot Chat identity/history, stock
-`message_agent` acknowledgement, live-owner admission, quiet-CLI offline delivery,
+UPSTREAM BEHAVIOR PRESERVED: with no resolver registered, canonical Bot Chat
+identity/history, native roster discovery, `message_agent` acknowledgement,
+live-owner admission, quiet-CLI offline delivery,
 queueing, ordering, retries, receipts, attributed replies, silence handling,
 background notification, remote peer relay, Gateway, terminal, and TUI ownership
-are unchanged after exact local target resolution.
+are unchanged.
 
 CONTRACTS:
 
-- absent configuration preserves stock standalone all-live-profile discovery;
-- explicit empty configuration grants no local Bot targets;
-- configured order is preserved and duplicates are removed without sorting;
-- self, malformed, unknown, deleted, and tombstoned profiles do not broaden access;
-- the default profile is available only when explicitly configured as `default`;
-- prompt construction, target validation, and capability fingerprinting share the
-  same resolver;
-- an epoch mismatch invalidates the matching cached protocol section before the
-  existing one-time prompt rebuild;
-- configure rejects invalid/self/non-live entries and describe returns the exact
-  stored ordered roster.
+- no registered resolver preserves stock native behavior;
+- a registered resolver must return exactly one profile, exact roster, and stored
+  target session or delivery is refused without native-roster fallback;
+- the resolved profile must already be live on the install and belong to the
+  returned exact roster;
+- live delivery matches only that stored session (or its compression tip);
+- cold delivery uses `--resume <stored-session-id>` and never title selection;
+- deterministic suffixed Bot Chat titles enable the native tool but grant no target.
 
 TESTS:
 
-- `tests/tools/test_bot_mode_probe.py`
 - `tests/tools/test_bot_mode_dm.py`
-- `tests/tui_gateway/test_profiles_bot_roster.py`
+- `tests/tools/test_bot_live_owner_delivery.py`
+- `packages/hermes-card-tools/tests/test_plugin.py`
+- `apps/backend/src/routes/hermesCardTools.routes.spec.ts`
+- `apps/backend/src/hermes/agentTerminal.spec.ts`
 
-FORK COST: one additive profile field, one bounded resolver conversion, and public
-profile RPC plumbing. There is no application delivery adapter, credential bridge,
-queue, waiter, callback, correlator, or alternate session/runtime owner.
+FORK COST: one generic plugin hook, one native target-resolution branch, one optional
+stored-session argument through existing delivery helpers, and exact live-owner
+lookup. There is no new queue, waiter, callback, correlator, profile, or runtime owner.
 
-ROLLBACK: remove the field and typed profile RPC members, restore the upstream
-all-live-profile local roster in prompt and target validation, restore lifecycle
-callers to the upstream helper, and remove the focused tests together. No saved
-Card, session, message, or Hermes delivery data requires migration.
+ROLLBACK: remove the resolver hook/title predicate/exact-session arguments and the
+Card-tools callback together; stock profile roster and canonical Bot Chat delivery
+remain. The extension is removable when upstream exposes equivalent exact-session
+target resolution or saved-Card direct messaging is retired. No saved Card, profile,
+session, message, or delivery data requires migration.
 
 ## 3. Root-scoped assignee ceiling for Mag One
 
@@ -567,8 +566,10 @@ Production files:
 - `hermes_cli/runtime_provider.py` — Codex app-server route without duplicate profile OAuth
 - `agent/transports/codex_app_server.py` — complete process-local worker MCP transport
 - `hermes_cli/config_migrations.py` — Bot roster/lifecycle enumeration split
-- `tools/bot_mode_probe.py` — profile-scoped native Bot roster resolver
-- `tools/bot_mode_dm.py` — native local-target validation through the resolver
+- `hermes_cli/plugins.py` — generic native message-target resolver hook
+- `tools/bot_mode_probe.py` — native roster fallback plus application-scoped Bot Chat title predicate
+- `tools/bot_mode_dm.py` — exact target/session validation through the resolver
+- `tools/bot_live_delivery.py` — exact stored-session live-owner lookup
 - `tui_gateway/contracts/profiles_vault_complete_foreign_subagents.py` — typed Bot roster RPC field
 - `tui_gateway/methods_profiles.py` — Bot roster configure/describe and exact CLI toolset pin
 - `tui_gateway/methods_bot_relay.py` — exact inbound live-profile resolution

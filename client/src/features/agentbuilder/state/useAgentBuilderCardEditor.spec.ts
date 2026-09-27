@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { DeckDocument } from '../../../types/agentgraph';
 import { INITIAL_DECK } from '../deck/newProjectDeck';
+import { projectDeckForPersistence } from './useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from './useAgentBuilderCardEditor';
 
 describe('Card settings and saved Bot wires', () => {
@@ -129,6 +130,64 @@ describe('Card settings and saved Bot wires', () => {
     expect(after.role).toBe('Saved presentation role');
     expect(after.prompt).toBe('[ROLE]\nRuntime instructions');
     expect(after.outputContract).toBeUndefined();
+  });
+
+  it('promotes only the explicitly saved New Agent while other drafts stay transient', async () => {
+    const deck = structuredClone(INITIAL_DECK);
+    const template = deck.nodes.find((node) => node.id === 'builder')!;
+    const firstDraft = {
+      ...structuredClone(template),
+      id: 'card_assist_first_draft',
+      title: 'First Draft',
+      runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'agent-first-draft' },
+    };
+    const secondDraft = {
+      ...structuredClone(template),
+      id: 'card_assist_second_draft',
+      title: 'Second Draft',
+      runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'agent-second-draft' },
+    };
+    for (const draft of [firstDraft, secondDraft]) {
+      delete draft._cardRevisionId;
+      delete draft._cardRevision;
+      delete draft._cardRevisionSha256;
+    }
+    deck.nodes.push(firstDraft, secondDraft);
+    deck.edges.push({
+      id: 'edge-second-draft',
+      source: deck.nodes[0].id,
+      target: secondDraft.id,
+      edgeType: 'flow',
+    });
+    const transientIds = new Set([firstDraft.id, secondDraft.id]);
+    const persistDeck = vi.fn(async (_document: DeckDocument) => undefined);
+    const onCardPersisted = vi.fn();
+    const { result } = renderHook(() => useAgentBuilderCardEditor({
+      deck,
+      selectedCardId: firstDraft.id,
+      setDeck: vi.fn(),
+      persistDeck,
+      recordDeckWriteReason: vi.fn(),
+      prepareDeckForCardSave: (document, cardId) => projectDeckForPersistence(
+        document,
+        transientIds,
+        new Set([cardId]),
+      ),
+      onCardPersisted,
+    }));
+
+    await act(async () => {
+      await result.current.handleSaveSelectedCardConfig({
+        ...result.current.selectedCardConfig!,
+        prompt_template: 'Explicit first Card save',
+      });
+    });
+
+    const saved = persistDeck.mock.calls[0][0];
+    expect(saved.nodes.some((node) => node.id === firstDraft.id)).toBe(true);
+    expect(saved.nodes.some((node) => node.id === secondDraft.id)).toBe(false);
+    expect(saved.edges.some((edge) => edge.id === 'edge-second-draft')).toBe(false);
+    expect(onCardPersisted).toHaveBeenCalledWith(firstDraft.id);
   });
 
 });

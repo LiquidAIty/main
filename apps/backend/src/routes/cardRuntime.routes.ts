@@ -53,7 +53,7 @@ async function authorizeMainProject(req: Request, res: Response, projectId: stri
   }
   try {
     const project = await getProjectCard(projectId);
-    if (!project?.ownerUserId?.trim()) {
+    if (!project?.ownerUserId?.trim() || project.ownerUserId.trim() !== userId) {
       res.status(403).json({ ok: false, error: 'main_project_access_denied' });
       return false;
     }
@@ -606,10 +606,13 @@ function boundedContextualNodeReaderContext(
 async function nativeMainHistorySeed(
   projectId: string,
   deckId: string,
+  conversationId: string,
   main: AddressableAgent,
 ): Promise<SharedChatMessageWrite[]> {
   try {
-    const runtime = agentTerminalManager.findCard(projectId, deckId, main.cardId);
+    const runtime = agentTerminalManager.findCard(
+      projectId, deckId, main.cardId, conversationId,
+    );
     if (!runtime) return [];
     const history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
     return history.messages
@@ -766,23 +769,58 @@ function internalMcpBridgeAuthorized(value: unknown): boolean {
   return internalMcpBridgeSecretAuthorized(value);
 }
 
+type InternalMainBridgeScope = {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+};
+
+function internalMainBridgeScope(req: Request): InternalMainBridgeScope | null {
+  const scope = (req as any).internalMainBridgeScope;
+  if (!scope || typeof scope !== 'object') return null;
+  return {
+    projectId: String(scope.projectId || '').trim(),
+    deckId: String(scope.deckId || '').trim(),
+    conversationId: String(scope.conversationId || '').trim(),
+  };
+}
+
 async function resolveCardRuntimeOwner(
   req: Request,
   projectId: string,
   deckId: string,
   cardId: string,
+  conversationId: string,
 ): Promise<AgentTerminalOwner> {
-  const authenticated = (req as any).internalMcpBridgeAuthenticated === true || (
-    typeof (req as any).userId === 'string'
-    && String((req as any).userId).trim().length > 0
-  );
-  if (!authenticated) throw new Error('agent_terminal_owner_authentication_required');
-  const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
-  if (runtime) return runtime.owner;
   const project = await getProjectCard(projectId);
   const savedOwnerUserId = String(project?.ownerUserId || '').trim();
   if (!savedOwnerUserId) throw new Error('agent_terminal_project_owner_missing');
-  return { userId: savedOwnerUserId, projectId, deckId, cardId };
+
+  const bridgeScope = internalMainBridgeScope(req);
+  if (bridgeScope) {
+    if (
+      bridgeScope.projectId !== projectId
+      || bridgeScope.deckId !== deckId
+      || bridgeScope.conversationId !== conversationId
+    ) throw new Error('agent_terminal_internal_scope_mismatch');
+  } else {
+    const authenticatedUserId = typeof (req as any).userId === 'string'
+      ? String((req as any).userId).trim()
+      : '';
+    if (!authenticatedUserId) throw new Error('agent_terminal_owner_authentication_required');
+    if (authenticatedUserId !== savedOwnerUserId) {
+      throw new Error('agent_terminal_project_access_denied');
+    }
+  }
+
+  const runtime = agentTerminalManager.findCard(projectId, deckId, cardId, conversationId);
+  if (runtime) {
+    if (runtime.owner.userId !== savedOwnerUserId) {
+      throw new Error('agent_terminal_runtime_owner_mismatch');
+    }
+    return runtime.owner;
+  }
+  return { userId: savedOwnerUserId, projectId, deckId, cardId, conversationId };
 }
 
 async function prepareMainCliRun(args: {
@@ -857,6 +895,12 @@ function authorizeInternalMainMcp(req: Request, res: Response, next: NextFunctio
       error: 'internal_mcp_bridge_authorization_required',
     });
   }
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || '').trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  if (projectId || deckId || conversationId) {
+    (req as any).internalMainBridgeScope = { projectId, deckId, conversationId };
+  }
   return next();
 }
 
@@ -926,8 +970,21 @@ internalMainMcpRoutes.post('/chat', authorizeInternalMainMcp, async (req, res) =
       }).catch(() => undefined);
       return res.status(409).json({ ok: false, error: 'external_main_card_identity_mismatch' });
     }
-    const runtime = agentTerminalManager.findCard(projectId, deckId, mainCardId);
-    if (!runtime) throw new Error('agent_card_runtime_not_started');
+    const owner = await resolveCardRuntimeOwner(
+      req, projectId, deckId, mainCardId, conversationId,
+    );
+    let runtime = agentTerminalManager.findCard(projectId, deckId, mainCardId, conversationId);
+    if (!runtime) {
+      const state = await agentTerminalManager.open(
+        owner,
+        run.savedCard,
+        run.savedDeck,
+        120,
+        36,
+        agentTerminalPresentationOptions(run.savedCard, false),
+      );
+      runtime = { owner, state };
+    }
     const result = await executePreparedGatewayCardRun({
       owner: runtime.owner,
       conversationId,
@@ -1241,6 +1298,7 @@ async function ensureMagenticAgents(
   req: Request,
   projectId: string,
   deckId: string,
+  conversationId: string,
   prepared: any,
   savedDeck?: any,
 ): Promise<Array<{
@@ -1276,7 +1334,7 @@ async function ensureMagenticAgents(
     && workers[0]?.teamTaskMode === true;
   if (!directTeamRoot) {
     const orchestratorOwner = await resolveCardRuntimeOwner(
-      req, projectId, deckId, orchestratorCardId,
+      req, projectId, deckId, orchestratorCardId, conversationId,
     );
     await agentTerminalManager.open(
       orchestratorOwner,
@@ -1317,7 +1375,7 @@ async function ensureMagenticAgents(
     if (currentIdentity !== nativeIdentity || String(card._cardRevisionId || '') !== revisionId) {
       throw new Error(`magentic_execution_worker_saved_identity_changed:${cardId}`);
     }
-    const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId);
+    const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
     await agentTerminalManager.open(
       owner,
       card,
@@ -1373,6 +1431,7 @@ async function executePreparedMagenticRun(args: {
   req: Request;
   projectId: string;
   deckId: string;
+  conversationId: string;
   runId: string;
   senderCardId: string;
   prepared: any;
@@ -1383,10 +1442,12 @@ async function executePreparedMagenticRun(args: {
 }): Promise<MagenticExecutionStatus> {
   assertPreparedSavedCardSnapshot(args.prepared, args.savedCard);
   const workerAuthorities = await ensureMagenticAgents(
-    args.req, args.projectId, args.deckId, args.prepared, args.savedDeck,
+    args.req, args.projectId, args.deckId, args.conversationId, args.prepared, args.savedDeck,
   );
   const sender = args.senderCardId
-    ? agentTerminalManager.findCard(args.projectId, args.deckId, args.senderCardId)
+    ? agentTerminalManager.findCard(
+      args.projectId, args.deckId, args.senderCardId, args.conversationId,
+    )
     : null;
   const submitted = await requestPythonRailsJson('/magentic/execution/submit', {
     method: 'POST',
@@ -1996,6 +2057,7 @@ async function runCompletedPairThinkGraphLifecycle(
       args.projectId,
       args.deckId,
       thinkGraphCard.cardId,
+      args.conversationId,
     );
     const cardResult = await executePreparedGatewayCardRun({
       owner,
@@ -2270,7 +2332,7 @@ router.post('/run', async (req, res) => {
         return res.status(404).json({ ok: false, error: 'agent_terminal_card_not_found' });
       }
       requireAgentTerminalCard(card, deck);
-      const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId);
+      const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
       const terminal = agentTerminalManager.find(owner);
       if (!terminal || !agentTerminalExecution.ownsRun(terminal.sessionId, runId)) {
         return res.status(409).json({ ok: false, error: 'agent_terminal_run_not_active' });
@@ -2364,7 +2426,7 @@ router.post('/run', async (req, res) => {
     let magenticProgressBound = false;
     try {
       if (prepared.runtimeOwner === 'hermes') {
-        const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId);
+        const owner = await resolveCardRuntimeOwner(req, projectId, deckId, cardId, conversationId);
         const execution = await executePreparedGatewayCardRun({
           owner,
           conversationId,
@@ -2393,6 +2455,7 @@ router.post('/run', async (req, res) => {
           req,
           projectId,
           deckId,
+          conversationId,
           runId,
           senderCardId,
           prepared,
@@ -2770,6 +2833,7 @@ async function resolveMainGatewayRuntime(
   req: Request,
   projectId: string,
   deckId: string,
+  conversationId: string,
 ) {
   const { deck } = await getDeckDocument(projectId, deckId);
   const cards = deck?.nodes.filter((card) => (
@@ -2777,9 +2841,11 @@ async function resolveMainGatewayRuntime(
   )) || [];
   if (!deck || cards.length !== 1) throw new Error('persisted_main_chat_mismatch');
   const card = cards[0];
-  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id);
+  let resolved = agentTerminalManager.findCard(projectId, deckId, card.id, conversationId);
   if (!resolved) {
-    const owner = await resolveCardRuntimeOwner(req, projectId, deckId, card.id);
+    const owner = await resolveCardRuntimeOwner(
+      req, projectId, deckId, card.id, conversationId,
+    );
     const state = await agentTerminalManager.open(
       owner,
       card,
@@ -2797,10 +2863,13 @@ async function resolveMainGatewayRuntime(
 mainRoutes.get('/session/driver', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
-  if (!projectId) return res.status(400).json({ ok: false, error: 'projectId_required' });
+  const conversationId = String(req.query?.conversationId || '').trim();
+  if (!projectId || !conversationId) {
+    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
+  }
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
   try {
-    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
+    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
     const runId = agentTerminalExecution.activeRunId(runtime.state.sessionId);
     return res.json({
       ok: true,
@@ -2830,7 +2899,7 @@ mainRoutes.get('/session/events', async (req, res) => {
   let runtime: Awaited<ReturnType<typeof resolveMainGatewayRuntime>>;
   let detach = () => {};
   try {
-    runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
+    runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
     if (runtime.state.sessionId !== runtimeSessionId) {
       return res.status(409).json({ ok: false, error: 'main_gateway_runtime_identity_mismatch' });
     }
@@ -3131,6 +3200,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
         req,
         projectId,
         deckId,
+        conversationId,
         runId: run.runId,
         senderCardId: authority.main.cardId,
         prepared: run.prepared,
@@ -3164,7 +3234,9 @@ mainRoutes.post('/session/chat', async (req, res) => {
         resultText = `Magnetic accepted this mission. Run ${run.runId} is active.`;
       }
     } else {
-      const owner = await resolveCardRuntimeOwner(req, projectId, deckId, run.cardId);
+      const owner = await resolveCardRuntimeOwner(
+        req, projectId, deckId, run.cardId, conversationId,
+      );
       const result = await executePreparedGatewayCardRun({
         owner,
         conversationId,
@@ -3218,7 +3290,7 @@ mainRoutes.post('/session/chat', async (req, res) => {
       throw new Error(directAddressed ? 'addressed_card_empty_response' : 'main_empty_response');
     }
     const seedMessages = existingMessages.length === 0
-      ? await nativeMainHistorySeed(projectId, deckId, authority.main)
+      ? await nativeMainHistorySeed(projectId, deckId, conversationId, authority.main)
       : [];
     try {
       await appendSharedConversationTurn({
@@ -3360,10 +3432,14 @@ mainRoutes.post('/session/chat', async (req, res) => {
 mainRoutes.post('/session/stop', async (req, res) => {
   const projectId = String(req.body?.projectId || '').trim();
   const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
   const expectedRunId = String(req.body?.expectedRunId || '').trim();
   const expectedCardId = String(req.body?.expectedCardId || '').trim();
-  if (!projectId || !expectedRunId) {
-    return res.status(400).json({ ok: false, error: 'projectId_and_expected_run_id_required' });
+  if (!projectId || !conversationId || !expectedRunId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'projectId_conversationId_and_expected_run_id_required',
+    });
   }
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
   try {
@@ -3406,7 +3482,7 @@ mainRoutes.post('/session/stop', async (req, res) => {
       await finishMagenticOuterRun(expectedRunId, stopped);
       return res.status(202).json({ ok: true, runId: expectedRunId, state: 'cancelled' });
     }
-    const runtime = agentTerminalManager.findCard(projectId, deckId, cardId);
+    const runtime = agentTerminalManager.findCard(projectId, deckId, cardId, conversationId);
     if (!runtime) return res.status(404).json({ ok: false, error: 'no_active_turn' });
     if (!agentTerminalExecution.ownsRun(runtime.state.sessionId, expectedRunId)) {
       return res.status(404).json({ ok: false, error: 'no_active_turn' });
@@ -3440,7 +3516,7 @@ mainRoutes.get('/session/history', async (req, res) => {
   let runtimeSessionId = '';
   try {
     authority = await resolveSharedChatAuthority(projectId, deckId);
-    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId);
+    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
     history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
     sharedMessages = await getConversationMessages(projectId, conversationId);
     nativeSessionId = runtime.state.nativeSessionId;

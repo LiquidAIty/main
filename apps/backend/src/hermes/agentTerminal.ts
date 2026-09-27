@@ -47,13 +47,22 @@ import {
 const GATEWAY_READY_TIMEOUT_MS = 120_000;
 const DEFAULT_TURN_TIMEOUT_MS = 30 * 60_000;
 const MAX_TERMINAL_REPLAY_BYTES = 2 * 1024 * 1024;
-const BOT_CHAT_TITLE = 'Bot Chat';
+const LIQUIDAITY_SESSION_TITLE_PREFIX = 'Bot Chat:';
+const CARD_TERMINAL_CONVERSATION_ID = 'card-terminal';
 const AUTH_MAX_FUTURE_SECONDS = 10 * 60;
 const PRIOR_SESSION_LIMIT = 8;
 const CARD_TOOL_NONCE_LIMIT = 512;
 const TEAM_CARD_ID = 'card_team';
+export const PROJECT_ROSTER_AUTHORITY_TOOL = 'project_roster.resolve';
 
-export type AgentTerminalOwner = { userId: string; projectId: string; deckId: string; cardId: string };
+export type AgentTerminalOwner = {
+  userId: string;
+  projectId: string;
+  deckId: string;
+  cardId: string;
+  /** Exact bounded conversation. Presentation-only terminals use card-terminal. */
+  conversationId?: string;
+};
 export type HermesBotRosterProjection = {
   cardId: string;
   cardRevisionId: string;
@@ -190,6 +199,7 @@ type Session = {
   owner: AgentTerminalOwner;
   card: AgentCardInstance;
   fingerprint: string;
+  profileCardFingerprint: string;
   state: AgentTerminalState;
   gateway: ChildProcess;
   gatewayUrl: string;
@@ -214,7 +224,10 @@ type Session = {
 
 type PendingStart = {
   owner: AgentTerminalOwner;
+  profile: string;
+  cardId: string;
   fingerprint: string;
+  profileCardFingerprint: string;
   promise: Promise<AgentTerminalState>;
 };
 
@@ -282,6 +295,12 @@ export type DesiredAgentTerminal = {
   deck: DeckDocument;
   workingDirectory?: string;
   attachTui?: boolean;
+  /**
+   * Keep this saved Project/Card identity in reconciliation authority without
+   * eagerly starting another Gateway/TUI.  The exact Project/conversation
+   * session still opens on demand through the ordinary Card runtime path.
+   */
+  openAtReconcile?: boolean;
 };
 
 export type DesiredHermesBotProfile = {
@@ -312,11 +331,35 @@ export function agentTerminalPresentationOptions(
 }
 
 function ownerKey(owner: AgentTerminalOwner): string {
-  return JSON.stringify([owner.userId, owner.projectId, owner.deckId, owner.cardId]);
+  return JSON.stringify([
+    owner.userId,
+    owner.projectId,
+    owner.deckId,
+    owner.cardId,
+    String(owner.conversationId || CARD_TERMINAL_CONVERSATION_ID).trim(),
+  ]);
 }
 
 function sameOwner(left: AgentTerminalOwner, right: AgentTerminalOwner): boolean {
   return ownerKey(left) === ownerKey(right);
+}
+
+/**
+ * Hermes owns the durable session mapping. The opaque title is only a lookup
+ * key inside the selected stable profile; it contains the complete application
+ * scope without leaking user, Project, Card, or conversation names.
+ */
+export function agentTerminalNativeSessionTitle(owner: AgentTerminalOwner): string {
+  const scope = [
+    String(owner.userId || '').trim(),
+    String(owner.projectId || '').trim(),
+    String(owner.deckId || '').trim(),
+    String(owner.cardId || '').trim(),
+    String(owner.conversationId || CARD_TERMINAL_CONVERSATION_ID).trim(),
+  ];
+  if (scope.some((value) => !value)) throw new Error('agent_terminal_session_scope_incomplete');
+  const digest = createHash('sha256').update(JSON.stringify(scope), 'utf8').digest('hex');
+  return `${LIQUIDAITY_SESSION_TITLE_PREFIX}${digest}`;
 }
 
 function cleanEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
@@ -376,6 +419,21 @@ export function agentTerminalFingerprint(
     prompt: card.prompt,
     tools: card.tools,
     workingDirectory: cwd,
+  })).digest('hex');
+}
+
+/** Saved Card/profile authority only. Project working directories and
+ * conversation identities deliberately do not participate in this value. */
+export function agentTerminalProfileCardFingerprint(card: AgentCardInstance): string {
+  return createHash('sha256').update(JSON.stringify({
+    id: card.id,
+    revisionId: card._cardRevisionId || null,
+    revision: card._cardRevision || null,
+    revisionSha256: card._cardRevisionSha256 || null,
+    runtime: card.runtime,
+    options: card.runtimeOptions,
+    prompt: card.prompt,
+    tools: card.tools,
   })).digest('hex');
 }
 
@@ -826,11 +884,14 @@ export class AgentTerminalManager {
     );
     const cardTools = await this.resolveCardTools(owner, card);
     const fingerprint = agentTerminalFingerprint(owner, card, deck, workingDirectory);
+    const profileCardFingerprint = agentTerminalProfileCardFingerprint(card);
     const attachTui = options.attachTui !== false;
     for (const session of this.sessions.values()) {
       if (session.state.status !== 'running') continue;
-      if (session.state.profile.toLowerCase() !== profile.toLowerCase()) continue;
-      if (!sameOwner(session.owner, owner)) throw new Error('agent_terminal_profile_in_use');
+      if (!sameOwner(session.owner, owner)) continue;
+      if (session.state.profile.toLowerCase() !== profile.toLowerCase()) {
+        throw new Error('agent_terminal_session_profile_changed');
+      }
       if (session.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
       }
@@ -855,9 +916,17 @@ export class AgentTerminalManager {
       }
       return attachTui ? this.attachTui(session, cols, rows) : { ...session.state };
     }
-    const pending = this.pendingStarts.get(profile.toLowerCase());
+    for (const session of this.sessions.values()) {
+      if (session.state.status !== 'running') continue;
+      if (session.state.profile.toLowerCase() !== profile.toLowerCase()) continue;
+      if (
+        session.owner.cardId !== owner.cardId
+        || session.profileCardFingerprint !== profileCardFingerprint
+      ) throw new Error('agent_terminal_profile_card_identity_mismatch');
+    }
+    const pendingKey = ownerKey(owner);
+    const pending = this.pendingStarts.get(pendingKey);
     if (pending) {
-      if (!sameOwner(pending.owner, owner)) throw new Error('agent_terminal_profile_in_use');
       if (pending.fingerprint !== fingerprint) {
         throw new Error('agent_terminal_configuration_changed_stop_required');
       }
@@ -874,6 +943,13 @@ export class AgentTerminalManager {
         ? this.attachTui(session, cols, rows)
         : state;
     }
+    for (const candidate of this.pendingStarts.values()) {
+      if (candidate.profile.toLowerCase() !== profile.toLowerCase()) continue;
+      if (
+        candidate.cardId !== owner.cardId
+        || candidate.profileCardFingerprint !== profileCardFingerprint
+      ) throw new Error('agent_terminal_profile_card_identity_mismatch');
+    }
     for (const [id, session] of this.sessions) {
       if (sameOwner(session.owner, owner) && session.state.status !== 'running' && !session.listeners.size) {
         this.sessions.delete(id);
@@ -883,8 +959,8 @@ export class AgentTerminalManager {
       owner, card, deck, cols, rows, fingerprint, workingDirectory, cardTools,
       options.botRosterProjection,
     );
-    this.pendingStarts.set(profile.toLowerCase(), {
-      owner: { ...owner }, fingerprint,
+    this.pendingStarts.set(pendingKey, {
+      owner: { ...owner }, profile, cardId: card.id, fingerprint, profileCardFingerprint,
       promise,
     });
     try {
@@ -893,8 +969,8 @@ export class AgentTerminalManager {
         ? this.attachTui(this.running(owner, state.sessionId), cols, rows)
         : state;
     } finally {
-      if (this.pendingStarts.get(profile.toLowerCase())?.promise === promise) {
-        this.pendingStarts.delete(profile.toLowerCase());
+      if (this.pendingStarts.get(pendingKey)?.promise === promise) {
+        this.pendingStarts.delete(pendingKey);
       }
     }
   }
@@ -935,19 +1011,10 @@ export class AgentTerminalManager {
       ...existing,
       title: String(card.title || card.id).trim() || card.id,
     } : null;
-    const described = record(await request<unknown>('profiles.describe', { name: projection.profile }));
-    const currentRoster = described.bot_mode_roster == null
-      ? null
-      : exactProfileNames(
-        described.bot_mode_roster,
-        'hermes_bot_profile_roster_readback_invalid',
-      );
     const metaChanged = projection.botEnabled
       ? JSON.stringify(existing) !== JSON.stringify(desired)
       : hasExistingBotMeta;
-    const rosterChanged = currentRoster === null
-      || JSON.stringify(currentRoster) !== JSON.stringify(projection.roster);
-    if (metaChanged || rosterChanged) {
+    if (metaChanged) {
       const revisions = record(current.ui_meta_revisions);
       const revision = revisions['hermes-bots'];
       if (revision != null && (!Number.isSafeInteger(revision) || Number(revision) < 0)) {
@@ -959,12 +1026,9 @@ export class AgentTerminalManager {
           ui_meta: { 'hermes-bots': desired },
           ui_meta_expected_revisions: { 'hermes-bots': Number(revision || 0) },
         } : {}),
-        ...(rosterChanged ? { bot_mode_roster: projection.roster } : {}),
       }));
       const applied = record(configured.applied);
-      if (configured.ok !== true
-        || (metaChanged && applied.ui_meta !== true)
-        || (rosterChanged && applied.bot_mode_roster !== true)) {
+      if (configured.ok !== true || applied.ui_meta !== true) {
         throw new Error('hermes_bot_profile_configuration_failed');
       }
     }
@@ -975,30 +1039,23 @@ export class AgentTerminalManager {
     } else if (Object.prototype.hasOwnProperty.call(record(readbackRow.ui_meta), 'hermes-bots')) {
       throw new Error('hermes_bot_profile_readback_failed');
     }
-    const rosterReadback = record(await request<unknown>(
-      'profiles.describe', { name: projection.profile },
-    ));
-    if (JSON.stringify(exactProfileNames(
-      rosterReadback.bot_mode_roster,
-      'hermes_bot_profile_roster_readback_invalid',
-    )) !== JSON.stringify(projection.roster)) {
-      throw new Error('hermes_bot_profile_roster_readback_failed');
-    }
   }
 
-  private async resolveCanonicalBotChat(
+  private async resolveBoundConversationSession(
     request: ProfileRequest,
+    owner: AgentTerminalOwner,
     card: AgentCardInstance,
     launch: AgentTerminalLaunch,
     cols: number,
   ): Promise<{ sessionId: string; storedSessionId: string }> {
+    const title = agentTerminalNativeSessionTitle(owner);
     const exact = sessionRows(await request('session.list', {
       profile: launch.profile,
-      title: BOT_CHAT_TITLE,
+      title,
       include_hidden: true,
       limit: 200,
     }));
-    if (exact.length > 1) throw new Error('agent_terminal_bot_chat_ambiguous');
+    if (exact.length > 1) throw new Error('agent_terminal_session_binding_ambiguous');
     let native: { sessionId: string; storedSessionId: string };
     if (exact.length === 1) {
       const stored = storedSessionId(exact[0]);
@@ -1016,7 +1073,7 @@ export class AgentTerminalManager {
     } else {
       const createParams: Record<string, unknown> = {
         profile: launch.profile,
-        title: BOT_CHAT_TITLE,
+        title,
         cwd: launch.cwd,
         cols,
         model: launch.providerSelection.model,
@@ -1034,20 +1091,20 @@ export class AgentTerminalManager {
       const titled = record(await request('session.title', {
         session_id: native.sessionId,
         profile: launch.profile,
-        title: BOT_CHAT_TITLE,
+        title,
       }));
-      if (titled.title !== BOT_CHAT_TITLE) throw new Error('agent_terminal_bot_chat_title_failed');
+      if (titled.title !== title) throw new Error('agent_terminal_session_binding_title_failed');
     }
 
     const readback = sessionRows(await request('session.list', {
       profile: launch.profile,
-      title: BOT_CHAT_TITLE,
+      title,
       include_hidden: true,
       limit: 200,
     }));
-    if (readback.length !== 1) throw new Error('agent_terminal_bot_chat_readback_invalid');
+    if (readback.length !== 1) throw new Error('agent_terminal_session_binding_readback_invalid');
     if (storedSessionId(readback[0]) !== native.storedSessionId) {
-      throw new Error('agent_terminal_bot_chat_identity_mismatch');
+      throw new Error('agent_terminal_session_binding_identity_mismatch');
     }
     return native;
   }
@@ -1145,7 +1202,7 @@ export class AgentTerminalManager {
         card,
         botRosterProjection ?? await this.resolveBotRoster(owner),
       );
-      const native = await this.resolveCanonicalBotChat(request, card, launch, cols);
+      const native = await this.resolveBoundConversationSession(request, owner, card, launch, cols);
       // These stock Gateway methods are session/install scoped and their public
       // contracts deliberately do not accept a profile selector.  The live
       // session already identifies the profile for tools.show.
@@ -1161,6 +1218,7 @@ export class AgentTerminalManager {
         owner: { ...owner },
         card: structuredClone(card),
         fingerprint,
+        profileCardFingerprint: agentTerminalProfileCardFingerprint(card),
         gateway,
         gatewayUrl,
         client,
@@ -1371,7 +1429,7 @@ export class AgentTerminalManager {
     return session ? { ...session.state } : null;
   }
 
-  findCard(projectId: string, deckId: string, cardId: string): {
+  findCard(projectId: string, deckId: string, cardId: string, conversationId?: string): {
     owner: AgentTerminalOwner;
     state: AgentTerminalState;
   } | null {
@@ -1379,6 +1437,8 @@ export class AgentTerminalManager {
       candidate.owner.projectId === projectId
       && candidate.owner.deckId === deckId
       && candidate.owner.cardId === cardId
+      && (conversationId === undefined
+        || String(candidate.owner.conversationId || CARD_TERMINAL_CONVERSATION_ID) === conversationId)
       && candidate.state.status === 'running'
     ));
     if (matches.length > 1) throw new Error('agent_terminal_card_runtime_ambiguous');
@@ -1553,6 +1613,16 @@ export class AgentTerminalManager {
     const registered = session.cardTools.pluginTools.find(
       (candidate) => candidate.hermesName === tool,
     );
+    const rosterArgumentKeys = Object.keys(args);
+    const projectRosterRequest = tool === PROJECT_ROSTER_AUTHORITY_TOOL && (
+      rosterArgumentKeys.length === 0
+      || (
+        rosterArgumentKeys.length === 1
+        && rosterArgumentKeys[0] === 'target'
+        && typeof (args as Record<string, unknown>).target === 'string'
+        && Buffer.byteLength(String((args as Record<string, unknown>).target)) <= 256
+      )
+    );
     const active = this.resolveActiveContext(session.state.sessionId);
     if (
       value.version !== 1
@@ -1561,8 +1631,10 @@ export class AgentTerminalManager {
       || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
       || !/^[a-f0-9]{32,128}$/i.test(nonce)
       || !sourceSessionKnown
-      || !registered
-      || (active !== null && !active.authorizedCanonicalTools.includes(registered.canonicalName))
+      || (!registered && !projectRosterRequest)
+      || (registered !== undefined
+        && active !== null
+        && !active.authorizedCanonicalTools.includes(registered.canonicalName))
     ) throw new Error('hermes_card_tool_authentication_failed');
     for (const [usedNonce, expiry] of session.cardToolNonces) {
       if (expiry < now) session.cardToolNonces.delete(usedNonce);
@@ -1577,7 +1649,9 @@ export class AgentTerminalManager {
     return {
       owner: { ...session.owner },
       state: { ...session.state },
-      canonicalToolName: registered.canonicalName,
+      canonicalToolName: projectRosterRequest
+        ? PROJECT_ROSTER_AUTHORITY_TOOL
+        : registered!.canonicalName,
       cardTools: {
         cardRevisionId: session.cardTools.cardRevisionId,
         configurationFingerprint: session.cardTools.configurationFingerprint,
@@ -1625,7 +1699,8 @@ export class AgentTerminalManager {
       candidate.state.status === 'running' && candidate.state.profile.toLowerCase() === normalized
     ));
     if (matches.length === 0) throw new Error('agent_terminal_profile_runtime_not_running');
-    if (matches.length > 1) throw new Error('agent_terminal_profile_runtime_ambiguous');
+    // Profile configuration is durable profile authority, not conversation
+    // authority. Any live Gateway for the unchanged profile can carry the RPC.
     return matches[0].client.request<T>(method, params);
   }
 
@@ -2026,30 +2101,20 @@ export class AgentTerminalManager {
     botProfiles?: DesiredHermesBotProfile[],
   ): Promise<AgentTerminalState[]> {
     const wantedOwners = new Map<string, DesiredAgentTerminal>();
-    const wantedProfiles = new Map<string, string>();
     for (const target of desired) {
-      const profile = requireAgentTerminalCard(target.card, target.deck).toLowerCase();
+      requireAgentTerminalCard(target.card, target.deck);
       const key = ownerKey(target.owner);
       if (wantedOwners.has(key)) throw new Error('agent_terminal_topology_owner_duplicate');
       wantedOwners.set(key, target);
-      const other = wantedProfiles.get(profile);
-      if (other && other !== key) throw new Error(`agent_terminal_topology_profile_shared:${profile}`);
-      wantedProfiles.set(profile, key);
     }
     const projectedByOwner = new Map<string, DesiredHermesBotProfile>();
-    const projectedProfiles = new Set<string>();
     for (const target of botProfiles ?? []) {
       const key = ownerKey(target.owner);
       if (projectedByOwner.has(key)) throw new Error('agent_terminal_bot_profile_owner_duplicate');
       if (target.card.id !== target.owner.cardId || target.projection.cardId !== target.owner.cardId) {
         throw new Error('agent_terminal_bot_profile_identity_invalid');
       }
-      const profile = target.projection.profile.toLowerCase();
-      if (projectedProfiles.has(profile)) {
-        throw new Error(`agent_terminal_bot_profile_shared:${profile}`);
-      }
       projectedByOwner.set(key, target);
-      projectedProfiles.add(profile);
     }
     // Saving a new Card and wiring it into a Bot roster is one application
     // operation. Materialize each enabled saved profile before roster
@@ -2070,7 +2135,9 @@ export class AgentTerminalManager {
       const revocations: DesiredHermesBotProfile[] = [];
       for (const session of this.sessions.values()) {
         if (session.state.status !== 'running'
-          || projectedProfiles.has(session.launch.profile.toLowerCase())) continue;
+          || [...(botProfiles ?? [])].some((target) => (
+            target.projection.profile.toLowerCase() === session.launch.profile.toLowerCase()
+          ))) continue;
         const card = {
           id: session.owner.cardId,
           title: session.launch.profile,
@@ -2095,6 +2162,41 @@ export class AgentTerminalManager {
     for (const session of this.sessions.values()) {
       if (session.state.status !== 'running') continue;
       const target = wantedOwners.get(ownerKey(session.owner));
+      const conversationId = String(
+        session.owner.conversationId || CARD_TERMINAL_CONVERSATION_ID,
+      ).trim();
+      if (!target && conversationId !== CARD_TERMINAL_CONVERSATION_ID) {
+        const sameDeckTarget = desired.find((candidate) => (
+          candidate.owner.projectId === session.owner.projectId
+          && candidate.owner.deckId === session.owner.deckId
+          && candidate.owner.cardId === session.owner.cardId
+        ));
+        const sameProfileTarget = desired.find((candidate) => (
+          candidate.card.runtime.kind === 'hermes'
+          && candidate.card.runtime.profile.toLowerCase() === session.state.profile.toLowerCase()
+        ));
+        const authorityTarget = sameDeckTarget ?? sameProfileTarget;
+        if (authorityTarget) {
+          const authorityProfile = requireAgentTerminalCard(
+            authorityTarget.card, authorityTarget.deck,
+          );
+          if (
+            authorityProfile.toLowerCase() !== session.state.profile.toLowerCase()
+            || authorityTarget.card.id !== session.owner.cardId
+            || agentTerminalProfileCardFingerprint(authorityTarget.card)
+              !== session.profileCardFingerprint
+          ) this.stopSession(session);
+          continue;
+        }
+        const reconcilesOwningDeck = desired.some((candidate) => (
+          candidate.owner.projectId === session.owner.projectId
+          && candidate.owner.deckId === session.owner.deckId
+        ));
+        if (reconcilesOwningDeck) this.stopSession(session);
+        // Another Project/deck's reconciliation is not authority to interrupt
+        // this conversation-bound session.
+        continue;
+      }
       const targetProfile = target ? requireAgentTerminalCard(target.card, target.deck) : null;
       const targetWorkingDirectory = target && targetProfile
         ? resolveAgentCardWorkingDirectory(
@@ -2113,7 +2215,8 @@ export class AgentTerminalManager {
         this.stopSession(session);
       }
     }
-    const opened = await Promise.all(desired.map((target) => this.open(
+    const openingTargets = desired.filter((target) => target.openAtReconcile !== false);
+    const opened = await Promise.all(openingTargets.map((target) => this.open(
       target.owner,
       target.card,
       target.deck,
@@ -2129,7 +2232,7 @@ export class AgentTerminalManager {
       const firstState = opened[0];
       if (!firstState) throw new Error('agent_terminal_bot_profile_gateway_unavailable');
       const gatewaySession = this.running(
-        desired[0].owner,
+        openingTargets[0].owner,
         firstState.sessionId,
       );
       await this.materializeNativeBotProfiles(gatewaySession, botProfiles);

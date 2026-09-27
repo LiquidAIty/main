@@ -21,7 +21,7 @@ const baseProps = {
   onShowWorldsignalWorkspace: () => undefined,
   onShowWorldviewWorkspace: () => undefined,
   onShowCanvasWorkspace: () => undefined,
-  onQuickAddAssistNode: () => undefined,
+  onOpenAddAgent: () => undefined,
   onShowKnowledgeWorkspace: () => undefined,
   onShowTradingWorkspace: () => undefined,
   onOpenNavigationDrawer: () => undefined,
@@ -46,7 +46,7 @@ function render(node: React.ReactElement) {
   return container;
 }
 
-describe('AgentBuilderRail hex-plus quick-add', () => {
+describe('AgentBuilderRail Add Agent control', () => {
   it('shows the hex-plus Agents control', () => {
     const host = render(<AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />);
     const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;
@@ -54,14 +54,14 @@ describe('AgentBuilderRail hex-plus quick-add', () => {
     expect(button.getAttribute('aria-label')).toBe('Agents');
   });
 
-  it('creates a new Agent Card when clicked on the canvas (one invocation)', () => {
-    const onQuickAdd = vi.fn();
+  it('opens the one Add Agent chooser when clicked on the canvas', () => {
+    const onOpenAddAgent = vi.fn();
     const host = render(
       <AgentBuilderRail
         {...baseProps}
         workspaceView="canvas"
         visibleRailItems={baseVisibility}
-        onQuickAddAssistNode={onQuickAdd}
+        onOpenAddAgent={onOpenAddAgent}
       />,
     );
     const button = host.querySelector('[data-testid="rail-plus-button"]') as HTMLButtonElement;
@@ -69,18 +69,18 @@ describe('AgentBuilderRail hex-plus quick-add', () => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(onQuickAdd).toHaveBeenCalledTimes(2);
+    expect(onOpenAddAgent).toHaveBeenCalledTimes(2);
   });
 
   it('switches to the canvas first when clicked from another workspace', () => {
-    const onQuickAdd = vi.fn();
+    const onOpenAddAgent = vi.fn();
     const onShowCanvas = vi.fn();
     const host = render(
       <AgentBuilderRail
         {...baseProps}
         workspaceView="knowledge"
         visibleRailItems={baseVisibility}
-        onQuickAddAssistNode={onQuickAdd}
+        onOpenAddAgent={onOpenAddAgent}
         onShowCanvasWorkspace={onShowCanvas}
       />,
     );
@@ -88,7 +88,7 @@ describe('AgentBuilderRail hex-plus quick-add', () => {
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(onQuickAdd).not.toHaveBeenCalled();
+    expect(onOpenAddAgent).not.toHaveBeenCalled();
     expect(onShowCanvas).toHaveBeenCalledOnce();
   });
 });

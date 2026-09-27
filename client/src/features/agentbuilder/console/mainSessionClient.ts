@@ -169,11 +169,16 @@ const BASE = '/api/main/session';
 
 export type MainDriverSource = 'internal_chat' | 'external_plugin' | 'native_cli';
 
-export async function loadMainDriverStatus(projectId: string, signal?: AbortSignal): Promise<{
+export async function loadMainDriverStatus(
+  projectId: string,
+  deckId: string,
+  conversationId: string,
+  signal?: AbortSignal,
+): Promise<{
   ready: boolean;
   activeDriver: MainDriverSource | null;
 }> {
-  const params = new URLSearchParams({ projectId });
+  const params = new URLSearchParams({ projectId, deckId, conversationId });
   const res = await fetch(`${BASE}/driver?${params.toString()}`, { credentials: 'include', signal });
   const payload = await res.json().catch(() => null) as {
     ready?: unknown;

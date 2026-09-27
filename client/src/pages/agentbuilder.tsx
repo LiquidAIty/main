@@ -36,7 +36,9 @@ import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBu
 import type {
   LoadedCardGraphReference,
 } from '../features/agentbuilder/console/useAgentBuilderMainChat';
-import useAgentBuilderAutosave from '../features/agentbuilder/state/useAgentBuilderAutosave';
+import useAgentBuilderAutosave, {
+  projectDeckForPersistence,
+} from '../features/agentbuilder/state/useAgentBuilderAutosave';
 import useAgentBuilderCardEditor from '../features/agentbuilder/state/useAgentBuilderCardEditor';
 import useAgentBuilderDeck from '../features/agentbuilder/state/useAgentBuilderDeck';
 import useAgentBuilderDeckLoad from '../features/agentbuilder/state/useAgentBuilderDeckLoad';
@@ -68,7 +70,6 @@ import {
 import {
   BUILDER_CARD_ID,
   BUILDER_DECK_ID,
-  INITIAL_DECK,
 } from '../features/agentbuilder/deck/newProjectDeck';
 import { readCardSubsystemAttachments } from '../features/agentbuilder/deck/cardSubsystems';
 import {
@@ -98,6 +99,14 @@ import type {
   DeckEdge,
   DeckDocument,
 } from '../types/agentgraph';
+
+type SavedCardChoice = {
+  cardId: string;
+  cardRevisionId: string;
+  title: string;
+  subtitle: string | null;
+  runtimeProfile: string;
+};
 
 const loadAgentManager = () => import('../components/AgentManager');
 const AgentManager = lazy(async () => {
@@ -300,6 +309,13 @@ export default function AgentBuilder(): React.ReactElement {
     createInitialDeck: buildProjectlessDeckDocument,
   });
   const [stateLoaded, setStateLoaded] = useState(false);
+  const [savedCardChooserOpen, setSavedCardChooserOpen] = useState(false);
+  const [savedCardChoices, setSavedCardChoices] = useState<SavedCardChoice[]>([]);
+  const [savedCardChooserBusy, setSavedCardChooserBusy] = useState(false);
+  const [savedCardChooserError, setSavedCardChooserError] = useState<string | null>(null);
+  const [transientNewCardIds, setTransientNewCardIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const canonicalDeckReady = Boolean(
     canvasProjectId
       && stateLoaded
@@ -783,6 +799,37 @@ export default function AgentBuilder(): React.ReactElement {
     },
     [BUILDER_DEV],
   );
+  const setDeckFromPersistence = useCallback<
+    React.Dispatch<React.SetStateAction<DeckDocument>>
+  >(
+    (update) => {
+      setDeck((current) => {
+        const persisted = typeof update === 'function'
+          ? (update as (previous: DeckDocument) => DeckDocument)(current)
+          : update;
+        if (transientNewCardIds.size === 0) return persisted;
+        const nextNodeIds = new Set(persisted.nodes.map((node) => node.id));
+        const transientNodes = current.nodes.filter((node) => (
+          transientNewCardIds.has(node.id) && !nextNodeIds.has(node.id)
+        ));
+        const nextEdgeIds = new Set(persisted.edges.map((edge) => edge.id));
+        const transientEdges = current.edges.filter((edge) => (
+          (transientNewCardIds.has(edge.source) || transientNewCardIds.has(edge.target))
+          && !nextEdgeIds.has(edge.id)
+        ));
+        return {
+          ...persisted,
+          version: Math.max(current.version, persisted.version),
+          nodes: [...persisted.nodes, ...transientNodes],
+          edges: [...persisted.edges, ...transientEdges],
+        };
+      });
+    },
+    [setDeck, transientNewCardIds],
+  );
+  useEffect(() => {
+    setTransientNewCardIds(new Set());
+  }, [canvasProjectId]);
   useAgentBuilderDeckLoad({
     canvasProjectId,
     projectsApi: PROJECTS_API,
@@ -817,6 +864,7 @@ export default function AgentBuilder(): React.ReactElement {
     deckLoadBusy,
     deckLoadError,
     stateLoaded,
+    transientCardIds: transientNewCardIds,
     layoutAutosaveAbortRef,
     lastPersistedBoardFingerprintRef,
     lastPersistedBoardSnapshotRef,
@@ -839,7 +887,7 @@ export default function AgentBuilder(): React.ReactElement {
       deckSaveAbortRef: layoutAutosaveAbortRef,
       formatBuilderStatusMessage,
       readDeckDocument,
-      setDeck,
+      setDeck: setDeckFromPersistence,
       setDeckRevision,
       setDeckSaveBusy,
       setDeckStatusMessage,
@@ -861,6 +909,22 @@ export default function AgentBuilder(): React.ReactElement {
 
 
   const showDeckBuilder = workspaceView === 'canvas';
+  const prepareDeckForCardSave = useCallback(
+    (document: DeckDocument, cardId: string) => projectDeckForPersistence(
+      document,
+      transientNewCardIds,
+      new Set([cardId]),
+    ),
+    [transientNewCardIds],
+  );
+  const handleCardPersisted = useCallback((cardId: string) => {
+    setTransientNewCardIds((current) => {
+      if (!current.has(cardId)) return current;
+      const next = new Set(current);
+      next.delete(cardId);
+      return next;
+    });
+  }, []);
   const {
     handleSaveCardConfiguration,
     handleSaveSelectedCardConfig,
@@ -873,6 +937,8 @@ export default function AgentBuilder(): React.ReactElement {
     recordDeckWriteReason,
     selectedCardId,
     setDeck,
+    prepareDeckForCardSave,
+    onCardPersisted: handleCardPersisted,
   });
   const tradingCard = useMemo(
     () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
@@ -952,50 +1018,151 @@ export default function AgentBuilder(): React.ReactElement {
     recordUiOnlyAction('drawer-toggle');
   }, [openDrawer, recordUiOnlyAction, workspaceView]);
 
-  const handleQuickAddAssistNode = useCallback(async () => {
+  const handleOpenSavedCardChooser = useCallback(async () => {
     if (!canonicalDeckReady) {
       setDeckStatusMessage('Wait for the canvas to load.');
       return;
     }
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
-    let runtime: { kind: 'hermes'; mode: 'delegate' };
+    setSavedCardChooserOpen(true);
+    setSavedCardChooserBusy(true);
+    setSavedCardChooserError(null);
+    try {
+      const response = await fetch(
+        `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/saved-cards`,
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true || !Array.isArray(payload.cards)) {
+        throw new Error(String(payload?.error || 'Saved Cards unavailable.'));
+      }
+      setSavedCardChoices(payload.cards as SavedCardChoice[]);
+    } catch (error) {
+      setSavedCardChoices([]);
+      setSavedCardChooserError(
+        error instanceof Error ? error.message : 'Saved Cards unavailable.',
+      );
+    } finally {
+      setSavedCardChooserBusy(false);
+    }
+  }, [
+    canonicalDeckReady,
+    canvasProjectId,
+    setDeckStatusMessage,
+  ]);
+
+  const handleAttachSavedCard = useCallback(async (choice: SavedCardChoice) => {
+    if (!canvasProjectId || !deckRevision || savedCardChooserBusy) return;
+    setSavedCardChooserBusy(true);
+    setSavedCardChooserError(null);
+    const rightMostX = currentDeckRef.current.nodes.reduce(
+      (maximum, node) => Math.max(maximum, Number(node.position?.x || 0)),
+      -220,
+    );
+    try {
+      const response = await fetch(
+        `${PROJECTS_API}/${canvasProjectId}/decks/${BUILDER_DECK_ID}/memberships`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cardId: choice.cardId,
+            cardRevisionId: choice.cardRevisionId,
+            expectedDeckRevision: deckRevision,
+            position: { x: rightMostX + 320, y: 40 },
+          }),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true || !payload.deck) {
+        throw new Error(String(payload?.error || 'Card attachment failed.'));
+      }
+      const loaded = readDeckDocument(payload.deck);
+      const nextRevision = typeof payload?.meta?.deckRevision === 'string'
+        ? payload.meta.deckRevision
+        : null;
+      if (!nextRevision) throw new Error('deck_revision_missing');
+      recordDeckWriteReason('saved-card-attach');
+      lastPersistedBoardFingerprintRef.current = JSON.stringify({
+        nodes: loaded.nodes,
+        edges: loaded.edges,
+      });
+      lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(loaded);
+      setDeckFromPersistence(loaded);
+      setDeckRevision(nextRevision);
+      setSavedCardChoices((current) => current.filter((card) => card.cardId !== choice.cardId));
+      setSavedCardChooserOpen(false);
+      setSelectedEdgeId(null);
+      setSelectedCardId(choice.cardId);
+      setBuilderCanvasFocusRequest((current) => ({
+        kind: 'card',
+        cardId: choice.cardId,
+        nonce: (current?.nonce || 0) + 1,
+      }));
+      setDeckStatusMessage(`Added existing saved Card ${choice.title} to this Project.`);
+    } catch (error) {
+      setSavedCardChooserError(error instanceof Error ? error.message : 'Card attachment failed.');
+    } finally {
+      setSavedCardChooserBusy(false);
+    }
+  }, [
+    canvasProjectId,
+    deckRevision,
+    lastPersistedBoardFingerprintRef,
+    lastPersistedBoardSnapshotRef,
+    recordDeckWriteReason,
+    savedCardChooserBusy,
+    setBuilderCanvasFocusRequest,
+    setDeckFromPersistence,
+    setDeckRevision,
+    setDeckStatusMessage,
+    setSelectedCardId,
+    setSelectedEdgeId,
+    snapshotDeckBoard,
+  ]);
+
+  const handleCreateNewAgent = useCallback(async () => {
+    if (!canonicalDeckReady || savedCardChooserBusy) return;
+    setSavedCardChooserBusy(true);
+    setSavedCardChooserError(null);
     try {
       const response = await fetch('/api/idd/card-editor');
-      const dictionary = await response.json();
+      const dictionary = await response.json().catch(() => null);
       const binding = dictionary?.templates?.template_assist?.runtime;
       if (!response.ok || dictionary?.ok !== true
         || binding?.kind !== 'hermes' || binding?.mode !== 'delegate') {
         throw new Error('Template unavailable.');
       }
-      runtime = binding;
+      const { nextNode } = buildQuickAddAssistCard(currentDeckRef.current, binding);
+      recordDeckWriteReason('deck-quick-add');
+      setTransientNewCardIds((current) => new Set(current).add(nextNode.id));
+      setDeck((current) => ({
+        ...current,
+        version: current.version + 1,
+        nodes: [...current.nodes, nextNode],
+      }));
+      setSavedCardChooserOpen(false);
+      setSelectedEdgeId(null);
+      setInspectorDrawerOpen(true);
+      setSelectedCardId(nextNode.id);
+      setBuilderCanvasFocusRequest((current) => ({
+        kind: 'card',
+        cardId: nextNode.id,
+        nonce: (current?.nonce || 0) + 1,
+      }));
+      if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) setTab('Prompt');
+      setDeckStatusMessage(
+        `Added ${nextNode.title}. Save the Card to establish its permanent Card/profile authority.`,
+      );
     } catch (error) {
-      setDeckStatusMessage(error instanceof Error ? error.message : 'Template unavailable.');
-      return;
+      setSavedCardChooserError(error instanceof Error ? error.message : 'Template unavailable.');
+    } finally {
+      setSavedCardChooserBusy(false);
     }
-    const { nextNode } = buildQuickAddAssistCard(currentDeckRef.current, runtime);
-    recordDeckWriteReason('deck-quick-add');
-    setDeck((current) => ({ ...current, version: current.version + 1, nodes: [...current.nodes, nextNode] }));
-    setSelectedEdgeId(null);
-    setInspectorDrawerOpen(false);
-    // Select and open the new card's editor immediately.
-    setSelectedCardId(nextNode.id);
-    setBuilderCanvasFocusRequest((current) => ({
-      kind: 'card',
-      cardId: nextNode.id,
-      nonce: (current?.nonce || 0) + 1,
-    }));
-    setInspectorDrawerOpen(true);
-    if (!BUILDER_NODE_TABS.some((entry) => entry === tab)) {
-      setTab('Prompt');
-    }
-    setDeckStatusMessage(
-      `Added ${nextNode.title} to the canvas. Open its editor to configure it.`,
-    );
   }, [
     BUILDER_NODE_TABS,
     canonicalDeckReady,
-    deck,
     recordDeckWriteReason,
+    savedCardChooserBusy,
     setBuilderCanvasFocusRequest,
     setDeck,
     setDeckStatusMessage,
@@ -1178,7 +1345,9 @@ export default function AgentBuilder(): React.ReactElement {
                 <button
                   onClick={() => {
                     recordDeckWriteReason('save-board-now');
-                    void handleSaveDeck();
+                    void handleSaveDeck(
+                      projectDeckForPersistence(deck, transientNewCardIds),
+                    ).catch(() => undefined);
                   }}
                   disabled={deckSaveBusy || !canonicalDeckReady}
                   style={graphDrawerButtonStyle({
@@ -1506,7 +1675,7 @@ export default function AgentBuilder(): React.ReactElement {
       onShowWorldsignalWorkspace={showWorldsignalWorkspace}
       onShowWorldviewWorkspace={showWorldviewWorkspace}
       onShowCanvasWorkspace={showCanvasWorkspace}
-      onQuickAddAssistNode={handleQuickAddAssistNode}
+      onOpenAddAgent={handleOpenSavedCardChooser}
       onShowKnowledgeWorkspace={showKnowledgeWorkspace}
       onShowTradingWorkspace={showTradingWorkspace}
       onOpenNavigationDrawer={() => setOpenDrawer('navigation')}
@@ -1706,11 +1875,86 @@ export default function AgentBuilder(): React.ReactElement {
           drawer={<>{workspaceDrawer}</>}
         />
 
+      {savedCardChooserOpen ? (
+        <div
+          data-testid="saved-card-chooser"
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.58)' }}
+          onClick={() => !savedCardChooserBusy && setSavedCardChooserOpen(false)}
+        >
+          <div
+            className="w-[min(560px,calc(100vw-32px))] max-h-[72vh] overflow-auto rounded-xl p-4"
+            style={{ background: C.panel, border: `1px solid ${C.border}` }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div>
+                <div className="text-sm font-semibold">Add Agent</div>
+                <div className="text-xs mt-1" style={{ color: C.neutral }}>
+                  Reuse a saved Card unchanged, or create and save one new Card.
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close Add Agent"
+                onClick={() => setSavedCardChooserOpen(false)}
+                disabled={savedCardChooserBusy}
+              >
+                ×
+              </button>
+            </div>
+            {savedCardChooserError ? (
+              <div className="text-xs mb-3" style={{ color: C.warn }}>{savedCardChooserError}</div>
+            ) : null}
+            <button
+              type="button"
+              className="w-full text-left rounded-lg p-3 mb-3"
+              style={{ border: `1px solid ${C.primary}`, background: C.bg }}
+              disabled={savedCardChooserBusy}
+              onClick={() => void handleCreateNewAgent()}
+              data-testid="add-agent-new-card"
+            >
+              <div className="text-sm font-medium">New Agent</div>
+              <div className="text-xs mt-1" style={{ color: C.neutral }}>
+                Open one new editable Card, then save it as the permanent authority.
+              </div>
+            </button>
+            <div className="text-xs font-semibold mb-2" style={{ color: C.neutral }}>
+              Saved Agents
+            </div>
+            {savedCardChooserBusy && savedCardChoices.length === 0 ? (
+              <div className="text-sm" style={{ color: C.neutral }}>Loading saved Cards…</div>
+            ) : null}
+            {!savedCardChooserBusy && savedCardChoices.length === 0 ? (
+              <div className="text-sm" style={{ color: C.neutral }}>
+                Every available saved Card is already in this Project.
+              </div>
+            ) : null}
+            <div className="grid gap-2">
+              {savedCardChoices.map((choice) => (
+                <button
+                  key={`${choice.cardId}:${choice.cardRevisionId}`}
+                  type="button"
+                  className="text-left rounded-lg p-3"
+                  style={{ border: `1px solid ${C.border}`, background: C.bg }}
+                  disabled={savedCardChooserBusy}
+                  onClick={() => void handleAttachSavedCard(choice)}
+                  data-testid={`saved-card-choice-${choice.cardId}`}
+                >
+                  <div className="text-sm font-medium">{choice.title}</div>
+                  <div className="text-xs mt-1" style={{ color: C.neutral }}>
+                    {choice.subtitle || 'Saved Card'} · {choice.runtimeProfile}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <AgentBuilderProjectDrawer
         activeProject={activeProject}
-        builderDeckId={BUILDER_DECK_ID}
         colors={C}
-        initialDeck={INITIAL_DECK}
         open={openDrawer === 'navigation'}
         projects={builderProjects}
         projectsApi={PROJECTS_API}

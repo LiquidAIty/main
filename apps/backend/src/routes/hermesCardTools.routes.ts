@@ -1,11 +1,15 @@
 import { Router, type Response } from 'express';
 import {
   agentTerminalManager,
+  PROJECT_ROSTER_AUTHORITY_TOOL,
+  resolveHermesBotRosterProjections,
   type AuthenticatedCardToolRequest,
+  type HermesBotRosterProjection,
 } from '../hermes/agentTerminal';
 import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
 import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
+import { getDeckDocument } from '../decks/store';
 
 const MAX_AUTH_FIELD_BYTES = 768 * 1024;
 const MAX_RESULT_BYTES = 2 * 1024 * 1024;
@@ -39,6 +43,11 @@ type Dependencies = {
     authorizedCanonicalTools: string[];
   } | null;
   execute(request: InternalCardToolRequest): Promise<{ ok: true; output: string }>;
+  resolveProjectRosters(projectId: string, deckId: string): Promise<HermesBotRosterProjection[]>;
+  openProjectRosterTarget(
+    authenticated: AuthenticatedCardToolRequest,
+    projection: HermesBotRosterProjection,
+  ): Promise<string>;
   isLoopbackSocketRequest: typeof isLoopbackSocketRequest;
 };
 
@@ -73,6 +82,37 @@ function exactEnvelope(value: unknown): { keyId: string; payload: string; signat
     || Buffer.byteLength(signature) > MAX_AUTH_FIELD_BYTES
   ) routeError(400, 'hermes_card_tool_request_invalid');
   return { keyId, payload, signature };
+}
+
+async function openProjectRosterTarget(
+  authenticated: AuthenticatedCardToolRequest,
+  projection: HermesBotRosterProjection,
+): Promise<string> {
+  const loaded = await getDeckDocument(authenticated.owner.projectId, authenticated.owner.deckId);
+  if (!loaded.deck) throw new Error('hermes_project_roster_deck_missing');
+  const matches = loaded.deck.nodes.filter((card) => card.id === projection.cardId);
+  if (matches.length !== 1) throw new Error('hermes_project_roster_target_missing');
+  const card = matches[0];
+  if (
+    card.runtime.kind !== 'hermes'
+    || String(card.runtime.profile || '').trim() !== projection.profile
+  ) throw new Error('hermes_project_roster_target_stale');
+  const state = await agentTerminalManager.open(
+    {
+      userId: authenticated.owner.userId,
+      projectId: authenticated.owner.projectId,
+      deckId: authenticated.owner.deckId,
+      cardId: projection.cardId,
+      conversationId: authenticated.owner.conversationId,
+    },
+    card,
+    loaded.deck,
+    120,
+    36,
+    { attachTui: false, botRosterProjection: projection },
+  );
+  if (!state.storedSessionId) throw new Error('hermes_project_roster_session_missing');
+  return state.storedSessionId;
 }
 
 export async function executeInternalCardTool(
@@ -127,6 +167,8 @@ export function createHermesCardToolsRouter(
     agentTerminalManager,
     activeContext: (sessionId) => agentTerminalExecution.activeContext(sessionId),
     execute: executeInternalCardTool,
+    resolveProjectRosters: resolveHermesBotRosterProjections,
+    openProjectRosterTarget,
     isLoopbackSocketRequest,
   },
 ) {
@@ -148,6 +190,53 @@ export function createHermesCardToolsRouter(
         routeError(401, 'hermes_card_tool_authentication_failed');
       }
       const executionContext = authenticated!.executionContext;
+      if (authenticated!.canonicalToolName === PROJECT_ROSTER_AUTHORITY_TOOL) {
+        const projections = await dependencies.resolveProjectRosters(
+          authenticated!.owner.projectId,
+          authenticated!.owner.deckId,
+        );
+        const sources = projections.filter((entry) => (
+          entry.cardId === authenticated!.owner.cardId
+        ));
+        if (sources.length !== 1) routeError(409, 'hermes_project_roster_stale');
+        const source = sources[0];
+        if (
+          source.cardRevisionId
+          && source.cardRevisionId !== authenticated!.cardTools.cardRevisionId
+        ) routeError(409, 'hermes_project_roster_stale');
+        const byProfile = new Map(projections.map((entry) => [entry.profile, entry]));
+        const targetProjections = source.roster.map((profile) => {
+          const target = byProfile.get(profile);
+          if (!target) routeError(409, 'hermes_project_roster_stale');
+          return target;
+        });
+        const targets = targetProjections.map((target) => ({
+          title: target.title,
+          profile: target.profile,
+        }));
+        const requested = authenticated!.request.arguments.target;
+        if (requested === undefined) {
+          return res.json({ ok: true, output: JSON.stringify({ targets }) });
+        }
+        if (typeof requested !== 'string') routeError(400, 'hermes_project_roster_target_invalid');
+        // The plugin removes the single optional user-facing `@` before signing.
+        // Resolve only that exact normalized title here so repeated prefixes cannot
+        // be stripped once in the plugin and again at the authority boundary.
+        const visible = requested.trim().toLocaleLowerCase('en-US');
+        const matches = targetProjections.filter((target) => (
+          target.title.toLocaleLowerCase('en-US') === visible
+        ));
+        if (matches.length !== 1) routeError(403, 'hermes_project_roster_target_forbidden');
+        const target = matches[0];
+        const storedSessionId = await dependencies.openProjectRosterTarget(authenticated!, target);
+        return res.json({
+          ok: true,
+          output: JSON.stringify({
+            targets,
+            resolved: { profile: target.profile, storedSessionId },
+          }),
+        });
+      }
       const active = executionContext
         ? null
         : dependencies.activeContext(authenticated!.state.sessionId);

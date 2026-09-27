@@ -1,16 +1,15 @@
 import { Router } from 'express';
-import {
-  createAnonymousSession,
-  getUserBySessionId,
-  setSessionCookie,
-} from '../auth/sessionStore';
 import { pool } from '../db/pool';
-import { canIssueBootstrapSession } from '../security/requestAccess';
+import { getDeckDocument, saveDeckDocument } from '../decks/store';
 import {
   createProject,
+  discardFreshProject,
   getProjectCard,
   listAgentCards,
+  SYSTEM6_PROJECT_EDGES,
 } from '../services/agentBuilderStore';
+import { requestConnectedAgentTerminalReconcile } from '../startup/pythonOwnedStartup';
+import { requireOwnedProject, resolveProjectOwnerUserId } from './projectAccess';
 
 const router = Router();
 const PROJECTS_TABLE = 'ag_catalog.projects';
@@ -27,24 +26,6 @@ function projectLookup(projectId: string): { clause: string; params: any[] } {
   return { clause: 'code = $1', params: [projectId] };
 }
 
-async function resolveProjectOwnerUserId(req: any, res: any): Promise<string | null> {
-  const sessionId = typeof req.cookies?.sid === 'string' ? req.cookies.sid.trim() : '';
-  if (sessionId) {
-    const user = await getUserBySessionId(sessionId);
-    if (user?.id) {
-      return user.id;
-    }
-  }
-
-  if (!canIssueBootstrapSession(req)) {
-    return null;
-  }
-
-  const { user, session } = await createAnonymousSession();
-  setSessionCookie(res, session.id, req);
-  return user.id;
-}
-
 async function getProjectColumns(): Promise<Set<string>> {
   const { rows } = await pool.query(
     `SELECT column_name
@@ -57,9 +38,13 @@ async function getProjectColumns(): Promise<Set<string>> {
 router.get('/', async (req, res) => {
   logProjectRoute(req);
   try {
+    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    if (!ownerUserId) {
+      return res.status(401).json({ ok: false, error: 'project owner session required' });
+    }
     const rawType = req.query.project_type;
     const projectType = rawType === 'assist' || rawType === 'agent' ? rawType : undefined;
-    const cards = await listAgentCards(null, projectType);
+    const cards = await listAgentCards(ownerUserId, projectType);
     return res.json({ ok: true, projects: cards });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to list projects' });
@@ -69,7 +54,11 @@ router.get('/', async (req, res) => {
 router.get('/:projectId', async (req, res) => {
   logProjectRoute(req);
   try {
-    const card = await getProjectCard(req.params.projectId);
+    const ownerUserId = await resolveProjectOwnerUserId(req, res);
+    if (!ownerUserId) {
+      return res.status(401).json({ ok: false, error: 'project owner session required' });
+    }
+    const card = await getProjectCard(req.params.projectId, ownerUserId);
     if (!card) {
       return res.status(404).json({ ok: false, error: 'project_not_found' });
     }
@@ -97,6 +86,35 @@ router.post('/', async (req, res) => {
       projectType,
       ownerUserId,
     );
+    if (projectType === 'agent') {
+      try {
+        const loaded = await getDeckDocument(project.id, 'deck_builder');
+        if (!loaded.deck || !loaded.meta.deckRevision) {
+          throw new Error('project_system6_deck_missing');
+        }
+        await saveDeckDocument(
+          project.id,
+          'deck_builder',
+          {
+            ...loaded.deck,
+            edges: SYSTEM6_PROJECT_EDGES.map((edge) => ({ ...edge })),
+          },
+          { expectedRevision: loaded.meta.deckRevision },
+        );
+      } catch (error) {
+        await discardFreshProject(project.id, ownerUserId).catch(() => undefined);
+        throw error;
+      }
+      // Runtime reconciliation happens only after the complete saved Project
+      // exists.  A reconciliation failure must not delete canonical relational
+      // state after the Python transaction has already committed AGE topology.
+      void requestConnectedAgentTerminalReconcile().catch((error) => {
+        console.warn('[projects] runtime reconcile deferred', {
+          projectId: project.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     return res.json({ ok: true, project });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to create project' });
@@ -120,6 +138,8 @@ router.patch('/:projectId', async (req, res) => {
   }
 
   try {
+    const access = await requireOwnedProject(req, res, projectId);
+    if (!access) return;
     const columns = await getProjectColumns();
     const { clause, params } = projectLookup(projectId);
     const assignments: string[] = [];
@@ -139,17 +159,19 @@ router.patch('/:projectId', async (req, res) => {
     }
     assignments.push('updated_at = NOW()');
 
+    values.push(access.ownerUserId);
+    const ownerParameter = `$${values.length}`;
     const { rows } = await pool.query(
       `UPDATE ${PROJECTS_TABLE}
        SET ${assignments.join(', ')}
-       WHERE ${clause}
+       WHERE ${clause} AND owner_user_id = ${ownerParameter}
        RETURNING id`,
       values,
     );
     if (!rows.length) {
       return res.status(404).json({ ok: false, error: 'project_not_found' });
     }
-    const project = await getProjectCard(projectId);
+    const project = await getProjectCard(projectId, access.ownerUserId);
     return res.json({ ok: true, project });
   } catch (err: any) {
     return res.status(500).json({ ok: false, error: err?.message || 'failed to update project' });
@@ -161,8 +183,13 @@ router.delete('/:projectId', async (req, res) => {
   const projectId = req.params.projectId;
   const client = await pool.connect();
   try {
+    const access = await requireOwnedProject(req, res, projectId);
+    if (!access) return;
     await client.query('BEGIN');
-    const result = await client.query('DELETE FROM ag_catalog.projects WHERE id = $1 RETURNING id', [projectId]);
+    const result = await client.query(
+      'DELETE FROM ag_catalog.projects WHERE id = $1 AND owner_user_id = $2 RETURNING id',
+      [projectId, access.ownerUserId],
+    );
 
     if (result.rowCount === 0) {
       await client.query('ROLLBACK');

@@ -99,6 +99,141 @@ def test_saved_profiles_stay_unique_and_stable_grants_are_preserved():
         }, "d")
 
 
+def test_existing_saved_hermes_card_profile_is_immutable() -> None:
+    previous = card_domain._stable_card(_agent(
+        "helper",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "stable-helper"},
+    ))
+    incoming = card_domain._stable_card(_agent(
+        "helper",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "renamed-helper"},
+    ))
+
+    with pytest.raises(card_domain.CardDomainError, match="card_runtime_profile_immutable"):
+        card_domain._validate_immutable_runtime_profile(previous, incoming)
+
+
+def test_global_profile_binding_locks_sorted_before_collision_read() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Cursor:
+        def execute(self, query, params=None):
+            calls.append((str(query), params))
+
+        def fetchone(self):
+            return {"card_id": "already-bound"}
+
+    cards = [
+        _agent("z-card", runtime={"kind": "hermes", "mode": "delegate", "profile": "zeta"}),
+        _agent("a-card", runtime={"kind": "hermes", "mode": "delegate", "profile": "Alpha"}),
+    ]
+
+    with pytest.raises(card_domain.CardDomainError, match="card_profile_duplicate:alpha"):
+        card_domain._lock_and_validate_hermes_profile_bindings(Cursor(), cards)
+
+    assert [params for query, params in calls if "pg_advisory_xact_lock" in query] == [
+        ("card-profile:alpha",),
+        ("card-profile:zeta",),
+    ]
+    first_binding_read = next(
+        index for index, (query, _params) in enumerate(calls)
+        if "FROM ag_catalog.agent_card_revisions" in query
+    )
+    assert first_binding_read == 2
+
+
+def test_global_profile_binding_allows_same_card_identity_in_another_project() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Cursor:
+        def execute(self, query, params=None):
+            calls.append((str(query), params))
+
+        def fetchone(self):
+            return None
+
+    card_domain._lock_and_validate_hermes_profile_bindings(
+        Cursor(),
+        [_agent(
+            "shared-card",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "shared-profile"},
+        )],
+    )
+
+    query, params = calls[1]
+    assert "LOWER(runtime_profile)=%s" in query
+    assert "card_id<>%s" in query
+    assert params == ("shared-profile", "shared-card")
+
+
+def test_save_deck_rejects_new_card_using_globally_bound_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            self.last_query = str(query)
+            calls.append((self.last_query, params))
+
+        def fetchone(self):
+            if "SELECT 1 FROM ag_catalog.agent_decks" in self.last_query:
+                return {"exists": 1}
+            if "LOWER(runtime_profile)=%s" in self.last_query:
+                return {"card_id": "existing-card"}
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "new-project"})
+    document = {
+        "id": "new-deck",
+        "name": "New Deck",
+        "version": 1,
+        "nodes": [_agent(
+            "new-card",
+            runtime={"kind": "hermes", "mode": "delegate", "profile": "taken-profile"},
+        )],
+        "edges": [],
+        "promptTemplates": [],
+    }
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_profile_duplicate:taken-profile",
+    ):
+        card_domain.save_deck("new-project", "new-deck", document, expected_revision=None)
+
+    profile_lock_index = next(
+        index for index, (query, _params) in enumerate(calls)
+        if "pg_advisory_xact_lock" in query
+    )
+    profile_binding_read_index = next(
+        index for index, (query, _params) in enumerate(calls)
+        if "LOWER(runtime_profile)=%s" in query
+    )
+    assert profile_lock_index < profile_binding_read_index
+    assert not any("FOR UPDATE" in query for query, _params in calls)
+    assert not any("INSERT INTO ag_catalog.agent_cards" in query for query, _params in calls)
+
+
 def test_one_flow_connection_grants_only_outbound_main_bot_authority():
     cards = [
         _main_bot('main', runtime={"kind": "hermes", "mode": "main", "profile": "main"}),
@@ -193,7 +328,7 @@ def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
     }]
 
 
-def test_orchestrator_flag_cannot_grant_non_main_outbound_bot_authority():
+def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
     main = _main_bot(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
@@ -211,22 +346,18 @@ def test_orchestrator_flag_cannot_grant_non_main_outbound_bot_authority():
         {"id": "signal-world", "source": "signal", "target": "worldsignals", "edgeType": "flow"},
     ]
 
-    with pytest.raises(
-        card_domain.CardDomainError,
-        match="card_connection_controller_required:signal-world",
-    ):
-        card_domain._validate_changed_flow_edges(cards, edges, [])
+    card_domain._validate_changed_flow_edges(cards, edges, [])
     rosters = {
         row["cardId"]: row["roster"]
         for row in card_domain._project_hermes_bot_rosters({
             "nodes": cards,
-            "edges": [edges[0]],
+            "edges": edges,
         })
     }
 
     assert rosters == {
         "main": ["signal"],
-        "signal": [],
+        "signal": ["worldsignals"],
         "worldsignals": [],
     }
 
@@ -975,27 +1106,38 @@ def test_explicit_card_deletion_requires_intent_and_rejects_protected_cards() ->
             expected_card_revision_id="card-revision",
             deletion_intent="",
         )
-    with pytest.raises(card_domain.CardDomainError, match="card_deletion_protected:card_main_chat"):
-        card_domain.delete_card(
-            "project-one", "deck-one", "card_main_chat",
-            expected_deck_revision="deck-revision",
-            expected_card_revision_id="card-revision",
-            deletion_intent="delete-card",
-        )
-    with pytest.raises(card_domain.CardDomainError, match="card_deletion_protected:card_knowgraph"):
-        card_domain.delete_card(
-            "project-one", "deck-one", "card_knowgraph",
-            expected_deck_revision="deck-revision",
-            expected_card_revision_id="card-revision",
-            deletion_intent="delete-card",
-        )
+    for card_id in (
+        "card_main_chat",
+        "builder",
+        "card_thinkgraph",
+        "card_magentic",
+        "card_team",
+        "card_knowgraph",
+    ):
+        with pytest.raises(
+            card_domain.CardDomainError,
+            match=f"card_deletion_protected:{card_id}",
+        ):
+            card_domain.delete_card(
+                "project-one", "deck-one", card_id,
+                expected_deck_revision="deck-revision",
+                expected_card_revision_id="card-revision",
+                deletion_intent="delete-card",
+            )
 
 
 @pytest.mark.parametrize(
     "card_id",
-    ["accidental", "card_helper", "card_delegate", "card_hermes_steward"],
+    [
+        "accidental",
+        "card_helper",
+        "card_delegate",
+        "card_hermes_steward",
+        "card_trading_workbench",
+        "card_worldsignals_agent",
+    ],
 )
-def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
+def test_explicit_card_removal_detaches_only_project_membership_and_endpoint_edges(
     monkeypatch: pytest.MonkeyPatch,
     card_id: str,
 ) -> None:
@@ -1085,14 +1227,214 @@ def test_explicit_card_deletion_removes_only_exact_card_and_endpoint_edges(
     assert connection.committed is True
     assert result["meta"]["deckRevision"] == "new-revision"
     assert not any("agent_assignments" in query for query, _ in statements)
-    assert any("FROM ag_catalog.trading_jobs" in query for query, _ in statements)
-    assert any("FROM ag_catalog.trading_lifecycle_runs" in query for query, _ in statements)
+    assert not any("DELETE FROM ag_catalog.agent_card_revisions" in query for query, _ in statements)
+    assert not any("DELETE FROM ag_catalog.agent_cards" in query for query, _ in statements)
+    assert not any("current_revision_id=NULL" in query for query, _ in statements)
     mutation_params = [params for query, params in statements if "DELETE FROM" in query]
-    assert mutation_params == [
-        ("project-one", "deck-one", card_id),
-        ("project-one", "deck-one", card_id),
-        ("project-one", "deck-one", card_id),
-    ]
+    assert mutation_params == [("project-one", "deck-one", card_id)]
+
+
+def test_project_card_removal_keeps_age_identity_when_historic_telemetry_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, _params=None):
+            self.last_query = str(query)
+
+        def fetchone(self):
+            if "SELECT revision" in self.last_query:
+                return {"revision": "deck-revision"}
+            if "SELECT current_revision_id" in self.last_query:
+                return {"current_revision_id": "card-revision"}
+            if "SELECT ordinal" in self.last_query:
+                return {"ordinal": 0}
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+        def commit(self):
+            return None
+
+    deleted_cards: list[str] = []
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "project-one"})
+    monkeypatch.setattr(card_domain, "_load_deck_with_cursor", lambda *_args, **_kwargs: {
+        "deck": {
+            "nodes": [{"id": "card-helper", "_cardRevisionId": "card-revision"}],
+            "edges": [],
+        },
+    })
+    monkeypatch.setattr(card_domain, "_card_has_telemetry_edges", lambda *_args: True)
+    monkeypatch.setattr(
+        card_domain,
+        "_delete_age_card",
+        lambda _cursor, _project, _deck, card: deleted_cards.append(card),
+    )
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: {
+        "deck": {"nodes": [], "edges": []},
+        "meta": {"deckRevision": "next"},
+    })
+
+    card_domain.delete_card(
+        "project-one", "deck-one", "card-helper",
+        expected_deck_revision="deck-revision",
+        expected_card_revision_id="card-revision",
+        deletion_intent="delete-card",
+    )
+
+    assert deleted_cards == []
+
+
+def test_card_save_advances_every_exact_reused_revision_and_ensures_age_presence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, object]] = []
+    ensured: list[tuple[str, str, str]] = []
+    inserted: list[tuple[str, str, str, int]] = []
+
+    class Cursor:
+        last_query = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            self.last_query = str(query)
+            statements.append((self.last_query, params))
+
+        def fetchone(self):
+            if "SELECT 1 FROM ag_catalog.agent_decks" in self.last_query:
+                return {"exists": 1}
+            if "MAX(lineage.revision_number)" in self.last_query:
+                return {
+                    "project_id": "canonical-project",
+                    "deck_id": "canonical-deck",
+                    "card_id": "card-helper",
+                    "latest_revision_number": 7,
+                }
+            return None
+
+        def fetchall(self):
+            if "RETURNING project_id::text, deck_id" in self.last_query:
+                return [
+                    {"project_id": "project-one", "deck_id": "deck-one"},
+                    {"project_id": "project-two", "deck_id": "deck-two"},
+                ]
+            return []
+
+    class Connection:
+        committed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+        def commit(self):
+            self.committed = True
+
+    previous = _agent("card-helper", title="Before")
+    previous.update({"_cardRevisionId": "revision-old", "_cardRevision": 4})
+    incoming = _agent("card-helper", title="After")
+    document = {
+        "id": "deck-one",
+        "name": "Deck One",
+        "version": 3,
+        "nodes": [incoming],
+        "edges": [],
+        "promptTemplates": [],
+    }
+    connection = Connection()
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "project-one"})
+    monkeypatch.setattr(card_domain, "_load_deck_with_cursor", lambda *_args, **_kwargs: {
+        "deck": {"nodes": [previous], "edges": []},
+        "meta": {"deckRevision": "deck-revision"},
+    })
+    monkeypatch.setattr(
+        card_domain,
+        "_ensure_age_card",
+        lambda _cursor, project, deck, card: ensured.append((project, deck, card)),
+    )
+
+    def insert_revision(_cursor, project, deck, card, revision_number):
+        inserted.append((project, deck, card["id"], revision_number))
+        return "revision-new"
+
+    monkeypatch.setattr(card_domain, "_insert_revision", insert_revision)
+    monkeypatch.setattr(card_domain, "load_deck", lambda *_args: {
+        "deck": document,
+        "meta": {"deckRevision": "next-deck-revision"},
+    })
+
+    result = card_domain.save_deck(
+        "project-one",
+        "deck-one",
+        document,
+        expected_revision="deck-revision",
+    )
+
+    assert result["meta"]["deckRevision"] == "next-deck-revision"
+    assert connection.committed is True
+    assert ensured == [("project-one", "deck-one", "card-helper")]
+    assert inserted == [("canonical-project", "canonical-deck", "card-helper", 8)]
+    profile_lock_index = next(
+        index for index, (query, _params) in enumerate(statements)
+        if "pg_advisory_xact_lock" in query
+    )
+    profile_binding_read_index = next(
+        index for index, (query, _params) in enumerate(statements)
+        if "LOWER(runtime_profile)=%s" in query
+    )
+    deck_lock_index = next(
+        index for index, (query, _params) in enumerate(statements)
+        if "agent_decks" in query and "FOR UPDATE" in query
+    )
+    revision_owner_read_index = next(
+        index for index, (query, _params) in enumerate(statements)
+        if "MAX(lineage.revision_number)" in query
+    )
+    revision_update_index = next(
+        index for index, (query, _params) in enumerate(statements)
+        if "WHERE card_id=%s AND current_revision_id=%s" in query
+    )
+    assert profile_lock_index < profile_binding_read_index < deck_lock_index
+    assert deck_lock_index < revision_owner_read_index
+    assert profile_lock_index < revision_update_index
+    propagation = next(
+        (query, params)
+        for query, params in statements
+        if "WHERE card_id=%s AND current_revision_id=%s" in query
+    )
+    assert propagation[1] == ("revision-new", "card-helper", "revision-old")
+    assert any(
+        params is not None and tuple(params)[-2:] == ("project-two", "deck-two")
+        for query, params in statements
+        if "UPDATE ag_catalog.agent_decks" in query
+    )
 
 
 def test_card_deletion_telemetry_check_uses_typed_agentgraph_endpoints(
@@ -2358,6 +2700,8 @@ def test_main_mode_invokes_magnetic_across_orange_bot_authority(
     }]
     main["runtime"] = {"kind": "hermes", "mode": "delegate", "profile": "main"}
     main["runtimeOptions"]["orchestrator"] = True
+    assert card_domain.materialize_invocation(payload)["runtimeOwner"] == "mag_one"
+    main["runtimeOptions"]["orchestrator"] = False
     with pytest.raises(card_domain.CardDomainError, match="card_invocation_edge_authority_required"):
         card_domain.materialize_invocation(payload)
 

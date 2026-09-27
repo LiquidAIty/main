@@ -10,7 +10,10 @@ import {
 } from '../hermes/agentTerminal';
 import { getV3ProjectBlob } from '../decks/store';
 import { BUILDER_CARD_ID } from '../decks/store';
-import { listOwnedAgentProjects } from '../services/agentBuilderStore';
+import {
+  listCanonicalSavedCardBindings,
+  listOwnedAgentProjects,
+} from '../services/agentBuilderStore';
 import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { logModelConfiguration } from './modelConfig';
 import type { AgentCardInstance, DeckDocument } from '../types';
@@ -99,21 +102,48 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
   loadProject?: typeof getV3ProjectBlob;
   reconcile?: typeof agentTerminalManager.reconcile;
   resolveBotProfiles?: typeof resolveHermesBotRosterProjections;
+  listCanonicalBindings?: typeof listCanonicalSavedCardBindings;
   mainWorkingDirectory?: () => string;
   builderWorkingDirectory?: () => string;
 } = {}): Promise<AgentTerminalState[]> {
   const projects = await (dependencies.listProjects ?? listOwnedAgentProjects)();
+  const canonicalBindings = await (
+    dependencies.listCanonicalBindings ?? listCanonicalSavedCardBindings
+  )();
+  const canonicalByProfile = new Map(canonicalBindings.map((binding) => (
+    [binding.runtimeProfile.toLowerCase(), binding] as const
+  )));
+  if (canonicalByProfile.size !== canonicalBindings.length) {
+    throw new Error('agent_terminal_canonical_profile_ambiguous');
+  }
+  const isCanonicalCard = (card: AgentCardInstance): boolean => {
+    if (card.runtime.kind !== 'hermes') return false;
+    const binding = canonicalByProfile.get(card.runtime.profile.toLowerCase());
+    return Boolean(
+      binding
+      && binding.cardId === card.id
+      && binding.cardRevisionId === String(card._cardRevisionId || '')
+      && binding.revisionSha256 === String(card._cardRevisionSha256 || ''),
+    );
+  };
   const loadProject = dependencies.loadProject ?? getV3ProjectBlob;
   const projectDecks = await Promise.all(projects.map(async (project) => ({
     project,
     blob: await loadProject(project.id),
   })));
+  projectDecks.sort((left, right) => (
+    left.project.ownerUserId.localeCompare(right.project.ownerUserId)
+    || left.project.id.localeCompare(right.project.id)
+  ));
   const desired: DesiredAgentTerminal[] = [];
   const botProfiles: DesiredHermesBotProfile[] = [];
+  const eagerProfiles = new Set<string>();
+  const projectedProfiles = new Set<string>();
   const resolveBotProfiles = dependencies.resolveBotProfiles ?? resolveHermesBotRosterProjections;
   for (const { project, blob } of projectDecks) {
     if (!project.ownerUserId.trim()) throw new Error('agent_terminal_project_owner_missing');
-    for (const [deckId, deck] of Object.entries(blob.decks)) {
+    for (const [deckId, deck] of Object.entries(blob.decks)
+      .sort(([left], [right]) => left.localeCompare(right))) {
       const projections = await resolveBotProfiles(project.id, deckId);
       const cards = new Map(deck.nodes.map((card) => [card.id, card] as const));
       for (const projection of projections) {
@@ -124,23 +154,32 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
           || (card._cardRevisionId || '') !== projection.cardRevisionId) {
           throw new Error('agent_terminal_bot_roster_saved_identity_mismatch');
         }
-        botProfiles.push({
-          owner: {
-            userId: project.ownerUserId,
-            projectId: project.id,
-            deckId,
-            cardId: card.id,
-          },
-          card,
-          projection,
-        });
+        if (!isCanonicalCard(card)) continue;
+        const profileKey = projection.profile.toLowerCase();
+        if (!projectedProfiles.has(profileKey)) {
+          projectedProfiles.add(profileKey);
+          botProfiles.push({
+            owner: {
+              userId: project.ownerUserId,
+              projectId: project.id,
+              deckId,
+              cardId: card.id,
+            },
+            card,
+            projection,
+          });
+        }
       }
       const requiredCardIds = deriveAutomaticHermesCardIds(deck, projections);
       for (const card of deck.nodes) {
         if (card.runtime.kind !== 'hermes') continue;
+        if (!isCanonicalCard(card)) continue;
         const isMainPresentation = card.runtime.mode === 'main';
         if (!requiredCardIds.has(card.id)) continue;
         const isBuilderPresentation = card.id === BUILDER_CARD_ID;
+        const profileKey = card.runtime.profile.toLowerCase();
+        const openAtReconcile = !eagerProfiles.has(profileKey);
+        eagerProfiles.add(profileKey);
         desired.push({
           owner: {
             userId: project.ownerUserId,
@@ -150,6 +189,7 @@ export async function reconcileConnectedAgentTerminals(dependencies: {
           },
           card,
           deck,
+          openAtReconcile,
           ...(dependencies.mainWorkingDirectory && isMainPresentation
             ? { workingDirectory: dependencies.mainWorkingDirectory(), attachTui: false }
             : dependencies.builderWorkingDirectory && isBuilderPresentation

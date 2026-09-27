@@ -177,6 +177,91 @@ describe('canonical deck write guards', () => {
     expect(evaluateBoardIntegrityForSave).not.toHaveBeenCalled();
   });
 
+  it('keeps a New Agent transient while autosaving saved-Card layout around it', async () => {
+    vi.useFakeTimers();
+    const persisted = canonicalDeck();
+    const draftId = 'card_assist_transient';
+    const draft = {
+      ...structuredClone(persisted.nodes[1]),
+      id: draftId,
+      title: 'Transient Agent',
+      runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'agent-transient' },
+      position: { x: 900, y: 40 },
+    };
+    delete draft._cardRevisionId;
+    delete draft._cardRevision;
+    delete draft._cardRevisionSha256;
+    const withDraft: DeckDocument = {
+      ...persisted,
+      nodes: [...persisted.nodes, draft],
+      edges: [
+        ...persisted.edges,
+        { id: 'edge-to-transient', source: persisted.nodes[0].id, target: draftId, edgeType: 'flow' },
+      ],
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ meta: { deckRevision: 'revision-2' } }),
+    } as Response);
+    const transientCardIds = new Set([draftId]);
+    const shared = {
+      builderDev: false,
+      canvasProjectId: 'project-canonical',
+      projectsApi: '/api/projects',
+      builderDeckId: 'deck_builder',
+      deckLoadBusy: false,
+      deckLoadError: null,
+      stateLoaded: true,
+      transientCardIds,
+      layoutAutosaveAbortRef: { current: null as AbortController | null },
+      lastPersistedBoardFingerprintRef: {
+        current: JSON.stringify({ nodes: persisted.nodes, edges: persisted.edges }),
+      },
+      lastPersistedBoardSnapshotRef: { current: null as unknown },
+      lastDeckPersistReasonRef: { current: 'deck-quick-add' },
+      evaluateBoardIntegrityForSave: vi.fn(() => ({ ok: true, removedNodeIds: [] })),
+      snapshotDeckBoard: vi.fn((deck: DeckDocument) => ({ nodes: deck.nodes, edges: deck.edges })),
+      formatBuilderStatusMessage: (_value: unknown, fallback: string) => fallback,
+      isAbortLikeError: () => false,
+      setDeckRevision: vi.fn(),
+      setDeckStatusMessage: vi.fn(),
+    };
+    const { rerender } = renderHook(
+      ({ deck }) => useAgentBuilderAutosave({
+        ...shared,
+        deck,
+        deckRevision: 'revision-1',
+      }),
+      { initialProps: { deck: withDraft } },
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    const movedAroundDraft: DeckDocument = {
+      ...withDraft,
+      nodes: withDraft.nodes.map((node) => node.id === persisted.nodes[0].id
+        ? { ...node, position: { x: 155, y: 245 } }
+        : node),
+    };
+    rerender({ deck: movedAroundDraft });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.document.nodes.some((node: { id: string }) => node.id === draftId)).toBe(false);
+    expect(body.document.edges.some((edge: { id: string }) => edge.id === 'edge-to-transient')).toBe(false);
+    expect(body.document.nodes.find((node: { id: string }) => node.id === persisted.nodes[0].id).position)
+      .toEqual({ x: 155, y: 245 });
+  });
+
   it('serializes rapid position saves and advances the latest board from the committed revision', async () => {
     vi.useFakeTimers();
     const firstDeck = canonicalDeck();

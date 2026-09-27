@@ -57,25 +57,31 @@ class RegistrationContext:
 
 
 def _configure_roster(plugin, monkeypatch, entries):
-    profile_home = Path("profiles") / "orchestrator"
-    roster = []
-    titles = {}
-    for stable_profile, title in entries:
-        target_home = Path("profiles") / stable_profile
-        roster.append((stable_profile, target_home))
-        titles[target_home] = title
-    monkeypatch.setattr(plugin, "_process_profile_home", lambda: profile_home)
-    monkeypatch.setattr(
-        plugin,
-        "_resolve_bot_roster",
-        lambda actual_home: roster if actual_home == profile_home else [],
-    )
-    monkeypatch.setattr(
-        plugin,
-        "_read_profile_meta",
-        lambda target_home: {"bot_title": titles[target_home]},
-    )
-    return profile_home, titles
+    stored_session_id = "stored-project-conversation"
+    profiles = [stable_profile for stable_profile, _title in entries]
+    titles = {stable_profile: title for stable_profile, title in entries}
+    def payload(actual_session, arguments):
+        if actual_session != stored_session_id:
+            raise ValueError("session mismatch")
+        targets = [{"title": titles[profile], "profile": profile} for profile in profiles]
+        if not arguments:
+            return {"targets": targets}
+        visible_target = arguments["target"]
+        matches = [
+            profile for profile in profiles
+            if titles[profile].casefold() == visible_target.casefold()
+        ]
+        if len(matches) != 1:
+            raise ValueError("message_agent target not authorized by project roster")
+        return {
+            "targets": targets,
+            "resolved": {
+                "profile": matches[0],
+                "storedSessionId": f"stored-{matches[0]}",
+            },
+        }
+    monkeypatch.setattr(plugin, "_request_project_roster_payload", payload)
+    return stored_session_id, titles
 
 
 def test_registers_exact_materialized_tools(plugin, monkeypatch):
@@ -86,7 +92,9 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}},
     }]
     monkeypatch.setattr(plugin, "_load_tools", lambda: tools)
-    _configure_roster(plugin, monkeypatch, [("builder_profile", "Builder")])
+    stored_session_id, _titles = _configure_roster(
+        plugin, monkeypatch, [("builder_profile", "Builder")],
+    )
     context = RegistrationContext()
 
     plugin.register(context)
@@ -102,48 +110,50 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         },
         "description": "Create a saved Card.",
     }
-    assert [name for name, _callback in context.hooks] == ["pre_tool_call"]
+    assert [name for name, _callback in context.hooks] == ["resolve_message_agent_target"]
     assert context.hooks[0][1](
-        tool_name="message_agent",
-        args={"target": "@builder", "message": "Inspect this."},
-    ) == {"action": "modify", "args": {"target": "builder_profile"}}
+        target="@builder",
+        session_id=stored_session_id,
+    ) == {
+        "profile": "builder_profile",
+        "roster": ["builder_profile"],
+        "stored_session_id": "stored-builder_profile",
+    }
     assert len(context.prompt_sections) == 1
     section_name, render, options = context.prompt_sections[0]
     assert section_name == "card-tools.visible-card-targets"
     assert options == {"max_chars": 4_000}
-    assert render({}) == (
+    assert render({"session_id": stored_session_id}) == (
         "Use `message_agent` with one of these exact visible saved-Card addresses:\n"
         "- `@Builder`"
     )
 
 
 def test_visible_titles_translate_case_insensitively_with_optional_at(plugin, monkeypatch):
-    profile_home, _titles = _configure_roster(
+    stored_session_id, _titles = _configure_roster(
         plugin,
         monkeypatch,
         [("profile_builder_7", "Builder"), ("profile_signal_9", "Signal")],
     )
 
     for target in ("Builder", "builder", "@BUILDER", "  @Builder  "):
-        assert plugin._rewrite_message_agent_target(
-            profile_home,
-            tool_name="message_agent",
-            args={"target": target, "message": "Inspect this."},
-        ) == {"action": "modify", "args": {"target": "profile_builder_7"}}
+        assert plugin._resolve_message_agent_target(
+            target=target,
+            session_id=stored_session_id,
+        ) == {
+            "profile": "profile_builder_7",
+            "roster": ["profile_builder_7", "profile_signal_9"],
+            "stored_session_id": "stored-profile_builder_7",
+        }
 
 
-def test_visible_title_hook_is_bounded_to_message_agent_and_exact_roster(plugin, monkeypatch):
-    profile_home, _titles = _configure_roster(
+def test_visible_title_resolver_refuses_every_target_outside_exact_roster(plugin, monkeypatch):
+    stored_session_id, _titles = _configure_roster(
         plugin,
         monkeypatch,
         [("profile_builder_7", "Builder")],
     )
 
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="card__card_create",
-        args={"target": "Builder"},
-    ) is None
     for target in (
         "profile_builder_7",
         "Unknown",
@@ -152,11 +162,11 @@ def test_visible_title_hook_is_bounded_to_message_agent_and_exact_roster(plugin,
         "Builder@another-machine",
         "@@Builder",
     ):
-        assert plugin._rewrite_message_agent_target(
-            profile_home,
-            tool_name="message_agent",
-            args={"target": target, "message": "Hello"},
-        ) is None
+        with pytest.raises(ValueError, match="not authorized"):
+            plugin._resolve_message_agent_target(
+                target=target,
+                session_id=stored_session_id,
+            )
 
 
 @pytest.mark.parametrize("bad_title", [
@@ -172,44 +182,42 @@ def test_malformed_visible_title_fails_closed_for_the_whole_projection(
     monkeypatch,
     bad_title,
 ):
-    profile_home, _titles = _configure_roster(
+    stored_session_id, _titles = _configure_roster(
         plugin,
         monkeypatch,
         [("valid_profile", "Valid"), ("invalid_profile", bad_title)],
     )
 
-    assert plugin._visible_card_targets(profile_home) == []
-    assert plugin._visible_card_targets_prompt(profile_home) == ""
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="message_agent",
-        args={"target": "@Valid", "message": "Hello"},
-    ) is None
+    assert plugin._visible_card_targets(stored_session_id) == []
+    assert plugin._visible_card_targets_prompt(stored_session_id) == ""
+    with pytest.raises(ValueError, match="response invalid|not authorized"):
+        plugin._resolve_message_agent_target(
+            target="@Valid", session_id=stored_session_id,
+        )
 
 
 def test_duplicate_visible_titles_fail_closed_case_insensitively(plugin, monkeypatch):
-    profile_home, _titles = _configure_roster(
+    stored_session_id, _titles = _configure_roster(
         plugin,
         monkeypatch,
         [("profile_one", "Signal"), ("profile_two", "sIgNaL")],
     )
 
-    assert plugin._visible_card_targets(profile_home) == []
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="message_agent",
-        args={"target": "Signal", "message": "Hello"},
-    ) is None
+    assert plugin._visible_card_targets(stored_session_id) == []
+    with pytest.raises(ValueError, match="response invalid|not authorized"):
+        plugin._resolve_message_agent_target(
+            target="Signal", session_id=stored_session_id,
+        )
 
 
 def test_prompt_lists_only_exact_visible_titles_and_no_internal_ids(plugin, monkeypatch):
-    profile_home, _titles = _configure_roster(
+    stored_session_id, _titles = _configure_roster(
         plugin,
         monkeypatch,
         [("profile_builder_7", "Builder"), ("profile_world_9", "WorldSignals")],
     )
 
-    prompt = plugin._visible_card_targets_prompt(profile_home)
+    prompt = plugin._visible_card_targets_prompt(stored_session_id)
 
     assert "@Builder" in prompt
     assert "@WorldSignals" in prompt
@@ -218,47 +226,45 @@ def test_prompt_lists_only_exact_visible_titles_and_no_internal_ids(plugin, monk
 
 
 def test_title_changes_are_read_live_by_prompt_and_translation(plugin, monkeypatch):
-    profile_home, titles = _configure_roster(
+    stored_session_id, titles = _configure_roster(
         plugin,
         monkeypatch,
         [("stable_profile", "Signal")],
     )
-    target_home = Path("profiles") / "stable_profile"
+    assert "@Signal" in plugin._visible_card_targets_prompt(stored_session_id)
+    titles["stable_profile"] = "WorldSignals"
 
-    assert "@Signal" in plugin._visible_card_targets_prompt(profile_home)
-    titles[target_home] = "WorldSignals"
-
-    prompt = plugin._visible_card_targets_prompt(profile_home)
+    prompt = plugin._visible_card_targets_prompt(stored_session_id)
     assert "@WorldSignals" in prompt
     assert "@Signal`" not in prompt
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="message_agent",
-        args={"target": "Signal", "message": "Hello"},
-    ) is None
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="message_agent",
-        args={"target": "@worldsignals", "message": "Hello"},
-    ) == {"action": "modify", "args": {"target": "stable_profile"}}
+    with pytest.raises(ValueError, match="not authorized"):
+        plugin._resolve_message_agent_target(
+            target="Signal", session_id=stored_session_id,
+        )
+    assert plugin._resolve_message_agent_target(
+        target="@worldsignals", session_id=stored_session_id,
+    ) == {
+        "profile": "stable_profile",
+        "roster": ["stable_profile"],
+        "stored_session_id": "stored-stable_profile",
+    }
 
 
 def test_empty_or_unreadable_roster_has_no_aliases_or_prompt(plugin, monkeypatch):
-    profile_home, _titles = _configure_roster(plugin, monkeypatch, [])
+    stored_session_id, _titles = _configure_roster(plugin, monkeypatch, [])
 
-    assert plugin._visible_card_targets(profile_home) == []
-    assert plugin._visible_card_targets_prompt(profile_home) == ""
+    assert plugin._visible_card_targets(stored_session_id) == []
+    assert plugin._visible_card_targets_prompt(stored_session_id) == ""
     monkeypatch.setattr(
         plugin,
-        "_resolve_bot_roster",
-        lambda _profile_home: (_ for _ in ()).throw(RuntimeError("unavailable")),
+        "_request_project_roster",
+        lambda _session_id: (_ for _ in ()).throw(RuntimeError("unavailable")),
     )
-    assert plugin._visible_card_targets(profile_home) == []
-    assert plugin._rewrite_message_agent_target(
-        profile_home,
-        tool_name="message_agent",
-        args={"target": "Builder", "message": "Hello"},
-    ) is None
+    assert plugin._visible_card_targets(stored_session_id) == []
+    with pytest.raises(ValueError, match="not authorized"):
+        plugin._resolve_message_agent_target(
+            target="Builder", session_id=stored_session_id,
+        )
 
 
 def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monkeypatch):
@@ -295,6 +301,44 @@ def test_handler_posts_one_signed_request_and_returns_native_output(plugin, monk
     assert envelope["signature"] == hmac.new(
         b"gateway-secret", envelope["payload"].encode("utf-8"), hashlib.sha256,
     ).hexdigest()
+
+
+def test_project_target_resolution_is_signed_to_exact_source_and_returns_exact_target_session(
+    plugin, monkeypatch,
+):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "gateway-secret")
+    monkeypatch.setattr(plugin.secrets, "token_hex", lambda _size: "d" * 32)
+    monkeypatch.setattr(plugin.time, "time", lambda: 3_000)
+    captured = {}
+
+    def post_once(_url, envelope):
+        captured.update(envelope)
+        return 200, {"ok": True, "output": json.dumps({
+            "targets": [{"title": "KnowGraph", "profile": "knowgraph"}],
+            "resolved": {
+                "profile": "knowgraph",
+                "storedSessionId": "stored-knowgraph-project-conversation",
+            },
+        })}
+
+    monkeypatch.setattr(plugin, "_post_once", post_once)
+
+    assert plugin._request_project_target("stored-main-project-conversation", "KnowGraph") == (
+        [("KnowGraph", "knowgraph")],
+        "knowgraph",
+        "stored-knowgraph-project-conversation",
+    )
+    payload = json.loads(captured["payload"])
+    assert payload == {
+        "version": 1,
+        "expiresAt": 3_300,
+        "nonce": "d" * 32,
+        "sourceStoredSessionId": "stored-main-project-conversation",
+        "tool": "project_roster.resolve",
+        "arguments": {"target": "KnowGraph"},
+    }
 
 
 def test_dispatcher_worker_posts_v2_claim_envelope_without_gateway_identity(plugin, monkeypatch):

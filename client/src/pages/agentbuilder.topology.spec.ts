@@ -18,6 +18,16 @@ const mainToKnowGraphConnected = (nodes: typeof INITIAL_DECK.nodes, edges: typeo
   );
 
 describe('Main / Hermes / graph authority topology', () => {
+  it('keeps saved reuse and new Card creation inside one Add Agent chooser', () => {
+    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('data-testid="saved-card-chooser"');
+    expect(source).toContain('data-testid="add-agent-new-card"');
+    expect(source).toContain('/saved-cards`');
+    expect(source).toContain('/memberships`');
+    expect(source).toContain('buildQuickAddAssistCard(currentDeckRef.current, binding)');
+    expect(source).toContain('Reuse a saved Card unchanged, or create and save one new Card.');
+  });
+
   it('keeps five general Card tabs, ordinary Card CLI, and the permanent Builder CLI', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     expect(source).not.toContain('main-card-cli-location');

@@ -10,6 +10,8 @@ type IntegrityResult = {
   message?: string;
 };
 
+const EMPTY_TRANSIENT_CARD_IDS: ReadonlySet<string> = new Set();
+
 type UseAgentBuilderAutosaveArgs = {
   builderDev: boolean;
   canvasProjectId: string;
@@ -20,6 +22,7 @@ type UseAgentBuilderAutosaveArgs = {
   deckLoadBusy: boolean;
   deckLoadError: string | null;
   stateLoaded: boolean;
+  transientCardIds?: ReadonlySet<string>;
   layoutAutosaveAbortRef: MutableRefObject<AbortController | null>;
   lastPersistedBoardFingerprintRef: MutableRefObject<string | null>;
   lastPersistedBoardSnapshotRef: MutableRefObject<unknown>;
@@ -38,6 +41,24 @@ type UseAgentBuilderAutosaveArgs = {
   setDeckStatusMessage: Dispatch<SetStateAction<string | null>>;
 };
 
+export function projectDeckForPersistence(
+  deck: DeckDocument,
+  transientCardIds: ReadonlySet<string>,
+  includedTransientCardIds: ReadonlySet<string> = new Set(),
+): DeckDocument {
+  const excludedCardIds = new Set(
+    [...transientCardIds].filter((cardId) => !includedTransientCardIds.has(cardId)),
+  );
+  if (excludedCardIds.size === 0) return deck;
+  return {
+    ...deck,
+    nodes: deck.nodes.filter((node) => !excludedCardIds.has(node.id)),
+    edges: deck.edges.filter((edge) => (
+      !excludedCardIds.has(edge.source) && !excludedCardIds.has(edge.target)
+    )),
+  };
+}
+
 export default function useAgentBuilderAutosave({
   builderDev,
   canvasProjectId,
@@ -48,6 +69,7 @@ export default function useAgentBuilderAutosave({
   deckLoadBusy,
   deckLoadError,
   stateLoaded,
+  transientCardIds = EMPTY_TRANSIENT_CARD_IDS,
   layoutAutosaveAbortRef,
   lastPersistedBoardFingerprintRef,
   lastPersistedBoardSnapshotRef,
@@ -67,9 +89,10 @@ export default function useAgentBuilderAutosave({
       || deckLoadBusy
       || deckLoadError
     ) return;
+    const persistableDeck = projectDeckForPersistence(deck, transientCardIds);
     const boardFingerprint = JSON.stringify({
-      nodes: deck.nodes,
-      edges: deck.edges,
+      nodes: persistableDeck.nodes,
+      edges: persistableDeck.edges,
     });
     if (lastPersistedBoardFingerprintRef.current === boardFingerprint) return;
 
@@ -80,15 +103,15 @@ export default function useAgentBuilderAutosave({
       // revision rerenders this hook and schedules the latest unsaved board.
       if (layoutAutosaveAbortRef.current) return;
       const reason = lastDeckPersistReasonRef.current || 'board-autosave';
-      const integrity = evaluateBoardIntegrityForSave(deck, reason);
+      const integrity = evaluateBoardIntegrityForSave(persistableDeck, reason);
       if (!integrity.ok) {
         setDeckStatusMessage(integrity.message ?? null);
         console.warn('[builder][deck-save-proof]', {
           projectId: canvasProjectId,
           deckId: builderDeckId,
           reason,
-          nodeCount: deck.nodes.length,
-          edgeCount: deck.edges.length,
+          nodeCount: persistableDeck.nodes.length,
+          edgeCount: persistableDeck.edges.length,
           revisionBefore: deckRevision,
           revisionAfter: null,
           ok: false,
@@ -111,7 +134,7 @@ export default function useAgentBuilderAutosave({
               },
               body: JSON.stringify({
                 document: {
-                  ...deck,
+                  ...persistableDeck,
                   id: builderDeckId,
                 },
                 expectedRevision: deckRevision,
@@ -139,8 +162,8 @@ export default function useAgentBuilderAutosave({
               projectId: canvasProjectId,
               deckId: builderDeckId,
               reason,
-              nodeCount: deck.nodes.length,
-              edgeCount: deck.edges.length,
+              nodeCount: persistableDeck.nodes.length,
+              edgeCount: persistableDeck.edges.length,
               revisionBefore,
               revisionAfter: null,
               ok: false,
@@ -161,13 +184,13 @@ export default function useAgentBuilderAutosave({
             setDeckRevision(data.meta.deckRevision);
           }
           lastPersistedBoardFingerprintRef.current = boardFingerprint;
-          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(deck);
+          lastPersistedBoardSnapshotRef.current = snapshotDeckBoard(persistableDeck);
           console.info('[builder][deck-save-proof]', {
             projectId: canvasProjectId,
             deckId: builderDeckId,
             reason,
-            nodeCount: deck.nodes.length,
-            edgeCount: deck.edges.length,
+            nodeCount: persistableDeck.nodes.length,
+            edgeCount: persistableDeck.edges.length,
             revisionBefore,
             revisionAfter,
             ok: true,
@@ -188,8 +211,8 @@ export default function useAgentBuilderAutosave({
             projectId: canvasProjectId,
             deckId: builderDeckId,
             reason,
-            nodeCount: deck.nodes.length,
-            edgeCount: deck.edges.length,
+            nodeCount: persistableDeck.nodes.length,
+            edgeCount: persistableDeck.edges.length,
             revisionBefore,
             revisionAfter: null,
             ok: false,
@@ -228,5 +251,6 @@ export default function useAgentBuilderAutosave({
     setDeckStatusMessage,
     snapshotDeckBoard,
     stateLoaded,
+    transientCardIds,
   ]);
 }

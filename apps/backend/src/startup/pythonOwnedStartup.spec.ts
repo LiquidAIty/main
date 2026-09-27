@@ -217,12 +217,14 @@ describe('Python-owned backend startup', () => {
         { id: 'active-builder', source: 'main-card', target: 'builder', edgeType: 'flow' },
         { id: 'mag-worker', source: 'mag-one', target: 'worker', edgeType: 'magentic_option' },
       ] } as any;
-    const reconcile = vi.fn(async (desired: any[], _dimensions?: unknown, _botProfiles?: unknown[]) => desired.map((entry, index) => ({
+    const reconcile = vi.fn(async (desired: any[], _dimensions?: unknown, _botProfiles?: unknown[]) => desired
+      .filter((entry) => entry.openAtReconcile !== false)
+      .map((entry, index) => ({
       sessionId: `session-${index}`, cardId: entry.card.id, profile: entry.card.runtime.profile,
       pid: 1, gatewayPid: 1, tuiPid: null, ptyId: null, nativeSessionId: `native-${index}`,
       storedSessionId: `native-${index}`, hermesHome: '', unavailableToolReasons: {},
       status: 'running', cols: 120, rows: 36,
-    })));
+      })));
 
     const states = await reconcileConnectedAgentTerminals({
       listProjects: async () => [{ id: 'project', name: 'Project', code: null,
@@ -238,6 +240,13 @@ describe('Python-owned backend startup', () => {
         { cardId: 'idle', cardRevisionId: '', profile: 'idle-profile', title: 'Idle',
           botEnabled: true, roster: [] },
       ],
+      listCanonicalBindings: async () => [main, connected, builder, disconnected, magOne]
+        .map((card) => ({
+          runtimeProfile: card.runtime.profile,
+          cardId: card.id,
+          cardRevisionId: '',
+          revisionSha256: '',
+        })),
       reconcile: reconcile as any,
       mainWorkingDirectory: () => 'C:\\neutral-main',
       builderWorkingDirectory: () => 'C:\\repository',
@@ -262,6 +271,60 @@ describe('Python-owned backend startup', () => {
     expect(reconcile.mock.calls[0][2]).toHaveLength(4);
   });
 
+  it('keeps every Project binding authoritative but eagerly opens one session per stable profile', async () => {
+    const shared = {
+      id: 'card_main_chat', templateId: 'template_main_chat', title: 'Main', kind: 'agent',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      runtimeOptions: {}, position: { x: 0, y: 0 },
+      _cardRevisionId: 'revision-main', _cardRevisionSha256: 'a'.repeat(64),
+    } as any;
+    const deck = (id: string) => ({
+      id, name: id, version: 1, promptTemplates: [], nodes: [{ ...shared }], edges: [],
+    }) as any;
+    const reconcile = vi.fn(async () => []);
+
+    await reconcileConnectedAgentTerminals({
+      // Deliberately reverse lexical order to prove the activation anchor is
+      // deterministic rather than whichever Project was most recently updated.
+      listProjects: async () => [
+        { id: 'project-b', name: 'B', code: null, status: 'active', project_type: 'agent', ownerUserId: 'owner' },
+        { id: 'project-a', name: 'A', code: null, status: 'active', project_type: 'agent', ownerUserId: 'owner' },
+      ],
+      loadProject: async (projectId) => ({
+        decks: { [`deck-${projectId.at(-1)}`]: deck(`deck-${projectId.at(-1)}`) },
+        meta: { decks: {} },
+      }),
+      resolveBotProfiles: async () => [{
+        cardId: shared.id,
+        cardRevisionId: shared._cardRevisionId,
+        profile: shared.runtime.profile,
+        title: shared.title,
+        botEnabled: true,
+        roster: [],
+      }],
+      listCanonicalBindings: async () => [{
+        runtimeProfile: shared.runtime.profile,
+        cardId: shared.id,
+        cardRevisionId: shared._cardRevisionId,
+        revisionSha256: shared._cardRevisionSha256,
+      }],
+      reconcile: reconcile as any,
+      mainWorkingDirectory: () => 'C:\\neutral-main',
+    });
+
+    const desired = reconcile.mock.calls[0][0];
+    expect(desired).toHaveLength(2);
+    expect(desired.map((entry: any) => ({
+      projectId: entry.owner.projectId,
+      openAtReconcile: entry.openAtReconcile,
+    }))).toEqual([
+      { projectId: 'project-a', openAtReconcile: true },
+      { projectId: 'project-b', openAtReconcile: false },
+    ]);
+    expect(reconcile.mock.calls[0][2]).toHaveLength(1);
+    expect(reconcile.mock.calls[0][2][0].owner.projectId).toBe('project-a');
+  });
+
   it('serializes startup and saved-topology reconciliation through the existing manager', async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -271,6 +334,7 @@ describe('Python-owned backend startup', () => {
     });
     const dependencies = {
       listProjects: async () => [],
+      listCanonicalBindings: async () => [],
       loadProject: vi.fn(),
       reconcile: reconcile as any,
     };

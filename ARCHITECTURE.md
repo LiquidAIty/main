@@ -426,11 +426,15 @@ exact files/symbols, preserved upstream behavior, tests, fork cost, and rollback
 
 For Hermes, the exact nine retained local extensions are recorded in
 `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`. Direct-agent delivery remains upstream-owned; its roster entry
-changes only profile-scoped local target authority. The Mag One entry changes only assignment authority
+changes only execution-scoped local target and exact-session authority. The Mag One entry changes only assignment authority
 inside one explicitly bounded creator tree and leaves ordinary tasks unrestricted. The invocation-local
 Card-routing entry narrows only Card-managed tools, uses native one-turn model switching, restores both
 surfaces, and emits observable execution receipts on the existing completion event. Upstream ACP is not a
 LiquidAIty runtime boundary. No other Hermes customization is silently accepted by this document.
+
+| Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback/removability |
+| --- | --- | --- | --- |
+| `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | Replace the rejected profile-global Project roster with one signed source-session resolver at the native delivery boundary. It resolves only an existing saved Card/profile and pins live or cold delivery to that target's exact stored Project conversation. Orange `flow` is the only target authority; blue Magnetic membership is untouched. With no resolver hook, stock Hermes title, roster, relay, peer, Team, delivery, and receipt behavior remains unchanged. The existing Card-tools HMAC/session seam is the available extension boundary; profile config cannot represent concurrent Projects safely. | Focused Card-tools, native Bot delivery/live-owner, backend route, terminal, and TypeScript typecheck suites cover refusal, exact session selection, and stock fallback. Fork cost is four small generic Hermes seams plus focused tests. Roll back these symbols and the Card-tools resolver together; remove the divergence when upstream exposes an equivalent exact-session target resolver or when saved-Card direct messaging is retired. |
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 

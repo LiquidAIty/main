@@ -30,6 +30,21 @@ def strip_legacy_protocol(text: str) -> str:
 # The only session title that receives the protocol section. Must match the
 # desktop plugin's createCanonicalChat title and the `-c "Bot Chat"` resume target.
 BOT_CHAT_TITLE = "Bot Chat"
+BOT_CHAT_TITLE_PREFIX = BOT_CHAT_TITLE + ":"
+
+
+def is_bot_chat_title(value: object) -> bool:
+    """True for stock Bot Chat or an application-scoped Bot Chat identity.
+
+    Stock Hermes creates exactly ``Bot Chat``.  Embedders may bind independent
+    persisted conversations to deterministic suffixed titles without changing
+    profile identity; the suffix itself grants no roster authority.
+    """
+    title = str(value or "").strip()
+    return title == BOT_CHAT_TITLE or (
+        title.startswith(BOT_CHAT_TITLE_PREFIX)
+        and bool(title[len(BOT_CHAT_TITLE_PREFIX):].strip())
+    )
 
 _lock = threading.Lock()
 _cached: dict[str, str] = {}

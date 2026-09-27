@@ -24,7 +24,7 @@ type AgentBuilderRailProps = {
   onShowWorldsignalWorkspace: () => void;
   onShowWorldviewWorkspace: () => void;
   onShowCanvasWorkspace: () => void;
-  onQuickAddAssistNode: () => void;
+  onOpenAddAgent: () => void;
   onShowKnowledgeWorkspace: () => void;
   onShowTradingWorkspace: () => void;
   onOpenNavigationDrawer: () => void;
@@ -74,7 +74,7 @@ export default function AgentBuilderRail({
   onShowWorldsignalWorkspace,
   onShowWorldviewWorkspace,
   onShowCanvasWorkspace,
-  onQuickAddAssistNode,
+  onOpenAddAgent,
   onShowKnowledgeWorkspace,
   onShowTradingWorkspace,
   onOpenNavigationDrawer,
@@ -131,12 +131,11 @@ export default function AgentBuilderRail({
         title="Agents"
         aria-label="Agents"
         data-testid="rail-plus-button"
-        // Hex-plus restores the canonical quick-add: on the Agent Canvas it
-        // creates one new editable Assistant Agent card right away. Off-canvas
-        // it first switches to the canvas workspace.
+        // One normal Add Agent control owns both saved-Card reuse and new-Card
+        // creation. Off-canvas it first switches to the canvas workspace.
         onClick={() => {
           if (workspaceView === 'canvas') {
-            onQuickAddAssistNode();
+            onOpenAddAgent();
           } else {
             onShowCanvasWorkspace();
           }
