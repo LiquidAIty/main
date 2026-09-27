@@ -418,13 +418,6 @@ export default function AgentBuilder(): React.ReactElement {
     () => deck.nodes.find((node) => isWorldViewCard(node)) || null,
     [deck.nodes],
   );
-  const signalAnalystCard = useMemo(
-    () => deck.nodes.find((node) => (
-      node.runtime.kind === 'hermes'
-      && node.runtime.profile === 'signal-analyst'
-    )) || null,
-    [deck.nodes],
-  );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
     useState<KnowledgeSurfaceKind>('combined');
   // Resolve existing conversation links once; continuity stays project-owned,
@@ -1714,9 +1707,7 @@ export default function AgentBuilder(): React.ReactElement {
       worldviewSurface={
         <WorldViewSurface
           projectId={canvasProjectId || null}
-          deckId={BUILDER_DECK_ID}
           cardId={worldViewCard?.id || null}
-          analystCardId={signalAnalystCard?.id || null}
         />
       }
     />

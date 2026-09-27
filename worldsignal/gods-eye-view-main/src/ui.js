@@ -2115,9 +2115,10 @@ export class StyleManager {
    * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance.
    * @param {object} [options]
    */
-  constructor(viewer, { mapStackController = null } = {}) {
+  constructor(viewer, { mapStackController = null, supervisedEmbed = false } = {}) {
     this.viewer = viewer;
     this.mapStackController = mapStackController;
+    this._supervisedEmbed = supervisedEmbed;
     this.stages = {};
     this.activeStyle = 'normal';
     document.documentElement.dataset.gevStyle = this.activeStyle;
@@ -2581,7 +2582,7 @@ export class StyleManager {
     // Parse before panel chrome initializes so every valid share URL starts
     // from deterministic markup defaults instead of recipient-local panel
     // preferences. Encoded panel fields are applied after all panels exist.
-    this._initialShareState = this.shareLinkManager.parseInitialHash();
+    this._initialShareState = this._supervisedEmbed ? null : this.shareLinkManager.parseInitialHash();
 
     this._detectionBtn = document.getElementById('detection-toggle');
     this._models3dBtn = document.getElementById('models3d-toggle');
@@ -4498,6 +4499,7 @@ export class StyleManager {
         this._dataManager,
         this.shareLinkManager,
         {
+          storage: this._supervisedEmbed ? null : undefined,
           onDurableStateChange: (state) => this._syncModels3dFromLayerState(state),
           onTrackingRestoreStatus: (result) => this._handleShareTrackingRestoreStatus(result),
         },
@@ -4507,7 +4509,7 @@ export class StyleManager {
         shareCreatedAtMs: this._initialShareState?.sharedAtMs ?? null,
         // Any valid camera/style share isolates recipient-local preferences,
         // including legacy and malformed-v2 layer payloads.
-        allowLocalState: !this._initialShareState,
+        allowLocalState: !this._supervisedEmbed && !this._initialShareState,
       });
       if (this._initialShareSelectionSuperseded) {
         this._layerStateCoordinator.cancelPendingShareTracking(
@@ -10087,6 +10089,11 @@ export class StyleManager {
   /** Terminal result for the complete initial share restoration. */
   get initialRestorePromise() {
     return this._initialShareRestorePromise || Promise.resolve({ status: 'not-requested' });
+  }
+
+  /** Source restoration settles separately from the embed protocol handshake. */
+  get sourceStateReadyPromise() {
+    return this._layerStateRestorePromise || Promise.resolve([]);
   }
 
   _settleInitialShareRestore(result) {

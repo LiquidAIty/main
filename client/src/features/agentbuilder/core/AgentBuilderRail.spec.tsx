@@ -94,6 +94,24 @@ describe('AgentBuilderRail Add Agent control', () => {
 });
 
 describe('AgentBuilderRail product destinations', () => {
+  it('uses the existing globe for World and the moon orb for WorldView', () => {
+    const host = render(
+      <AgentBuilderRail
+        {...baseProps}
+        moonOrb={<span data-testid="existing-moon-orb" />}
+        visibleRailItems={{ ...baseVisibility, showWorldsignal: true, showWorldview: true }}
+      />,
+    );
+    const world = host.querySelector('[data-testid="rail-world-button"]') as HTMLButtonElement;
+    const worldview = host.querySelector('[data-testid="rail-worldview-button"]') as HTMLButtonElement;
+    expect(world.querySelector('svg')).not.toBeNull();
+    expect(world.querySelector('[data-testid="existing-moon-orb"]')).toBeNull();
+    expect(worldview.querySelector('[data-testid="existing-moon-orb"]')).not.toBeNull();
+    expect(worldview.querySelector('svg')).toBeNull();
+    expect(world.getAttribute('aria-label')).toBe('World');
+    expect(worldview.getAttribute('aria-label')).toBe('WorldView');
+  });
+
   it('shows the graph launcher with the stable rail treatment', () => {
     const host = render(
       <AgentBuilderRail {...baseProps} visibleRailItems={baseVisibility} />,

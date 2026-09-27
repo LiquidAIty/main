@@ -924,9 +924,13 @@ test('real mission build, select, refresh, deselect, disable, and destroy paths 
   };
   const canvas = new FakeElement('canvas');
   const dataSources = [];
+  const cameraFlights = [];
   const camera = {
-    positionCartographic: null,
+    positionCartographic: { longitude: -1.4, latitude: 0.5 },
+    frustum: { fovy: 1 },
+    heading: 0,
     positionWC: Cesium.Cartesian3.fromDegrees(-80.604, 28.608, 18_000_000),
+    flyTo: (options) => cameraFlights.push(options),
     cancelFlight() {},
     lookAtTransform() {},
   };
@@ -1006,7 +1010,9 @@ test('real mission build, select, refresh, deselect, disable, and destroy paths 
     rocketLaunchesLayer.init(viewer);
     initialized = true;
     await rocketLaunchesLayer.enable();
+    assert.equal(cameraFlights.length, 0, 'enabling Space Missions preserves the camera');
     await rocketLaunchesLayer.update();
+    assert.equal(cameraFlights.length, 0, 'background mission refresh preserves the camera');
 
     const entities = dataSources[0].entities.values;
     assert.ok(entities.length >= 7, 'runtime guard requires the populated mission build path');

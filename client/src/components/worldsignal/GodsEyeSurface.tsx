@@ -1,21 +1,39 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 
 export type GodsEyeSelectionRef = {
   id: string;
   type: string;
   label: string | null;
   position: { longitude: number; latitude: number } | null;
-  observedAt?: string | null;
+  updatedAt?: string | null;
 };
 
-export type GodsEyeFocusRequest = {
+export type GodsEyeSourceDescriptor = {
   id: string;
-  position: { longitude: number; latitude: number };
+  name: string | null;
+  provider: string | null;
+  enabled: boolean;
+  lifecycleState: string | null;
+  lifecycleUncertain: boolean;
+  feedState: string | null;
+  available: boolean | null;
+  loading: boolean;
+  refreshing: boolean;
+  count: number | null;
+  lastRefreshAt: string | null;
+  error: string | null;
 };
 
 export type GodsEyeLayerState = {
+  sourceStateReady: boolean;
   enabledLayerIds: string[];
   sourceClocks: Record<string, string | null>;
+  sources: GodsEyeSourceDescriptor[];
+};
+
+export type GodsEyeBridge = {
+  setLayerVisibility: (layerId: string, enabled: boolean) => string | null;
+  focusSelection: (selection: GodsEyeSelectionRef) => string | null;
 };
 
 export type GodsEyeNativeAgentState = {
@@ -25,6 +43,8 @@ export type GodsEyeNativeAgentState = {
 
 type GodsEyeReadyMessage = {
   schemaVersion: 'gev.embed.ready.v1';
+  projectId: string;
+  cardId: string;
   sourceVersion: string;
   agentRuntime: 'supervised';
   nativeAgentAvailable: boolean;
@@ -33,16 +53,35 @@ type GodsEyeReadyMessage = {
 
 type GodsEyeSelectionMessage = {
   schemaVersion: 'gev.embed.selection.v1';
+  projectId: string;
+  cardId: string;
   selection: GodsEyeSelectionRef | null;
 };
 
 type GodsEyeLayerStateMessage = {
   schemaVersion: 'gev.embed.layer-state.v1';
+  projectId: string;
+  cardId: string;
   state: GodsEyeLayerState;
+};
+
+export type GodsEyeCommandResult = {
+  schemaVersion: 'gev.embed.layer-visibility.result.v1' | 'gev.embed.focus.result.v1';
+  projectId: string;
+  cardId: string;
+  requestId: string;
+  ok: boolean;
+  error: string | null;
+  layerId?: string;
+  requestedEnabled?: boolean;
+  targetId?: string;
+  state?: GodsEyeLayerState;
 };
 
 type GodsEyeErrorMessage = {
   schemaVersion: 'gev.embed.error.v1';
+  projectId: string;
+  cardId: string;
   code: string;
   message: string;
 };
@@ -51,6 +90,7 @@ export type GodsEyeHostMessage =
   | GodsEyeReadyMessage
   | GodsEyeSelectionMessage
   | GodsEyeLayerStateMessage
+  | GodsEyeCommandResult
   | GodsEyeErrorMessage;
 
 type GodsEyeSurfaceProps = {
@@ -58,11 +98,12 @@ type GodsEyeSurfaceProps = {
   embedUrl: string | null;
   projectId: string;
   cardId: string;
-  focus?: GodsEyeFocusRequest | null;
   onReady?: (sourceVersion: string) => void;
+  onBridgeUnavailable?: () => void;
   onNativeAgentState?: (state: GodsEyeNativeAgentState) => void;
   onSelectionChange?: (selection: GodsEyeSelectionRef | null) => void;
   onLayerStateChange?: (state: GodsEyeLayerState) => void;
+  onCommandResult?: (result: GodsEyeCommandResult) => void;
   onError?: (error: { code: string; message: string }) => void;
 };
 
@@ -74,8 +115,28 @@ function isFiniteCoordinate(value: unknown, minimum: number, maximum: number): v
   return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
+function isScopedMessage(value: Record<string, unknown>): boolean {
+  return typeof value.projectId === 'string' && value.projectId.length > 0
+    && typeof value.cardId === 'string' && value.cardId.length > 0;
+}
+
+function isSourceDescriptor(value: unknown): value is GodsEyeSourceDescriptor {
+  if (!isRecord(value)) return false;
+  return typeof value.id === 'string' && Boolean(value.id)
+    && ['name', 'provider', 'lifecycleState'].every(
+      (key) => value[key] === null || typeof value[key] === 'string',
+    ) && ['enabled', 'lifecycleUncertain', 'loading', 'refreshing'].every(
+    (key) => typeof value[key] === 'boolean',
+  ) && (value.available === null || typeof value.available === 'boolean')
+    && (value.feedState === null || typeof value.feedState === 'string')
+    && (value.count === null || (typeof value.count === 'number' && Number.isFinite(value.count)))
+    && (value.lastRefreshAt === null || typeof value.lastRefreshAt === 'string')
+    && (value.error === null || typeof value.error === 'string');
+}
+
 export function parseGodsEyeHostMessage(value: unknown): GodsEyeHostMessage | null {
   if (!isRecord(value) || typeof value.schemaVersion !== 'string') return null;
+  if (!isScopedMessage(value)) return null;
   if (value.schemaVersion === 'gev.embed.ready.v1') {
     if (
       typeof value.sourceVersion !== 'string'
@@ -97,6 +158,11 @@ export function parseGodsEyeHostMessage(value: unknown): GodsEyeHostMessage | nu
       || !value.selection.type.trim()
       || !(value.selection.label === null || typeof value.selection.label === 'string')
       || !(
+        value.selection.updatedAt === undefined
+        || value.selection.updatedAt === null
+        || typeof value.selection.updatedAt === 'string'
+      )
+      || !(
         position === null
         || (
           isRecord(position)
@@ -110,14 +176,35 @@ export function parseGodsEyeHostMessage(value: unknown): GodsEyeHostMessage | nu
   if (value.schemaVersion === 'gev.embed.layer-state.v1') {
     if (!isRecord(value.state)) return null;
     if (
-      !Array.isArray(value.state.enabledLayerIds)
+      typeof value.state.sourceStateReady !== 'boolean'
+      || !Array.isArray(value.state.enabledLayerIds)
       || !value.state.enabledLayerIds.every((item) => typeof item === 'string' && item.length > 0)
       || !isRecord(value.state.sourceClocks)
       || !Object.values(value.state.sourceClocks).every(
         (item) => item === null || typeof item === 'string',
       )
+      || !Array.isArray(value.state.sources)
+      || !value.state.sources.every(isSourceDescriptor)
     ) return null;
     return value as GodsEyeLayerStateMessage;
+  }
+  if (value.schemaVersion === 'gev.embed.layer-visibility.result.v1'
+    || value.schemaVersion === 'gev.embed.focus.result.v1') {
+    if (typeof value.requestId !== 'string' || !value.requestId
+      || typeof value.ok !== 'boolean'
+      || !(value.error === null || typeof value.error === 'string')) return null;
+    if (value.schemaVersion === 'gev.embed.layer-visibility.result.v1') {
+      if (typeof value.layerId !== 'string' || !value.layerId
+        || typeof value.requestedEnabled !== 'boolean'
+        || !isRecord(value.state)
+        || !parseGodsEyeHostMessage({
+          schemaVersion: 'gev.embed.layer-state.v1',
+          projectId: value.projectId,
+          cardId: value.cardId,
+          state: value.state,
+        })) return null;
+    } else if (typeof value.targetId !== 'string' || !value.targetId) return null;
+    return value as GodsEyeCommandResult;
   }
   if (value.schemaVersion === 'gev.embed.error.v1') {
     if (
@@ -156,25 +243,34 @@ export function resolveGodsEyeEmbedUrl(rawUrl: string, hostOrigin: string): URL 
  * explicitly user-started subsystem. Hermes remains the parent Card runtime;
  * the upstream agent retains its native globe-interaction lifecycle.
  */
-export default function GodsEyeSurface({
+let nextRequestId = 0;
+
+const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function GodsEyeSurface({
   embedUrl,
   projectId,
   cardId,
-  focus = null,
   onReady,
+  onBridgeUnavailable,
   onNativeAgentState,
   onSelectionChange,
   onLayerStateChange,
+  onCommandResult,
   onError,
-}: GodsEyeSurfaceProps): React.ReactElement {
+}, bridgeRef): React.ReactElement {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const readyRef = useRef(false);
+  const pendingRef = useRef(new Map<string, {
+    kind: 'layer' | 'focus'; targetId: string; requestedEnabled?: boolean;
+  }>());
   const [ready, setReady] = useState(false);
   const callbacksRef = useRef({
-    onReady, onNativeAgentState, onSelectionChange, onLayerStateChange, onError,
+    onReady, onBridgeUnavailable, onNativeAgentState, onSelectionChange,
+    onLayerStateChange, onCommandResult, onError,
   });
   useEffect(() => {
     callbacksRef.current = {
-      onReady, onNativeAgentState, onSelectionChange, onLayerStateChange, onError,
+      onReady, onBridgeUnavailable, onNativeAgentState, onSelectionChange,
+      onLayerStateChange, onCommandResult, onError,
     };
   });
 
@@ -190,43 +286,93 @@ export default function GodsEyeSurface({
     }
   }, [embedUrl]);
 
+  useImperativeHandle(bridgeRef, () => ({
+    setLayerVisibility(layerId, enabled) {
+      const target = frameRef.current?.contentWindow;
+      if (!readyRef.current || !resolved.url || !target || !layerId) return null;
+      const requestId = `worldview-${++nextRequestId}`;
+      pendingRef.current.set(requestId, { kind: 'layer', targetId: layerId, requestedEnabled: enabled });
+      target.postMessage({
+        schemaVersion: 'gev.embed.layer-visibility.v1', requestId,
+        projectId, cardId, layerId, enabled,
+      }, resolved.url.origin);
+      return requestId;
+    },
+    focusSelection(selection) {
+      const target = frameRef.current?.contentWindow;
+      if (!readyRef.current || !resolved.url || !target || !selection.position) return null;
+      const requestId = `worldview-${++nextRequestId}`;
+      pendingRef.current.set(requestId, { kind: 'focus', targetId: selection.id });
+      target.postMessage({
+        schemaVersion: 'gev.embed.focus.v1', requestId,
+        projectId, cardId, targetId: selection.id, position: selection.position,
+      }, resolved.url.origin);
+      return requestId;
+    },
+  }), [cardId, projectId, resolved.url]);
+
   useEffect(() => {
+    readyRef.current = false;
+    pendingRef.current.clear();
     setReady(false);
+    callbacksRef.current.onBridgeUnavailable?.();
     if (!resolved.url) return;
     const expectedOrigin = resolved.url.origin;
     const receive = (event: MessageEvent<unknown>) => {
       if (event.origin !== expectedOrigin || event.source !== frameRef.current?.contentWindow) return;
+      if (isRecord(event.data) && event.data.schemaVersion === 'gev.embed.bootstrap.v1') {
+        readyRef.current = false;
+        pendingRef.current.clear();
+        setReady(false);
+        callbacksRef.current.onBridgeUnavailable?.();
+        frameRef.current?.contentWindow?.postMessage({
+          schemaVersion: 'gev.embed.host-config.v1', projectId, cardId,
+          parentRuntime: 'hermes', nativeAgentPolicy: 'user-initiated',
+        }, expectedOrigin);
+        return;
+      }
       const message = parseGodsEyeHostMessage(event.data);
-      if (!message) return;
+      if (!message || message.projectId !== projectId || message.cardId !== cardId) return;
       if (message.schemaVersion === 'gev.embed.ready.v1') {
+        readyRef.current = true;
         setReady(true);
         callbacksRef.current.onReady?.(message.sourceVersion);
         callbacksRef.current.onNativeAgentState?.({
           available: message.nativeAgentAvailable,
           active: message.nativeAgentActive,
         });
+      } else if (!readyRef.current) {
+        return;
       } else if (message.schemaVersion === 'gev.embed.selection.v1') {
         callbacksRef.current.onSelectionChange?.(message.selection);
       } else if (message.schemaVersion === 'gev.embed.layer-state.v1') {
         callbacksRef.current.onLayerStateChange?.(message.state);
-      } else {
+      } else if (message.schemaVersion === 'gev.embed.layer-visibility.result.v1'
+        || message.schemaVersion === 'gev.embed.focus.result.v1') {
+        const pending = pendingRef.current.get(message.requestId);
+        if (!pending || (pending.kind === 'layer'
+          && (message.schemaVersion !== 'gev.embed.layer-visibility.result.v1'
+            || message.layerId !== pending.targetId
+            || message.requestedEnabled !== pending.requestedEnabled))
+          || (pending.kind === 'focus'
+            && (message.schemaVersion !== 'gev.embed.focus.result.v1'
+              || message.targetId !== pending.targetId))) return;
+        pendingRef.current.delete(message.requestId);
+        if (message.schemaVersion === 'gev.embed.layer-visibility.result.v1' && message.state) {
+          callbacksRef.current.onLayerStateChange?.(message.state);
+        }
+        callbacksRef.current.onCommandResult?.(message);
+      } else if (message.schemaVersion === 'gev.embed.error.v1') {
         callbacksRef.current.onError?.({ code: message.code, message: message.message });
       }
     };
     window.addEventListener('message', receive);
-    return () => window.removeEventListener('message', receive);
-  }, [resolved.url]);
-
-  useEffect(() => {
-    if (!ready || !focus || !resolved.url) return;
-    frameRef.current?.contentWindow?.postMessage({
-      schemaVersion: 'gev.embed.focus.v1',
-      projectId,
-      cardId,
-      id: focus.id,
-      position: focus.position,
-    }, resolved.url.origin);
-  }, [cardId, focus, projectId, ready, resolved.url]);
+    return () => {
+      readyRef.current = false;
+      pendingRef.current.clear();
+      window.removeEventListener('message', receive);
+    };
+  }, [cardId, projectId, resolved.url]);
 
   if (resolved.error) {
     return <Unavailable title="God’s Eye embed rejected" detail={resolved.error} />;
@@ -243,6 +389,7 @@ export default function GodsEyeSurface({
   return (
     <section style={styles.root} aria-label="God’s Eye WorldView globe">
       <iframe
+        key={`${projectId}:${cardId}`}
         ref={frameRef}
         src={resolved.url.toString()}
         title="God’s Eye WorldView globe"
@@ -251,6 +398,10 @@ export default function GodsEyeSurface({
         referrerPolicy="no-referrer"
         style={styles.frame}
         onLoad={() => {
+          readyRef.current = false;
+          pendingRef.current.clear();
+          setReady(false);
+          callbacksRef.current.onBridgeUnavailable?.();
           frameRef.current?.contentWindow?.postMessage({
             schemaVersion: 'gev.embed.host-config.v1',
             projectId,
@@ -267,7 +418,9 @@ export default function GodsEyeSurface({
       ) : null}
     </section>
   );
-}
+});
+
+export default GodsEyeSurface;
 
 function Unavailable({ title, detail }: { title: string; detail: string }): React.ReactElement {
   return (

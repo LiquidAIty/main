@@ -36,6 +36,10 @@ import { installHostBridge, resolveEmbedMode } from './embed/hostBridge.js';
 
 initLogoGaze();
 const embedMode = resolveEmbedMode(window.location.search);
+if (embedMode.enabled) {
+  const dataPanel = document.getElementById('data-panel');
+  if (dataPanel) dataPanel.style.display = 'none';
+}
 
 /**
  * Extract a human-readable error message from any thrown value.
@@ -196,7 +200,10 @@ async function init() {
     await mapStackController.setStack(tileset ? 'photoreal' : 'osm', { silent: true });
 
     // Initialize the style manager (post-processing, HUD, locations, share links)
-    const styleManager = new StyleManager(viewer, { mapStackController });
+    const styleManager = new StyleManager(viewer, {
+      mapStackController,
+      supervisedEmbed: embedMode.enabled,
+    });
     // The previous multi-canvas weather compositor remains disabled. Cockpit
     // clouds use a separate, capped low-resolution GPU pass that never attaches
     // Cesium fog or post-process stages and is fully stopped in map mode.
@@ -204,10 +211,10 @@ async function init() {
     const cockpitCloudEffects = initCockpitCloudEffects(viewer);
 
     // If no share link state, do default fly-to Austin
-    if (!styleManager.hasShareState) {
+    if (!embedMode.enabled && !styleManager.hasShareState) {
       loaderStatus.textContent = 'Flying to Austin, TX...';
       flyToAustin(viewer);
-    } else {
+    } else if (styleManager.hasShareState) {
       loaderStatus.textContent = 'Restoring shared view...';
     }
 
@@ -249,7 +256,7 @@ async function init() {
         return dataManager.unregisterForQa(layerId);
       };
     }
-    dataManager.buildTogglePanel(document.getElementById('data-toggles'));
+    if (!embedMode.enabled) dataManager.buildTogglePanel(document.getElementById('data-toggles'));
     styleManager.attachDataManager(dataManager);
 
     // Initialize deterministic scene playback for social clip capture
@@ -344,10 +351,26 @@ async function init() {
     window.__godsEyeView.hostBridge = installHostBridge({
       dataManager,
       voiceCommands: window.__godsEyeView.voiceCommands,
-      focusPosition: ({ longitude, latitude }) => viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, 800000),
-        duration: 1.2,
+      focusPosition: ({ longitude, latitude }) => new Promise((resolve, reject) => {
+        if (viewer.scene.mode === Cesium.SceneMode.MORPHING) {
+          reject(new Error('Focus unavailable while globe mode is changing'));
+          return;
+        }
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, 800000),
+          duration: 1.2,
+          complete: resolve,
+          cancel: () => reject(new Error('Focus flight cancelled')),
+        });
       }),
+      projectCartesianPosition: (position) => {
+        const cartographic = Cesium.Cartographic.fromCartesian(position);
+        return cartographic ? {
+          longitude: Cesium.Math.toDegrees(cartographic.longitude),
+          latitude: Cesium.Math.toDegrees(cartographic.latitude),
+        } : null;
+      },
+      sourceStateReady: styleManager.sourceStateReadyPromise,
       sourceVersion: '0.1.0',
       mode: embedMode,
     });

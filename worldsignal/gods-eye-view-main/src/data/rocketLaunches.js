@@ -4,7 +4,6 @@ import {
   getSatelliteOrbitTrack,
   orbitFrameModelMatrix,
 } from './satellites.js';
-import { getKeyholeGeometry } from '../celestialRing.js';
 import {
   clearOverlaySource,
   setOverlayEntries,
@@ -72,7 +71,6 @@ let _activeTleText = null;
 let _activeTlePromise = null;
 let _activeTlePromiseToken = 0;
 let _renderedTleText = null;
-let _focusAfterActiveLookup = false;
 let _satelliteStateBeforeMission = null;
 let _satelliteActivationPromise = null;
 let _replayCameraRemover = null;
@@ -453,27 +451,6 @@ export function missionAnchorVisible(
 ) {
   if (selectedLaunchId && markerId !== selectedLaunchId) return false;
   return missionAnchorHorizonVisible(cameraPosition, markerPosition);
-}
-
-function focusFullGlobe(viewer, duration = 2.4) {
-  const canvas = viewer?.scene?.canvas;
-  const height = canvas?.clientHeight || canvas?.height;
-  const width = canvas?.clientWidth || canvas?.width;
-  const cartographic = viewer?.camera?.positionCartographic;
-  const fovy = viewer?.camera?.frustum?.fovy;
-  if (!(width > 0) || !(height > 0) || !cartographic || !Number.isFinite(fovy) || fovy <= 0 || fovy >= Math.PI) return;
-  const earthRadius = Cesium.Ellipsoid.WGS84.maximumRadius;
-  const keyholeRadius = getKeyholeGeometry(width, height).radius;
-  const targetScreenRadius = keyholeRadius * 0.61;
-  const angularRadius = Math.atan((targetScreenRadius / (height * 0.5)) * Math.tan(fovy * 0.5));
-  const distance = earthRadius / Math.max(Math.sin(angularRadius), 1e-4);
-  const altitude = Math.max(earthRadius * 1.55, distance - earthRadius);
-  viewer.camera.flyTo({
-    destination: Cesium.Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, altitude),
-    orientation: { heading: viewer.camera.heading, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0 },
-    duration,
-    easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT,
-  });
 }
 
 function shortMissionLabel(name, maxLength = 24) {
@@ -3263,7 +3240,6 @@ function ensureActiveTleLookup(token) {
     .then((text) => {
       if (!_enabled || token !== _lifecycleToken) return null;
       _activeTleText = text;
-      _focusAfterActiveLookup = Boolean(_selectedLaunchId);
       schedulePostTleRetry(token);
       return text;
     })
@@ -3364,11 +3340,7 @@ async function performMissionUpdate(token) {
       setSelectedMission(null, false);
     } else {
       setSelectedMission(_selectedLaunchId, true);
-      if (_focusAfterActiveLookup) {
-        focusMission(launches.find((launch) => launch.id === _selectedLaunchId));
-      }
     }
-    _focusAfterActiveLookup = false;
     renderMissionPanel();
     _lastUpdate = Date.now();
     _lastError = null;
@@ -3471,7 +3443,6 @@ const rocketLaunchesLayer = {
     _updateDirty = false;
     if (_dataSource) _dataSource.show = true;
     syncMissionOrbitPrimitiveVisibility();
-    focusFullGlobe(_viewer);
     document.getElementById('cockpit-context')?.setAttribute('hidden', '');
     if (_selectedLaunchId) setSelectedMission(_selectedLaunchId, _explicitSelection);
     else setSelectedMission(null, false);

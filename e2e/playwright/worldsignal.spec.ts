@@ -4,9 +4,9 @@ test.setTimeout(90_000);
 
 async function openWorldSurface(page: import('@playwright/test').Page) {
   await page.goto('/agentbuilder');
-  await expect(page.getByTestId('rail-moon-orb-button')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('rail-world-button')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId('rail-worldsignal-button')).toHaveCount(0);
-  await page.getByTestId('rail-moon-orb-button').click();
+  await page.getByTestId('rail-world-button').click();
   await expect(page.getByTestId('worldsignal-surface')).toBeVisible();
 }
 
@@ -62,7 +62,7 @@ test('World view renders visible globe with live bridge runtime', async ({ page,
 
   await openWorldSurface(page);
 
-  await expect(page.getByTestId('rail-moon-orb-button')).toBeVisible();
+  await expect(page.getByTestId('rail-world-button')).toBeVisible();
   await expect(page.getByTestId('rail-worldsignal-button')).toHaveCount(0);
   await expect(page.locator('iframe')).toHaveCount(0);
 

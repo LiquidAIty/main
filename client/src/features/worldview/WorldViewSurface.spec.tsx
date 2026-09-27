@@ -1,188 +1,150 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { SignalAssessment, SignalPackage } from './signalContracts';
+import type { GodsEyeSourceDescriptor } from '../../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from './WorldViewSurface';
+
+const scope = { projectId: 'project-1', cardId: 'card-worldview' };
+const origin = 'http://127.0.0.1:4174';
+const source: GodsEyeSourceDescriptor = { id: 'earthquakes', name: 'Earthquakes', provider: 'USGS',
+  enabled: true, lifecycleState: 'active', lifecycleUncertain: false,
+  feedState: 'ready', available: null, loading: false, refreshing: false,
+  count: 4, lastRefreshAt: '2026-09-27T00:00:00Z', error: null };
+const layerState = { sourceStateReady: true, enabledLayerIds: ['earthquakes'],
+  sourceClocks: { earthquakes: '2026-09-27T00:00:00Z' }, sources: [source] };
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-const packageFixture: SignalPackage = {
-  schemaVersion: 'signal.package.v1',
-  packageId: 'signal-package:bounded-1',
-  projectId: 'project-1',
-  deckId: 'deck_builder',
-  producerCardId: 'card-worldview',
-  producerRunId: 'run-worldview-1',
-  generatedAt: '2026-09-03T10:00:00Z',
-  query: {
-    schemaVersion: 'signal.query.v1',
-    queryId: 'signal-query:1',
-    requestingCardId: 'card-worldview',
-    requestingRunId: 'run-worldview-1',
-    reason: 'Inspect two bounded source results.',
-  },
-  candidates: [
-    {
-      schemaVersion: 'signal.candidate.v1',
-      candidateId: 'signal-candidate:geo',
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      producerCardId: 'card-worldview',
-      producerRunId: 'run-worldview-1',
-      source: {
-        system: 'worldsignals',
-        nativeRef: 'worldsignals:earthquakes:native-1',
-        retrievalMethod: 'get_layer_slice',
-        contentHash: `sha256:${'a'.repeat(64)}`,
-      },
-      retrievedAt: '2026-09-03T10:00:00Z',
-      freshness: 'fresh',
-      stalenessState: 'current',
-      domain: 'geophysical',
-      location: { type: 'Point', coordinates: [-97.7431, 30.2672] },
-      entityRefs: ['native-1'],
-      assetRefs: [],
-      topics: [],
-      lifecycleStatus: 'observed',
-      evidenceRefs: [{
-        sourceNativeRef: 'worldsignals:earthquakes:native-1',
-        contentHash: `sha256:${'a'.repeat(64)}`,
-      }],
-      rawObservation: { magnitude: 4.2 },
-      agentHypothesis: null,
-    },
-    {
-      schemaVersion: 'signal.candidate.v1',
-      candidateId: 'signal-candidate:entity',
-      projectId: 'project-1',
-      deckId: 'deck_builder',
-      producerCardId: 'card-worldview',
-      producerRunId: 'run-worldview-1',
-      source: {
-        system: 'worldsignals',
-        nativeRef: 'worldsignals:news:native-2',
-        retrievalMethod: 'search_news',
-        contentHash: `sha256:${'b'.repeat(64)}`,
-      },
-      retrievedAt: '2026-09-03T10:00:00Z',
-      freshness: 'unknown',
-      stalenessState: 'unknown',
-      domain: 'news',
-      location: null,
-      entityRefs: ['Example Corp'],
-      assetRefs: [],
-      topics: [],
-      lifecycleStatus: 'observed',
-      evidenceRefs: [{
-        sourceNativeRef: 'worldsignals:news:native-2',
-        contentHash: `sha256:${'b'.repeat(64)}`,
-      }],
-      rawObservation: { headline: 'Sourced headline' },
-      agentHypothesis: 'This may merit corroboration.',
-    },
-  ],
-  truncated: false,
-  cursor: null,
-  sourceClocks: { worldsignals: '2026-09-03T10:00:00Z' },
-  errors: [],
-};
-
-const assessmentFixture: SignalAssessment = {
-  schemaVersion: 'signal.assessment.v1',
-  assessmentId: 'assessment-1',
-  projectId: 'project-1',
-  deckId: 'deck_builder',
-  requestingCardId: 'card-worldview',
-  requestingRunId: 'run-worldview-1',
-  analystCardId: 'card-signal-analyst',
-  analysisRunId: 'run-analyst-1',
-  packageId: 'signal-package:bounded-1',
-  candidateIds: ['signal-candidate:geo'],
-  disposition: 'INCONCLUSIVE',
-  method: 'Single-source assessment.',
-  observations: ['One observation is present.'],
-  inference: 'More corroboration is required.',
-  evidenceRefs: [{
-    sourceNativeRef: 'worldsignals:earthquakes:native-1',
-    contentHash: `sha256:${'a'.repeat(64)}`,
-  }],
-  limitations: ['One source.'],
-  confidence: 0.35,
-  assessedAt: '2026-09-03T10:05:00Z',
-  asOfAt: '2026-09-03T10:00:00Z',
-  freshness: 'fresh',
-};
-
-function readyGlobe() {
-  const frame = screen.getByTitle('God’s Eye WorldView globe') as HTMLIFrameElement;
-  const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+function dispatch(frame: HTMLIFrameElement, data: unknown) {
   fireEvent(window, new MessageEvent('message', {
-    origin: new URL(frame.src).origin, source: frame.contentWindow,
-    data: { schemaVersion: 'gev.embed.ready.v1', sourceVersion: 'unit-test',
-      agentRuntime: 'supervised', nativeAgentAvailable: false, nativeAgentActive: false },
+    origin, source: frame.contentWindow, data,
   }));
-  return postMessage;
 }
 
-describe('WorldView Card-owned presentation', () => {
+function mount() {
+  const fetchMock = vi.fn();
+  vi.stubGlobal('fetch', fetchMock);
+  render(<WorldViewSurface {...scope} />);
+  const frame = screen.getByTitle('God’s Eye WorldView globe') as HTMLIFrameElement;
+  const postMessage = vi.spyOn(frame.contentWindow!, 'postMessage');
+  return { frame, postMessage, fetchMock };
+}
+
+function ready(frame: HTMLIFrameElement) {
+  dispatch(frame, { schemaVersion: 'gev.embed.ready.v1', ...scope,
+    sourceVersion: '0.1.0', agentRuntime: 'supervised',
+    nativeAgentAvailable: false, nativeAgentActive: false });
+}
+
+function sourceReadback(frame: HTMLIFrameElement, state = layerState) {
+  dispatch(frame, { schemaVersion: 'gev.embed.layer-state.v1', ...scope, state });
+}
+
+describe('WorldView native source presentation', () => {
   it('fails closed without a saved Card attachment', () => {
     render(<WorldViewSurface projectId="project-1" cardId={null} />);
     expect(screen.getByText('WorldView Card is not connected')).toBeTruthy();
     expect(screen.queryByTitle('God’s Eye WorldView globe')).toBeNull();
   });
 
-  it('removes the evidence drawer while preserving geographic focus', () => {
-    render(<WorldViewSurface projectId="project-1" cardId="card-worldview"
-      signalPackage={packageFixture} assessment={assessmentFixture} />);
-    const postMessage = readyGlobe();
-    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      schemaVersion: 'gev.embed.focus.v1', id: 'signal-candidate:geo',
-      position: { longitude: -97.7431, latitude: 30.2672 },
-    }), expect.any(String));
-    expect(screen.queryByRole('complementary')).toBeNull();
-    expect(screen.queryByText('Observed fact')).toBeNull();
-    expect(screen.queryByText('Agent hypothesis')).toBeNull();
-    expect(screen.queryByText('Analyst assessment')).toBeNull();
-    expect(screen.getByRole('region', { name: 'WorldView signal workspace' }).style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+  it('never fetches a Card Run or focuses automatically and shows distinct readiness', () => {
+    const { frame, postMessage, fetchMock } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Data Sources' }));
+    expect(screen.getByText('Embed bridge: Pending')).toBeTruthy();
+    expect(screen.getByText('Source state: Pending')).toBeTruthy();
+    ready(frame);
+    expect(screen.getByText('Embed bridge: Ready')).toBeTruthy();
+    expect(screen.getByText('Source state: Pending')).toBeTruthy();
+    sourceReadback(frame);
+    expect(screen.getByText('Source state: Ready')).toBeTruthy();
+    expect(screen.getByText(/Earthquakes · ON/)).toBeTruthy();
+    expect(screen.getByText(/Not checked/)).toBeTruthy();
+    expect(screen.getByText(/native voice control missing/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ schemaVersion: 'gev.embed.focus.v1' }), expect.any(String));
+    expect(screen.getAllByText('Data Sources')).toHaveLength(2);
   });
 
-  it('does not invent globe coordinates for non-geographic candidates', () => {
-    render(<WorldViewSurface projectId="project-1" cardId="card-worldview"
-      signalPackage={{ ...packageFixture, candidates: [packageFixture.candidates[1]] }} />);
-    expect(readyGlobe()).not.toHaveBeenCalled();
-  });
-
-  it('reads the existing Card Run for globe focus without fetching the removed assessment panel', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200,
-      json: async () => ({ ok: true, result: { state: 'completed', runId: 'run-worldview-1',
-        cardId: 'card-worldview', output: JSON.stringify(packageFixture) } }),
+  it('does not optimistically change ON/OFF and clears pending on native readback', () => {
+    const { frame, postMessage } = mount();
+    ready(frame);
+    sourceReadback(frame);
+    fireEvent.click(screen.getByRole('button', { name: 'Data Sources' }));
+    const checkbox = screen.getByRole('checkbox', { name: /Earthquakes · ON/ }) as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    fireEvent.click(checkbox);
+    const request = postMessage.mock.calls.find(([payload]) =>
+      (payload as { schemaVersion?: string }).schemaVersion === 'gev.embed.layer-visibility.v1');
+    expect(request?.[0]).toMatchObject({ schemaVersion: 'gev.embed.layer-visibility.v1',
+      ...scope, layerId: 'earthquakes', enabled: false,
+      requestId: expect.any(String) });
+    expect(checkbox.checked).toBe(true);
+    expect(checkbox.disabled).toBe(true);
+    expect(screen.getByText(/Earthquakes · ON/)).toBeTruthy();
+    const stateOff = { ...layerState, enabledLayerIds: [],
+      sources: [{ ...source, enabled: false }] };
+    // Manager snapshots are factual readback, but only the exact correlated
+    // result may release this request's pending command lane.
+    sourceReadback(frame, stateOff);
+    expect((screen.getByRole('checkbox', { name: /Earthquakes · OFF/ }) as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('checkbox', { name: /Earthquakes · OFF/ }) as HTMLInputElement).disabled).toBe(true);
+    dispatch(frame, {
+      schemaVersion: 'gev.embed.layer-visibility.result.v1',
+      ...scope,
+      requestId: (request?.[0] as { requestId: string }).requestId,
+      layerId: 'earthquakes',
+      requestedEnabled: false,
+      ok: true,
+      error: null,
+      state: stateOff,
     });
-    vi.stubGlobal('fetch', fetchMock);
-    render(<WorldViewSurface projectId="project-1" cardId="card-worldview" analystCardId="card-signal-analyst" />);
-    const postMessage = readyGlobe();
-    await waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ id: 'signal-candidate:geo' }), expect.any(String)));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      action: 'status', inspectOnly: true, projectId: 'project-1', deckId: 'deck_builder', cardId: 'card-worldview',
-    });
+    expect((screen.getByRole('checkbox', { name: /Earthquakes · OFF/ }) as HTMLInputElement).disabled).toBe(false);
+    expect(postMessage.mock.calls.filter(([payload]) =>
+      (payload as { schemaVersion?: string }).schemaVersion === 'gev.embed.layer-visibility.v1')).toHaveLength(1);
   });
 
-  it.each([
-    'A useful answer, but not a SignalPackage.',
-    JSON.stringify({ ...packageFixture, projectId: 'another-project' }),
-  ])('does not focus the globe from invalid or mismatched Card output', async (output) => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200,
-      json: async () => ({ ok: true, result: { state: 'completed', runId: 'run-worldview-1', cardId: 'card-worldview', output } }),
-    }));
-    render(<WorldViewSurface projectId="project-1" cardId="card-worldview" />);
-    const postMessage = readyGlobe();
-    await act(async () => {});
+  it('returns native selection and focuses exactly once after the explicit click', () => {
+    const { frame, postMessage } = mount();
+    ready(frame);
+    sourceReadback(frame);
+    dispatch(frame, { schemaVersion: 'gev.embed.selection.v1', ...scope,
+      selection: { id: 'native-flight-1', type: 'flight', label: 'Flight 1',
+        position: { longitude: -97, latitude: 30 } } });
+    fireEvent.click(screen.getByRole('button', { name: 'Data Sources' }));
+    expect(screen.getByText('Flight 1 · flight')).toBeTruthy();
     expect(postMessage).not.toHaveBeenCalled();
-    expect(screen.queryByRole('complementary')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Focus' }));
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({
+      schemaVersion: 'gev.embed.focus.v1', ...scope,
+      requestId: expect.any(String), targetId: 'native-flight-1',
+      position: { longitude: -97, latitude: 30 },
+    }, origin);
+    ready(frame);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an unavailable or refreshing source be explicitly toggled and clears native state on reconnect', () => {
+    const { frame, postMessage } = mount();
+    ready(frame);
+    sourceReadback(frame, {
+      ...layerState,
+      sources: [{ ...source, available: false, loading: true, refreshing: true }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Data Sources' }));
+    const checkbox = screen.getByRole('checkbox', { name: /Earthquakes · ON/ });
+    expect((checkbox as HTMLInputElement).disabled).toBe(false);
+    fireEvent.click(checkbox);
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    dispatch(frame, { schemaVersion: 'gev.embed.bootstrap.v1' });
+    expect(screen.getByText('Embed bridge: Pending')).toBeTruthy();
+    expect(screen.getByText('Source state: Pending')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(postMessage).toHaveBeenCalledTimes(2); // fresh host config only
   });
 });
