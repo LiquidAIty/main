@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from '@testing-library/react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import useAgentBuilderWorkspaceLayout from './useAgentBuilderWorkspaceLayout';
+import useAgentBuilderWorkspaceLayout, {
+  companionMinimumWidth,
+  resolveHybridWorkspaceGeometry,
+} from './useAgentBuilderWorkspaceLayout';
 
 function attachShell(
   layout: ReturnType<typeof useAgentBuilderWorkspaceLayout<string>>,
@@ -16,38 +19,82 @@ function attachShell(
   return shell;
 }
 
+function pointerEvent(type: string, clientX: number, pointerId = 7) {
+  const event = new MouseEvent(type, { bubbles: true, clientX });
+  Object.defineProperty(event, 'pointerId', { configurable: true, value: pointerId });
+  return event;
+}
+
 function beginDrag(
   layout: ReturnType<typeof useAgentBuilderWorkspaceLayout<string>>,
   clientX: number,
 ) {
-  layout.handleSplitterMouseDown({
+  const target = document.createElement('div');
+  target.setPointerCapture = vi.fn();
+  target.hasPointerCapture = vi.fn(() => true);
+  target.releasePointerCapture = vi.fn();
+  layout.handleSplitterPointerDown({
+    button: 0,
     clientX,
+    pointerId: 7,
+    currentTarget: target,
     preventDefault: vi.fn(),
-  } as unknown as ReactMouseEvent<HTMLDivElement>);
+    stopPropagation: vi.fn(),
+  } as unknown as ReactPointerEvent<HTMLDivElement>);
+  return target;
 }
 
-describe('useAgentBuilderWorkspaceLayout WorldView coverage', () => {
-  it('keeps the historical 420px opening width with no snap-state API', () => {
-    const setWorkspaceView = vi.fn();
-    const { result } = renderHook(() => useAgentBuilderWorkspaceLayout({
-      setWorkspaceView,
-      workspaceView: 'worldview',
-    }));
-
-    act(() => {
-      attachShell(result.current, 1000);
+describe('useAgentBuilderWorkspaceLayout shared hybrid geometry', () => {
+  it('resizes the companion until its minimum and then converts the remainder to overlap', () => {
+    expect(resolveHybridWorkspaceGeometry({
+      workspaceWidth: 1200,
+      mainWidth: 420,
+      companionMinWidth: 520,
+    })).toEqual({
+      companionVisibleWidth: 770,
+      companionViewportWidth: 770,
+      companionOverlayWidth: 0,
     });
-
-    expect(result.current.chatPanelWidth).toBe(420);
-    expect(result.current).not.toHaveProperty('worldviewMainSize');
-    expect(result.current).not.toHaveProperty('handleSplitterClick');
-    expect(setWorkspaceView).not.toHaveBeenCalled();
+    expect(resolveHybridWorkspaceGeometry({
+      workspaceWidth: 1000,
+      mainWidth: 600,
+      companionMinWidth: 520,
+    })).toEqual({
+      companionVisibleWidth: 390,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 130,
+    });
   });
 
-  it('tracks an exact intermediate drag width instead of snapping', () => {
-    const setWorkspaceView = vi.fn();
+  it('uses source-backed surface-specific minimums', () => {
+    expect(companionMinimumWidth('canvas')).toBe(520);
+    expect(companionMinimumWidth('knowledge')).toBe(520);
+    expect(companionMinimumWidth('trading')).toBe(520);
+    expect(companionMinimumWidth('worldsignal')).toBe(360);
+    expect(companionMinimumWidth('worldview')).toBe(720);
+  });
+
+  it('tracks exact continuous drag widths without switching workspace or snapping', () => {
     const { result } = renderHook(() => useAgentBuilderWorkspaceLayout({
-      setWorkspaceView,
+      workspaceView: 'canvas',
+    }));
+    act(() => {
+      attachShell(result.current, 1000);
+      beginDrag(result.current, 420);
+    });
+    act(() => {
+      window.dispatchEvent(pointerEvent('pointermove', 600));
+      window.dispatchEvent(pointerEvent('pointerup', 600));
+    });
+
+    expect(result.current.chatPanelWidth).toBe(600);
+    expect(result.current.companionVisibleWidth).toBe(390);
+    expect(result.current.companionViewportWidth).toBe(520);
+    expect(result.current.companionOverlayWidth).toBe(130);
+  });
+
+  it('allows Main to cover WorldView while its 720px viewport stays mounted', () => {
+    const { result } = renderHook(() => useAgentBuilderWorkspaceLayout({
       workspaceView: 'worldview',
     }));
     act(() => {
@@ -55,53 +102,65 @@ describe('useAgentBuilderWorkspaceLayout WorldView coverage', () => {
       beginDrag(result.current, 420);
     });
     act(() => {
-      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 735 }));
-      window.dispatchEvent(new MouseEvent('mouseup'));
-    });
-
-    expect(result.current.chatPanelWidth).toBe(735);
-    expect(setWorkspaceView).not.toHaveBeenCalled();
-  });
-
-  it('allows full Main coverage without unmounting the WorldView workspace', () => {
-    const setWorkspaceView = vi.fn();
-    const { result } = renderHook(() => useAgentBuilderWorkspaceLayout({
-      setWorkspaceView,
-      workspaceView: 'worldview',
-    }));
-    act(() => {
-      attachShell(result.current, 1000);
-      beginDrag(result.current, 420);
-    });
-    act(() => {
-      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 1400 }));
-      window.dispatchEvent(new MouseEvent('mouseup'));
+      window.dispatchEvent(pointerEvent('pointermove', 1400));
+      window.dispatchEvent(pointerEvent('pointerup', 1400));
     });
 
     expect(result.current.chatPanelWidth).toBe(990);
-    expect(setWorkspaceView).not.toHaveBeenCalled();
+    expect(result.current.companionVisibleWidth).toBe(0);
+    expect(result.current.companionViewportWidth).toBe(720);
+    expect(result.current.companionOverlayWidth).toBe(720);
   });
 
-  it('commits a small drag exactly and restores the start width on Escape', () => {
+  it('captures and releases the pointer, commits on blur, and cancels on Escape', () => {
     const { result } = renderHook(() => useAgentBuilderWorkspaceLayout({
-      setWorkspaceView: vi.fn(),
-      workspaceView: 'worldview',
+      workspaceView: 'knowledge',
     }));
+    let target: HTMLDivElement;
     act(() => {
-      attachShell(result.current, 1000);
+      attachShell(result.current, 1100);
+      target = beginDrag(result.current, 420);
+    });
+    expect(target!.setPointerCapture).toHaveBeenCalledWith(7);
+    act(() => {
+      window.dispatchEvent(pointerEvent('pointermove', 500));
+      window.dispatchEvent(new Event('blur'));
+    });
+    expect(result.current.chatPanelWidth).toBe(500);
+    expect(target!.releasePointerCapture).toHaveBeenCalledWith(7);
+
+    act(() => { target = beginDrag(result.current, 500); });
+    act(() => {
+      window.dispatchEvent(pointerEvent('pointermove', 760));
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(result.current.chatPanelWidth).toBe(500);
+    expect(target!.releasePointerCapture).toHaveBeenCalledWith(7);
+  });
+
+  it('preserves intentional standard and WorldView widths independently', () => {
+    const { result, rerender } = renderHook<
+      ReturnType<typeof useAgentBuilderWorkspaceLayout<string>>,
+      { workspaceView: 'canvas' | 'worldview' }
+    >(
+      ({ workspaceView }: { workspaceView: 'canvas' | 'worldview' }) => (
+        useAgentBuilderWorkspaceLayout<string>({ workspaceView })
+      ),
+      { initialProps: { workspaceView: 'worldview' } },
+    );
+    act(() => {
+      attachShell(result.current, 1200);
       beginDrag(result.current, 420);
     });
     act(() => {
-      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 424 }));
-      window.dispatchEvent(new MouseEvent('mouseup'));
+      window.dispatchEvent(pointerEvent('pointermove', 700));
+      window.dispatchEvent(pointerEvent('pointerup', 700));
     });
-    expect(result.current.chatPanelWidth).toBe(424);
+    expect(result.current.chatPanelWidth).toBe(700);
 
-    act(() => beginDrag(result.current, 424));
-    act(() => {
-      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 800 }));
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    });
-    expect(result.current.chatPanelWidth).toBe(424);
+    rerender({ workspaceView: 'canvas' });
+    expect(result.current.chatPanelWidth).toBe(420);
+    rerender({ workspaceView: 'worldview' });
+    expect(result.current.chatPanelWidth).toBe(700);
   });
 });

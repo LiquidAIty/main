@@ -1,71 +1,112 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  Dispatch,
-  MouseEvent,
-  SetStateAction,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 const CHAT_MIN_WIDTH = 280;
-const CANVAS_MIN_WIDTH = 520;
-const COMPANION_MIN_WIDTH = 360;
 const SPLITTER_WIDTH = 10;
-const COLLAPSE_EDGE_PX = 28;
 const DEFAULT_CHAT_WIDTH = 420;
 
-function reservedSurfaceWidth(workspaceView: string) {
-  if (workspaceView === 'worldview') return SPLITTER_WIDTH;
-  return workspaceView === 'canvas'
-    ? CANVAS_MIN_WIDTH + SPLITTER_WIDTH
-    : COMPANION_MIN_WIDTH + SPLITTER_WIDTH;
+export const COMPANION_MIN_WIDTHS = Object.freeze({
+  canvas: 520,
+  knowledge: 520,
+  trading: 520,
+  worldsignal: 360,
+  worldview: 720,
+});
+
+export function companionMinimumWidth(workspaceView: string): number {
+  return COMPANION_MIN_WIDTHS[
+    workspaceView as keyof typeof COMPANION_MIN_WIDTHS
+  ] ?? COMPANION_MIN_WIDTHS.knowledge;
+}
+
+export function resolveHybridWorkspaceGeometry({
+  workspaceWidth,
+  mainWidth,
+  companionMinWidth,
+  splitterWidth = SPLITTER_WIDTH,
+}: {
+  workspaceWidth: number;
+  mainWidth: number;
+  companionMinWidth: number;
+  splitterWidth?: number;
+}) {
+  const boundedWorkspaceWidth = Math.max(0, Number(workspaceWidth) || 0);
+  const boundedSplitterWidth = Math.max(0, Number(splitterWidth) || 0);
+  const boundedMainWidth = Math.max(0, Number(mainWidth) || 0);
+  const boundedCompanionMinWidth = Math.max(0, Number(companionMinWidth) || 0);
+  const companionVisibleWidth = Math.max(
+    0,
+    boundedWorkspaceWidth - boundedMainWidth - boundedSplitterWidth,
+  );
+  const companionViewportWidth = Math.max(
+    boundedCompanionMinWidth,
+    companionVisibleWidth,
+  );
+  const companionOverlayWidth = Math.max(
+    0,
+    companionViewportWidth - companionVisibleWidth,
+  );
+  return {
+    companionOverlayWidth,
+    companionViewportWidth,
+    companionVisibleWidth,
+  };
 }
 
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
-  setWorkspaceView: Dispatch<SetStateAction<T>>;
   workspaceView: T;
+};
+
+type ResizeSession = {
+  kind: 'standard' | 'worldview';
+  pointerId: number;
+  pointerTarget: HTMLDivElement;
+  startX: number;
+  startWidth: number;
+  pendingWidth: number;
 };
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function releaseCapturedPointer(session: ResizeSession) {
+  const target = session.pointerTarget;
+  try {
+    if (
+      typeof target.releasePointerCapture === 'function'
+      && (typeof target.hasPointerCapture !== 'function'
+        || target.hasPointerCapture(session.pointerId))
+    ) {
+      target.releasePointerCapture(session.pointerId);
+    }
+  } catch {
+    // The browser may already have released capture during blur or pointercancel.
+  }
+}
+
 export default function useAgentBuilderWorkspaceLayout<T extends string>({
-  setWorkspaceView,
   workspaceView,
 }: UseAgentBuilderWorkspaceLayoutArgs<T>) {
   const [standardChatPanelWidth, setStandardChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
   const [worldviewChatPanelWidth, setWorldviewChatPanelWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [splitterActive, setSplitterActive] = useState(false);
   const [splitterDragging, setSplitterDragging] = useState(false);
   const workspaceShellRef = useRef<HTMLDivElement | null>(null);
-  const resizeSessionRef = useRef<{
-    kind: 'standard' | 'worldview';
-    startX: number;
-    startWidth: number;
-    pendingWidth: number;
-    reservedWidth: number;
-  } | null>(null);
+  const resizeSessionRef = useRef<ResizeSession | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const chatPanelWidth = workspaceView === 'worldview'
     ? worldviewChatPanelWidth
     : standardChatPanelWidth;
+  const companionMinWidth = companionMinimumWidth(workspaceView);
 
-  const clampChatWidth = useCallback(
-    (nextWidth: number, reservedWidth: number) => {
-      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
-      if (shellWidth <= 0) return Math.max(CHAT_MIN_WIDTH, nextWidth);
-      return clamp(
-        nextWidth,
-        CHAT_MIN_WIDTH,
-        Math.max(CHAT_MIN_WIDTH, shellWidth - reservedWidth),
-      );
-    },
-    [],
-  );
-
-  const resolveChatMaxWidth = useCallback((reservedWidth: number) => {
+  const clampChatWidth = useCallback((nextWidth: number) => {
     const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
-    if (shellWidth <= 0) return CHAT_MIN_WIDTH;
-    return Math.max(CHAT_MIN_WIDTH, shellWidth - reservedWidth);
+    if (shellWidth <= 0) return Math.max(CHAT_MIN_WIDTH, nextWidth);
+    const maximum = Math.max(0, shellWidth - SPLITTER_WIDTH);
+    const minimum = Math.min(CHAT_MIN_WIDTH, maximum);
+    return clamp(nextWidth, minimum, maximum);
   }, []);
 
   const setWidthForKind = useCallback((kind: 'standard' | 'worldview', width: number) => {
@@ -81,36 +122,27 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       const session = resizeSessionRef.current;
       if (!session) return;
       resizeSessionRef.current = null;
+      releaseCapturedPointer(session);
       setSplitterDragging(false);
       setSplitterActive(false);
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current);
         resizeFrameRef.current = null;
       }
-      if (mode === 'cancel') {
-        setWidthForKind(session.kind, session.startWidth);
-        return;
-      }
-      setWidthForKind(session.kind, session.pendingWidth);
-      if (session.kind === 'worldview') return;
-      const maxWidth = resolveChatMaxWidth(session.reservedWidth);
-      if (session.pendingWidth >= maxWidth - COLLAPSE_EDGE_PX) {
-        setWorkspaceView('chat' as T);
-      }
+      setWidthForKind(
+        session.kind,
+        mode === 'cancel' ? session.startWidth : session.pendingWidth,
+      );
     },
-    [resolveChatMaxWidth, setWidthForKind, setWorkspaceView],
+    [setWidthForKind],
   );
 
   useEffect(() => {
-    if (!splitterDragging) return;
-    const handleMouseMove = (event: globalThis.MouseEvent) => {
+    const handlePointerMove = (event: globalThis.PointerEvent) => {
       const session = resizeSessionRef.current;
-      if (!session) return;
+      if (!session || event.pointerId !== session.pointerId) return;
       const delta = event.clientX - session.startX;
-      session.pendingWidth = clampChatWidth(
-        session.startWidth + delta,
-        session.reservedWidth,
-      );
+      session.pendingWidth = clampChatWidth(session.startWidth + delta);
       if (resizeFrameRef.current !== null) return;
       resizeFrameRef.current = window.requestAnimationFrame(() => {
         resizeFrameRef.current = null;
@@ -120,27 +152,36 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
         }
       });
     };
-    const handleMouseUp = () => finishResize('commit');
+    const handlePointerUp = (event: globalThis.PointerEvent) => {
+      if (event.pointerId === resizeSessionRef.current?.pointerId) finishResize('commit');
+    };
+    const handlePointerCancel = (event: globalThis.PointerEvent) => {
+      if (event.pointerId === resizeSessionRef.current?.pointerId) finishResize('cancel');
+    };
     const handleWindowBlur = () => finishResize('commit');
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
       finishResize('cancel');
     };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [clampChatWidth, finishResize, setWidthForKind, splitterDragging]);
+  }, [clampChatWidth, finishResize, setWidthForKind]);
 
   useEffect(
     () => () => {
+      const session = resizeSessionRef.current;
+      if (session) releaseCapturedPointer(session);
       if (resizeFrameRef.current !== null) {
         window.cancelAnimationFrame(resizeFrameRef.current);
       }
@@ -149,12 +190,13 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   );
 
   useEffect(() => {
-    const reservedWidth = reservedSurfaceWidth(workspaceView);
     const syncWidth = () => {
+      const shellWidth = workspaceShellRef.current?.clientWidth ?? 0;
+      setWorkspaceWidth(shellWidth);
       if (workspaceView === 'worldview') {
-        setWorldviewChatPanelWidth((current) => clampChatWidth(current, reservedWidth));
+        setWorldviewChatPanelWidth((current) => clampChatWidth(current));
       } else {
-        setStandardChatPanelWidth((current) => clampChatWidth(current, reservedWidth));
+        setStandardChatPanelWidth((current) => clampChatWidth(current));
       }
     };
     syncWidth();
@@ -170,31 +212,49 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
     };
   }, [clampChatWidth, workspaceView]);
 
-  const handleSplitterMouseDown = useCallback(
-    (event: MouseEvent<HTMLDivElement>) => {
+  const handleSplitterPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
+      const pointerId = event.pointerId;
+      const pointerTarget = event.currentTarget;
+      try {
+        pointerTarget.setPointerCapture?.(pointerId);
+      } catch {
+        // Window listeners still guarantee release if capture is unavailable.
+      }
       setSplitterActive(true);
-      const reservedWidth = reservedSurfaceWidth(workspaceView);
       resizeSessionRef.current = {
         kind: workspaceView === 'worldview' ? 'worldview' : 'standard',
+        pointerId,
+        pointerTarget,
         startX: event.clientX,
         startWidth: chatPanelWidth,
         pendingWidth: chatPanelWidth,
-        reservedWidth,
       };
       setSplitterDragging(true);
     },
     [chatPanelWidth, workspaceView],
   );
 
+  const geometry = useMemo(
+    () => resolveHybridWorkspaceGeometry({
+      workspaceWidth,
+      mainWidth: chatPanelWidth,
+      companionMinWidth,
+    }),
+    [chatPanelWidth, companionMinWidth, workspaceWidth],
+  );
+
   return {
-    canvasMinWidth: CANVAS_MIN_WIDTH,
     chatMinWidth: CHAT_MIN_WIDTH,
     chatPanelWidth,
-    companionMinWidth: COMPANION_MIN_WIDTH,
-    handleSplitterMouseDown,
-    onSplitterMouseEnter: () => setSplitterActive(true),
-    onSplitterMouseLeave: () => {
+    companionMinWidth,
+    ...geometry,
+    handleSplitterPointerDown,
+    onSplitterPointerEnter: () => setSplitterActive(true),
+    onSplitterPointerLeave: () => {
       if (!splitterDragging) setSplitterActive(false);
     },
     splitterActive,

@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode, RefObject } from 'react';
+import type { PointerEvent, ReactNode, RefObject } from 'react';
 
 type AgentBuilderWorkspaceProps = {
   rail: ReactNode;
@@ -9,10 +9,13 @@ type AgentBuilderWorkspaceProps = {
   chatMinWidth: number;
   chat: ReactNode;
   splitterActive: boolean;
-  onSplitterMouseEnter: () => void;
-  onSplitterMouseLeave: () => void;
-  onSplitterMouseDown: (event: MouseEvent<HTMLDivElement>) => void;
-  canvasMinWidth: number;
+  onSplitterPointerEnter: () => void;
+  onSplitterPointerLeave: () => void;
+  onSplitterPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
+  companionMinWidth: number;
+  companionOverlayWidth: number;
+  companionViewportWidth: number;
+  companionVisibleWidth: number;
   canvas: ReactNode;
   companion: ReactNode;
   drawer: ReactNode;
@@ -27,15 +30,18 @@ export default function AgentBuilderWorkspace({
   chatMinWidth,
   chat,
   splitterActive,
-  onSplitterMouseEnter,
-  onSplitterMouseLeave,
-  onSplitterMouseDown,
-  canvasMinWidth,
+  onSplitterPointerEnter,
+  onSplitterPointerLeave,
+  onSplitterPointerDown,
+  companionMinWidth,
+  companionOverlayWidth,
+  companionViewportWidth,
+  companionVisibleWidth,
   canvas,
   companion,
   drawer,
 }: AgentBuilderWorkspaceProps) {
-  const companionUnderMain = workspaceView === 'worldview';
+  const companionUnderMain = companionOverlayWidth > 0;
   return (
     <>
       <style>{`
@@ -54,7 +60,7 @@ export default function AgentBuilderWorkspace({
           <div
             data-testid="workspace-large-region"
             data-surface={surfaceName}
-            data-worldview-main-overlay={companionUnderMain ? 'true' : undefined}
+            data-main-over-companion={companionUnderMain ? 'true' : undefined}
             className="h-full min-w-0 relative"
             style={
               workspaceView === 'chat'
@@ -65,10 +71,10 @@ export default function AgentBuilderWorkspace({
                   }
                 : {
                     width: chatPanelWidth,
-                    minWidth: companionUnderMain ? 0 : chatMinWidth,
+                    minWidth: Math.min(chatMinWidth, chatPanelWidth),
                     flex: '0 0 auto',
-                    zIndex: companionUnderMain ? 2 : undefined,
-                    background: companionUnderMain ? '#1F1F1F' : undefined,
+                    zIndex: 2,
+                    background: '#1F1F1F',
                     boxShadow: companionUnderMain
                       ? '10px 0 28px rgba(0,0,0,0.28)'
                       : undefined,
@@ -82,9 +88,9 @@ export default function AgentBuilderWorkspace({
               data-testid="workspace-chat-resize-handle"
               aria-label="Resize chat panel"
               title="Drag to resize chat"
-              onMouseEnter={onSplitterMouseEnter}
-              onMouseLeave={onSplitterMouseLeave}
-              onMouseDown={onSplitterMouseDown}
+              onPointerEnter={onSplitterPointerEnter}
+              onPointerLeave={onSplitterPointerLeave}
+              onPointerDown={onSplitterPointerDown}
               style={{
                 width: 10,
                 height: '100%',
@@ -92,6 +98,8 @@ export default function AgentBuilderWorkspace({
                 flexShrink: 0,
                 position: 'relative',
                 zIndex: companionUnderMain ? 3 : undefined,
+                touchAction: 'none',
+                userSelect: 'none',
                 overflow: 'hidden',
                 borderLeft: `1px solid ${
                   splitterActive
@@ -113,16 +121,33 @@ export default function AgentBuilderWorkspace({
               }}
             />
           ) : null}
-          {workspaceView === 'canvas' ? (
+          {workspaceView !== 'chat' ? (
             <div
-              data-testid="workspace-canvas-region"
+              data-testid="workspace-companion-clip"
+              data-companion-visible-viewport="true"
+              data-companion-min-width={companionMinWidth}
+              data-companion-overlay-width={companionOverlayWidth}
+              data-companion-viewport-width={companionViewportWidth}
+              data-companion-visible-width={companionVisibleWidth}
               className="h-full flex-1 min-w-0 relative"
-              style={{ minWidth: canvasMinWidth }}
+              style={{ minWidth: 0, overflow: 'hidden', zIndex: 0 }}
             >
-              {canvas}
+              <div
+                data-testid="workspace-companion-content"
+                className="h-full relative"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: companionViewportWidth,
+                  minWidth: companionMinWidth,
+                }}
+              >
+                {workspaceView === 'canvas' ? canvas : companion}
+              </div>
             </div>
           ) : null}
-          {companion}
           {drawer}
         </div>
       </div>

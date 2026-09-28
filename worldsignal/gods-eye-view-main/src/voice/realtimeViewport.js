@@ -34,6 +34,22 @@ function roundedRect(rect) {
   );
 }
 
+function intersectRect(first, second) {
+  const left = Math.max(first.left, second.left);
+  const top = Math.max(first.top, second.top);
+  const right = Math.min(first.right, second.right);
+  const bottom = Math.min(first.bottom, second.bottom);
+  if (right <= left || bottom <= top) return null;
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
 /** Resolve the one legal image source for the active native application. */
 export function resolveViewportCaptureSurface({ viewer = null, root = null } = {}) {
   const runtime = globalThis.window?.__godsEyeView || null;
@@ -57,12 +73,25 @@ export function resolveViewportCaptureSurface({ viewer = null, root = null } = {
     && canvasBounds.bottom <= rootBounds.bottom + tolerance;
   if (!insideRoot) return null;
 
+  const visibleViewport = resolvedRoot.closest?.(
+    '[data-companion-visible-viewport="true"]',
+  );
+  const visibleViewportBounds = finiteRect(visibleViewport?.getBoundingClientRect?.());
+  const visibleRootBounds = visibleViewportBounds
+    ? intersectRect(rootBounds, visibleViewportBounds)
+    : rootBounds;
+  const visibleCanvasBounds = visibleRootBounds
+    ? intersectRect(canvasBounds, visibleRootBounds)
+    : null;
+  if (!visibleRootBounds || !visibleCanvasBounds) return null;
+
   return {
     viewer: resolvedViewer,
     root: resolvedRoot,
     canvas,
-    rootBounds,
-    canvasBounds,
+    rootBounds: visibleRootBounds,
+    canvasBounds: visibleCanvasBounds,
+    sourceCanvasBounds: canvasBounds,
   };
 }
 
@@ -77,9 +106,27 @@ export async function captureViewportImage({
   const fresh = await renderFreshCesiumFrame(surface.viewer);
   if (!fresh) return null;
 
+  const scaleX = source.width / surface.sourceCanvasBounds.width;
+  const scaleY = source.height / surface.sourceCanvasBounds.height;
+  const sourceLeft = Math.max(
+    0,
+    Math.round((surface.canvasBounds.left - surface.sourceCanvasBounds.left) * scaleX),
+  );
+  const sourceTop = Math.max(
+    0,
+    Math.round((surface.canvasBounds.top - surface.sourceCanvasBounds.top) * scaleY),
+  );
+  const sourceWidth = Math.max(
+    1,
+    Math.min(source.width - sourceLeft, Math.round(surface.canvasBounds.width * scaleX)),
+  );
+  const sourceHeight = Math.max(
+    1,
+    Math.min(source.height - sourceTop, Math.round(surface.canvasBounds.height * scaleY)),
+  );
   const { width, height } = computeDownscale(
-    source.width,
-    source.height,
+    sourceWidth,
+    sourceHeight,
     VIEWPORT_MAX_PIXELS,
   );
   const canvas = document.createElement('canvas');
@@ -88,7 +135,17 @@ export async function captureViewportImage({
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
   try {
-    ctx.drawImage(source, 0, 0, width, height);
+    ctx.drawImage(
+      source,
+      sourceLeft,
+      sourceTop,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      width,
+      height,
+    );
     if (isNearlyBlackFrame(ctx, width, height)) {
       console.warn('[WorldView Voice] Skipped black Cesium viewport capture');
       return null;
@@ -105,7 +162,7 @@ export async function captureViewportImage({
     onCapture?.(Object.freeze({
       rootBounds: roundedRect(surface.rootBounds),
       canvasBounds: roundedRect(surface.canvasBounds),
-      sourcePixels: Object.freeze({ width: source.width, height: source.height }),
+      sourcePixels: Object.freeze({ width: sourceWidth, height: sourceHeight }),
       imagePixels: Object.freeze({ width, height }),
       encodedBytes,
       capturedAt: new Date().toISOString(),

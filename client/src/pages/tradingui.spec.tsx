@@ -126,8 +126,8 @@ describe('Trading agent UI', () => {
     expect(screen.getByTestId('selected-trade-job')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'PAUSE' }).hasAttribute('disabled')).toBe(true);
     expect(widget).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: 'RDW' }));
-    expect(screen.queryByRole('button', { name: 'Dark', exact: true })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Fullscreen', exact: true }));
+    expect(screen.queryByRole('button', { name: /^Dark$/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Fullscreen$/ }));
     expect(screen.queryByRole('complementary', { name: 'Trading controls' })).toBeNull();
     expect(screen.getByTestId('trading-candles')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Exit Fullscreen' }));

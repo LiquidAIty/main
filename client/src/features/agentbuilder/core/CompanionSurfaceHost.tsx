@@ -4,7 +4,6 @@ import { GRAPH_THEME, graphCompanionPanelStyle } from '../../../components/graph
 
 type CompanionSurfaceHostProps = {
   workspaceView: string;
-  minWidth: number;
   knowledgeSurface: ReactNode;
   tradingSurface: ReactNode;
   worldsignalSurface: ReactNode;
@@ -13,7 +12,6 @@ type CompanionSurfaceHostProps = {
 
 export default function CompanionSurfaceHost({
   workspaceView,
-  minWidth,
   knowledgeSurface,
   tradingSurface,
   worldsignalSurface,
@@ -22,24 +20,18 @@ export default function CompanionSurfaceHost({
   if (workspaceView === 'canvas' || workspaceView === 'chat') {
     return null;
   }
-  const underMain = workspaceView === 'worldview';
 
   return (
     <aside
       data-testid="workspace-companion-region"
       data-workspace={workspaceView}
       data-open="true"
-      className="h-full relative"
+      className="h-full w-full min-w-0 relative"
       style={graphCompanionPanelStyle({
-        minWidth: underMain ? 0 : minWidth,
-        flex: underMain ? undefined : '1 1 0%',
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
         overflow: 'hidden',
-        ...(underMain ? {
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          zIndex: 0,
-        } : {}),
       })}
     >
       <div className="h-full flex flex-col overflow-hidden min-h-0 relative">

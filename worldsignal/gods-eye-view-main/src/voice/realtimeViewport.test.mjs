@@ -92,6 +92,79 @@ test('capture records the mounted pane and Cesium bounds, never browser dimensio
   }
 });
 
+test('capture crops the stable WorldView canvas to the exposed hybrid companion pane', async () => {
+  const originalDocument = globalThis.document;
+  const fullBounds = rect(400, 64, 720, 540);
+  const exposedBounds = rect(700, 64, 420, 540);
+  const source = {
+    width: 1440,
+    height: 1080,
+    getBoundingClientRect: () => fullBounds,
+  };
+  let postRender = null;
+  const viewer = {
+    scene: {
+      canvas: source,
+      postRender: {
+        addEventListener(listener) {
+          postRender = listener;
+          return () => { postRender = null; };
+        },
+      },
+      requestRender() { queueMicrotask(() => postRender?.()); },
+    },
+  };
+  const visibleViewport = { getBoundingClientRect: () => exposedBounds };
+  const root = {
+    contains: (candidate) => candidate === source,
+    closest: (selector) => selector === '[data-companion-visible-viewport="true"]'
+      ? visibleViewport
+      : null,
+    getBoundingClientRect: () => fullBounds,
+  };
+  let diagnostics = null;
+  let capturedDraw = null;
+  try {
+    globalThis.document = {
+      hidden: false,
+      createElement(tag) {
+        assert.equal(tag, 'canvas');
+        const element = {
+          width: 0,
+          height: 0,
+          getContext() {
+            return {
+              canvas: element,
+              drawImage(...args) {
+                if (args.length === 9) capturedDraw = args;
+              },
+              getImageData: () => ({ data: new Uint8ClampedArray([40, 80, 120, 255]) }),
+            };
+          },
+          toDataURL: () => 'data:image/jpeg;base64,AAAA',
+        };
+        return element;
+      },
+    };
+    const image = await captureViewportImage({
+      viewer,
+      root,
+      onCapture: (value) => { diagnostics = value; },
+    });
+    assert.equal(image, 'data:image/jpeg;base64,AAAA');
+    assert.deepEqual(diagnostics.rootBounds, exposedBounds);
+    assert.deepEqual(diagnostics.canvasBounds, exposedBounds);
+    assert.deepEqual(diagnostics.sourcePixels, { width: 840, height: 1080 });
+    assert.deepEqual(capturedDraw.slice(1, 5), [600, 0, 840, 1080]);
+    assert.equal(
+      diagnostics.imagePixels.width / diagnostics.imagePixels.height,
+      exposedBounds.width / exposedBounds.height,
+    );
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
 test('visual grounding sends the actual viewport image as high-detail model context', async () => {
   const messages = [];
   const channel = { readyState: 'open' };

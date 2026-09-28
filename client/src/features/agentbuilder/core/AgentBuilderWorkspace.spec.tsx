@@ -23,7 +23,7 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof AgentBui
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  const props: React.ComponentProps<typeof AgentBuilderWorkspace> = {
+  let props: React.ComponentProps<typeof AgentBuilderWorkspace> = {
     rail: <div data-testid="rail" />,
     workspaceShellRef: { current: null },
     workspaceView: 'worldview',
@@ -32,52 +32,119 @@ function renderWorkspace(overrides: Partial<React.ComponentProps<typeof AgentBui
     chatMinWidth: 280,
     chat: <div data-testid="main-chat" />,
     splitterActive: false,
-    onSplitterMouseEnter: vi.fn(),
-    onSplitterMouseLeave: vi.fn(),
-    onSplitterMouseDown: vi.fn(),
-    canvasMinWidth: 520,
+    onSplitterPointerEnter: vi.fn(),
+    onSplitterPointerLeave: vi.fn(),
+    onSplitterPointerDown: vi.fn(),
+    companionMinWidth: 720,
+    companionOverlayWidth: 150,
+    companionViewportWidth: 720,
+    companionVisibleWidth: 570,
     canvas: <div data-testid="canvas" />,
     companion: <div data-testid="worldview" />,
     drawer: <div data-testid="drawer" />,
     ...overrides,
   };
-  act(() => root?.render(<AgentBuilderWorkspace {...props} />));
-  return { host: container, props };
+  const commit = () => act(() => root?.render(<AgentBuilderWorkspace {...props} />));
+  commit();
+  return {
+    host: container,
+    get props() { return props; },
+    rerender(next: Partial<React.ComponentProps<typeof AgentBuilderWorkspace>>) {
+      props = { ...props, ...next };
+      commit();
+    },
+  };
 }
 
-describe('AgentBuilderWorkspace WorldView underlay', () => {
-  it('keeps WorldView mounted while continuously sized Main covers it', () => {
-    const { host } = renderWorkspace({ chatPanelWidth: 990 });
+describe('AgentBuilderWorkspace shared hybrid companion layout', () => {
+  it('keeps WorldView mounted at its minimum while continuously sized Main covers it', () => {
+    const { host } = renderWorkspace({
+      chatPanelWidth: 990,
+      companionVisibleWidth: 0,
+      companionViewportWidth: 720,
+      companionOverlayWidth: 720,
+    });
     const main = host.querySelector('[data-testid="workspace-large-region"]') as HTMLElement;
     const worldview = host.querySelector('[data-testid="worldview"]');
-    const handle = host.querySelector('[data-testid="workspace-chat-resize-handle"]');
+    const clip = host.querySelector('[data-testid="workspace-companion-clip"]') as HTMLElement;
+    const content = host.querySelector('[data-testid="workspace-companion-content"]') as HTMLElement;
 
     expect(worldview).not.toBeNull();
-    expect(main.dataset.worldviewMainOverlay).toBe('true');
+    expect(main.dataset.mainOverCompanion).toBe('true');
     expect(main.style.width).toBe('990px');
     expect(main.style.zIndex).toBe('2');
-    expect(handle?.tagName).toBe('DIV');
-    expect(handle?.getAttribute('aria-label')).toBe('Resize chat panel');
+    expect(clip.dataset.companionVisibleViewport).toBe('true');
+    expect(clip.dataset.companionVisibleWidth).toBe('0');
+    expect(content.style.width).toBe('720px');
   });
 
-  it('uses only the existing unlabeled drag boundary', () => {
-    const onMouseDown = vi.fn();
-    const { host } = renderWorkspace({ onSplitterMouseDown: onMouseDown });
+  it('uses only the existing unlabeled pointer-captured drag boundary', () => {
+    const onPointerDown = vi.fn();
+    const { host } = renderWorkspace({ onSplitterPointerDown: onPointerDown });
     const handle = host.querySelector('[data-testid="workspace-chat-resize-handle"]') as HTMLDivElement;
 
     expect(handle.textContent).toBe('');
-    act(() => handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
-    expect(onMouseDown).toHaveBeenCalledOnce();
+    expect(handle.style.touchAction).toBe('none');
+    act(() => handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })));
+    expect(onPointerDown).toHaveBeenCalledOnce();
   });
 
-  it('leaves the existing Canvas splitter presentation unchanged', () => {
-    const { host } = renderWorkspace({ workspaceView: 'canvas' });
-    const main = host.querySelector('[data-testid="workspace-large-region"]') as HTMLElement;
-    const handle = host.querySelector('[data-testid="workspace-chat-resize-handle"]');
+  it('keeps one Canvas instance mounted when responsive resize crosses into overlap', () => {
+    let mounts = 0;
+    let unmounts = 0;
+    function CanvasProbe() {
+      React.useEffect(() => {
+        mounts += 1;
+        return () => { unmounts += 1; };
+      }, []);
+      return <div data-testid="canvas-probe" />;
+    }
+    const view = renderWorkspace({
+      workspaceView: 'canvas',
+      companion: null,
+      canvas: <CanvasProbe />,
+      companionMinWidth: 520,
+      companionVisibleWidth: 770,
+      companionViewportWidth: 770,
+      companionOverlayWidth: 0,
+    });
+    const initialContent = view.host.querySelector(
+      '[data-testid="workspace-companion-content"]',
+    ) as HTMLElement;
+    expect(initialContent.style.width).toBe('770px');
+    expect(mounts).toBe(1);
 
-    expect(main.dataset.worldviewMainOverlay).toBeUndefined();
-    expect(main.style.minWidth).toBe('280px');
-    expect(handle?.tagName).toBe('DIV');
-    expect(host.querySelector('[data-testid="canvas"]')).not.toBeNull();
+    view.rerender({
+      chatPanelWidth: 800,
+      companionVisibleWidth: 390,
+      companionViewportWidth: 520,
+      companionOverlayWidth: 130,
+    });
+    const content = view.host.querySelector(
+      '[data-testid="workspace-companion-content"]',
+    ) as HTMLElement;
+    expect(content.style.width).toBe('520px');
+    expect(view.host.querySelector('[data-testid="canvas-probe"]')).not.toBeNull();
+    expect(mounts).toBe(1);
+    expect(unmounts).toBe(0);
+  });
+
+  it.each([
+    ['canvas', 520],
+    ['knowledge', 520],
+    ['trading', 520],
+    ['worldview', 720],
+  ])('renders the %s companion with its surface-specific floor', (workspaceView, minimum) => {
+    const { host } = renderWorkspace({
+      workspaceView,
+      companionMinWidth: minimum,
+      companionViewportWidth: minimum,
+      companionVisibleWidth: 300,
+      companionOverlayWidth: minimum - 300,
+    });
+    const clip = host.querySelector('[data-testid="workspace-companion-clip"]') as HTMLElement;
+    const content = host.querySelector('[data-testid="workspace-companion-content"]') as HTMLElement;
+    expect(clip.dataset.companionMinWidth).toBe(String(minimum));
+    expect(content.style.minWidth).toBe(`${minimum}px`);
   });
 });

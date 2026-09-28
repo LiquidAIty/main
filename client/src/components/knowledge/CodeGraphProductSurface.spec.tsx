@@ -88,7 +88,6 @@ function ProductGraphsHarness() {
       />
       <CompanionSurfaceHost
         workspaceView={workspaceView}
-        minWidth={640}
         tradingSurface={null}
         worldsignalSurface={null}
         knowledgeSurface={(
@@ -128,9 +127,9 @@ describe('product Graphs tab CodeGraph preservation', () => {
     expect(scene.textContent).toContain('NativeAuthorityGraphSurface.NativeCodeGraphSurface');
     expect(scene.textContent).toContain('KnowledgeGraphFramework.KnowledgeGraphFramework');
     expect(scene.textContent).toContain('CALLS');
-    expect(screen.getByRole('button', { name: 'ThinkGraph', exact: true })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'KnowGraph', exact: true })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'CodeGraph', exact: true })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^ThinkGraph$/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^KnowGraph$/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^CodeGraph$/ })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   }, 45_000);
 });

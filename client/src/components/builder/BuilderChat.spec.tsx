@@ -3,7 +3,7 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
 import BuilderChat, { followLatestOutput } from './BuilderChat';
@@ -42,6 +42,7 @@ describe('BuilderChat', () => {
   afterEach(() => {
     cleanup();
     delete (HTMLElement.prototype as { scrollTo?: unknown }).scrollTo;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -302,17 +303,18 @@ describe('BuilderChat', () => {
       status: 'complete' as const,
     }));
 
-    render(
+    const renderChat = (items: typeof messages) => (
       <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 64 }}>
         <BuilderChat
-          messages={messages}
+          messages={items}
           mainCardId="card_main_chat"
           onSend={vi.fn()}
           knowledgeProjectId="trading-project"
           colors={colors}
         />
-      </VirtuosoMockContext.Provider>,
+      </VirtuosoMockContext.Provider>
     );
+    const { rerender } = render(renderChat(messages));
 
     scrollVirtualViewportToBottom(114, 64, 300);
 
@@ -323,6 +325,69 @@ describe('BuilderChat', () => {
       expect(mountedRows).toBeLessThan(114);
     });
     expect(screen.queryByText('Trading message 0')).toBeNull();
+
+    const scroller = screen.getByTestId('builder-chat-message-list');
+    scroller.scrollTop = 3200;
+    fireEvent.scroll(scroller);
+    expect(await screen.findByRole('button', { name: 'Return to latest' })).not.toBeNull();
+
+    const readerPosition = scroller.scrollTop;
+    rerender(renderChat([
+      ...messages,
+      {
+        role: 'assistant',
+        text: 'Trading message 114',
+        speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+        status: 'complete',
+      },
+    ]));
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 115 * 64 });
+    await waitFor(() => expect(scroller.scrollTop).toBe(readerPosition));
+  });
+
+  it('reflows Pretext bubble width when the continuously resizable Main lane changes', async () => {
+    let viewportWidth = 720;
+    let notifyResize: () => void = () => undefined;
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => viewportWidth);
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      font: '',
+      measureText: (text: string) => ({ width: Array.from(text).length * 7.5 }),
+    } as unknown as CanvasRenderingContext2D);
+    vi.stubGlobal('ResizeObserver', vi.fn((callback: ResizeObserverCallback) => {
+      notifyResize = () => callback([], {} as ResizeObserver);
+      return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+    }));
+
+    render(
+      <VirtuosoMockContext.Provider value={{ viewportHeight: 300, itemHeight: 96 }}>
+        <BuilderChat
+          messages={[{
+            role: 'assistant',
+            text: 'This variable-height answer reflows through Pretext as Main changes width without replacing the conversation.',
+            speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+            status: 'complete',
+          }]}
+          mainCardId="card_main_chat"
+          onSend={vi.fn()}
+          knowledgeProjectId="trading-project"
+          colors={colors}
+        />
+      </VirtuosoMockContext.Provider>,
+    );
+    scrollVirtualViewportToBottom(1, 96, 300);
+
+    const frame = await screen.findByTestId('builder-chat-message-frame');
+    const wideWidth = Number.parseFloat(frame.style.width);
+    const scroller = screen.getByTestId('builder-chat-message-list');
+    scroller.scrollTop = 37;
+    const readerPosition = scroller.scrollTop;
+    viewportWidth = 300;
+    await act(async () => notifyResize());
+    const narrowWidth = Number.parseFloat(frame.style.width);
+
+    expect(wideWidth).toBeGreaterThan(narrowWidth);
+    expect(narrowWidth).toBeLessThanOrEqual((300 - 40) * 0.92 + 1);
+    expect(scroller.scrollTop).toBe(readerPosition);
   });
 
   it('shows a native transport failure as status instead of assistant speech', () => {

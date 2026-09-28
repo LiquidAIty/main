@@ -280,17 +280,18 @@ export default function AgentBuilder(): React.ReactElement {
     openCanvasWorkspace: () => setWorkspaceView('canvas'),
   });
   const {
-    canvasMinWidth,
     chatMinWidth,
     chatPanelWidth,
     companionMinWidth,
-    handleSplitterMouseDown,
-    onSplitterMouseEnter,
-    onSplitterMouseLeave,
+    companionOverlayWidth,
+    companionViewportWidth,
+    companionVisibleWidth,
+    handleSplitterPointerDown,
+    onSplitterPointerEnter,
+    onSplitterPointerLeave,
     splitterActive,
     workspaceShellRef,
   } = useAgentBuilderWorkspaceLayout({
-    setWorkspaceView,
     workspaceView,
   });
   const [moonPhase01, setMoonPhase01] = useState(() =>
@@ -1760,7 +1761,6 @@ export default function AgentBuilder(): React.ReactElement {
   const workspaceCompanionSurfaceHost = (
     <CompanionSurfaceHost
       workspaceView={workspaceView}
-      minWidth={companionMinWidth}
       knowledgeSurface={
         renderKnowledgeGraphSurface({
           minHeight: 420,
@@ -1940,10 +1940,13 @@ export default function AgentBuilder(): React.ReactElement {
           chatMinWidth={chatMinWidth}
           chat={renderChatSurface(activeProject, false, 'large')}
           splitterActive={splitterActive}
-          onSplitterMouseEnter={onSplitterMouseEnter}
-          onSplitterMouseLeave={onSplitterMouseLeave}
-          onSplitterMouseDown={handleSplitterMouseDown}
-          canvasMinWidth={canvasMinWidth}
+          onSplitterPointerEnter={onSplitterPointerEnter}
+          onSplitterPointerLeave={onSplitterPointerLeave}
+          onSplitterPointerDown={handleSplitterPointerDown}
+          companionMinWidth={companionMinWidth}
+          companionOverlayWidth={companionOverlayWidth}
+          companionViewportWidth={companionViewportWidth}
+          companionVisibleWidth={companionVisibleWidth}
           canvas={canvasSurface}
           companion={workspaceCompanionSurfaceHost}
           drawer={<>{workspaceDrawer}</>}
