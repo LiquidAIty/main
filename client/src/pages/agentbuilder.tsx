@@ -16,6 +16,7 @@ import WorldSignalSurface, {
   type WorldSignalsLayerState,
 } from '../components/worldsignal/WorldSignalSurface';
 import WorldSignalsInspectorPanel from '../components/worldsignal/WorldSignalsInspectorPanel';
+import type { GodsEyeBridge } from '../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from '../features/worldview/WorldViewSurface';
 import AgentCanvasPane from '../features/agentbuilder/canvas/AgentCanvasPane';
 import AgentBuilderRail from '../features/agentbuilder/core/AgentBuilderRail';
@@ -408,6 +409,7 @@ export default function AgentBuilder(): React.ReactElement {
     useState<WorldSignalsLayerState | null>(null);
   const [worldSignalBridge, setWorldSignalBridge] =
     useState<WorldSignalsInspectorBridge | null>(null);
+  const [worldViewBridge, setWorldViewBridge] = useState<GodsEyeBridge | null>(null);
   const handleWorldSignalInspectorRequest = useCallback(
     (section: WorldSignalsInspectorSection) => {
       // Only sections with a real canonical destination open today.
@@ -596,6 +598,13 @@ export default function AgentBuilder(): React.ReactElement {
       cancelled = true;
     };
   }, [canvasProjectId, knowledgeGraphKind, mainCardId, workspaceView]);
+  const prepareRunImages = useCallback(async (targetCardId: string | null) => {
+    if (!targetCardId || targetCardId !== worldViewCard?.id || workspaceView !== 'worldview') {
+      return [];
+    }
+    if (!worldViewBridge) throw new Error('worldview_turn_context_unavailable');
+    return worldViewBridge.prepareRunImages();
+  }, [workspaceView, worldViewBridge, worldViewCard?.id]);
   const {
     handleNativeSend,
     messages,
@@ -605,8 +614,12 @@ export default function AgentBuilder(): React.ReactElement {
     queuedInputCount,
     mainDriverSource,
     sessionHistoryLoading,
+    startVoiceSession,
     stopMainTurn,
+    stopVoiceSession,
     technicalError,
+    voiceError,
+    voicePhase,
   } = useAgentBuilderMainChat({
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
@@ -615,6 +628,7 @@ export default function AgentBuilder(): React.ReactElement {
     dataAnchors: mainCardId
       ? (transientCardGraphContext[mainCardId] || []).map((item) => item.reference)
       : [],
+    prepareRunImages,
     onUserTurnStarted: graphAttention.startAttentionScope,
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
     onTurnFinished: graphAttention.finishAttentionScope,
@@ -1504,6 +1518,12 @@ export default function AgentBuilder(): React.ReactElement {
           queuedCount={queuedInputCount}
           historyLoading={sessionHistoryLoading}
           error={technicalError}
+          voiceError={voiceError}
+          voicePhase={voicePhase}
+          onVoiceStart={startVoiceSession}
+          onVoiceStop={() => {
+            void stopVoiceSession();
+          }}
           onStop={() => {
             void stopMainTurn().catch((error) => {
               setDeckStatusMessage(error instanceof Error ? error.message : 'Main run stop failed.');
@@ -1770,6 +1790,7 @@ export default function AgentBuilder(): React.ReactElement {
         <WorldViewSurface
           projectId={canvasProjectId || null}
           cardId={worldViewCard?.id || null}
+          onBridgeChange={setWorldViewBridge}
         />
       }
     />

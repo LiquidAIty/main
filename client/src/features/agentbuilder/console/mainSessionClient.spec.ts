@@ -7,8 +7,10 @@ import {
   projectCardChatTargets,
   selectedConversationId,
   SessionStreamError,
+  stopVoiceCapture,
   subscribeSessionEvents,
   streamSession,
+  streamVoiceCapture,
 } from './mainSessionClient';
 
 function sseResponse(frames: string[]): Response {
@@ -383,6 +385,59 @@ describe('streamSession', () => {
   });
 });
 
+describe('Hermes voice transport', () => {
+  it('streams exact Card-scoped voice state and transcript events', async () => {
+    const ready = {
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      cardId: 'card_worldview', runtimeSessionId: 'runtime-worldview',
+      nativeSessionId: 'native-worldview', state: { enabled: true, tts: true },
+    };
+    const transcript = {
+      ...ready,
+      event: {
+        type: 'voice.transcript', session_id: 'native-worldview', seq: 9,
+        payload: { text: 'What city is this?' },
+      },
+    };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        targetCardId: 'card_worldview', tts: true,
+      });
+      return sseResponse([
+        `event: ready\ndata: ${JSON.stringify(ready)}\n\n`,
+        `event: transcript\ndata: ${JSON.stringify(transcript)}\n\n`,
+      ]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const onEvent = vi.fn();
+
+    await streamVoiceCapture({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      targetCardId: 'card_worldview', onEvent,
+    });
+
+    expect(onEvent.mock.calls.map(([event]) => event.kind)).toEqual(['ready', 'transcript']);
+    expect(onEvent.mock.calls[1][0].event.payload.text).toBe('What city is this?');
+  });
+
+  it('stops the exact Card voice session without retargeting it', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        targetCardId: 'card_worldview', cancel: true,
+      });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await stopVoiceCapture({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      targetCardId: 'card_worldview', cancel: true,
+    });
+  });
+});
+
 describe('subscribeSessionEvents', () => {
   it('delivers only an exact native Gateway event and closes the one EventSource', () => {
     const listeners = new Map<string, (event: Event) => void>();
@@ -515,6 +570,41 @@ describe('loadSessionHistory', () => {
     })).resolves.toEqual({
       nativeSessionId: 'native-main', runtimeSessionId: 'runtime-main', mainCardId: 'card_main_chat',
       addressableAgents: [], messages: [], terminalEvents: [],
+    });
+  });
+
+  it('loads Project history before a Hermes runtime has been opened', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({
+        ok: true,
+        sessionId: '',
+        runtimeSessionId: '',
+        mainCardId: 'card_main_chat',
+        addressableAgents: [],
+        messages: [{
+          role: 'assistant',
+          text: 'Persisted answer',
+          speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+        }],
+        terminalEvents: [],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(loadSessionHistory({
+      projectId: 'project-1',
+      conversationId: 'main',
+    })).resolves.toEqual({
+      nativeSessionId: '',
+      runtimeSessionId: '',
+      mainCardId: 'card_main_chat',
+      addressableAgents: [],
+      messages: [{
+        role: 'assistant',
+        text: 'Persisted answer',
+        speaker: { kind: 'card', label: 'Main', cardId: 'card_main_chat' },
+      }],
+      terminalEvents: [],
     });
   });
 

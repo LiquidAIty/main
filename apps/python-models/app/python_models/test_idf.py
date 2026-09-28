@@ -21,6 +21,7 @@ from app.python_models.idf import (
 def _idf(
     *, graph_context: str = "", secret: bool = False,
     capabilities: dict | None = None, task: str = "Inspect the exact bounded slice.",
+    images: list[dict] | None = None,
 ):
     reference = {
         "authority": "CodeGraph",
@@ -70,7 +71,7 @@ def _idf(
         },
         variable={
             "task": task,
-            "images": [],
+            "images": list(images or []),
         },
         capabilities={
             "enabledTools": ["codegraph.search_graph"],
@@ -112,6 +113,47 @@ def test_native_projection_preserves_exact_user_task_whitespace() -> None:
     materialized = _idf(task=exact)
     assert materialized.idf.dynamicContext.task == exact
     assert runtime_projection(materialized)["message"] == exact
+
+
+def test_worldview_turn_context_is_retained_once_and_projected_for_hermes() -> None:
+    image = {
+        "schemaVersion": "worldview.turn-context.v1",
+        "kind": "worldview-viewport",
+        "projectId": "project-one",
+        "cardId": "card-one",
+        "name": "worldview-viewport.jpg",
+        "mediaType": "image/jpeg",
+        "sha256": "0" * 64,
+        "sizeBytes": 3,
+        "dataUrl": "data:image/jpeg;base64,AQID",
+        "capturedAt": "2026-09-28T12:00:00Z",
+        "viewport": {"imagePixels": {"width": 640, "height": 480}},
+        "context": {
+            "schemaVersion": "worldview.surface-context.v1",
+            "currentView": {
+                "ok": True,
+                "camera": {"longitude": -74.006, "latitude": 40.7128},
+                "place": "New York City",
+                "viewScale": "city",
+                "enabledLayers": ["flights"],
+            },
+            "entityContext": {
+                "ok": True,
+                "selected": {"id": "flight-one", "callsign": "SOURCE 1"},
+            },
+        },
+    }
+    materialized = _idf(task="What city is this and what is selected?", images=[image])
+    loaded = load_idf_bytes(materialized.idf_bytes)
+    projected = runtime_projection(loaded)
+
+    assert projected["images"] == [image]
+    assert projected["message"].endswith("What city is this and what is selected?")
+    assert "## Current WorldView observations" in projected["message"]
+    assert '"place":"New York City"' in projected["message"]
+    assert '"id":"flight-one"' in projected["message"]
+    assert image["dataUrl"] not in projected["message"]
+    assert projected["estimates"]["worldviewContextTokens"] > 0
 
 
 def test_script_presentation_survives_exact_idf_bytes_and_runtime_projection() -> None:

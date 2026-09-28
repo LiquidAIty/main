@@ -1,5 +1,10 @@
 import * as Cesium from 'cesium';
-import { getApplicationViewport, toApplicationPoint } from './app/viewport.js';
+import {
+  applicationViewportAtMost,
+  getApplicationViewport,
+  toApplicationPoint,
+  toApplicationRect,
+} from './app/viewport.js';
 import { retroShader } from './styles/retro.js';
 import { animeShader } from './styles/anime.js';
 import { noirShader } from './styles/noir.js';
@@ -2003,7 +2008,7 @@ class CockpitViewController {
 
   syncContextLayout() {
     if (!this.context || this.context.hidden) return;
-    if (window.matchMedia('(max-width: 760px)').matches) {
+    if (applicationViewportAtMost(760)) {
       this.context.dataset.layoutMode = 'compact-bottom';
       this.context.style.removeProperty('--cockpit-context-left');
       this.context.style.removeProperty('--cockpit-context-top');
@@ -2021,7 +2026,7 @@ class CockpitViewController {
   syncSignalLayout() {
     if (!this.signalStream || this.signalStream.hidden) return;
     const utilityControls = document.getElementById('cockpit-utility-controls');
-    if (window.matchMedia('(max-width: 760px)').matches) {
+    if (applicationViewportAtMost(760)) {
       this.signalStream.dataset.layoutMode = 'compact-top';
       utilityControls?.classList.remove('layout-primary-only');
       utilityControls?.querySelectorAll('.cockpit-utility-control').forEach((control) => {
@@ -2045,7 +2050,7 @@ class CockpitViewController {
     this.signalStream.style.setProperty('--cockpit-signal-right', `${desktopInset.toFixed(1)}px`);
     this.signalStream.style.removeProperty('--cockpit-signal-top');
     this.signalStream.style.removeProperty('--cockpit-signal-max-height');
-    const signalBounds = this.signalStream.getBoundingClientRect();
+    const signalBounds = toApplicationRect(this.signalStream.getBoundingClientRect());
     const utilityBounds = utilityControls?.getBoundingClientRect();
     if (utilityBounds) {
       const expandedControl = utilityControls?.querySelector('.cockpit-utility-control.is-expanded');
@@ -2066,7 +2071,9 @@ class CockpitViewController {
       // the Minimal variant drops it with `display:none`, but HUD Off hides the
       // whole Intel HUD with `visibility`/`opacity`, which keeps its rect.
       const recReadout = document.querySelector('#intel-hud .hud-top-right');
-      const recBounds = isRenderedOnScreen(recReadout) ? recReadout.getBoundingClientRect() : null;
+      const recBounds = isRenderedOnScreen(recReadout)
+        ? toApplicationRect(recReadout.getBoundingClientRect())
+        : null;
       const utilityAnchor = resolveCockpitUtilityAnchor({
         recBottom: recBounds ? recBounds.bottom : 0,
         signalTop: signalBounds.top,
@@ -6858,7 +6865,7 @@ export class StyleManager {
         this._syncPanelCollapseButton(panel);
       }
     }
-    const isMobile = window.matchMedia('(max-width: 720px)').matches;
+    const isMobile = applicationViewportAtMost(720);
     const hasExpandedPanel = panels.some((panel) => (
       !panel.classList.contains('collapsed') && (!isMobile || panel.id !== 'pp-toggles')
     ));
@@ -6883,8 +6890,9 @@ export class StyleManager {
 
     const viewportHeight = Math.max(1, getApplicationViewport().height);
     const safeGap = Math.max(8, viewportHeight * 0.012);
-    const stackRect = stack.getBoundingClientRect();
-    const leftStackTop = this._leftPanelStack?.getBoundingClientRect().top;
+    const stackRect = toApplicationRect(stack.getBoundingClientRect());
+    const leftStackRect = this._leftPanelStack?.getBoundingClientRect();
+    const leftStackTop = leftStackRect ? toApplicationRect(leftStackRect).top : NaN;
     const alignedTop = Number.isFinite(leftStackTop)
       ? leftStackTop
       : viewportHeight * 0.26;
@@ -6901,7 +6909,7 @@ export class StyleManager {
         }
       }
       if (hiddenByAncestor) continue;
-      const rect = obstacle.getBoundingClientRect();
+      const rect = toApplicationRect(obstacle.getBoundingClientRect());
       if (rect.width <= 0 || rect.height <= 0) continue;
       obstacleRects.push({
         left: rect.left,
@@ -7187,7 +7195,7 @@ export class StyleManager {
 
     // The existing narrow-screen composition has its own full-width stack.
     // Keep this desktop lane engine from fighting those dedicated rules.
-    if (window.matchMedia('(max-width: 720px)').matches) {
+    if (applicationViewportAtMost(720)) {
       stack.classList.remove('layout-focus');
       stack.classList.remove('layout-tail');
       stack.style.removeProperty('--left-stack-safe-top');
@@ -7202,7 +7210,7 @@ export class StyleManager {
     }
 
     const viewportHeight = Math.max(1, getApplicationViewport().height);
-    const stackRect = stack.getBoundingClientRect();
+    const stackRect = toApplicationRect(stack.getBoundingClientRect());
     const baseTop = viewportHeight * 0.26;
     const baseBottomInset = viewportHeight * 0.04;
     const safeGap = viewportHeight * 0.012;
@@ -7222,7 +7230,7 @@ export class StyleManager {
         }
       }
       if (hiddenByAncestor) continue;
-      const rect = obstacle.getBoundingClientRect();
+      const rect = toApplicationRect(obstacle.getBoundingClientRect());
       if (rect.width <= 0 || rect.height <= 0) continue;
       const overlapsHorizontally = rect.right > stackRect.left && rect.left < stackRect.right;
       if (!overlapsHorizontally) continue;
@@ -7330,10 +7338,8 @@ export class StyleManager {
     const layoutBottom = shouldFocus
       ? obstacleSafeBottom
       : shouldTail ? tailLayoutBottom : safeBottom;
-    const topPct = (layoutTop / viewportHeight) * 100;
-    const bottomPct = ((viewportHeight - layoutBottom) / viewportHeight) * 100;
-    const topValue = `${topPct.toFixed(3)}vh`;
-    const bottomValue = `${bottomPct.toFixed(3)}vh`;
+    const topValue = `${layoutTop.toFixed(1)}px`;
+    const bottomValue = `${Math.max(0, viewportHeight - layoutBottom).toFixed(1)}px`;
     const expandedAvailableHeight = shouldFocus
       ? Math.max(0, layoutBottom - layoutTop
         - rowGap * Math.max(0, expandedPanels.length - 1))
@@ -7371,8 +7377,8 @@ export class StyleManager {
     stack.classList.toggle('layout-focus', shouldFocus);
     stack.classList.toggle('layout-tail', shouldTail);
     stack.dataset.layoutMode = shouldFocus ? 'focus' : shouldTail ? 'tail' : 'normal';
-    stack.dataset.safeTopPct = topPct.toFixed(2);
-    stack.dataset.safeBottomPct = (100 - bottomPct).toFixed(2);
+    stack.dataset.safeTopPct = ((layoutTop / viewportHeight) * 100).toFixed(2);
+    stack.dataset.safeBottomPct = ((layoutBottom / viewportHeight) * 100).toFixed(2);
     stack.dataset.availableHeightPct = ((availableHeight / viewportHeight) * 100).toFixed(2);
     stack.dataset.requiredHeightPct = ((requiredHeight / viewportHeight) * 100).toFixed(2);
     stack.dataset.tailAvailableHeightPct = ((tailAvailableHeight / viewportHeight) * 100).toFixed(2);
@@ -9885,11 +9891,12 @@ export class StyleManager {
       this._syncShareState();
     });
 
+    const initialHudVariant = this._supervisedEmbed ? 'minimal' : 'tactical';
     if (this._hudLayoutSelect) {
-      this._hudLayoutSelect.value = 'tactical';
+      this._hudLayoutSelect.value = initialHudVariant;
     }
-    this._setHudVariant('tactical');
-    this.hud.setMode('on');
+    this._setHudVariant(initialHudVariant);
+    this.hud.setMode(this._supervisedEmbed ? 'off' : 'on');
     this._updateHudButtonState();
 
     // Detection toggle button

@@ -432,11 +432,16 @@ body.cockpit-mode #cockpit-cloud-effects.active {
   user-select: none;
 }
 
-/* LiquidAIty already supplies the WorldView identity around the isolated globe.
-   Keep routine startup status, but remove the duplicate imported product mark. */
+/* LiquidAIty supplies the surrounding product identity. Keep upstream controls
+   and operational feedback, but remove duplicate or decorative chrome. */
 html.supervised-embed #title-bar,
-html.supervised-embed .loader-logo,
-html.supervised-embed .loader-content h2 {
+html.supervised-embed .loader-content,
+html.supervised-embed #style-indicator,
+html.supervised-embed .cockpit-visor-status,
+html.supervised-embed .cockpit-help,
+html.supervised-embed #global-loading-status,
+html.supervised-embed #traffic-sync-chip,
+html.supervised-embed #cctv-sync-chip {
   display: none;
 }
 

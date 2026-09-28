@@ -550,9 +550,14 @@ test('Cockpit panel corridors reserve the owned topline readouts', () => {
   assert.match(signalLayout[1], /#intel-hud \.hud-top-right/);
   assert.match(
     signalLayout[1],
-    /const recBounds = isRenderedOnScreen\(recReadout\) \? recReadout\.getBoundingClientRect\(\) : null;/,
+    /const recBounds = isRenderedOnScreen\(recReadout\)[\s\S]*?\? toApplicationRect\(recReadout\.getBoundingClientRect\(\)\)[\s\S]*?: null;/,
     'HUD Off retires the Intel HUD with visibility/opacity, which leaves the REC '
       + 'readout a rect — a rect test alone would anchor the strip to an invisible readout',
+  );
+  assert.match(
+    signalLayout[1],
+    /const signalBounds = toApplicationRect\(this\.signalStream\.getBoundingClientRect\(\)\)/,
+    'Cockpit layout geometry must be normalized into the mounted application rectangle',
   );
   assert.match(
     ui,

@@ -15,6 +15,69 @@ function boundedId(value) {
     && value.trim() === value ? value : null;
 }
 
+function actionName(value) {
+  return typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value)
+    ? value
+    : null;
+}
+
+function plainArguments(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+async function inlineImageRecord({ capture, context, projectId, cardId }) {
+  const dataUrl = boundedText(capture?.dataUrl, 400_000);
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
+  if (!match || typeof globalThis.atob !== 'function' || !globalThis.crypto?.subtle) {
+    throw new Error('worldview_viewport_capture_invalid');
+  }
+  const decoded = globalThis.atob(match[2]);
+  const bytes = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  const sha256 = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
+  return {
+    schemaVersion: 'worldview.turn-context.v1',
+    kind: 'worldview-viewport',
+    projectId,
+    cardId,
+    name: `worldview-viewport.${match[1] === 'image/jpeg' ? 'jpg' : match[1].slice('image/'.length)}`,
+    mediaType: match[1],
+    sha256,
+    sizeBytes: bytes.byteLength,
+    dataUrl,
+    capturedAt: boundedText(capture?.capturedAt) || new Date().toISOString(),
+    viewport: {
+      rootBounds: capture?.rootBounds || null,
+      canvasBounds: capture?.canvasBounds || null,
+      sourcePixels: capture?.sourcePixels || null,
+      imagePixels: capture?.imagePixels || null,
+    },
+    context,
+  };
+}
+
+function contextOnlyRecord({ context, projectId, cardId, captureError }) {
+  return {
+    schemaVersion: 'worldview.turn-context.v1',
+    kind: 'worldview-context',
+    projectId,
+    cardId,
+    capturedAt: new Date().toISOString(),
+    captureError: boundedText(captureError, 500),
+    context,
+  };
+}
+
+function settledAction(result, fallback) {
+  if (result.status === 'fulfilled') {
+    const value = result.value;
+    return value?.ok === false
+      ? { value: null, error: boundedText(value?.error, 500) || fallback }
+      : { value, error: null };
+  }
+  return { value: null, error: boundedText(result.reason?.message || result.reason, 500) || fallback };
+}
+
 function validCoordinate(value, minimum, maximum) {
   const number = typeof value === 'number' ? value : NaN;
   return Number.isFinite(number) && number >= minimum && number <= maximum ? number : null;
@@ -91,7 +154,8 @@ export function projectSourceState(dataManager, sourceStateReady = false) {
 export function createDirectHostBridge({
   dataManager,
   contextController = null,
-  voiceCommands,
+  runAction,
+  captureViewport,
   focusPosition,
   projectCartesianPosition = null,
   sourceStateReady = Promise.resolve(),
@@ -108,6 +172,7 @@ export function createDirectHostBridge({
   const sourceReadyPromise = Promise.resolve(sourceStateReady);
   let ready = false;
   let destroyed = false;
+  let turnContextGeneration = 0;
 
   const state = () => projectSourceState(dataManager, ready);
   const publishLayers = () => {
@@ -145,11 +210,6 @@ export function createDirectHostBridge({
   queueMicrotask(() => {
     if (destroyed) return;
     callbacks.onReady?.(sourceVersion);
-    callbacks.onNativeAgentState?.({
-      available: Boolean(voiceCommands),
-      active: Boolean(voiceCommands?.isActive?.()),
-      status: boundedText(voiceCommands?.status) || 'idle',
-    });
     publishLayers();
   });
 
@@ -240,10 +300,77 @@ export function createDirectHostBridge({
       return requestId;
     },
 
+    async executeAction(name, args = {}) {
+      const normalizedName = actionName(name);
+      if (destroyed || !normalizedName || typeof runAction !== 'function') {
+        throw new Error('worldview_action_unavailable');
+      }
+      return runAction(normalizedName, plainArguments(args));
+    },
+
+    async prepareRunImages() {
+      if (destroyed || typeof runAction !== 'function' || typeof captureViewport !== 'function') {
+        throw new Error('worldview_turn_context_unavailable');
+      }
+      const generation = ++turnContextGeneration;
+      const [currentViewResult, entityContextResult, captureResult] = await Promise.allSettled([
+        runAction('get_current_view_state'),
+        runAction('get_entity_context', { scope: 'auto', limit: 5 }),
+        captureViewport(),
+      ]);
+      if (destroyed || generation !== turnContextGeneration) {
+        throw new Error('worldview_turn_context_stale');
+      }
+      const currentView = settledAction(currentViewResult, 'worldview_current_view_unavailable');
+      const entityContext = settledAction(entityContextResult, 'worldview_entity_context_unavailable');
+      if (!currentView.value && !entityContext.value) {
+        throw new Error('worldview_turn_context_incomplete');
+      }
+      const context = {
+        schemaVersion: 'worldview.surface-context.v1',
+        currentView: currentView.value,
+        currentViewError: currentView.error,
+        entityContext: entityContext.value,
+        entityContextError: entityContext.error,
+      };
+      let record;
+      if (captureResult.status === 'fulfilled' && captureResult.value?.dataUrl) {
+        try {
+          record = await inlineImageRecord({
+            capture: captureResult.value,
+            projectId,
+            cardId,
+            context,
+          });
+        } catch (error) {
+          record = contextOnlyRecord({
+            context,
+            projectId,
+            cardId,
+            captureError: error?.message || error,
+          });
+        }
+      } else {
+        record = contextOnlyRecord({
+          context,
+          projectId,
+          cardId,
+          captureError: captureResult.status === 'rejected'
+            ? captureResult.reason?.message || captureResult.reason
+            : 'worldview_viewport_capture_unavailable',
+        });
+      }
+      if (destroyed || generation !== turnContextGeneration) {
+        throw new Error('worldview_turn_context_stale');
+      }
+      return [record];
+    },
+
     getLayerState: state,
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      turnContextGeneration += 1;
       while (listeners.length) listeners.pop()?.();
       consumedFocusIds.clear();
     },

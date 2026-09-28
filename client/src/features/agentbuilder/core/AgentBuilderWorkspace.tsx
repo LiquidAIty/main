@@ -35,6 +35,7 @@ export default function AgentBuilderWorkspace({
   companion,
   drawer,
 }: AgentBuilderWorkspaceProps) {
+  const companionUnderMain = workspaceView === 'worldview';
   return (
     <>
       <style>{`
@@ -53,6 +54,7 @@ export default function AgentBuilderWorkspace({
           <div
             data-testid="workspace-large-region"
             data-surface={surfaceName}
+            data-worldview-main-overlay={companionUnderMain ? 'true' : undefined}
             className="h-full min-w-0 relative"
             style={
               workspaceView === 'chat'
@@ -63,8 +65,13 @@ export default function AgentBuilderWorkspace({
                   }
                 : {
                     width: chatPanelWidth,
-                    minWidth: chatMinWidth,
+                    minWidth: companionUnderMain ? 0 : chatMinWidth,
                     flex: '0 0 auto',
+                    zIndex: companionUnderMain ? 2 : undefined,
+                    background: companionUnderMain ? '#1F1F1F' : undefined,
+                    boxShadow: companionUnderMain
+                      ? '10px 0 28px rgba(0,0,0,0.28)'
+                      : undefined,
                   }
             }
           >
@@ -84,6 +91,7 @@ export default function AgentBuilderWorkspace({
                 cursor: 'col-resize',
                 flexShrink: 0,
                 position: 'relative',
+                zIndex: companionUnderMain ? 3 : undefined,
                 overflow: 'hidden',
                 borderLeft: `1px solid ${
                   splitterActive

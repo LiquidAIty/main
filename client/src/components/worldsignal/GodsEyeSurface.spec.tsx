@@ -47,6 +47,7 @@ describe('WorldView direct native mount', () => {
     expect(root).toBe(document.getElementById('worldview-native-root'));
     expect(config).toEqual(expect.objectContaining(scope));
     expect(document.querySelector('iframe')).toBeNull();
+    expect(screen.queryByText('Starting WorldView…')).toBeNull();
     expect(screen.getByLabelText('WorldView globe').contains(root)).toBe(true);
   });
 

@@ -13,6 +13,8 @@ import {
   SessionStreamError,
   type SharedChatMessage,
   type SharedChatParticipant,
+  stopVoiceCapture,
+  streamVoiceCapture,
   subscribeSessionEvents,
   stopSession,
   streamSession,
@@ -20,12 +22,15 @@ import {
 
 export type AgentBuilderChatMessage = SharedChatMessage & { status?: 'pending' | 'complete' | 'error' };
 
+export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
   conversationId: string;
   directChatTargets?: DirectChatTarget[];
   dataAnchors?: LoadedCardGraphReference['reference'][];
+  prepareRunImages?: (targetCardId: string | null) => Promise<Array<Record<string, unknown>>>;
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
   onTurnFinished?: (turn: MainChatTurnFinished) => void;
@@ -201,6 +206,7 @@ export default function useAgentBuilderMainChat({
   conversationId,
   directChatTargets = NO_DIRECT_CHAT_TARGETS,
   dataAnchors = [],
+  prepareRunImages,
   onUserTurnStarted,
   onNativeTurnEvent,
   onTurnFinished,
@@ -247,6 +253,23 @@ export default function useAgentBuilderMainChat({
     key: conversationKey,
     cardId: null,
   });
+  const activeVoiceRef = useRef<{
+    key: string;
+    controller: AbortController;
+    targetCardId: string | null;
+    participant: SharedChatParticipant;
+    hasTranscript: boolean;
+    turnFinished: boolean;
+    sawSpeaking: boolean;
+    speechIdle: boolean;
+    tts: boolean;
+    audioAvailable: boolean | null;
+  } | null>(null);
+  const [voiceState, setVoiceState] = useState<{
+    key: string;
+    phase: MainChatVoicePhase;
+    error: string | null;
+  }>({ key: conversationKey, phase: 'idle', error: null });
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
   const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
@@ -390,18 +413,6 @@ export default function useAgentBuilderMainChat({
             route: '/api/health',
           });
         }
-        return loadMainDriverStatus(projectId, deckId, conversationId, controller.signal);
-      })
-      .then((status) => {
-        if (cancelled || !status) return undefined;
-        setMainDriverSource(status.activeDriver);
-        if (!status.ready) {
-          throw new SessionStreamError({
-            code: 'main_gateway_runtime_unavailable',
-            message: 'The saved Main session is not ready.',
-            route: '/api/main/session/driver',
-          });
-        }
         return loadSessionHistory({
           projectId,
           deckId,
@@ -428,12 +439,20 @@ export default function useAgentBuilderMainChat({
           ids: new Set(history.terminalEvents.map((event) => event.id)),
         };
         setHistoryState({ key: conversationKey, loading: false });
+        // Runtime observation is auxiliary to the Project conversation. It may
+        // connect after history renders, but it may never gate or replace that
+        // persisted shared-chat authority.
+        void loadMainDriverStatus(projectId, deckId, conversationId, controller.signal)
+          .then((status) => {
+            if (!cancelled) setMainDriverSource(status.activeDriver);
+          })
+          .catch(() => undefined);
       })
       .catch(() => {
         if (cancelled || controller.signal.aborted) return;
         setHistoryState({ key: conversationKey, loading: false });
         setTechnical((current) => current.key === conversationKey
-          ? { ...current, error: current.error || 'conversation_history_read_failed' } : current);
+          ? { ...current, error: current.error || 'Conversation unavailable. Reload to retry.' } : current);
       })
 
     return () => {
@@ -523,12 +542,23 @@ export default function useAgentBuilderMainChat({
       };
 
       try {
+        let images: Array<Record<string, unknown>> = [];
+        if (prepareRunImages) {
+          try {
+            images = await prepareRunImages(targetCardId);
+          } catch {
+            // Surface perception is additive. A stale/unmounted viewport must
+            // never turn an otherwise valid shared-chat message into a failed turn.
+            images = [];
+          }
+        }
         const { finalText } = await streamSession({
           projectId: canvasProjectId,
           deckId,
           conversationId,
           message: text,
           ...(targetCardId ? { targetCardId } : {}),
+          images,
           dataAnchors: (targetCardId ? [] : dataAnchors).map((anchor) => ({
             authority: anchor.authority,
             nativeId: anchor.nativeId,
@@ -708,6 +738,7 @@ export default function useAgentBuilderMainChat({
       onNativeTurnEvent,
       onTurnFinished,
       onUserTurnStarted,
+      prepareRunImages,
       subscribeToNativeSession,
     ],
   );
@@ -732,6 +763,232 @@ export default function useAgentBuilderMainChat({
     },
     [conversationKey, nativeSessionPending, prepareSubmission, requestPreparedText],
   );
+
+  const endVoiceSession = useCallback(async (
+    nextPhase: MainChatVoicePhase = 'idle',
+    error: string | null = null,
+  ) => {
+    const active = activeVoiceRef.current;
+    if (!active || active.key !== conversationKey) {
+      setVoiceState({ key: conversationKey, phase: nextPhase, error });
+      return;
+    }
+    activeVoiceRef.current = null;
+    active.controller.abort();
+    setVoiceState({ key: conversationKey, phase: nextPhase, error });
+    if (!canvasProjectId) return;
+    await stopVoiceCapture({
+      projectId: canvasProjectId,
+      deckId,
+      conversationId,
+      ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
+      cancel: true,
+    }).catch(() => undefined);
+  }, [canvasProjectId, conversationId, conversationKey, deckId]);
+
+  const startVoiceSession = useCallback(() => {
+    if (!canvasProjectId || !mainCardId || sessionHistoryLoading) {
+      setVoiceState({
+        key: conversationKey,
+        phase: 'error',
+        error: 'Voice is unavailable until the Project conversation is ready.',
+      });
+      return;
+    }
+    if (nativeSessionPending) {
+      setVoiceState({
+        key: conversationKey,
+        phase: 'error',
+        error: 'Wait for the current response before starting voice.',
+      });
+      return;
+    }
+    if (activeVoiceRef.current?.key === conversationKey) return;
+
+    const targetCardId = responderRef.current.key === conversationKey
+      ? responderRef.current.cardId
+      : null;
+    const target = uniqueCardTarget(directChatTargets, targetCardId);
+    const mainTarget = uniqueCardTarget(directChatTargets, mainCardId);
+    const participant = target
+      ? participantForTarget(target)
+      : mainTarget
+        ? participantForTarget(mainTarget)
+        : { kind: 'card' as const, label: 'Main', cardId: mainCardId };
+    const controller = new AbortController();
+    const active = {
+      key: conversationKey,
+      controller,
+      targetCardId,
+      participant,
+      hasTranscript: false,
+      turnFinished: false,
+      sawSpeaking: false,
+      speechIdle: false,
+      tts: true,
+      audioAvailable: null as boolean | null,
+    };
+    activeVoiceRef.current = active;
+    setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+
+    void streamVoiceCapture({
+      projectId: canvasProjectId,
+      deckId,
+      conversationId,
+      ...(targetCardId ? { targetCardId } : {}),
+      tts: true,
+      signal: controller.signal,
+      onEvent: (event) => {
+        const current = activeVoiceRef.current;
+        if (!current || current.controller !== controller || current.key !== conversationKey) return;
+        const expectedCardId = targetCardId || mainCardId;
+        if (event.cardId !== expectedCardId) {
+          void endVoiceSession('error', 'Voice connected to the wrong Card.');
+          return;
+        }
+        if (event.kind === 'ready') {
+          current.tts = event.state?.tts === true;
+          current.audioAvailable = typeof event.state?.audioAvailable === 'boolean'
+            ? event.state.audioAvailable
+            : null;
+          setVoiceState({ key: conversationKey, phase: 'listening', error: null });
+          return;
+        }
+        if (event.kind === 'error') {
+          void endVoiceSession('error', event.error || 'Voice transport failed.');
+          return;
+        }
+        if (event.kind === 'status') {
+          const statusPayload = (event.event?.payload || {}) as Record<string, unknown>;
+          const phase = String(statusPayload.state || '').toLowerCase();
+          if (phase === 'listening' || phase === 'recording') {
+            setVoiceState({ key: conversationKey, phase: 'listening', error: null });
+          } else if (phase === 'transcribing' || phase === 'processing') {
+            setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+          } else if (phase === 'speaking') {
+            current.sawSpeaking = true;
+            setVoiceState({ key: conversationKey, phase: 'speaking', error: null });
+          } else if (phase === 'idle') {
+            if (current.sawSpeaking) current.speechIdle = true;
+            if (current.hasTranscript && current.turnFinished && current.speechIdle) {
+              void endVoiceSession();
+            } else if (!current.sawSpeaking) {
+              setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+            }
+          }
+          return;
+        }
+        const payload = (event.event?.payload || {}) as Record<string, unknown>;
+        if (payload.stop_phrase === true) {
+          void endVoiceSession();
+          return;
+        }
+        if (payload.no_speech_limit === true) {
+          void endVoiceSession('error', 'No speech was detected.');
+          return;
+        }
+        const transcriptText = String(payload.text || '').trim();
+        if (!transcriptText || current.hasTranscript) return;
+        current.hasTranscript = true;
+        setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+        const submission: PreparedChatSubmission = {
+          key: conversationKey,
+          text: transcriptText,
+          targetCardId,
+          participant,
+        };
+        void requestPreparedText(submission)
+          .then(() => {
+            const latest = activeVoiceRef.current;
+            if (!latest || latest.controller !== controller) return;
+            latest.turnFinished = true;
+            if (!latest.tts || latest.audioAvailable === false || latest.speechIdle) {
+              void endVoiceSession();
+            }
+          })
+          .catch((error: unknown) => {
+            if (controller.signal.aborted) return;
+            void endVoiceSession(
+              'error',
+              error instanceof Error ? error.message : 'Voice turn failed.',
+            );
+          });
+      },
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      void endVoiceSession(
+        'error',
+        error instanceof Error ? error.message : 'Voice transport failed.',
+      );
+    });
+  }, [
+    canvasProjectId,
+    conversationId,
+    conversationKey,
+    deckId,
+    directChatTargets,
+    endVoiceSession,
+    mainCardId,
+    nativeSessionPending,
+    requestPreparedText,
+    sessionHistoryLoading,
+  ]);
+
+  const stopVoiceSession = useCallback(async () => {
+    const active = activeVoiceRef.current;
+    if (!active || active.key !== conversationKey || !canvasProjectId) return;
+    const phase = voiceState.key === conversationKey ? voiceState.phase : 'idle';
+    if (phase === 'listening') {
+      setVoiceState({ key: conversationKey, phase: 'processing', error: null });
+      try {
+        await stopVoiceCapture({
+          projectId: canvasProjectId,
+          deckId,
+          conversationId,
+          ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
+          cancel: false,
+        });
+      } catch (error) {
+        await endVoiceSession(
+          'error',
+          error instanceof Error ? error.message : 'Voice stop failed.',
+        );
+      }
+      return;
+    }
+    await endVoiceSession();
+  }, [
+    canvasProjectId,
+    conversationId,
+    conversationKey,
+    deckId,
+    endVoiceSession,
+    voiceState.key,
+    voiceState.phase,
+  ]);
+
+  const selectedVoiceTargetCardId = selectedResponderTarget?.cardId || null;
+  useEffect(() => {
+    const active = activeVoiceRef.current;
+    if (!active || active.key !== conversationKey) return;
+    if (active.targetCardId !== selectedVoiceTargetCardId) void endVoiceSession();
+  }, [conversationKey, endVoiceSession, selectedVoiceTargetCardId]);
+
+  useEffect(() => () => {
+    const active = activeVoiceRef.current;
+    if (!active || active.key !== conversationKey) return;
+    activeVoiceRef.current = null;
+    active.controller.abort();
+    if (canvasProjectId) {
+      void stopVoiceCapture({
+        projectId: canvasProjectId,
+        deckId,
+        conversationId,
+        ...(active.targetCardId ? { targetCardId: active.targetCardId } : {}),
+        cancel: true,
+      }).catch(() => undefined);
+    }
+  }, [canvasProjectId, conversationId, conversationKey, deckId]);
 
   useEffect(() => {
     if (nativeSessionPending || sessionHistoryLoading) return;
@@ -792,6 +1049,10 @@ export default function useAgentBuilderMainChat({
     queuedInputCount,
     sessionHistoryLoading,
     requestMainText,
+    startVoiceSession,
     stopMainTurn,
+    stopVoiceSession,
+    voiceError: voiceState.key === conversationKey ? voiceState.error : null,
+    voicePhase: voiceState.key === conversationKey ? voiceState.phase : 'idle',
   };
 }

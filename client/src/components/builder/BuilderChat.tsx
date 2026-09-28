@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
+import type { MainChatVoicePhase } from "../../features/agentbuilder/console/useAgentBuilderMainChat";
 import UploadAttachment from "../knowledge/UploadAttachment";
+import {
+  prepareChatBubbleText,
+  tightChatBubbleTextWidth,
+} from "./pretextBubbleLayout";
 
 type BuilderChatColors = {
   primary: string;
@@ -25,6 +31,127 @@ function safeText(value: unknown): string {
   return String(value);
 }
 
+type BuilderChatMessage = {
+  role: "assistant" | "user";
+  text: string;
+  speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
+  target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
+  status?: "pending" | "complete" | "error";
+};
+
+function shouldRenderMessage(message: BuilderChatMessage): boolean {
+  return message.role !== "assistant" || Boolean(safeText(message.text).trim());
+}
+
+export function followLatestOutput(atBottom: boolean): "auto" | false {
+  return atBottom ? "auto" : false;
+}
+
+function BuilderChatMessageBubble({
+  colors,
+  laneWidth,
+  mainCardId,
+  message,
+}: {
+  colors: BuilderChatColors;
+  laneWidth: number | null;
+  mainCardId?: string;
+  message: BuilderChatMessage;
+}) {
+  const text = safeText(message.text);
+  const isUser = message.role !== "assistant";
+  const horizontalPadding = isUser ? 30 : 32;
+  const maximumBubbleWidth = laneWidth == null
+    ? null
+    : Math.max(
+        horizontalPadding + 1,
+        Math.min(isUser ? 560 : 640, laneWidth * (isUser ? 0.82 : 0.92)),
+      );
+  const measurementEnabled = laneWidth != null;
+  const prepared = useMemo(
+    () => measurementEnabled ? prepareChatBubbleText(text) : null,
+    [measurementEnabled, text],
+  );
+  const measuredContentWidth = useMemo(
+    () => tightChatBubbleTextWidth(
+      prepared,
+      maximumBubbleWidth == null ? 0 : maximumBubbleWidth - horizontalPadding,
+    ),
+    [maximumBubbleWidth, prepared],
+  );
+  const measuredBubbleWidth = measuredContentWidth == null
+    ? null
+    : Math.ceil(measuredContentWidth + horizontalPadding);
+  const showSpeaker = !isUser
+    && Boolean(message.speaker.cardId)
+    && message.speaker.cardId !== mainCardId;
+  const speakerAddress = safeText(message.speaker.address || message.speaker.label)
+    .replace(/^@/, "");
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: isUser ? "flex-end" : "flex-start",
+        width: "100%",
+      }}
+    >
+      <div
+        data-testid="builder-chat-message-frame"
+        style={{
+          maxWidth: isUser ? "min(82%, 560px)" : "min(92%, 640px)",
+          width: measuredBubbleWidth == null ? "fit-content" : measuredBubbleWidth,
+        }}
+      >
+        {showSpeaker ? (
+          <div
+            data-testid="builder-chat-speaker"
+            style={{
+              color: message.status === "error" ? "#FF9B9B" : colors.neutral,
+              fontSize: 10.5,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              margin: "0 6px 5px",
+              textTransform: "uppercase",
+              textAlign: "left",
+            }}
+          >
+            @{speakerAddress}
+          </div>
+        ) : null}
+        <div
+          style={{
+            boxSizing: "border-box",
+            width: "100%",
+            padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",
+            color: colors.text,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "break-word",
+            wordBreak: "normal",
+            lineHeight: 1.55,
+            fontSize: 13.5,
+            letterSpacing: "-0.01em",
+            borderRadius: isUser
+              ? "16px 16px 5px 16px"
+              : "16px 16px 16px 6px",
+            background: isUser
+              ? "linear-gradient(165deg, rgba(52,56,62,0.98) 0%, rgba(36,40,46,0.99) 55%, rgba(30,34,40,1) 100%)"
+              : "linear-gradient(180deg, rgba(28,30,34,0.55) 0%, rgba(22,24,28,0.72) 100%)",
+            border: isUser
+              ? "1px solid rgba(79,162,173,0.22)"
+              : "1px solid rgba(255,255,255,0.06)",
+            boxShadow: isUser
+              ? "inset 0 1px 0 rgba(255,255,255,0.07), 0 1px 0 rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.22), 0 0 0 1px rgba(79,162,173,0.06)"
+              : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
+          }}
+        >
+          {text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function BuilderChat({
   messages,
   mainCardId,
@@ -37,17 +164,15 @@ export default function BuilderChat({
   queuedCount = 0,
   historyLoading = false,
   error = null,
+  voiceError = null,
+  voicePhase = "idle",
+  onVoiceStart,
+  onVoiceStop,
   onStop,
   draft,
   onDraftChange,
 }: {
-  messages: {
-    role: "assistant" | "user";
-    text: string;
-    speaker: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
-    target?: { kind: "user" | "card"; label: string; cardId?: string; profile?: string; address?: string };
-    status?: "pending" | "complete" | "error";
-  }[];
+  messages: BuilderChatMessage[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
@@ -64,12 +189,18 @@ export default function BuilderChat({
   historyLoading?: boolean;
   /** Visible transport/configuration failure; never represented as assistant speech. */
   error?: string | null;
+  voiceError?: string | null;
+  voicePhase?: MainChatVoicePhase;
+  onVoiceStart?: () => void;
+  onVoiceStop?: () => void;
   onStop?: () => void;
   draft?: string;
   onDraftChange?: (value: string) => void;
 }) {
   const [localDraft, setLocalDraft] = useState("");
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
+  const [messageLaneWidth, setMessageLaneWidth] = useState<number | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const interactionDisabled = historyLoading;
   const value = draft === undefined ? localDraft : draft;
   const setValue = (next: string) => {
@@ -97,14 +228,55 @@ export default function BuilderChat({
     setValue(`@${agent.address} `);
     setSelectedAddressIndex(0);
   };
-  const listRef = useRef<HTMLDivElement>(null);
+  const messageViewportRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const renderableMessages = useMemo(
+    () => messages.filter(shouldRenderMessage),
+    [messages],
+  );
 
-  // Keep the latest message in view as native assistant text streams in.
-  const lastTextLen = messages.length ? messages[messages.length - 1]?.text?.length ?? 0 : 0;
   useEffect(() => {
-    const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, lastTextLen]);
+    const viewport = messageViewportRef.current;
+    if (!viewport || typeof ResizeObserver !== "function") return;
+    const syncWidth = () => {
+      // Pretext needs the actual text lane width. This observes the one
+      // continuously-resizable chat viewport; Virtuoso remains the sole row
+      // height/scroll measurement owner.
+      const nextWidth = Math.max(0, viewport.clientWidth - 40);
+      setMessageLaneWidth((current) => current === nextWidth ? current : nextWidth);
+    };
+    syncWidth();
+    const observer = new ResizeObserver(syncWidth);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
+
+  const renderMessage = useCallback((index: number, message: BuilderChatMessage) => (
+    <div
+      data-testid="builder-chat-message-row"
+      style={{
+        boxSizing: "border-box",
+        padding: `${index === 0 ? 16 : 7}px 20px ${
+          index === renderableMessages.length - 1 ? 18 : 7
+        }px`,
+      }}
+    >
+      <BuilderChatMessageBubble
+        colors={colors}
+        laneWidth={messageLaneWidth}
+        mainCardId={mainCardId}
+        message={message}
+      />
+    </div>
+  ), [colors, mainCardId, messageLaneWidth, renderableMessages.length]);
+
+  const returnToLatest = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "smooth",
+    });
+  }, []);
 
   const send = () => {
     if (!value.trim() || interactionDisabled) return;
@@ -136,92 +308,74 @@ export default function BuilderChat({
         `}
       </style>
       <div
-        ref={listRef}
-        className="flex-1 builder-chat-scroll"
+        ref={messageViewportRef}
+        data-testid="builder-chat-message-viewport"
+        className="flex-1"
         style={{
+          position: "relative",
           flex: "1 1 0",
           minHeight: 0,
-          overflowY: "auto",
-          overflowX: "hidden",
-          padding: "16px 20px 18px",
         }}
       >
-        <div
-          style={{
-            minHeight: "100%",
-            display: "grid",
-            alignContent: "end",
-            gap: 14,
+        <Virtuoso
+          ref={virtuosoRef}
+          data={renderableMessages}
+          data-testid="builder-chat-message-list"
+          className="builder-chat-scroll"
+          style={{ height: "100%", width: "100%" }}
+          alignToBottom
+          initialTopMostItemIndex={{
+            index: Math.max(0, renderableMessages.length - 1),
+            align: "end",
           }}
-        >
-        {messages.map((m, i) => {
-          const isUser = m.role !== "assistant";
-          const showSpeaker = !isUser
-            && Boolean(m.speaker.cardId)
-            && m.speaker.cardId !== mainCardId;
-          const speakerAddress = safeText(m.speaker.address || m.speaker.label)
-            .replace(/^@/, "");
-          // Never render an empty/whitespace assistant bubble — only real assistant
-          // text appears as a bubble. (Real user messages always render.)
-          if (!isUser && !safeText(m.text).trim()) return null;
-          return (
-            <div
-              key={i}
-              style={{
-                justifySelf: isUser ? "end" : "start",
-                maxWidth: isUser ? "min(82%, 560px)" : "min(92%, 640px)",
-                width: "fit-content",
-              }}
+          followOutput={followLatestOutput}
+          atBottomStateChange={setIsAtBottom}
+          computeItemKey={(index) => index}
+          itemContent={renderMessage}
+        />
+        {!isAtBottom && renderableMessages.length > 0 ? (
+          <button
+            type="button"
+            data-testid="builder-chat-return-to-latest"
+            aria-label="Return to latest"
+            title="Return to latest"
+            onClick={returnToLatest}
+            style={{
+              position: "absolute",
+              right: 16,
+              bottom: 10,
+              zIndex: 3,
+              width: 32,
+              height: 32,
+              display: "grid",
+              placeItems: "center",
+              borderRadius: "50%",
+              border: `1px solid ${colors.border}`,
+              background: colors.panel,
+              color: colors.text,
+              boxShadow: "0 7px 18px rgba(0,0,0,0.28)",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
             >
-              {showSpeaker ? (
-                <div
-                  data-testid="builder-chat-speaker"
-                  style={{
-                    color: m.status === "error" ? "#FF9B9B" : colors.neutral,
-                    fontSize: 10.5,
-                    fontWeight: 700,
-                    letterSpacing: "0.04em",
-                    margin: "0 6px 5px",
-                    textTransform: "uppercase",
-                    textAlign: "left",
-                  }}
-                >
-                  @{speakerAddress}
-                </div>
-              ) : null}
-              <div
-                style={{
-                  padding: isUser ? "11px 15px 12px 15px" : "11px 16px 12px 16px",
-                  color: colors.text,
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                  wordBreak: "break-word",
-                  lineHeight: 1.55,
-                  fontSize: 13.5,
-                  letterSpacing: "-0.01em",
-                  borderRadius: isUser
-                    ? "16px 16px 5px 16px"
-                    : "16px 16px 16px 6px",
-                  background: isUser
-                    ? "linear-gradient(165deg, rgba(52,56,62,0.98) 0%, rgba(36,40,46,0.99) 55%, rgba(30,34,40,1) 100%)"
-                    : "linear-gradient(180deg, rgba(28,30,34,0.55) 0%, rgba(22,24,28,0.72) 100%)",
-                  border: isUser
-                    ? "1px solid rgba(79,162,173,0.22)"
-                    : `1px solid rgba(255,255,255,0.06)`,
-                  boxShadow: isUser
-                    ? "inset 0 1px 0 rgba(255,255,255,0.07), 0 1px 0 rgba(0,0,0,0.35), 0 10px 28px rgba(0,0,0,0.22), 0 0 0 1px rgba(79,162,173,0.06)"
-                    : "inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -1px 0 rgba(0,0,0,0.18), 0 4px 18px rgba(0,0,0,0.14)",
-                }}
-              >
-                {safeText(m.text)}
-              </div>
-            </div>
-          );
-        })}
-        </div>
+              <path d="M12 5v14" />
+              <path d="m19 12-7 7-7-7" />
+            </svg>
+          </button>
+        ) : null}
       </div>
       <div className="px-4 pb-4">
-        {error ? (
+        {error || voiceError ? (
           <div
             data-testid="builder-chat-error"
             role="status"
@@ -233,7 +387,7 @@ export default function BuilderChat({
               overflowWrap: "anywhere",
             }}
           >
-            {safeText(error)}
+            {safeText(error || voiceError)}
           </div>
         ) : null}
         <div
@@ -365,6 +519,65 @@ export default function BuilderChat({
           {busy && onStop ? (
             <button type="button" data-testid="builder-chat-stop" onClick={onStop}>
               Stop
+            </button>
+          ) : null}
+          {onVoiceStart && onVoiceStop ? (
+            <button
+              type="button"
+              data-testid="builder-chat-voice"
+              aria-label={voicePhase === "idle" || voicePhase === "error"
+                ? "Start voice"
+                : voicePhase === "listening"
+                  ? "Stop and transcribe voice"
+                  : "Stop voice"}
+              title={voicePhase === "idle" || voicePhase === "error"
+                ? "Start voice"
+                : voicePhase === "listening"
+                  ? "Listening"
+                  : voicePhase === "processing"
+                    ? "Processing voice"
+                    : "Speaking"}
+              onClick={voicePhase === "idle" || voicePhase === "error"
+                ? onVoiceStart
+                : onVoiceStop}
+              disabled={interactionDisabled}
+              className="rounded-full flex items-center justify-center"
+              style={{
+                width: 34,
+                height: 34,
+                flex: "0 0 auto",
+                border: voicePhase === "listening"
+                  ? "1px solid rgba(255,130,130,0.72)"
+                  : `1px solid ${colors.border}`,
+                background: voicePhase === "idle"
+                  ? "transparent"
+                  : voicePhase === "error"
+                    ? "rgba(255,105,105,0.10)"
+                    : "rgba(79,162,173,0.14)",
+                color: voicePhase === "listening" ? "#FF9B9B" : colors.text,
+                cursor: interactionDisabled ? "not-allowed" : "pointer",
+                opacity: interactionDisabled ? 0.45 : 1,
+                boxShadow: voicePhase === "listening"
+                  ? "0 0 0 4px rgba(255,130,130,0.08)"
+                  : "none",
+              }}
+            >
+              <svg
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0" />
+                <path d="M12 18v3" />
+                <path d="M9 21h6" />
+              </svg>
             </button>
           ) : null}
           <button

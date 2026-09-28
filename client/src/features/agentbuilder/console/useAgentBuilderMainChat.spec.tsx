@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   loadMainDriverStatus: vi.fn(),
   loadSessionHistory: vi.fn(),
   stopSession: vi.fn(),
+  stopVoiceCapture: vi.fn(),
+  streamVoiceCapture: vi.fn(),
   subscribeSessionEvents: vi.fn(),
   streamSession: vi.fn(),
   waitForBackendReady: vi.fn(),
@@ -23,6 +25,8 @@ vi.mock('./mainSessionClient', async () => {
     loadMainDriverStatus: mocks.loadMainDriverStatus,
     loadSessionHistory: mocks.loadSessionHistory,
     stopSession: mocks.stopSession,
+    stopVoiceCapture: mocks.stopVoiceCapture,
+    streamVoiceCapture: mocks.streamVoiceCapture,
     subscribeSessionEvents: mocks.subscribeSessionEvents,
     streamSession: mocks.streamSession,
   };
@@ -49,12 +53,19 @@ const directChatTargets = [
     profile: 'worldsignals', title: 'WorldSignals', address: 'WorldSignals',
     aliases: ['worldsignals'],
   },
+  {
+    cardId: 'card_worldview', cardRevisionId: 'revision-worldview',
+    profile: 'worldview', title: 'WorldView', address: 'WorldView',
+    aliases: ['worldview'],
+  },
 ];
 
 beforeEach(() => {
   mocks.loadMainDriverStatus.mockReset().mockResolvedValue({ ready: true, activeDriver: null });
   mocks.loadSessionHistory.mockReset();
   mocks.stopSession.mockReset();
+  mocks.stopVoiceCapture.mockReset().mockResolvedValue(undefined);
+  mocks.streamVoiceCapture.mockReset();
   mocks.subscribeSessionEvents.mockReset().mockReturnValue(vi.fn());
   mocks.streamSession.mockReset();
   mocks.waitForBackendReady.mockReset().mockResolvedValue(false);
@@ -63,6 +74,10 @@ beforeEach(() => {
 describe('Main chat live observation callbacks', () => {
   it('surfaces the server-owned active Main input driver', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: '', nativeSessionId: '', mainCardId: 'card_main_chat',
+      addressableAgents: [], messages: [], terminalEvents: [],
+    });
     mocks.loadMainDriverStatus.mockResolvedValue({
       ready: true,
       activeDriver: 'external_plugin',
@@ -79,7 +94,7 @@ describe('Main chat live observation callbacks', () => {
     );
   });
 
-  it('waits for the real Main runtime before requesting its history', async () => {
+  it('loads Project history before the Main runtime readiness snapshot settles', async () => {
     let resolveMainReady!: (status: { ready: boolean; activeDriver: null }) => void;
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadMainDriverStatus.mockReturnValue(new Promise((resolve) => {
@@ -99,13 +114,14 @@ describe('Main chat live observation callbacks', () => {
       conversationId: 'main',
     }));
 
+    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
     await waitFor(() => expect(mocks.loadMainDriverStatus).toHaveBeenCalledOnce());
-    expect(mocks.loadSessionHistory).not.toHaveBeenCalled();
     await act(async () => {
       resolveMainReady({ ready: true, activeDriver: null });
       await Promise.resolve();
     });
-    await waitFor(() => expect(mocks.loadSessionHistory).toHaveBeenCalledOnce());
+    expect(mocks.loadSessionHistory.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.loadMainDriverStatus.mock.invocationCallOrder[0]);
   });
 
   it('keeps duplicate technical events under the server-issued Run and out of chat', async () => {
@@ -281,6 +297,104 @@ describe('Main chat live observation callbacks', () => {
     expect(result.current.currentResponder).toMatchObject({
       cardId: 'card_main_chat', label: 'Main', address: 'Main',
     });
+  });
+
+  it('submits one WorldView voice transcript through the normal Card turn with current scene input', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    const viewportRecord = {
+      schemaVersion: 'worldview.turn-context.v1',
+      kind: 'worldview-viewport',
+      name: 'worldview-viewport.jpg',
+    };
+    const prepareRunImages = vi.fn().mockResolvedValue([viewportRecord]);
+    mocks.streamSession.mockResolvedValue({ finalText: 'You are looking at New York City.' });
+    mocks.streamVoiceCapture.mockImplementation(async (args: any) => {
+      args.onEvent({
+        kind: 'ready', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_worldview', state: { tts: false, audioAvailable: false },
+      });
+      args.onEvent({
+        kind: 'transcript', projectId: 'project-1', deckId: 'deck_builder',
+        conversationId: 'main', cardId: 'card_worldview',
+        event: {
+          type: 'voice.transcript', session_id: 'native-worldview',
+          payload: { text: 'What city is this?' },
+        },
+      });
+      await new Promise<void>((resolve) => {
+        if (args.signal?.aborted) resolve();
+        else args.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets, prepareRunImages,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      expect(result.current.setCurrentResponderCardId('card_worldview')).toBe(true);
+      result.current.startVoiceSession();
+    });
+
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledOnce());
+    expect(mocks.streamVoiceCapture).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      targetCardId: 'card_worldview', tts: true,
+    }));
+    expect(prepareRunImages).toHaveBeenCalledWith('card_worldview');
+    expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'What city is this?',
+      targetCardId: 'card_worldview',
+      images: [viewportRecord],
+    }));
+    await waitFor(() => expect(result.current.voicePhase).toBe('idle'));
+    expect(mocks.stopVoiceCapture).toHaveBeenCalledWith(expect.objectContaining({
+      targetCardId: 'card_worldview', cancel: true,
+    }));
+    expect(messageText(result.current.messages)).toEqual([
+      { role: 'user', text: 'What city is this?' },
+      { role: 'assistant', text: 'You are looking at New York City.' },
+    ]);
+  });
+
+  it('ends the old Card microphone instead of transferring it when the responder changes', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    mocks.streamVoiceCapture.mockImplementation(async (args: any) => {
+      args.onEvent({
+        kind: 'ready', projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+        cardId: 'card_main_chat', state: { tts: true, audioAvailable: true },
+      });
+      await new Promise<void>((resolve) => {
+        if (args.signal?.aborted) resolve();
+        else args.signal?.addEventListener('abort', () => resolve(), { once: true });
+      });
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => result.current.startVoiceSession());
+    await waitFor(() => expect(result.current.voicePhase).toBe('listening'));
+    act(() => {
+      expect(result.current.setCurrentResponderCardId('card_worldview')).toBe(true);
+    });
+
+    await waitFor(() => expect(result.current.voicePhase).toBe('idle'));
+    expect(mocks.stopVoiceCapture).toHaveBeenCalledWith({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main', cancel: true,
+    });
+    expect(mocks.streamVoiceCapture).toHaveBeenCalledTimes(1);
   });
 
   it('preserves the current Card when an unavailable companion target is rejected', async () => {
@@ -499,6 +613,7 @@ describe('Main chat live observation callbacks', () => {
 
     expect(result.current.sessionHistoryLoading).toBe(false);
     expect(result.current.messages).toEqual([]);
+    expect(result.current.technicalError).toBe('Conversation unavailable. Reload to retry.');
   });
 
   it('keeps autonomous native Main completions out of the shared transcript', async () => {

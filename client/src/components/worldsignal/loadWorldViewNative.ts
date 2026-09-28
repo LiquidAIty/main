@@ -3,7 +3,6 @@ import scopedStyles from 'virtual:worldview-native-css';
 
 export type NativeWorldViewCallbacks = {
   onReady?: (sourceVersion: string) => void;
-  onNativeAgentState?: (state: unknown) => void;
   onSelectionChange?: (selection: unknown) => void;
   onLayerStateChange?: (state: unknown) => void;
   onCommandResult?: (result: unknown) => void;
@@ -17,6 +16,8 @@ export type NativeWorldViewMount = {
     options?: { exitIncompatibleContext?: boolean },
   ) => string | null;
   focusSelection: (selection: unknown) => string | null;
+  executeAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+  prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
   destroy: () => Promise<void>;
 };
 

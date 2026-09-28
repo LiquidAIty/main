@@ -21,6 +21,8 @@ import { LAYER_STATE_REGISTRY } from '../data/layerState.js';
 import { registerDataCredits } from '../data/dataCredits.js';
 import { SceneDirector } from '../scenes/director.js';
 import { initGevVoiceCommands } from '../voice/gevRealtime.js';
+import { createGevActionRunner } from '../voice/gevActions.js';
+import { captureViewportImage } from '../voice/realtimeViewport.js';
 import { MapStackController } from '../mapStackController.js';
 import { initAnnotations } from '../annotations/index.js';
 import { initLogoGaze } from '../logoGaze.js';
@@ -283,7 +285,11 @@ export function createWorldViewApplication({
       defer(() => document.removeEventListener('visibilitychange', syncVisibilitySuspension));
       syncVisibilitySuspension();
 
-      const voiceCommands = initGevVoiceCommands({
+      // LiquidAIty's supervised mount is a capability surface for the saved
+      // WorldView Hermes Card. It must not create the upstream standalone
+      // Realtime voice agent or inject its second microphone/conversation UI.
+      // Keep that upstream controller only for the fork's unsupervised app.
+      const voiceCommands = supervised ? null : initGevVoiceCommands({
         viewer,
         root,
         styleManager,
@@ -291,15 +297,31 @@ export function createWorldViewApplication({
         sceneDirector,
         annotations,
       });
-      defer(() => {
-        voiceCommands?.stop?.({ removeUi: true });
-        if (window.__gevVoiceCommands === voiceCommands) delete window.__gevVoiceCommands;
-      });
+      if (voiceCommands) {
+        defer(() => {
+          voiceCommands.stop?.({ removeUi: true });
+          if (window.__gevVoiceCommands === voiceCommands) delete window.__gevVoiceCommands;
+        });
+      }
+
+      const runAction = supervised
+        ? createGevActionRunner({ viewer, styleManager, dataManager, sceneDirector, annotations })
+        : null;
+      const captureViewport = supervised ? async () => {
+        let metadata = null;
+        const dataUrl = await captureViewportImage({
+          viewer,
+          root,
+          onCapture: (value) => { metadata = value; },
+        });
+        return dataUrl ? { dataUrl, ...metadata } : null;
+      } : null;
 
       const directBridge = supervised ? createDirectHostBridge({
         dataManager,
         contextController: styleManager,
-        voiceCommands,
+        runAction,
+        captureViewport,
         focusPosition: ({ longitude, latitude }) => new Promise((resolve, reject) => {
           if (viewer.scene.mode === Cesium.SceneMode.MORPHING) {
             reject(new Error('Focus unavailable while globe mode is changing'));
@@ -339,6 +361,7 @@ export function createWorldViewApplication({
         weatherEffects: null,
         cockpitCloudEffects,
         voiceCommands,
+        runAction,
         bridge: directBridge,
         getRenderGovernorDiagnostics,
         requestRender: governorRequestRender,
@@ -364,7 +387,7 @@ export function createWorldViewApplication({
         if (revealTimer !== null) window.clearTimeout(revealTimer);
         firstRun?.dismiss?.();
       });
-      return { sceneDirector, annotations, voiceCommands, bridge: directBridge };
+      return { sceneDirector, annotations, voiceCommands, runAction, bridge: directBridge };
     },
   });
 }

@@ -22,6 +22,7 @@ export default function CompanionSurfaceHost({
   if (workspaceView === 'canvas' || workspaceView === 'chat') {
     return null;
   }
+  const underMain = workspaceView === 'worldview';
 
   return (
     <aside
@@ -30,9 +31,15 @@ export default function CompanionSurfaceHost({
       data-open="true"
       className="h-full relative"
       style={graphCompanionPanelStyle({
-        minWidth,
-        flex: '1 1 0%',
+        minWidth: underMain ? 0 : minWidth,
+        flex: underMain ? undefined : '1 1 0%',
         overflow: 'hidden',
+        ...(underMain ? {
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          zIndex: 0,
+        } : {}),
       })}
     >
       <div className="h-full flex flex-col overflow-hidden min-h-0 relative">

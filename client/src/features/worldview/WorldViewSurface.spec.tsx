@@ -10,6 +10,8 @@ const directHost = vi.hoisted(() => ({
   props: null as Record<string, any> | null,
   setLayerVisibility: vi.fn(),
   focusSelection: vi.fn(),
+  executeAction: vi.fn(),
+  prepareRunImages: vi.fn(),
 }));
 
 vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
@@ -19,6 +21,8 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
       React.useImperativeHandle(ref, () => ({
         setLayerVisibility: directHost.setLayerVisibility,
         focusSelection: directHost.focusSelection,
+        executeAction: directHost.executeAction,
+        prepareRunImages: directHost.prepareRunImages,
       }), []);
       React.useEffect(() => {
         directHost.props = props;
@@ -63,13 +67,12 @@ function callbacks() {
 }
 
 function openDataSources() {
-  fireEvent.click(screen.getByRole('button', { name: 'Open Data Sources' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
 }
 
 function nativeReady(state = layerState) {
   act(() => {
     callbacks().onReady?.('0.1.0');
-    callbacks().onNativeAgentState?.({ available: false, active: false });
     callbacks().onLayerStateChange?.(state);
   });
 }
@@ -132,7 +135,7 @@ describe('WorldView direct source presentation', () => {
     expect(screen.getByText('WorldView runtime: Ready · 0.1.0')).toBeTruthy();
     expect(screen.getByText('Source state: Ready')).toBeTruthy();
     expect(screen.getByText('1 layers on')).toBeTruthy();
-    expect(screen.getByText('Voice control: Unavailable')).toBeTruthy();
+    expect(screen.queryByText(/Voice control:/)).toBeNull();
     expect(screen.getByText(/Earthquakes · ON/)).toBeTruthy();
     expect(screen.getByText(/Not checked/)).toBeTruthy();
     expect(screen.queryByText(/Embed bridge/)).toBeNull();

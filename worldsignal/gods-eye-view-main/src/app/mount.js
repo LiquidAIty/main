@@ -138,6 +138,18 @@ async function createMountedRuntime(root, config) {
       focusSelection(...args) {
         return handle.bridge?.focusSelection(...args) ?? null;
       },
+      executeAction(...args) {
+        if (!handle.bridge?.executeAction) {
+          return Promise.reject(new Error('worldview_action_unavailable'));
+        }
+        return handle.bridge.executeAction(...args);
+      },
+      prepareRunImages() {
+        if (!handle.bridge?.prepareRunImages) {
+          return Promise.reject(new Error('worldview_turn_context_unavailable'));
+        }
+        return handle.bridge.prepareRunImages();
+      },
       getState: app.getState,
       getComponents: app.getComponents,
       destroy() {

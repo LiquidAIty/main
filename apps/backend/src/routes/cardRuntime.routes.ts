@@ -16,7 +16,6 @@ import {
   getConversationMessages,
   listConversations,
   type ConversationMessage,
-  type SharedChatMessageWrite,
   type SharedChatParticipant,
 } from '../conversations/store';
 import { getProjectCard } from '../services/agentBuilderStore';
@@ -569,26 +568,14 @@ function boundedSharedContext(
   messages: ConversationMessage[],
   main: AddressableAgent,
   participant: AddressableAgent,
-  nativeSeedMessages: SharedChatMessageWrite[] = [],
 ): Array<Record<string, string>> {
-  const projected = messages.length > 0
-    ? messages
-      .filter((message) => (
-        (message.role === 'user' || message.role === 'assistant')
-        && message.status === 'complete'
-        && message.content.length > 0
-      ))
-      .map((message) => ({ view: sharedHistoryMessage(message, main) }))
-    : nativeSeedMessages
-      .filter((message) => message.content.length > 0)
-      .map((message) => ({
-        view: {
-          role: message.role,
-          text: message.content,
-          speaker: message.speaker,
-          ...(message.target ? { target: message.target } : {}),
-        },
-      }));
+  const projected = messages
+    .filter((message) => (
+      (message.role === 'user' || message.role === 'assistant')
+      && message.status === 'complete'
+      && message.content.length > 0
+    ))
+    .map((message) => ({ view: sharedHistoryMessage(message, main) }));
   let lastParticipantReply = -1;
   for (let index = 0; index < projected.length; index += 1) {
     const entry = projected[index];
@@ -670,31 +657,6 @@ function boundedContextualNodeReaderContext(
       content: view.text,
     })),
   };
-}
-
-async function nativeMainHistorySeed(
-  projectId: string,
-  deckId: string,
-  conversationId: string,
-  main: AddressableAgent,
-): Promise<SharedChatMessageWrite[]> {
-  const runtime = agentTerminalManager.findCard(
-    projectId, deckId, main.cardId, conversationId,
-  );
-  if (!runtime) return [];
-  const history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
-  return history.messages
-    .filter((message) => (
-      (message.role === 'user' || message.role === 'assistant')
-      && String(message.text || '').length > 0
-    ))
-    .map((message) => ({
-      role: message.role === 'user' ? 'user' as const : 'assistant' as const,
-      content: String(message.text || ''),
-      speaker: message.role === 'user' ? SHARED_CHAT_USER : cardParticipant(main),
-      ...(message.role === 'user' ? { target: cardParticipant(main) } : {}),
-      providerContinuationRef: runtime.state.nativeSessionId,
-    }));
 }
 
 export function materializerReadPrincipalForSavedCard(args: {
@@ -903,6 +865,7 @@ async function prepareMainCliRun(args: {
   driverSource: RemoteMainDriverSource;
   runId?: string;
   dataAnchors?: unknown[];
+  images?: unknown[];
   sharedConversation?: Array<Record<string, string>>;
 }): Promise<PreparedMainCliRun> {
   const runId = String(args.runId || `req_${randomUUID().slice(0, 8)}`);
@@ -923,6 +886,7 @@ async function prepareMainCliRun(args: {
       runId,
       correlationId: runId,
       dataAnchors: Array.isArray(args.dataAnchors) ? args.dataAnchors : [],
+      images: Array.isArray(args.images) ? args.images : [],
       sharedConversation: Array.isArray(args.sharedConversation) ? args.sharedConversation : [],
       cardRevisionId: snapshotRevisionId,
       discoveredTools: discoveredToolCatalog.tools,
@@ -1955,6 +1919,7 @@ async function executePreparedGatewayCardRun(args: {
       {
         onEvent: args.onEvent,
         routing: preparedTurn.routing,
+        images: preparedTurn.images,
         ...(args.surface ? { surface: args.surface } : {}),
       },
     );
@@ -2908,6 +2873,203 @@ async function resolveMainGatewayRuntime(
   return { ...resolved, card, deck };
 }
 
+async function resolveSharedChatVoiceRuntime(
+  req: Request,
+  projectId: string,
+  deckId: string,
+  conversationId: string,
+  targetCardId: string,
+) {
+  const authority = await resolveProjectSharedChatAuthority(projectId, deckId);
+  const target = targetCardId
+    ? authority.cards.find((candidate) => candidate.cardId === targetCardId)
+    : authority.main;
+  if (!target) throw new Error('target_card_unavailable');
+  const card = authority.deck.nodes.find((candidate) => candidate.id === target.cardId);
+  if (!card || card.runtime.kind !== 'hermes' || card.runtime.mode === 'magentic_one') {
+    throw new Error('card_voice_runtime_unsupported');
+  }
+  let resolved = agentTerminalManager.findCard(
+    projectId,
+    deckId,
+    card.id,
+    conversationId,
+  );
+  if (!resolved) {
+    const owner = await resolveCardRuntimeOwner(
+      req,
+      projectId,
+      deckId,
+      card.id,
+      conversationId,
+    );
+    const state = await agentTerminalManager.open(
+      owner,
+      card,
+      authority.deck,
+      120,
+      36,
+      agentTerminalPresentationOptions(card, false),
+    );
+    resolved = { owner, state };
+  }
+  agentTerminalManager.verifyConfiguration(
+    resolved.owner,
+    resolved.state.sessionId,
+    card,
+    authority.deck,
+  );
+  return { ...resolved, card, target, deck: authority.deck };
+}
+
+mainRoutes.post('/session/voice/start', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const targetCardId = String(req.body?.targetCardId || '').trim();
+  const tts = req.body?.tts !== false;
+  if (!projectId || !conversationId) {
+    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+
+  let runtime: Awaited<ReturnType<typeof resolveSharedChatVoiceRuntime>>;
+  try {
+    runtime = await resolveSharedChatVoiceRuntime(
+      req,
+      projectId,
+      deckId,
+      conversationId,
+      targetCardId,
+    );
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_voice_runtime_unavailable',
+    });
+  }
+
+  let closed = false;
+  let detach = () => {};
+  let keepAlive: ReturnType<typeof setInterval> | undefined;
+  const writeEvent = (name: string, payload: Record<string, unknown>) => {
+    if (closed || res.destroyed || res.writableEnded) return;
+    res.write(`event: ${name}\ndata: ${JSON.stringify({
+      projectId,
+      deckId,
+      conversationId,
+      cardId: runtime.card.id,
+      runtimeSessionId: runtime.state.sessionId,
+      nativeSessionId: runtime.state.nativeSessionId,
+      ...payload,
+    })}\n\n`);
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    detach();
+    if (keepAlive) clearInterval(keepAlive);
+    void agentTerminalManager.stopVoiceCapture(
+      runtime.owner,
+      runtime.state.sessionId,
+      { cancel: true },
+    ).catch(() => undefined);
+  };
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': Hermes voice connected\n\n');
+  res.once('close', cleanup);
+  detach = agentTerminalManager.subscribeGatewayEvents(
+    runtime.owner,
+    runtime.state.sessionId,
+    (event) => {
+      if (event.session_id !== runtime.state.nativeSessionId) return;
+      if (!['voice.status', 'voice.transcript'].includes(event.type)) return;
+      writeEvent(event.type === 'voice.status' ? 'status' : 'transcript', {
+        event,
+      });
+      if (
+        event.type === 'voice.transcript'
+        && (event.payload?.stop_phrase === true || event.payload?.no_speech_limit === true)
+      ) {
+        void agentTerminalManager.stopVoiceCapture(
+          runtime.owner,
+          runtime.state.sessionId,
+          { cancel: true },
+        ).catch(() => undefined).finally(() => {
+          if (!res.writableEnded) res.end();
+        });
+      }
+    },
+  );
+  keepAlive = setInterval(() => {
+    if (!closed && !res.destroyed && !res.writableEnded) res.write(': voice active\n\n');
+  }, 15_000);
+  keepAlive.unref?.();
+
+  try {
+    const state = await agentTerminalManager.startVoiceCapture(
+      runtime.owner,
+      runtime.state.sessionId,
+      { tts },
+    );
+    writeEvent('ready', {
+      state,
+      participant: cardParticipant(runtime.target),
+    });
+    return undefined;
+  } catch (error) {
+    writeEvent('error', {
+      error: error instanceof Error ? error.message : 'card_voice_start_failed',
+    });
+    if (!res.writableEnded) res.end();
+    return undefined;
+  }
+});
+
+mainRoutes.post('/session/voice/stop', async (req, res) => {
+  const projectId = String(req.body?.projectId || '').trim();
+  const deckId = String(req.body?.deckId || BUILDER_DECK_ID).trim();
+  const conversationId = String(req.body?.conversationId || '').trim();
+  const targetCardId = String(req.body?.targetCardId || '').trim();
+  const cancel = req.body?.cancel === true;
+  if (!projectId || !conversationId) {
+    return res.status(400).json({ ok: false, error: 'projectId_and_conversationId_required' });
+  }
+  if (!await authorizeMainProject(req, res, projectId)) return undefined;
+  try {
+    const runtime = await resolveSharedChatVoiceRuntime(
+      req,
+      projectId,
+      deckId,
+      conversationId,
+      targetCardId,
+    );
+    const state = await agentTerminalManager.stopVoiceCapture(
+      runtime.owner,
+      runtime.state.sessionId,
+      { cancel },
+    );
+    return res.json({
+      ok: true,
+      cardId: runtime.card.id,
+      runtimeSessionId: runtime.state.sessionId,
+      nativeSessionId: runtime.state.nativeSessionId,
+      state,
+    });
+  } catch (error) {
+    return res.status(503).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'card_voice_stop_failed',
+    });
+  }
+});
+
 mainRoutes.get('/session/driver', async (req, res) => {
   const projectId = String(req.query?.projectId || '').trim();
   const deckId = String(req.query?.deckId || BUILDER_DECK_ID).trim();
@@ -3082,7 +3244,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
   const parsedAddress = leadingAddress(message);
   let projectAuthority: ProjectSharedChatAuthority;
   let existingMessages: ConversationMessage[];
-  let seedMessages: SharedChatMessageWrite[] = [];
   try {
     projectAuthority = await resolveProjectSharedChatAuthority(projectId, deckId);
   } catch (error) {
@@ -3136,11 +3297,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
 
   try {
     existingMessages = await getConversationMessages(projectId, conversationId);
-    if (existingMessages.length === 0) {
-      seedMessages = await nativeMainHistorySeed(
-        projectId, deckId, conversationId, projectAuthority.main,
-      );
-    }
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'shared_conversation_unavailable';
     logHarnessTrace(`[shared-chat] history rejected reason=${redactTrace(reason)}`);
@@ -3167,7 +3323,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
           existingMessages,
           projectAuthority.main,
           target,
-          seedMessages,
         ),
         sharedConversationTargetLabel: target.title,
       });
@@ -3215,11 +3370,11 @@ mainRoutes.post('/session/chat', async (req, res) => {
         driverSource: 'internal_chat',
         runId: requestedRunId,
         dataAnchors: Array.isArray(req.body?.dataAnchors) ? req.body.dataAnchors : [],
+        images: Array.isArray(req.body?.images) ? req.body.images : [],
         sharedConversation: boundedSharedContext(
           existingMessages,
           projectAuthority.main,
           projectAuthority.main,
-          seedMessages,
         ),
       });
       if (run.cardId !== projectAuthority.main.cardId) {
@@ -3396,7 +3551,6 @@ mainRoutes.post('/session/chat', async (req, res) => {
       await appendSharedConversationTurn({
         projectId,
         conversationId,
-        seedMessages,
         messages: [
           {
             role: 'user',
@@ -3609,18 +3763,16 @@ mainRoutes.get('/session/history', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'main_cli_history_scope_required', messages: [] });
   }
   if (!await authorizeMainProject(req, res, projectId)) return undefined;
-  let history;
   let authority: ProjectSharedChatAuthority;
   let sharedMessages: ConversationMessage[];
   let nativeSessionId = '';
   let runtimeSessionId = '';
   try {
     authority = await resolveProjectSharedChatAuthority(projectId, deckId);
-    const runtime = await resolveMainGatewayRuntime(req, projectId, deckId, conversationId);
-    history = await agentTerminalManager.history(runtime.owner, runtime.state.sessionId);
+    // The Project conversation is the one shared visible history authority for
+    // Main, direct Card turns, typed input, and voice input. Hermes session
+    // history remains execution-owned and must not gate or replace this read.
     sharedMessages = await getConversationMessages(projectId, conversationId);
-    nativeSessionId = runtime.state.nativeSessionId;
-    runtimeSessionId = runtime.state.sessionId;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'main_cli_history_read_failed';
     return res.status(reason === 'agent_terminal_history_scope_mismatch' ? 409 : 503)
@@ -3631,27 +3783,28 @@ mainRoutes.get('/session/history', async (req, res) => {
       ].includes(reason)
         ? reason : 'main_cli_history_read_failed', messages: [] });
   }
+  const runtime = agentTerminalManager.findCard(
+    projectId,
+    deckId,
+    authority.main.cardId,
+    conversationId,
+  );
+  if (runtime) {
+    nativeSessionId = runtime.state.nativeSessionId;
+    runtimeSessionId = runtime.state.sessionId;
+  }
   return res.json({
     ok: true,
     sessionId: nativeSessionId,
     runtimeSessionId,
     mainCardId: authority.main.cardId,
     addressableAgents: authority.addressableAgents,
-    messages: sharedMessages.length > 0
-      ? sharedMessages
-        .filter((message) => (
-          (message.role === 'user' || message.role === 'assistant')
-          && message.status === 'complete'
-        ))
-        .map((message) => sharedHistoryMessage(message, authority.main))
-      : history.messages
-        .filter((message) => message.role === 'user' || message.role === 'assistant')
-        .map((message) => ({
-          role: message.role,
-          text: String(message.text || ''),
-          speaker: message.role === 'user' ? SHARED_CHAT_USER : cardParticipant(authority.main),
-          ...(message.role === 'user' ? { target: cardParticipant(authority.main) } : {}),
-        })),
+    messages: sharedMessages
+      .filter((message) => (
+        (message.role === 'user' || message.role === 'assistant')
+        && message.status === 'complete'
+      ))
+      .map((message) => sharedHistoryMessage(message, authority.main)),
     terminalEvents: [],
   });
 });

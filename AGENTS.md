@@ -164,10 +164,14 @@ own or launch CBM.
 
 Codex repository work uses its directly registered official CBM server and does not depend on LiquidAIty,
 GPT Web, or the LiquidAIty plugin. Hermes, Cards, plugins, connectors, and application UI use only
-LiquidAIty's application-published `cbm.*` tools. No tracked prompt/Stop hook, connector refresh, or model turn
-may launch an extra frontend, index, retry, repair, or own lifecycle. Normal freshness belongs to the upstream
-watcher. Initial or destructive projection maintenance is an explicit application-MCP administrative operation,
-never an automatic coding-agent hook.
+LiquidAIty's application-published `cbm.*` tools. At repository-task start, and whenever CBM reports a closed
+transport, inspect the official CBM process ownership. Keep at most the one application frontend and the one
+Codex Desktop frontend described above; stop stale or duplicate CBM frontend/coordination processes, restart the
+selected official frontend exactly once through its normal registered command, and verify `list_projects` plus
+`index_status` before continuing. Do not leave duplicate instances running, repeatedly retry a dead transport,
+or substitute complaint/reporting for this bounded recovery. Normal index freshness remains the upstream
+watcher's responsibility. Initial or destructive projection maintenance is an explicit application-MCP
+administrative operation, never an automatic coding-agent hook.
 
 Begin with `search_graph`; retain real native IDs/provenance supplied by Main or the IDF actual-graph-data section; never fabricate
 symbols or graph seeds; and read complete current source before changing behavior. Any production deletion or
@@ -175,8 +179,9 @@ rename must resolve actual qualified identities, traverse inverse relationships,
 and prove residue absence according to the skill.
 
 The current derived projection intentionally excludes controlled imported roots listed in `.cbmignore`.
-Never open or manipulate CBM SQLite/cache files, create backups, launch another daemon/frontend, change
-global Codex configuration, or bypass LiquidAIty's application MCP boundary.
+Never open or manipulate CBM SQLite/cache files, create backups, change global Codex configuration, or bypass
+LiquidAIty's application MCP boundary. The required duplicate-process cleanup and one official-frontend restart
+above must reuse the configured command and must not create an additional persistent CBM instance.
 
 ---
 

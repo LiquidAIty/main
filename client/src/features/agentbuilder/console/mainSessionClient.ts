@@ -273,6 +273,7 @@ export async function streamSession(args: {
   conversationId: string;
   message: string;
   targetCardId?: string;
+  images?: Array<Record<string, unknown>>;
   dataAnchors?: Array<{
     authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
     nativeId: string;
@@ -296,6 +297,7 @@ export async function streamSession(args: {
       message: args.message,
       ...(args.targetCardId ? { targetCardId: args.targetCardId } : {}),
       dataAnchors: args.dataAnchors || [],
+      ...(args.images?.length ? { images: args.images } : {}),
     }),
     signal: args.signal,
   });
@@ -414,6 +416,136 @@ export async function stopSession(args: {
   return { runId: String(payload.runId || ''), state: String(payload.state || 'stopping') };
 }
 
+export type HermesVoiceStreamEvent = {
+  kind: 'ready' | 'status' | 'transcript' | 'error';
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  cardId: string;
+  runtimeSessionId: string;
+  nativeSessionId: string;
+  state?: {
+    enabled?: boolean;
+    tts?: boolean;
+    available?: boolean | null;
+    audioAvailable?: boolean | null;
+    sttAvailable?: boolean | null;
+    details?: string;
+    recordStatus?: string;
+  };
+  event?: NativeSessionEvent;
+  error?: string;
+};
+
+export async function streamVoiceCapture(args: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  targetCardId?: string;
+  tts?: boolean;
+  signal?: AbortSignal;
+  onEvent: (event: HermesVoiceStreamEvent) => void;
+}): Promise<void> {
+  const route = `${BASE}/voice/start`;
+  const res = await fetch(route, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      conversationId: args.conversationId,
+      ...(args.targetCardId ? { targetCardId: args.targetCardId } : {}),
+      tts: args.tts !== false,
+    }),
+    signal: args.signal,
+  });
+  if (!res.ok || !res.body) {
+    const payload = await res.json().catch(() => null) as { error?: unknown } | null;
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'card_voice_start_failed',
+      message: `Voice start failed with status ${res.status}.`,
+      route,
+      status: res.status,
+    });
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let failure: SessionStreamError | null = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let index = buffer.indexOf('\n\n');
+    while (index >= 0) {
+      const frame = buffer.slice(0, index);
+      buffer = buffer.slice(index + 2);
+      const kind = /^event: (.*)$/m.exec(frame)?.[1] as HermesVoiceStreamEvent['kind'] | undefined;
+      const raw = /^data: ([\s\S]*)$/m.exec(frame)?.[1];
+      if (kind && ['ready', 'status', 'transcript', 'error'].includes(kind)) {
+        let data: Record<string, unknown> = {};
+        try { data = JSON.parse(raw || '{}') as Record<string, unknown>; } catch { /* validated below */ }
+        const event = { ...data, kind } as HermesVoiceStreamEvent;
+        if (
+          event.projectId !== args.projectId
+          || event.deckId !== args.deckId
+          || event.conversationId !== args.conversationId
+          || typeof event.cardId !== 'string'
+          || !event.cardId
+        ) {
+          throw new SessionStreamError({
+            code: 'card_voice_event_identity_mismatch',
+            message: 'Voice transport returned an event for another Card or conversation.',
+            route,
+          });
+        }
+        args.onEvent(event);
+        if (kind === 'error') {
+          failure = new SessionStreamError({
+            code: event.error || 'card_voice_stream_failed',
+            message: event.error || 'Voice transport reported a failure.',
+            route,
+          });
+        }
+      }
+      index = buffer.indexOf('\n\n');
+    }
+  }
+  if (failure) throw failure;
+}
+
+export async function stopVoiceCapture(args: {
+  projectId: string;
+  deckId: string;
+  conversationId: string;
+  targetCardId?: string;
+  cancel?: boolean;
+}): Promise<void> {
+  const route = `${BASE}/voice/stop`;
+  const res = await fetch(route, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectId: args.projectId,
+      deckId: args.deckId,
+      conversationId: args.conversationId,
+      ...(args.targetCardId ? { targetCardId: args.targetCardId } : {}),
+      cancel: args.cancel === true,
+    }),
+  });
+  const payload = await res.json().catch(() => null) as { ok?: boolean; error?: unknown } | null;
+  if (!res.ok || payload?.ok !== true) {
+    throw new SessionStreamError({
+      code: typeof payload?.error === 'string' ? payload.error : 'card_voice_stop_failed',
+      message: `Voice stop failed with status ${res.status}.`,
+      route,
+      status: res.status,
+    });
+  }
+}
+
 export function subscribeSessionEvents(args: {
   projectId: string;
   deckId: string;
@@ -466,9 +598,9 @@ export function subscribeSessionEvents(args: {
 }
 
 /**
- * Reload the saved Main Card's native Hermes session history. A fresh native
- * conversation resolves to an empty array; transport and malformed-response
- * failures remain visible to the caller.
+ * Reload the persisted Project conversation. Hermes runtime identities are
+ * optional because reading shared chat must not open or depend on a runtime.
+ * Transport and malformed-response failures remain visible to the caller.
  */
 export async function loadSessionHistory(args: {
   projectId: string;
@@ -612,10 +744,10 @@ export async function loadSessionHistory(args: {
       }];
     })
     : [];
-  if (!runtimeSessionId || !nativeSessionId || !mainCardId) {
+  if (!mainCardId) {
     throw new SessionStreamError({
-      code: 'conversation_history_session_identity_missing',
-      message: 'Conversation history did not include the active native session identity.',
+      code: 'conversation_history_main_card_identity_missing',
+      message: 'Conversation history did not include the saved Main Card identity.',
       route: `${BASE}/history`,
       status: res.status,
     });

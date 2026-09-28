@@ -82,6 +82,8 @@ class FakeGatewayClient {
   private activeStored = '';
   private activeNative = '';
   private mcpReloaded = false;
+  private voiceEnabled = false;
+  private voiceTts = false;
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
   private readonly botRosters = new Map<string, string[]>();
 
@@ -223,6 +225,33 @@ class FakeGatewayClient {
       }
       this.durableByTitle.set(titleKey(title), this.activeStored);
       return { pending: false, title } as T;
+    }
+    if (method === 'voice.toggle') {
+      const action = String(params.action || 'status');
+      if (action === 'on') this.voiceEnabled = true;
+      if (action === 'off') {
+        this.voiceEnabled = false;
+        this.voiceTts = false;
+      }
+      if (action === 'tts') this.voiceTts = !this.voiceTts;
+      return {
+        enabled: this.voiceEnabled,
+        tts: this.voiceTts,
+        available: true,
+        audio_available: true,
+        stt_available: true,
+        details: '',
+        record_key: 'ctrl+b',
+      } as T;
+    }
+    if (method === 'voice.record') {
+      return { status: params.action === 'stop' ? 'stopped' : 'recording' } as T;
+    }
+    if (method === 'image.attach_bytes') {
+      return {
+        attached: true,
+        path: `/session/${String(params.filename || 'attachment.png')}`,
+      } as T;
     }
     if (method === 'prompt.submit') {
       const sessionId = String(params.session_id || '');
@@ -857,6 +886,49 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
   });
 
+  it('attaches exact turn images before the same Card prompt and degrades an invalid image', async () => {
+    const f = fixture();
+    const state = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24);
+    const onEvent = vi.fn();
+
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'inspect this view', {
+      images: [
+        {
+          name: 'worldview-viewport.png',
+          mediaType: 'image/png',
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          sha256: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+          kind: 'worldview-viewport',
+        },
+        { name: '../invalid.png', dataUrl: 'data:image/png;base64,aGVsbG8=' },
+      ],
+      onEvent,
+    })).resolves.toMatchObject({ text: 'reply:inspect this view' });
+
+    const attachIndex = f.clients[0].requests.findIndex(({ method }) => method === 'image.attach_bytes');
+    const promptIndex = f.clients[0].requests.findIndex(({ method }) => method === 'prompt.submit');
+    expect(attachIndex).toBeGreaterThan(-1);
+    expect(attachIndex).toBeLessThan(promptIndex);
+    expect(f.clients[0].requests[attachIndex]).toEqual({
+      method: 'image.attach_bytes',
+      params: {
+        session_id: state.nativeSessionId,
+        profile: state.profile,
+        content_base64: 'aGVsbG8=',
+        filename: 'worldview-viewport.png',
+      },
+    });
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'attachment.accepted',
+      session_id: state.nativeSessionId,
+      payload: expect.objectContaining({ source: 'worldview-viewport' }),
+    }));
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'attachment.error',
+      payload: expect.objectContaining({ index: 1, error: 'attachment_image_invalid' }),
+    }));
+  });
+
   it('starts without the optional external catalog and refreshes it before a later turn', async () => {
     const f = fixture();
     const base = await f.resolveCardTools(f.owners[0], f.cards[0]);
@@ -1166,6 +1238,34 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     });
     expect(listener).toHaveBeenCalledOnce();
     expect(f.ptys[0].resize).not.toHaveBeenCalled();
+  });
+
+  it('gives voice capture to one exact Card session and releases it before another Card starts', async () => {
+    const f = fixture();
+    const signal = await f.manager.open(f.owners[0], f.cards[0], f.deck, 80, 24, {
+      attachTui: false,
+    });
+    const quant = await f.manager.open(f.owners[1], f.cards[1], f.deck, 80, 24, {
+      attachTui: false,
+    });
+
+    await expect(f.manager.startVoiceCapture(f.owners[0], signal.sessionId, { tts: true }))
+      .resolves.toMatchObject({ enabled: true, tts: true, recordStatus: 'recording' });
+    expect(f.clients[0].requests.slice(-4)).toEqual([
+      expect.objectContaining({ method: 'voice.toggle', params: expect.objectContaining({ action: 'status' }) }),
+      expect.objectContaining({ method: 'voice.toggle', params: expect.objectContaining({ action: 'on' }) }),
+      expect.objectContaining({ method: 'voice.toggle', params: expect.objectContaining({ action: 'tts' }) }),
+      expect.objectContaining({ method: 'voice.record', params: expect.objectContaining({
+        action: 'start', session_id: signal.nativeSessionId, profile: 'signal-analyst',
+      }) }),
+    ]);
+    await expect(f.manager.startVoiceCapture(f.owners[1], quant.sessionId))
+      .rejects.toThrow('agent_terminal_voice_owned_by_another_card');
+
+    await expect(f.manager.stopVoiceCapture(f.owners[0], signal.sessionId, { cancel: true }))
+      .resolves.toMatchObject({ enabled: false, tts: false, recordStatus: 'stopped' });
+    await expect(f.manager.startVoiceCapture(f.owners[1], quant.sessionId, { tts: false }))
+      .resolves.toMatchObject({ enabled: true, tts: false, recordStatus: 'recording' });
   });
 
   it('materializes Card tools before Gateway start and owns one scoped native session', async () => {

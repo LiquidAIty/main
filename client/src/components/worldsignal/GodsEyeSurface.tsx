@@ -49,12 +49,8 @@ export type GodsEyeBridge = {
     options?: { exitIncompatibleContext?: boolean },
   ) => string | null;
   focusSelection: (selection: GodsEyeSelectionRef) => string | null;
-};
-
-export type GodsEyeNativeAgentState = {
-  available: boolean;
-  active: boolean;
-  status?: string | null;
+  executeAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+  prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
 };
 
 export type GodsEyeCommandResult = {
@@ -75,7 +71,6 @@ type GodsEyeSurfaceProps = {
   cardId: string;
   onReady?: (sourceVersion: string) => void;
   onBridgeUnavailable?: () => void;
-  onNativeAgentState?: (state: GodsEyeNativeAgentState) => void;
   onSelectionChange?: (selection: GodsEyeSelectionRef | null) => void;
   onLayerStateChange?: (state: GodsEyeLayerState) => void;
   onCommandResult?: (result: GodsEyeCommandResult) => void;
@@ -88,7 +83,6 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   cardId,
   onReady,
   onBridgeUnavailable,
-  onNativeAgentState,
   onSelectionChange,
   onLayerStateChange,
   onCommandResult,
@@ -101,7 +95,6 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   const callbacksRef = useRef({
     onReady,
     onBridgeUnavailable,
-    onNativeAgentState,
     onSelectionChange,
     onLayerStateChange,
     onCommandResult,
@@ -111,7 +104,6 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     callbacksRef.current = {
       onReady,
       onBridgeUnavailable,
-      onNativeAgentState,
       onSelectionChange,
       onLayerStateChange,
       onCommandResult,
@@ -125,6 +117,14 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     },
     focusSelection(selection) {
       return mountRef.current?.focusSelection(selection) ?? null;
+    },
+    executeAction(name, args) {
+      return mountRef.current?.executeAction(name, args)
+        ?? Promise.reject(new Error('worldview_action_unavailable'));
+    },
+    prepareRunImages() {
+      return mountRef.current?.prepareRunImages()
+        ?? Promise.reject(new Error('worldview_turn_context_unavailable'));
     },
   }), []);
 
@@ -150,11 +150,6 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
           }
           setStatus('ready');
           callbacksRef.current.onReady?.(sourceVersion);
-        },
-        onNativeAgentState(state) {
-          if (!cancelled) callbacksRef.current.onNativeAgentState?.(
-            state as GodsEyeNativeAgentState,
-          );
         },
         onSelectionChange(selection) {
           if (!cancelled) callbacksRef.current.onSelectionChange?.(
@@ -211,9 +206,6 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   return (
     <section style={styles.root} aria-label="WorldView globe">
       <div ref={rootRef} id="worldview-native-root" style={styles.mount} />
-      {status === 'starting' ? (
-        <div style={styles.waiting} role="status">Starting WorldView…</div>
-      ) : null}
       {status === 'failed' ? (
         <div style={styles.failed} role="alert">
           <strong>WorldView could not start</strong>
@@ -236,18 +228,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#050b10',
   },
   mount: { position: 'absolute', inset: 0, minWidth: 0, minHeight: 0 },
-  waiting: {
-    position: 'absolute',
-    inset: 'auto 16px 16px',
-    zIndex: 1000,
-    padding: 10,
-    color: '#d9f7f2',
-    background: 'rgba(5, 11, 16, 0.9)',
-    border: '1px solid rgba(217, 247, 242, 0.22)',
-    borderRadius: 8,
-    textAlign: 'center',
-    pointerEvents: 'none',
-  },
   failed: {
     position: 'absolute',
     inset: 0,

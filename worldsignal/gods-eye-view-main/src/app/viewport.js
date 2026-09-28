@@ -29,6 +29,23 @@ export function getApplicationViewport() {
   return { left: 0, top: 0, right: width, bottom: height, width, height };
 }
 
+export function applicationViewportAtMost(maxWidth) {
+  const limit = Number(maxWidth);
+  return Number.isFinite(limit) && getApplicationViewport().width <= limit;
+}
+
+export function toApplicationRect(rect) {
+  const viewport = getApplicationViewport();
+  return {
+    left: rect.left - viewport.left,
+    top: rect.top - viewport.top,
+    right: rect.right - viewport.left,
+    bottom: rect.bottom - viewport.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 export function toApplicationPoint(clientX, clientY) {
   const viewport = getApplicationViewport();
   return { x: clientX - viewport.left, y: clientY - viewport.top };

@@ -108,8 +108,20 @@ def _tts_stream_begin() -> Optional[queue.Queue]:
     stop, done = threading.Event(), threading.Event()
     threading.Thread(target=stream_tts_to_speaker, args=(text_queue, stop, done), daemon=True).start()
     global _tts_stream_state
+    state = {"stop": stop, "done": done}
     with _tts_stream_lock:
-        _tts_stream_state = {"stop": stop, "done": done}
+        _tts_stream_state = state
+    _voice_emit("voice.status", {"state": "speaking"})
+
+    def _report_speech_complete() -> None:
+        done.wait()
+        with _tts_stream_lock:
+            still_current = _tts_stream_state is state
+        if still_current:
+            _voice_emit("voice.status", {"state": "idle"})
+
+    threading.Thread(target=_report_speech_complete, daemon=True,
+                     name="voice-tts-status").start()
     _arm_barge_listener_if_enabled()
     return text_queue
 
@@ -265,6 +277,7 @@ def _speak_text_with_barge(text: str) -> None:
     stop, done = threading.Event(), threading.Event()
     with _fd_listener_lock:
         _fd_speak_pipelines.add((stop, done))
+    _voice_emit("voice.status", {"state": "speaking"})
 
     def _speak():
         try:
@@ -275,6 +288,7 @@ def _speak_text_with_barge(text: str) -> None:
             done.set()
             with _fd_listener_lock:
                 _fd_speak_pipelines.discard((stop, done))
+            _voice_emit("voice.status", {"state": "idle"})
     threading.Thread(target=_speak, daemon=True).start()
     _arm_barge_listener_if_enabled()
 

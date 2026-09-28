@@ -172,6 +172,24 @@ const agentTerminalMocks = vi.hoisted(() => {
   });
   const verifyConfiguration = vi.fn();
   const interrupt = vi.fn(async () => undefined);
+  const startVoiceCapture = vi.fn(async () => ({
+    enabled: true,
+    tts: true,
+    available: true,
+    audioAvailable: true,
+    sttAvailable: true,
+    details: '',
+    recordStatus: 'recording',
+  }));
+  const stopVoiceCapture = vi.fn(async (_owner: any, _id: string, options?: { cancel?: boolean }) => ({
+    enabled: options?.cancel !== true,
+    tts: options?.cancel !== true,
+    available: true,
+    audioAvailable: true,
+    sttAvailable: true,
+    details: '',
+    recordStatus: 'stopped',
+  }));
   const complete = (
     runId: string,
     owner: any,
@@ -333,6 +351,7 @@ const agentTerminalMocks = vi.hoisted(() => {
     manager: {
       find, findCard, open, history, verifyConfiguration, submit, interrupt,
       dispatchLearn, requestProfile, subscribeGatewayEvents, magenticCardToolAuthority,
+      startVoiceCapture, stopVoiceCapture,
     },
     resolveHermesBotRosterProjections,
     execution: { stage, completeStaged, cancelStaged, abort, ownsRun, requestCancellation, activeRunId },
@@ -935,7 +954,7 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('projects only user and assistant messages from the selected native Main conversation session', async () => {
+  it('does not substitute native Main session history for an empty Project conversation', async () => {
     agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 3, messages: [
       { role: 'user', text: 'Question' },
       { role: 'tool', text: 'private tool event' },
@@ -951,11 +970,7 @@ describe('saved Card routes', () => {
         sessionId: 'native:default:other',
         runtimeSessionId: 'terminal:card_main_chat:other',
         mainCardId: 'card_main_chat',
-        messages: [
-          { role: 'user', text: 'Question', speaker: { kind: 'user', label: 'You' },
-            target: { cardId: 'card_main_chat', label: 'Main' } },
-          { role: 'assistant', text: 'Answer', speaker: { cardId: 'card_main_chat', label: 'Main' } },
-        ],
+        messages: [],
         terminalEvents: [],
       });
       expect(payload.addressableAgents).toEqual(expect.arrayContaining([
@@ -964,13 +979,7 @@ describe('saved Card routes', () => {
           address: 'Builder', aliases: ['builder'],
         }),
       ]));
-      expect(agentTerminalMocks.manager.history).toHaveBeenCalledWith(
-        {
-          userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder',
-          cardId: 'card_main_chat', conversationId: 'other',
-        },
-        'terminal:card_main_chat:other',
-      );
+      expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
     } finally { await closeServer(server); }
   });
 
@@ -1077,7 +1086,7 @@ describe('saved Card routes', () => {
     }
   });
 
-  it('opens the saved Main runtime when history arrives during canonical startup', async () => {
+  it('reads Project history without opening a Main runtime during canonical startup', async () => {
     agentTerminalMocks.manager.findCard.mockReturnValueOnce(null);
     const { server, baseUrl } = await createApiServer();
     try {
@@ -1087,20 +1096,10 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
-        runtimeSessionId: 'terminal:card_main_chat',
+        runtimeSessionId: '',
         mainCardId: 'card_main_chat',
       });
-      expect(agentTerminalMocks.manager.open).toHaveBeenCalledWith(
-        {
-          userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder',
-          cardId: 'card_main_chat', conversationId: 'main',
-        },
-        expect.objectContaining({ id: 'card_main_chat' }),
-        expect.any(Object),
-        120,
-        36,
-        expect.objectContaining({ attachTui: false }),
-      );
+      expect(agentTerminalMocks.manager.open).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
@@ -1243,6 +1242,68 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ ok: true });
     } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('starts voice on the exact selected saved Card session and stops that same owner', async () => {
+    agentTerminalMocks.manager.startVoiceCapture.mockClear();
+    agentTerminalMocks.manager.stopVoiceCapture.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    const controller = new AbortController();
+    try {
+      const response = await fetch(`${baseUrl}/main/session/voice/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deckId: 'deck_builder',
+          conversationId: 'main',
+          targetCardId: 'card_test_delegate',
+          tts: true,
+        }),
+        signal: controller.signal,
+      });
+      expect(response.status).toBe(200);
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let wire = '';
+      while (!wire.includes('event: ready')) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        wire += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(wire).toContain('"cardId":"card_test_delegate"');
+      expect(agentTerminalMocks.manager.startVoiceCapture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'project-1', deckId: 'deck_builder',
+          cardId: 'card_test_delegate', conversationId: 'main',
+        }),
+        'terminal:card_test_delegate',
+        { tts: true },
+      );
+
+      const stopped = await fetch(`${baseUrl}/main/session/voice/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+          targetCardId: 'card_test_delegate', cancel: false,
+        }),
+      });
+      expect(stopped.status).toBe(200);
+      expect(await stopped.json()).toMatchObject({
+        ok: true, cardId: 'card_test_delegate',
+        runtimeSessionId: 'terminal:card_test_delegate',
+      });
+      expect(agentTerminalMocks.manager.stopVoiceCapture).toHaveBeenCalledWith(
+        expect.objectContaining({ cardId: 'card_test_delegate', conversationId: 'main' }),
+        'terminal:card_test_delegate',
+        { cancel: false },
+      );
+      await reader.cancel();
+    } finally {
+      controller.abort();
       await closeServer(server);
     }
   });
@@ -1605,7 +1666,8 @@ describe('saved Card routes', () => {
 
   it('returns an empty history only for a successful empty read', async () => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 0, messages: [] });
+    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
+    agentTerminalMocks.manager.history.mockClear();
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
@@ -1617,13 +1679,47 @@ describe('saved Card routes', () => {
         mainCardId: 'card_main_chat', messages: [], terminalEvents: [],
       });
       expect(orchestratorMocks.requestPythonRailsJson).not.toHaveBeenCalled();
+      expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
     } finally {
       await closeServer(server);
     }
   });
 
-  it('returns a typed failure when the live Main Chat history snapshot is unavailable', async () => {
-    agentTerminalMocks.manager.history.mockRejectedValueOnce(new Error('gateway_history_unavailable'));
+  it('returns persisted Project history without consulting Hermes session history', async () => {
+    chatSessionMocks.getConversationMessages.mockResolvedValueOnce([{
+      role: 'user', status: 'complete', content: 'Persisted Project question',
+      visibleActivities: [
+        { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+        { kind: 'shared_chat_target', status: 'card', label: 'Main', cardId: 'card_main_chat' },
+      ],
+    }, {
+      role: 'assistant', status: 'complete', content: 'Persisted Project answer',
+      visibleActivities: [
+        { kind: 'shared_chat_speaker', status: 'card', label: 'Main', cardId: 'card_main_chat' },
+      ],
+    }] as any);
+    agentTerminalMocks.manager.history.mockClear();
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(
+        `${baseUrl}/main/session/history?projectId=project-1&conversationId=main`,
+      );
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        messages: [
+          { role: 'user', text: 'Persisted Project question', target: { cardId: 'card_main_chat' } },
+          { role: 'assistant', text: 'Persisted Project answer', speaker: { cardId: 'card_main_chat' } },
+        ],
+      });
+      expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('returns a typed failure when the Project conversation read is unavailable', async () => {
+    chatSessionMocks.getConversationMessages.mockRejectedValueOnce(new Error('database_unavailable'));
     const { server, baseUrl } = await createApiServer();
     try {
       const response = await fetch(
@@ -3721,12 +3817,20 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('seeds the first direct Card turn with existing native Main history', async () => {
-      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
-      agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 2, messages: [
-        { role: 'user', text: 'Earlier shared question' },
-        { role: 'assistant', text: 'Earlier Main answer' },
-      ] });
+    it('uses only persisted Project history for a direct Card turn', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([{
+        role: 'user', status: 'complete', content: 'Earlier shared question',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+          { kind: 'shared_chat_target', status: 'card', label: 'Main', cardId: 'card_main_chat' },
+        ],
+      }, {
+        role: 'assistant', status: 'complete', content: 'Earlier Main answer',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'card', label: 'Main', cardId: 'card_main_chat' },
+        ],
+      }] as any);
+      agentTerminalMocks.manager.history.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
       const { server, baseUrl } = await createApiServer();
@@ -3757,19 +3861,9 @@ describe('saved Card routes', () => {
           }],
         });
         expect(chatSessionMocks.appendSharedConversationTurn).toHaveBeenCalledWith(
-          expect.objectContaining({
-            seedMessages: [
-              expect.objectContaining({
-                role: 'user', content: 'Earlier shared question',
-                target: expect.objectContaining({ cardId: 'card_main_chat', label: 'Main' }),
-              }),
-              expect.objectContaining({
-                role: 'assistant', content: 'Earlier Main answer',
-                speaker: expect.objectContaining({ cardId: 'card_main_chat', label: 'Main' }),
-              }),
-            ],
-          }),
+          expect.not.objectContaining({ seedMessages: expect.anything() }),
         );
+        expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
       } finally {
         await closeServer(server);
       }
@@ -3938,7 +4032,8 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('allows an empty seed only when no native Main runtime exists', async () => {
+    it('allows a successful empty Project conversation without consulting Hermes history', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
       agentTerminalMocks.manager.findCard.mockReturnValueOnce(null);
       agentTerminalMocks.manager.history.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -3965,8 +4060,9 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('refuses the first direct Card turn when existing native Main history cannot be read', async () => {
-      agentTerminalMocks.manager.history.mockRejectedValueOnce(new Error('gateway_history_unavailable'));
+    it('refuses a direct Card turn when the Project conversation cannot be read', async () => {
+      chatSessionMocks.getConversationMessages.mockRejectedValueOnce(new Error('database_unavailable'));
+      agentTerminalMocks.manager.history.mockClear();
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
@@ -3986,6 +4082,7 @@ describe('saved Card routes', () => {
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
           ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
         )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
         expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
         expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
       } finally {

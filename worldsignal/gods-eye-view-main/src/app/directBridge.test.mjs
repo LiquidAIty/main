@@ -88,6 +88,8 @@ function bridgeHarness({
   dataManager = null,
   contextController = null,
   focusPosition = async () => {},
+  runAction = async () => ({ ok: true }),
+  captureViewport = async () => null,
 } = {}) {
   const previousWindow = globalThis.window;
   const listeners = new Map();
@@ -105,12 +107,13 @@ function bridgeHarness({
     getLayerLifecycleState: () => null,
     setEnabled: async () => false,
   };
-  const events = { ready: [], agents: [], layers: [], selections: [], results: [] };
+  const events = { ready: [], layers: [], selections: [], results: [] };
   const bridge = createDirectHostBridge({
     dataManager: manager,
     contextController,
     sourceStateReady,
-    voiceCommands: null,
+    runAction,
+    captureViewport,
     projectId: 'project-1',
     cardId: 'card-1',
     focusPosition,
@@ -119,7 +122,6 @@ function bridgeHarness({
       : null,
     callbacks: {
       onReady: (value) => events.ready.push(value),
-      onNativeAgentState: (value) => events.agents.push(value),
       onLayerStateChange: (value) => events.layers.push(value),
       onSelectionChange: (value) => events.selections.push(value),
       onCommandResult: (value) => events.results.push(value),
@@ -229,6 +231,75 @@ test('native selection events project and clear through direct callbacks', async
   } finally { h.close(); }
 });
 
+test('turn context binds live scene, selected entity, and mounted viewport capture', async () => {
+  const calls = [];
+  const h = bridgeHarness({
+    runAction: async (name, args) => {
+      calls.push([name, args]);
+      if (name === 'get_current_view_state') {
+        return { ok: true, camera: { latitude: 35.15, longitude: -82.5 }, scale: 'regional' };
+      }
+      return { ok: true, selected: [{ id: 'sat-1', name: 'SAT 1', altitudeKm: 510 }] };
+    },
+    captureViewport: async () => ({
+      dataUrl: 'data:image/jpeg;base64,aGVsbG8=',
+      capturedAt: '2026-09-28T12:00:00.000Z',
+      rootBounds: { x: 710, y: 180, width: 1190, height: 828 },
+      canvasBounds: { x: 710, y: 180, width: 1190, height: 828 },
+      sourcePixels: { width: 1190, height: 828 },
+      imagePixels: { width: 1200, height: 835 },
+    }),
+  });
+  try {
+    const [record] = await h.bridge.prepareRunImages();
+    assert.deepEqual(calls, [
+      ['get_current_view_state', undefined],
+      ['get_entity_context', { scope: 'auto', limit: 5 }],
+    ]);
+    assert.equal(record.schemaVersion, 'worldview.turn-context.v1');
+    assert.equal(record.kind, 'worldview-viewport');
+    assert.equal(record.name, 'worldview-viewport.jpg');
+    assert.equal(record.mediaType, 'image/jpeg');
+    assert.equal(record.sha256, '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824');
+    assert.deepEqual(record.viewport.rootBounds, { x: 710, y: 180, width: 1190, height: 828 });
+    assert.deepEqual(record.context, {
+      schemaVersion: 'worldview.surface-context.v1',
+      currentView: { ok: true, camera: { latitude: 35.15, longitude: -82.5 }, scale: 'regional' },
+      currentViewError: null,
+      entityContext: { ok: true, selected: [{ id: 'sat-1', name: 'SAT 1', altitudeKm: 510 }] },
+      entityContextError: null,
+    });
+  } finally { h.close(); }
+});
+
+test('viewport capture failure preserves structured WorldView context for the turn', async () => {
+  const h = bridgeHarness({
+    runAction: async (name) => name === 'get_current_view_state'
+      ? { ok: true, camera: { latitude: 35.15, longitude: -82.5 } }
+      : { ok: true, selected: [] },
+    captureViewport: async () => { throw new Error('canvas unavailable'); },
+  });
+  try {
+    const [record] = await h.bridge.prepareRunImages();
+    assert.equal(record.schemaVersion, 'worldview.turn-context.v1');
+    assert.equal(record.kind, 'worldview-context');
+    assert.equal(record.dataUrl, undefined);
+    assert.equal(record.captureError, 'canvas unavailable');
+    assert.equal(record.context.currentView.ok, true);
+    assert.equal(record.context.entityContext.ok, true);
+  } finally { h.close(); }
+});
+
+test('turn context fails honestly when both structured scene channels are unavailable', async () => {
+  const h = bridgeHarness({
+    runAction: async () => { throw new Error('scene unavailable'); },
+    captureViewport: async () => null,
+  });
+  try {
+    await assert.rejects(h.bridge.prepareRunImages(), /worldview_turn_context_incomplete/);
+  } finally { h.close(); }
+});
+
 test('Project source enable exits incompatible Context only when explicitly requested', async () => {
   let enabled = false;
   let contextMode = 'space-missions';
@@ -273,18 +344,23 @@ test('Project source enable exits incompatible Context only when explicitly requ
   } finally { h.close(); }
 });
 
-test('direct mount keeps native controls and removes the iframe protocol', async () => {
-  const [css, application, mount, bridge] = await Promise.all([
+test('direct mount keeps native controls, starts calmly, and removes the iframe protocol', async () => {
+  const [css, application, mount, bridge, ui] = await Promise.all([
     readFile(new URL('../../style.css', import.meta.url), 'utf8'),
     readFile(new URL('./directApplication.js', import.meta.url), 'utf8'),
     readFile(new URL('./mount.js', import.meta.url), 'utf8'),
     readFile(new URL('./directBridge.js', import.meta.url), 'utf8'),
+    readFile(new URL('../ui.js', import.meta.url), 'utf8'),
   ]);
   assert.match(css, /html\.supervised-embed #title-bar/);
+  assert.match(css, /html\.supervised-embed #style-indicator/);
+  assert.match(css, /html\.supervised-embed #global-loading-status/);
   assert.match(application, /dataManager\.buildTogglePanel\(requiredElement\(root, '#data-toggles'\)\)/);
   assert.match(application, /initGevVoiceCommands\(\{/);
   assert.match(application, /createDirectHostBridge\(\{/);
   assert.match(mount, /createWorldViewApplication\(\{/);
+  assert.match(ui, /const initialHudVariant = this\._supervisedEmbed \? 'minimal' : 'tactical'/);
+  assert.match(ui, /this\.hud\.setMode\(this\._supervisedEmbed \? 'off' : 'on'\)/);
   assert.doesNotMatch(mount, /iframe|postMessage/);
   assert.doesNotMatch(bridge, /postMessage|window\.parent/);
 });

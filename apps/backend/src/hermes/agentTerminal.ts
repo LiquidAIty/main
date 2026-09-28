@@ -163,6 +163,16 @@ export type AgentTerminalTurnResult = {
   event: AgentTerminalGatewayEvent;
 };
 
+export type AgentTerminalVoiceState = {
+  enabled: boolean;
+  tts: boolean;
+  available: boolean | null;
+  audioAvailable: boolean | null;
+  sttAvailable: boolean | null;
+  details: string;
+  recordStatus?: 'recording' | 'stopped';
+};
+
 type Output = { sequence: number; data: string };
 type Listener = (event: 'output' | 'state', value: Output | AgentTerminalState) => void;
 
@@ -812,6 +822,7 @@ function requireNativeSession(
 export class AgentTerminalManager {
   private readonly sessions = new Map<string, Session>();
   private readonly pendingStarts = new Map<string, PendingStart>();
+  private voiceLeaseSessionId: string | null = null;
 
   constructor(
     private readonly spawnPtyProcess: typeof spawnPty = spawnPty,
@@ -1752,8 +1763,125 @@ export class AgentTerminalManager {
     });
   }
 
+  async startVoiceCapture(
+    owner: AgentTerminalOwner,
+    id: string,
+    options: { tts?: boolean } = {},
+  ): Promise<AgentTerminalVoiceState> {
+    const session = this.running(owner, id);
+    if (this.voiceLeaseSessionId && this.voiceLeaseSessionId !== id) {
+      throw new Error('agent_terminal_voice_owned_by_another_card');
+    }
+    this.voiceLeaseSessionId = id;
+    try {
+      let status = record(await session.client.request('voice.toggle', {
+        action: 'status',
+        profile: session.state.profile,
+      }));
+      if (status.available === false || status.stt_available === false) {
+        throw new Error(String(status.details || 'agent_terminal_voice_unavailable'));
+      }
+      if (status.enabled !== true) {
+        status = record(await session.client.request('voice.toggle', {
+          action: 'on',
+          profile: session.state.profile,
+        }));
+      }
+      const wantsTts = options.tts !== false;
+      if (Boolean(status.tts) !== wantsTts) {
+        status = record(await session.client.request('voice.toggle', {
+          action: 'tts',
+          profile: session.state.profile,
+        }));
+      }
+      const recording = record(await session.client.request('voice.record', {
+        action: 'start',
+        session_id: session.state.nativeSessionId,
+        profile: session.state.profile,
+      }));
+      if (recording.status !== 'recording') {
+        throw new Error(recording.reason === 'wake_owned'
+          ? 'agent_terminal_voice_microphone_busy'
+          : 'agent_terminal_voice_recording_not_started');
+      }
+      return {
+        enabled: status.enabled === true,
+        tts: status.tts === true,
+        available: typeof status.available === 'boolean' ? status.available : null,
+        audioAvailable: typeof status.audio_available === 'boolean'
+          ? status.audio_available : null,
+        sttAvailable: typeof status.stt_available === 'boolean' ? status.stt_available : null,
+        details: typeof status.details === 'string' ? status.details : '',
+        recordStatus: 'recording',
+      };
+    } catch (error) {
+      if (this.voiceLeaseSessionId === id) this.voiceLeaseSessionId = null;
+      await session.client.request('voice.toggle', {
+        action: 'off',
+        profile: session.state.profile,
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async stopVoiceCapture(
+    owner: AgentTerminalOwner,
+    id: string,
+    options: { cancel?: boolean } = {},
+  ): Promise<AgentTerminalVoiceState> {
+    const session = this.running(owner, id);
+    if (this.voiceLeaseSessionId && this.voiceLeaseSessionId !== id) {
+      throw new Error('agent_terminal_voice_owned_by_another_card');
+    }
+    if (options.cancel) {
+      const status = record(await session.client.request('voice.toggle', {
+        action: 'off',
+        profile: session.state.profile,
+      }));
+      if (this.voiceLeaseSessionId === id) this.voiceLeaseSessionId = null;
+      return {
+        enabled: status.enabled === true,
+        tts: status.tts === true,
+        available: null,
+        audioAvailable: null,
+        sttAvailable: null,
+        details: '',
+        recordStatus: 'stopped',
+      };
+    }
+    const result = record(await session.client.request('voice.record', {
+      action: 'stop',
+      session_id: session.state.nativeSessionId,
+      profile: session.state.profile,
+    }));
+    if (result.status !== 'stopped') {
+      throw new Error('agent_terminal_voice_recording_not_stopped');
+    }
+    const status = record(await session.client.request('voice.toggle', {
+      action: 'status',
+      profile: session.state.profile,
+    }));
+    return {
+      enabled: status.enabled === true,
+      tts: status.tts === true,
+      available: typeof status.available === 'boolean' ? status.available : null,
+      audioAvailable: typeof status.audio_available === 'boolean'
+        ? status.audio_available : null,
+      sttAvailable: typeof status.stt_available === 'boolean' ? status.stt_available : null,
+      details: typeof status.details === 'string' ? status.details : '',
+      recordStatus: 'stopped',
+    };
+  }
+
   private stopSession(session: Session): void {
     if (session.state.status !== 'running') return;
+    if (this.voiceLeaseSessionId === session.state.sessionId) {
+      this.voiceLeaseSessionId = null;
+      void session.client.request('voice.toggle', {
+        action: 'off',
+        profile: session.state.profile,
+      }).catch(() => undefined);
+    }
     session.stopping = true;
     session.state.status = 'exited';
     session.detachGatewayState();
@@ -1784,6 +1912,7 @@ export class AgentTerminalManager {
       onEvent?: (event: AgentTerminalGatewayEvent) => void;
       surface?: 'card-shared-chat';
       routing?: AgentTerminalTurnRouting;
+      images?: unknown[];
     } = {},
   ): Promise<AgentTerminalTurnResult> {
     if (!text.trim()) throw new Error('agent_terminal_turn_input_required');
@@ -1791,11 +1920,13 @@ export class AgentTerminalManager {
     const execute = async () => {
       const externalConfiguration = await this.refreshOptionalCardTools(session);
       try {
+        const { images = [], ...turnOptions } = options;
+        await this.attachTurnImages(session, images, options.onEvent);
         const resolvedRouting = options.routing
           ? nativeTurnRouting(session.cardTools, options.routing)
           : null;
         return await this.submitNow(session, text, {
-          ...options,
+          ...turnOptions,
           ...(resolvedRouting || {}),
         });
       } finally {
@@ -1807,6 +1938,80 @@ export class AgentTerminalManager {
     const result = session.turnTail.then(execute, execute);
     session.turnTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private async attachTurnImages(
+    session: Session,
+    images: unknown[],
+    onEvent?: (event: AgentTerminalGatewayEvent) => void,
+  ): Promise<void> {
+    if (!Array.isArray(images) || images.length > 12) {
+      throw new Error('agent_terminal_turn_images_invalid');
+    }
+    for (const [index, raw] of images.entries()) {
+      try {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new Error('attachment_record_invalid');
+        }
+        const image = raw as Record<string, unknown>;
+        const name = String(image.name || `attachment-${index + 1}.png`).trim();
+        const dataUrl = String(image.dataUrl || '').trim();
+        if (image.schemaVersion === 'worldview.turn-context.v1' && !dataUrl) {
+          onEvent?.({
+            type: 'attachment.context_only',
+            session_id: session.state.nativeSessionId,
+            payload: {
+              index,
+              source: String(image.kind || 'worldview-context'),
+              captureError: String(image.captureError || ''),
+            },
+          });
+          continue;
+        }
+        const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
+        if (!match || !name || name.length > 200 || /[\\/]/.test(name)) {
+          throw new Error('attachment_image_invalid');
+        }
+        const bytes = Buffer.from(match[2], 'base64');
+        if (!bytes.length || bytes.length > 10 * 1024 * 1024) {
+          throw new Error('attachment_image_size_invalid');
+        }
+        const expectedMediaType = String(image.mediaType || match[1]).trim().toLowerCase();
+        if (expectedMediaType !== match[1]) throw new Error('attachment_image_media_type_mismatch');
+        const expectedSha256 = String(image.sha256 || '').trim().toLowerCase();
+        const actualSha256 = createHash('sha256').update(bytes).digest('hex');
+        if (expectedSha256 && expectedSha256 !== actualSha256) {
+          throw new Error('attachment_image_hash_mismatch');
+        }
+        const result = record(await session.client.request('image.attach_bytes', {
+          session_id: session.state.nativeSessionId,
+          profile: session.state.profile,
+          content_base64: match[2],
+          filename: name,
+        }));
+        if (result.attached !== true) throw new Error('attachment_image_not_accepted');
+        onEvent?.({
+          type: 'attachment.accepted',
+          session_id: session.state.nativeSessionId,
+          payload: {
+            index,
+            name,
+            mediaType: match[1],
+            sha256: actualSha256,
+            source: String(image.kind || 'user-upload'),
+          },
+        });
+      } catch (error) {
+        onEvent?.({
+          type: 'attachment.error',
+          session_id: session.state.nativeSessionId,
+          payload: {
+            index,
+            error: error instanceof Error ? error.message : 'attachment_image_failed',
+          },
+        });
+      }
+    }
   }
 
   private async refreshOptionalCardTools(session: Session): Promise<HermesCardTools | null> {

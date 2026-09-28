@@ -9,6 +9,7 @@ type StagedAgentTerminalRun = {
   runId: string;
   conversationId: string;
   message: string;
+  images: Array<Record<string, unknown>>;
   routing: AgentTerminalTurnRouting;
   started: number;
   cancelRequested?: boolean;
@@ -148,7 +149,12 @@ function resolveStagedRun(
   owner: AgentTerminalOwner,
   profile: string,
   prepared: any,
-): { runId: string; message: string; routing: AgentTerminalTurnRouting } {
+): {
+  runId: string;
+  message: string;
+  images: Array<Record<string, unknown>>;
+  routing: AgentTerminalTurnRouting;
+} {
   const transport = prepared?.hermesTransport;
   const identity = transport?.cardIdentity;
   const input = transport?.request;
@@ -168,6 +174,17 @@ function resolveStagedRun(
   ) {
     throw new Error('agent_terminal_staged_run_invalid');
   }
+  const rawImages = Object.prototype.hasOwnProperty.call(input, 'images')
+    ? input.images
+    : [];
+  if (
+    !Array.isArray(rawImages)
+    || rawImages.length > 12
+    || rawImages.some((image) => !image || typeof image !== 'object' || Array.isArray(image))
+  ) {
+    throw new Error('agent_terminal_staged_run_images_invalid');
+  }
+  const images = rawImages as Array<Record<string, unknown>>;
   const retiredFields = [
     'systemPrompt',
     'outputRequirements',
@@ -199,7 +216,7 @@ function resolveStagedRun(
   }
   // Validate the exact saved provider before any text reaches the native session.
   resolvePreparedHermesProvider(input);
-  return { runId, message, routing: resolveTurnRouting(prepared, input) };
+  return { runId, message, images, routing: resolveTurnRouting(prepared, input) };
 }
 
 /**
@@ -218,11 +235,16 @@ export class AgentTerminalExecution {
     profile: string,
     prepared: any,
     conversationId = '',
-  ): { runId: string; message: string; routing: AgentTerminalTurnRouting } {
+  ): {
+    runId: string;
+    message: string;
+    images: Array<Record<string, unknown>>;
+    routing: AgentTerminalTurnRouting;
+  } {
     if (this.staged.has(terminalSessionId)) {
       throw new Error('agent_terminal_turn_already_running');
     }
-    const { runId, message, routing } = resolveStagedRun(owner, profile, prepared);
+    const { runId, message, images, routing } = resolveStagedRun(owner, profile, prepared);
     this.staged.set(terminalSessionId, {
       owner: { ...owner },
       profile,
@@ -230,10 +252,11 @@ export class AgentTerminalExecution {
       runId,
       conversationId,
       message,
+      images,
       routing,
       started: Date.now(),
     });
-    return { runId, message, routing };
+    return { runId, message, images, routing };
   }
 
   /** Persist the exact native Gateway completion for an application-submitted turn. */

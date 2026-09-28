@@ -84,8 +84,8 @@ Use `trace_path` only when relationships or impact matter. Use `get_code_snippet
 name returned by CBM. Optional graph and text-search stages are not a checklist: select the smallest useful
 subset and say why an omission matters when it limits proof. Use `get_architecture` only when broad orientation
 is genuinely necessary. Always read the complete relevant current source before changing behavior. Any bounded
-native result supplied by Main is a discovery seed, never proof or freshness evidence. Do not invoke lifecycle
-mutation during the response.
+native result supplied by Main is a discovery seed, never proof or freshness evidence. Process cleanup follows
+the bounded official-frontend recovery below; index mutation remains outside ordinary discovery.
 
 Exceptions: pure prose edits, spelling fixes, emergency repair when CBM itself is broken. State why CBM was skipped.
 
@@ -235,11 +235,12 @@ frontend through its official direct user registration. Both use the same upstre
 cache, and runtime identity. Hermes, Cards, plugins, connectors, and application UI use only the
 application-published `cbm.*` catalog and never launch another frontend or own index lifecycle.
 
-The upstream watcher owns ordinary incremental freshness. Empty and failed searches remain visible and fail
-open to bounded source inspection. There is no Codex lifecycle hook, host CLI doorway, second daemon, mutex,
-turn claim, lease, generation file, worktree fingerprint, state file, database wrapper, receipt, journal,
-retry loop, static graph handoff, or prompt-time lifecycle recovery. The active agent uses the application MCP
-for result-informed graph navigation and never repairs or mutates the index during its response.
+The upstream watcher owns ordinary incremental freshness. Empty searches remain visible and fail open to bounded
+source inspection. A closed transport is different: inspect process ownership, retain no more than the one
+application frontend and one Codex Desktop frontend, stop stale or duplicate CBM frontend/coordination processes,
+restart the selected official frontend exactly once through its configured command, and verify the canonical
+project before continuing. This bounded process recovery must not create a second persistent daemon, mutate the
+index, introduce a mutex/lease/state wrapper, or become a retry loop.
 
 The current projection intentionally excludes controlled imported roots listed in `.cbmignore`. Verify actual
 coverage before relying on graph absence; use bounded direct-source reads for every excluded path.
@@ -283,7 +284,8 @@ authority proves it remains required, and document that contract. Never leave an
 ## Cold Start & Performance
 
 The connected application MCP keeps one native frontend warm; the upstream host coordination daemon owns its
-watcher and embedded UI. Neither lifecycle depends on Hermes.
+watcher and embedded UI. Neither lifecycle depends on Hermes. Repository work must remove stale or duplicate CBM
+processes and perform one official-frontend restart when the registered transport is closed.
 
 Use exactly one doorway owned by the current client. Codex repository work uses its directly registered official
 MCP server and never falls back through LiquidAIty or the GPT/plugin connection. LiquidAIty product execution
@@ -297,8 +299,8 @@ canonical native projection, and project; do not impose an arbitrary concurrency
 their prerequisites, and every mutation, initialization, indexing, deletion, and recovery operation remains
 sequential. Never launch a native process for discovery or concurrency.
 
-Process lifecycle and index lifecycle are separate. A transport error does not authorize an index
-delete or reindex.
+Process lifecycle and index lifecycle are separate. A transport error requires the bounded process cleanup and
+single official-frontend restart above; it does not authorize an index delete or reindex.
 
 ## Hybrid Workflow Pattern (The Core Loop)
 
@@ -562,15 +564,15 @@ When CBM returns nothing:
 When graph and source disagree: source truth wins. Determine if index is stale, path excluded, call resolution uncertain, or dynamic dispatch involved. Record the disagreement.
 
 When CBM returns `Transport closed`, times out, or exits:
-1. Stop equivalent retries.
-2. Identify which doorway was selected and inspect its owner once.
-3. Distinguish connector/process failure from query or index failure.
-4. Preserve the live owner's native child. Ordinary discovery does not authorize stopping an orphan or repairing lifecycle.
-5. Retry only if a separately authorized owner repair has actually changed the failing condition.
-6. Use verified direct-source fallback when the index is ready but the connector remains unavailable.
+1. Stop equivalent query retries.
+2. Identify the selected official doorway and enumerate CBM frontend/coordination processes.
+3. Retain at most one application frontend and one Codex Desktop frontend; stop every stale or duplicate instance.
+4. Restart the selected official frontend exactly once through its normal registered command.
+5. Verify `list_projects` and `index_status` for `C-Projects-LiquidAIty-main`.
+6. If that one recovery attempt still fails, use verified direct-source fallback without another restart loop.
 
-Do not repeatedly restart CBM. Do not repeatedly call `index_repository`. Do not compensate by
-starting both the direct connector and LiquidAIty federation.
+Do not call `index_repository` merely for transport recovery. Do not compensate by starting both a new direct
+connector and another LiquidAIty federation instance.
 
 Expose state without interaction tax: report the selected doorway, project/root, readiness,
 operation, and exact failure. Do not dump process tables or raw graph payloads unless needed for

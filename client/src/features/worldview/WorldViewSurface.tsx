@@ -4,7 +4,6 @@ import GodsEyeSurface, {
   type GodsEyeBridge,
   type GodsEyeCommandResult,
   type GodsEyeLayerState,
-  type GodsEyeNativeAgentState,
   type GodsEyeSelectionRef,
 } from '../../components/worldsignal/GodsEyeSurface';
 import RightGlassDrawer from '../../components/graph/RightGlassDrawer';
@@ -17,15 +16,15 @@ import {
 type WorldViewSurfaceProps = {
   projectId: string | null;
   cardId: string | null;
+  onBridgeChange?: (bridge: GodsEyeBridge | null) => void;
 };
 
-export default function WorldViewSurface({ projectId, cardId }: WorldViewSurfaceProps) {
+export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: WorldViewSurfaceProps) {
   const bridgeRef = useRef<GodsEyeBridge | null>(null);
   const currentProjectRef = useRef(projectId);
   const nextProjectWriteRef = useRef(0);
   const [sourceVersion, setSourceVersion] = useState<string | null>(null);
   const [layerState, setLayerState] = useState<GodsEyeLayerState | null>(null);
-  const [nativeAgentState, setNativeAgentState] = useState<GodsEyeNativeAgentState | null>(null);
   const [selection, setSelection] = useState<GodsEyeSelectionRef | null>(null);
   const [surfaceError, setSurfaceError] = useState<string | null>(null);
   const [projectWorldview, setProjectWorldview] = useState<ProjectWorldviewState | null>(null);
@@ -203,15 +202,18 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
         ref={bridgeRef}
         projectId={projectId}
         cardId={cardId}
-        onReady={(version) => { setSourceVersion(version); setSurfaceError(null); }}
+        onReady={(version) => {
+          setSourceVersion(version);
+          setSurfaceError(null);
+          onBridgeChange?.(bridgeRef.current);
+        }}
         onBridgeUnavailable={() => {
           setSourceVersion(null);
           setLayerState(null);
-          setNativeAgentState(null);
           setSelection(null);
           setPendingLayers({});
+          onBridgeChange?.(null);
         }}
-        onNativeAgentState={setNativeAgentState}
         onSelectionChange={setSelection}
         onLayerStateChange={setLayerState}
         onCommandResult={handleResult}
@@ -223,7 +225,8 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
         onOpen={() => setSourcesOpen(true)}
         onClose={() => setSourcesOpen(false)}
         title="Data Sources"
-        collapsedLabel="Data Sources"
+        collapsedLabel={null}
+        openAriaLabel="Open inspector"
         dataTestId="worldview-data-sources"
         defaultWidth={360}
         minWidth={300}
@@ -240,9 +243,6 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
           <div>{sourceReady
             ? `${layerState?.enabledLayerIds.length || 0} layers on`
             : 'Layer state pending'}</div>
-          <div>{nativeAgentState
-            ? `Voice control: ${nativeAgentState.available ? (nativeAgentState.active ? 'Active' : 'Available · user-started') : 'Unavailable'}${nativeAgentState.status ? ` · ${nativeAgentState.status}` : ''}`
-            : 'Voice control state pending'}</div>
           {surfaceError ? <div role="alert" style={styles.error}>{surfaceError}</div> : null}
           {projectWorldviewError
             ? <div role="alert" style={styles.error}>Project WorldView: {projectWorldviewError}</div>

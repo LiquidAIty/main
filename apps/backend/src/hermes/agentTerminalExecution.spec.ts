@@ -46,6 +46,7 @@ describe('Gateway Card Run receipt binding', () => {
       .toEqual({
         runId: 'prepared-run',
         message: 'Reloaded canonical IDF request',
+        images: [],
         routing: {
           managedCanonicalTools: [],
           allowedCanonicalTools: [],
@@ -56,6 +57,24 @@ describe('Gateway Card Run receipt binding', () => {
     expect(execution.activeRunId('terminal-signal')).toBe('prepared-run');
     expect(execution.ownsRun('terminal-signal', 'prepared-run')).toBe(true);
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it('retains the exact bounded image records from the materialized Hermes request', () => {
+    const { execution } = fixture();
+    const images = [{
+      schemaVersion: 'worldview.turn-context.v1',
+      kind: 'worldview-viewport',
+      dataUrl: 'data:image/jpeg;base64,aGVsbG8=',
+    }];
+    const base = prepared();
+    const value = prepared({
+      hermesTransport: {
+        ...base.hermesTransport,
+        request: { ...base.hermesTransport.request, images },
+      },
+    });
+
+    expect(execution.stage(owner, 'terminal-signal', 'signal', value).images).toBe(images);
   });
 
   it('rejects invalid identity, authority, provider, and retired operation fields before staging', () => {
