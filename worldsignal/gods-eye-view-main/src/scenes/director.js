@@ -1388,4 +1388,22 @@ export class SceneDirector {
       this.stopScene('Stopped (Esc)');
     }
   }
+
+  /** Release active playback and document-owned listeners on app unmount. */
+  destroy() {
+    this._loadGeneration += 1;
+    this._runAbort?.abort();
+    this._runAbort = null;
+    this._loadAbort?.abort();
+    this._loadAbort = null;
+    if (this._runToken) this._runToken.cancelled = true;
+    this._runToken = null;
+    this._running = false;
+    this.viewer?.camera?.cancelFlight?.();
+    if (this._progressTimer) clearInterval(this._progressTimer);
+    this._progressTimer = null;
+    clearTimeout(this._storageToastTimer);
+    this._storageToastTimer = null;
+    document.removeEventListener('keydown', this._onKeyDown);
+  }
 }

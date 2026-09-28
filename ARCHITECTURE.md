@@ -158,9 +158,10 @@ does not authorize LiquidAIty to use ACP as a Card runtime or restore the remove
 
 ## Hermes modes and delegation
 
-`main` and `delegate` are the supported saved Hermes Card execution modes. Direct creation of a new
-saved Card Run in the old `kanban` runtime mode fails closed. Read compatibility and recovery remain
-only where existing active Kanban rows require them.
+`main`, `delegate`, and `magentic_one` are the supported saved Hermes Card execution modes. The retired
+saved-Card runtime mode literally named `kanban` is neither accepted nor recovered. Historical revisions
+and completed Run evidence, if any, remain immutable and inert; schema migration preflight rejects a
+current Card or active Run in that state before narrowing the insertion constraints.
 
 Native Hermes delegation remains model-selected within the Card's native capability ceiling:
 
@@ -184,8 +185,8 @@ is rendered and persisted with that Card's identity. An unaddressed turn invokes
   remains the model-chosen Main-to-Card communication path.
 
 LiquidAIty has no TypeScript participant classifier, task-count router, callback scheduler, copied
-Kanban database, or Team receipt product. `apps/backend/src/hermes/kanbanRunRecovery.ts` monitors only
-eligible existing active `runtimeMode === "kanban"` rows and does not create new Team work.
+Kanban database, Team receipt product, or saved-mode recovery loop. Hermes' native Kanban task vocabulary,
+SQLite task/dependency ledger, worker execution, and `kanban.task_mode` remain retained Magnetic machinery.
 
 The complete Hermes fork scope and rollback contract is
 [`Hermes/LIQUIDAITY_VENDOR_PATCHES.md`](Hermes/LIQUIDAITY_VENDOR_PATCHES.md). It records the
@@ -436,11 +437,11 @@ LiquidAIty runtime boundary. No other Hermes customization is silently accepted 
 | --- | --- | --- | --- |
 | `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | Replace the rejected profile-global Project roster with one signed source-session resolver at the native delivery boundary. It resolves only an existing saved Card/profile and pins live or cold delivery to that target's exact stored Project conversation. Orange `flow` is the only target authority; blue Magnetic membership is untouched. With no resolver hook, stock Hermes title, roster, relay, peer, Team, delivery, and receipt behavior remains unchanged. The existing Card-tools HMAC/session seam is the available extension boundary; profile config cannot represent concurrent Projects safely. | Focused Card-tools, native Bot delivery/live-owner, backend route, terminal, and TypeScript typecheck suites cover refusal, exact session selection, and stock fallback. Fork cost is four small generic Hermes seams plus focused tests. Roll back these symbols and the Card-tools resolver together; remove the divergence when upstream exposes an equivalent exact-session target resolver or when saved-Card direct messaging is retired. |
 
-The controlled God's Eye import has this bounded local divergence:
+The controlled upstream globe import has this bounded local divergence:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |
 | --- | --- | --- | --- |
-| `bilawalsidhu/gods-eye-view`, imported package version `0.1.0` (upstream commit not recorded) | `worldsignal/gods-eye-view-main/src/embed/hostBridge.js::installHostBridge`, `projectSelection`, `projectSourceState`; `src/main.js::init`; `src/ui.js::StyleManager`; `src/data/rocketLaunches.js` source-enable/background-refresh camera paths | Complete the existing supervised LiquidAIty bridge: scoped bootstrap/readback, native manager-backed Data Sources ON/OFF, truthful source readiness/clocks/errors, native selection projection, and replay-bounded explicit focus. Supervised mode hides the duplicate native Data Layers panel, skips iframe-local source/tracking restoration and startup camera flight, while standalone source UI/providers and user-started voice remain. Source enable and background Rocket TLE arrival no longer move the camera; explicit native camera actions remain. | Focused bridge/layer/client tests, client typecheck, and both production builds cover the retained seams. A controlled loaded browser preview additionally proved 14 native rows, native Datacenters OFF-to-ON readback with 4,362 items, zero camera-pose change during activation, real native marker selection, and explicit Focus movement. Persisted selected-Project execution and owner visual acceptance remain separate. Fork cost is four bounded existing extension points plus focused tests. Roll back these exact hunks together; no backend, provider, saved-data, or schema migration is involved. |
+| `bilawalsidhu/gods-eye-view` package `0.1.1` at `81eb44340d90feda5b5283438f6e5fdad5cabbdd` | `worldsignal/gods-eye-view-main/src/app/{application,viewer,viewport,directApplication,mount,directBridge}.js`; `src/runtimeUrl.js`; `src/voice/{gevRealtime,realtimeProtocol,realtimeViewport}.js`; `src/data/contextStore.js`; `client/src/components/worldsignal/{loadWorldViewNative,GodsEyeSurface}.tsx`; `client/vite.config.ts` | **UPSTREAM CURRENT:** retain the modular application lifecycle, Cesium viewer, complete visual/control surface, live data managers, scene context, selected-entity context, Realtime action runner, and image grounding. **LOCAL KEPT:** retain the supervised camera-stability rules, WorldView presentation wording, Project source readback, selection projection, and credits. **MERGED:** both standalone and LiquidAIty use the same lifecycle and full controller graph. **LIQUIDAITY-SPECIFIC:** React supplies one caller-owned pane, scoped CSS/container sizing, same-origin provider transport, direct callbacks, and serialized teardown/remount. The removed iframe/postMessage bridge is not a fallback. Realtime image grounding accepts only the Cesium canvas contained by the currently mounted WorldView root, records root/canvas/image bounds, and invalidates retained images on stop or unmount. | Focused vendor tests cover URL scoping, annotations, context reset, Realtime protocol, pane-bounded capture, retained-image deletion, and teardown invalidation; focused React tests cover one mount, direct commands, callbacks, and cleanup; vendor/client production builds cover both bundles. A visible Trading Project Preview proved one iframe-free 795×720 mount/canvas inside a 1280×720 page, current satellite/mission feeds, a completed camera reset, a real Launch Library selection with source metadata, and complete removal followed by one clean remount with idle voice and no selected mission. Live AI question/answer acceptance remains blocked honestly because the supervised provider has no configured `OPENAI_API_KEY`; the port is not declared parity-complete until those turns and the resulting viewport-capture diagnostics run. Fork cost is the bounded lifecycle/root/capture seam plus focused tests. Roll back this row's files together; no graph, Project, Card, user, or source data is migrated. |
 
 The installed Engraphis runtime and the separately retained browser-renderer fork have these bounded local divergences:
 
@@ -472,7 +473,7 @@ The installed Engraphis runtime and the separately retained browser-renderer for
   projected selections alone are not execution proof.
 - Mag One, graph attention, external MCP selection, and visual behavior retain their own acceptance
   boundaries.
-- WorldView/God's Eye Phase 1 source, focused tests, client typecheck, production builds, controlled
+- WorldView Phase 1 source, focused tests, client typecheck, production builds, controlled
   loaded preview, persisted selected-Project execution, and Jeremiah's visual acceptance remain
   separate proof tiers. ShadowBroker/provider integration is not part of that proof and is not
   assumed as the next architecture.

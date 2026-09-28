@@ -546,7 +546,7 @@ test('the decision table is written down where the next editor will read it', ()
 
 test('markup, startup ordering and accessibility remain pinned', () => {
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  const main = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const application = fs.readFileSync(new URL('./app/directApplication.js', import.meta.url), 'utf8');
   const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
 
   assert.match(html, /id="first-run-launcher" role="dialog"[^>]*aria-labelledby="first-run-title"[^>]*hidden/);
@@ -577,7 +577,11 @@ test('markup, startup ordering and accessibility remain pinned', () => {
   assert.doesNotMatch(html, /data-first-run-choice="infrastructure"/,
     'the removed tile must leave no markup behind');
 
-  const startup = main.slice(main.indexOf('void Promise.all(['), main.indexOf('// Expose for debugging'));
+  const startupStart = application.indexOf('Promise.allSettled([');
+  const startup = application.slice(
+    startupStart,
+    application.indexOf('defer(() => {', startupStart),
+  );
   assert.match(startup, /styleManager\.initialRestorePromise/);
   assert.ok(startup.indexOf("loadingScreen.classList.add('hidden')") < startup.indexOf('initFirstRunExperience'));
   assert.match(startup, /initFirstRunExperience\(\{ styleManager, dataManager \}\)/);
@@ -644,20 +648,20 @@ test('the DISPLAY rail starts collapsed on a first run, and a stored choice wins
   );
 });
 
-// ── Voice: instruction-only, tool schema byte-unchanged ─────────────────────
+// ── Voice: first-run mapping remains instruction-only ───────────────────────
 
-test('the voice TOOL SCHEMA is byte-identical to main — the mission mapping is instructions only', () => {
+test('the voice TOOL SCHEMA matches the approved WorldView-description baseline', () => {
   const src = fs.readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8');
   const start = src.indexOf('const GEV_REALTIME_TOOLS = [');
   assert.ok(start > 0, 'GEV_REALTIME_TOOLS must still be a single literal array');
   const end = src.indexOf('\n];\n', start);
   const block = src.slice(start, end + 4);
 
-  assert.equal(block.length, 31104, 'tool schema byte length drifted from the frozen baseline');
+  assert.equal(block.length, 31107, 'tool schema byte length drifted from the frozen baseline');
   assert.equal(
     crypto.createHash('sha256').update(block).digest('hex'),
-    '3ace199727934e851902e4899c423d549d34d3f53469dcb56f07fc070d3f9d66',
-    'the first-run missions must ride EXISTING tools: no schema edit, no cache bust',
+    'b586aeeef5169254b589ac7dd889d93d8b3b60f42e55c51543d8811ab24cbdf3',
+    'the first-run missions must ride existing tools and only approved description text may move',
   );
 
   // ...and the mapping that makes them reachable by voice is one instruction

@@ -356,13 +356,6 @@ const chatSessionMocks = vi.hoisted(() => {
   };
 });
 
-const kanbanMocks = vi.hoisted(() => ({
-  readHermesKanbanCardSnapshots: vi.fn(async () => []),
-  observeHermesKanbanTaskGraph: vi.fn(async (): Promise<any> => ({
-    nativeRootId: 't_root', nativeRunId: null, nativeStatus: 'ready', nativeTasks: [],
-    tasksCompleted: 0, tasksTotal: 1, activeWorkers: 0, workerSessionIds: [],
-  })),
-}));
 const mcpClientMocks = vi.hoisted(() => {
   const listPythonAgentMcpCatalog = vi.fn(async (): Promise<any[]> => []);
   const readPythonAgentMcpCatalog = vi.fn(async (): Promise<{
@@ -571,8 +564,7 @@ const orchestratorMocks = vi.hoisted(() => {
       const graphAgent = cardId === 'card_hermes_steward';
       const agentBuilder = cardId === 'builder';
       const thinkGraph = cardId === 'card_thinkgraph';
-      const legacyKanban = cardId === 'card_legacy_kanban';
-      const graphConfigured = graphAgent || legacyKanban;
+      const graphConfigured = graphAgent;
       const delegateCard = cardId === 'card_test_delegate';
       const requestKey = [body.projectId, body.deckId, cardId, body.cardRevisionId || '', body.assignment || body.message || ''].join('|');
       const existingRunId = requestFingerprints.get(requestKey);
@@ -585,7 +577,7 @@ const orchestratorMocks = vi.hoisted(() => {
            cardId,
            state: 'running',
            runtimeKind: 'hermes',
-           runtimeMode: mainChat ? 'main' : legacyKanban ? 'kanban' : 'delegate',
+           runtimeMode: mainChat ? 'main' : 'delegate',
            runtimeProfile: mainChat ? 'default' : agentBuilder ? 'builder'
              : thinkGraph ? 'thinkgraph'
              : graphConfigured ? 'liquidaity-hermes-steward' : 'delegate',
@@ -623,7 +615,7 @@ const orchestratorMocks = vi.hoisted(() => {
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : delegateCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'delegate' }
-                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
+                : { kind: 'hermes', mode: 'delegate',
                     profile: thinkGraph ? 'thinkgraph' : 'liquidaity-hermes-steward' },
             provider: {
               accessMode: 'chatgpt-account', provider: 'openai',
@@ -665,17 +657,12 @@ const orchestratorMocks = vi.hoisted(() => {
                 : delegateCard ? '## Resolved CodeGraph\n- pkg.materialize_idf' : '',
               String(mainChat ? body.message || '' : body.assignment || ''),
             ].filter(Boolean).join('\n\n'),
-            kanbanMission: legacyKanban ? [
-              '## Resolved ThinkGraph',
-              'Native bounded context for think-root-1.',
-              '',
-              String(body.assignment || ''),
-            ].join('\n') : '',
+            kanbanMission: '',
             runtime: cardId === 'card_main_chat'
               ? { kind: 'hermes', mode: 'main', profile: 'default' }
               : delegateCard
                 ? { kind: 'hermes', mode: 'delegate', profile: 'delegate' }
-                : { kind: 'hermes', mode: legacyKanban ? 'kanban' : 'delegate',
+                : { kind: 'hermes', mode: 'delegate',
                     profile: agentBuilder ? 'builder'
                       : thinkGraph ? 'thinkgraph' : 'liquidaity-hermes-steward' },
             provider: {
@@ -698,7 +685,7 @@ const orchestratorMocks = vi.hoisted(() => {
             cardId,
             title: cardId === 'card_main_chat' ? 'Main' : agentBuilder ? 'Builder'
               : thinkGraph ? 'ThinkGraph' : delegateCard ? 'Delegate'
-              : graphAgent ? 'Graph Agent' : 'Retired Kanban history',
+              : graphAgent ? 'Graph Agent' : 'Card',
           },
         },
       };
@@ -817,8 +804,6 @@ vi.mock('./hermesKanban.routes', () => ({
     'triage', 'todo', 'scheduled', 'ready', 'running',
     'blocked', 'review', 'done', 'archived',
   ],
-  observeHermesKanbanTaskGraph: kanbanMocks.observeHermesKanbanTaskGraph,
-  readHermesKanbanCardSnapshots: kanbanMocks.readHermesKanbanCardSnapshots,
 }));
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
@@ -2063,86 +2048,6 @@ describe('saved Card routes', () => {
       } finally { await closeServer(server); }
     });
 
-  it('rejects the retired Kanban Card mode without creating a native root', async () => {
-    deckMocks.getDeckDocument.mockResolvedValueOnce({
-      deck: {
-        workspaceRoot: process.cwd(),
-        nodes: [{
-          id: 'card_legacy_kanban',
-          _cardRevisionId: 'revision:card_legacy_kanban',
-          runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
-          runtimeOptions: {},
-        }],
-        edges: [],
-      } as any,
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/cards/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-one',
-          deckId: 'deck-one',
-          cardId: 'card_legacy_kanban',
-          action: 'execute',
-          input: 'This mode is retired.',
-          runId: 'run-retired',
-          correlationId: 'correlation-retired',
-        }),
-      });
-      expect(response.status).toBe(502);
-      await expect(response.json()).resolves.toMatchObject({
-        ok: false,
-        error: 'hermes_kanban_card_mode_retired',
-      });
-    } finally {
-      await closeServer(server);
-    }
-  });
-  it('keeps passive Card-front status inspection read-only for a retained terminal root', async () => {
-    orchestratorMocks.requestPythonRailsJson.mockClear();
-    orchestratorMocks.runRecords.clear();
-    orchestratorMocks.runRecords.set('run-failed-transport', {
-      runId: 'run-failed-transport',
-      correlationId: 'run-failed-transport',
-      projectId: 'project-rejoin',
-      deckId: 'deck_builder',
-      cardId: 'card_hermes_steward',
-      runtimeKind: 'hermes',
-      runtimeMode: 'kanban',
-      runtimeProfile: 'liquidaity-hermes-steward',
-      state: 'failed',
-      nativeRootId: 't_retained_root',
-      nativeStatus: 'archived',
-      finalResult: null,
-      startedAt: new Date().toISOString(),
-    });
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/cards/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'status',
-          inspectOnly: true,
-          projectId: 'project-rejoin',
-          deckId: 'deck_builder',
-          runId: 'run-failed-transport',
-        }),
-      });
-      await expect(response.json()).resolves.toMatchObject({
-        result: {
-          runId: 'run-failed-transport',
-          nativeRootId: 't_retained_root',
-          state: 'failed',
-        },
-      });
-      expect(orchestratorMocks.runRecords).toHaveLength(1);
-    } finally {
-      await closeServer(server);
-    }
-  });
 
   it.each([true, false])('uses only the conversation-scoped native Run selection (found=%s)', async (found) => {
     orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -2220,27 +2125,6 @@ describe('saved Card routes', () => {
     } finally { await closeServer(server); }
   });
 
-  it('does not fall back to an ordinary Gateway turn for the retired Kanban Card mode', async () => {
-    const { server, baseUrl } = await createApiServer();
-    try {
-      const response = await fetch(`${baseUrl}/cards/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: 'project-one',
-          deckId: 'deck-one',
-          cardId: 'card_legacy_kanban',
-          action: 'execute',
-          input: 'No fallback.',
-          runId: 'run-retired-no-fallback',
-          correlationId: 'correlation-retired-no-fallback',
-        }),
-      });
-      expect(response.status).toBe(502);
-    } finally {
-      await closeServer(server);
-    }
-  });
   it('runs the saved delegate Agent through one Python materialization', async () => {
     agentTerminalMocks.manager.submit.mockClear();
     agentTerminalMocks.execution.stage.mockClear();
@@ -3017,7 +2901,6 @@ describe('saved Card routes', () => {
   it('observes exact Magnetic tasks without reconciling or mutating the outer Run', async () => {
     orchestratorMocks.runRecords.clear();
     orchestratorMocks.requestPythonRailsJson.mockClear();
-    kanbanMocks.observeHermesKanbanTaskGraph.mockClear();
     const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
     const startedAt = new Date().toISOString();
     orchestratorMocks.runRecords.set('magnetic-inspection', {
@@ -3090,7 +2973,6 @@ describe('saved Card routes', () => {
           }],
         },
       });
-      expect(kanbanMocks.observeHermesKanbanTaskGraph).not.toHaveBeenCalled();
       const endpoints = orchestratorMocks.requestPythonRailsJson.mock.calls
         .map(([endpoint]) => endpoint);
       expect(endpoints.filter((endpoint) => endpoint === '/magentic/execution/status')).toHaveLength(1);
@@ -3749,10 +3631,18 @@ describe('saved Card routes', () => {
       }
     });
 
-    it('preserves a long multiline direct Builder reply unchanged in the native Run and shared chat', async () => {
+    it('uses targetCardId as the direct Project Card route and preserves the full multiline reply', async () => {
       agentTerminalMocks.manager.submit.mockClear();
+      agentTerminalMocks.resolveHermesBotRosterProjections.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const projectDeck = await deckMocks.getDeckDocument();
+      projectDeck.deck.edges = projectDeck.deck.edges.filter((edge: any) => (
+        edge.source !== 'builder' && edge.target !== 'builder'
+      ));
+      deckMocks.getDeckDocument
+        .mockResolvedValueOnce(projectDeck)
+        .mockResolvedValueOnce(projectDeck);
       const fullReply = [
         'BUILDER_DIRECT_OK: the native Builder completion is intentionally longer than the retired shared-chat limit so this test proves the complete answer is accepted without a one-line restriction.',
         '',
@@ -3768,11 +3658,14 @@ describe('saved Card routes', () => {
       ));
       const { server, baseUrl } = await createApiServer();
       try {
-        const exactMessage = '@bUiLdEr Reply exactly BUILDER_DIRECT_OK';
+        const exactMessage = 'Reply exactly BUILDER_DIRECT_OK';
         const response = await fetch(`${baseUrl}/main/session/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: 'project-1', conversationId: 'direct-builder', message: exactMessage }),
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'direct-builder',
+            targetCardId: 'builder', message: exactMessage,
+          }),
         });
         const body = await response.text();
 
@@ -3794,7 +3687,10 @@ describe('saved Card routes', () => {
         expect(beginCalls).toHaveLength(1);
         expect(JSON.parse(String(beginCalls[0][1]?.body))).toMatchObject({
           cardId: 'builder', assignment: exactMessage, conversationId: 'direct-builder',
+          sharedConversation: [], sharedConversationTargetLabel: 'Builder',
         });
+        expect(JSON.parse(String(beginCalls[0][1]?.body))).not.toHaveProperty('senderCardId');
+        expect(agentTerminalMocks.resolveHermesBotRosterProjections).not.toHaveBeenCalled();
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledTimes(1);
         expect(agentTerminalMocks.manager.submit).toHaveBeenCalledWith(
           { userId: 'owner-user', projectId: 'project-1', deckId: 'deck_builder', cardId: 'builder', conversationId: 'direct-builder' },
@@ -3825,6 +3721,60 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('seeds the first direct Card turn with existing native Main history', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([]);
+      agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 2, messages: [
+        { role: 'user', text: 'Earlier shared question' },
+        { role: 'assistant', text: 'Earlier Main answer' },
+      ] });
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'first-direct-after-native-main',
+            targetCardId: 'builder', message: 'Continue from the shared conversation.',
+          }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+
+        const begin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/runs/begin',
+        );
+        expect(begin).toBeDefined();
+        expect(JSON.parse(String(begin?.[1]?.body))).toMatchObject({
+          cardId: 'builder',
+          sharedConversationTargetLabel: 'Builder',
+          sharedConversation: [{
+            role: 'user', speakerLabel: 'You', targetCardId: 'card_main_chat',
+            targetLabel: 'Main', content: 'Earlier shared question',
+          }, {
+            role: 'assistant', speakerCardId: 'card_main_chat', speakerLabel: 'Main',
+            content: 'Earlier Main answer',
+          }],
+        });
+        expect(chatSessionMocks.appendSharedConversationTurn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            seedMessages: [
+              expect.objectContaining({
+                role: 'user', content: 'Earlier shared question',
+                target: expect.objectContaining({ cardId: 'card_main_chat', label: 'Main' }),
+              }),
+              expect.objectContaining({
+                role: 'assistant', content: 'Earlier Main answer',
+                speaker: expect.objectContaining({ cardId: 'card_main_chat', label: 'Main' }),
+              }),
+            ],
+          }),
+        );
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it('starts the exact Magnetic outer Run from its public address without using the Gateway', async () => {
       const railsImplementation = orchestratorMocks.requestPythonRailsJson.getMockImplementation()!;
       agentTerminalMocks.manager.submit.mockClear();
@@ -3838,10 +3788,11 @@ describe('saved Card routes', () => {
           preparedRunId = request.runId;
           expect(request).toMatchObject({
             projectId: 'project-1', deckId: 'deck_builder', cardId: 'card_magentic',
-            cardRevisionId: 'revision:card_magentic', senderCardId: 'card_main_chat',
+            cardRevisionId: 'revision:card_magentic',
             assignment: '@Magnetic Coordinate the bounded mission.',
             conversationId: 'direct-magnetic', correlationId: request.runId,
           });
+          expect(request).not.toHaveProperty('senderCardId');
           return {
             runId: request.runId,
             correlationId: request.correlationId,
@@ -3878,8 +3829,8 @@ describe('saved Card routes', () => {
           expect(request).toMatchObject({
             runId: preparedRunId,
             orchestrator: { cardId: 'card_magentic', nativeIdentity: 'card_magentic' },
-            notifySession: { sessionKey: 'native:default:direct-magnetic', profile: 'default' },
           });
+          expect(request).not.toHaveProperty('notifySession');
           return {
             ok: true, state: 'running', nativeStatus: 'ready', nativeRootId: 't_shared_magnetic',
             outerRunBound: true,
@@ -3943,6 +3894,10 @@ describe('saved Card routes', () => {
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
+      agentTerminalMocks.manager.history.mockResolvedValueOnce({ count: 2, messages: [
+        { role: 'user', text: 'Existing native question' },
+        { role: 'assistant', text: 'Existing native answer' },
+      ] });
       agentTerminalMocks.manager.submit.mockRejectedValueOnce(new Error('native_builder_unavailable'));
       const { server, baseUrl } = await createApiServer();
       try {
@@ -3983,6 +3938,61 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('allows an empty seed only when no native Main runtime exists', async () => {
+      agentTerminalMocks.manager.findCard.mockReturnValueOnce(null);
+      agentTerminalMocks.manager.history.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'first-direct-without-main-runtime',
+            targetCardId: 'builder', message: 'Start this shared conversation.',
+          }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+        const begin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/runs/begin',
+        );
+        expect(JSON.parse(String(begin?.[1]?.body))).toMatchObject({
+          cardId: 'builder', sharedConversation: [],
+        });
+        expect(agentTerminalMocks.manager.history).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('refuses the first direct Card turn when existing native Main history cannot be read', async () => {
+      agentTerminalMocks.manager.history.mockRejectedValueOnce(new Error('gateway_history_unavailable'));
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'first-direct-history-failure',
+            targetCardId: 'builder', message: 'Do not run without the visible history.',
+          }),
+        });
+        expect(response.status).toBe(503);
+        await expect(response.json()).resolves.toEqual({
+          ok: false, error: 'shared_conversation_unavailable',
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+        )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+        expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it('refuses an unavailable explicit address before any Card or Main execution', async () => {
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
@@ -4009,20 +4019,149 @@ describe('saved Card routes', () => {
       }
     });
 
+    it('rejects conflicting typed and targetCardId routes before any Run starts', async () => {
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      chatSessionMocks.getConversationMessages.mockClear();
+      chatSessionMocks.appendSharedConversationTurn.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'target-mismatch',
+            targetCardId: 'builder', message: '@Delegate do this instead',
+          }),
+        });
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({
+          ok: false,
+          error: 'shared_chat_target_mismatch',
+          address: 'delegate',
+          targetCardId: 'builder',
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+        )).toHaveLength(0);
+        expect(chatSessionMocks.getConversationMessages).not.toHaveBeenCalled();
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+        expect(chatSessionMocks.appendSharedConversationTurn).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('refuses targetCardId when the Project Card has no current saved revision', async () => {
+      deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: {
+        nodes: [{
+          id: 'card_main_chat', _cardRevisionId: 'revision:card_main_chat', title: 'Main',
+          runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+        }, {
+          id: 'builder', title: 'Builder',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'builder' },
+        }],
+        edges: [],
+      } } as any);
+      agentTerminalMocks.manager.submit.mockClear();
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'stale-target',
+            targetCardId: 'builder', message: 'Do not start.',
+          }),
+        });
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({
+          ok: false, error: 'target_card_unavailable', targetCardId: 'builder',
+        });
+        expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',
+        )).toHaveLength(0);
+        expect(agentTerminalMocks.manager.submit).not.toHaveBeenCalled();
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('passes only intervening Project turns to a reselected Card', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([{
+        role: 'user', status: 'complete', content: 'First Builder question',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+          { kind: 'shared_chat_target', status: 'card', label: 'Builder', cardId: 'builder',
+            profile: 'builder', address: 'Builder' },
+        ],
+      }, {
+        role: 'assistant', status: 'complete', content: 'Prior Builder answer',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'card', label: 'Builder', cardId: 'builder',
+            profile: 'builder', address: 'Builder' },
+        ],
+      }, {
+        role: 'user', status: 'complete', content: '@Delegate inspect this',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+          { kind: 'shared_chat_target', status: 'card', label: 'Delegate', cardId: 'card_test_delegate',
+            profile: 'delegate', address: 'Delegate' },
+        ],
+      }, {
+        role: 'assistant', status: 'complete', content: 'Delegate result',
+        visibleActivities: [
+          { kind: 'shared_chat_speaker', status: 'card', label: 'Delegate',
+            cardId: 'card_test_delegate', profile: 'delegate', address: 'Delegate' },
+        ],
+      }] as any);
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'builder-return',
+            targetCardId: 'builder', message: 'Continue with that result.',
+          }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+        const begin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/runs/begin',
+        );
+        expect(begin).toBeDefined();
+        expect(JSON.parse(String(begin?.[1]?.body))).toMatchObject({
+          cardId: 'builder',
+          assignment: 'Continue with that result.',
+          sharedConversationTargetLabel: 'Builder',
+          sharedConversation: [{
+            role: 'user', speakerLabel: 'You', targetCardId: 'card_test_delegate',
+            targetLabel: 'Delegate', content: '@Delegate inspect this',
+          }, {
+            role: 'assistant', speakerCardId: 'card_test_delegate',
+            speakerLabel: 'Delegate', content: 'Delegate result',
+          }],
+        });
+        const serialized = String(begin?.[1]?.body);
+        expect(serialized).not.toContain('First Builder question');
+        expect(serialized).not.toContain('Prior Builder answer');
+      } finally {
+        await closeServer(server);
+      }
+    });
+
     it.each(['internal-profile', 'card_internal_123'])(
       'does not expose the saved Card %s as a public address alias', async (internalAddress) => {
-        agentTerminalMocks.resolveHermesBotRosterProjections.mockResolvedValueOnce([
-          {
-            cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
-            profile: 'default', title: 'Main', botEnabled: true,
-            roster: ['internal-profile'],
-          },
-          {
-            cardId: 'card_internal_123', cardRevisionId: 'revision:card_internal_123',
-            profile: 'internal-profile', title: 'KnowGraph', botEnabled: true,
-            roster: [],
-          },
-        ]);
+        deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: {
+          nodes: [{
+            id: 'card_main_chat', _cardRevisionId: 'revision:card_main_chat', title: 'Main',
+            runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+          }, {
+            id: 'card_internal_123', _cardRevisionId: 'revision:card_internal_123', title: 'KnowGraph',
+            runtime: { kind: 'hermes', mode: 'delegate', profile: 'internal-profile' },
+          }],
+          edges: [],
+        } } as any);
         agentTerminalMocks.manager.submit.mockClear();
         orchestratorMocks.requestPythonRailsJson.mockClear();
         chatSessionMocks.appendSharedConversationTurn.mockClear();
@@ -4050,19 +4189,17 @@ describe('saved Card routes', () => {
       },
     );
 
-    it('rejects a malformed visible Card title before any Card or Main execution', async () => {
-      agentTerminalMocks.resolveHermesBotRosterProjections.mockResolvedValueOnce([
-        {
-          cardId: 'card_main_chat', cardRevisionId: 'revision:card_main_chat',
-          profile: 'default', title: 'Main', botEnabled: true,
-          roster: ['internal-profile'],
-        },
-        {
-            cardId: 'card_internal_123', cardRevisionId: 'revision:card_internal_123',
-            profile: 'internal-profile', title: 'Graph Agent', botEnabled: true,
-            roster: [],
-        },
-      ]);
+    it('does not let a malformed visible Card title block Main or become a partial address', async () => {
+      deckMocks.getDeckDocument.mockResolvedValueOnce({ deck: {
+        nodes: [{
+          id: 'card_main_chat', _cardRevisionId: 'revision:card_main_chat', title: 'Main',
+          runtime: { kind: 'hermes', mode: 'main', profile: 'default' },
+        }, {
+          id: 'card_internal_123', _cardRevisionId: 'revision:card_internal_123', title: 'Graph Agent',
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'internal-profile' },
+        }],
+        edges: [],
+      } } as any);
       agentTerminalMocks.manager.submit.mockClear();
       orchestratorMocks.requestPythonRailsJson.mockClear();
       chatSessionMocks.appendSharedConversationTurn.mockClear();
@@ -4075,9 +4212,9 @@ describe('saved Card routes', () => {
             message: '@Graph do work',
           }),
         });
-        expect(response.status).toBe(503);
+        expect(response.status).toBe(409);
         await expect(response.json()).resolves.toEqual({
-          ok: false, error: 'shared_chat_agent_address_invalid',
+          ok: false, error: 'addressed_card_unavailable', address: 'graph',
         });
         expect(orchestratorMocks.requestPythonRailsJson.mock.calls.filter(
           ([endpoint]) => endpoint === '/domain/main/runs/begin' || endpoint === '/domain/runs/begin',

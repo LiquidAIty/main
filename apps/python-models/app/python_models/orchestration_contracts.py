@@ -34,7 +34,7 @@ class ToolSpec(BaseModel):
 
 class HermesRuntime(BaseModel):
     kind: Literal["hermes"]
-    mode: Literal["main", "delegate", "kanban", "magentic_one"]
+    mode: Literal["main", "delegate", "magentic_one"]
     profile: RequiredRuntimeString
 
 

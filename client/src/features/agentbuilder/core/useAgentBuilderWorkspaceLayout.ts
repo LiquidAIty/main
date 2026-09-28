@@ -8,6 +8,7 @@ import type {
 const CHAT_MIN_WIDTH = 280;
 const CANVAS_MIN_WIDTH = 520;
 const COMPANION_MIN_WIDTH = 360;
+const SPLITTER_WIDTH = 10;
 const COLLAPSE_EDGE_PX = 28;
 
 type UseAgentBuilderWorkspaceLayoutArgs<T extends string> = {
@@ -128,8 +129,8 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
   useEffect(() => {
     const reservedWidth =
       workspaceView === 'canvas'
-        ? CANVAS_MIN_WIDTH
-        : COMPANION_MIN_WIDTH;
+        ? CANVAS_MIN_WIDTH + SPLITTER_WIDTH
+        : COMPANION_MIN_WIDTH + SPLITTER_WIDTH;
     const syncWidth = () => {
       setChatPanelWidth((current) =>
         clampChatWidth(current, reservedWidth),
@@ -146,8 +147,8 @@ export default function useAgentBuilderWorkspaceLayout<T extends string>({
       setSplitterActive(true);
       const reservedWidth =
         workspaceView === 'canvas'
-          ? CANVAS_MIN_WIDTH
-          : COMPANION_MIN_WIDTH;
+          ? CANVAS_MIN_WIDTH + SPLITTER_WIDTH
+          : COMPANION_MIN_WIDTH + SPLITTER_WIDTH;
       resizeSessionRef.current = {
         startX: event.clientX,
         startWidth: chatPanelWidth,

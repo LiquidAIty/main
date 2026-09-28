@@ -353,9 +353,11 @@ orange `flow` edges authorize that Card to address those exact saved Bot/Card ta
 reverse authority. Main is the seeded and currently configured direct orchestrator, while another Card may
 deliberately enable the same setting for a bounded series such as Signal -> WorldSignals. Only an enabled
 orchestrator renders an orange connection dot. The same target may also have a blue `magentic_option` edge,
-which independently makes that saved identity available to Magnetic's Hermes SQLite task ledger. Agent
-Canvas renders Main as a hexagon to expose its front-door role; this is presentation, not a second Card type
-or the source of orchestration authority.
+which independently makes that saved identity available to Magnetic's Hermes SQLite task ledger. Main remains
+the default chat front door and uses the same compact rounded Card geometry wherever a Card preview is rendered;
+presentation never creates a second Card type or orchestration authority. Main, Builder, ThinkGraph, KnowGraph,
+and Magnetic remain visible as the orange system topology; that visibility does not make them members of
+Magnetic's independently blue-connected Trading worker roster.
 Each Hermes Card also owns one saved desired native subagent model. Run start materializes that
 selection into the bound native profile and reads it back before inference; actual child provider/model
 and any fallback belong in the Run receipt. The selector never rewrites the parent model, another Card,

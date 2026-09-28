@@ -7,6 +7,7 @@ import {
   loadSessionHistory,
   loadMainDriverStatus,
   type AddressableAgent,
+  type DirectChatTarget,
   type MainDriverSource,
   type NativeSessionEvent,
   SessionStreamError,
@@ -23,6 +24,7 @@ type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
   conversationId: string;
+  directChatTargets?: DirectChatTarget[];
   dataAnchors?: LoadedCardGraphReference['reference'][];
   onUserTurnStarted?: (turn: MainChatTurnStarted) => void;
   onNativeTurnEvent?: (turn: MainChatTurnEvent) => void;
@@ -85,6 +87,7 @@ function notifyObserver<T>(observer: ((value: T) => void) | undefined, value: T)
 }
 
 const SHARED_CHAT_USER: SharedChatParticipant = { kind: 'user', label: 'You' };
+const NO_DIRECT_CHAT_TARGETS: DirectChatTarget[] = [];
 
 function participantFromEvent(value: unknown): SharedChatParticipant | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -106,22 +109,83 @@ function participantFromEvent(value: unknown): SharedChatParticipant | null {
   };
 }
 
-function requestedParticipant(
-  text: string,
-  mainCardId: string,
-  agents: AddressableAgent[],
-): SharedChatParticipant {
-  const match = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(text);
-  if (!match) return { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
-  const address = match[1].toLowerCase();
-  const target = agents.find((agent) => agent.aliases.includes(address));
-  return target ? {
+type PreparedChatSubmission = {
+  key: string;
+  text: string;
+  targetCardId: string | null;
+  participant: SharedChatParticipant;
+};
+
+function participantForTarget(target: DirectChatTarget): SharedChatParticipant {
+  return {
     kind: 'card',
     label: target.title,
     cardId: target.cardId,
     profile: target.profile,
-    address: target.address,
-  } : { kind: 'card', label: `@${address}`, address };
+    ...(target.address ? { address: target.address } : {}),
+  };
+}
+
+function uniqueCardTarget(
+  targets: DirectChatTarget[],
+  cardId: string | null,
+): DirectChatTarget | null {
+  if (!cardId) return null;
+  const matches = targets.filter((target) => target.cardId === cardId);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function prepareChatSubmission({
+  conversationKey,
+  text,
+  mainCardId,
+  currentResponderCardId,
+  targets,
+}: {
+  conversationKey: string;
+  text: string;
+  mainCardId: string;
+  currentResponderCardId: string | null;
+  targets: DirectChatTarget[];
+}): PreparedChatSubmission & { nextResponderCardId?: string | null } {
+  const mainTarget = uniqueCardTarget(targets, mainCardId);
+  const mainParticipant = mainTarget
+    ? participantForTarget(mainTarget)
+    : { kind: 'card' as const, label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
+  const selectedTarget = uniqueCardTarget(targets, currentResponderCardId);
+  const fallbackTargetCardId = selectedTarget && selectedTarget.cardId !== mainCardId
+    ? selectedTarget.cardId
+    : null;
+  const addressMatch = /^\s*@([a-z0-9][a-z0-9_-]{0,63})(?=\s|$)/i.exec(text);
+  if (!addressMatch) {
+    return {
+      key: conversationKey,
+      text,
+      targetCardId: fallbackTargetCardId,
+      participant: selectedTarget ? participantForTarget(selectedTarget) : mainParticipant,
+    };
+  }
+  const address = addressMatch[1].toLowerCase();
+  const matches = targets.filter((target) => (
+    target.aliases.some((alias) => alias.toLowerCase() === address)
+  ));
+  if (matches.length !== 1) {
+    return {
+      key: conversationKey,
+      text,
+      targetCardId: fallbackTargetCardId,
+      participant: { kind: 'card', label: `@${address}`, address },
+    };
+  }
+  const target = matches[0];
+  const targetsMain = target.cardId === mainCardId;
+  return {
+    key: conversationKey,
+    text,
+    targetCardId: targetsMain ? null : target.cardId,
+    participant: participantForTarget(target),
+    nextResponderCardId: targetsMain ? null : target.cardId,
+  };
 }
 
 function lastUserMessageIndex(messages: AgentBuilderChatMessage[], text: string): number {
@@ -135,6 +199,7 @@ export default function useAgentBuilderMainChat({
   canvasProjectId,
   deckId,
   conversationId,
+  directChatTargets = NO_DIRECT_CHAT_TARGETS,
   dataAnchors = [],
   onUserTurnStarted,
   onNativeTurnEvent,
@@ -172,8 +237,16 @@ export default function useAgentBuilderMainChat({
     key: conversationKey,
     ids: new Set(),
   });
-  const queuedInputsRef = useRef<Array<{ key: string; text: string }>>([]);
+  const queuedInputsRef = useRef<PreparedChatSubmission[]>([]);
   const [queuedInputCount, setQueuedInputCount] = useState(0);
+  const [responderState, setResponderState] = useState<{
+    key: string;
+    cardId: string | null;
+  }>({ key: conversationKey, cardId: null });
+  const responderRef = useRef<{ key: string; cardId: string | null }>({
+    key: conversationKey,
+    cardId: null,
+  });
 
   const messages = transcript.key === conversationKey ? transcript.messages : [];
   const nativeSessionActive = turnState.key === conversationKey && turnState.phase === 'active';
@@ -189,6 +262,49 @@ export default function useAgentBuilderMainChat({
   }>({ key: conversationKey, mainCardId: '', agents: [] });
   const addressableAgents = sharedAuthority.key === conversationKey ? sharedAuthority.agents : [];
   const mainCardId = sharedAuthority.key === conversationKey ? sharedAuthority.mainCardId : '';
+  const selectedResponderTarget = uniqueCardTarget(
+    directChatTargets,
+    responderState.key === conversationKey ? responderState.cardId : null,
+  );
+  const mainResponderTarget = uniqueCardTarget(directChatTargets, mainCardId);
+  const currentResponder: SharedChatParticipant = selectedResponderTarget
+    ? participantForTarget(selectedResponderTarget)
+    : mainResponderTarget
+      ? participantForTarget(mainResponderTarget)
+      : { kind: 'card', label: 'Main', ...(mainCardId ? { cardId: mainCardId } : {}) };
+
+  const setCurrentResponderCardId = useCallback((requestedCardId: string | null): boolean => {
+    const requestedMain = !requestedCardId || requestedCardId === mainCardId;
+    const matches = requestedMain
+      ? []
+      : directChatTargets.filter((target) => target.cardId === requestedCardId);
+    if (!requestedMain && matches.length !== 1) return false;
+    const nextCardId = requestedMain ? null : requestedCardId;
+    responderRef.current = { key: conversationKey, cardId: nextCardId };
+    setResponderState({ key: conversationKey, cardId: nextCardId });
+    return true;
+  }, [conversationKey, directChatTargets, mainCardId]);
+
+  const prepareSubmission = useCallback((text: string): PreparedChatSubmission => {
+    const prepared = prepareChatSubmission({
+      conversationKey,
+      text,
+      mainCardId,
+      currentResponderCardId: responderRef.current.key === conversationKey
+        ? responderRef.current.cardId
+        : null,
+      targets: directChatTargets,
+    });
+    if (prepared.nextResponderCardId !== undefined) {
+      setCurrentResponderCardId(prepared.nextResponderCardId);
+    }
+    return {
+      key: prepared.key,
+      text: prepared.text,
+      targetCardId: prepared.targetCardId,
+      participant: prepared.participant,
+    };
+  }, [conversationKey, directChatTargets, mainCardId, setCurrentResponderCardId]);
 
   const subscribeToNativeSession = useCallback((runtimeSessionId: string, nativeSessionId: string) => {
     if (!canvasProjectId || !runtimeSessionId || !nativeSessionId) return;
@@ -251,6 +367,8 @@ export default function useAgentBuilderMainChat({
     observedProjectionIdsRef.current = { key: conversationKey, ids: new Set() };
     queuedInputsRef.current = [];
     setQueuedInputCount(0);
+    responderRef.current = { key: conversationKey, cardId: null };
+    setResponderState({ key: conversationKey, cardId: null });
     setTurnState({ key: conversationKey, phase: 'idle' });
     setMainDriverSource(null);
 
@@ -328,16 +446,19 @@ export default function useAgentBuilderMainChat({
     };
   }, [canvasProjectId, conversationId, conversationKey, deckId, subscribeToNativeSession]);
 
-  const requestMainText = useCallback(
-    async (text: string): Promise<string> => {
+  const requestPreparedText = useCallback(
+    async (submission: PreparedChatSubmission): Promise<string> => {
+      const { text, targetCardId } = submission;
+      const observesMainAttention = !targetCardId;
       if (!text.trim()) throw new Error('main_prompt_empty');
+      if (submission.key !== conversationKey) throw new Error('main_conversation_changed');
       if (!canvasProjectId) {
         setTurnState({ key: conversationKey, phase: 'idle' });
         throw new Error('main_project_required');
       }
       if (nativeSessionPending) throw new Error('main_session_busy');
 
-      let turnParticipant = requestedParticipant(text, mainCardId, addressableAgents);
+      let turnParticipant = submission.participant;
       setTranscript((current) => ({
         key: conversationKey,
         messages: [
@@ -358,7 +479,7 @@ export default function useAgentBuilderMainChat({
         key: conversationKey,
         controller: streamController,
         runId: null,
-        cardId: turnParticipant.cardId || null,
+        cardId: targetCardId || mainCardId || null,
       };
       setTurnState({ key: conversationKey, phase: 'connecting' });
 
@@ -407,7 +528,8 @@ export default function useAgentBuilderMainChat({
           deckId,
           conversationId,
           message: text,
-          dataAnchors: dataAnchors.map((anchor) => ({
+          ...(targetCardId ? { targetCardId } : {}),
+          dataAnchors: (targetCardId ? [] : dataAnchors).map((anchor) => ({
             authority: anchor.authority,
             nativeId: anchor.nativeId,
             reason: anchor.reason,
@@ -459,8 +581,10 @@ export default function useAgentBuilderMainChat({
               if (activeStreamRef.current?.controller === streamController) {
                 activeStreamRef.current.runId = runId;
               }
-              notifyObserver(onUserTurnStarted, { projectId: canvasProjectId, conversationId,
-                runId, text, observedAt: new Date().toISOString() });
+              if (observesMainAttention) {
+                notifyObserver(onUserTurnStarted, { projectId: canvasProjectId, conversationId,
+                  runId, text, observedAt: new Date().toISOString() });
+              }
             }
             if (publicEvent?.projectId === canvasProjectId && publicEvent.deckId === deckId
               && publicEvent.cardId && publicEvent.runId && publicEvent.id
@@ -495,7 +619,7 @@ export default function useAgentBuilderMainChat({
                   : current);
               }
             }
-            if (runId) notifyObserver(onNativeTurnEvent, {
+            if (runId && observesMainAttention) notifyObserver(onNativeTurnEvent, {
               projectId: canvasProjectId,
               conversationId,
               runId,
@@ -533,7 +657,7 @@ export default function useAgentBuilderMainChat({
             )),
           };
         });
-        if (runId) notifyObserver(onTurnFinished, {
+        if (runId && observesMainAttention) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
@@ -556,7 +680,7 @@ export default function useAgentBuilderMainChat({
         const disconnected = streamController.signal.aborted;
         const cancelled = error instanceof SessionStreamError
           && ['harness_turn_cancelled', 'main_cli_turn_cancelled'].includes(error.code);
-        if (runId) notifyObserver(onTurnFinished, {
+        if (runId && observesMainAttention) notifyObserver(onTurnFinished, {
           projectId: canvasProjectId,
           conversationId,
           runId,
@@ -575,7 +699,6 @@ export default function useAgentBuilderMainChat({
     },
     [
       canvasProjectId,
-      addressableAgents,
       conversationId,
       conversationKey,
       dataAnchors,
@@ -589,19 +712,25 @@ export default function useAgentBuilderMainChat({
     ],
   );
 
+  const requestMainText = useCallback(
+    (text: string): Promise<string> => requestPreparedText(prepareSubmission(text)),
+    [prepareSubmission, requestPreparedText],
+  );
+
   const handleNativeSend = useCallback(
     (text: string) => {
       if (!text.trim()) return;
+      const submission = prepareSubmission(text);
       if (nativeSessionPending || activeStreamRef.current?.key === conversationKey) {
-        queuedInputsRef.current.push({ key: conversationKey, text });
+        queuedInputsRef.current.push(submission);
         setQueuedInputCount(queuedInputsRef.current.length);
         return;
       }
-      void requestMainText(text).catch(() => {
+      void requestPreparedText(submission).catch(() => {
         // Native failure remains transport telemetry and never transcript text.
       });
     },
-    [conversationKey, nativeSessionPending, requestMainText],
+    [conversationKey, nativeSessionPending, prepareSubmission, requestPreparedText],
   );
 
   useEffect(() => {
@@ -610,10 +739,11 @@ export default function useAgentBuilderMainChat({
     if (!next || next.key !== conversationKey) return;
     queuedInputsRef.current.shift();
     setQueuedInputCount(queuedInputsRef.current.length);
-    void requestMainText(next.text).catch(() => {
-      // The queued turn used the same canonical route; failures remain transport telemetry.
+    void requestPreparedText(next).catch(() => {
+      // The queued turn retains its exact responder snapshot on the same shared-chat route.
+      // Failures remain transport telemetry.
     });
-  }, [conversationKey, nativeSessionPending, queuedInputCount, requestMainText, sessionHistoryLoading]);
+  }, [conversationKey, nativeSessionPending, queuedInputCount, requestPreparedText, sessionHistoryLoading]);
 
   const stopMainTurn = useCallback(async () => {
     if (!nativeSessionPending || !canvasProjectId) return;
@@ -653,6 +783,9 @@ export default function useAgentBuilderMainChat({
     handleNativeSend,
     messages,
     addressableAgents,
+    currentResponder,
+    currentResponderCardId: selectedResponderTarget?.cardId || null,
+    setCurrentResponderCardId,
     mainDriverSource,
     nativeSessionActive,
     nativeSessionConnecting,

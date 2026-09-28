@@ -27,7 +27,7 @@ export type InternalMcpPrincipal =
       parentRunId: string;
       callerCardId: string;
       callerRuntimeKind: 'hermes';
-      callerRuntimeMode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+      callerRuntimeMode: 'main' | 'delegate' | 'magentic_one';
       grantedTools: string[];
       presentedTools?: string[];
       // Signed native attribution only; these do not grant permissions.

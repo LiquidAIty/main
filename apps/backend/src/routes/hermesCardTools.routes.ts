@@ -28,7 +28,7 @@ type InternalCardToolRequest = {
   cardId: string;
   cardRevisionId: string;
   configurationFingerprint: string;
-  runtimeMode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  runtimeMode: 'main' | 'delegate' | 'magentic_one';
   toolName: string;
   arguments: Record<string, unknown>;
   conversationId: string;

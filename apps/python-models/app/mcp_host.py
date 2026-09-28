@@ -2270,6 +2270,31 @@ def _application_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="worldview.set_capability",
+            description=(
+                "Main only: set Main's ON/OFF choice for one exact capability in the "
+                "current authenticated Project WorldView. The server supplies Project "
+                "identity. An explicit user choice remains authoritative over this value."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "capabilityId": {
+                        "type": "string",
+                        "pattern": r"^[a-z0-9][a-z0-9._:-]{0,127}$",
+                    },
+                    "enabled": {"type": "boolean"},
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1000,
+                    },
+                },
+                "required": ["capabilityId", "enabled", "reason"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="agentgraph.inspect",
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
@@ -2441,6 +2466,7 @@ def _application_tools() -> list[Tool]:
 
 _APPLICATION_OPERATION_ACCESS = {
     "main.context": "read",
+    "worldview.set_capability": "write",
     "agentgraph.inspect": "read",
     "mag_one.describe_connected_agents": "read",
     "run_mag_one": "write",
@@ -2476,7 +2502,9 @@ def application_operation_definitions() -> list[OperationDefinition]:
             namespace="main",
             external_source_id="main_mcp",
             required_caller_runtime=(
-                ("hermes", "main") if tool.name == "run_mag_one" else None
+                ("hermes", "main")
+                if tool.name in {"run_mag_one", "worldview.set_capability"}
+                else None
             ),
         ))
     return definitions
@@ -2910,6 +2938,9 @@ def _bind_authenticated_catalog(tools: list[Tool]) -> list[Tool]:
 # silently forwarded (prevents smuggling prompts/models/patches through the host).
 _ALLOWED_KEYS: dict[str, set[str]] = {
     "main.context": set(),
+    "worldview.set_capability": {
+        "projectId", "capabilityId", "enabled", "reason",
+    },
     "agentgraph.inspect": {
         "projectId",
         "deckId",
@@ -3052,6 +3083,11 @@ async def _dispatch_tool(
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
     args = dict(arguments or {})
+    if name == "worldview.set_capability" and context is None:
+        return [TextContent(type="text", text=json.dumps({
+            "ok": False,
+            "error": "authenticated_main_context_required",
+        }))]
     if context is not None:
         try:
             supplied_identity = sorted(_SERVER_OWNED_ARGUMENTS & args.keys())
@@ -3203,6 +3239,26 @@ async def _dispatch_tool(
                 ),
             )
         ]
+    if name == "worldview.set_capability":
+        from app.python_models.project_worldview import (
+            ProjectWorldviewError,
+            set_main_project_worldview_capability,
+        )
+
+        try:
+            result = await asyncio.to_thread(
+                set_main_project_worldview_capability,
+                str(args.get("projectId") or ""),
+                str(args.get("capabilityId") or ""),
+                args.get("enabled"),
+                str(args.get("reason") or ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result))]
+        except ProjectWorldviewError as error:
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False,
+                "error": str(error),
+            }))]
     if name == "web_search":
         from app.python_models.web_search import web_search
 

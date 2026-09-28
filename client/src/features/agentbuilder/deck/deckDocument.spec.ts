@@ -8,6 +8,7 @@ describe('requested initial Card topology', () => {
   it('keeps unique profiles, system names, orange peers, and Magnetic worker availability', () => {
     const main = INITIAL_DECK.nodes.find(card => card.id === 'card_main_chat')!;
     expect(main.runtimeOptions?.tools).toContain('canvas.inspect');
+    expect(main.runtimeOptions?.tools).toContain('worldview.set_capability');
     expect(main.runtime).toMatchObject({ kind: 'hermes', mode: 'main' });
     expect(INITIAL_DECK.nodes.every(card => !('orchestrator' in (card.runtimeOptions || {}))))
       .toBe(true);

@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { runtimeUrl } from '../runtimeUrl.js';
 import {
   registerEntityContext,
   selectEntityContext,
@@ -52,7 +53,7 @@ const FOCUS_EVIDENCE_DEV = import.meta.env?.DEV === true;
 let _lastCamPoseSig = '';
 const _scratchFocusScreen = new Cesium.Cartesian2();
 
-const DEFAULT_API_URL = '/api/ais-live';
+const DEFAULT_API_URL = runtimeUrl('/api/ais-live');
 const DEFAULT_RENDER_ROWS = 12000;
 const DEFAULT_ACTIVE_LABELS = 900;
 const REFRESH_MS = 60000;
@@ -1654,7 +1655,7 @@ function startSelectedVesselTrail(record) {
 async function backfillVesselTrail(mmsi, token) {
   let samples = null;
   try {
-    const response = await fetch('/api/ais-live/track?mmsi=' + encodeURIComponent(mmsi), {
+    const response = await fetch(runtimeUrl('/api/ais-live/track?mmsi=' + encodeURIComponent(mmsi)), {
       signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) return;

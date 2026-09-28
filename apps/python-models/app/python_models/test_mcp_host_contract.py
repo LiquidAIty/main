@@ -266,8 +266,144 @@ def test_caller_enforcement_reads_explicit_idd_permissions():
     assert mcp_host._enforce_tool_caller("run_mag_one", denied) == (
         "tool_caller_not_authorized: run_mag_one requires hermes/main"
     )
+    assert mcp_host._enforce_tool_caller(
+        "worldview.set_capability", {
+            "_callerCardId": "card-main",
+            "_callerRuntimeKind": "hermes",
+            "_callerRuntimeMode": "main",
+        },
+    ) is None
+    assert mcp_host._enforce_tool_caller(
+        "worldview.set_capability", {
+            "_callerCardId": "card-hermes",
+            "_callerRuntimeKind": "hermes",
+            "_callerRuntimeMode": "delegate",
+        },
+    ) == (
+        "tool_caller_not_authorized: worldview.set_capability requires hermes/main"
+    )
     unrestricted: dict[str, str] = {}
     assert mcp_host._enforce_tool_caller("cbm.search_graph", unrestricted) is None
+
+
+def test_worldview_main_write_uses_only_server_owned_project_scope(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app.python_models import project_worldview
+
+    calls = []
+
+    def save(project_id, capability_id, enabled, reason):
+        calls.append((project_id, capability_id, enabled, reason))
+        return {
+            "schemaVersion": "project-worldview.v1",
+            "projectId": project_id,
+            "capability": {
+                "capabilityId": capability_id,
+                "enabled": enabled,
+                "controlledBy": "main",
+                "mainReason": reason,
+                "updatedAt": "2026-09-27T00:00:00+00:00",
+            },
+        }
+
+    monkeypatch.setattr(
+        project_worldview, "set_main_project_worldview_capability", save,
+    )
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-current",
+        "deckId": "deck-current",
+        "conversationId": "conversation-current",
+        "parentRunId": "run-current",
+        "mainCardId": "card-main",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "main",
+    })
+
+    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+        "capabilityId": "weather",
+        "enabled": False,
+        "reason": "The current Project does not need weather data.",
+    }))
+
+    assert calls == [(
+        "project-current",
+        "weather",
+        False,
+        "The current Project does not need weather data.",
+    )]
+    assert json.loads(result[0].text)["projectId"] == "project-current"
+
+    forged = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+        "projectId": "project-foreign",
+        "capabilityId": "weather",
+        "enabled": True,
+        "reason": "Attempted scope widening.",
+    }))
+    assert json.loads(forged[0].text) == {
+        "ok": False,
+        "error": "caller_identity_rejected: projectId",
+    }
+    assert len(calls) == 1
+
+
+def test_worldview_main_write_rejects_delegate_card_before_storage(monkeypatch):
+    import asyncio
+    import mcp_host
+    from app.python_models import project_worldview
+
+    calls = []
+    monkeypatch.setattr(
+        project_worldview,
+        "set_main_project_worldview_capability",
+        lambda *args: calls.append(args),
+    )
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: {
+        "projectId": "project-current",
+        "mainCardId": "card-delegate",
+        "callerRuntimeKind": "hermes",
+        "callerRuntimeMode": "delegate",
+    })
+
+    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+        "capabilityId": "weather",
+        "enabled": True,
+        "reason": "Relevant.",
+    }))
+
+    assert json.loads(result[0].text) == {
+        "ok": False,
+        "error": (
+            "tool_caller_not_authorized: worldview.set_capability "
+            "requires hermes/main"
+        ),
+    }
+    assert calls == []
+
+
+def test_worldview_main_write_requires_authenticated_context(monkeypatch):
+    import asyncio
+    import mcp_host
+
+    monkeypatch.setattr(mcp_host, "_authenticated_main_context", lambda: None)
+    monkeypatch.setattr(mcp_host, "_internal_mcp_principal", lambda: None)
+
+    result = asyncio.run(mcp_host._dispatch_tool("worldview.set_capability", {
+        "projectId": "caller-supplied-project",
+        "_callerCardId": "caller-supplied-main",
+        "_callerRuntimeKind": "hermes",
+        "_callerRuntimeMode": "main",
+        "capabilityId": "weather",
+        "enabled": True,
+        "reason": "Attempted unauthenticated write.",
+    }))
+
+    assert json.loads(result[0].text) == {
+        "ok": False,
+        "error": "authenticated_main_context_required",
+    }
 
 
 def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeypatch):
@@ -1851,6 +1987,23 @@ def test_application_catalog_preserves_saved_card_schemas_without_native_discove
             "targetCardId", "mission",
         ]
         assert by_name["run_mag_one"].inputSchema["properties"]["dataAnchors"]["minItems"] == 0
+        assert by_name["worldview.set_capability"].inputSchema == {
+            "type": "object",
+            "properties": {
+                "capabilityId": {
+                    "type": "string",
+                    "pattern": r"^[a-z0-9][a-z0-9._:-]{0,127}$",
+                },
+                "enabled": {"type": "boolean"},
+                "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000,
+                },
+            },
+            "required": ["capabilityId", "enabled", "reason"],
+            "additionalProperties": False,
+        }
         assert by_name["card.load_graph_references"].inputSchema["required"] == [
             "targetCardId", "authority", "nativeId", "reason", "order", "depth",
             "resultLimit", "required",

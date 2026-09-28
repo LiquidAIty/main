@@ -16,7 +16,7 @@ import { resolveSavedHermesProvider } from './providerSelection';
 const NATIVE_ESSENTIAL_SKILL_NAMES = new Set(['hermes-agent']);
 
 export type HermesProfileSelection = {
-  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban' | 'magentic_one'; profile: string };
+  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'magentic_one'; profile: string };
   provider: string;
   accessMode: 'chatgpt-account' | 'openai-api' | 'openrouter-api';
   modelKey: string;

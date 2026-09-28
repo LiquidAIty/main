@@ -25,10 +25,7 @@ export default function AgentCardNode({
 }) {
   const canReceiveConnection = true;
   const canStartConnection = true;
-  const mainBotSource = hasMainBotAuthority(data);
-  const isMainCard = data.kind === 'agent'
-    && data.runtime.kind === 'hermes'
-    && data.runtime.mode === 'main';
+  const orchestratorSource = hasMainBotAuthority(data);
   const busOnRight = data.busX === undefined || data.position.x < data.busX;
   const bluePosition = busOnRight ? Position.Right : Position.Left;
   const orangePosition = busOnRight ? Position.Left : Position.Right;
@@ -48,78 +45,31 @@ export default function AgentCardNode({
       ? GRAPH_THEME.accent.primaryBorder
       : GRAPH_THEME.card.glassBorder;
   const shellShadow = shellActive
-    ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24), 0 0 16px rgba(242,166,74,0.16)`
+    ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px rgba(55,173,170,0.6), 0 14px 30px rgba(55,173,170,0.24)`
     : selected
       ? `${GRAPH_THEME.card.glassInset}, 0 0 0 1px ${GRAPH_THEME.accent.primaryBorder}, 0 14px 28px ${GRAPH_THEME.accent.primaryGlow}`
       : `${GRAPH_THEME.card.glassInset}, ${GRAPH_THEME.surface.shadow}`;
 
   return (
     <div
-      className={isMainCard ? 'text-white' : 'rounded-xl border bg-zinc-900 text-white'}
-      data-card-shape={isMainCard ? 'hexagon' : 'rounded'}
+      className="rounded-xl border bg-zinc-900 text-white"
+      data-card-shape="rounded"
       style={
         graphGlassCardStyle({
           position: 'relative',
-          padding: isMainCard ? '13px 22px' : '8px 9px',
-          width: isMainCard ? 136 : 124,
-          minHeight: isMainCard ? 104 : 90,
-          borderWidth: isMainCard ? 0 : 1,
+          padding: '8px 9px',
+          width: 124,
+          minHeight: 90,
+          borderWidth: 1,
           borderColor: shellBorderColor,
-          borderRadius: isMainCard ? 0 : 14,
-          background: isMainCard ? 'transparent' : GRAPH_THEME.card.glassBackground,
-          boxShadow: isMainCard ? 'none' : shellShadow,
-          backdropFilter: isMainCard ? 'none' : 'blur(14px) saturate(120%)',
-          WebkitBackdropFilter: isMainCard ? 'none' : 'blur(14px) saturate(120%)',
+          borderRadius: 14,
+          background: GRAPH_THEME.card.glassBackground,
+          boxShadow: shellShadow,
+          backdropFilter: 'blur(14px) saturate(120%)',
+          WebkitBackdropFilter: 'blur(14px) saturate(120%)',
         })
       }
     >
-      {isMainCard ? (
-        <div
-          aria-hidden="true"
-          data-testid="main-card-hexagon"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            clipPath: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)',
-            background: shellBorderColor,
-            filter: shellActive
-              ? 'drop-shadow(0 14px 24px rgba(55,173,170,0.24))'
-              : 'drop-shadow(0 12px 20px rgba(0,0,0,0.28))',
-            pointerEvents: 'none',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              inset: 1,
-              clipPath: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)',
-              background: GRAPH_THEME.card.glassBackground,
-              boxShadow: shellShadow,
-              backdropFilter: 'blur(14px) saturate(120%)',
-              WebkitBackdropFilter: 'blur(14px) saturate(120%)',
-            }}
-          />
-        </div>
-      ) : null}
-      <Handle
-        id="card-control-target"
-        className="card-control-target"
-        type="target"
-        position={orangePosition}
-        aria-label={`${name} bot input`}
-        isConnectable={canReceiveConnection}
-        style={{
-          width: 10,
-          height: 30,
-          ...orangeSide,
-          border: 'none',
-          borderRadius: 5,
-          background: 'transparent',
-          boxShadow: 'none',
-          opacity: 0,
-          pointerEvents: 'all',
-        }}
-      />
       <Handle
         type="target"
         position={bluePosition}
@@ -158,7 +108,7 @@ export default function AgentCardNode({
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
-      {mainBotSource ? (
+      {orchestratorSource ? (
         <Handle
           id="card-control"
           type="source"

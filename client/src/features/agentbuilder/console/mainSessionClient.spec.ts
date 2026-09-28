@@ -4,6 +4,7 @@ import {
   isJevAttentionEvent,
   loadMainDriverStatus,
   loadSessionHistory,
+  projectCardChatTargets,
   selectedConversationId,
   SessionStreamError,
   subscribeSessionEvents,
@@ -33,6 +34,49 @@ describe('selectedConversationId', () => {
 
   it('uses main only when no selected conversation exists', () => {
     expect(selectedConversationId('?projectId=project-1')).toBe('main');
+  });
+});
+
+describe('projectCardChatTargets', () => {
+  it('derives exact direct targets from Project Cards without consulting Main topology', () => {
+    expect(projectCardChatTargets([
+      {
+        id: 'card_main_chat', _cardRevisionId: 'revision-main', title: 'Main',
+        runtime: { kind: 'hermes', mode: 'main', profile: 'liquidaity-main' },
+      },
+      {
+        id: 'card_worldsignals_agent', _cardRevisionId: 'revision-worldsignals', title: 'WorldSignals',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'worldsignals' },
+      },
+      {
+        id: 'card-spaced-title', _cardRevisionId: 'revision-spaced', title: 'Two Words',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'two-words' },
+      },
+      {
+        id: 'card-unsaved', title: 'Unsaved',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'unsaved' },
+      },
+      {
+        ...({ enabled: false } as { enabled: boolean }),
+        id: 'card-disabled', _cardRevisionId: 'revision-disabled', title: 'Disabled',
+        runtime: { kind: 'hermes', mode: 'delegate', profile: 'disabled' },
+      },
+    ])).toEqual([
+      {
+        cardId: 'card_main_chat', cardRevisionId: 'revision-main',
+        profile: 'liquidaity-main', title: 'Main',
+        address: 'Main', aliases: ['main'],
+      },
+      {
+        cardId: 'card_worldsignals_agent', cardRevisionId: 'revision-worldsignals',
+        profile: 'worldsignals', title: 'WorldSignals',
+        address: 'WorldSignals', aliases: ['worldsignals'],
+      },
+      {
+        cardId: 'card-spaced-title', cardRevisionId: 'revision-spaced',
+        profile: 'two-words', title: 'Two Words', aliases: [],
+      },
+    ]);
   });
 });
 
@@ -69,6 +113,45 @@ describe('loadMainDriverStatus', () => {
 });
 
 describe('streamSession', () => {
+  it('sends an exact optional target Card ID without rewriting the user text', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        projectId: 'project-1',
+        deckId: 'deck_builder',
+        conversationId: 'main',
+        message: 'Show me the current picture.',
+        targetCardId: 'card_worldsignals_agent',
+        dataAnchors: [],
+      });
+      return sseResponse([
+        'event: done\ndata: {"fullText":"WorldSignals reply"}\n\n',
+        'event: end\ndata: {}\n\n',
+      ]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(streamSession({
+      projectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      message: 'Show me the current picture.', targetCardId: 'card_worldsignals_agent',
+      onEvent: vi.fn(),
+    })).resolves.toEqual({ finalText: 'WorldSignals reply' });
+  });
+
+  it('omits targetCardId for Main', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).not.toHaveProperty('targetCardId');
+      return sseResponse([
+        'event: done\ndata: {"fullText":"Main reply"}\n\n',
+        'event: end\ndata: {}\n\n',
+      ]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamSession({
+      projectId: 'project-1', conversationId: 'main', message: 'Hello Main', onEvent: vi.fn(),
+    });
+  });
+
   it('forwards one complete Jev attention result with its distribution and identity', async () => {
     const attention = {
       schemaVersion: 'jev-attention.v1', status: 'success',

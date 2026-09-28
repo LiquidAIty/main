@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { getApplicationViewport, toApplicationPoint } from './app/viewport.js';
 import { retroShader } from './styles/retro.js';
 import { animeShader } from './styles/anime.js';
 import { noirShader } from './styles/noir.js';
@@ -2010,7 +2011,7 @@ class CockpitViewController {
       return;
     }
 
-    const desktopInset = Math.max(24, Math.min(58, window.innerWidth * 0.04));
+    const desktopInset = Math.max(24, Math.min(58, getApplicationViewport().width * 0.04));
     this.context.dataset.layoutMode = 'bottom-left';
     this.context.style.setProperty('--cockpit-context-left', `${desktopInset.toFixed(1)}px`);
     this.context.style.removeProperty('--cockpit-context-top');
@@ -2039,7 +2040,7 @@ class CockpitViewController {
       return;
     }
 
-    const desktopInset = Math.max(24, Math.min(58, window.innerWidth * 0.04));
+    const desktopInset = Math.max(24, Math.min(58, getApplicationViewport().width * 0.04));
     this.signalStream.dataset.layoutMode = 'bottom-right';
     this.signalStream.style.setProperty('--cockpit-signal-right', `${desktopInset.toFixed(1)}px`);
     this.signalStream.style.removeProperty('--cockpit-signal-top');
@@ -2070,7 +2071,7 @@ class CockpitViewController {
         recBottom: recBounds ? recBounds.bottom : 0,
         signalTop: signalBounds.top,
         stripHeight: utilityBounds.height,
-        viewportHeight: window.innerHeight,
+        viewportHeight: getApplicationViewport().height,
         collapsedHeight,
         recGap: COCKPIT_UTILITY_REC_GAP_PX,
         signalGap: COCKPIT_UTILITY_SIGNAL_GAP_PX,
@@ -2582,7 +2583,7 @@ export class StyleManager {
     // Parse before panel chrome initializes so every valid share URL starts
     // from deterministic markup defaults instead of recipient-local panel
     // preferences. Encoded panel fields are applied after all panels exist.
-    this._initialShareState = this._supervisedEmbed ? null : this.shareLinkManager.parseInitialHash();
+    this._initialShareState = this.shareLinkManager.parseInitialHash();
 
     this._detectionBtn = document.getElementById('detection-toggle');
     this._models3dBtn = document.getElementById('models3d-toggle');
@@ -6880,7 +6881,7 @@ export class StyleManager {
       return;
     }
 
-    const viewportHeight = Math.max(1, window.innerHeight);
+    const viewportHeight = Math.max(1, getApplicationViewport().height);
     const safeGap = Math.max(8, viewportHeight * 0.012);
     const stackRect = stack.getBoundingClientRect();
     const leftStackTop = this._leftPanelStack?.getBoundingClientRect().top;
@@ -7200,7 +7201,7 @@ export class StyleManager {
       return;
     }
 
-    const viewportHeight = Math.max(1, window.innerHeight);
+    const viewportHeight = Math.max(1, getApplicationViewport().height);
     const stackRect = stack.getBoundingClientRect();
     const baseTop = viewportHeight * 0.26;
     const baseBottomInset = viewportHeight * 0.04;
@@ -7445,7 +7446,8 @@ export class StyleManager {
   _pinPanelToRight(panelEl) {
     if (!panelEl) return;
     const rect = panelEl.getBoundingClientRect();
-    const rightOffset = Math.max(6, Math.round(window.innerWidth - rect.right));
+    const viewport = getApplicationViewport();
+    const rightOffset = Math.max(6, Math.round(viewport.right - rect.right));
     panelEl.style.right = `${rightOffset}px`;
     panelEl.style.left = 'auto';
   }
@@ -7488,8 +7490,9 @@ export class StyleManager {
    */
   _clampToViewport(left, top, panelEl) {
     const rect = panelEl.getBoundingClientRect();
-    const maxLeft = Math.max(6, window.innerWidth - rect.width - 6);
-    const maxTop = Math.max(6, window.innerHeight - rect.height - 6);
+    const viewport = getApplicationViewport();
+    const maxLeft = Math.max(6, viewport.width - rect.width - 6);
+    const maxTop = Math.max(6, viewport.height - rect.height - 6);
     return {
       left: Math.max(6, Math.min(maxLeft, left)),
       top: Math.max(6, Math.min(maxTop, top)),
@@ -7505,9 +7508,10 @@ export class StyleManager {
   _savePanelPosition(panelId, panelEl) {
     const rect = panelEl.getBoundingClientRect();
     try {
+      const viewport = getApplicationViewport();
       localStorage.setItem(this._panelStorageKey(panelId), JSON.stringify({
-        left: Math.round(rect.left),
-        top: Math.round(rect.top),
+        left: Math.round(rect.left - viewport.left),
+        top: Math.round(rect.top - viewport.top),
       }));
     } catch {
       // storage unavailable
@@ -7567,18 +7571,21 @@ export class StyleManager {
       const offsetX = startX - rect.left;
       const offsetY = startY - rect.top;
 
-      panelEl.style.left = `${rect.left}px`;
-      panelEl.style.top = `${rect.top}px`;
+      const initialViewport = getApplicationViewport();
+      panelEl.style.left = `${rect.left - initialViewport.left}px`;
+      panelEl.style.top = `${rect.top - initialViewport.top}px`;
       panelEl.style.right = 'auto';
       panelEl.style.bottom = 'auto';
       panelEl.classList.add('panel-dragging');
       this._promotePanelZ(panelEl);
 
       const onMove = (moveEvent) => {
-        const nextLeftRaw = moveEvent.clientX - offsetX;
-        const nextTopRaw = moveEvent.clientY - offsetY;
-        const maxLeft = Math.max(6, window.innerWidth - rect.width - 6);
-        const maxTop = Math.max(6, window.innerHeight - rect.height - 6);
+        const viewport = getApplicationViewport();
+        const point = toApplicationPoint(moveEvent.clientX, moveEvent.clientY);
+        const nextLeftRaw = point.x - offsetX;
+        const nextTopRaw = point.y - offsetY;
+        const maxLeft = Math.max(6, viewport.width - rect.width - 6);
+        const maxTop = Math.max(6, viewport.height - rect.height - 6);
         const nextLeft = Math.max(6, Math.min(maxLeft, nextLeftRaw));
         const nextTop = Math.max(6, Math.min(maxTop, nextTopRaw));
         panelEl.style.left = `${nextLeft}px`;
@@ -9567,7 +9574,8 @@ export class StyleManager {
     this._orbitIndicator = document.createElement('div');
     this._orbitIndicator.id = 'orbit-indicator';
     this._orbitIndicator.innerHTML = '<span class="orbit-icon">&#x21BB;</span> ORBIT';
-    document.body.appendChild(this._orbitIndicator);
+    const mountRoot = this.viewer?.container?.closest?.('[data-worldview-mounted="true"]') || document.body;
+    mountRoot.appendChild(this._orbitIndicator);
   }
 
   /**
@@ -10073,7 +10081,10 @@ export class StyleManager {
         return;
       }
       const rect = this._cctvPanel.getBoundingClientRect();
-      const availableHeight = Math.max(190, Math.floor(window.innerHeight - rect.top - 12));
+      const availableHeight = Math.max(
+        190,
+        Math.floor(getApplicationViewport().bottom - rect.top - 12),
+      );
       this._cctvPanel.style.maxHeight = `${availableHeight}px`;
       if (inner) {
         inner.style.maxHeight = `${availableHeight}px`;
@@ -10291,6 +10302,7 @@ export class StyleManager {
       document.removeEventListener('gev:radio-selected', this._radioSelectedHandler);
       this._radioSelectedHandler = null;
     }
+    this.hud?.destroy?.();
     destroyTrackedReadout();
     destroyDetection();
     destroyWorldOverlay();

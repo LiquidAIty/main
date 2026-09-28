@@ -182,7 +182,39 @@ def _worker_scope(workers: list[dict[str, Any]]) -> tuple[list[str], str]:
         identities.append(identity)
         title = str(worker.get("title") or card_id).strip()
         description = str(worker.get("description") or "").strip()
-        capability = f"; {description}" if description else ""
+        capabilities = worker.get("capabilities")
+        eligible_tools: list[str] = []
+        if capabilities is not None:
+            if (
+                not isinstance(capabilities, dict)
+                or set(capabilities) != {"savedToolIds", "projectEligibleToolIds"}
+                or not isinstance(capabilities.get("savedToolIds"), list)
+                or not isinstance(capabilities.get("projectEligibleToolIds"), list)
+                or len(capabilities["savedToolIds"]) > 128
+                or len(capabilities["projectEligibleToolIds"]) > 128
+            ):
+                raise MagenticExecutionError("magentic_worker_capabilities_invalid")
+            saved_tools = [
+                _required_text(value, "magentic_worker_saved_capability")
+                for value in capabilities["savedToolIds"]
+            ]
+            eligible_tools = [
+                _required_text(value, "magentic_worker_project_capability")
+                for value in capabilities["projectEligibleToolIds"]
+            ]
+            if (
+                len(saved_tools) != len(set(saved_tools))
+                or len(eligible_tools) != len(set(eligible_tools))
+                or not set(eligible_tools) <= set(saved_tools)
+            ):
+                raise MagenticExecutionError("magentic_worker_capabilities_invalid")
+        details = [description] if description else []
+        if capabilities is not None:
+            details.append(
+                "Project-eligible tools: "
+                + (", ".join(eligible_tools) if eligible_tools else "none")
+            )
+        capability = f"; {'; '.join(details)}" if details else ""
         lines.append(
             f"- {identity}: Card {card_id} revision {revision_id}; "
             f"{title}{capability}"

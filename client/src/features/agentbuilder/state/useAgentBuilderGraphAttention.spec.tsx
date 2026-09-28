@@ -125,6 +125,33 @@ function jevAttentionTurn(
 afterEach(() => vi.unstubAllGlobals());
 
 describe('attention-activated native graph projection', () => {
+  it('waits for a real Project before reading native graph authorities', async () => {
+    const fetchMock = vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
+      ? thinkgraphResponse()
+      : knowledgeResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender } = renderHook(({ projectId }) => useAgentBuilderGraphAttention({
+      projectId,
+      deckId: 'deck_builder',
+      conversationId: 'main',
+    }), { initialProps: { projectId: '' } });
+
+    await waitFor(() => expect(result.current.statuses).toMatchObject({
+      thinkgraph: 'ready',
+      knowgraph: 'ready',
+    }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    rerender({ projectId: 'project-1' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/thinkgraph/projection?projectId=project-1',
+    ));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/knowgraph/graph?projectId=project-1&limit=200',
+    ));
+  });
+
   it('creates no visual state before one real successful Jev distribution', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => url.startsWith('/api/thinkgraph/')
       ? thinkgraphResponse() : knowledgeResponse()));

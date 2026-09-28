@@ -1,4 +1,3 @@
-import { recoverActiveKanbanRunMonitors } from '../hermes/kanbanRunRecovery';
 import {
   agentTerminalManager,
   agentTerminalPresentationOptions,
@@ -23,7 +22,6 @@ type PythonOwnedStartupDependencies = {
   delay?: (milliseconds: number) => Promise<void>;
   logModels?: () => Promise<unknown>;
   startCardRuntimes?: () => Promise<unknown>;
-  recoverKanban?: typeof recoverActiveKanbanRunMonitors;
   isActive?: () => boolean;
   maxAttempts?: number;
   pollIntervalMs?: number;
@@ -228,13 +226,12 @@ function errorMessage(error: unknown): string {
  */
 export async function runPythonOwnedStartupTasks(
   dependencies: PythonOwnedStartupDependencies = {},
-): Promise<{ discovered: number; started: number }> {
+): Promise<void> {
   const request = dependencies.request ?? ((endpointPath, init) => (
     requestPythonRailsJson(endpointPath, init, { timeoutMs: STARTUP_PROBE_TIMEOUT_MS })
   ));
   const wait = dependencies.delay ?? delay;
   const logModels = dependencies.logModels ?? logModelConfiguration;
-  const recoverKanban = dependencies.recoverKanban ?? recoverActiveKanbanRunMonitors;
   const isActive = dependencies.isActive ?? (() => true);
   const maxAttempts = Math.max(1, Math.trunc(dependencies.maxAttempts ?? DEFAULT_MAX_ATTEMPTS));
   const pollIntervalMs = Math.max(0, Math.trunc(
@@ -267,10 +264,8 @@ export async function runPythonOwnedStartupTasks(
   // Readiness is the only retried operation. Once the supervised Python rails
   // process is ready, each stateful startup task runs at most once for this
   // backend listener; failures remain visible instead of replaying Deck reads
-  // or retained standalone Kanban recovery inside the readiness loop.
+  // inside the readiness loop.
   if (!isActive()) throw new Error('python_owned_startup_cancelled');
   await (dependencies.startCardRuntimes ?? requestConnectedAgentTerminalReconcile)();
   await logModels();
-  if (!isActive()) throw new Error('python_owned_startup_cancelled');
-  return recoverKanban();
 }

@@ -1,3 +1,5 @@
+import { runtimeUrl } from '../runtimeUrl.js';
+
 /**
  * Shared military-aircraft ICAO24 registry (2026-06-10 playtest fix).
  *
@@ -105,7 +107,7 @@ export function refreshMilitaryRegistryIfStale() {
   _polling = true;
   (async () => {
     try {
-      const response = await fetch('/api/adsblol/mil', { signal: AbortSignal.timeout(10000) });
+      const response = await fetch(runtimeUrl('/api/adsblol/mil'), { signal: AbortSignal.timeout(10000) });
       if (!response.ok) return;
       const data = await response.json();
       const aircraft = Array.isArray(data?.ac) ? data.ac : [];

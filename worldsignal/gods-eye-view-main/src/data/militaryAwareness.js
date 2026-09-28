@@ -250,7 +250,10 @@ function ensurePanel() {
     requestFocus(target.dataset.awarenessLayer, target.dataset.awarenessId, false, { origin: 'user' });
   };
   panel.addEventListener('click', state.panelClickListener);
-  if (!existing) document.body.appendChild(panel);
+  if (!existing) {
+    const mountRoot = state.viewer?.container?.closest?.('[data-worldview-mounted="true"]') || document.body;
+    mountRoot.appendChild(panel);
+  }
   state.panel = panel;
   return panel;
 }

@@ -99,6 +99,35 @@ def _team_execution_payload() -> dict[str, Any]:
     return payload
 
 
+def test_worker_scope_includes_only_compact_project_eligible_capability_metadata() -> None:
+    workers = _execution_payload()["workers"]
+    workers[0]["capabilities"] = {
+        "savedToolIds": ["weather.read", "ais.history"],
+        "projectEligibleToolIds": ["weather.read"],
+    }
+
+    identities, scope = magentic_execution._worker_scope(workers)
+
+    assert identities == ["worker-a", "worker-b"]
+    assert "Project-eligible tools: weather.read" in scope
+    assert "ais.history" not in scope
+    assert "Project-eligible tools" not in scope.splitlines()[1]
+
+
+def test_worker_scope_rejects_project_capabilities_not_owned_by_the_saved_card() -> None:
+    workers = _execution_payload()["workers"]
+    workers[0]["capabilities"] = {
+        "savedToolIds": ["weather.read"],
+        "projectEligibleToolIds": ["ais.history"],
+    }
+
+    with pytest.raises(
+        magentic_execution.MagenticExecutionError,
+        match="magentic_worker_capabilities_invalid",
+    ):
+        magentic_execution._worker_scope(workers)
+
+
 @pytest.fixture
 def native_task_store(tmp_path, monkeypatch):
     magentic_execution._runtime_paths()

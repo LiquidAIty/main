@@ -16,6 +16,17 @@ export function getContextStore() {
 }
 
 /**
+ * End one native application lifetime. Direct remount must never inherit the
+ * prior scene's selected entity or visible-entity records.
+ */
+export function resetContextStore() {
+  if (!hasContextHost()) return;
+  const store = window[STORE_KEY];
+  store?.entities?.clear?.();
+  delete window[STORE_KEY];
+}
+
+/**
  * Is there a window to hang the store on?
  *
  * The tracking-subject helpers run inside the aircraft layers' per-poll

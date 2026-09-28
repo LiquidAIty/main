@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import {
-  createAnonymousSession,
+  createLocalSession,
   getUserBySessionId,
   setSessionCookie,
 } from '../auth/sessionStore';
@@ -30,7 +30,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         next();
         return;
       }
-      // Session is invalid/expired - fall through to create new session for local dev
+      // Session is invalid/expired - fall through to bind the one local user.
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Internal server error' });
       return;
@@ -39,7 +39,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   if (isLocalDevLoopbackRequest(req)) {
     try {
-      const { user, session } = await createAnonymousSession();
+      const { user, session } = await createLocalSession();
       setSessionCookie(res, session.id, req);
       (req as any).userId = user.id;
       next();

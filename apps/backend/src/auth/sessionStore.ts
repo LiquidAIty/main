@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import type { User } from './userService';
 import { prisma } from '../services/database';
 
+const LOCAL_USER_EMAIL = 'local-user@localhost';
+
 export interface Session {
   id: string;
   userId: string;
@@ -52,13 +54,13 @@ export async function removeSession(sessionId: string): Promise<void> {
   });
 }
 
-// For backward compatibility with dev/bootstrap flow
-export async function createAnonymousSession(): Promise<{ user: User; session: Session }> {
-  // Create a temporary anonymous user
-  const { createUser } = await import('./userService.js');
-  const anonymousEmail = `anon-${Date.now()}-${Math.random().toString(36).substring(7)}@localhost`;
-  const user = await createUser(anonymousEmail, Math.random().toString(36), 'Anonymous User');
-  
+// Loopback development is one local product owner, not a new anonymous account
+// per browser, host spelling, or cleared cookie. Future multi-user identity is a
+// separate authenticated product boundary.
+export async function createLocalSession(): Promise<{ user: User; session: Session }> {
+  const { getUserByEmail } = await import('./userService.js');
+  const user = await getUserByEmail(LOCAL_USER_EMAIL);
+  if (!user) throw new Error('local_user_missing');
   const session = await createSession(user.id);
 
   return { user, session };

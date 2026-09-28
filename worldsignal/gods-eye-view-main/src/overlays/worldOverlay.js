@@ -1060,7 +1060,8 @@ function ensureOverlayDom() {
     _accessibilityRoot.className = 'world-overlay-accessibility';
     _accessibilityRoot.setAttribute('role', 'region');
     _accessibilityRoot.setAttribute('aria-label', 'Visible map targets');
-    document.body.appendChild(_accessibilityRoot);
+    const mountRoot = _viewer?.container?.closest?.('[data-worldview-mounted="true"]') || document.body;
+    mountRoot.appendChild(_accessibilityRoot);
   }
   _accessibilityList = document.getElementById(ACCESSIBILITY_LIST_ID);
   if (!_accessibilityList) {

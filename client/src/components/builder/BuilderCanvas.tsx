@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
   ConnectionMode,
+  Controls,
   ReactFlow,
   addEdge,
   applyEdgeChanges,
@@ -33,8 +34,6 @@ import {
 import { hasMainBotAuthority, normalizeDeckEdgeType } from '../../features/agentbuilder/deck/deckPrimitives';
 import {
   GRAPH_THEME,
-  graphControlButtonStyle,
-  graphControlStackStyle,
   graphPillButtonStyle,
 } from '../graph/graphVisualTokens';
 import { buildPresentationLandingViewport } from '../../features/agentbuilder/core/agentBuilderViewportMath';
@@ -254,13 +253,11 @@ type FlowEdgeData = {
 };
 
 const MAGNETIC_DIRECT_HANDLE = 'card-control';
-const CARD_CONTROL_TARGET_HANDLE = 'card-control-target';
 
-/** Classify a user-drawn connection into the two runtime edge types:
- * Main's orange handle to a saved Card → 'flow'; a Magnetic side-bus handle
- * → 'magentic_option'. Orange authority is outbound and never implies reverse
- * control. The browser only labels what the user drew; the server resolves
- * authority from the persisted type and Main's fixed runtime identity. */
+/** Classify a user-drawn connection from Card identities, not the side or
+ * decorative handle used: a Magnetic endpoint is blue worker membership;
+ * an orchestrator Card's outbound connection to another Card is orange flow.
+ * Orange authority is outbound and never implies reverse control. */
 function resolveCanvasConnectionEdgeType(
   document: DeckDocument,
   connection: Pick<Connection, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>,
@@ -279,30 +276,12 @@ function resolveCanvasConnectionEdgeType(
   if (sourceIsBus && targetIsBus) return null;
 
   if (sourceIsBus || targetIsBus) {
-    const magneticHandle = String(
-      (sourceIsBus ? connection.sourceHandle : connection.targetHandle) || '',
-    ).trim();
-    const cardHandle = String(
-      (sourceIsBus ? connection.targetHandle : connection.sourceHandle) || '',
-    ).trim();
-    if (magneticHandle === MAGNETIC_DIRECT_HANDLE) {
-      return targetIsBus
-        && hasMainBotAuthority(sourceNode)
-        && connection.sourceHandle === MAGNETIC_DIRECT_HANDLE
-        ? 'flow'
-        : null;
-    }
-    if (cardHandle === MAGNETIC_DIRECT_HANDLE || cardHandle === CARD_CONTROL_TARGET_HANDLE) {
-      return null;
-    }
     return 'magentic_option';
   }
 
   const targetOptions = targetNode.runtimeOptions as { enabled?: boolean } | null;
   const targetProfile = targetNode.runtime.kind === 'hermes' ? targetNode.runtime.profile.trim().toLowerCase() : '';
   if (!hasMainBotAuthority(sourceNode)
-    || connection.sourceHandle !== MAGNETIC_DIRECT_HANDLE
-    || connection.targetHandle !== CARD_CONTROL_TARGET_HANDLE
     || (targetNode as AgentCardInstance & { enabled?: boolean }).enabled === false
     || targetOptions?.enabled === false
     || targetNode.runtime.kind !== 'hermes'
@@ -402,8 +381,8 @@ export function toFlowEdges(
       sourceHandle: edgeType === 'flow' && sourceCanOrchestrate
         ? 'card-control' : edge.sourceHandle ?? undefined,
       target: edge.target,
-      targetHandle: edgeType === 'flow' && sourceCanOrchestrate
-        ? targetIsMagnetic ? MAGNETIC_DIRECT_HANDLE : CARD_CONTROL_TARGET_HANDLE
+      targetHandle: edgeType === 'flow' && sourceCanOrchestrate && targetIsMagnetic
+        ? MAGNETIC_DIRECT_HANDLE
         : edge.targetHandle ?? undefined,
       data: {
         edgeType,
@@ -506,10 +485,7 @@ export function mergeFlowEdgesIntoDeck(nextEdges: Edge[], prevEdges: DeckEdge[])
           && normalizeDeckEdgeType(edge.edgeType) === 'flow'
           ? edge.sourceHandle ?? null : nextEdge.sourceHandle ?? null,
         target: nextEdge.target,
-        targetHandle: nextEdge.target === edge.target
-          && nextEdge.targetHandle === CARD_CONTROL_TARGET_HANDLE
-          && normalizeDeckEdgeType(edge.edgeType) === 'flow'
-          ? edge.targetHandle ?? null : nextEdge.targetHandle ?? null,
+        targetHandle: nextEdge.targetHandle ?? null,
         edgeType:
           ((nextEdge.data as FlowEdgeData | undefined)?.edgeType as DeckEdgeType | null | undefined) ??
           edge.edgeType ??
@@ -566,7 +542,15 @@ export function isPlainConnectionAllowedForDocument(
       && target.runtime.mode === 'magentic_one';
     if (sourceIsMagnetic === targetIsMagnetic) return false;
     const worker = sourceIsMagnetic ? target : source;
-    if (worker.runtime.kind === 'hermes' && worker.runtime.mode === 'main') return false;
+    const workerRecord = worker as AgentCardInstance & { enabled?: boolean };
+    const workerOptions = worker.runtimeOptions as { enabled?: boolean } | null;
+    if (worker.kind !== 'agent'
+      || worker.runtime.kind !== 'hermes'
+      || worker.runtime.mode === 'magentic_one'
+      || !worker.runtime.profile.trim()
+      || workerRecord.enabled === false
+      || workerOptions?.enabled === false
+      || hasMainBotAuthority(worker)) return false;
     return {
       workerId: sourceIsMagnetic ? targetId : sourceId,
       masterId: sourceIsMagnetic ? sourceId : targetId,
@@ -663,7 +647,6 @@ export default function BuilderCanvas({
   const activeCardIdSet = useMemo(() => new Set(activeCardIds), [activeCardIds]);
   const activeEdgeIdSet = useMemo(() => new Set(activeEdgeIds), [activeEdgeIds]);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
-  const [layoutLocked, setLayoutLocked] = useState(false);
   const [paperViewport, setPaperViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const initialViewportAppliedRef = useRef(false);
@@ -1017,12 +1000,6 @@ export default function BuilderCanvas({
             0 0 0 2px ${GRAPH_THEME.accent.primarySoft},
             0 0 0 5px ${GRAPH_THEME.accent.solarSoft};
         }
-        .builder-flow .react-flow__handle.card-control-target.connectionindicator {
-          opacity: 0.34 !important;
-          border: 1px solid ${GRAPH_THEME.accent.solar} !important;
-          background: ${GRAPH_THEME.accent.solarSoft} !important;
-          box-shadow: 0 0 0 3px ${GRAPH_THEME.accent.solarSoft} !important;
-        }
         .builder-flow .react-flow__connection-path {
           stroke: ${GRAPH_THEME.accent.primary};
           stroke-width: 2.35;
@@ -1101,88 +1078,6 @@ export default function BuilderCanvas({
           </button>
         </div>
       ) : null}
-      <div style={{ ...graphControlStackStyle, left: 'auto', right: 16 }}>
-        <button
-          type="button"
-          aria-label="Zoom in"
-          onClick={() =>
-            reactFlowInstance?.zoomIn({
-              duration: GRAPH_THEME.nav.zoomDurationMs,
-            })
-          }
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
-        >
-          +
-        </button>
-        <button
-          type="button"
-          aria-label="Zoom out"
-          onClick={() =>
-            reactFlowInstance?.zoomOut({
-              duration: GRAPH_THEME.nav.zoomDurationMs,
-            })
-          }
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
-        >
-          -
-        </button>
-        <button
-          type="button"
-          aria-label="Fit view"
-          onClick={() => {
-            if (!reactFlowInstance) return;
-            fitBuilderCanvasView(reactFlowInstance);
-          }}
-          style={graphControlButtonStyle({
-            borderBottom: `1px solid ${GRAPH_THEME.controls.border}`,
-          })}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path
-              d="M2.25 5.25V2.25h3M8.75 2.25h3v3M11.75 8.75v3h-3M5.25 11.75h-3v-3"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          type="button"
-          aria-label={layoutLocked ? 'Unlock graph layout' : 'Lock graph layout'}
-          onClick={() => setLayoutLocked((current) => !current)}
-          style={graphControlButtonStyle({
-            color: layoutLocked
-              ? GRAPH_THEME.accent.primary
-              : GRAPH_THEME.controls.text,
-          })}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-            <path
-              d="M4.5 6V4.75a2.5 2.5 0 1 1 5 0V6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-              strokeLinecap="round"
-            />
-            <rect
-              x="3"
-              y="6"
-              width="8"
-              height="6"
-              rx="1.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.25"
-            />
-          </svg>
-        </button>
-      </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -1197,7 +1092,6 @@ export default function BuilderCanvas({
         selectionOnDrag={false}
         connectOnClick={false}
         deleteKeyCode={null}
-        nodesDraggable={!layoutLocked}
         isValidConnection={(connection) =>
           isPlainConnectionAllowed(
             {
@@ -1246,6 +1140,7 @@ export default function BuilderCanvas({
         }}
       >
         <GraphPaperBackground viewport={paperViewport} />
+        <Controls position="bottom-right" showInteractive={false} />
       </ReactFlow>
     </div>
   );

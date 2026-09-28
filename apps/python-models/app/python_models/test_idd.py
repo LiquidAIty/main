@@ -466,15 +466,21 @@ def test_live_cbm_permissions_come_from_native_discovery(live_cbm_operations) ->
     tool_names = {
         tool["id"] for tool in dictionary["operations"]
     }
-    assert {"agentgraph.inspect", "run_mag_one"}.issubset(tool_names)
+    assert {
+        "agentgraph.inspect", "run_mag_one", "worldview.set_capability",
+    }.issubset(tool_names)
     assert {"cbm.search_graph", "cbm.current_write"}.issubset(tool_names)
     assert required_tool_caller_runtime("run_mag_one") == {"kind": "hermes", "mode": "main"}
+    assert required_tool_caller_runtime("worldview.set_capability") == {
+        "kind": "hermes", "mode": "main",
+    }
     assert required_tool_caller_runtime("cbm.search_graph") is None
     from app.python_models.tool_registry import readable_tool_ids, writable_tool_ids
     assert "cbm.search_graph" in readable_tool_ids()
     assert "cbm.current_write" in writable_tool_ids()
     assert "write_mag_one_instructions" in writable_tool_ids()
     assert "card.load_graph_references" in writable_tool_ids()
+    assert "worldview.set_capability" in writable_tool_ids()
     assert "write_mag_one_instructions" not in readable_tool_ids()
 
 

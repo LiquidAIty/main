@@ -36,14 +36,13 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
-  it('shows an orange source only on Main while every Card keeps an orange input', () => {
+  it('shows an orange source only on saved orchestrators and keeps ordinary Card inputs on the normal port', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
     const { rerender } = render(<AgentCardNode data={card} />);
     expect(screen.queryByLabelText('Test Agent bot output')).toBeNull();
     expect(screen.getByLabelText('Test Agent Magnetic worker output')).not.toBeNull();
-    const directInput = screen.getByLabelText('Test Agent bot input');
-    expect(directInput.getAttribute('data-handle-id')).toBe('card-control-target');
-    expect(directInput.style.opacity).toBe('0');
+    expect(screen.queryByLabelText('Test Agent bot input')).toBeNull();
+    expect(screen.getByLabelText('Test Agent input').getAttribute('data-handle-type')).toBe('target');
     rerender(<AgentCardNode data={{
       ...card,
       title: 'Main',
@@ -54,6 +53,11 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(directHandle.getAttribute('data-handle-type')).toBe('source');
     rerender(<AgentCardNode data={{
       ...card,
+      runtimeOptions: { orchestrator: true },
+    }} />);
+    expect(screen.getByLabelText('Test Agent bot output').getAttribute('data-handle-id')).toBe('card-control');
+    rerender(<AgentCardNode data={{
+      ...card,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
       runtimeOptions: { enabled: false } as any,
@@ -61,7 +65,7 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(screen.queryByLabelText('Main bot output')).toBeNull();
   });
 
-  it('renders Main as a hexagon while ordinary Cards keep the compact rounded geometry', () => {
+  it('keeps Main and ordinary agents on the same compact rounded Card geometry', () => {
     const { container, rerender } = render(
       <AgentCardNode
         data={{ ...baseCard, runtime: { kind: 'hermes', mode: 'delegate', profile: 'delegate' } }}
@@ -78,10 +82,10 @@ describe('AgentCardNode shared Card geometry', () => {
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
     }} />);
-    expect(card.style.width).toBe('136px');
-    expect(card.style.minHeight).toBe('104px');
-    expect(card.dataset.cardShape).toBe('hexagon');
-    expect(screen.getByTestId('main-card-hexagon').style.clipPath).toContain('polygon');
+    expect(card.style.width).toBe('124px');
+    expect(card.style.minHeight).toBe('90px');
+    expect(card.dataset.cardShape).toBe('rounded');
+    expect(screen.queryByTestId('main-card-hexagon')).toBeNull();
     expect(screen.getByLabelText('Main bot output')).not.toBeNull();
   });
 
@@ -106,7 +110,7 @@ describe('AgentCardNode shared Card geometry', () => {
       <AgentCardNode
         data={{
           ...baseCard,
-          runtime: { kind: 'hermes', mode: 'kanban', profile: 'liquidaity-hermes-steward' },
+          runtime: { kind: 'hermes', mode: 'delegate', profile: 'test-agent' },
           activeAgentCount: 3,
           isRuntimeActive: true,
         }}
@@ -138,6 +142,7 @@ describe('AgentCardNode shared Card geometry', () => {
     const activeShadow = card.style.boxShadow;
     expect(screen.getByTestId('active-agent-count').textContent).toBe('1');
     expect(activeShadow).toContain('rgba(55,173,170');
+    expect(activeShadow).not.toContain('242, 166, 74');
 
     rerender(
       <AgentCardNode

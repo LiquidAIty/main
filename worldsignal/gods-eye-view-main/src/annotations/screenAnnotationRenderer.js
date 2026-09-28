@@ -55,9 +55,10 @@ export function createScreenAnnotationRenderer(viewer, {
   overlayPaintRect = getOverlayPaintRect,
   activeTrackedReadoutId = getActiveTrackedReadoutId,
 } = {}) {
-  injectStyles();
+  const mountRoot = viewer.container?.closest?.('[data-worldview-mounted="true"]') || document.body;
+  const disposeStyles = injectStyles(mountRoot);
   const { layer, svg, defs } = buildOverlay();
-  document.body.appendChild(layer);
+  mountRoot.appendChild(layer);
 
   const scene = viewer.scene;
   const occluder = new Cesium.EllipsoidalOccluder(Cesium.Ellipsoid.WGS84, scene.camera.positionWC);
@@ -515,6 +516,7 @@ export function createScreenAnnotationRenderer(viewer, {
   function destroy() {
     try { scene.postRender.removeEventListener(onPostRender); } catch { /* torn down */ }
     try { layer.remove(); } catch { /* gone */ }
+    disposeStyles();
     records.clear();
     heightCache.clear();
   }
@@ -640,12 +642,17 @@ function svgEl(tag, attrs) {
   return el;
 }
 
-function injectStyles() {
-  if (document.getElementById('gev-screen-whiteboard-styles')) return;
+function injectStyles(mountRoot) {
+  const existing = mountRoot.querySelector?.(':scope > #gev-screen-whiteboard-styles')
+    || (mountRoot === document.body
+      ? document.getElementById?.('gev-screen-whiteboard-styles')
+      : null);
+  if (existing) return () => {};
   const style = document.createElement('style');
   style.id = 'gev-screen-whiteboard-styles';
   style.textContent = `
   .gev-screen-whiteboard { position: fixed; inset: 0; pointer-events: none; z-index: 90; }
+  [data-worldview-mounted="true"] > .gev-screen-whiteboard { position: absolute; }
   .gev-screen-whiteboard-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
   /* No CSS opacity transition here on purpose: group opacity is driven per-frame in JS
      (the 260ms fade-in via computeAlpha, and the tracked-entity z-order ease). A CSS
@@ -670,5 +677,8 @@ function injectStyles() {
   @keyframes gev-ring-pulse { 0%,100% { opacity: 0.9; stroke-width: 2; } 50% { opacity: 0.35; stroke-width: 3.5; } }
   @keyframes gev-pop { from { opacity: 0; } to { opacity: 1; } }
   `;
-  document.head.appendChild(style);
+  if (typeof mountRoot.prepend === 'function') mountRoot.prepend(style);
+  else if (typeof mountRoot.insertBefore === 'function') mountRoot.insertBefore(style, mountRoot.firstChild || null);
+  else mountRoot.appendChild(style);
+  return () => style.remove();
 }

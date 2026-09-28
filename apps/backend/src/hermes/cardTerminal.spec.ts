@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCardTerminal, projectKanbanTerminal, terminalText } from './cardTerminal';
+import { buildCardTerminal, terminalText } from './cardTerminal';
 
 const run = {
   projectId: 'p',
@@ -55,37 +55,6 @@ describe('persisted Run to Card terminal presentation', () => {
     expect(buildCardTerminal({ ...run, runtimeMode: 'magentic_one' })).toMatchObject({
       observation: 'unavailable', unavailableReason: 'magentic_execution_headless',
     });
-  });
-
-  it('uses persistent native task event and attempt IDs across refresh', () => {
-    const native = {
-      task: { id: 't_native', title: 'Native task', status: 'running' },
-      parents: [],
-      children: [],
-      events: [{
-        id: 7, kind: 'claimed', run_id: 42, created_at: 1780000002,
-        payload: { status: 'running' },
-      }],
-      runs: [
-        { id: 41, status: 'failed', started_at: 1780000000, ended_at: 1780000001 },
-        { id: 42, status: 'running', started_at: 1780000002, ended_at: null },
-      ],
-    };
-    const value = projectKanbanTerminal(
-      { ...run, runtimeMode: 'kanban', terminal: {} },
-      [native],
-    );
-    expect(value.activeAgentCount).toBe(1);
-    expect(value.nativeTasks).toEqual([native.task]);
-    expect(value.events.find((event) => event.kind === 'task')).toMatchObject({
-      taskId: 't_native', agentId: '42', runId: 'root', id: 'root:kanban:t_native:event:7',
-    });
-    expect(value.events.filter((event) => event.kind === 'child_started').map((event) => event.agentId))
-      .toEqual(['41', '42']);
-    expect(projectKanbanTerminal(
-      { ...run, runtimeMode: 'kanban', terminal: {} },
-      [native],
-    ).events).toEqual(value.events);
   });
 
   it('redacts credential-shaped fields without changing the source value', () => {

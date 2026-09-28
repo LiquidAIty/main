@@ -19,6 +19,7 @@ import { CITY_POIS } from './locations.js';
 import { composeLocalityTag } from './hudLocality.js';
 import { ellipsoidalToMslDisplayM, ensureGeoidReady, geoidHeight } from './data/geoid.js';
 import { getBasemapLabelContext } from './voice/gevActions.js';
+import { runtimeUrl } from './runtimeUrl.js';
 
 /** Color palettes keyed by shader mode; applied as CSS custom properties. */
 const HUD_COLORS = {
@@ -34,7 +35,7 @@ const MILITARY_STYLES = new Set(['retro', 'surveillance', 'thermal']);
 /** Allowed HUD layout variants. */
 const HUD_VARIANTS = new Set(['tactical', 'operator', 'minimal']);
 const HUD_SUMMARY_INTERVAL_MS = 15000;
-const HUD_SUMMARY_URL = '/api/openai/hud-summary';
+const HUD_SUMMARY_URL = runtimeUrl('/api/openai/hud-summary');
 
 /**
  * Cell size (degrees) for the ALT readout's geoid-undulation cache. N changes

@@ -20,6 +20,7 @@ import { isPickedWorldPosition } from '../data/scenePick.js';
 import { resolveRegionRingForQuery } from '../annotations/annotationResolver.js';
 import { normalizeRadioCountryInput } from '../data/radioCountry.js';
 import { TR3B_CLASS } from '../data/tr3bRegistry.js';
+import { runtimeUrl } from '../runtimeUrl.js';
 
 const ALLOWED_STYLES = new Set(['normal', 'retro', 'surveillance', 'thermal', 'anime', 'noir', 'snow']);
 const PANEL_ALIASES = new Map([
@@ -918,7 +919,7 @@ export function createGevActionRunner({ viewer, styleManager, dataManager, scene
       return clearAnnotations(annotations);
     }
 
-    throw new Error(`Unknown GEV tool: ${name}`);
+    throw new Error(`Unknown WorldView tool: ${name}`);
   };
 }
 
@@ -3051,7 +3052,7 @@ async function fetchNearbyPlaces(latitude, longitude, cameraHeightM) {
         lon: String(longitude),
         radiusM: String(radiusM),
       });
-      const response = await fetchWithTimeout(`/api/google/nearby-places?${params}`, {}, 5000);
+      const response = await fetchWithTimeout(runtimeUrl(`/api/google/nearby-places?${params}`), {}, 5000);
       const data = await response.json().catch(() => null);
       const places = response.ok && Array.isArray(data?.places)
       ? data.places.filter((place) => place?.name).slice(0, 12)

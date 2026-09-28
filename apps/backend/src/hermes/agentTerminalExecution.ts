@@ -161,7 +161,7 @@ function resolveStagedRun(
     || !input
     || typeof input !== 'object'
     || runtime?.kind !== 'hermes'
-    || !['main', 'delegate', 'kanban'].includes(runtime?.mode)
+    || !['main', 'delegate'].includes(runtime?.mode)
     || !String(runtime?.profile || '').trim()
     || !message.trim()
     || message.length > 512_000

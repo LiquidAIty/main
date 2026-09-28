@@ -666,7 +666,7 @@ test('Cockpit Display portals shared HUD, Detection, Parameters, and 3D controls
 
 test('mobile Cockpit prioritizes flight instruments and collision-safe controls', () => {
   const mobileCockpit = css.match(
-    /@media \(max-width: 760px\) \{([\s\S]*?)\n\}\n\n@media \(prefers-reduced-motion/,
+    /@media \(max-width: 760px\) \{([\s\S]*?)\r?\n\}\r?\n\r?\n@media \(prefers-reduced-motion/,
   );
   assert.ok(mobileCockpit, 'mobile Cockpit rules are missing');
   assert.match(mobileCockpit[1], /body\.cockpit-mode #left-panel-stack,[\s\S]*?display:\s*none\s*!important;/);

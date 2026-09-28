@@ -43,7 +43,7 @@ export type NativeHermesCardView = {
   };
   binding: {
     profile: string;
-    mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+    mode: 'main' | 'delegate' | 'magentic_one';
   };
 };
 

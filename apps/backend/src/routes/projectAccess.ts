@@ -1,5 +1,5 @@
 import {
-  createAnonymousSession,
+  createLocalSession,
   getUserBySessionId,
   setSessionCookie,
 } from '../auth/sessionStore';
@@ -13,7 +13,7 @@ export async function resolveProjectOwnerUserId(req: any, res: any): Promise<str
     if (user?.id) return user.id;
   }
   if (!canIssueBootstrapSession(req)) return null;
-  const { user, session } = await createAnonymousSession();
+  const { user, session } = await createLocalSession();
   setSessionCookie(res, session.id, req);
   return user.id;
 }

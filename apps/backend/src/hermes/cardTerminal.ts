@@ -1,5 +1,4 @@
 import type { RuntimeIdentity, RuntimeEvent, RuntimeObservation } from '../contracts/runtimeEvents';
-import type { HermesKanbanTaskSnapshot } from '../routes/hermesKanban.routes';
 
 export type CardTerminalEvent = RuntimeEvent;
 
@@ -74,47 +73,5 @@ export function buildCardTerminal(run: any): RuntimeObservation {
     errorCode: run.errorCode || null,
     errorSummary: terminalText(run.errorSummary || ''),
     configuration: run.terminal?.configuration,
-  };
-}
-
-/** Native task events and attempt records, never inferred worker roles or prose. */
-export function projectKanbanTerminal(run: any, snapshots: HermesKanbanTaskSnapshot[]): RuntimeObservation {
-  const terminal = buildCardTerminal(run);
-  const identity = terminalIdentity(run);
-  const events: RuntimeEvent[] = [...terminal.events];
-  const timestamp = (value: unknown): string | null => typeof value === 'number' && Number.isFinite(value)
-    ? new Date(value * 1000).toISOString() : null;
-  let running = 0;
-  for (const snapshot of snapshots) {
-    const taskId = String(snapshot.task.id);
-    for (const event of snapshot.events) {
-      // Native task_events.id is persistent across replay, unlike a UI array index.
-      if (typeof event.id !== 'number' && typeof event.id !== 'string') continue;
-      const agentId = event.run_id == null ? null : String(event.run_id);
-      events.push({ ...identity, taskId, agentId, nativeChildId: agentId,
-        id: `${identity.runId}:kanban:${taskId}:event:${event.id}`, kind: 'task',
-        sequence: Number(event.id), timestamp: timestamp(event.created_at),
-        status: String(event.kind || ''), detail: terminalText(event.payload) });
-    }
-    for (const attempt of snapshot.runs) {
-      if (attempt.id == null) continue;
-      const agentId = String(attempt.id);
-      if (attempt.ended_at == null && attempt.status === 'running') running++;
-      const base = { ...identity, taskId, agentId, nativeChildId: agentId };
-      const started = timestamp(attempt.started_at);
-      const ended = timestamp(attempt.ended_at);
-      if (started) events.push({ ...base, id: `${identity.runId}:kanban:${taskId}:attempt:${agentId}:start`,
-        kind: 'child_started', sequence: 0, timestamp: started, status: 'running',
-        detail: terminalText({ profile: attempt.profile, step: attempt.step_key }) });
-      if (ended) events.push({ ...base, id: `${identity.runId}:kanban:${taskId}:attempt:${agentId}:end`,
-        kind: 'child_finished', sequence: 0, timestamp: ended, status: String(attempt.status),
-        detail: terminalText({ outcome: attempt.outcome, error: attempt.error, summary: attempt.summary }) });
-    }
-  }
-  events.sort((a, b) => String(a.timestamp || '').localeCompare(String(b.timestamp || '')) || a.sequence - b.sequence || a.id.localeCompare(b.id));
-  return { ...terminal, events, activeAgentCount: run.state === 'running' ? running : 0,
-    observation: ['running', 'pending'].includes(run.state) ? 'live' : 'finished', unavailableReason: null,
-    // Exact native structured task fields. Credential redaction does not rewrite task state.
-    nativeTasks: snapshots.map(({ task }) => JSON.parse(terminalText(task))),
   };
 }

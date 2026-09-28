@@ -31,7 +31,7 @@ router.use('/agent-terminals', agentTerminalRoutes);
 // Mount children exactly once. Preserve existing concrete paths.
 router.use('/health', health);
 // The official Python MCP host calls these process-secret endpoints. Mount the
-// bridge before browser auth so it cannot be converted into an anonymous user.
+// bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/main', internalMainMcpRoutes);
 router.use('/hermes-card-tools', hermesCardToolsRoutes);
 router.use('/config', authMiddleware, config);

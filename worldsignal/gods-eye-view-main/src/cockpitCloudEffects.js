@@ -1,5 +1,7 @@
 import * as Cesium from 'cesium';
 import { deriveWeatherEffectProfile, weatherAltitudeFactors } from './weatherEffectsMath.js';
+import { runtimeUrl } from './runtimeUrl.js';
+import { getApplicationViewport } from './app/viewport.js';
 
 const WEATHER_REFRESH_MS = 5 * 60_000;
 const CLOUD_FRAME_MS = 1000 / 12;
@@ -170,7 +172,8 @@ export class CockpitCloudEffectsController {
     this.canvas = document.createElement('canvas');
     this.canvas.id = 'cockpit-cloud-effects';
     this.canvas.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(this.canvas);
+    const mountRoot = viewer.container?.closest?.('[data-worldview-mounted="true"]') || document.body;
+    mountRoot.appendChild(this.canvas);
 
     this.gl = null;
     this.program = null;
@@ -290,7 +293,8 @@ export class CockpitCloudEffectsController {
 
   resize() {
     if (!this.gl) return;
-    const size = cockpitCloudRenderSize(window.innerWidth, window.innerHeight);
+    const viewport = getApplicationViewport();
+    const size = cockpitCloudRenderSize(viewport.width, viewport.height);
     if (this.canvas.width === size.width && this.canvas.height === size.height) return;
     this.canvas.width = size.width;
     this.canvas.height = size.height;
@@ -372,7 +376,7 @@ export class CockpitCloudEffectsController {
       latitude: point.latitude.toFixed(5),
       longitude: point.longitude.toFixed(5),
     });
-    this.pending = fetch(`/api/weather-effects?${params}`, { signal: this.abort.signal })
+    this.pending = fetch(runtimeUrl(`/api/weather-effects?${params}`), { signal: this.abort.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Cloud weather unavailable (${response.status})`);
         const payload = await response.json();

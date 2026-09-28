@@ -31,7 +31,10 @@ import type {
 } from '../components/knowledge/NativeAuthorityGraphSurface';
 import AgentTerminalPanel from '../features/agentbuilder/console/AgentTerminalPanel';
 import HarnessChatPanel from '../features/agentbuilder/console/HarnessChatPanel';
-import { selectedConversationId } from '../features/agentbuilder/console/mainSessionClient';
+import {
+  projectCardChatTargets,
+  selectedConversationId,
+} from '../features/agentbuilder/console/mainSessionClient';
 import useAgentBuilderMainChat from '../features/agentbuilder/console/useAgentBuilderMainChat';
 import type {
   LoadedCardGraphReference,
@@ -370,6 +373,10 @@ export default function AgentBuilder(): React.ReactElement {
     ))?.id || null,
     [deck.nodes],
   );
+  const directChatTargets = useMemo(
+    () => projectCardChatTargets(deck.nodes),
+    [deck.nodes],
+  );
   const builderCard = useMemo(
     () => deck.nodes.find((card) => (
       card.runtime.kind === 'hermes'
@@ -415,7 +422,17 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const worldViewCard = useMemo(
-    () => deck.nodes.find((node) => isWorldViewCard(node)) || null,
+    () => {
+      const owners = deck.nodes.filter((node) => isWorldViewCard(node));
+      return owners.length === 1
+        && directChatTargets.some((target) => target.cardId === owners[0].id)
+        ? owners[0]
+        : null;
+    },
+    [deck.nodes, directChatTargets],
+  );
+  const tradingCard = useMemo(
+    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
     [deck.nodes],
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
@@ -582,7 +599,7 @@ export default function AgentBuilder(): React.ReactElement {
   const {
     handleNativeSend,
     messages,
-    addressableAgents,
+    setCurrentResponderCardId,
     nativeSessionActive,
     nativeSessionConnecting,
     queuedInputCount,
@@ -594,6 +611,7 @@ export default function AgentBuilder(): React.ReactElement {
     canvasProjectId,
     deckId: BUILDER_DECK_ID,
     conversationId,
+    directChatTargets,
     dataAnchors: mainCardId
       ? (transientCardGraphContext[mainCardId] || []).map((item) => item.reference)
       : [],
@@ -601,6 +619,40 @@ export default function AgentBuilder(): React.ReactElement {
     onNativeTurnEvent: graphAttention.observeNativeTurnEvent,
     onTurnFinished: graphAttention.finishAttentionScope,
   });
+  useEffect(() => {
+    const companion = workspaceView === 'worldsignal'
+      ? { cardId: worldSignalsCardId, label: 'WorldSignals' }
+      : workspaceView === 'worldview'
+        ? { cardId: worldViewCard?.id || null, label: 'WorldView' }
+        : workspaceView === 'trading'
+          ? { cardId: tradingCard?.id || null, label: 'Trading' }
+          : null;
+    if (!companion) {
+      setCurrentResponderCardId(null);
+      return;
+    }
+    if (!canonicalDeckReady) return;
+    if (companion.cardId && setCurrentResponderCardId(companion.cardId)) return;
+    setDeckStatusMessage(`${companion.label} saved Card is unavailable for direct chat.`);
+    setWorkspaceView(canvasProjectId ? 'canvas' : 'chat');
+    const params = new URLSearchParams(window.location.search);
+    params.delete('workspace');
+    const nextQuery = params.toString();
+    window.history.replaceState(
+      {},
+      '',
+      nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname,
+    );
+  }, [
+    canonicalDeckReady,
+    canvasProjectId,
+    setCurrentResponderCardId,
+    setDeckStatusMessage,
+    tradingCard?.id,
+    workspaceView,
+    worldSignalsCardId,
+    worldViewCard?.id,
+  ]);
   const contextualReaderRevision = useMemo(() => {
     const serialized = JSON.stringify(messages.slice(-24).map((message) => ({
       role: message.role,
@@ -933,10 +985,6 @@ export default function AgentBuilder(): React.ReactElement {
     prepareDeckForCardSave,
     onCardPersisted: handleCardPersisted,
   });
-  const tradingCard = useMemo(
-    () => deck.nodes.find((card) => card.id === 'card_trading_workbench') || null,
-    [deck.nodes],
-  );
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
       ...BUILDER_NODE_TABS,
@@ -1435,7 +1483,7 @@ export default function AgentBuilder(): React.ReactElement {
         <BuilderChat
           messages={messages}
           mainCardId={mainCardId || undefined}
-          addressableAgents={addressableAgents}
+          directChatTargets={directChatTargets}
           onSend={handleNativeSend}
           draft={mainCardId ? transientCardInputs[mainCardId] || '' : ''}
           onDraftChange={(value) => {
@@ -1602,6 +1650,7 @@ export default function AgentBuilder(): React.ReactElement {
 
   const showCanvasWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
+    setCurrentResponderCardId(null);
     setWorkspaceView('canvas');
     const params = new URLSearchParams(window.location.search);
     params.delete('workspace');
@@ -1613,10 +1662,11 @@ export default function AgentBuilder(): React.ReactElement {
     );
     // Camera focus only — pan to the agent/bus zone on the same scene.
     setCanvasFocusZone({ zone: 'agents', nonce: Date.now() });
-  }, [closeInspectorDrawer]);
+  }, [closeInspectorDrawer, setCurrentResponderCardId]);
 
   const showKnowledgeWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
+    setCurrentResponderCardId(null);
     setWorkspaceView('knowledge');
     setKnowledgeGraphKind('combined');
     const params = new URLSearchParams(window.location.search);
@@ -1626,24 +1676,36 @@ export default function AgentBuilder(): React.ReactElement {
       '',
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [closeInspectorDrawer]);
+  }, [closeInspectorDrawer, setCurrentResponderCardId]);
 
   const showTradingWorkspace = useCallback(async () => {
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;
+    if (!tradingCard?.id || !setCurrentResponderCardId(tradingCard.id)) {
+      setDeckStatusMessage('Trading saved Card is unavailable for direct chat.');
+      return;
+    }
     // Hide the editor while the operational presentation is open, but preserve
     // the Canvas selection. Returning to the Canvas therefore restores the
     // same Card context instead of treating app navigation as a Card edit.
     setInspectorDrawerOpen(false);
     setWorkspaceView('trading');
-  }, [setInspectorDrawerOpen]);
+  }, [setCurrentResponderCardId, setDeckStatusMessage, setInspectorDrawerOpen, tradingCard?.id]);
 
   const showWorldsignalWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
+    if (!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)) {
+      setDeckStatusMessage('WorldSignals saved Card is unavailable for direct chat.');
+      return;
+    }
     setWorkspaceView('worldsignal');
-  }, [closeInspectorDrawer]);
+  }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldSignalsCardId]);
 
   const showWorldviewWorkspace = useCallback(async () => {
     if (!(await closeInspectorDrawer())) return;
+    if (!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)) {
+      setDeckStatusMessage('WorldView saved Card is unavailable for direct chat.');
+      return;
+    }
     setWorkspaceView('worldview');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'worldview');
@@ -1652,7 +1714,7 @@ export default function AgentBuilder(): React.ReactElement {
       '',
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [closeInspectorDrawer]);
+  }, [closeInspectorDrawer, setCurrentResponderCardId, setDeckStatusMessage, worldViewCard?.id]);
 
   const handleCompanionTabClick = useCallback(async (nextTab: string) => {
     if (cardLeaveRef.current && !(await cardLeaveRef.current())) return;

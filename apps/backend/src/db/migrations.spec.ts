@@ -52,6 +52,9 @@ describe('canonical backend migrations', () => {
       expect.objectContaining({ filename: '039_remove_assistant_agent_capability.sql', applied: true }),
       expect.objectContaining({ filename: '040_remove_main_script_experiment.sql', applied: true }),
       expect.objectContaining({ filename: '041_native_hermes_task_status.sql', applied: true }),
+      expect.objectContaining({ filename: '047_retire_saved_card_kanban_mode.sql', applied: true }),
+      expect.objectContaining({ filename: '048_project_worldview_capabilities.sql', applied: true }),
+      expect.objectContaining({ filename: '049_grant_main_project_worldview_control.sql', applied: true }),
     ]);
     const statements = client.query.mock.calls.map(([sql]) => String(sql).trim());
     expect(statements).toEqual(expect.arrayContaining([
@@ -174,6 +177,42 @@ describe('canonical backend migrations', () => {
     expect(source).toContain('SET current_revision_id = next_revision_id');
     expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
     expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('retires only the saved-Card kanban runtime mode without rewriting history', async () => {
+    const source = await readFile(
+      migrationPath('047_retire_saved_card_kanban_mode.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("revision.runtime_mode = 'kanban'");
+    expect(source).toContain('retired_kanban_card_mode_current_state_present');
+    expect(source).toContain("run.runtime_mode = 'kanban'");
+    expect(source).toContain("run.state IN ('pending', 'running')");
+    expect(source).toContain('retired_kanban_card_mode_active_run_present');
+    expect(source.match(/runtime_mode IN \('main', 'delegate', 'magentic_one'\)/g)).toHaveLength(2);
+    expect(source.match(/\) NOT VALID;/g)).toHaveLength(2);
+    expect(source).not.toContain("runtime_mode IN ('main', 'delegate', 'kanban'");
+    expect(source).not.toMatch(/\bUPDATE\s+ag_catalog\./i);
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+  });
+
+  it('grants Project WorldView control to current Main through new revisions', async () => {
+    const source = await readFile(
+      migrationPath('049_grant_main_project_worldview_control.sql'),
+      'utf8',
+    );
+
+    expect(source).toContain("revision.runtime_kind = 'hermes'");
+    expect(source).toContain("revision.runtime_mode = 'main'");
+    expect(source).toContain("capability.grant_id = 'worldview.set_capability'");
+    expect(source).toContain('INSERT INTO ag_catalog.agent_card_revisions');
+    expect(source).toContain('INSERT INTO ag_catalog.card_capability_grants');
+    expect(source).toContain('SET current_revision_id = next_revision_id');
+    expect(source).toContain('UPDATE ag_catalog.agent_decks');
+    expect(source).not.toContain('UPDATE ag_catalog.agent_card_revisions');
+    expect(source).not.toMatch(/\bDELETE\s+FROM\b/i);
+    expect(source).not.toContain('UPDATE ag_catalog.agent_runs');
   });
 
   it('accepts truthful native cancellation without rewriting retained Runs', async () => {

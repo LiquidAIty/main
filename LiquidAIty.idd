@@ -12,6 +12,7 @@ relationships = [
 # or grants. The existing host consumes this small projection at startup.
 operations = [
   { id = "main.context", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
+  { id = "worldview.set_capability", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool", callerKind = "hermes", callerMode = "main" },
   { id = "agentgraph.inspect", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "mag_one.describe_connected_agents", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "run_mag_one", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool", callerKind = "hermes", callerMode = "main" },

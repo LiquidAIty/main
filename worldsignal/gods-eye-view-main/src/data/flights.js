@@ -20,6 +20,7 @@
  * looking at (product rule 2026-07-02).
  */
 import * as Cesium from 'cesium';
+import { runtimeUrl } from '../runtimeUrl.js';
 import { aircraftIncludedInNearby } from './aircraftNearbyPolicy.js';
 import { registerPickOwner, unregisterPickOwner, isOwnedByOtherLayer, resolvePickId } from './pickRegistry.js';
 import {
@@ -270,7 +271,7 @@ const _scratchModelBS = new Cesium.BoundingSphere(new Cesium.Cartesian3(), 1.0);
 const _billboardLimbScale = new WeakMap();
 
 /** @constant {string} API_URL - Vite proxy endpoint for OpenSky /states/all */
-const API_URL = '/api/opensky';
+const API_URL = runtimeUrl('/api/opensky');
 const SOURCE_STALE_MS = 120_000;
 /** @constant {number} BACKOFF_INTERVAL - Cooldown (ms) after 429 / auth errors */
 const BACKOFF_INTERVAL = 45000; // 45s on rate limit
@@ -819,7 +820,7 @@ function _drainEnrich() {
 
 function _requestTypeEnrichment(icao24, priority = false) {
   if (!/^[0-9a-f]{6}$/i.test(icao24)) return;
-  _enqueueEnrich(`t:${icao24}`, `/api/adsbdb/type/${icao24.toLowerCase()}`, (data) => {
+  _enqueueEnrich(`t:${icao24}`, runtimeUrl(`/api/adsbdb/type/${icao24.toLowerCase()}`), (data) => {
     const meta = _flightData.get(icao24);
     if (!meta) return; // evicted while the lookup was in flight
     meta.typeCode = data.typeCode || meta.typeCode;
@@ -843,7 +844,7 @@ function _requestTypeEnrichment(icao24, priority = false) {
 function _requestRouteEnrichment(icao24) {
   const cs = String(_flightData.get(icao24)?.callsign || '').trim().toUpperCase();
   if (!/^[A-Z]{3}\d/.test(cs)) return; // airline-style callsigns only (LLL + digit); GA tails won't resolve
-  _enqueueEnrich(`r:${cs}`, `/api/adsbdb/route/${encodeURIComponent(cs)}`, (data) => {
+  _enqueueEnrich(`r:${cs}`, runtimeUrl(`/api/adsbdb/route/${encodeURIComponent(cs)}`), (data) => {
     const meta = _flightData.get(icao24);
     if (!meta) return;
     meta.airline = data.airline || meta.airline;
@@ -2415,7 +2416,7 @@ async function _ensureModel(icao24) {
   try {
     const spec = _modelSpec(_flightData.get(icao24)?.klass);
     model = await Cesium.Model.fromGltfAsync({
-      url: spec.url,
+      url: runtimeUrl(spec.url),
       asynchronous: false,
       minimumPixelSize: MODEL_MIN_PX,
       scale: spec.scale,
@@ -2538,7 +2539,7 @@ function _updateTrackedModel() {
     const trackedKey = _specKeyFor(_flightData.get(_trackedIcao)?.klass);
     const trackedIrBoost = _irBoost;
     Cesium.Model.fromGltfAsync({
-      url: trackedSpec.url,
+      url: runtimeUrl(trackedSpec.url),
       asynchronous: false,
       minimumPixelSize: TRACKED_MODEL_MIN_PX,
       scale: trackedSpec.scale,
@@ -3046,7 +3047,7 @@ function _startTrail(icao24) {
 async function _backfillTrail(icao24, token, oldestFixEpochSec) {
   let path = null;
   try {
-    const response = await fetch('/api/opensky-track?icao24=' + encodeURIComponent(icao24), {
+    const response = await fetch(runtimeUrl('/api/opensky-track?icao24=' + encodeURIComponent(icao24)), {
       signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) return;
@@ -3915,7 +3916,7 @@ const flightsLayer = {
     // destroy/re-init mid-load doesn't flip the flag for a torn-down lifecycle.
     if (!_preloadModel) {
       const epoch = _modelEpoch;
-      Cesium.Model.fromGltfAsync({ url: PLANE_MODEL_URL, asynchronous: false })
+      Cesium.Model.fromGltfAsync({ url: runtimeUrl(PLANE_MODEL_URL), asynchronous: false })
         .then((m) => {
           if (epoch === _modelEpoch) { _preloadModel = m; _planeModelLoaded = true; }
           else { try { m.destroy(); } catch { /* gone */ } }

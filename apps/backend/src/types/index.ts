@@ -5,7 +5,7 @@ export type PromptTemplate = {
 
 export type CardRuntime = {
   kind: 'hermes';
-  mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  mode: 'main' | 'delegate' | 'magentic_one';
   profile: string;
 };
 
@@ -36,6 +36,9 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
+  /** Saved outbound orange Card-to-Card delegation authority. Main has this
+   * authority by its runtime role; another non-Magnetic Card must opt in. */
+  orchestrator?: boolean;
   /** Temporary native Hermes children for one Card turn. This is unrelated to
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';

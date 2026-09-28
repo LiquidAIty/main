@@ -468,7 +468,7 @@ test('lifecycle is idempotent and teardown removes listeners, observers, and DOM
   );
   assert.match(
     readFileSync(new URL('../../style.css', import.meta.url), 'utf8'),
-    /#world-overlay-detection-surface,\n#world-overlay-canvas \{\n  position: absolute;\n  inset: 0;[\s\S]*?pointer-events: none;/,
+    /#world-overlay-detection-surface,\r?\n#world-overlay-canvas \{\r?\n  position: absolute;\r?\n  inset: 0;[\s\S]*?pointer-events: none;/,
     'both host surfaces share absolute positioning and pointer passthrough',
   );
 

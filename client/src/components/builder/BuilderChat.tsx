@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
 import UploadAttachment from "../knowledge/UploadAttachment";
 
 type BuilderChatColors = {
@@ -27,7 +28,7 @@ function safeText(value: unknown): string {
 export default function BuilderChat({
   messages,
   mainCardId,
-  addressableAgents = [],
+  directChatTargets = [],
   onSend,
   knowledgeProjectId,
   colors,
@@ -49,13 +50,7 @@ export default function BuilderChat({
   }[];
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
-  addressableAgents?: {
-    cardId: string;
-    profile: string;
-    title: string;
-    address: string;
-    aliases: string[];
-  }[];
+  directChatTargets?: DirectChatTarget[];
   onSend: (t: string) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
@@ -85,7 +80,9 @@ export default function BuilderChat({
   const addressPrefix = addressMatch?.[1]?.toLowerCase() ?? null;
   const addressSuggestions = addressPrefix === null
     ? []
-    : addressableAgents.filter((agent) => (
+    : directChatTargets.filter((agent) => (
+      Boolean(agent.address)
+      &&
       agent.aliases.some((alias) => alias.toLowerCase().startsWith(addressPrefix))
     ));
   const boundedAddressIndex = addressSuggestions.length > 0
@@ -96,7 +93,7 @@ export default function BuilderChat({
   }, [addressPrefix]);
   const completeAddress = (index = boundedAddressIndex) => {
     const agent = addressSuggestions[index];
-    if (!agent) return;
+    if (!agent?.address) return;
     setValue(`@${agent.address} `);
     setSelectedAddressIndex(0);
   };
@@ -114,7 +111,6 @@ export default function BuilderChat({
     onSend(value);
     setValue("");
   };
-
   return (
     <div data-testid="builder-chat-panel" className="h-full flex flex-col" style={{ gap: 12 }}>
       <style>
@@ -163,6 +159,8 @@ export default function BuilderChat({
           const showSpeaker = !isUser
             && Boolean(m.speaker.cardId)
             && m.speaker.cardId !== mainCardId;
+          const speakerAddress = safeText(m.speaker.address || m.speaker.label)
+            .replace(/^@/, "");
           // Never render an empty/whitespace assistant bubble — only real assistant
           // text appears as a bubble. (Real user messages always render.)
           if (!isUser && !safeText(m.text).trim()) return null;
@@ -188,7 +186,7 @@ export default function BuilderChat({
                     textAlign: "left",
                   }}
                 >
-                  {m.speaker.label}
+                  @{speakerAddress}
                 </div>
               ) : null}
               <div

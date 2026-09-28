@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const session = vi.hoisted(() => ({
-  createAnonymousSession: vi.fn(),
+  createLocalSession: vi.fn(),
   getUserBySessionId: vi.fn(),
   setSessionCookie: vi.fn(),
 }));
@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe('backend authentication middleware', () => {
   it.each(['execute', 'status'])(
-    'accepts the established loopback process bridge for %s without creating an anonymous user',
+    'accepts the established loopback process bridge for %s without creating a local session',
     async (action) => {
     const secret = 'internal-process-bridge-secret-0123456789abcdef';
     process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secret;
@@ -42,7 +42,7 @@ describe('backend authentication middleware', () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect((request as any).internalMcpBridgeAuthenticated).toBe(true);
-    expect(session.createAnonymousSession).not.toHaveBeenCalled();
+    expect(session.createLocalSession).not.toHaveBeenCalled();
     expect(session.getUserBySessionId).not.toHaveBeenCalled();
     },
   );
@@ -52,9 +52,9 @@ describe('backend authentication middleware', () => {
     async (action) => {
       const secret = 'internal-process-bridge-secret-0123456789abcdef';
       process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secret;
-      session.createAnonymousSession.mockResolvedValue({
-        user: { id: 'anonymous-owner' },
-        session: { id: 'anonymous-session' },
+      session.createLocalSession.mockResolvedValue({
+        user: { id: 'local-owner' },
+        session: { id: 'local-session' },
       });
       const request = {
         method: 'POST',
@@ -73,16 +73,16 @@ describe('backend authentication middleware', () => {
 
       expect(next).toHaveBeenCalledOnce();
       expect((request as any).internalMcpBridgeAuthenticated).toBeUndefined();
-      expect((request as any).userId).toBe('anonymous-owner');
-      expect(session.createAnonymousSession).toHaveBeenCalledOnce();
+      expect((request as any).userId).toBe('local-owner');
+      expect(session.createLocalSession).toHaveBeenCalledOnce();
     },
   );
 
   it('does not treat a foreign process secret as internal authentication', async () => {
     process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = 'internal-process-bridge-secret-0123456789abcdef';
-    session.createAnonymousSession.mockResolvedValue({
-      user: { id: 'anonymous-owner' },
-      session: { id: 'anonymous-session' },
+    session.createLocalSession.mockResolvedValue({
+      user: { id: 'local-owner' },
+      session: { id: 'local-session' },
     });
     const request = {
       method: 'POST',
@@ -101,16 +101,16 @@ describe('backend authentication middleware', () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect((request as any).internalMcpBridgeAuthenticated).toBeUndefined();
-    expect((request as any).userId).toBe('anonymous-owner');
-    expect(session.createAnonymousSession).toHaveBeenCalledOnce();
+    expect((request as any).userId).toBe('local-owner');
+    expect(session.createLocalSession).toHaveBeenCalledOnce();
   });
 
   it('does not broaden the process bridge credential to another backend route', async () => {
     const secret = 'internal-process-bridge-secret-0123456789abcdef';
     process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secret;
-    session.createAnonymousSession.mockResolvedValue({
-      user: { id: 'anonymous-owner' },
-      session: { id: 'anonymous-session' },
+    session.createLocalSession.mockResolvedValue({
+      user: { id: 'local-owner' },
+      session: { id: 'local-session' },
     });
     const request = {
       method: 'GET',
@@ -128,7 +128,7 @@ describe('backend authentication middleware', () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect((request as any).internalMcpBridgeAuthenticated).toBeUndefined();
-    expect((request as any).userId).toBe('anonymous-owner');
-    expect(session.createAnonymousSession).toHaveBeenCalledOnce();
+    expect((request as any).userId).toBe('local-owner');
+    expect(session.createLocalSession).toHaveBeenCalledOnce();
   });
 });

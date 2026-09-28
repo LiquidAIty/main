@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   canIssueBootstrapSession: vi.fn(),
-  createAnonymousSession: vi.fn(),
+  createLocalSession: vi.fn(),
   getUserBySessionId: vi.fn(),
   setSessionCookie: vi.fn(),
 }));
@@ -42,27 +42,27 @@ describe('session bootstrap continuity', () => {
   it('keeps the authenticated identity and cookie when bootstrap is repeated', async () => {
     mocks.canIssueBootstrapSession.mockReturnValue(true);
     mocks.getUserBySessionId.mockResolvedValue({ id: 'existing-owner' });
-    mocks.createAnonymousSession.mockResolvedValue({ user: { id: 'replacement-owner' }, session: { id: 'replacement-session' } });
+    mocks.createLocalSession.mockResolvedValue({ user: { id: 'replacement-owner' }, session: { id: 'replacement-session' } });
     expect(await bootstrap('sid=existing-session')).toEqual({ status: 200, body: { userId: 'existing-owner' } });
     expect(mocks.getUserBySessionId).toHaveBeenCalledExactlyOnceWith('existing-session');
-    expect(mocks.createAnonymousSession).not.toHaveBeenCalled();
+    expect(mocks.createLocalSession).not.toHaveBeenCalled();
     expect(mocks.setSessionCookie).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, 'sid=expired-session'])('still creates an anonymous session without a valid identity (%s)', async cookie => {
+  it.each([undefined, 'sid=expired-session'])('binds the one local user without a valid session (%s)', async cookie => {
     mocks.canIssueBootstrapSession.mockReturnValue(true);
     mocks.getUserBySessionId.mockResolvedValue(null);
-    mocks.createAnonymousSession.mockResolvedValue({ user: { id: 'new-owner' }, session: { id: 'new-session' } });
-    expect(await bootstrap(cookie)).toEqual({ status: 200, body: { userId: 'new-owner' } });
-    expect(mocks.createAnonymousSession).toHaveBeenCalledOnce();
-    expect(mocks.setSessionCookie).toHaveBeenCalledWith(expect.anything(), 'new-session', expect.anything());
+    mocks.createLocalSession.mockResolvedValue({ user: { id: 'local-owner' }, session: { id: 'local-session' } });
+    expect(await bootstrap(cookie)).toEqual({ status: 200, body: { userId: 'local-owner' } });
+    expect(mocks.createLocalSession).toHaveBeenCalledOnce();
+    expect(mocks.setSessionCookie).toHaveBeenCalledWith(expect.anything(), 'local-session', expect.anything());
   });
 
   it('preserves the bootstrap authorization boundary even with an existing cookie', async () => {
     mocks.canIssueBootstrapSession.mockReturnValue(false);
     expect((await bootstrap('sid=existing-session')).status).toBe(403);
     expect(mocks.getUserBySessionId).not.toHaveBeenCalled();
-    expect(mocks.createAnonymousSession).not.toHaveBeenCalled();
+    expect(mocks.createLocalSession).not.toHaveBeenCalled();
     expect(mocks.setSessionCookie).not.toHaveBeenCalled();
   });
 });

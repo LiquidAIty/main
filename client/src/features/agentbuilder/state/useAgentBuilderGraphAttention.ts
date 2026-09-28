@@ -593,6 +593,10 @@ export default function useAgentBuilderGraphAttention({
   ) => {
     const requestId = thinkGraphRequestRef.current + 1;
     thinkGraphRequestRef.current = requestId;
+    if (!projectId.trim()) {
+      setStatuses((current) => ({ ...current, thinkgraph: 'ready' }));
+      return;
+    }
     setStatuses((current) => ({ ...current, thinkgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId });
@@ -646,6 +650,10 @@ export default function useAgentBuilderGraphAttention({
 
   const refreshKnowGraph = useCallback(async (attention?: GraphHighlight) => {
     const requestId = ++knowGraphRequestRef.current;
+    if (!projectId.trim()) {
+      setStatuses((current) => ({ ...current, knowgraph: 'ready' }));
+      return;
+    }
     setStatuses((current) => ({ ...current, knowgraph: 'loading' }));
     try {
       const query = new URLSearchParams({ projectId, limit: '200' });

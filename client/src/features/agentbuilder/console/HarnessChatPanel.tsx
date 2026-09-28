@@ -27,7 +27,7 @@ export default function HarnessChatPanel({
     move: (event: MouseEvent) => void;
     up: () => void;
   } | null>(null);
-  const initialSplitHeight = (() => {
+  const preferredSplitHeight = (() => {
     try {
       const savedValue = window.localStorage.getItem(storageKey);
       if (savedValue === null) return DEFAULT_SPLIT_HEIGHT;
@@ -37,10 +37,14 @@ export default function HarnessChatPanel({
       return DEFAULT_SPLIT_HEIGHT;
     }
   })();
-  const heightRef = useRef(initialSplitHeight);
-  const lastOpenHeightRef = useRef(initialSplitHeight);
+  // Main is the ambient surface and opens fully. A previously chosen split is
+  // remembered only for the user's next explicit work-surface interaction.
+  const heightRef = useRef(0);
+  const lastOpenHeightRef = useRef(
+    preferredSplitHeight > HANDLE_HEIGHT ? preferredSplitHeight : DEFAULT_SPLIT_HEIGHT,
+  );
   const dragMovedRef = useRef(false);
-  const [height, setHeightState] = useState(initialSplitHeight);
+  const [height, setHeightState] = useState(0);
   const [manualFullCli, setManualFullCli] = useState(false);
   const [dragging, setDragging] = useState(false);
 

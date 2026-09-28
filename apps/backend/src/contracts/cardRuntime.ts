@@ -8,8 +8,8 @@ export function resolveCardRuntime(value: unknown): CardRuntime | null {
 
   if (kind === 'hermes') {
     const profile = String(candidate.profile || '').trim();
-    if (!profile || !['main', 'delegate', 'kanban', 'magentic_one'].includes(mode)) return null;
-    return { kind, mode: mode as 'main' | 'delegate' | 'kanban' | 'magentic_one', profile };
+    if (!profile || !['main', 'delegate', 'magentic_one'].includes(mode)) return null;
+    return { kind, mode: mode as 'main' | 'delegate' | 'magentic_one', profile };
   }
   return null;
 }

@@ -68,6 +68,10 @@ from app.python_models.jev_validation import (
     validate_rounded_weighted_score,
 )
 from app.python_models.postgres import connect_postgres
+from app.python_models.project_worldview import (
+    ProjectWorldviewError,
+    resolve_project_worldview,
+)
 from app.python_models.tool_registry import tool_manifest
 
 
@@ -700,7 +704,7 @@ def _card_runtime(card: dict[str, Any]) -> dict[str, str]:
     kind = _required_text(runtime.get("kind"), "runtime_kind")
     mode = _required_text(runtime.get("mode"), "runtime_mode")
     if kind == "hermes":
-        if mode not in {"main", "delegate", "kanban", "magentic_one"}:
+        if mode not in {"main", "delegate", "magentic_one"}:
             raise CardDomainError(f"hermes_runtime_mode_unsupported:{mode}")
         return {
             "kind": kind,
@@ -2670,6 +2674,52 @@ def _connected_hermes_card_targets(
     return direct
 
 
+def _magentic_worker_capability_projection(
+    project_id: str,
+    workers: list[dict[str, Any]],
+    cards: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Add compact saved/Project-eligible capability facts to exact workers.
+
+    This is assignment metadata only. It grants no tool, carries no schemas or
+    datasets, and does not replace the worker Card's normal Run-time
+    Project/Card/Run intersection and Jev narrowing.
+    """
+
+    saved_by_card: dict[str, list[str]] = {}
+    candidates: list[str] = []
+    for worker in workers:
+        card_id = str(worker.get("cardId") or "")
+        card = cards.get(card_id)
+        if card is None:
+            raise CardDomainError(f"magentic_worker_card_missing:{card_id or 'missing'}")
+        options = _json_object(card.get("runtimeOptions"), "runtime_options")
+        saved = _string_list(options.get("tools"), "tools")
+        saved_by_card[card_id] = saved
+        candidates.extend(saved)
+    try:
+        worldview = resolve_project_worldview(
+            project_id,
+            list(dict.fromkeys(candidates)),
+            connector=connect_postgres,
+        )
+    except ProjectWorldviewError as error:
+        raise CardDomainError(str(error)) from error
+    enabled = set(worldview["enabledCapabilities"])
+    projected: list[dict[str, Any]] = []
+    for worker in workers:
+        card_id = str(worker["cardId"])
+        saved = saved_by_card[card_id]
+        projected.append({
+            **worker,
+            "capabilities": {
+                "savedToolIds": saved,
+                "projectEligibleToolIds": [tool for tool in saved if tool in enabled],
+            },
+        })
+    return projected
+
+
 def _direct_card_targets(
     card_id: str,
     cards: dict[str, dict[str, Any]],
@@ -3515,10 +3565,22 @@ def _prepare_invocation(
     # effect metadata, and saved-grant validation, but it must not erase a
     # currently published external tool merely because this Python process did
     # not register that provider at import time.
-    selected_tools = list(effective_tools)
+    try:
+        project_worldview = resolve_project_worldview(
+            loaded["projectId"],
+            list(effective_tools),
+            connector=connect_postgres,
+        )
+    except ProjectWorldviewError as error:
+        raise CardDomainError(str(error)) from error
+    project_enabled_tools = set(project_worldview["enabledCapabilities"])
+    selected_tools = [
+        name for name in effective_tools if name in project_enabled_tools
+    ]
     call_config["enabledTools"] = selected_tools
     call_config["unavailableTools"] = unavailable_tools
     call_config["unavailableToolReasons"] = unavailable_tool_reasons
+    call_config["projectWorldview"] = project_worldview
     # `tools` remains the saved Card's deliberately selected presentation.
     presented_tools = [
         name for name in ceiling
@@ -3576,6 +3638,7 @@ def _prepare_invocation(
         "_outputRequirements": str(card.get("outputContract") or ""),
         "assignment": assignment,
         "cardIdentity": card_identity,
+        "projectWorldview": project_worldview,
         "_callConfig": call_config,
         "_toolDefinitions": tool_definitions if include_tool_definitions else [],
         "_effectiveToolDefinitions": (
@@ -4317,6 +4380,11 @@ def describe_magentic_agents(
             "readinessState": "ready" if reason is None else "configuration_invalid",
             "readinessReason": reason,
         })
+    connected = _magentic_worker_capability_projection(
+        loaded["projectId"],
+        connected,
+        cards,
+    )
     return {
         "projectId": loaded["projectId"],
         "deckId": deck_id,
@@ -4619,11 +4687,19 @@ def read_run_input_files(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _main_shared_conversation_task(message: str, value: Any) -> str:
-    """Mechanically include the bounded shared transcript only on a Main turn."""
+def _shared_conversation_task(
+    message: str,
+    value: Any,
+    target_label: str,
+) -> str:
+    """Mechanically include the bounded shared transcript for one selected Card."""
 
     if value is None:
         return message
+    target_label = _required_text(
+        target_label,
+        "shared_conversation_target_label",
+    )
     if not isinstance(value, list) or len(value) > 24:
         raise CardDomainError("shared_conversation_context_invalid")
     rendered: list[str] = []
@@ -4651,9 +4727,9 @@ def _main_shared_conversation_task(message: str, value: Any) -> str:
     if not rendered:
         return message
     return "\n\n".join((
-        "## Shared conversation before this Main turn",
+        f"## Shared conversation before this {target_label} turn",
         *rendered,
-        "## Current user message to Main",
+        f"## Current user message to {target_label}",
         message,
     ))
 
@@ -4661,16 +4737,14 @@ def _main_shared_conversation_task(message: str, value: Any) -> str:
 def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Resolve Main, then use the one canonical saved-Card Run function."""
     message = _required_content(payload.get("message"), "message")
-    assignment = _main_shared_conversation_task(
-        message, payload.get("sharedConversation")
-    )
     main = prepare_main_chat({**payload, "message": ""})
     return begin_run({
         **payload,
         "projectId": main["projectId"],
         "deckId": main["deckId"],
         "cardId": main["cardIdentity"]["cardId"],
-        "assignment": assignment,
+        "assignment": message,
+        "sharedConversationTargetLabel": main["cardIdentity"]["title"],
         "_mainAttentionQuery": message,
         "_mainAttentionToken": _MAIN_ATTENTION_TOKEN,
     })
@@ -4679,14 +4753,32 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Create one Run, retain its one IDF, then expose one native request."""
 
-    prepared = prepare_run_invocation(payload)
+    effective_payload = payload
+    shared_target_label: str | None = None
+    if "sharedConversation" in payload:
+        shared_target_label = _required_text(
+            payload.get("sharedConversationTargetLabel"),
+            "shared_conversation_target_label",
+        )
+        effective_payload = {
+            **payload,
+            "assignment": _shared_conversation_task(
+                _required_content(payload.get("assignment"), "assignment"),
+                payload.get("sharedConversation"),
+                shared_target_label,
+            ),
+        }
+    prepared = prepare_run_invocation(effective_payload)
+    if (
+        shared_target_label is not None
+        and str(prepared["cardIdentity"].get("title") or "") != shared_target_label
+    ):
+        raise CardDomainError("shared_conversation_target_mismatch")
     run_id = _required_text(payload.get("runId"), "run_id")
     correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
     card_identity = prepared["cardIdentity"]
     owner = prepared["runtimeOwner"]
     runtime = prepared["idf"]["stableSavedCardContext"]["runtime"]
-    if owner == "hermes" and runtime.get("mode") == "kanban":
-        raise CardDomainError("hermes_kanban_card_mode_retired")
     magentic_workers: list[dict[str, Any]] = []
     if owner == "mag_one":
         loaded = _load_deck_internal(prepared["projectId"], prepared["deckId"])
@@ -4700,6 +4792,11 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         )
         if not magentic_workers:
             raise CardDomainError("magentic_runtime_no_connected_participants")
+        magentic_workers = _magentic_worker_capability_projection(
+            prepared["projectId"],
+            magentic_workers,
+            cards,
+        )
     request_fingerprint = None
     resolved_run_id, resolved_correlation_id, created = _insert_run(
         prepared,
@@ -4746,7 +4843,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
     if created:
         telemetry_written = _observe_run_start(
             prepared,
-            payload,
+            effective_payload,
             run_id=resolved_run_id,
             correlation_id=resolved_correlation_id,
         )
@@ -4990,44 +5087,6 @@ def _read_run_terminal(cursor: Any, row: dict[str, Any], *, conversation_id: str
         "parentRunIds": [str(item["parent_id"]) for item in lineage if str(item["child_id"]) == run_id],
         "children": children,
         "activeChildren": sum(child["state"] == "running" for child in children),
-    }
-
-
-def list_active_kanban_runs() -> dict[str, Any]:
-    """Return retained standalone kanban Runs that still need monitoring."""
-
-    with connect_postgres(autocommit=False) as connection:
-        with connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute("SET TRANSACTION READ ONLY")
-            cursor.execute(
-                """
-                SELECT run.*, revision.card_id, revision.runtime_profile
-                FROM ag_catalog.agent_runs AS run
-                JOIN ag_catalog.agent_card_revisions AS revision
-                  ON revision.revision_id=run.target_card_revision_id
-                WHERE run.state IN ('pending','running')
-                  AND run.runtime_kind='hermes'
-                  AND run.runtime_mode='kanban'
-                  AND run.provider_thread_ref IS NOT NULL
-                ORDER BY run.created_at ASC
-                """
-            )
-            rows = [
-                dict(row) for row in cursor.fetchall()
-                if re.fullmatch(
-                    r"t_[A-Za-z0-9_-]+",
-                    str(row.get("provider_thread_ref") or ""),
-                )
-            ]
-    return {
-        "ok": True,
-        "runs": [
-            {
-                **_run_projection(row),
-                "runtimeProfile": str(row.get("runtime_profile") or ""),
-            }
-            for row in rows
-        ],
     }
 
 

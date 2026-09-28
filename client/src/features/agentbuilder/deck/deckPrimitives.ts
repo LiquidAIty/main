@@ -61,6 +61,7 @@ export const MAIN_CHAT_CONTROLLER_TOOLS = [
   'engraphis_get_memory',
   'engraphis_remember',
   'run_mag_one',
+  'worldview.set_capability',
 ] as const;
 export const THINKGRAPH_CARD_TOOLS = [
   'engraphis_recall_context',
@@ -93,8 +94,8 @@ export function normalizeCardRuntime(value: unknown): CardRuntime | null {
   const mode = safeText(candidate.mode).trim().toLowerCase();
   if (kind === 'hermes') {
     const profile = safeText(candidate.profile).trim();
-    if (!profile || !['main', 'delegate', 'kanban', 'magentic_one'].includes(mode)) return null;
-    return { kind, mode: mode as 'main' | 'delegate' | 'kanban' | 'magentic_one', profile };
+    if (!profile || !['main', 'delegate', 'magentic_one'].includes(mode)) return null;
+    return { kind, mode: mode as 'main' | 'delegate' | 'magentic_one', profile };
   }
   return null;
 }
@@ -106,13 +107,15 @@ export function normalizeRuntimeOptions(
   return cloneDeckDocument(value as AgentCardRuntimeOptions);
 }
 
-/** Orange flow authority belongs only to the fixed Main runtime. */
+/** Orange flow authority belongs to Main or an explicitly enabled saved
+ * non-Magnetic Hermes orchestrator Card. */
 export function hasMainBotAuthority(card: AgentCardInstance): boolean {
   const record = card as AgentCardInstance & { enabled?: boolean };
   const options = card.runtimeOptions as (AgentCardRuntimeOptions & { enabled?: boolean }) | null;
   return card.kind === 'agent'
     && card.runtime.kind === 'hermes'
-    && card.runtime.mode === 'main'
+    && card.runtime.mode !== 'magentic_one'
+    && (card.runtime.mode === 'main' || options?.orchestrator === true)
     && Boolean(card.runtime.profile.trim())
     && record.enabled !== false
     && options?.enabled !== false;

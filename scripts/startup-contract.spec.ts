@@ -8,8 +8,14 @@ describe('canonical Hermes gateway launcher', () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(import.meta.dirname, '..', 'package.json'), 'utf8'),
     ) as { scripts?: Record<string, string> };
+    const supervisedStartup = readFileSync(
+      resolve(import.meta.dirname, 'start-dev-services.ps1'),
+      'utf8',
+    );
 
     expect(packageJson.scripts?.['dev:fresh']).toContain('scripts/start-dev-services.ps1');
+    expect(supervisedStartup).toContain("$env:NX_SKIP_VSCODE_EXTENSION_INSTALL = 'true'");
+    expect(supervisedStartup).toContain("$env:NX_INTERACTIVE = 'false'");
     expect(packageJson.scripts?.['dev:dependent-services']?.match(/npm run dev:gateway/g)).toHaveLength(1);
     expect(packageJson.scripts?.['dev:dependent-services']).toContain('dev:mcp');
     expect(packageJson.scripts?.['dev:dependent-services']).toContain('dev:worldview');

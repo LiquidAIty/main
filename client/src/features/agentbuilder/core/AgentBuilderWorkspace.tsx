@@ -43,11 +43,11 @@ export default function AgentBuilderWorkspace({
           50% { transform: translateY(-0.5px) scale(1.015); }
         }
       `}</style>
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="flex flex-1 overflow-hidden min-h-0 min-w-0">
         {rail}
         <div
           ref={workspaceShellRef}
-          className="flex flex-1 overflow-hidden min-h-0"
+          className="flex flex-1 overflow-hidden min-h-0 min-w-0"
           style={{ position: 'relative' }}
         >
           <div

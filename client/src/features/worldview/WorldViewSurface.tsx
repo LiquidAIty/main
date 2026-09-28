@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import GodsEyeSurface, {
   type GodsEyeBridge,
@@ -8,8 +8,11 @@ import GodsEyeSurface, {
   type GodsEyeSelectionRef,
 } from '../../components/worldsignal/GodsEyeSurface';
 import RightGlassDrawer from '../../components/graph/RightGlassDrawer';
-
-const GLOBE_URL = import.meta.env.VITE_WORLDVIEW_GLOBE_URL || 'http://127.0.0.1:4174';
+import {
+  loadProjectWorldview,
+  setProjectWorldviewCapability,
+  type ProjectWorldviewState,
+} from './projectWorldview';
 
 type WorldViewSurfaceProps = {
   projectId: string | null;
@@ -18,13 +21,170 @@ type WorldViewSurfaceProps = {
 
 export default function WorldViewSurface({ projectId, cardId }: WorldViewSurfaceProps) {
   const bridgeRef = useRef<GodsEyeBridge | null>(null);
+  const currentProjectRef = useRef(projectId);
+  const nextProjectWriteRef = useRef(0);
   const [sourceVersion, setSourceVersion] = useState<string | null>(null);
   const [layerState, setLayerState] = useState<GodsEyeLayerState | null>(null);
   const [nativeAgentState, setNativeAgentState] = useState<GodsEyeNativeAgentState | null>(null);
   const [selection, setSelection] = useState<GodsEyeSelectionRef | null>(null);
   const [surfaceError, setSurfaceError] = useState<string | null>(null);
+  const [projectWorldview, setProjectWorldview] = useState<ProjectWorldviewState | null>(null);
+  const [projectWorldviewLoading, setProjectWorldviewLoading] = useState(false);
+  const [projectWorldviewError, setProjectWorldviewError] = useState<string | null>(null);
+  const [layerApplyErrors, setLayerApplyErrors] = useState<Record<string, string>>({});
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [pendingLayers, setPendingLayers] = useState<Record<string, { requestId: string; enabled: boolean }>>({});
+  const [pendingLayers, setPendingLayers] = useState<Record<string, {
+    requestId: string;
+    enabled: boolean;
+    phase: 'saving' | 'applying';
+  }>>({});
+
+  currentProjectRef.current = projectId;
+
+  useEffect(() => {
+    if (!projectId) return;
+    let active = true;
+    setProjectWorldview(null);
+    setProjectWorldviewLoading(true);
+    setProjectWorldviewError(null);
+    setLayerApplyErrors({});
+    setPendingLayers({});
+    void loadProjectWorldview(projectId).then((state) => {
+      if (!active || currentProjectRef.current !== projectId) return;
+      setProjectWorldview(state);
+      setProjectWorldviewLoading(false);
+    }).catch((error) => {
+      if (!active || currentProjectRef.current !== projectId) return;
+      setProjectWorldviewLoading(false);
+      setProjectWorldviewError(error instanceof Error ? error.message : 'project_worldview_load_failed');
+    });
+    return () => { active = false; };
+  }, [projectId]);
+
+  const sourceReady = Boolean(sourceVersion && layerState?.sourceStateReady);
+  const handleResult = (result: GodsEyeCommandResult) => {
+    if (result.schemaVersion === 'gev.direct.layer-visibility.result.v1' && result.layerId) {
+      setPendingLayers((current) => {
+        if (current[result.layerId!]?.requestId !== result.requestId) return current;
+        const next = { ...current };
+        delete next[result.layerId!];
+        return next;
+      });
+      setLayerApplyErrors((current) => {
+        const next = { ...current };
+        if (result.ok) delete next[result.layerId!];
+        else next[result.layerId!] = result.error || 'Layer update failed';
+        return next;
+      });
+    }
+    if (!result.ok) setSurfaceError(result.error || 'WorldView command failed');
+    else setSurfaceError(null);
+  };
+
+  useEffect(() => {
+    if (!projectId || !sourceReady || !projectWorldview
+      || projectWorldview.projectId !== projectId || !layerState) return;
+    const sourcesById = new Map(layerState.sources.map((source) => [source.id, source]));
+    const requests: Record<string, {
+      requestId: string;
+      enabled: boolean;
+      phase: 'applying';
+    }> = {};
+    const resolvedErrors: string[] = [];
+    for (const capability of projectWorldview.capabilities) {
+      const source = sourcesById.get(capability.capabilityId);
+      if (!source) continue;
+      if (source.enabled === capability.enabled) {
+        if (layerApplyErrors[source.id]) resolvedErrors.push(source.id);
+        continue;
+      }
+      if (pendingLayers[source.id] || layerApplyErrors[source.id]) continue;
+      const requestId = bridgeRef.current?.setLayerVisibility(source.id, capability.enabled);
+      if (requestId) {
+        requests[source.id] = { requestId, enabled: capability.enabled, phase: 'applying' };
+      } else {
+        setLayerApplyErrors((current) => ({
+          ...current,
+          [source.id]: 'Project setting is saved, but the map layer is not ready.',
+        }));
+      }
+    }
+    if (Object.keys(requests).length > 0) {
+      setPendingLayers((current) => ({ ...current, ...requests }));
+    }
+    if (resolvedErrors.length > 0) {
+      setLayerApplyErrors((current) => {
+        const next = { ...current };
+        for (const sourceId of resolvedErrors) delete next[sourceId];
+        return next;
+      });
+    }
+  }, [layerApplyErrors, layerState, pendingLayers, projectId, projectWorldview, sourceReady]);
+
+  const handleSourceToggle = async (
+    source: GodsEyeLayerState['sources'][number],
+    currentEnabled: boolean,
+  ) => {
+    if (!projectId || pendingLayers[source.id]) return;
+    const enabled = !currentEnabled;
+    const saveRequestId = `project-worldview-${++nextProjectWriteRef.current}`;
+    setProjectWorldviewError(null);
+    setLayerApplyErrors((current) => {
+      const next = { ...current };
+      delete next[source.id];
+      return next;
+    });
+    setPendingLayers((current) => ({
+      ...current,
+      [source.id]: { requestId: saveRequestId, enabled, phase: 'saving' },
+    }));
+    try {
+      const capability = await setProjectWorldviewCapability(projectId, source.id, enabled);
+      if (currentProjectRef.current !== projectId) return;
+      setProjectWorldview((current) => {
+        if (!current || current.projectId !== projectId) return current;
+        const capabilities = current.capabilities.filter(
+          (entry) => entry.capabilityId !== capability.capabilityId,
+        );
+        capabilities.push(capability);
+        return { ...current, capabilities };
+      });
+      const requestId = enabled
+        ? bridgeRef.current?.setLayerVisibility(source.id, true, {
+          exitIncompatibleContext: true,
+        })
+        : bridgeRef.current?.setLayerVisibility(source.id, false);
+      if (!requestId) {
+        setPendingLayers((current) => {
+          if (current[source.id]?.requestId !== saveRequestId) return current;
+          const next = { ...current };
+          delete next[source.id];
+          return next;
+        });
+        setLayerApplyErrors((current) => ({
+          ...current,
+          [source.id]: 'Project setting is saved, but the map layer is not ready.',
+        }));
+        return;
+      }
+      setPendingLayers((current) => {
+        if (current[source.id]?.requestId !== saveRequestId) return current;
+        return {
+          ...current,
+          [source.id]: { requestId, enabled, phase: 'applying' },
+        };
+      });
+    } catch (error) {
+      if (currentProjectRef.current !== projectId) return;
+      setPendingLayers((current) => {
+        if (current[source.id]?.requestId !== saveRequestId) return current;
+        const next = { ...current };
+        delete next[source.id];
+        return next;
+      });
+      setProjectWorldviewError(error instanceof Error ? error.message : 'project_worldview_write_failed');
+    }
+  };
 
   if (!projectId || !cardId) {
     return <section style={styles.unavailable}>
@@ -33,25 +193,14 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
     </section>;
   }
 
-  const sourceReady = Boolean(sourceVersion && layerState?.sourceStateReady);
-  const handleResult = (result: GodsEyeCommandResult) => {
-    if (result.schemaVersion === 'gev.embed.layer-visibility.result.v1' && result.layerId) {
-      setPendingLayers((current) => {
-        if (current[result.layerId!]?.requestId !== result.requestId) return current;
-        const next = { ...current };
-        delete next[result.layerId!];
-        return next;
-      });
-    }
-    if (!result.ok) setSurfaceError(result.error || 'Native command failed');
-    else setSurfaceError(null);
-  };
+  const projectCapabilitiesById = new Map(
+    projectWorldview?.capabilities.map((capability) => [capability.capabilityId, capability]),
+  );
 
   return <section style={styles.root} aria-label="WorldView workspace">
     <div style={styles.globePane}>
       <GodsEyeSurface
         ref={bridgeRef}
-        embedUrl={GLOBE_URL}
         projectId={projectId}
         cardId={cardId}
         onReady={(version) => { setSourceVersion(version); setSurfaceError(null); }}
@@ -68,57 +217,53 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
         onCommandResult={handleResult}
         onError={(error) => setSurfaceError(`${error.code}: ${error.message}`)}
       />
-      <div style={styles.statusBar}>
-        <span style={styles.brand}>WORLDVIEW</span>
-        <span>{sourceVersion ? `God’s Eye bridge ready · ${sourceVersion}` : 'God’s Eye bridge pending'}</span>
-        <span>{sourceReady
-          ? `${layerState?.enabledLayerIds.length || 0} native layers on`
-          : 'source state pending'}</span>
-        <span>{nativeAgentState
-          ? `native voice control ${nativeAgentState.available ? (nativeAgentState.active ? 'active' : 'present · user-started') : 'missing'}`
-          : 'native voice control state pending'}</span>
-        <button type="button" onClick={() => setSourcesOpen(true)} style={styles.action}>
-          Data Sources
-        </button>
-        {surfaceError ? <span role="alert" style={styles.error}>{surfaceError}</span> : null}
-      </div>
+      {surfaceError ? <div role="alert" style={styles.errorNotice}>{surfaceError}</div> : null}
       <RightGlassDrawer
         isOpen={sourcesOpen}
         onOpen={() => setSourcesOpen(true)}
         onClose={() => setSourcesOpen(false)}
         title="Data Sources"
-        collapsedLabel={null}
+        collapsedLabel="Data Sources"
         dataTestId="worldview-data-sources"
         defaultWidth={360}
         minWidth={300}
         maxWidth={560}
       >
         <div style={styles.drawerBody}>
-          <div>Embed bridge: {sourceVersion ? 'Ready' : 'Pending'}</div>
+          <div>WorldView runtime: {sourceVersion ? `Ready · ${sourceVersion}` : 'Connecting'}</div>
+          <div>Project WorldView: {projectWorldviewLoading
+            ? 'Loading'
+            : projectWorldview
+              ? 'Ready'
+              : 'Unavailable'}</div>
           <div>Source state: {sourceReady ? 'Ready' : 'Pending'}</div>
-          {sourceReady ? layerState?.sources.map((source) => (
-            <div key={source.id} style={styles.sourceRow}>
+          <div>{sourceReady
+            ? `${layerState?.enabledLayerIds.length || 0} layers on`
+            : 'Layer state pending'}</div>
+          <div>{nativeAgentState
+            ? `Voice control: ${nativeAgentState.available ? (nativeAgentState.active ? 'Active' : 'Available · user-started') : 'Unavailable'}${nativeAgentState.status ? ` · ${nativeAgentState.status}` : ''}`
+            : 'Voice control state pending'}</div>
+          {surfaceError ? <div role="alert" style={styles.error}>{surfaceError}</div> : null}
+          {projectWorldviewError
+            ? <div role="alert" style={styles.error}>Project WorldView: {projectWorldviewError}</div>
+            : null}
+          {sourceReady ? layerState?.sources.map((source) => {
+            const projectCapability = projectCapabilitiesById.get(source.id);
+            const enabled = projectCapability?.enabled ?? source.enabled;
+            return <div key={source.id} style={styles.sourceRow}>
               <label style={styles.sourceLabel}>
                 <input
                   type="checkbox"
-                  checked={source.enabled}
+                  checked={enabled}
                   disabled={!sourceReady
-                    || source.lifecycleState === 'enabling'
-                    || source.lifecycleState === 'disabling'
-                    || source.lifecycleUncertain
+                    || projectWorldviewLoading
+                    || !projectWorldview
                     || Boolean(pendingLayers[source.id])}
-                  onChange={() => {
-                    const requestId = bridgeRef.current?.setLayerVisibility(source.id, !source.enabled);
-                    if (requestId) {
-                      setPendingLayers((current) => ({
-                        ...current, [source.id]: { requestId, enabled: !source.enabled },
-                      }));
-                    } else setSurfaceError('God’s Eye bridge is not ready');
-                  }}
+                  onChange={() => { void handleSourceToggle(source, enabled); }}
                 />
-                <span>{source.name || source.id} · {source.enabled ? 'ON' : 'OFF'}</span>
+                <span>{source.name || source.id} · {enabled ? 'ON' : 'OFF'}</span>
               </label>
-              <small>{source.provider || 'Provider unknown'} · {source.lifecycleState || 'Lifecycle unknown'}
+              <small>{source.provider || 'Provider unknown'} · globe layer {source.lifecycleState || 'state unknown'}
                 {source.lifecycleUncertain ? ' · lifecycle uncertain' : ''}
                 {source.available === null ? ' · Not checked' : source.available ? '' : ' · Unavailable'}
                 {source.loading ? ' · loading' : ''}
@@ -128,9 +273,21 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
                 {source.lastRefreshAt ? ` · ${source.lastRefreshAt}` : ''}
                 {source.error ? ` · ${source.error}` : ''}
               </small>
-            </div>
-          )) : <div>Waiting for native source readback.</div>}
-          {sourceReady && layerState?.sources.length === 0 ? <div>No native data sources reported.</div> : null}
+              {pendingLayers[source.id] ? (
+                <small style={styles.pending}>
+                  {pendingLayers[source.id].phase === 'saving'
+                    ? 'Saving Project setting…'
+                    : `Applying Project ${pendingLayers[source.id].enabled ? 'ON' : 'OFF'} to globe…`}
+                </small>
+              ) : null}
+              {layerApplyErrors[source.id]
+                ? <small role="alert" style={styles.error}>
+                  {enabled ? 'ON saved' : 'OFF saved'} · globe layer: {layerApplyErrors[source.id]}
+                </small>
+                : null}
+            </div>;
+          }) : <div>Waiting for source status.</div>}
+          {sourceReady && layerState?.sources.length === 0 ? <div>No data sources reported.</div> : null}
           <div style={styles.selection}>
             <strong>Selected entity</strong>
             {selection ? <>
@@ -140,13 +297,13 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
                 disabled={!selection.position || !sourceVersion}
                 onClick={() => {
                   const requestId = bridgeRef.current?.focusSelection(selection);
-                  if (!requestId) setSurfaceError('God’s Eye focus is unavailable');
+                  if (!requestId) setSurfaceError('WorldView focus is unavailable');
                 }}
                 style={styles.action}
               >
                 Focus
               </button>
-            </> : <span>No native selection.</span>}
+            </> : <span>No selection.</span>}
           </div>
         </div>
       </RightGlassDrawer>
@@ -157,10 +314,10 @@ export default function WorldViewSurface({ projectId, cardId }: WorldViewSurface
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', height: '100%', minHeight: 0, background: '#050b10', color: '#d9f7f2' },
   globePane: { position: 'relative', minWidth: 0, minHeight: 0 },
-  statusBar: { position: 'absolute', left: 14, right: 14, top: 12, display: 'flex', flexWrap: 'wrap', gap: 9, alignItems: 'center', padding: '7px 10px', border: '1px solid rgba(114,215,199,.2)', borderRadius: 999, background: 'rgba(5,11,16,.82)', backdropFilter: 'blur(12px)', color: '#7f9eaa', fontSize: 10 },
-  brand: { color: '#d9f7f2', letterSpacing: '.18em', fontWeight: 800 },
   action: { border: '1px solid rgba(114,215,199,.45)', borderRadius: 7, padding: '4px 9px', color: '#d9f7f2', background: 'rgba(5,11,16,.82)', cursor: 'pointer' },
   error: { color: '#f39b73' },
+  pending: { color: '#91cfc7' },
+  errorNotice: { position: 'absolute', left: 14, right: 44, bottom: 14, zIndex: 31, padding: '8px 10px', border: '1px solid rgba(243,155,115,.35)', borderRadius: 8, color: '#f39b73', background: 'rgba(5,11,16,.9)', fontSize: 11, pointerEvents: 'none' },
   drawerBody: { display: 'grid', gap: 12, fontSize: 12 },
   sourceRow: { display: 'grid', gap: 4, padding: '10px 0', borderTop: '1px solid rgba(114,215,199,.2)' },
   sourceLabel: { display: 'flex', gap: 8, alignItems: 'center', color: '#d9f7f2' },

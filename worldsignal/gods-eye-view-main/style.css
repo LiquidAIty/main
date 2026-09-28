@@ -432,6 +432,14 @@ body.cockpit-mode #cockpit-cloud-effects.active {
   user-select: none;
 }
 
+/* LiquidAIty already supplies the WorldView identity around the isolated globe.
+   Keep routine startup status, but remove the duplicate imported product mark. */
+html.supervised-embed #title-bar,
+html.supervised-embed .loader-logo,
+html.supervised-embed .loader-content h2 {
+  display: none;
+}
+
 #title-bar .title-glow {
   position: absolute;
   top: -20px;

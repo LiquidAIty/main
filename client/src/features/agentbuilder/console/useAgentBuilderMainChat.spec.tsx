@@ -35,6 +35,22 @@ function messageText(messages: Array<{ role: string; text: string }>) {
   return messages.map(({ role, text }) => ({ role, text }));
 }
 
+const directChatTargets = [
+  {
+    cardId: 'card_main_chat', cardRevisionId: 'revision-main', profile: 'liquidaity-main',
+    title: 'Main', address: 'Main', aliases: ['main'],
+  },
+  {
+    cardId: 'builder', cardRevisionId: 'revision-builder', profile: 'builder',
+    title: 'Builder', address: 'Builder', aliases: ['builder'],
+  },
+  {
+    cardId: 'card_worldsignals_agent', cardRevisionId: 'revision-worldsignals',
+    profile: 'worldsignals', title: 'WorldSignals', address: 'WorldSignals',
+    aliases: ['worldsignals'],
+  },
+];
+
 beforeEach(() => {
   mocks.loadMainDriverStatus.mockReset().mockResolvedValue({ ready: true, activeDriver: null });
   mocks.loadSessionHistory.mockReset();
@@ -223,6 +239,164 @@ describe('Main chat live observation callbacks', () => {
       { role: 'assistant', text: 'BUILDER_DIRECT_OK', status: 'complete', speaker: builder },
     ]);
     expect(mocks.subscribeSessionEvents).not.toHaveBeenCalled();
+  });
+
+  it('uses one visible responder state and lets a typed address replace an icon target', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    mocks.streamSession.mockResolvedValue({ finalText: 'Done.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
+    });
+    expect(result.current.currentResponder).toMatchObject({
+      cardId: 'card_worldsignals_agent', label: 'WorldSignals', address: 'WorldSignals',
+    });
+
+    await act(async () => {
+      await result.current.requestMainText('@Builder Keep these exact user bytes.');
+    });
+    expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
+      message: '@Builder Keep these exact user bytes.',
+      targetCardId: 'builder',
+    }));
+    expect(result.current.currentResponder).toMatchObject({
+      cardId: 'builder', label: 'Builder', address: 'Builder',
+    });
+
+    await act(async () => {
+      await result.current.requestMainText('@Main Return to the default responder.');
+    });
+    expect(mocks.streamSession).toHaveBeenLastCalledWith(expect.not.objectContaining({
+      targetCardId: expect.anything(),
+    }));
+    expect(result.current.currentResponder).toMatchObject({
+      cardId: 'card_main_chat', label: 'Main', address: 'Main',
+    });
+  });
+
+  it('preserves the current Card when an unavailable companion target is rejected', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    mocks.streamSession.mockResolvedValue({ finalText: 'WorldSignals reply.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      expect(result.current.setCurrentResponderCardId('card_worldsignals_agent')).toBe(true);
+      expect(result.current.setCurrentResponderCardId('missing-companion-card')).toBe(false);
+    });
+    expect(result.current.currentResponder).toMatchObject({
+      cardId: 'card_worldsignals_agent', label: 'WorldSignals',
+    });
+
+    await act(async () => {
+      await result.current.requestMainText('Keep the existing responder.');
+    });
+    expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
+      targetCardId: 'card_worldsignals_agent',
+      message: 'Keep the existing responder.',
+    }));
+  });
+
+  it('snapshots the selected target Card when a submission enters the queue', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    let finishFirst!: (value: { finalText: string }) => void;
+    mocks.streamSession
+      .mockImplementationOnce(({ onEvent }) => {
+        onEvent({ kind: 'session', runId: 'run-first', cardId: 'card_worldsignals_agent' });
+        return new Promise((resolve) => { finishFirst = resolve; });
+      })
+      .mockResolvedValueOnce({ finalText: 'Builder queued reply.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      result.current.setCurrentResponderCardId('card_worldsignals_agent');
+      result.current.handleNativeSend('First turn.');
+    });
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(1));
+    act(() => {
+      result.current.setCurrentResponderCardId('builder');
+      result.current.handleNativeSend('Queued for Builder.');
+      result.current.setCurrentResponderCardId(null);
+    });
+    expect(result.current.queuedInputCount).toBe(1);
+
+    await act(async () => {
+      finishFirst({ finalText: 'WorldSignals first reply.' });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
+    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
+      message: 'Queued for Builder.',
+      targetCardId: 'builder',
+    });
+  });
+
+  it('keeps Main graph context and attention observers out of a direct Card turn', async () => {
+    const onUserTurnStarted = vi.fn();
+    const onNativeTurnEvent = vi.fn();
+    const onTurnFinished = vi.fn();
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    mocks.streamSession.mockImplementation(async (args) => {
+      expect(args.targetCardId).toBe('builder');
+      expect(args.dataAnchors).toEqual([]);
+      args.onEvent({
+        kind: 'run', runId: 'builder-run', cardId: 'builder', directAddressed: true,
+      });
+      args.onEvent({
+        kind: 'text', runId: 'builder-run', cardId: 'builder', directAddressed: true,
+        text: 'Builder reply.',
+      });
+      return { finalText: 'Builder reply.' };
+    });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+      dataAnchors: [{
+        authority: 'CodeGraph', nativeId: 'main-only-anchor', reason: 'next Main invocation',
+        order: 0, boundedExpansion: 1, resultLimit: 12, required: true,
+      }],
+      onUserTurnStarted, onNativeTurnEvent, onTurnFinished,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      expect(result.current.setCurrentResponderCardId('builder')).toBe(true);
+    });
+    await act(async () => {
+      await result.current.requestMainText('Work directly.');
+    });
+
+    expect(onUserTurnStarted).not.toHaveBeenCalled();
+    expect(onNativeTurnEvent).not.toHaveBeenCalled();
+    expect(onTurnFinished).not.toHaveBeenCalled();
   });
 
   it('keeps a failed addressed turn attributed to the attempted target without fake assistant speech', async () => {

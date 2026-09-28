@@ -1,6 +1,7 @@
 import * as Cesium from 'cesium';
 import { holdContinuousRender, releaseContinuousRender } from '../renderGovernor.js';
 import { isRateLimitedOutcome, resolveAnnotationTarget } from './annotationResolver.js';
+import { runtimeUrl } from '../runtimeUrl.js';
 
 // Dev convenience: expose the app's Cesium instance for console/preview probing
 // (single shared module instance — avoids dual-Cesium state bugs when testing).
@@ -866,6 +867,16 @@ export function createAnnotationEngine({
     annotate,
     clear,
     fadeOutAll,
+    destroy() {
+      clear();
+      if (tickHandle != null) {
+        cancelAnimationFrame(tickHandle);
+        tickHandle = null;
+      }
+      outlineListeners.clear();
+      renderer.destroy?.();
+      releaseContinuousRender('annotations');
+    },
     count: () => annotations.size,
     list: () => Array.from(annotations.values()),
 
@@ -1091,7 +1102,7 @@ async function fetchRoute(coordPairs, mode, externalSignal) {
   const timer = setTimeout(() => controller.abort(), 13000);
   try {
     const coords = coordPairs.map(([lon, lat]) => `${lon.toFixed(6)},${lat.toFixed(6)}`).join(';');
-    const res = await fetch(`/api/route?profile=${mode}&coords=${encodeURIComponent(coords)}`, { signal: controller.signal });
+    const res = await fetch(runtimeUrl(`/api/route?profile=${mode}&coords=${encodeURIComponent(coords)}`), { signal: controller.signal });
     const data = await res.json();
     if (data?.ok && Array.isArray(data.geometry) && data.geometry.length >= 2) return data;
   } catch { /* routing unavailable / aborted → caller falls back to straight segments */ } finally {

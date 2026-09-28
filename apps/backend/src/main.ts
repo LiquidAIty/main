@@ -227,16 +227,12 @@ async function startServer() {
         console.log(`[BOOT] Hermes Card ready card=${terminal.cardId} profile=${terminal.profile} gatewayPid=${terminal.gatewayPid}`);
       }
     },
-  })
-    .then(({ discovered, started }) => {
-      console.log(`[BOOT] standalone Kanban Run recovery discovered=${discovered} started=${started}`);
-    })
-    .catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message !== 'python_owned_startup_cancelled') {
-        console.error(`[BOOT] Python-owned startup failed: ${message}`);
-      }
-    });
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message !== 'python_owned_startup_cancelled') {
+      console.error(`[BOOT] Python-owned startup failed: ${message}`);
+    }
+  });
 }
 
 // Mount all routes under /api

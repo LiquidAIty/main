@@ -177,6 +177,23 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });
 
+  it('selects direct chat responders from exact Card-owned companion surfaces without topology mutation', () => {
+    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('projectCardChatTargets(deck.nodes)');
+    expect(source).toContain('const owners = deck.nodes.filter((node) => isWorldViewCard(node));');
+    expect(source).toContain('directChatTargets.some((target) => target.cardId === owners[0].id)');
+    expect(source).toContain('!worldSignalsCardId || !setCurrentResponderCardId(worldSignalsCardId)');
+    expect(source).toContain('!worldViewCard?.id || !setCurrentResponderCardId(worldViewCard.id)');
+    expect(source).toContain('!tradingCard?.id || !setCurrentResponderCardId(tradingCard.id)');
+    expect(source).toContain('saved Card is unavailable for direct chat.');
+    expect(source).toContain("setWorkspaceView(canvasProjectId ? 'canvas' : 'chat')");
+    expect(source).toContain('setCurrentResponderCardId(null)');
+    expect(source).toContain('currentResponder={currentResponder}');
+    expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
+      source: 'card_main_chat', target: 'card_worldsignals_agent', edgeType: 'flow',
+    }));
+  });
+
   it('stores bounded write authority without the retired public Card-run model tool', () => {
     const byId = new Map(INITIAL_DECK.nodes.map((node) => [node.id, node]));
     const mainTools = byId.get('card_main_chat')?.runtimeOptions?.tools ?? [];
@@ -184,6 +201,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(mainTools).toEqual(expect.arrayContaining([
       'engraphis_remember',
       'run_mag_one',
+      'worldview.set_capability',
     ]));
     expect(mainTools).not.toEqual(expect.arrayContaining([
       'engraphis_recall_context',
@@ -401,9 +419,7 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(magOne).toMatchObject({
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
     });
-    expect(INITIAL_DECK.nodes.filter(
-      (node) => node.runtime.kind === 'hermes' && node.runtime.mode === 'kanban',
-    )).toEqual([]);
+    expect(JSON.stringify(INITIAL_DECK.nodes)).not.toContain('"mode":"kanban"');
   });
 
   it('resolves CodeGraph identity only after the user opens the CodeGraph surface', () => {

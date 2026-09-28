@@ -1,8 +1,9 @@
 /**
  * Frontend client for shared chat over saved Cards' persistent Hermes Gateway
- * sessions. Unaddressed turns resolve to Main; an addressed turn resolves to
- * the selected saved Card before any inference. The browser consumes backend
- * SSE while each Card-owned Gateway remains the AIAgent/runtime owner.
+ * sessions. Omitting `targetCardId` resolves to Main; an exact selected Card ID
+ * or matching leading address resolves to that saved Project Card before any
+ * inference. The browser consumes backend SSE while each Card-owned Gateway
+ * remains the AIAgent/runtime owner.
  *
  * `streamSession` forwards backend-projected native events to `onEvent` and
  * resolves with the native completion text. Stable event IDs are delivered
@@ -12,6 +13,7 @@ import type {
   MainProjectionEvent,
   RuntimeEvent,
 } from '../../../../../apps/backend/src/contracts/runtimeEvents';
+import type { AgentCardInstance } from '../../../types/agentgraph';
 
 export type NativeSessionEvent = {
   terminalEvent?: RuntimeEvent;
@@ -158,6 +160,51 @@ export type AddressableAgent = {
   aliases: string[];
 };
 
+export type DirectChatTarget = {
+  cardId: string;
+  cardRevisionId: string;
+  profile: string;
+  title: string;
+  address?: string;
+  aliases: string[];
+};
+
+const DIRECT_CHAT_ADDRESS_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Project membership, not Main's orange outbound roster, is the client-side
+ * source for direct shared-chat targets. The server still validates the exact
+ * saved Card identity and current Project membership for every turn.
+ */
+export function projectCardChatTargets(
+  cards: readonly Pick<
+    AgentCardInstance,
+    'id' | '_cardRevisionId' | 'title' | 'runtime' | 'runtimeOptions'
+  >[],
+): DirectChatTarget[] {
+  return cards.flatMap((card) => {
+    const record = card as typeof card & { enabled?: boolean };
+    const runtimeOptions = card.runtimeOptions as (
+      NonNullable<AgentCardInstance['runtimeOptions']> & { enabled?: boolean }
+    ) | null | undefined;
+    const cardId = card.id.trim();
+    const cardRevisionId = String(card._cardRevisionId || '').trim();
+    const title = card.title.trim();
+    const profile = card.runtime.profile.trim();
+    if (record.enabled === false || runtimeOptions?.enabled === false
+      || !cardId || !cardRevisionId || !profile || !title) return [];
+    const address = DIRECT_CHAT_ADDRESS_PATTERN.test(title) ? title : undefined;
+    return [{
+      cardId,
+      cardRevisionId,
+      profile,
+      title,
+      ...(address ? { address } : {}),
+      aliases: address ? [address.toLowerCase()] : [],
+    }];
+  });
+}
+
 export type SharedChatMessage = {
   role: 'assistant' | 'user';
   text: string;
@@ -225,6 +272,7 @@ export async function streamSession(args: {
   deckId?: string;
   conversationId: string;
   message: string;
+  targetCardId?: string;
   dataAnchors?: Array<{
     authority: 'ThinkGraph' | 'KnowGraph' | 'CodeGraph';
     nativeId: string;
@@ -246,6 +294,7 @@ export async function streamSession(args: {
       deckId: args.deckId,
       conversationId: args.conversationId,
       message: args.message,
+      ...(args.targetCardId ? { targetCardId: args.targetCardId } : {}),
       dataAnchors: args.dataAnchors || [],
     }),
     signal: args.signal,

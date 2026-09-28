@@ -5,11 +5,11 @@ export type PromptTemplate = {
 
 export type CardRuntime = {
   kind: 'hermes';
-  mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  mode: 'main' | 'delegate' | 'magentic_one';
   profile: string;
 };
 
-// flow = ORANGE Main bot-team authority; magentic_option = BLUE Magnetic
+// flow = ORANGE saved-Card orchestrator authority; magentic_option = BLUE Magnetic
 // task-ledger worker availability, independent of endpoint order. Blue
 // topology never starts or controls Magnetic.
 // Mirrors the backend contract: an unrecognised edge is classified 'invalid' and
@@ -39,6 +39,9 @@ export type CardSubsystemAttachment = {
 };
 
 export type AgentCardRuntimeOptions = {
+  /** Saved outbound orange Card-to-Card delegation authority. Main has this
+   * authority by its runtime role; another non-Magnetic Card must opt in. */
+  orchestrator?: boolean;
   /** Temporary native Hermes children for one Card turn. This is unrelated to
    * orange saved-Card orchestration and Magnetic's blue saved-worker roster. */
   subagentType?: 'none' | 'leaf' | 'recursive';

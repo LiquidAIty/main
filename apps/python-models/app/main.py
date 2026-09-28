@@ -22,7 +22,6 @@ from app.python_models.card_domain import (
     delete_card,
     finish_run,
     inspect_agentgraph,
-    list_active_kanban_runs,
     list_decks,
     load_deck,
     prepare_main_chat,
@@ -658,14 +657,6 @@ def domain_run_read(payload: dict[str, Any]):
 def domain_run_input_files(payload: dict[str, Any]):
     try:
         return read_run_input_files(payload)
-    except CardDomainError as err:
-        raise HTTPException(status_code=409, detail=str(err)) from err
-
-
-@app.get("/domain/runs/active-kanban")
-def domain_active_kanban_runs():
-    try:
-        return list_active_kanban_runs()
     except CardDomainError as err:
         raise HTTPException(status_code=409, detail=str(err)) from err
 

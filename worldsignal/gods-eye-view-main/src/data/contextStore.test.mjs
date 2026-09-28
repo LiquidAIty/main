@@ -7,6 +7,7 @@ import {
   getSelectedEntityContext,
   refreshTrackedSubjectContext,
   registerEntityContext,
+  resetContextStore,
   selectEntityContext,
   selectTrackedSubjectContext,
 } from './contextStore.js';
@@ -41,6 +42,16 @@ const flightSubject = (id, extra = {}) => ({
   longitude: -97.7431,
   ...extra,
 });
+
+test('native application teardown deletes the selected-entity store', () => withWindow(() => {
+  const carrier = {};
+  registerEntityContext(carrier, flightSubject('stale-before-remount'));
+  selectEntityContext(carrier);
+  assert.equal(getSelectedEntityContext()?.id, 'stale-before-remount');
+  resetContextStore();
+  assert.equal(globalThis.window.__gevContextStore, undefined);
+  assert.equal(getSelectedEntityContext(), null);
+}));
 
 test('a tracking layer subject becomes the selected entity context', () => {
   withWindow(() => {

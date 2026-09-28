@@ -46,6 +46,7 @@
  * plus CCTV-specific methods (selectCamera, cycleCamera, focusNearest, etc.).
  */
 import * as Cesium from 'cesium';
+import { runtimeUrl } from '../runtimeUrl.js';
 import { registerSpriteCollection, restoreSpriteOrder } from './spriteOrder.js';
 import {
   CCTV_ACTIVATION_RESULT,
@@ -103,10 +104,10 @@ import { holdContinuousRender, releaseContinuousRender } from '../renderGovernor
 // ---------------------------------------------------------------------------
 // API endpoints
 // ---------------------------------------------------------------------------
-const FRAME_ENDPOINT = '/api/cctv/frame';
-const SOURCE_ENDPOINT = '/api/cctv/sources';
-const HEALTH_ENDPOINT = '/api/cctv/health';
-const MEDIA_ENDPOINT = '/api/cctv/media';
+const FRAME_ENDPOINT = runtimeUrl('/api/cctv/frame');
+const SOURCE_ENDPOINT = runtimeUrl('/api/cctv/sources');
+const HEALTH_ENDPOINT = runtimeUrl('/api/cctv/health');
+const MEDIA_ENDPOINT = runtimeUrl('/api/cctv/media');
 
 // ---------------------------------------------------------------------------
 // Timing and geometry constants

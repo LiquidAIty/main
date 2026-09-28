@@ -56,10 +56,10 @@ describe('canvas connection validation', () => {
     }, [])).toBe(false);
   });
 
-  it('classifies Magnetic\'s ordinary Card handle as orange flow', () => {
+  it('classifies a Magnetic endpoint as blue regardless of the card-side handle', () => {
     const deck = structuredClone(INITIAL_DECK);
     const connection = {
-      source: 'card_main_chat',
+      source: 'card_trading_workbench',
       target: 'card_magentic',
       sourceHandle: 'card-control',
       targetHandle: 'card-control',
@@ -67,15 +67,15 @@ describe('canvas connection validation', () => {
     expect(isPlainConnectionAllowedForDocument(deck, connection, [])).toBe(true);
     expect(isPlainConnectionAllowedForDocument(deck, connection, [{
       ...connection,
-      id: 'existing-direct-card-flow',
-      data: { edgeType: 'flow' },
+      id: 'existing-worker-membership',
+      data: { edgeType: 'magentic_option' },
     }])).toBe(false);
     expect(isPlainConnectionAllowedForDocument(deck, {
       source: 'builder',
       target: 'card_magentic',
       sourceHandle: 'card-control',
       targetHandle: 'card-control',
-    }, [])).toBe(false);
+    }, [])).toBe(true);
     expect(isPlainConnectionAllowedForDocument(deck, {
       source: 'card_magentic',
       target: 'card_main_chat',
@@ -99,22 +99,20 @@ describe('canvas connection validation', () => {
       source: 'card_main_chat', target: 'builder', sourceHandle: 'card-control', targetHandle: null,
     };
     const allowed = (value = connect, ignore?: string) => isPlainConnectionAllowedForDocument(deck, value, [], ignore);
-    expect(allowed()).toBe(false);
-    const directConnect = { ...connect, targetHandle: 'card-control-target' };
-    expect(allowed(directConnect)).toBe(true);
+    expect(allowed()).toBe(true);
     expect(allowed({ ...connect, source: connect.target, target: connect.source })).toBe(false);
     const main = deck.nodes.find(card => card.id === connect.source)!;
     const mainOptions = main.runtimeOptions as typeof main.runtimeOptions & { enabled?: boolean };
-    expect(allowed(directConnect)).toBe(true);
+    expect(allowed(connect)).toBe(true);
     mainOptions!.enabled = false;
-    expect(allowed(directConnect)).toBe(false);
-    expect(allowed(directConnect, 'reconnected-edge')).toBe(false);
+    expect(allowed(connect)).toBe(false);
+    expect(allowed(connect, 'reconnected-edge')).toBe(false);
     expect(allowed({ ...connect, target: 'card_magentic', targetHandle: 'card-control' as any })).toBe(false);
     expect(allowed({ ...connect, sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-6' as any })).toBe(false);
     expect(allowed({ ...connect, source: 'card_trading_workbench', sourceHandle: null, target: 'card_magentic', targetHandle: 'bus-in-5' as any })).toBe(true);
     mainOptions!.enabled = true;
     deck.nodes.find(card => card.id === connect.target)!.runtime = main.runtime;
-    expect(allowed(directConnect)).toBe(false);
+    expect(allowed(connect)).toBe(false);
   });
 
   it('allows one master per Card and lets one reconnected wire change that master', () => {
@@ -124,7 +122,7 @@ describe('canvas connection validation', () => {
       source: 'card_main_chat',
       sourceHandle: 'card-control',
       target: 'card_team',
-      targetHandle: 'card-control-target',
+      targetHandle: null,
       data: { edgeType: 'flow' as const },
     };
     const blue = {
@@ -150,6 +148,32 @@ describe('canvas connection validation', () => {
 });
 
 describe('BuilderCanvas runtime-truth helpers', () => {
+  it('renders the real orange system topology beside the blue Trading worker topology', () => {
+    const nodes = toFlowNodes(
+      structuredClone(INITIAL_DECK),
+      null,
+      null,
+      false,
+      new Set(),
+    );
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    for (const cardId of ['card_main_chat', 'builder', 'card_thinkgraph', 'card_knowgraph']) {
+      expect(byId.get(cardId)?.hidden).not.toBe(true);
+    }
+    expect(byId.get('card_magentic')?.hidden).not.toBe(true);
+    expect(byId.get('card_team')?.hidden).not.toBe(true);
+    expect(byId.get('card_trading_workbench')?.hidden).not.toBe(true);
+    expect(byId.get('card_worldsignals_agent')?.hidden).not.toBe(true);
+
+    const edges = toFlowEdges(structuredClone(INITIAL_DECK), null, null, new Set());
+    const edgesById = new Map(edges.map((edge) => [edge.id, edge] as const));
+    expect(edgesById.get('edge_main_chat_thinkgraph')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_agent_builder')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_hermes')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_main_chat_magnetic')?.hidden).not.toBe(true);
+    expect(edgesById.get('edge_team_magentic_bus')?.hidden).not.toBe(true);
+  });
+
   it('fits every rendered Card when the Fit view control is used', () => {
     const fitView = vi.fn();
 
@@ -796,14 +820,15 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     ).toBe(false);
   });
 
-  it('allows orange bot-team connections from Main only', () => {
+  it('allows orange bot-team connections only from a saved orchestrator and ignores card side', () => {
     const document = createBusTestDocument();
     for (const card of document.nodes.filter(card => card.id !== 'card_magentic')) {
       card.runtime = { kind: 'hermes', mode: 'delegate', profile: card.id };
       card.runtimeOptions = {};
     }
     const first = document.nodes.find(card => card.id === 'card_worker_a')!;
-    first.runtime = { kind: 'hermes', mode: 'main', profile: 'main' };
+    first.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-a' };
+    first.runtimeOptions = { orchestrator: true };
     const currentEdges: Edge[] = [
       {
         id: 'edge_main_worker',
@@ -822,7 +847,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           source: 'card_worker_a',
           sourceHandle: 'card-control',
           target: 'card_worker_b',
-          targetHandle: 'card-control-target',
+          targetHandle: null,
         },
         currentEdges,
       ),
@@ -835,7 +860,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
           source: 'card_worker_b',
           sourceHandle: 'card-control',
           target: 'card_research_agent',
-          targetHandle: 'card-control-target',
+          targetHandle: null,
         },
         currentEdges,
       ),
@@ -846,9 +871,9 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         document,
         {
           source: 'card_worker_a',
-          sourceHandle: 'card-control',
+          sourceHandle: null,
           target: 'card_research_agent',
-          targetHandle: 'card-control-target',
+          targetHandle: null,
         },
         currentEdges,
       ),
@@ -891,7 +916,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
   });
 
-  it('maps existing orange edges to the invisible direct-control target affordance', () => {
+  it('maps existing orange edges to the ordinary visible target port', () => {
     const document = createBusTestDocument([{
       id: 'edge_first_second',
       source: 'card_worker_a',
@@ -910,8 +935,8 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     expect(edge).toMatchObject({
       hidden: false,
       sourceHandle: 'card-control',
-      targetHandle: 'card-control-target',
     });
+    expect(edge.targetHandle).toBeUndefined();
   });
 
   it('captures handle ids when converting React Flow edges back to DeckEdge', () => {

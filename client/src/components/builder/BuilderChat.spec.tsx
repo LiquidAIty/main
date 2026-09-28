@@ -115,6 +115,7 @@ describe('BuilderChat', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(screen.getByPlaceholderText('Type a message…')).not.toBeNull();
+    expect(screen.queryByTestId('builder-chat-current-responder')).toBeNull();
   });
 
   it('uses the parent-owned draft so an imported Main task reaches the one chat composer', () => {
@@ -161,13 +162,15 @@ describe('BuilderChat', () => {
     render(
       <BuilderChat
         messages={[]}
-        addressableAgents={[
+        directChatTargets={[
           {
-            cardId: 'builder', profile: 'builder', title: 'Builder',
+            cardId: 'builder', cardRevisionId: 'revision-builder',
+            profile: 'builder', title: 'Builder',
             address: 'Builder', aliases: ['builder'],
           },
           {
-            cardId: 'trading', profile: 'trading', title: 'Trading',
+            cardId: 'trading', cardRevisionId: 'revision-trading',
+            profile: 'trading', title: 'Trading',
             address: 'Trading', aliases: ['trading'],
           },
         ]}
@@ -216,7 +219,7 @@ describe('BuilderChat', () => {
     expect(screen.queryByText('You → Builder')).toBeNull();
     expect(screen.queryByText('You')).toBeNull();
     expect(screen.getAllByTestId('builder-chat-speaker')).toHaveLength(1);
-    expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('Builder');
+    expect(screen.getByTestId('builder-chat-speaker').textContent).toBe('@Builder');
     expect(screen.queryByText('Main Chat')).toBeNull();
     expect(screen.getByText('Main answer')).not.toBeNull();
     expect(screen.getByText('BUILDER_DIRECT_OK')).not.toBeNull();

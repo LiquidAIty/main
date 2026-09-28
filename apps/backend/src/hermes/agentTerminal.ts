@@ -114,7 +114,7 @@ export type AuthenticatedCardToolRequest = {
   cardTools: {
     cardRevisionId: string;
     configurationFingerprint: string;
-    runtimeMode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+    runtimeMode: 'main' | 'delegate' | 'magentic_one';
   };
   request: {
     version: 1;

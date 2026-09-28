@@ -128,6 +128,20 @@ export function getRenderGovernorDiagnostics() {
   };
 }
 
+/** Release the active viewer and every outstanding owner hold on app unmount. */
+export function uninstallRenderGovernor(viewer = _viewer) {
+  if (viewer && _viewer && viewer !== _viewer) return false;
+  if (_viewer?.scene) {
+    _viewer.scene.requestRenderMode = false;
+    _viewer.scene.maximumRenderTimeChange = 0;
+  }
+  _viewer = null;
+  _installed = false;
+  _holds.clear();
+  _recentRequests.length = 0;
+  return true;
+}
+
 /** Test seam: reset module state between unit tests. */
 export function _resetRenderGovernorForTest() {
   _viewer = null;

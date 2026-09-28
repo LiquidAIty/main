@@ -4,7 +4,7 @@ import {
 } from '../security/requestAccess';
 import {
   clearSessionCookie,
-  createAnonymousSession,
+  createLocalSession,
   createSession,
   getUserBySessionId,
   removeSession,
@@ -33,7 +33,7 @@ authRouter.post('/start', async (req, res) => {
       if (existingUser) return res.json({ userId: existingUser.id });
     }
 
-    const { user, session } = await createAnonymousSession();
+    const { user, session } = await createLocalSession();
     setSessionCookie(res, session.id, req);
     return res.json({ userId: user.id });
   } catch (error: any) {

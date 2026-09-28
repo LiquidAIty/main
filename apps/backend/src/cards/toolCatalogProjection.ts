@@ -21,7 +21,7 @@ export type ToolCatalogReference = {
   access: 'read' | 'write';
   contracts: NativeToolContract[];
   requiredCallerRuntimeKind?: 'hermes';
-  requiredCallerRuntimeMode?: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  requiredCallerRuntimeMode?: 'main' | 'delegate' | 'magentic_one';
 };
 
 export type ToolCatalogIndex = {

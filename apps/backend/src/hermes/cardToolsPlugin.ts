@@ -142,7 +142,7 @@ export type HermesCardTools = {
   cardId: string;
   cardRevisionId: string;
   cardRevisionSha256: string;
-  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'kanban' | 'magentic_one'; profile: string };
+  runtime: { kind: 'hermes'; mode: 'main' | 'delegate' | 'magentic_one'; profile: string };
   enabledTools: string[];
   unavailableTools: string[];
   unavailableToolReasons: Record<string, string>;
@@ -203,7 +203,7 @@ function requireCardTools(
     || body.cardRevisionSha256 !== card._cardRevisionSha256
     || runtime.kind !== 'hermes'
     || runtime.profile !== (card.runtime.kind === 'hermes' ? card.runtime.profile : '')
-    || !['main', 'delegate', 'kanban', 'magentic_one'].includes(String(runtime.mode || ''))
+    || !['main', 'delegate', 'magentic_one'].includes(String(runtime.mode || ''))
     || !/^[a-f0-9]{64}$/.test(String(body.configurationFingerprint || ''))
     || !rawPluginTools
     || !rawExternalMcpTools

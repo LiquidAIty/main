@@ -31,16 +31,16 @@ async function render(activeDriver: MainDriverSource | null = null) {
 }
 
 describe('shared chat and Card work surface', () => {
-  it('starts with the genuine Card surface visible directly below shared chat', async () => {
+  it('opens with Main fully visible while keeping the genuine Card surface mounted', async () => {
     const host = await render();
     expect(host.querySelector('[data-testid="main-chat"]')).not.toBeNull();
     const handle = host.querySelector('[data-testid="main-chat-agent-builder-divider"]') as HTMLButtonElement;
-    expect(handle.getAttribute('aria-expanded')).toBe('true');
+    expect(handle.getAttribute('aria-expanded')).toBe('false');
     const region = host.querySelector('[data-testid="agent-builder-region"]') as HTMLDivElement;
-    expect(region.style.height).toBe('320px');
-    expect(region.getAttribute('aria-hidden')).toBe('false');
+    expect(region.style.height).toBe('0px');
+    expect(region.getAttribute('aria-hidden')).toBe('true');
     expect(host.querySelector('[data-testid="main-work-surface"]')?.getAttribute('data-terminal-mode'))
-      .toBe('split');
+      .toBe('collapsed');
     expect(host.querySelector('[data-testid="agent-builder-instance"]')).not.toBeNull();
   });
 

@@ -46,7 +46,7 @@ export type NativeHermesProfileState = {
 
 export type HermesCardProfileBinding = {
   profile: string;
-  mode: 'main' | 'delegate' | 'kanban' | 'magentic_one';
+  mode: 'main' | 'delegate' | 'magentic_one';
 };
 
 export type HermesCardProfileReadback = {

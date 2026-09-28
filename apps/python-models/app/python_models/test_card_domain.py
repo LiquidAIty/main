@@ -7,6 +7,25 @@ import pytest
 from app.python_models import card_domain
 
 
+@pytest.fixture(autouse=True)
+def project_worldview_defaults_to_existing_availability(monkeypatch):
+    """Keep unrelated Card tests focused; dedicated tests override the mask."""
+
+    def resolve(project_id, candidate_capability_ids, **_kwargs):
+        candidates = list(dict.fromkeys(candidate_capability_ids))
+        return {
+            "schemaVersion": "project-worldview.v1",
+            "projectId": project_id,
+            "defaultEnabled": True,
+            "candidateCapabilities": candidates,
+            "enabledCapabilities": candidates,
+            "excludedCapabilities": [],
+            "overrides": [],
+        }
+
+    monkeypatch.setattr(card_domain, "resolve_project_worldview", resolve)
+
+
 @pytest.mark.parametrize("conversation_matches", [True, False])
 def test_scoped_run_read_checks_native_conversation_before_output(monkeypatch, conversation_matches):
     from unittest.mock import MagicMock
@@ -1706,21 +1725,6 @@ def _prepared_grounded_runtime(runtime: dict[str, str]) -> dict:
     }
 
 
-def _prepared_kanban_runtime() -> dict:
-    prepared = _prepared_grounded_runtime({
-        "kind": "hermes", "mode": "kanban", "profile": "steward",
-    })
-    prepared.update({
-        "projectId": "project-one",
-        "deckId": "deck-one",
-        "runtimeOwner": "hermes",
-        "cardIdentity": {"cardId": "kanban-one", "title": "Kanban"},
-        "resolvedNativeReads": [],
-        "resolvedGraphProjection": {"nodes": [], "edges": []},
-    })
-    return prepared
-
-
 def _fake_retain_idf(prepared: dict, **_kwargs) -> tuple[dict, dict, dict]:
     idf = prepared["idf"]
     stable = idf["stableSavedCardContext"]
@@ -2011,6 +2015,10 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
             "profile": worker["runtime"]["profile"],
             "description": worker["subtitle"],
             "cardRevisionId": worker["_cardRevisionId"],
+            "capabilities": {
+                "savedToolIds": [],
+                "projectEligibleToolIds": [],
+            },
         }
         for worker in workers
     ]
@@ -2030,94 +2038,23 @@ def test_mag_one_materializes_all_six_saved_edges_without_worker_selection(monke
     }
 
 
-def test_retired_kanban_card_mode_cannot_create_a_new_run(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    prepared = _prepared_kanban_runtime()
-    monkeypatch.setattr(card_domain, "prepare_run_invocation", lambda _payload: prepared)
-    monkeypatch.setattr(
-        card_domain,
-        "_insert_run",
-        lambda *_args, **_kwargs: pytest.fail("retired Card mode created a Run"),
-    )
-
+def test_retired_kanban_card_mode_is_not_a_runtime_contract() -> None:
     with pytest.raises(
         card_domain.CardDomainError,
-        match="hermes_kanban_card_mode_retired",
+        match="hermes_runtime_mode_unsupported:kanban",
     ):
-        card_domain.begin_run({
-            "projectId": "project-one",
-            "deckId": "deck-one",
-            "cardId": "kanban-one",
-            "runId": "run-retired",
-            "correlationId": "correlation-retired",
-            "assignment": "Do not start",
-        })
-
-
-def test_active_kanban_recovery_projects_only_persisted_run_and_root_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    statements: list[str] = []
-
-    class Cursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def execute(self, query, _params=None):
-            statements.append(str(query))
-
-        def fetchall(self):
-            base = {
-                "run_id": "run-one",
-                "correlation_id": "correlation-one",
-                "project_id": "project-one",
-                "deck_id": "deck-one",
-                "card_id": "card_hermes_steward",
-                "target_card_revision_id": "revision-one",
-                "runtime_kind": "hermes",
-                "runtime_mode": "kanban",
-                "runtime_profile": "liquidaity-hermes-steward",
-                "state": "running",
-                "provider_thread_ref": "t_existing_root",
-            }
-            return [base]
-
-    class Connection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def cursor(self, **_kwargs):
-            return Cursor()
-
-    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
-
-    result = card_domain.list_active_kanban_runs()
-
-    assert result["ok"] is True
-    assert len(result["runs"]) == 1
-    assert result["runs"][0]["runId"] == "run-one"
-    assert result["runs"][0]["nativeRootId"] == "t_existing_root"
-    assert result["runs"][0]["runtimeProfile"] == "liquidaity-hermes-steward"
-    query = "\n".join(statements)
-    assert "run.state IN ('pending','running')" in query
-    assert "run.runtime_mode='kanban'" in query
-    assert "provider_thread_ref IS NOT NULL" in query
-    assert "native_child" not in query.lower()
+        card_domain._runtime_owner(_agent(
+            "retired-kanban",
+            runtime={"kind": "hermes", "mode": "kanban", "profile": "retired-kanban"},
+        ))
 
 
 def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None:
     projected = card_domain._run_projection({
         "run_id": "run-one",
         "runtime_kind": "hermes",
-        "runtime_mode": "kanban",
-        "runtime_profile": "liquidaity-hermes-steward",
+        "runtime_mode": "delegate",
+        "runtime_profile": "research",
         "provider_thread_ref": "t_retained_root",
         "provider": "openai-codex",
         "provider_model_id": "gpt-5.6-luna",
@@ -2127,7 +2064,7 @@ def test_run_projection_carries_saved_runtime_profile_for_exact_rejoin() -> None
     })
 
     assert projected["runId"] == "run-one"
-    assert projected["runtimeProfile"] == "liquidaity-hermes-steward"
+    assert projected["runtimeProfile"] == "research"
     assert projected["nativeRootId"] == "t_retained_root"
     assert projected["provider"] == "openai-codex"
     assert projected["model"] == "gpt-5.6-luna"
@@ -2768,7 +2705,7 @@ def test_stable_card_has_one_prompt_and_one_explicit_runtime() -> None:
 
 
 def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
-    for mode in ("main", "delegate", "kanban"):
+    for mode in ("main", "delegate"):
         assert card_domain._runtime_owner(_agent(
             mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
         )) == "hermes"
@@ -2788,10 +2725,9 @@ def test_runtime_owner_is_exhaustive_over_the_explicit_runtime_union() -> None:
 
 
 def test_enabled_callable_saved_cards_are_magentic_workers() -> None:
-    for mode in ("delegate", "kanban"):
-        assert card_domain._is_callable_magentic_worker_card(_agent(
-            mode, runtime={"kind": "hermes", "mode": mode, "profile": mode}
-        )) is True
+    assert card_domain._is_callable_magentic_worker_card(_agent(
+        "delegate", runtime={"kind": "hermes", "mode": "delegate", "profile": "delegate"}
+    )) is True
     assert card_domain._is_callable_magentic_worker_card(_agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}
     )) is False
@@ -2890,7 +2826,62 @@ def test_magentic_roster_describes_an_enabled_hermes_saved_card(
         "executionReady": True,
         "readinessState": "ready",
         "readinessReason": None,
+        "capabilities": {
+            "savedToolIds": [],
+            "projectEligibleToolIds": [],
+        },
     }]
+
+
+def test_magentic_roster_reports_compact_project_eligible_saved_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mag = _agent(
+        "mag",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag"},
+    )
+    researcher = _agent("researcher", title="Researcher")
+    researcher["runtimeOptions"]["tools"] = ["calculator", "current_datetime"]
+    writer = _agent("writer", title="Writer")
+    writer["runtimeOptions"]["tools"] = ["current_datetime"]
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_: {
+        "projectId": "project-one",
+        "deck": {
+            "nodes": [mag, researcher, writer],
+            "edges": [
+                {"source": "mag", "target": "researcher", "edgeType": "magentic_option"},
+                {"source": "mag", "target": "writer", "edgeType": "magentic_option"},
+            ],
+        },
+    })
+
+    def project_mask(project_id, candidates, **_kwargs):
+        assert project_id == "project-one"
+        assert candidates == ["calculator", "current_datetime"]
+        return {
+            "schemaVersion": "project-worldview.v1",
+            "projectId": project_id,
+            "defaultEnabled": True,
+            "candidateCapabilities": candidates,
+            "enabledCapabilities": ["calculator"],
+            "excludedCapabilities": ["current_datetime"],
+            "overrides": [],
+        }
+
+    monkeypatch.setattr(card_domain, "resolve_project_worldview", project_mask)
+
+    roster = card_domain.describe_magentic_agents("project-one", "deck-one")
+
+    assert [item["capabilities"] for item in roster["connectedAgents"]] == [
+        {
+            "savedToolIds": ["calculator", "current_datetime"],
+            "projectEligibleToolIds": ["calculator"],
+        },
+        {
+            "savedToolIds": ["current_datetime"],
+            "projectEligibleToolIds": [],
+        },
+    ]
 
 
 def test_wire_magentic_roster_deduplicates_both_orders_and_ignores_disabled_edges(monkeypatch):
@@ -3089,7 +3080,7 @@ def test_invalid_saved_hermes_subagent_type_is_rejected(monkeypatch):
 
 @pytest.mark.parametrize("runtime", [
     {"kind": "hermes", "mode": mode, "profile": "research"}
-    for mode in ("main", "delegate", "kanban", "magentic_one")
+    for mode in ("main", "delegate", "magentic_one")
 ])
 def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, runtime):
     from app.python_models import idd
@@ -3101,6 +3092,60 @@ def test_ordinary_materialization_never_loads_builder_dictionary(monkeypatch, ru
     payload.pop("senderCardId")
     invocation = card_domain.materialize_invocation(payload)
     assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
+
+
+def test_project_worldview_filters_saved_tools_before_the_existing_one_batch_jev(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loaded = _destination_fixture(monkeypatch)
+    card = next(item for item in loaded["deck"]["nodes"] if item["id"] == "hermes")
+    card["runtimeOptions"].update({
+        "tools": ["calculator", "current_datetime"],
+        "autoTools": True,
+    })
+    jev_candidates: list[list[str]] = []
+
+    def project_mask(project_id, candidates, **_kwargs):
+        assert project_id == loaded["projectId"]
+        assert candidates == ["calculator", "current_datetime"]
+        return {
+            "schemaVersion": "project-worldview.v1",
+            "projectId": project_id,
+            "defaultEnabled": True,
+            "candidateCapabilities": candidates,
+            "enabledCapabilities": ["calculator"],
+            "excludedCapabilities": ["current_datetime"],
+            "overrides": [{
+                "capabilityId": "current_datetime",
+                "enabled": False,
+                "controlledBy": "user",
+                "mainReason": None,
+                "updatedAt": "2026-09-27T00:00:00+00:00",
+            }],
+        }
+
+    def one_batch_jev(_context, candidates):
+        names = [str(item["canonicalId"]) for item in candidates]
+        jev_candidates.append(names)
+        return names, {
+            "schemaVersion": "card-auto-tools.v1",
+            "enabled": True,
+            "status": "selected",
+            "requestCount": 1,
+            "questionCount": len(names),
+            "normalAuthorizedTools": names,
+            "selectedTools": names,
+        }
+
+    monkeypatch.setattr(card_domain, "resolve_project_worldview", project_mask)
+    monkeypatch.setattr(card_domain, "_decide_card_auto_tools", one_batch_jev)
+
+    invocation = card_domain.materialize_invocation(_destination_payload("hermes"))
+
+    assert jev_candidates == [["calculator"]]
+    assert invocation["projectWorldview"]["excludedCapabilities"] == ["current_datetime"]
+    assert invocation["idf"]["selectedToolsAndGrants"]["enabledTools"] == ["calculator"]
+    assert invocation["jevAutoTools"]["questionCount"] == 1
 
 
 def test_receiving_card_materializes_its_own_exact_call_data(
@@ -3262,7 +3307,7 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
 def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _agent("helper", runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"})
+    source = _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"})
     source["runtimeOptions"]["tools"] = ["card.load_graph_references"]
     target = _agent(
         "mag-one",
@@ -3388,7 +3433,7 @@ def test_non_main_same_card_graph_load_remains_forbidden(
 ) -> None:
     helper = _agent(
         "helper",
-        runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"},
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"},
     )
     helper["runtimeOptions"]["tools"] = ["card.load_graph_references"]
     monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
@@ -3419,7 +3464,7 @@ def test_non_main_same_card_graph_load_remains_forbidden(
 def test_card_graph_handoff_fails_closed_for_ungranted_or_unresolved_required_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _agent("helper", runtime={"kind": "hermes", "mode": "kanban", "profile": "helper"})
+    source = _agent("helper", runtime={"kind": "hermes", "mode": "delegate", "profile": "helper"})
     target = _agent(
         "mag-one",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
@@ -4072,7 +4117,7 @@ def test_main_chat_uses_one_canonical_materializer_without_serialized_card_data(
     assert begun["jevAttention"]["decisionId"].startswith("jev-attention:")
 
 
-def test_main_shared_conversation_is_visible_only_when_main_is_invoked() -> None:
+def test_shared_conversation_task_names_the_selected_saved_card() -> None:
     current = "Who just replied to me?"
     context = [
         {
@@ -4092,11 +4137,65 @@ def test_main_shared_conversation_is_visible_only_when_main_is_invoked() -> None
             "content": "BUILDER_DIRECT_OK",
         },
     ]
-    rendered = card_domain._main_shared_conversation_task(current, context)
+    rendered = card_domain._shared_conversation_task(current, context, "Builder")
+    assert rendered.startswith("## Shared conversation before this Builder turn")
     assert "You -> Builder:\n@builder Reply exactly BUILDER_DIRECT_OK" in rendered
     assert "Builder:\nBUILDER_DIRECT_OK" in rendered
-    assert rendered.endswith("## Current user message to Main\n\nWho just replied to me?")
-    assert card_domain._main_shared_conversation_task(current, []) == current
+    assert rendered.endswith("## Current user message to Builder\n\nWho just replied to me?")
+    assert card_domain._shared_conversation_task(current, [], "Research") == current
+
+
+def test_begin_run_renders_shared_conversation_before_selected_card_idf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = _prepared_grounded_runtime({
+        "kind": "hermes", "mode": "delegate", "profile": "builder",
+    })
+    prepared["cardIdentity"] = {"cardId": "builder", "title": "Builder"}
+    captured: dict[str, object] = {}
+
+    def prepare(payload: dict) -> dict:
+        captured.update(payload)
+        return prepared
+
+    monkeypatch.setattr(card_domain, "prepare_run_invocation", prepare)
+    monkeypatch.setattr(
+        card_domain,
+        "_insert_run",
+        lambda *_args, **_kwargs: ("run-builder", "run-builder", True),
+    )
+    monkeypatch.setattr(card_domain, "_retain_required_run_idf", _fake_retain_idf)
+    monkeypatch.setattr(card_domain, "_observe_run_start", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        card_domain,
+        "observe_materialized_anchor_reads",
+        lambda *_args, **_kwargs: True,
+    )
+
+    card_domain.begin_run({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "builder",
+        "assignment": "Continue with this result.",
+        "sharedConversationTargetLabel": "Builder",
+        "sharedConversation": [{
+            "role": "assistant",
+            "speakerCardId": "research",
+            "speakerLabel": "Research",
+            "targetCardId": "",
+            "targetLabel": "",
+            "content": "The bounded research result.",
+        }],
+        "runId": "run-builder",
+        "correlationId": "run-builder",
+    })
+
+    assert captured["assignment"] == "\n\n".join((
+        "## Shared conversation before this Builder turn",
+        "Research:\nThe bounded research result.",
+        "## Current user message to Builder",
+        "Continue with this result.",
+    ))
 
 
 def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
