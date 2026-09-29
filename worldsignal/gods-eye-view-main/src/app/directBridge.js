@@ -169,6 +169,7 @@ export function createDirectHostBridge({
   }
   const listeners = [];
   const consumedFocusIds = new Set();
+  const actionControllers = new Set();
   const sourceReadyPromise = Promise.resolve(sourceStateReady);
   let ready = false;
   let destroyed = false;
@@ -198,7 +199,15 @@ export function createDirectHostBridge({
   on(window, 'gev:awareness-subject-cleared', () => {
     if (!destroyed) callbacks.onSelectionChange?.(null);
   });
-  const unsubscribe = dataManager?.subscribe?.(publishLayers);
+  const unsubscribe = dataManager?.subscribe?.((change) => {
+    if (!destroyed && change?.type === 'visibility' && change.origin === 'user') {
+      callbacks.onLayerVisibilityChange?.({
+        layerId: change.layerId,
+        enabled: change.enabled,
+      });
+    }
+    publishLayers();
+  });
   if (typeof unsubscribe === 'function') listeners.push(unsubscribe);
 
   sourceReadyPromise.then(() => {
@@ -241,7 +250,7 @@ export function createDirectHostBridge({
         const contextMode = contextController?.getContextModeState?.()?.mode || null;
         const contextBlockReason = contextLayerEnableBlockReason({
           contextMode,
-          change: { layerId: normalizedLayerId, enabled, origin: 'user' },
+          change: { layerId: normalizedLayerId, enabled, origin: options.origin || 'user' },
           layerName: row.name,
         });
         if (contextBlockReason) {
@@ -254,7 +263,9 @@ export function createDirectHostBridge({
             );
           }
         }
-        return dataManager.setEnabled(normalizedLayerId, enabled, { origin: 'user' });
+        return dataManager.setEnabled(normalizedLayerId, enabled, {
+          origin: options.origin === 'programmatic' ? 'programmatic' : 'user',
+        });
       }).then((operationResult) => {
         if (destroyed) return;
         const readback = dataManager.getLayerLifecycleState(normalizedLayerId);
@@ -300,12 +311,35 @@ export function createDirectHostBridge({
       return requestId;
     },
 
-    async executeAction(name, args = {}) {
+    async executeAction(name, args = {}, options = {}) {
       const normalizedName = actionName(name);
       if (destroyed || !normalizedName || typeof runAction !== 'function') {
         throw new Error('worldview_action_unavailable');
       }
-      return runAction(normalizedName, plainArguments(args));
+      const disabled = new Set(
+        Array.isArray(options.disabledLayerIds)
+          ? options.disabledLayerIds.filter(boundedId) : [],
+      );
+      const removeGuard = dataManager?.addVisibilityGuard?.((change) => (
+        change.enabled && disabled.has(change.layerId)
+          ? 'Project WorldView source is OFF'
+          : null
+      ));
+      const controller = new AbortController();
+      actionControllers.add(controller);
+      const abort = () => controller.abort('worldview_action_cancelled');
+      options.signal?.addEventListener?.('abort', abort, { once: true });
+      if (options.signal?.aborted) abort();
+      try {
+        return await runAction(normalizedName, plainArguments(args), {
+          signal: controller.signal,
+          isCurrent: () => !destroyed && !controller.signal.aborted,
+        });
+      } finally {
+        options.signal?.removeEventListener?.('abort', abort);
+        actionControllers.delete(controller);
+        removeGuard?.();
+      }
     },
 
     async prepareRunImages() {
@@ -371,6 +405,8 @@ export function createDirectHostBridge({
       if (destroyed) return;
       destroyed = true;
       turnContextGeneration += 1;
+      for (const controller of actionControllers) controller.abort('worldview_mount_destroyed');
+      actionControllers.clear();
       while (listeners.length) listeners.pop()?.();
       consumedFocusIds.clear();
     },

@@ -30,6 +30,12 @@
   --cockpit-radio-expanded-width: 232px;
 }
 
+/* The mounted viewer remains full-sized while Main covers its left edge.
+   Keep the existing source controls in the exposed part of that viewer. */
+html.supervised-embed {
+  --left-stack-x: calc(52px + var(--worldview-occluded-left, 0px));
+}
+
 * {
   margin: 0;
   padding: 0;

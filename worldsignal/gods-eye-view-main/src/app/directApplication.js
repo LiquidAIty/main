@@ -39,6 +39,10 @@ import { installScopeMask, destroyScopeMask } from '../scopeMask.js';
 import { initFirstRunExperience } from '../firstRunExperience.js';
 import { resetContextStore } from '../data/contextStore.js';
 import { createDirectHostBridge } from './directBridge.js';
+import {
+  getExposedApplicationViewport,
+  getExposedPerspectiveXOffset,
+} from './viewport.js';
 
 function describeError(error) {
   if (!error) return 'Unknown initialization error';
@@ -64,32 +68,77 @@ function requiredElement(root, selector) {
 function installRootResize(root, viewer) {
   let lastWidth = 0;
   let lastHeight = 0;
+  let lastVisibleWidth = -1;
+  let lastOccludedLeft = -1;
+  let managedFrustum = null;
+  let baseXOffset = 0;
+  let exposedViewport = null;
+  const previousSafeInset = root.style.getPropertyValue('--worldview-occluded-left');
+  const syncProjection = () => {
+    const frustum = viewer.camera?.frustum;
+    if (frustum !== managedFrustum) {
+      managedFrustum = frustum;
+      baseXOffset = Number.isFinite(frustum?.xOffset) ? frustum.xOffset : 0;
+    }
+    const offset = getExposedPerspectiveXOffset(
+      frustum,
+      exposedViewport,
+      baseXOffset,
+    );
+    if (offset !== null && Math.abs(frustum.xOffset - offset) > 1e-9) {
+      frustum.xOffset = offset;
+    }
+  };
   const resize = () => {
     const rect = root.getBoundingClientRect();
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
-    if (width === lastWidth && height === lastHeight) return;
+    const exposed = getExposedApplicationViewport(root);
+    exposedViewport = exposed?.width > 0 ? exposed : null;
+    const visibleWidth = Math.round(exposed?.width ?? width);
+    const occludedLeft = exposed?.width > 0
+      ? Math.round(exposed.occludedLeft) : 0;
+    if (width === lastWidth && height === lastHeight
+      && visibleWidth === lastVisibleWidth && occludedLeft === lastOccludedLeft) return;
+    const rootChanged = width !== lastWidth || height !== lastHeight;
     lastWidth = width;
     lastHeight = height;
-    viewer.resize?.();
+    lastVisibleWidth = visibleWidth;
+    lastOccludedLeft = occludedLeft;
+    root.style.setProperty('--worldview-occluded-left', `${occludedLeft}px`);
+    if (rootChanged) viewer.resize?.();
+    syncProjection();
     governorRequestRender('worldview-root-resize');
     window.dispatchEvent(new CustomEvent('gev:viewport-resize', {
-      detail: { width, height, left: rect.left, top: rect.top },
+      detail: { width, height, left: rect.left, top: rect.top,
+        visibleWidth, occludedLeft },
     }));
     // Retained native controllers historically subscribe to window.resize.
     // A React pane can resize without the browser window changing, so mirror
     // that native signal after the root-local dimensions have settled.
     window.dispatchEvent(new Event('resize'));
   };
+  const removePreRender = viewer.scene?.preRender?.addEventListener?.(syncProjection);
+  const clip = root.closest?.('[data-companion-visible-viewport="true"]');
+  const cleanup = (stopObserving) => () => {
+    stopObserving();
+    removePreRender?.();
+    if (managedFrustum && Number.isFinite(managedFrustum.xOffset)) {
+      managedFrustum.xOffset = baseXOffset;
+    }
+    if (previousSafeInset) root.style.setProperty('--worldview-occluded-left', previousSafeInset);
+    else root.style.removeProperty('--worldview-occluded-left');
+  };
   if (typeof ResizeObserver === 'function') {
     const observer = new ResizeObserver(resize);
     observer.observe(root);
+    if (clip) observer.observe(clip);
     resize();
-    return () => observer.disconnect();
+    return cleanup(() => observer.disconnect());
   }
   window.addEventListener('resize', resize);
   resize();
-  return () => window.removeEventListener('resize', resize);
+  return cleanup(() => window.removeEventListener('resize', resize));
 }
 
 function registerNativeLayers(dataManager) {

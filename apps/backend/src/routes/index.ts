@@ -16,7 +16,7 @@ import worldsignalRoutes from './worldsignal.routes';
 import config from './config.routes';
 import hermesProfileRoutes from './hermesProfile.routes';
 import tradingRoutes from './trading.routes';
-import worldviewRoutes from './worldview.routes';
+import worldviewRoutes, { worldviewInternalRoutes } from './worldview.routes';
 import agentTerminalRoutes from './agentTerminal.routes';
 import hermesCardToolsRoutes from './hermesCardTools.routes';
 import graphRoutes from './graph.routes';
@@ -34,6 +34,7 @@ router.use('/health', health);
 // bridge before browser auth so it cannot be converted into a local-user session.
 router.use('/main', internalMainMcpRoutes);
 router.use('/hermes-card-tools', hermesCardToolsRoutes);
+router.use('/worldview', worldviewInternalRoutes);
 router.use('/config', authMiddleware, config);
 router.use('/cards', authMiddleware, cardEditor, cardRuntime);
 router.use('/main', authMiddleware, mainRoutes);

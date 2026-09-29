@@ -18,6 +18,7 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
   const React = await import('react');
   return {
     default: React.forwardRef((props: Record<string, any>, ref) => {
+      directHost.props = props;
       React.useImperativeHandle(ref, () => ({
         setLayerVisibility: directHost.setLayerVisibility,
         focusSelection: directHost.focusSelection,
@@ -25,7 +26,6 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
         prepareRunImages: directHost.prepareRunImages,
       }), []);
       React.useEffect(() => {
-        directHost.props = props;
         props.onBridgeUnavailable?.();
       }, [props.cardId, props.projectId]);
       return React.createElement('section', {
@@ -51,6 +51,20 @@ const layerState = {
   sources: [source],
 };
 let fetchMock: ReturnType<typeof vi.fn>;
+const actionStreams: TestActionStream[] = [];
+
+class TestActionStream {
+  listeners = new Map<string, (event: MessageEvent) => void>();
+  closed = false;
+  constructor(readonly url: string) { actionStreams.push(this); }
+  addEventListener(name: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(name, listener);
+  }
+  emit(name: string, data: unknown) {
+    this.listeners.get(name)?.({ data: JSON.stringify(data) } as MessageEvent);
+  }
+  close() { this.closed = true; }
+}
 
 function projectResponse(projectId: string, capabilities: unknown[] = []) {
   return new Response(JSON.stringify({
@@ -78,6 +92,8 @@ function nativeReady(state = layerState) {
 }
 
 beforeEach(() => {
+  actionStreams.length = 0;
+  vi.stubGlobal('EventSource', TestActionStream);
   directHost.props = null;
   directHost.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
   directHost.focusSelection.mockReset().mockReturnValue('focus-request-1');
@@ -117,7 +133,7 @@ describe('WorldView direct source presentation', () => {
     expect(document.querySelector('iframe')).toBeNull();
   });
 
-  it('keeps operational state in the peripheral Data Sources drawer', async () => {
+  it('keeps God’s Eye controls on the globe without a duplicate React layer switch', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
 
@@ -128,73 +144,39 @@ describe('WorldView direct source presentation', () => {
     expect(directHost.focusSelection).not.toHaveBeenCalled();
 
     openDataSources();
-    await waitFor(() => expect(screen.getByText('Project WorldView: Ready')).toBeTruthy());
-    expect(screen.getByText('WorldView runtime: Connecting')).toBeTruthy();
-    expect(screen.getByText('Source state: Pending')).toBeTruthy();
+    expect(screen.getByText('No selection.')).toBeTruthy();
     nativeReady();
-    expect(screen.getByText('WorldView runtime: Ready · 0.1.0')).toBeTruthy();
-    expect(screen.getByText('Source state: Ready')).toBeTruthy();
-    expect(screen.getByText('1 layers on')).toBeTruthy();
-    expect(screen.queryByText(/Voice control:/)).toBeNull();
-    expect(screen.getByText(/Earthquakes · ON/)).toBeTruthy();
-    expect(screen.getByText(/Not checked/)).toBeTruthy();
-    expect(screen.queryByText(/Embed bridge/)).toBeNull();
-    expect(screen.getAllByText('Data Sources')).toHaveLength(1);
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByText('Data Sources')).toBeNull();
+    expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
   });
 
-  it('uses saved Project ON/OFF while the native layer application settles', async () => {
+  it('persists a settled native ON/OFF event without toggling the layer twice', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
     nativeReady();
-    openDataSources();
-    await waitFor(() => expect(screen.getByText('Project WorldView: Ready')).toBeTruthy());
-
-    const checkbox = screen.getByRole('checkbox', { name: /Earthquakes · ON/ }) as HTMLInputElement;
-    expect(checkbox.checked).toBe(true);
-    fireEvent.click(checkbox);
-    expect(screen.getByText('Saving Project setting…')).toBeTruthy();
-    await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', false));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/worldview/projects/project-1/capabilities', { method: 'GET' },
+    ));
+    act(() => {
+      callbacks().onLayerVisibilityChange?.({ layerId: 'earthquakes', enabled: false });
+      callbacks().onLayerStateChange?.({
+        ...layerState,
+        enabledLayerIds: [],
+        sources: [{ ...source, enabled: false }],
+      });
+    });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH'))
+      .toBe(true));
     const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
     expect(patchCall).toEqual([
       '/api/worldview/projects/project-1/capabilities/earthquakes',
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
     ]);
-    expect(fetchMock.mock.invocationCallOrder.at(-1))
-      .toBeLessThan(directHost.setLayerVisibility.mock.invocationCallOrder[0]);
-    expect(screen.getByText('Applying Project OFF to globe…')).toBeTruthy();
-    expect(checkbox.checked).toBe(false);
-    expect(checkbox.disabled).toBe(true);
-
-    const stateOff = {
-      ...layerState,
-      enabledLayerIds: [],
-      sources: [{ ...source, enabled: false }],
-    };
-    act(() => callbacks().onLayerStateChange?.(stateOff));
-    const offCheckbox = screen.getByRole('checkbox', {
-      name: /Earthquakes · OFF/,
-    }) as HTMLInputElement;
-    expect(offCheckbox.checked).toBe(false);
-    expect(offCheckbox.disabled).toBe(true);
-
-    act(() => callbacks().onCommandResult?.({
-      schemaVersion: 'gev.direct.layer-visibility.result.v1',
-      ...scope,
-      requestId: 'layer-request-1',
-      layerId: 'earthquakes',
-      requestedEnabled: false,
-      ok: true,
-      error: null,
-      state: stateOff,
-    }));
-    expect((screen.getByRole('checkbox', {
-      name: /Earthquakes · OFF/,
-    }) as HTMLInputElement).disabled).toBe(false);
-    expect(directHost.setLayerVisibility).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(directHost.setLayerVisibility).not.toHaveBeenCalled());
   });
 
-  it('keeps a saved ON source ON when its native feed cannot settle, then lets the user turn it OFF', async () => {
+  it('keeps saved ON distinct from a failed native feed, then accepts the native OFF control', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if ((init?.method || 'GET') === 'GET') {
@@ -234,13 +216,8 @@ describe('WorldView direct source presentation', () => {
       }],
     });
     openDataSources();
-
-    const checkbox = await screen.findByRole('checkbox', { name: /Earthquakes · ON/ });
-    expect((checkbox as HTMLInputElement).checked).toBe(true);
-    expect((checkbox as HTMLInputElement).disabled).toBe(true);
-
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledWith('earthquakes', true));
+      .toHaveBeenCalledWith('earthquakes', true, { origin: 'programmatic' }));
     act(() => callbacks().onCommandResult?.({
       schemaVersion: 'gev.direct.layer-visibility.result.v1',
       ...scope,
@@ -256,18 +233,13 @@ describe('WorldView direct source presentation', () => {
       },
     }));
 
-    expect((screen.getByRole('checkbox', {
-      name: /Earthquakes · ON/,
-    }) as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByRole('checkbox', {
-      name: /Earthquakes · ON/,
-    }) as HTMLInputElement).disabled).toBe(false);
-    expect(screen.getByText(/ON saved · globe layer: Layer did not settle/)).toBeTruthy();
-
-    directHost.setLayerVisibility.mockClear().mockReturnValue('layer-request-2');
-    fireEvent.click(screen.getByRole('checkbox', { name: /Earthquakes · ON/ }));
-    await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', false));
+    expect(screen.getAllByRole('alert').some((node) =>
+      node.textContent?.includes('Layer did not settle'))).toBe(true);
+    act(() => callbacks().onLayerVisibilityChange?.({ layerId: 'earthquakes', enabled: false }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/worldview/projects/project-1/capabilities/earthquakes',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
+    ));
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/api/worldview/projects/project-1/capabilities/earthquakes',
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
@@ -285,7 +257,6 @@ describe('WorldView direct source presentation', () => {
       position: { longitude: -97, latitude: 30 },
     }));
     openDataSources();
-    await waitFor(() => expect(screen.getByText('Project WorldView: Ready')).toBeTruthy());
 
     expect(screen.getByText('Flight 1 · flight')).toBeTruthy();
     expect(directHost.focusSelection).not.toHaveBeenCalled();
@@ -298,7 +269,7 @@ describe('WorldView direct source presentation', () => {
     });
   });
 
-  it('keeps unavailable sources user-controllable and clears native state on remount', async () => {
+  it('keeps native layer controls available and clears selection on Project remount', async () => {
     const { rerender } = render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
     nativeReady({
@@ -314,21 +285,18 @@ describe('WorldView direct source presentation', () => {
       }],
     });
     openDataSources();
-    await waitFor(() => expect(screen.getByText('Project WorldView: Ready')).toBeTruthy());
-
-    const checkbox = screen.getByRole('checkbox', { name: /Earthquakes · OFF/ });
-    expect((checkbox as HTMLInputElement).disabled).toBe(false);
-    fireEvent.click(checkbox);
-    await waitFor(() => expect(directHost.setLayerVisibility).toHaveBeenCalledExactlyOnceWith(
-      'earthquakes',
-      true,
-      { exitIncompatibleContext: true },
-    ));
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    act(() => callbacks().onSelectionChange?.({
+      id: 'selected-1', type: 'satellite', label: 'Satellite 1',
+      position: { longitude: -97, latitude: 30 },
+    }));
+    expect(screen.getByText('Satellite 1 · satellite')).toBeTruthy();
 
     rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" />);
-    await waitFor(() => expect(screen.getByText('WorldView runtime: Connecting')).toBeTruthy());
-    expect(screen.getByText('Source state: Pending')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('No selection.')).toBeTruthy());
     expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(actionStreams.at(-1)?.url).toContain('/api/worldview/projects/project-2/actions/stream');
+    expect(actionStreams[0]?.closed).toBe(true);
   });
 
   it('applies only exact-ID Project overrides and reloads them when the Project changes', async () => {
@@ -360,7 +328,7 @@ describe('WorldView direct source presentation', () => {
     await waitFor(() => expect(directHost.props).toBeTruthy());
     nativeReady();
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', false));
+      .toHaveBeenCalledExactlyOnceWith('earthquakes', false, { origin: 'programmatic' }));
 
     act(() => callbacks().onLayerStateChange?.({
       ...layerState,
@@ -395,7 +363,7 @@ describe('WorldView direct source presentation', () => {
       });
     });
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', true));
+      .toHaveBeenCalledExactlyOnceWith('earthquakes', true, { origin: 'programmatic' }));
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/worldview/projects/project-2/capabilities',
       { method: 'GET' },
@@ -407,8 +375,6 @@ describe('WorldView direct source presentation', () => {
     await waitFor(() => expect(directHost.props).toBeTruthy());
     nativeReady();
     openDataSources();
-    await waitFor(() => expect(screen.getByText('Project WorldView: Ready')).toBeTruthy());
-    fireEvent.click(screen.getByRole('checkbox', { name: /Earthquakes · ON/ }));
 
     act(() => callbacks().onCommandResult?.({
       schemaVersion: 'gev.direct.layer-visibility.result.v1',
@@ -423,5 +389,43 @@ describe('WorldView direct source presentation', () => {
     expect(screen.getAllByRole('alert').some((node) =>
       node.textContent?.includes('provider unavailable'))).toBe(true);
     expect(screen.getByLabelText('WorldView globe')).toBeTruthy();
+  });
+
+  it('returns a read-only spatial action from the live mount to the waiting turn', async () => {
+    directHost.executeAction.mockResolvedValueOnce({
+      ok: true, action: 'get_current_view_state', camera: { longitude: -82.5, latitude: 35.15 },
+    });
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Response(JSON.stringify({ ok: true, capability: null }), { status: 200 });
+      }
+      return projectResponse('project-1');
+    });
+    render(<WorldViewSurface {...scope} />);
+    await waitFor(() => expect(directHost.props).toBeTruthy());
+    nativeReady();
+    await waitFor(() => expect(actionStreams).toHaveLength(1));
+
+    act(() => actionStreams[0].emit('action', {
+      requestId: 'request-1', name: 'get_current_view_state', arguments: {},
+      disabledLayerIds: ['satellites'],
+    }));
+    await waitFor(() => expect(directHost.executeAction).toHaveBeenCalledWith(
+      'get_current_view_state', {},
+      expect.objectContaining({ disabledLayerIds: ['satellites'], signal: expect.any(AbortSignal) }),
+    ));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/worldview/projects/project-1/actions/result',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          cardId: 'card-worldview', requestId: 'request-1',
+          result: {
+            ok: true, action: 'get_current_view_state',
+            camera: { longitude: -82.5, latitude: 35.15 },
+          },
+        }),
+      }),
+    ));
   });
 });

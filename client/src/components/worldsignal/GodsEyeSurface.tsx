@@ -46,10 +46,14 @@ export type GodsEyeBridge = {
   setLayerVisibility: (
     layerId: string,
     enabled: boolean,
-    options?: { exitIncompatibleContext?: boolean },
+    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'programmatic' },
   ) => string | null;
   focusSelection: (selection: GodsEyeSelectionRef) => string | null;
-  executeAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+  executeAction: (
+    name: string,
+    args?: Record<string, unknown>,
+    options?: { disabledLayerIds?: string[]; signal?: AbortSignal },
+  ) => Promise<unknown>;
   prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
 };
 
@@ -73,6 +77,7 @@ type GodsEyeSurfaceProps = {
   onBridgeUnavailable?: () => void;
   onSelectionChange?: (selection: GodsEyeSelectionRef | null) => void;
   onLayerStateChange?: (state: GodsEyeLayerState) => void;
+  onLayerVisibilityChange?: (change: { layerId: string; enabled: boolean }) => void;
   onCommandResult?: (result: GodsEyeCommandResult) => void;
   onError?: (error: { code: string; message: string }) => void;
 };
@@ -85,6 +90,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   onBridgeUnavailable,
   onSelectionChange,
   onLayerStateChange,
+  onLayerVisibilityChange,
   onCommandResult,
   onError,
 }, bridgeRef): React.ReactElement {
@@ -97,6 +103,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     onBridgeUnavailable,
     onSelectionChange,
     onLayerStateChange,
+    onLayerVisibilityChange,
     onCommandResult,
     onError,
   });
@@ -106,6 +113,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
       onBridgeUnavailable,
       onSelectionChange,
       onLayerStateChange,
+      onLayerVisibilityChange,
       onCommandResult,
       onError,
     };
@@ -118,8 +126,8 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     focusSelection(selection) {
       return mountRef.current?.focusSelection(selection) ?? null;
     },
-    executeAction(name, args) {
-      return mountRef.current?.executeAction(name, args)
+    executeAction(name, args, options) {
+      return mountRef.current?.executeAction(name, args, options)
         ?? Promise.reject(new Error('worldview_action_unavailable'));
     },
     prepareRunImages() {
@@ -160,6 +168,9 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
           if (!cancelled) callbacksRef.current.onLayerStateChange?.(
             state as GodsEyeLayerState,
           );
+        },
+        onLayerVisibilityChange(change) {
+          if (!cancelled) callbacksRef.current.onLayerVisibilityChange?.(change);
         },
         onCommandResult(result) {
           if (!cancelled) callbacksRef.current.onCommandResult?.(
@@ -224,6 +235,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     minHeight: 0,
+    containerName: 'worldview-native',
+    containerType: 'size',
     overflow: 'hidden',
     background: '#050b10',
   },

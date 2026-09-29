@@ -1976,6 +1976,8 @@ atexit.register(_close_native_cbm)
 def _backend_bridge_timeout_seconds(path: str) -> float:
     if path in {"run_configured_card", "external_main_chat"}:
         return _NATIVE_CBM_REQUEST_TIMEOUT_SECONDS
+    if path == "worldview_action":
+        return 40.0
     return _MCP_CALL_TIMEOUT_SECONDS
 
 
@@ -1984,15 +1986,17 @@ _BACKEND_ROUTES = {
     "external_main_chat": "/api/main/chat",
     "describe_connected_agents": "/api/cards/connected",
     "run_configured_card": "/api/cards/run",
+    "worldview_action": "/api/worldview/internal/actions",
 }
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path == "run_configured_card" and len(INTERNAL_MCP_SECRET) < 32:
+    if path in {"run_configured_card", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
         raise RuntimeError("internal_mcp_secret_missing")
     if path in {
-        "external_main_context", "external_main_chat", "run_configured_card"
+        "external_main_context", "external_main_chat", "run_configured_card",
+        "worldview_action",
     } and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
     request = Request(
@@ -2295,6 +2299,36 @@ def _application_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="worldview.action",
+            description=(
+                "Saved WorldView Hermes Card only: execute one existing God's Eye action "
+                "against the currently mounted WorldView in this Project. Examples: "
+                "get_current_view_state, get_entity_context, track_entity, "
+                "set_layer_visibility, zoom_to_globe. The current Project source "
+                "OFF ceiling is enforced; an absent or ambiguous mount fails closed. "
+                "Returns the real action readback, not an inferred success."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "enum": [
+                            "get_current_view_state",
+                            "get_entity_context",
+                            "zoom_to_globe",
+                            "track_entity",
+                            "stop_tracking",
+                            "set_layer_visibility",
+                        ],
+                    },
+                    "arguments": {"type": "object", "additionalProperties": True},
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="agentgraph.inspect",
             description=(
                 "Read a bounded, authenticated Project-scoped view of current PostgreSQL/AGE "
@@ -2467,6 +2501,7 @@ def _application_tools() -> list[Tool]:
 _APPLICATION_OPERATION_ACCESS = {
     "main.context": "read",
     "worldview.set_capability": "write",
+    "worldview.action": "write",
     "agentgraph.inspect": "read",
     "mag_one.describe_connected_agents": "read",
     "run_mag_one": "write",
@@ -2497,13 +2532,18 @@ def application_operation_definitions() -> list[OperationDefinition]:
             parameters_schema=copy.deepcopy(tool.inputSchema),
             handler=dispatch,
             available=True,
-            publishers=frozenset({"internal-plugin", "external-mcp"}),
+            publishers=(
+                frozenset({"internal-plugin"})
+                if tool.name == "worldview.action"
+                else frozenset({"internal-plugin", "external-mcp"})
+            ),
             access=access,
-            namespace="main",
+            namespace="worldview" if tool.name == "worldview.action" else "main",
             external_source_id="main_mcp",
             required_caller_runtime=(
                 ("hermes", "main")
                 if tool.name in {"run_mag_one", "worldview.set_capability"}
+                else ("hermes", "delegate") if tool.name == "worldview.action"
                 else None
             ),
         ))
@@ -2941,6 +2981,9 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "worldview.set_capability": {
         "projectId", "capabilityId", "enabled", "reason",
     },
+    "worldview.action": {
+        "projectId", "deckId", "parentRunId", "name", "arguments",
+    },
     "agentgraph.inspect": {
         "projectId",
         "deckId",
@@ -3083,10 +3126,14 @@ async def _dispatch_tool(
     if allowed is None:
         return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown_tool: {name}"}))]
     args = dict(arguments or {})
-    if name == "worldview.set_capability" and context is None:
+    if name in {"worldview.set_capability", "worldview.action"} and context is None:
         return [TextContent(type="text", text=json.dumps({
             "ok": False,
-            "error": "authenticated_main_context_required",
+            "error": (
+                "authenticated_main_context_required"
+                if name == "worldview.set_capability"
+                else "authenticated_card_context_required"
+            ),
         }))]
     if context is not None:
         try:
@@ -3099,6 +3146,8 @@ async def _dispatch_tool(
                             and (args.get("runId") or args.get("projectWide") is True)):
                         continue
                     args[field] = str(context[field])
+            if name == "worldview.action":
+                args["parentRunId"] = str(context.get("parentRunId") or "")
             if name in {"write_mag_one_instructions", "card.load_graph_references", "worldsignals.package"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
             if name in {"card.load_graph_references", "worldsignals.package"}:
@@ -3259,6 +3308,24 @@ async def _dispatch_tool(
                 "ok": False,
                 "error": str(error),
             }))]
+    if name == "worldview.action":
+        if not all((
+            str(args.get("projectId") or "").strip(),
+            str(args.get("deckId") or "").strip(),
+            caller_card_id,
+            str(args.get("parentRunId") or "").strip(),
+        )):
+            return [TextContent(type="text", text=json.dumps({
+                "ok": False, "error": "worldview_card_run_context_required",
+            }))]
+        return await _bridge("worldview_action", {
+            "projectId": str(args["projectId"]),
+            "deckId": str(args["deckId"]),
+            "cardId": caller_card_id,
+            "parentRunId": str(args["parentRunId"]),
+            "name": str(args.get("name") or ""),
+            "arguments": args.get("arguments") if isinstance(args.get("arguments"), dict) else {},
+        })
     if name == "web_search":
         from app.python_models.web_search import web_search
 

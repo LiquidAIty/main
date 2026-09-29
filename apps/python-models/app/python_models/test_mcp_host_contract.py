@@ -406,6 +406,23 @@ def test_worldview_main_write_requires_authenticated_context(monkeypatch):
     }
 
 
+def test_worldview_action_catalog_offers_only_spatial_actions():
+    import mcp_host
+
+    action = next(
+        tool for tool in mcp_host._application_tools()
+        if tool.name == "worldview.action"
+    )
+    assert action.inputSchema["properties"]["name"]["enum"] == [
+        "get_current_view_state",
+        "get_entity_context",
+        "zoom_to_globe",
+        "track_entity",
+        "stop_tracking",
+        "set_layer_visibility",
+    ]
+
+
 def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeypatch):
     import asyncio
     import mcp_host

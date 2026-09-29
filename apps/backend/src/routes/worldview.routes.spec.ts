@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createProjectWorldviewCapabilityStore,
+  createWorldviewActionChannel,
+  createWorldviewInternalRouter,
   createWorldviewRouter,
   resolveWorldviewGlobeUrl,
   type ProjectWorldviewCapabilityStore,
@@ -14,6 +16,67 @@ const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {
   delete process.env.WORLDVIEW_GLOBE_URL;
   await Promise.all(closers.splice(0).map((close) => close()));
+});
+
+describe('WorldView Card spatial action boundary', () => {
+  it('accepts only the six requested God\'s Eye actions', async () => {
+    const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+    const secret = 'test-only-worldview-action-boundary-secret';
+    process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secret;
+    try {
+      const capabilityStore: ProjectWorldviewCapabilityStore = {
+        list: vi.fn(async () => []),
+        set: vi.fn(async () => { throw new Error('must_not_write'); }),
+      };
+      const runAuthorizer = vi.fn(async () => true);
+      const app = express();
+      app.use(express.json());
+      app.use('/worldview', createWorldviewInternalRouter({
+        channel: createWorldviewActionChannel(),
+        capabilityStore,
+        runAuthorizer,
+      }));
+      const server = await new Promise<ReturnType<typeof app.listen>>((resolve) => {
+        const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+      });
+      closers.push(() => new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      }));
+      const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/worldview`;
+      const call = async (name: string) => fetch(`${base}/internal/actions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-liquidaity-internal-mcp-secret': secret,
+        },
+        body: JSON.stringify({
+          projectId: 'project-a', deckId: 'deck-a', cardId: 'card-worldview',
+          parentRunId: 'run-a', name, arguments: {},
+        }),
+      });
+
+      for (const name of [
+        'get_current_view_state', 'get_entity_context', 'zoom_to_globe',
+        'track_entity', 'stop_tracking', 'set_layer_visibility',
+      ]) {
+        const response = await call(name);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          ok: true, result: { ok: false, error: 'worldview_mount_unavailable' },
+        });
+      }
+      const outsideScope = await call('fly_to_location');
+      expect(outsideScope.status).toBe(400);
+      expect(await outsideScope.json()).toMatchObject({
+        ok: false, error: 'worldview_action_request_invalid',
+      });
+      expect(runAuthorizer).toHaveBeenCalledTimes(6);
+      expect(capabilityStore.set).not.toHaveBeenCalled();
+    } finally {
+      if (previousSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
+      else process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = previousSecret;
+    }
+  });
 });
 
 async function serve(

@@ -5,6 +5,7 @@ export type NativeWorldViewCallbacks = {
   onReady?: (sourceVersion: string) => void;
   onSelectionChange?: (selection: unknown) => void;
   onLayerStateChange?: (state: unknown) => void;
+  onLayerVisibilityChange?: (change: { layerId: string; enabled: boolean }) => void;
   onCommandResult?: (result: unknown) => void;
   onError?: (error: { code: string; message: string }) => void;
 };
@@ -13,10 +14,14 @@ export type NativeWorldViewMount = {
   setLayerVisibility: (
     layerId: string,
     enabled: boolean,
-    options?: { exitIncompatibleContext?: boolean },
+    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'programmatic' },
   ) => string | null;
   focusSelection: (selection: unknown) => string | null;
-  executeAction: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+  executeAction: (
+    name: string,
+    args?: Record<string, unknown>,
+    options?: { disabledLayerIds?: string[]; signal?: AbortSignal },
+  ) => Promise<unknown>;
   prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
   destroy: () => Promise<void>;
 };

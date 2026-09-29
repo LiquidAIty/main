@@ -12,7 +12,7 @@ export type ProjectWorldviewState = {
   capabilities: ProjectWorldviewCapability[];
 };
 
-function isCapability(value: unknown): value is ProjectWorldviewCapability {
+export function isCapability(value: unknown): value is ProjectWorldviewCapability {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return typeof row.capabilityId === 'string'
@@ -90,4 +90,3 @@ export async function setProjectWorldviewCapability(
   }
   return body.capability;
 }
-
