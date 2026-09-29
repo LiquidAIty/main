@@ -228,7 +228,7 @@ describe('WorldView direct source presentation', () => {
       },
     }));
     expect(directHost.setSatelliteParams).toHaveBeenCalledExactlyOnceWith({
-      catalog: 'dense', showPoints: true, showOrbits: true,
+      catalog: 'core', showPoints: true, showOrbits: true,
     });
     expect(directHost.executeAction).not.toHaveBeenCalled();
     act(() => callbacks().onCommandResult?.({
@@ -236,8 +236,8 @@ describe('WorldView direct source presentation', () => {
       ...scope,
       requestId: 'satellite-params-request-1',
       layerId: 'satellites',
-      requestedParams: { catalog: 'dense', showPoints: true, showOrbits: true },
-      effectiveParams: { catalog: 'dense', showPoints: true, showOrbits: true },
+      requestedParams: { catalog: 'core', showPoints: true, showOrbits: true },
+      effectiveParams: { catalog: 'core', showPoints: true, showOrbits: true },
       ok: true,
       error: null,
       state: layerState,
@@ -281,13 +281,13 @@ describe('WorldView direct source presentation', () => {
       schemaVersion: 'gev.direct.satellite-params.result.v1',
       ...scope,
       requestId: 'satellite-params-request-1', layerId: 'satellites',
-      requestedParams: { catalog: 'dense', showPoints: true, showOrbits: true },
-      effectiveParams: { catalog: 'core', showPoints: true, showOrbits: true },
-      ok: false, error: 'Dense catalog unavailable', state: layerState,
+      requestedParams: { catalog: 'core', showPoints: true, showOrbits: true },
+      effectiveParams: { catalog: 'dense', showPoints: true, showOrbits: true },
+      ok: false, error: 'Core catalog unavailable', state: layerState,
     }));
     expect(directHost.executeAction).not.toHaveBeenCalled();
     expect(screen.getAllByRole('alert').some((node) =>
-      node.textContent?.includes('Dense catalog unavailable'))).toBe(true);
+      node.textContent?.includes('Core catalog unavailable'))).toBe(true);
   });
 
   it('persists a settled native ON/OFF event without toggling the layer twice', async () => {

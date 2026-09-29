@@ -185,7 +185,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
       if (result.requestId === satelliteViewRequestRef.current) {
         if (result.ok) {
           const requestId = bridgeRef.current?.setSatelliteParams({
-            catalog: 'dense', showPoints: true, showOrbits: true,
+            catalog: 'core', showPoints: true, showOrbits: true,
           });
           satelliteViewRequestRef.current = requestId ?? null;
           if (!requestId) setSurfaceError('Satellite view is unavailable');

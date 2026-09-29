@@ -634,6 +634,11 @@ export function createLocalGeoJsonLayer({
           if (!cameraPos) return;
           
           const occluder = new Cesium.EllipsoidalOccluder(Cesium.Ellipsoid.WGS84, cameraPos);
+          // Use the cards' declared range for their native ground stems too:
+          // from an orbital camera, 65px stems become a bright radial fan
+          // across the small Earth.
+          const beyondInfrastructureRange = Cesium.Cartesian3.magnitude(cameraPos)
+            - Cesium.Ellipsoid.WGS84.maximumRadius > LOCAL_OVERLAY_MAX_DISTANCE_M;
           const visibleOverlayRecords = [];
           const refreshStemGeometry = _stemGeometryDirty;
           
@@ -678,7 +683,7 @@ export function createLocalGeoJsonLayer({
                 < GROUND_SAMPLE_MAX_DISTANCE_M) {
               groundRetryPending = true;
             }
-            const isVisible = occluder.isPointVisible(record.base);
+            const isVisible = !beyondInfrastructureRange && occluder.isPointVisible(record.base);
             if (record.entity.show !== isVisible) record.entity.show = isVisible;
             if (isVisible && record.entry) visibleOverlayRecords.push(record);
           }

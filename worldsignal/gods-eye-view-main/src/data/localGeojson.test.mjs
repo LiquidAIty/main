@@ -345,6 +345,24 @@ test('real layer disable clears its published host entries and balances settle l
   env.cleanup();
 });
 
+test('local infrastructure stems disappear at orbital range and return near the ground', async () => {
+  const env = await createRealLocalLayerHarness();
+  const entity = env.dataSources[0].entities.values[0];
+
+  setCameraAltitude(env, 100_000_000);
+  env.moveEnd.raise();
+  env.preRender.raise();
+  assert.equal(entity.show, false, 'far satellite views must not draw ground stems');
+
+  setCameraAltitude(env, 100_000);
+  env.moveEnd.raise();
+  env.preRender.raise();
+  assert.equal(entity.show, true, 'nearby infrastructure remains visible');
+
+  env.layer.destroy(env.viewer);
+  env.cleanup();
+});
+
 test('unchanged moveEnds do not redefine stem constants and real tip changes update once', async () => {
   const env = await createRealLocalLayerHarness();
   env.preRender.raise();
