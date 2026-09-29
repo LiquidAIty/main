@@ -13,6 +13,7 @@ const native = vi.hoisted(() => ({
   selectInspectorTab: vi.fn(),
   detachInspectorControls: vi.fn(),
   setLayerVisibility: vi.fn(),
+  setSatelliteParams: vi.fn(),
   focusSelection: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ function handle() {
     attachInspectorControls: native.attachInspectorControls,
     selectInspectorTab: native.selectInspectorTab,
     setLayerVisibility: native.setLayerVisibility,
+    setSatelliteParams: native.setSatelliteParams,
     focusSelection: native.focusSelection,
   };
 }
@@ -40,6 +42,7 @@ beforeEach(() => {
   }));
   native.selectInspectorTab.mockReset().mockReturnValue(true);
   native.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
+  native.setSatelliteParams.mockReset().mockReturnValue('satellite-params-1');
   native.focusSelection.mockReset().mockReturnValue('focus-request-1');
   native.load.mockReset().mockResolvedValue(handle());
 });
@@ -68,6 +71,7 @@ describe('WorldView direct native mount', () => {
     render(<GodsEyeSurface ref={ref} {...scope} />);
     await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
     expect(ref.current?.setLayerVisibility('earthquakes', true)).toBeNull();
+    expect(ref.current?.setSatelliteParams({ catalog: 'dense' })).toBeNull();
     const host = document.createElement('div');
     expect(ref.current?.attachInspectorControls(host)).toBeNull();
     expect(ref.current?.selectInspectorTab('view')).toBe(false);
@@ -87,6 +91,11 @@ describe('WorldView direct native mount', () => {
       true,
       { exitIncompatibleContext: true },
     );
+    expect(ref.current?.setSatelliteParams({ catalog: 'dense', showPoints: true, showOrbits: true }))
+      .toBe('satellite-params-1');
+    expect(native.setSatelliteParams).toHaveBeenCalledExactlyOnceWith({
+      catalog: 'dense', showPoints: true, showOrbits: true,
+    });
   });
 
   it('publishes readiness only after the mounted handle is command-ready', async () => {

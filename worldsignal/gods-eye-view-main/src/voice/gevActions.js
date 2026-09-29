@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
-import { CITY_POIS, findPoiByName, flyToGlobeView, flyToLandmark, flyToPOI, flyToPresetLocation, GLOBE_VIEW, searchAndFlyTo } from '../locations.js';
+import { CITY_POIS, findPoiByName, flyToGlobeView, flyToLandmark, flyToPOI, flyToPresetLocation, GLOBE_VIEW, planSatelliteOverview, searchAndFlyTo } from '../locations.js';
+import { getApplicationRoot, getSatelliteOverviewViewports } from '../app/viewport.js';
 import {
   getContextStore,
   getSelectedEntityContext,
@@ -804,6 +805,51 @@ export function createGevActionRunner({ viewer, styleManager, dataManager, scene
           longitude: Number(result.longitude.toFixed(2)),
         },
       };
+    }
+
+    if (name === 'satellite_overview') {
+      const lifecycle = readLayerLifecycleSummary(dataManager, 'satellites');
+      if (!lifecycle.enabled || lifecycle.lifecycleUncertain) {
+        return { ok: false, action: name, error: 'Satellites layer is not ready' };
+      }
+      if (viewer.scene.mode !== Cesium.SceneMode.SCENE3D) {
+        return { ok: false, action: name, error: 'Satellite overview requires the 3D globe' };
+      }
+      const satelliteModule = dataManager.layers.get('satellites')?.module;
+      const positions = satelliteModule?.getAllPositions?.(Number.MAX_SAFE_INTEGER) || [];
+      const root = getApplicationRoot();
+      const plan = planSatelliteOverview(
+        viewer,
+        positions,
+        root?.getBoundingClientRect?.(),
+        getSatelliteOverviewViewports(root),
+      );
+      if (!plan) {
+        return { ok: false, action: name, error: 'Live satellite positions or visible camera area unavailable' };
+      }
+      if (!current()) return { ok: false, action: name, error: 'Satellite overview cancelled' };
+      return runManagedVoiceNavigation(styleManager, 'satellites', name, () => {
+        viewer.camera.flyTo({
+          destination: plan.destination,
+          orientation: plan.orientation,
+          duration: GLOBE_VIEW.durationS,
+          endTransform: Cesium.Matrix4.IDENTITY,
+        });
+        return {
+          ok: true,
+          action: name,
+          flightStarted: true,
+          satelliteCount: plan.satelliteCount,
+          shellRadiusKm: Math.round(plan.shellRadiusM / 1000),
+          cameraHeightKm: Math.round(plan.cameraHeightM / 1000),
+          viewport: {
+            left: plan.viewport.left,
+            top: plan.viewport.top,
+            width: plan.viewport.width,
+            height: plan.viewport.height,
+          },
+        };
+      });
     }
 
     if (name === 'next_iss_pass') {

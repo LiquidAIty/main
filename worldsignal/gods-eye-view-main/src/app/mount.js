@@ -152,6 +152,9 @@ async function createMountedRuntime(root, config) {
       setLayerVisibility(...args) {
         return handle.bridge?.setLayerVisibility(...args) ?? null;
       },
+      setSatelliteParams(...args) {
+        return handle.bridge?.setSatelliteParams(...args) ?? null;
+      },
       focusSelection(...args) {
         return handle.bridge?.focusSelection(...args) ?? null;
       },

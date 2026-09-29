@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as Cesium from 'cesium';
 import {
   SATELLITE_CLASSES,
   SATELLITE_CLASS_ORDER,
@@ -241,7 +242,7 @@ test('DENSE reports loading, then ACTIVE only once the points exist', async () =
   const refreshes = [];
   try {
     globalThis.fetch = async () => ({ ok: true, text: async () => DENSE_TLE });
-    _setDenseCatalogStateForTest({});
+    const densePoints = _setDenseCatalogStateForTest({});
     satellitesLayer.setRowControlsListener(() => refreshes.push(satellitesLayer.getRowControls()));
 
     satellitesLayer.setParams({ catalog: 'dense' });
@@ -263,7 +264,23 @@ test('DENSE reports loading, then ACTIVE only once the points exist', async () =
     // without that push the row would keep the pre-load counts for 5 minutes.
     assert.ok(refreshes.length >= 2, 'load start and load completion each pushed a refresh');
     const legend = satellitesLayer.getRowControls().legend;
-    assert.equal(legend.some((row) => row.klass === 'comms'), true);
+    const comms = legend.find((row) => row.klass === 'comms');
+    assert.ok(comms);
+    const point = densePoints.get(44444);
+    assert.ok(point?.position, 'the point comes from the propagated TLE');
+    assert.equal(densePoints.size, 1, 'one valid dense TLE creates one point');
+    assert.equal(point.id, 44444);
+    assert.equal(Cesium.Color.equals(
+      point.color,
+      Cesium.Color.fromCssColorString(comms.color).withAlpha(0.9),
+    ), true, 'point and COMMS legend share the class palette');
+    const farDiameter = point.pixelSize * point.scaleByDistance.farValue;
+    const nearDiameter = point.pixelSize * point.scaleByDistance.nearValue;
+    assert.ok(farDiameter >= 1.5 && farDiameter < 2.5,
+      'far dense points remain a fine texture beneath core satellites');
+    assert.ok(nearDiameter < 5, 'dense points remain bounded close to the camera');
+    assert.equal(point.outlineWidth, 0);
+    assert.equal(Object.hasOwn(point, 'label'), false, 'dense points stay label-free');
   } finally {
     globalThis.fetch = originalFetch;
     _clearDenseCatalogStateForTest();

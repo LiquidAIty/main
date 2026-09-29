@@ -201,6 +201,46 @@ test('direct layer command waits for source settlement and returns native readba
   } finally { h.close(); }
 });
 
+test('satellite options use the native layer parameter owner and report effective readback', async () => {
+  let enabled = true;
+  let params = { catalog: 'core', showPoints: false, showOrbits: false };
+  const calls = [];
+  const manager = {
+    getAll: () => [{
+      id: 'satellites', name: 'Satellites', showInTogglePanel: true,
+      enabled, lifecycleState: 'enabled', lifecycleUncertain: false, stats: {},
+    }],
+    subscribe: () => () => {},
+    getLayerLifecycleState: () => ({ enabled, lifecycleState: 'enabled', uncertain: false }),
+    getLayerParams: () => ({ ...params }),
+    setLayerParams: (id, requested, options) => {
+      calls.push([id, requested, options]);
+      params = { ...params, ...requested };
+      return true;
+    },
+  };
+  const h = bridgeHarness({ dataManager: manager });
+  try {
+    const requested = { catalog: 'dense', showPoints: true, showOrbits: true };
+    const requestId = h.bridge.setSatelliteParams(requested);
+    assert.ok(requestId);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [['satellites', requested, { origin: 'user' }]]);
+    assert.deepEqual(h.events.results.at(-1), {
+      schemaVersion: 'gev.direct.satellite-params.result.v1',
+      projectId: 'project-1', cardId: 'card-1', requestId,
+      layerId: 'satellites', requestedParams: requested, effectiveParams: requested,
+      ok: true, error: null, state: h.events.layers.at(-1),
+    });
+    assert.equal(h.bridge.setSatelliteParams({ selectedSatTrackingId: 25544 }), null);
+    enabled = false;
+    h.bridge.setSatelliteParams({ showPoints: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.length, 1, 'disabled layer receives no parameter write');
+    assert.equal(h.events.results.at(-1).ok, false);
+  } finally { h.close(); }
+});
+
 test('Card actions reuse the mounted God\'s Eye action with Card origin', async () => {
   const calls = [];
   const h = bridgeHarness({
@@ -381,10 +421,15 @@ test('direct mount keeps native controls, starts calmly, and removes the iframe 
   assert.match(css, /html\.supervised-embed #title-bar/);
   assert.match(css, /html\.supervised-embed #style-indicator/);
   assert.match(css, /html\.supervised-embed #global-loading-status/);
+  assert.doesNotMatch(css, /html\.supervised-embed #intel-hud/);
   assert.match(application, /dataManager\.buildTogglePanel\(requiredElement\(root, '#data-toggles'\)\)/);
   assert.match(application, /initGevVoiceCommands\(\{/);
   assert.match(application, /createDirectHostBridge\(\{/);
   assert.match(mount, /createWorldViewApplication\(\{/);
+  assert.match(ui, /const hudVariant = this\._supervisedEmbed \? 'minimal' : defaults\.hudVariant/);
+  assert.match(ui, /const hudVisible = this\._supervisedEmbed \? false : defaults\.hudVisible/);
+  assert.match(ui, /const celestialRing = this\._supervisedEmbed \? true : defaults\.celestialRing/);
+  assert.match(ui, /explicitDisplayFieldsOnly: supervisedEmbed/);
   assert.match(ui, /const initialHudVariant = this\._supervisedEmbed \? 'minimal' : 'tactical'/);
   assert.match(ui, /this\.hud\.setMode\(this\._supervisedEmbed \? 'off' : 'on'\)/);
   assert.doesNotMatch(mount, /iframe|postMessage/);

@@ -18,6 +18,11 @@ export type NativeWorldViewMount = {
     enabled: boolean,
     options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'restore' },
   ) => string | null;
+  setSatelliteParams: (params: {
+    catalog?: 'core' | 'dense';
+    showPoints?: boolean;
+    showOrbits?: boolean;
+  }) => string | null;
   focusSelection: (selection: unknown) => string | null;
   executeAction: (
     name: string,

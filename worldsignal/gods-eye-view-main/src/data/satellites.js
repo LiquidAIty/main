@@ -1331,6 +1331,7 @@ export function _runSatellitePreRenderForTest() {
  * exercise the real async load/settle/fail path (and the row-control states it
  * drives) without constructing a WebGL viewer.
  * @param {{ catalog?: 'core'|'dense', showPoints?: boolean }} [options]
+ * @returns {Map<number, object>} Point records populated by the real load path.
  */
 export function _setDenseCatalogStateForTest({ catalog = 'core', showPoints = true } = {}) {
   _viewer = { scene: { primitives: { add: (p) => p, remove() {} } } };
@@ -1357,6 +1358,7 @@ export function _setDenseCatalogStateForTest({ catalog = 'core', showPoints = tr
   _cancelPendingTrackingRestore();
   _params = { catalog, showPoints, showOrbits: false };
   _enabled = true;
+  return _points;
 }
 
 /** Tear the dense seam back down so ordering cannot leak into other tests. */

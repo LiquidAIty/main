@@ -18,6 +18,7 @@ import {
   regionFramingPlan,
   REGION_SWATH_SPAN_KM,
   GLOBE_VIEW,
+  planSatelliteOverview,
   searchAndFlyTo,
 } from './locations.js';
 
@@ -517,6 +518,40 @@ test('a globe flight without callbacks still flies (both hooks are optional)', (
   assert.equal(target.heightM, GLOBE_VIEW.heightM);
   assert.equal(viewer.flights[0].complete, undefined);
   assert.equal(viewer.flights[0].cancel, undefined);
+});
+
+test('satellite overview fits the real outer position into the exposed perspective area', () => {
+  const source = { left: 0, top: 0, width: 1200, height: 800 };
+  const safe = { left: 0, right: 800, top: 0, bottom: 800, width: 800, height: 800 };
+  const outer = Cesium.Cartesian3.fromDegrees(65, 10, 35_786_000);
+  const viewer = {
+    camera: {
+      positionWC: Cesium.Cartesian3.fromDegrees(0, 0, 50_000_000),
+      frustum: { offCenterFrustum: { near: 1, left: -1, right: 1, bottom: -0.7, top: 0.7 } },
+    },
+  };
+  const plan = planSatelliteOverview(viewer, [
+    { position: Cesium.Cartesian3.fromDegrees(0, 0, 420_000) },
+    { position: outer },
+  ], source, [safe]);
+  assert.ok(plan);
+  assert.equal(plan.satelliteCount, 2);
+  assert.ok(Math.abs(plan.shellRadiusM - Cesium.Cartesian3.magnitude(outer)) < 1);
+  assert.deepEqual(plan.viewport, safe);
+
+  const right = Cesium.Cartesian3.cross(
+    plan.orientation.direction, plan.orientation.up, new Cesium.Cartesian3(),
+  );
+  const toEarth = Cesium.Cartesian3.negate(plan.destination, new Cesium.Cartesian3());
+  const depth = Cesium.Cartesian3.dot(toEarth, plan.orientation.direction);
+  const screenSlopeX = Cesium.Cartesian3.dot(toEarth, right) / depth;
+  assert.ok(Math.abs(screenSlopeX + 1 / 3) < 1e-10,
+    'Earth aims at the center of the unblocked left 800 pixels');
+  const angularRadius = Math.asin(plan.shellRadiusM / plan.distanceM);
+  const leftPlaneMargin = Math.asin((screenSlopeX + 1) /
+    (Math.hypot(1, -1) * Math.hypot(1, screenSlopeX)));
+  assert.ok(angularRadius < leftPlaneMargin,
+    'the outer real shell leaves negative space before the limiting screen edge');
 });
 
 test('geocoded Location branches forward the resolved-navigation ownership hook', () => {

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   getExposedApplicationViewport,
   getExposedPerspectiveXOffset,
+  getSatelliteOverviewViewports,
 } from './viewport.js';
 
 const rect = (left, top, width, height) => ({
@@ -37,4 +38,30 @@ test('projection centres the same camera target in the exposed pane', () => {
   assert.equal(getExposedPerspectiveXOffset(frustum, covered), -0.5);
   assert.equal(getExposedPerspectiveXOffset(frustum, covered, 0.25), -0.25);
   assert.equal(getExposedPerspectiveXOffset({ xOffset: undefined }, covered), null);
+});
+
+test('orbital fit uses the actual open Inspector rectangle, including bottom-left placement', () => {
+  let panel = rect(700, 20, 300, 600);
+  let open = true;
+  const root = {
+    getBoundingClientRect: () => rect(100, 20, 900, 600),
+    closest: () => ({ getBoundingClientRect: () => rect(300, 20, 700, 600) }),
+    ownerDocument: {
+      querySelector: () => open ? { getBoundingClientRect: () => panel } : null,
+    },
+  };
+  assert.deepEqual(getSatelliteOverviewViewports(root), [
+    rect(300, 20, 400, 600),
+  ]);
+
+  panel = rect(300, 420, 350, 200);
+  assert.deepEqual(getSatelliteOverviewViewports(root), [
+    rect(650, 20, 350, 600),
+    rect(300, 20, 700, 400),
+  ]);
+
+  open = false;
+  assert.deepEqual(getSatelliteOverviewViewports(root), [{
+    ...rect(300, 20, 700, 600), sourceWidth: 900, occludedLeft: 200,
+  }]);
 });

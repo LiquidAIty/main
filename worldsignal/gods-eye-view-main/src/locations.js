@@ -164,6 +164,100 @@ export function flyToGlobeView(viewer, options = {}) {
 }
 
 /**
+ * Plan an explicit satellite overview from the currently rendered orbital positions.
+ * The camera keeps its current side of Earth. Cesium's own perspective frustum and
+ * the unobscured screen rectangles determine the range and the screen-space aim.
+ * No catalog position or ordinary globe preset is changed.
+ */
+export function planSatelliteOverview(viewer, positions, source, viewports) {
+  const frustum = viewer?.camera?.frustum?.offCenterFrustum;
+  const near = Number(frustum?.near);
+  if (!(source?.width > 0) || !(source?.height > 0)
+    || !(near > 0) || !Array.isArray(viewports) || !viewports.length) return null;
+  const left = frustum.left / near;
+  const right = frustum.right / near;
+  const bottom = frustum.bottom / near;
+  const top = frustum.top / near;
+  if (![left, right, bottom, top].every(Number.isFinite)
+    || !(right > left) || !(top > bottom)) return null;
+
+  let satelliteCount = 0;
+  let shellRadiusM = Cesium.Ellipsoid.WGS84.maximumRadius;
+  for (const entry of positions || []) {
+    const position = entry?.position;
+    if (![position?.x, position?.y, position?.z].every(Number.isFinite)) continue;
+    satelliteCount += 1;
+    shellRadiusM = Math.max(shellRadiusM, Cesium.Cartesian3.magnitude(position));
+  }
+  if (!satelliteCount) return null;
+
+  let best = null;
+  for (const viewport of viewports) {
+    if (!(viewport?.width > 0) || !(viewport?.height > 0)) continue;
+    const screenX = (x) => left + (right - left) * (x - source.left) / source.width;
+    const screenY = (y) => top - (top - bottom) * (y - source.top) / source.height;
+    const minX = screenX(viewport.left);
+    const maxX = screenX(viewport.right);
+    const maxY = screenY(viewport.top);
+    const minY = screenY(viewport.bottom);
+    const slopeX = (minX + maxX) / 2;
+    const slopeY = (minY + maxY) / 2;
+    const rayLength = Math.hypot(1, slopeX, slopeY);
+    const planeSines = [
+      (slopeX - minX) / (Math.hypot(1, minX) * rayLength),
+      (maxX - slopeX) / (Math.hypot(1, maxX) * rayLength),
+      (slopeY - minY) / (Math.hypot(1, minY) * rayLength),
+      (maxY - slopeY) / (Math.hypot(1, maxY) * rayLength),
+    ];
+    const smallestSine = Math.min(...planeSines);
+    if (!(smallestSine > 0) || !Number.isFinite(smallestSine)) continue;
+    const marginRad = Math.asin(Math.min(1, smallestSine));
+    if (!best || marginRad > best.marginRad) {
+      best = { viewport, slopeX, slopeY, rayLength, marginRad };
+    }
+  }
+  if (!best) return null;
+
+  // Reserve 18% of the limiting angular margin as negative space around the
+  // outermost real orbit, including Earth when the catalog contains only LEO.
+  const distanceM = shellRadiusM / Math.sin(best.marginRad * 0.82);
+  const depthM = distanceM / best.rayLength;
+  const cameraPosition = viewer.camera.positionWC;
+  if (![cameraPosition?.x, cameraPosition?.y, cameraPosition?.z].every(Number.isFinite)
+    || Cesium.Cartesian3.magnitude(cameraPosition) === 0) return null;
+  const radial = Cesium.Cartesian3.normalize(cameraPosition, new Cesium.Cartesian3());
+  let east = Cesium.Cartesian3.cross(Cesium.Cartesian3.UNIT_Z, radial, new Cesium.Cartesian3());
+  if (Cesium.Cartesian3.magnitude(east) < 1e-8) {
+    east = Cesium.Cartesian3.cross(Cesium.Cartesian3.UNIT_X, radial, east);
+  }
+  Cesium.Cartesian3.normalize(east, east);
+  const north = Cesium.Cartesian3.normalize(
+    Cesium.Cartesian3.cross(radial, east, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  );
+  const destination = Cesium.Cartesian3.add(
+    Cesium.Cartesian3.add(
+      Cesium.Cartesian3.multiplyByScalar(radial, depthM, new Cesium.Cartesian3()),
+      Cesium.Cartesian3.multiplyByScalar(east, -depthM * best.slopeX, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3(),
+    ),
+    Cesium.Cartesian3.multiplyByScalar(north, -depthM * best.slopeY, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3(),
+  );
+  const cameraHeightM = Cesium.Cartographic.fromCartesian(destination)?.height;
+  if (!Number.isFinite(cameraHeightM)) return null;
+  return {
+    destination,
+    orientation: { direction: Cesium.Cartesian3.negate(radial, new Cesium.Cartesian3()), up: north },
+    viewport: best.viewport,
+    satelliteCount,
+    shellRadiusM,
+    distanceM,
+    cameraHeightM,
+  };
+}
+
+/**
  * Flat list of locations for backward compatibility.
  */
 export const LOCATIONS = Object.entries(CITY_POIS).map(([id, city]) => ({

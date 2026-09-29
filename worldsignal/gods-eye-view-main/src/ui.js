@@ -2479,6 +2479,7 @@ export class StyleManager {
 
     // Share Link Manager
     this.shareLinkManager = new ShareLinkManager(viewer, {
+      explicitDisplayFieldsOnly: supervisedEmbed,
       onRestore: async (state) => {
         const {
           style,
@@ -3747,6 +3748,9 @@ export class StyleManager {
    */
   _applyGlobalPostDefaults() {
     const defaults = GLOBAL_POST_DEFAULTS;
+    const hudVariant = this._supervisedEmbed ? 'minimal' : defaults.hudVariant;
+    const hudVisible = this._supervisedEmbed ? false : defaults.hudVisible;
+    const celestialRing = this._supervisedEmbed ? true : defaults.celestialRing;
     if (typeof defaults.bloom?.intensity === 'number' && this._bloomSlider) {
       this._setBloomIntensity(clampBloomIntensity(defaults.bloom.intensity), { syncShare: false });
     }
@@ -3764,11 +3768,11 @@ export class StyleManager {
       this._setSharpenEnabled(defaults.sharpen.enabled);
     }
 
-    if (defaults.hudVariant) {
-      this._setHudVariant(defaults.hudVariant);
+    if (hudVariant) {
+      this._setHudVariant(hudVariant);
     }
-    if (typeof defaults.hudVisible === 'boolean') {
-      this.hud.setMode(defaults.hudVisible ? 'on' : 'off');
+    if (typeof hudVisible === 'boolean') {
+      this.hud.setMode(hudVisible ? 'on' : 'off');
       this._updateHudButtonState();
     }
 
@@ -3792,8 +3796,8 @@ export class StyleManager {
       this._detectionOpacitySlider.value = String(defaults.detectionOutsideOpacityPct ?? 1);
     }
     this._applyDetectionFadeFromUi();
-    if (typeof defaults.celestialRing === 'boolean') {
-      this.setCelestialRingEnabled(defaults.celestialRing, { syncShare: false, focus: false });
+    if (typeof celestialRing === 'boolean') {
+      this.setCelestialRingEnabled(celestialRing, { syncShare: false, focus: false });
     }
   }
 

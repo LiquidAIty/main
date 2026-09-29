@@ -7,6 +7,7 @@ import { DataLayerManager } from '../data/manager.js';
 import { getActiveCameraMotion, interruptCameraMotion, moveCamera } from '../cameraVerbs.js';
 import { reassertNavigationHandoff, runExplicitNavigation } from '../navigationPolicy.js';
 import { TR3B_CLASS } from '../data/tr3bRegistry.js';
+import { setApplicationRoot } from '../app/viewport.js';
 import {
   controlCctv,
   controlRadio,
@@ -153,6 +154,53 @@ test('zoom to globe adopts the shared visible reset route and returns its result
   });
   assert.deepEqual(await runner('zoom_to_globe'), expected);
   assert.equal(calls, 1);
+});
+
+test('explicit satellite overview reads live positions and starts its flight after camera handoff', async () => {
+  globalThis.window = globalThis.window || { clearTimeout, setTimeout, requestIdleCallback: null };
+  const { viewer, styleManager, order } = createVoiceNavigationHarness();
+  viewer.scene.mode = Cesium.SceneMode.SCENE3D;
+  viewer.camera.frustum = {
+    offCenterFrustum: { near: 1, left: -1, right: 1, bottom: -0.7, top: 0.7 },
+  };
+  let flight = null;
+  viewer.camera.flyTo = (options) => { flight = options; order.push('fly'); };
+  const root = {
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 }),
+    closest: () => null,
+    ownerDocument: { querySelector: () => null },
+  };
+  const restoreRoot = setApplicationRoot(root);
+  let requestedCap = null;
+  const dataManager = {
+    layers: new Map([['satellites', { module: {
+      getAllPositions(cap) {
+        requestedCap = cap;
+        return [{ position: Cesium.Cartesian3.fromDegrees(0, 0, 35_786_000) }];
+      },
+    } }]]),
+    isEnabled: () => true,
+    getAll: () => [],
+  };
+  try {
+    const runner = createGevActionRunner({ viewer, styleManager, dataManager });
+    const result = await runner('satellite_overview');
+    assert.equal(result.ok, true);
+    assert.equal(result.action, 'satellite_overview');
+    assert.equal(result.flightStarted, true);
+    assert.equal(result.satelliteCount, 1);
+    assert.equal(requestedCap, Number.MAX_SAFE_INTEGER);
+    assert.ok(flight?.destination);
+    assert.ok(order.indexOf('release') < order.indexOf('fly'));
+
+    dataManager.isEnabled = () => false;
+    flight = null;
+    const refused = await runner('satellite_overview');
+    assert.equal(refused.ok, false);
+    assert.equal(flight, null, 'disabled satellites do not move the camera');
+  } finally {
+    restoreRoot();
+  }
 });
 
 test('dependent voice navigation waits for the destination viewport to arrive', async () => {

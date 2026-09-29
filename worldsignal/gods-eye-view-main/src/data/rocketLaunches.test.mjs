@@ -320,6 +320,128 @@ test('restores the complete standalone Satellite style after mission mode', () =
   });
 });
 
+test('Space Missions preserves an independently enabled Satellite fleet and options', async (t) => {
+  let satellitesEnabled = true;
+  let params = { catalog: 'dense', showPoints: true, showOrbits: true };
+  const parameterWrites = [];
+  const fakeManager = {
+    isEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    isEffectivelyEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    getLayerParams: () => ({ ...params }),
+    setLayerParams: (_id, next) => {
+      parameterWrites.push(next);
+      params = { ...params, ...next };
+    },
+    setEnabled: (_id, enabled) => {
+      satellitesEnabled = enabled;
+      return Promise.resolve(true);
+    },
+  };
+  const priorDocument = globalThis.document;
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  rocketLaunchesLayer.attachDataManager(fakeManager);
+  t.after(() => {
+    globalThis.document = priorDocument;
+    rocketLaunchesLayer.attachDataManager(null);
+  });
+
+  await rocketLaunchesLayer.enable();
+  assert.deepEqual(parameterWrites, [], 'mission does not hide or replace an already visible fleet');
+  assert.deepEqual(params, { catalog: 'dense', showPoints: true, showOrbits: true });
+  params.showOrbits = false; // a Satellite option changed while both layers are active
+  await rocketLaunchesLayer.disable();
+  assert.deepEqual(parameterWrites, [], 'mission exit does not restore over the newer Satellite option');
+  assert.deepEqual(params, { catalog: 'dense', showPoints: true, showOrbits: false });
+  assert.equal(satellitesEnabled, true);
+});
+
+test('Space Missions still hides a dependency-only Satellite fleet and restores its prior state', async (t) => {
+  let satellitesEnabled = false;
+  let params = { catalog: 'core', showPoints: true, showOrbits: true };
+  const parameterWrites = [];
+  const fakeManager = {
+    isEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    isEffectivelyEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    getLayerParams: () => ({ ...params }),
+    setLayerParams: (_id, next) => {
+      parameterWrites.push(next);
+      params = { ...params, ...next };
+    },
+    setEnabled: (_id, enabled) => {
+      satellitesEnabled = enabled;
+      return Promise.resolve(true);
+    },
+  };
+  const priorDocument = globalThis.document;
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  rocketLaunchesLayer.attachDataManager(fakeManager);
+  t.after(() => {
+    globalThis.document = priorDocument;
+    rocketLaunchesLayer.attachDataManager(null);
+  });
+
+  await rocketLaunchesLayer.enable();
+  assert.deepEqual(params, { catalog: 'dense', showPoints: false, showOrbits: false });
+  assert.equal(satellitesEnabled, true);
+  await rocketLaunchesLayer.disable();
+  assert.deepEqual(params, { catalog: 'core', showPoints: true, showOrbits: true });
+  assert.equal(satellitesEnabled, false);
+  assert.equal(parameterWrites.length, 2);
+});
+
+test('a later explicit Satellite ON intent reveals a mission-borrowed fleet', async (t) => {
+  let satellitesEnabled = false;
+  let params = { catalog: 'core', showPoints: true, showOrbits: true };
+  const listeners = new Set();
+  const fakeManager = {
+    isEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    isEffectivelyEnabled: (id) => id === 'satellites' && satellitesEnabled,
+    getLayerParams: () => ({ ...params }),
+    setLayerParams: (_id, next) => { params = { ...params, ...next }; },
+    setEnabled: (_id, enabled, { origin = 'programmatic' } = {}) => {
+      satellitesEnabled = enabled;
+      for (const listener of listeners) {
+        listener({ type: 'visibility', layerId: 'satellites', enabled, origin });
+      }
+      return Promise.resolve(true);
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const priorDocument = globalThis.document;
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  rocketLaunchesLayer.attachDataManager(fakeManager);
+  t.after(() => {
+    globalThis.document = priorDocument;
+    rocketLaunchesLayer.attachDataManager(null);
+  });
+
+  await rocketLaunchesLayer.enable();
+  assert.deepEqual(params, { catalog: 'dense', showPoints: false, showOrbits: false });
+  assert.equal(satellitesEnabled, true);
+  await fakeManager.setEnabled('satellites', true, { origin: 'user' });
+  assert.deepEqual(params, { catalog: 'core', showPoints: true, showOrbits: true });
+  assert.equal(listeners.size, 0, 'mission no longer owns Satellite display options');
+  params.catalog = 'dense';
+  await rocketLaunchesLayer.disable();
+  assert.deepEqual(params, { catalog: 'dense', showPoints: true, showOrbits: true });
+  assert.equal(satellitesEnabled, true, 'mission exit preserves the explicit standalone enable');
+});
+
 test('suppresses every orbital representation for failed launches', () => {
   assert.equal(launchStatusAllowsOrbit('Launch Successful'), true);
   assert.equal(launchStatusAllowsOrbit('Go for Launch'), true);

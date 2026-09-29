@@ -16,6 +16,7 @@ const directHost = vi.hoisted(() => ({
   selectInspectorTab: vi.fn(),
   detachInspectorControls: vi.fn(),
   setLayerVisibility: vi.fn(),
+  setSatelliteParams: vi.fn(),
   focusSelection: vi.fn(),
   executeAction: vi.fn(),
   prepareRunImages: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
         attachInspectorControls: directHost.attachInspectorControls,
         selectInspectorTab: directHost.selectInspectorTab,
         setLayerVisibility: directHost.setLayerVisibility,
+        setSatelliteParams: directHost.setSatelliteParams,
         focusSelection: directHost.focusSelection,
         executeAction: directHost.executeAction,
         prepareRunImages: directHost.prepareRunImages,
@@ -46,7 +48,9 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
   };
 });
 
-const scope = { projectId: 'project-1', cardId: 'card-worldview' };
+const inspectorHost = document.createElement('div');
+inspectorHost.dataset.testid = 'workspace-inspector-drawer';
+const scope = { projectId: 'project-1', cardId: 'card-worldview', inspectorContainer: inspectorHost };
 const source: GodsEyeSourceDescriptor = {
   id: 'earthquakes', name: 'Earthquakes', provider: 'USGS',
   enabled: true, lifecycleState: 'active', lifecycleUncertain: false,
@@ -90,8 +94,9 @@ function callbacks() {
 }
 
 function openDataSources() {
-  fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
+  expect(screen.getByTestId('workspace-inspector-drawer')).toBeTruthy();
 }
+
 
 function openSelection() {
   fireEvent.click(screen.getByRole('tab', { name: 'Selection' }));
@@ -105,6 +110,7 @@ function nativeReady(state = layerState) {
 }
 
 beforeEach(() => {
+  document.body.appendChild(inspectorHost);
   actionStreams.length = 0;
   vi.stubGlobal('EventSource', TestActionStream);
   directHost.props = null;
@@ -114,6 +120,7 @@ beforeEach(() => {
   directHost.selectInspectorTab.mockReset().mockReturnValue(true);
   directHost.detachInspectorControls.mockReset();
   directHost.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
+  directHost.setSatelliteParams.mockReset().mockReturnValue('satellite-params-request-1');
   directHost.focusSelection.mockReset().mockReturnValue('focus-request-1');
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -140,13 +147,14 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  inspectorHost.remove();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 describe('WorldView direct source presentation', () => {
   it('fails closed without a saved Card attachment', () => {
-    render(<WorldViewSurface projectId="project-1" cardId={null} />);
+    render(<WorldViewSurface projectId="project-1" cardId={null} inspectorContainer={inspectorHost} />);
     expect(screen.getByText('WorldView Card is not connected')).toBeTruthy();
     expect(screen.queryByLabelText('WorldView globe')).toBeNull();
     expect(document.querySelector('iframe')).toBeNull();
@@ -164,9 +172,9 @@ describe('WorldView direct source presentation', () => {
 
     openDataSources();
     nativeReady();
-    const inspector = screen.getByTestId('worldview-data-sources');
+    const inspector = screen.getByTestId('workspace-inspector-drawer');
     const host = document.getElementById('worldview-inspector-controls');
-    expect(screen.getByLabelText('WorldView globe').parentElement?.contains(inspector)).toBe(true);
+    expect(screen.getByLabelText('WorldView globe').parentElement?.contains(inspector)).toBe(false);
     expect(inspector.contains(host)).toBe(true);
     expect(directHost.attachInspectorControls).toHaveBeenCalledExactlyOnceWith(host);
     expect(directHost.selectInspectorTab).toHaveBeenCalledWith('data');
@@ -176,6 +184,110 @@ describe('WorldView direct source presentation', () => {
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByText('Data Sources')).toBeNull();
     expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
+  });
+
+  it('routes compact navigation through the native bridge', async () => {
+    directHost.executeAction.mockResolvedValue({ ok: true });
+    render(<WorldViewSurface {...scope} />);
+    nativeReady();
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(1,
+      'adjust_camera_zoom', { direction: 'in', amount: 'little' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(2,
+      'adjust_camera_zoom', { direction: 'out', amount: 'little' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(3, 'zoom_to_globe', {});
+  });
+
+  it('frames live satellites after the explicit ON and options requests settle', () => {
+    directHost.executeAction.mockResolvedValue({ ok: true, action: 'satellite_overview' });
+    render(<WorldViewSurface {...scope} />);
+    nativeReady({
+      ...layerState,
+      enabledLayerIds: ['satellites'],
+      sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Satellite view' }));
+    expect(directHost.setLayerVisibility).toHaveBeenCalledExactlyOnceWith(
+      'satellites', true, { origin: 'user' });
+    expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
+    act(() => callbacks().onCommandResult?.({
+      schemaVersion: 'gev.direct.layer-visibility.result.v1',
+      ...scope,
+      requestId: 'layer-request-1',
+      layerId: 'satellites',
+      requestedEnabled: true,
+      ok: true,
+      error: null,
+      state: {
+        ...layerState,
+        enabledLayerIds: ['satellites'],
+        sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
+      },
+    }));
+    expect(directHost.setSatelliteParams).toHaveBeenCalledExactlyOnceWith({
+      catalog: 'dense', showPoints: true, showOrbits: true,
+    });
+    expect(directHost.executeAction).not.toHaveBeenCalled();
+    act(() => callbacks().onCommandResult?.({
+      schemaVersion: 'gev.direct.satellite-params.result.v1',
+      ...scope,
+      requestId: 'satellite-params-request-1',
+      layerId: 'satellites',
+      requestedParams: { catalog: 'dense', showPoints: true, showOrbits: true },
+      effectiveParams: { catalog: 'dense', showPoints: true, showOrbits: true },
+      ok: true,
+      error: null,
+      state: layerState,
+    }));
+    expect(directHost.executeAction).toHaveBeenCalledExactlyOnceWith('satellite_overview', {});
+  });
+
+  it('does not apply satellite presentation when explicit ON fails', () => {
+    render(<WorldViewSurface {...scope} />);
+    nativeReady();
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Satellite view' }));
+    act(() => callbacks().onCommandResult?.({
+      schemaVersion: 'gev.direct.layer-visibility.result.v1',
+      ...scope,
+      requestId: 'layer-request-1',
+      layerId: 'satellites',
+      requestedEnabled: true,
+      ok: false,
+      error: 'Satellite layer unavailable',
+      state: layerState,
+    }));
+    expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
+    expect(directHost.executeAction).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('alert').some((node) =>
+      node.textContent?.includes('Satellite layer unavailable'))).toBe(true);
+  });
+
+  it('does not move the camera when satellite options fail', () => {
+    render(<WorldViewSurface {...scope} />);
+    nativeReady();
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Satellite view' }));
+    act(() => callbacks().onCommandResult?.({
+      schemaVersion: 'gev.direct.layer-visibility.result.v1',
+      ...scope,
+      requestId: 'layer-request-1', layerId: 'satellites',
+      requestedEnabled: true, ok: true, error: null, state: layerState,
+    }));
+    act(() => callbacks().onCommandResult?.({
+      schemaVersion: 'gev.direct.satellite-params.result.v1',
+      ...scope,
+      requestId: 'satellite-params-request-1', layerId: 'satellites',
+      requestedParams: { catalog: 'dense', showPoints: true, showOrbits: true },
+      effectiveParams: { catalog: 'core', showPoints: true, showOrbits: true },
+      ok: false, error: 'Dense catalog unavailable', state: layerState,
+    }));
+    expect(directHost.executeAction).not.toHaveBeenCalled();
+    expect(screen.getAllByRole('alert').some((node) =>
+      node.textContent?.includes('Dense catalog unavailable'))).toBe(true);
   });
 
   it('persists a settled native ON/OFF event without toggling the layer twice', async () => {
@@ -352,7 +464,7 @@ describe('WorldView direct source presentation', () => {
     }));
     expect(screen.getByText('Satellite 1 · satellite')).toBeTruthy();
 
-    rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" />);
+    rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" inspectorContainer={inspectorHost} />);
     await waitFor(() => expect(screen.getByText('No selection.')).toBeTruthy());
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(actionStreams.at(-1)?.url).toContain('/api/worldview/projects/project-2/actions/stream');
@@ -414,7 +526,7 @@ describe('WorldView direct source presentation', () => {
     }));
 
     directHost.setLayerVisibility.mockClear().mockReturnValue('layer-request-2');
-    rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" />);
+    rerender(<WorldViewSurface projectId="project-2" cardId="card-worldview-2" inspectorContainer={inspectorHost} />);
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0]))
       .toContain('/api/worldview/projects/project-2/capabilities'));
     act(() => {

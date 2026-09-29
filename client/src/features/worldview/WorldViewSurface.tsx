@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import scopedWorldViewStyles from 'virtual:worldview-native-css';
 import inspectorOverrides from './worldviewInspector.css?raw';
 
@@ -8,7 +9,6 @@ import GodsEyeSurface, {
   type GodsEyeLayerState,
   type GodsEyeSelectionRef,
 } from '../../components/worldsignal/GodsEyeSurface';
-import RightGlassDrawer from '../../components/graph/RightGlassDrawer';
 import {
   isCapability,
   loadProjectWorldview,
@@ -20,6 +20,7 @@ type WorldViewSurfaceProps = {
   projectId: string | null;
   cardId: string | null;
   onBridgeChange?: (bridge: GodsEyeBridge | null) => void;
+  inspectorContainer: HTMLElement | null;
 };
 
 const INSPECTOR_TABS = [
@@ -33,10 +34,11 @@ const INSPECTOR_TABS = [
 type InspectorTab = typeof INSPECTOR_TABS[number]['id'];
 const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-native-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
 
-export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: WorldViewSurfaceProps) {
+export default function WorldViewSurface({ projectId, cardId, onBridgeChange, inspectorContainer }: WorldViewSurfaceProps) {
   const bridgeRef = useRef<GodsEyeBridge | null>(null);
   const inspectorControlsRef = useRef<HTMLDivElement | null>(null);
   const inspectorAttachmentRef = useRef<{ detach: () => void } | null>(null);
+  const satelliteViewRequestRef = useRef<string | null>(null);
   const currentProjectRef = useRef(projectId);
   const confirmedProjectRef = useRef<ProjectWorldviewState | null>(null);
   const nextProjectWriteRef = useRef(0);
@@ -53,7 +55,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   const [projectWorldviewError, setProjectWorldviewError] = useState<string | null>(null);
   const [layerApplyErrors, setLayerApplyErrors] = useState<Record<string, string>>({});
   const [layerPersistenceErrors, setLayerPersistenceErrors] = useState<Record<string, string>>({});
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('data');
   const [remoteActionCount, setRemoteActionCount] = useState(0);
   const [pendingLayers, setPendingLayers] = useState<Record<string, {
@@ -69,8 +70,42 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   }, [inspectorTab]);
 
   useEffect(() => {
+    inspectorAttachmentRef.current?.detach();
+    inspectorAttachmentRef.current = null;
+    if (!inspectorContainer || !sourceVersion) return;
+    try {
+      inspectorAttachmentRef.current = inspectorControlsRef.current
+        ? bridgeRef.current?.attachInspectorControls(inspectorControlsRef.current) ?? null
+        : null;
+      bridgeRef.current?.selectInspectorTab(inspectorTab);
+    } catch (error) {
+      setSurfaceError(error instanceof Error ? error.message : 'WorldView controls unavailable');
+    }
+    return () => {
+      inspectorAttachmentRef.current?.detach();
+      inspectorAttachmentRef.current = null;
+    };
+  }, [inspectorContainer, sourceVersion]);
+
+  const navigate = (name: string, args: Record<string, unknown> = {}) => {
+    const bridge = bridgeRef.current;
+    if (!bridge) return;
+    void bridge.executeAction(name, args).then((result) => {
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        setSurfaceError('error' in result && typeof result.error === 'string'
+          ? result.error : 'WorldView navigation failed');
+        return;
+      }
+      setSurfaceError(null);
+    }).catch((error) => {
+      setSurfaceError(error instanceof Error ? error.message : 'WorldView navigation failed');
+    });
+  };
+
+  useEffect(() => {
     if (!projectId) return;
     let active = true;
+    satelliteViewRequestRef.current = null;
     confirmedProjectRef.current = null;
     ownedLayerWritesRef.current.clear();
     setProjectWorldview(null);
@@ -147,6 +182,18 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   };
   const handleResult = (result: GodsEyeCommandResult) => {
     if (result.schemaVersion === 'gev.direct.layer-visibility.result.v1' && result.layerId) {
+      if (result.requestId === satelliteViewRequestRef.current) {
+        if (result.ok) {
+          const requestId = bridgeRef.current?.setSatelliteParams({
+            catalog: 'dense', showPoints: true, showOrbits: true,
+          });
+          satelliteViewRequestRef.current = requestId ?? null;
+          if (!requestId) setSurfaceError('Satellite view is unavailable');
+        } else {
+          satelliteViewRequestRef.current = null;
+          setSurfaceError(result.error || 'Satellite view could not be enabled');
+        }
+      }
       setPendingLayers((current) => {
         if (current[result.layerId!]?.requestId !== result.requestId) return current;
         const next = { ...current };
@@ -159,6 +206,13 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         else next[result.layerId!] = result.error || 'Layer update failed';
         return next;
       });
+      return;
+    }
+    if (result.schemaVersion === 'gev.direct.satellite-params.result.v1'
+      && result.requestId === satelliteViewRequestRef.current) {
+      satelliteViewRequestRef.current = null;
+      if (result.ok) navigate('satellite_overview');
+      else setSurfaceError(result.error || 'Satellite view could not be prepared');
       return;
     }
     if (!result.ok) setSurfaceError(result.error || 'WorldView command failed');
@@ -373,18 +427,10 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         onReady={(version) => {
           setSourceVersion(version);
           setSurfaceError(null);
-          try {
-            inspectorAttachmentRef.current?.detach();
-            inspectorAttachmentRef.current = inspectorControlsRef.current
-              ? bridgeRef.current?.attachInspectorControls(inspectorControlsRef.current) ?? null
-              : null;
-            bridgeRef.current?.selectInspectorTab(inspectorTab);
-          } catch (error) {
-            setSurfaceError(error instanceof Error ? error.message : 'WorldView controls unavailable');
-          }
           onBridgeChange?.(bridgeRef.current);
         }}
         onBridgeUnavailable={() => {
+          satelliteViewRequestRef.current = null;
           inspectorAttachmentRef.current?.detach();
           inspectorAttachmentRef.current = null;
           setSourceVersion(null);
@@ -399,18 +445,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         onCommandResult={handleResult}
         onError={(error) => setSurfaceError(`${error.code}: ${error.message}`)}
       />
-      <RightGlassDrawer
-        isOpen={sourcesOpen}
-        onOpen={() => setSourcesOpen(true)}
-        onClose={() => setSourcesOpen(false)}
-        title="Inspector"
-        collapsedLabel={null}
-        openAriaLabel="Open inspector"
-        dataTestId="worldview-data-sources"
-        defaultWidth={360}
-        minWidth={300}
-        maxWidth={560}
-      >
+      {inspectorContainer ? createPortal(<>
         <style data-worldview-inspector-styles>{inspectorStyles}</style>
         <div style={styles.drawerBody}>
           <div role="tablist" aria-label="WorldView inspector" style={styles.tabs}>
@@ -422,6 +457,27 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
               onClick={() => setInspectorTab(tab.id)}
               style={{ ...styles.tab, ...(inspectorTab === tab.id ? styles.tabSelected : {}) }}
             >{tab.label}</button>)}
+          </div>
+          <div role="group" aria-label="WorldView navigation" style={styles.navigation}>
+            <button type="button" style={styles.action} disabled={!sourceVersion}
+              onClick={() => navigate('adjust_camera_zoom', { direction: 'in', amount: 'little' })}
+            >Zoom in</button>
+            <button type="button" style={styles.action} disabled={!sourceVersion}
+              onClick={() => navigate('adjust_camera_zoom', { direction: 'out', amount: 'little' })}
+            >Zoom out</button>
+            <button type="button" style={styles.action} disabled={!sourceVersion}
+              onClick={() => navigate('zoom_to_globe')}
+            >Overview</button>
+            {inspectorTab === 'view' ? <button
+              type="button"
+              style={styles.action}
+              disabled={!sourceVersion}
+              onClick={() => {
+                const requestId = bridgeRef.current?.setLayerVisibility('satellites', true, { origin: 'user' });
+                if (requestId) satelliteViewRequestRef.current = requestId;
+                else setSurfaceError('Satellite view is unavailable');
+              }}
+            >Satellite view</button> : null}
           </div>
           <div ref={inspectorControlsRef} id="worldview-inspector-controls" />
           {projectWorldviewLoading ? <div>Loading Project sources…</div> : null}
@@ -453,7 +509,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
             </div>
           </> : null}
         </div>
-      </RightGlassDrawer>
+      </>, inspectorContainer) : null}
     </div>
   </section>;
 }
@@ -464,9 +520,10 @@ const styles: Record<string, React.CSSProperties> = {
   action: { border: '1px solid rgba(114,215,199,.45)', borderRadius: 7, padding: '4px 9px', color: '#d9f7f2', background: 'rgba(5,11,16,.82)', cursor: 'pointer' },
   error: { color: '#f39b73' },
   drawerBody: { display: 'grid', gap: 12, fontSize: 12 },
+  navigation: { display: 'flex', flexWrap: 'wrap', gap: 6 },
   tabs: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 5 },
   tab: { border: '1px solid rgba(126,232,226,.16)', borderRadius: 8, padding: '7px 4px', color: '#9db9bd', background: 'rgba(8,20,26,.45)', cursor: 'pointer', fontSize: 11 },
-  tabSelected: { borderColor: 'rgba(126,232,226,.55)', color: '#e4fbf7', background: 'rgba(35,111,119,.28)' },
+  tabSelected: { border: '1px solid rgba(126,232,226,.55)', color: '#e4fbf7', background: 'rgba(35,111,119,.28)' },
   selection: { display: 'grid', gap: 8, paddingTop: 12, borderTop: '1px solid rgba(114,215,199,.2)' },
   unavailable: { display: 'grid', placeContent: 'center', gap: 6, height: '100%', padding: 24, textAlign: 'center', color: '#78929c', background: '#050b10' },
 };

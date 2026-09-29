@@ -43,6 +43,7 @@ import {
   normalizeAllocationStrategy,
   normalizeProfile,
   profileForDensity,
+  satelliteDetectionPresentation,
   viewScaleForAltitude,
 } from './detectionPolicy.js';
 import { detectionBracketOpacity } from './detectionPresentation.js';
@@ -1140,6 +1141,8 @@ function _drawOverlay(frame) {
   // host's own keyhole alpha comes from, so a bracket and its callout can never
   // disagree about the operator's setting within a frame.
   const keyholeOutsideOpacity = getKeyholeFadeTuning().outsideOpacity;
+  const altitude = _viewer?.camera?.positionCartographic?.height ?? 1e9;
+  const satellitePresentation = satelliteDetectionPresentation(altitude, _densityPct);
   const viewProjection = frame.viewProjectionMatrix;
   const vp0 = viewProjection[0];
   const vp1 = viewProjection[1];
@@ -1162,6 +1165,7 @@ function _drawOverlay(frame) {
   const tiers = _theme.tiers || null;
   const colorFor = (key) => (tiers && tiers[key]) || _theme.line;
   const bracketPaths = new Map();
+  const ambientSatelliteBracketPaths = new Map();
   const pathFor = (map, color, alpha) => {
     const band = Math.max(1, Math.min(BRACKET_ALPHA_STEPS, Math.ceil(alpha * BRACKET_ALPHA_STEPS)));
     let bands = map.get(color);
@@ -1221,6 +1225,11 @@ function _drawOverlay(frame) {
       halfW = _mode === MODE_DENSE ? (isTracked ? 28 : 11) : 16;
       halfH = _mode === MODE_DENSE ? (isTracked ? 22 : 7) : 10;
     }
+    const ambientSatellite = obj.type === 'SAT' && !isTracked && satellitePresentation.progress > 0;
+    if (ambientSatellite) {
+      halfW *= satellitePresentation.bracketScale;
+      halfH *= satellitePresentation.bracketScale;
+    }
     // Viewport bounds check with padding
     if (sx < -halfW || sx > width + halfW || sy < -halfH || sy > height + halfH) continue;
 
@@ -1230,7 +1239,10 @@ function _drawOverlay(frame) {
     const keyholeAlpha = keyholeLabelAlphaFromGeometry(sx, sy, keyhole);
     const bracketAlpha = detectionBracketAlpha(obj.type, keyholeAlpha, keyholeOutsideOpacity);
     if (bracketAlpha > 0) {
-      appendCornerBracket(pathFor(bracketPaths, color, bracketAlpha), sx, sy, halfW, halfH);
+      appendCornerBracket(
+        pathFor(ambientSatellite ? ambientSatelliteBracketPaths : bracketPaths, color, bracketAlpha),
+        sx, sy, halfW, halfH,
+      );
       visibleCount++;
       if (obj.type === 'AIR') aircraftBracketSectors[detectionHorizontalSector(sx, width)]++;
       if (bracketAlpha >= 1) bracketOpacityCounts.full++;
@@ -1285,14 +1297,19 @@ function _drawOverlay(frame) {
     }
   }
 
-  const altitude = _viewer?.camera?.positionCartographic?.height ?? 1e9;
   const collectiveBudget = labelBudgetFor(altitude, _densityPct);
   const ambientBudget = Math.max(0, collectiveBudget - Math.min(collectiveBudget, protectedVisibleCount));
   let didSolve = false;
   let solveMs = 0;
   if (shouldSolve) {
+    const allocationDemand = new Map(demandByLayer);
+    if (satellitePresentation.progress > 0 && allocationDemand.has('satellites')) {
+      allocationDemand.set('satellites', Math.min(
+        allocationDemand.get('satellites'), satellitePresentation.labelLimit,
+      ));
+    }
     const quotas = allocateLayerQuotas(
-      demandByLayer,
+      allocationDemand,
       ambientBudget,
       _allocationStrategy,
       LAYER_WEIGHTS,
@@ -1300,7 +1317,11 @@ function _drawOverlay(frame) {
     const solveCandidates = [];
     const cohortByLayer = {};
     for (const [layerId, builder] of cohortBuilders) {
-      const cohort = builder.values(cohortCapForQuota(quotas.get(layerId) || 0));
+      const cohortCap = cohortCapForQuota(quotas.get(layerId) || 0);
+      const candidateCap = layerId === 'satellites' && satellitePresentation.progress > 0
+        ? Math.round(cohortCap + (satellitePresentation.labelLimit - cohortCap) * satellitePresentation.progress)
+        : cohortCap;
+      const cohort = builder.values(Math.min(cohortCap, candidateCap));
       for (const obj of cohort) {
         const key = _detectionKey(layerId, obj._cohortSourceId);
         let candidate = candidateMap.get(key);
@@ -1325,7 +1346,7 @@ function _drawOverlay(frame) {
       capacity: ambientBudget,
       strategy: _allocationStrategy,
       layerWeights: LAYER_WEIGHTS,
-      demandByLayer,
+      demandByLayer: allocationDemand,
       now,
       // A dirty solve means the capacity/profile/policy changed, not that stable
       // identities became invalid. The arbiter itself disables preservation when
@@ -1347,7 +1368,19 @@ function _drawOverlay(frame) {
   const fade = acquireAlpha(_enableTime, now, FADE_MS);
   const bracketWidth = _mode === MODE_DENSE ? 1 : 1.25;
 
-  // Brackets — batched by tier color and linear radial-opacity band.
+  // Ambient overview SAT brackets paint first, so tracked and other brackets
+  // retain their full contrast when their paths cross the orbital shell.
+  _ctx.lineWidth = bracketWidth * satellitePresentation.bracketLineWidthScale;
+  for (const bands of ambientSatelliteBracketPaths.values()) {
+    for (const entry of bands) {
+      if (!entry) continue;
+      _ctx.globalAlpha = fade * entry.alpha * bracketPresentationOpacity * satellitePresentation.bracketOpacity;
+      _ctx.strokeStyle = entry.color;
+      _ctx.stroke(entry.path);
+    }
+  }
+
+  // All other brackets keep the existing size, width, and opacity.
   _ctx.lineWidth = bracketWidth;
   for (const bands of bracketPaths.values()) {
     for (const entry of bands) {
@@ -1395,6 +1428,7 @@ function _drawOverlay(frame) {
       protectedVisibleCount,
       collectiveLabelBudget: collectiveBudget,
       ambientLabelBudget: ambientBudget,
+      satelliteAmbientLabelLimit: satellitePresentation.labelLimit,
       labelsByLayer: arbiterDiagnostics.labelsByLayer || {},
       entitlementByLayer: arbiterDiagnostics.quotas || {},
       labeledKeys: Array.from(_labelArbiter.selectedKeys),
@@ -1423,6 +1457,7 @@ function _drawOverlay(frame) {
     _lastDiagnostics.aircraftBracketSectors = aircraftBracketSectors;
     _lastDiagnostics.bracketPresentationOpacity = bracketPresentationOpacity;
     _lastDiagnostics.protectedVisibleCount = protectedVisibleCount;
+    _lastDiagnostics.satelliteAmbientLabelLimit = satellitePresentation.labelLimit;
   }
 
   _drawScanlines(width, height, now);

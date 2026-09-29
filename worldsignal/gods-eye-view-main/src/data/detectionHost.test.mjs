@@ -48,8 +48,9 @@ class MockEvent {
 }
 
 class MockPath2D {
-  moveTo() {}
-  lineTo() {}
+  constructor() { this.commands = []; }
+  moveTo(...coords) { this.commands.push(coords); }
+  lineTo(...coords) { this.commands.push(coords); }
   roundRect() {}
   arcTo() {}
   closePath() {}
@@ -96,7 +97,7 @@ function mockContext(target, trace) {
     // set at some point during the frame. globalAlpha rides along for the same
     // reason: the backdrop feather is an alpha, not a colour.
     fill(path) { record('fill', path, this.fillStyle, this.globalAlpha); },
-    stroke(path) { record('stroke', path); },
+    stroke(path) { record('stroke', path, this.strokeStyle, this.globalAlpha, this.lineWidth); },
     fillRect(...args) { record('fillRect', ...args); },
     fillText(...args) { record('fillText', ...args); },
     drawImage(...args) { record('drawImage', ...args); },
@@ -868,6 +869,74 @@ test('the backdrop feather reaches the canvas as a lighter plate against sky', (
       lightest < heaviest * 0.5,
       `sky plate ${lightest} must be markedly lighter than ground plate ${heaviest}`,
     );
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('far orbital Detection subdues ambient SAT brackets while tracked SAT and AIR stay strong', () => {
+  const env = installEnvironment();
+  env.viewer.camera.positionCartographic.height = 97_000_000;
+  const position = new Cesium.Cartesian3(0, 0, 6_356_752);
+  try {
+    initWorldOverlay(env.viewer);
+    initDetection(env.viewer, [
+      { id: 'satellites', getDetectableObjects: () => [
+        { position, sourceId: 'ambient', id: 'AMBIENT SAT', type: 'SAT' },
+        { position, sourceId: 'tracked', id: 'TRACKED SAT', type: 'SAT', skipLabel: true },
+      ] },
+      { id: 'flights', getDetectableObjects: () => [
+        { position, sourceId: 'air', id: 'AIR', type: 'AIR' },
+      ] },
+    ], () => {});
+    setMode('DENSE');
+    settleFrame(env);
+
+    const strokes = env.detectionCtx.calls.filter(([name]) => name === 'stroke');
+    const satColor = DETECTION_THEME_MAP._default.tiers.space;
+    const satStrokes = strokes.filter(([, , color]) => color === satColor);
+    const airStroke = strokes.find(([, , color]) => color === DETECTION_THEME_MAP._default.tiers.civil);
+    assert.equal(satStrokes.length, 2, 'ambient and tracked SAT paths paint separately');
+    assert.ok(airStroke, 'the ordinary AIR path still paints');
+    const boundsWidth = ([, path]) => {
+      const xs = path.commands.map(([x]) => x);
+      return Math.max(...xs) - Math.min(...xs);
+    };
+    const [ambient, tracked] = satStrokes;
+    assert.ok(boundsWidth(ambient) < boundsWidth(tracked) * 0.3,
+      'the ambient SAT bracket is a fine mark beside the full tracked bracket');
+    assert.ok(ambient[3] < tracked[3] * 0.5, 'ambient SAT paint is subdued');
+    assert.ok(ambient[4] < tracked[4], 'only ambient SAT uses the fine stroke');
+    assert.equal(tracked[3], airStroke[3], 'tracked SAT and AIR retain ordinary opacity');
+    assert.equal(tracked[4], airStroke[4], 'tracked SAT and AIR retain ordinary stroke width');
+    assert.equal(getDetectionDiagnostics().protectedVisibleCount, 1);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('far orbital SAT label limit preserves the source count and collective density setting', () => {
+  const env = installEnvironment();
+  env.viewer.camera.positionCartographic.height = 97_000_000;
+  const objects = Array.from({ length: 81 }, (_, index) => ({
+    position: new Cesium.Cartesian3((index % 9 - 4) * 0.18, (Math.floor(index / 9) - 4) * 0.15, 6_356_752),
+    sourceId: `sat-${index}`,
+    id: `SAT-${index}`,
+    type: 'SAT',
+  }));
+  try {
+    initWorldOverlay(env.viewer);
+    initDetection(env.viewer, [{ id: 'satellites', getDetectableObjects: () => objects }], () => {});
+    setMode('DENSE');
+    settleFrame(env);
+    const diagnostics = getDetectionDiagnostics();
+    assert.equal(diagnostics.observationCount, 81, 'all real observations still reach Detection');
+    assert.equal(diagnostics.visibleCount, 81, 'the label limit does not cull visible brackets');
+    assert.equal(diagnostics.collectiveLabelBudget, 42, 'the existing density stop stays intact');
+    assert.equal(diagnostics.satelliteAmbientLabelLimit, 11);
+    assert.equal(diagnostics.demandByLayer.satellites, 81, 'diagnostics retain actual SAT demand');
+    assert.ok(diagnostics.cohortByLayer.satellites <= 11);
+    assert.ok((diagnostics.labelsByLayer.satellites || 0) <= 11);
   } finally {
     env.cleanup();
   }

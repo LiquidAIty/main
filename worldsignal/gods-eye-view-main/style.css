@@ -441,7 +441,6 @@ body.cockpit-mode #cockpit-cloud-effects.active {
 /* LiquidAIty supplies the surrounding product identity. Keep upstream controls
    and operational feedback, but remove duplicate or decorative chrome. */
 html.supervised-embed #title-bar,
-html.supervised-embed #intel-hud,
 html.supervised-embed .loader-content,
 html.supervised-embed #style-indicator,
 html.supervised-embed .cockpit-visor-status,
@@ -9165,6 +9164,41 @@ body.scene-playback-mode #first-run-launcher {
     animation-timeline: scroll(self block);
     animation-range: contain 80% contain 100%;
   }
+}
+
+/* The mounted WorldView keeps Main over the left side of the full-size globe.
+   Place Cesium's complete credit line just inside the exposed edge; keep its
+   logo, source text, and expandable attribution link on screen in every mode. */
+html.supervised-embed:not(.ui-clean-view):not(.recording-mode) #cesium-credits,
+html.supervised-embed:not(.ui-clean-view):not(.recording-mode):has(#intel-hud[data-variant='minimal'].active) #cesium-credits,
+html.supervised-embed.ui-clean-view #cesium-credits,
+html.supervised-embed.recording-mode #cesium-credits {
+  bottom: 0.5rem;
+  left: calc(var(--worldview-occluded-left, 0px) + 0.75rem);
+  max-width: min(22rem, calc(100cqw - var(--worldview-occluded-left, 0px) - 1.5rem));
+  white-space: normal;
+  text-align: left;
+}
+
+/* WorldView's optional Minimal HUD is one quiet location readout, not the
+   standalone tactical telemetry. Full HUD variants remain available there. */
+.supervised-embed #intel-hud[data-variant='minimal'] .hud-top-left,
+.supervised-embed #intel-hud[data-variant='minimal'] .hud-bottom-bar,
+.supervised-embed #intel-hud[data-variant='minimal'] #hud-mgrs,
+.supervised-embed #intel-hud[data-variant='minimal'] .hud-bottom-left .hud-bracket {
+  display: none;
+}
+
+.supervised-embed #intel-hud[data-variant='minimal'] .hud-bottom-left {
+  top: 0.75rem;
+  bottom: auto;
+  left: calc(var(--worldview-occluded-left, 0px) + 0.75rem);
+}
+
+.supervised-embed #intel-hud[data-variant='minimal'] #hud-latlon {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
 }
 
 @keyframes first-run-scroll-fade {

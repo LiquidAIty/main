@@ -50,6 +50,11 @@ export type GodsEyeBridge = {
     enabled: boolean,
     options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'restore' },
   ) => string | null;
+  setSatelliteParams: (params: {
+    catalog?: 'core' | 'dense';
+    showPoints?: boolean;
+    showOrbits?: boolean;
+  }) => string | null;
   focusSelection: (selection: GodsEyeSelectionRef) => string | null;
   executeAction: (
     name: string,
@@ -60,7 +65,7 @@ export type GodsEyeBridge = {
 };
 
 export type GodsEyeCommandResult = {
-  schemaVersion: 'gev.direct.layer-visibility.result.v1' | 'gev.direct.focus.result.v1';
+  schemaVersion: 'gev.direct.layer-visibility.result.v1' | 'gev.direct.satellite-params.result.v1' | 'gev.direct.focus.result.v1';
   projectId: string;
   cardId: string;
   requestId: string;
@@ -68,6 +73,8 @@ export type GodsEyeCommandResult = {
   error: string | null;
   layerId?: string;
   requestedEnabled?: boolean;
+  requestedParams?: { catalog?: 'core' | 'dense'; showPoints?: boolean; showOrbits?: boolean };
+  effectiveParams?: Record<string, unknown> | null;
   targetId?: string;
   state?: GodsEyeLayerState;
 };
@@ -130,6 +137,9 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     },
     setLayerVisibility(layerId, enabled, options) {
       return mountRef.current?.setLayerVisibility(layerId, enabled, options) ?? null;
+    },
+    setSatelliteParams(params) {
+      return mountRef.current?.setSatelliteParams(params) ?? null;
     },
     focusSelection(selection) {
       return mountRef.current?.focusSelection(selection) ?? null;

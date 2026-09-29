@@ -175,6 +175,28 @@ export function labelBudgetFor(altitudeM, densityPct) {
   return VIEW_SCALE_BUDGETS[scale][stop];
 }
 
+// At orbital-overview distances the point primitives carry the satellite
+// population. Detection remains available, but its ambient SAT brackets and
+// callouts recede continuously while tracked targets keep their full styling.
+const SAT_OVERVIEW_NEAR_M = 8_000_000;
+const SAT_OVERVIEW_FAR_M = 45_000_000;
+
+/** Presentation only: never changes satellite records, positions, or selection. */
+export function satelliteDetectionPresentation(altitudeM, densityPct) {
+  const altitude = Number(altitudeM);
+  const progress = Number.isFinite(altitude)
+    ? Math.max(0, Math.min(1, (altitude - SAT_OVERVIEW_NEAR_M) / (SAT_OVERVIEW_FAR_M - SAT_OVERVIEW_NEAR_M)))
+    : 0;
+  const budget = labelBudgetFor(altitudeM, densityPct);
+  return {
+    progress,
+    bracketScale: 1 - progress * 0.42,
+    bracketOpacity: 1 - progress * 0.62,
+    bracketLineWidthScale: 1 - progress * 0.15,
+    labelLimit: Math.max(1, Math.round(budget * (1 - progress * 0.75))),
+  };
+}
+
 /**
  * Migrate a persisted/legacy mode+density pair into one canonical state.
  * Legacy Panoptic/God intent resolves to Dense even when its historical

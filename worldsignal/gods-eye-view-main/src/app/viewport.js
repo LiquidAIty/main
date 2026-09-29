@@ -51,6 +51,36 @@ export function getExposedApplicationViewport(root = applicationRoot) {
   };
 }
 
+/** Rectangles available to an explicit orbital fit after the open Inspector is excluded. */
+export function getSatelliteOverviewViewports(root = applicationRoot) {
+  const exposed = getExposedApplicationViewport(root);
+  if (!exposed || !(exposed.width > 0) || !(exposed.height > 0)) return [];
+  const inspector = root?.ownerDocument?.querySelector?.(
+    '[data-testid="workspace-inspector-drawer"][data-open="true"]',
+  );
+  const panel = inspector?.getBoundingClientRect?.();
+  if (!panel || !(panel.width > 0) || !(panel.height > 0)) return [exposed];
+
+  const overlap = {
+    left: Math.max(exposed.left, panel.left),
+    right: Math.min(exposed.right, panel.right),
+    top: Math.max(exposed.top, panel.top),
+    bottom: Math.min(exposed.bottom, panel.bottom),
+  };
+  if (overlap.right <= overlap.left || overlap.bottom <= overlap.top) return [exposed];
+
+  return [
+    { left: exposed.left, right: overlap.left, top: exposed.top, bottom: exposed.bottom },
+    { left: overlap.right, right: exposed.right, top: exposed.top, bottom: exposed.bottom },
+    { left: exposed.left, right: exposed.right, top: exposed.top, bottom: overlap.top },
+    { left: exposed.left, right: exposed.right, top: overlap.bottom, bottom: exposed.bottom },
+  ].map((candidate) => ({
+    ...candidate,
+    width: candidate.right - candidate.left,
+    height: candidate.bottom - candidate.top,
+  })).filter((candidate) => candidate.width > 0 && candidate.height > 0);
+}
+
 /** Shift projection only: the geographic camera position and orientation stay put. */
 export function getExposedPerspectiveXOffset(frustum, exposed, baseOffset = 0) {
   if (!frustum || !exposed || !(exposed.sourceWidth > 0)

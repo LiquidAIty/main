@@ -14,6 +14,7 @@ import {
   normalizeAllocationStrategy,
   normalizeProfile,
   profileForDensity,
+  satelliteDetectionPresentation,
   viewScaleForAltitude,
 } from './detectionPolicy.js';
 import { KEYHOLE_OUTSIDE_OPACITY_DEFAULT } from '../celestialRing.js';
@@ -185,6 +186,29 @@ test('collective budgets follow view scale and canonical stop', () => {
   assert.equal(labelBudgetFor(1e9, 100), 56);
   assert.equal(labelBudgetFor(1e9, 75), 42);
   assert.equal(labelBudgetFor(1e9, 28), 28);
+});
+
+test('orbital overview presentation calms only far ambient satellite marks and labels', () => {
+  const close = satelliteDetectionPresentation(5_000_000, 75);
+  assert.deepEqual(close, {
+    progress: 0,
+    bracketScale: 1,
+    bracketOpacity: 1,
+    bracketLineWidthScale: 1,
+    labelLimit: labelBudgetFor(5_000_000, 75),
+  });
+
+  const mid = satelliteDetectionPresentation(26_500_000, 75);
+  const far = satelliteDetectionPresentation(97_000_000, 75);
+  assert.equal(mid.progress, 0.5);
+  assert.ok(far.bracketScale < mid.bracketScale && mid.bracketScale < close.bracketScale);
+  assert.ok(far.bracketOpacity < mid.bracketOpacity && mid.bracketOpacity < close.bracketOpacity);
+  assert.ok(Math.abs(far.bracketScale - 0.58) < 1e-9);
+  assert.ok(Math.abs(far.bracketOpacity - 0.38) < 1e-9);
+  assert.equal(far.bracketLineWidthScale, 0.85);
+  assert.equal(far.labelLimit, 11, 'Dense 75 keeps a sparse subset of the existing 42 global callouts');
+  assert.equal(satelliteDetectionPresentation(97_000_000, 0).labelLimit, 2);
+  assert.equal(satelliteDetectionPresentation(97_000_000, 100).labelLimit, 14);
 });
 
 test('legacy state migration removes contradictory mode/density pairs', () => {

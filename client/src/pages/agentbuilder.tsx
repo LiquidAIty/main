@@ -362,6 +362,8 @@ export default function AgentBuilder(): React.ReactElement {
     deck,
   });
   const cardLeaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const [worldViewInspectorHost, setWorldViewInspectorHost] = useState<HTMLDivElement | null>(null);
+  const [worldViewInspectorOpen, setWorldViewInspectorOpen] = useState(true);
   const registerCardLeave = useCallback((save: (() => Promise<boolean>) | null) => {
     cardLeaveRef.current = save;
   }, []);
@@ -1443,17 +1445,20 @@ export default function AgentBuilder(): React.ReactElement {
     activeProjectLatestRef.current = activeProject;
   }, [activeProject]);
 
-  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | null>(() => {
+  const inspectorDrawerRole = useMemo<'agent' | 'trading' | 'worldsignal' | 'worldview' | null>(() => {
     if (workspaceView === 'canvas' && canonicalDeckReady && selectedCard) return 'agent';
     // The canonical Inspector also serves the WorldSignals companion surface —
     // same drawer, same renderer, section requested by the vendor controls.
     if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';
+    if (workspaceView === 'worldview' && worldViewCard) return 'worldview';
     if (workspaceView === 'trading' && tradingCard) return 'trading';
     return null;
-  }, [canonicalDeckReady, selectedCard, tradingCard, workspaceView, worldSignalInspectorSection]);
+  }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView, worldSignalInspectorSection]);
   const isInspectorDrawerVisible =
     inspectorDrawerRole === 'worldsignal'
       ? true
+      : inspectorDrawerRole === 'worldview'
+        ? worldViewInspectorOpen
       : inspectorDrawerOpen && inspectorDrawerRole !== null;
   const inspectorDrawerDefaultWidth = AGENT_EDITOR_DEFAULT_WIDTH;
   const inspectorDrawerStorageKey = 'liquidaity.drawer.inspector.agent.v1.width';
@@ -1728,6 +1733,7 @@ export default function AgentBuilder(): React.ReactElement {
       return;
     }
     setWorkspaceView('worldview');
+    setWorldViewInspectorOpen(true);
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'worldview');
     window.history.replaceState(
@@ -1791,6 +1797,7 @@ export default function AgentBuilder(): React.ReactElement {
           projectId={canvasProjectId || null}
           cardId={worldViewCard?.id || null}
           onBridgeChange={setWorldViewBridge}
+          inspectorContainer={worldViewInspectorHost}
         />
       }
     />
@@ -1803,6 +1810,8 @@ export default function AgentBuilder(): React.ReactElement {
         title={
           inspectorDrawerRole === 'worldsignal'
             ? 'WorldSignals'
+            : inspectorDrawerRole === 'worldview'
+              ? ''
             : inspectorDrawerRole === 'trading'
               ? 'Trading settings'
             : safeText(selectedCard?.title || 'Agent')
@@ -1810,13 +1819,17 @@ export default function AgentBuilder(): React.ReactElement {
         onClose={
           inspectorDrawerRole === 'worldsignal'
             ? closeWorldSignalInspector
+            : inspectorDrawerRole === 'worldview'
+              ? () => setWorldViewInspectorOpen(false)
             : inspectorDrawerRole === 'trading'
               ? () => setInspectorDrawerOpen(false)
               : closeInspectorDrawer
         }
-        onOpen={inspectorDrawerRole === 'trading' ? () => setInspectorDrawerOpen(true) : undefined}
+        onOpen={inspectorDrawerRole === 'worldview'
+          ? () => setWorldViewInspectorOpen(true)
+          : inspectorDrawerRole === 'trading' ? () => setInspectorDrawerOpen(true) : undefined}
         collapsedLabel={null}
-        openAriaLabel="Open Trading Inspector"
+        openAriaLabel={inspectorDrawerRole === 'worldview' ? 'Open WorldView controls' : 'Open Trading Inspector'}
         movable={inspectorDrawerRole !== 'trading'}
         defaultWidth={inspectorDrawerDefaultWidth}
         resetWidthOnOpen={false}
@@ -1825,6 +1838,8 @@ export default function AgentBuilder(): React.ReactElement {
         storageKey={
           inspectorDrawerRole === 'worldsignal'
             ? 'liquidaity.drawer.inspector.worldsignal.v1.width'
+            : inspectorDrawerRole === 'worldview'
+              ? 'liquidaity.drawer.inspector.worldview.v1.width'
             : inspectorDrawerRole === 'trading'
               ? 'card.drawer.inspector.trading.v1.width'
             : inspectorDrawerStorageKey
@@ -1833,6 +1848,7 @@ export default function AgentBuilder(): React.ReactElement {
         right={12}
         top={48}
       >
+        {inspectorDrawerRole === 'worldview' ? <div ref={setWorldViewInspectorHost} /> : null}
         {inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection ? (
           <div
             className="flex min-w-0 flex-wrap"

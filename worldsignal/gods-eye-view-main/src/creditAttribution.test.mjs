@@ -196,6 +196,10 @@ const RECOGNIZED = new Set([
   "body:not(.ui-clean-view):not(.recording-mode):has(#intel-hud[data-variant='minimal'].active) #cesium-credits",
   'body.ui-clean-view #cesium-credits',
   'body.recording-mode #cesium-credits',
+  'html.supervised-embed:not(.ui-clean-view):not(.recording-mode) #cesium-credits',
+  "html.supervised-embed:not(.ui-clean-view):not(.recording-mode):has(#intel-hud[data-variant='minimal'].active) #cesium-credits",
+  'html.supervised-embed.ui-clean-view #cesium-credits',
+  'html.supervised-embed.recording-mode #cesium-credits',
   // dock
   '#command-dock',
   '#command-dock:has(#location-bar:not(.collapsed))',

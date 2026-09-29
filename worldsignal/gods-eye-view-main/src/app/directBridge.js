@@ -279,6 +279,53 @@ export function createDirectHostBridge({
       return requestId;
     },
 
+    setSatelliteParams(params) {
+      if (destroyed || !params || typeof params !== 'object' || Array.isArray(params)) return null;
+      const allowed = new Set(['catalog', 'showPoints', 'showOrbits']);
+      const requestedParams = Object.fromEntries(Object.entries(params));
+      const keys = Object.keys(requestedParams);
+      if (!keys.length || keys.some((key) => !allowed.has(key))
+        || (Object.hasOwn(requestedParams, 'catalog')
+          && !['core', 'dense'].includes(requestedParams.catalog))
+        || (Object.hasOwn(requestedParams, 'showPoints')
+          && typeof requestedParams.showPoints !== 'boolean')
+        || (Object.hasOwn(requestedParams, 'showOrbits')
+          && typeof requestedParams.showOrbits !== 'boolean')) return null;
+      const requestId = `worldview-${++nextRequestId}`;
+      const respond = (ok, error = null) => {
+        if (destroyed) return;
+        const result = {
+          schemaVersion: 'gev.direct.satellite-params.result.v1',
+          ...scope,
+          requestId,
+          layerId: 'satellites',
+          requestedParams,
+          effectiveParams: dataManager.getLayerParams?.('satellites') || null,
+          ok,
+          error,
+          state: state(),
+        };
+        callbacks.onLayerStateChange?.(result.state);
+        callbacks.onCommandResult?.(result);
+      };
+      sourceReadyPromise.then(() => {
+        if (destroyed) return;
+        const lifecycle = dataManager.getLayerLifecycleState?.('satellites');
+        if (!lifecycle?.enabled || lifecycle.uncertain) {
+          respond(false, 'Satellites layer is not enabled');
+          return;
+        }
+        const applied = dataManager.setLayerParams('satellites', requestedParams, { origin: 'user' });
+        const effective = dataManager.getLayerParams?.('satellites');
+        const matches = effective && keys.every((key) => Object.is(effective[key], requestedParams[key]));
+        const ok = applied === true && matches;
+        respond(ok, ok ? null : 'Satellite options did not settle at requested values');
+      }).catch((error) => {
+        if (!destroyed) respond(false, commandError(error, 'Satellite options request failed'));
+      });
+      return requestId;
+    },
+
     focusSelection(selection) {
       if (destroyed || typeof focusPosition !== 'function') return null;
       const targetId = boundedId(selection?.id);

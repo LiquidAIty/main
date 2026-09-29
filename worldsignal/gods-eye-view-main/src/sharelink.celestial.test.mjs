@@ -22,7 +22,7 @@ function assertClaimsBefore(block, mutation, label) {
   assert.ok(claimIndex < mutationIndex, `${label} must claim before mutation`);
 }
 
-function makeManager(hash = '') {
+function makeManager(hash = '', options = {}) {
   globalThis.window = { location: { hash, href: `http://localhost/${hash}` } };
   globalThis.history = {
     replaceState(_state, _title, nextHash) {
@@ -38,7 +38,7 @@ function makeManager(hash = '') {
       roll: 0,
     },
   };
-  return new ShareLinkManager(viewer);
+  return new ShareLinkManager(viewer, options);
 }
 
 function installClipboard(writeText) {
@@ -56,6 +56,24 @@ test('share links without cr default the celestial ring off', () => {
 test('share links parse explicit celestial on and off states', () => {
   assert.equal(makeManager('#lat=10&lon=20&cr=1').parseInitialHash().celestialRing, true);
   assert.equal(makeManager('#lat=10&lon=20&cr=0').parseInitialHash().celestialRing, false);
+});
+
+test('supervised restore leaves absent display fields to WorldView defaults and keeps explicit choices', () => {
+  const options = { explicitDisplayFieldsOnly: true };
+  const locationOnly = makeManager('#lat=10&lon=20', options).parseInitialHash();
+  assert.equal(locationOnly.hudVariant, undefined);
+  assert.equal(locationOnly.hudVisible, undefined);
+  assert.equal(locationOnly.celestialRing, undefined);
+
+  const chosen = makeManager('#lat=10&lon=20&hud=tactical&hv=1&cr=0', options).parseInitialHash();
+  assert.equal(chosen.hudVariant, 'tactical');
+  assert.equal(chosen.hudVisible, true);
+  assert.equal(chosen.celestialRing, false);
+
+  const partial = makeManager('#lat=10&lon=20&hv=0', options).parseInitialHash();
+  assert.equal(partial.hudVariant, undefined);
+  assert.equal(partial.hudVisible, false);
+  assert.equal(partial.celestialRing, undefined);
 });
 
 test('unknown-only v2 layer tokens are invalid, while historical l fields stay inert', () => {

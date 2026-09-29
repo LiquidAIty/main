@@ -91,9 +91,11 @@ export class ShareLinkManager {
     onRestore,
     isNavigationCurrent,
     cancelOwnedNavigation,
+    explicitDisplayFieldsOnly = false,
   } = {}) {
     this.viewer = viewer;
     this._onRestore = onRestore; // callback: ({ style, bloom, sharpen }) => void
+    this._explicitDisplayFieldsOnly = explicitDisplayFieldsOnly;
     this._debounceTimer = null;
     this._currentStyle = 'normal';
     this._bloomEnabled = false;
@@ -190,8 +192,10 @@ export class ShareLinkManager {
       bloomIntensity: parseOr(params.get('bi'), LEGACY_BLOOM_FALLBACK),
       bloomVersion: parseOr(params.get('bv'), 1),
       sharpenIntensity: parseOr(params.get('si'), 49),
-      hudVariant: params.get('hud') || 'tactical',
-      hudVisible: params.get('hv') === '1',
+      hudVariant: this._explicitDisplayFieldsOnly && !params.has('hud')
+        ? undefined : params.get('hud') || 'tactical',
+      hudVisible: this._explicitDisplayFieldsOnly && !params.has('hv')
+        ? undefined : params.get('hv') === '1',
       detectionMode: restoredDetection.enabled ? restoredDetection.profile : 'OFF',
       detectionDensity: restoredDetection.densityPct,
       detectionAllocation: normalizeAllocationStrategy(params.get('da')),
@@ -204,7 +208,8 @@ export class ShareLinkManager {
       // way. The first-run default is a different question, answered in
       // celestialRing.js.
       detectionOutsideOpacityPct: Math.max(0, Math.min(100, Math.round(parseOr(params.get('ko'), 5)))),
-      celestialRing: params.has('cr') ? params.get('cr') === '1' : false,
+      celestialRing: params.has('cr') ? params.get('cr') === '1'
+        : this._explicitDisplayFieldsOnly ? undefined : false,
       scopeEnabled: params.has('sc') ? params.get('sc') === '1' : true,
       // Deliberately still 35 through both later default moves (0 on
       // 2026-08-22, 8 on 2026-08-23). This is the PARSE fallback for a link that

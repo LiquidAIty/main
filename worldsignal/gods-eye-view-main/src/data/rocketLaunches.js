@@ -11,6 +11,7 @@ import {
 } from '../overlays/worldOverlay.js';
 import { holdContinuousRender, releaseContinuousRender } from '../renderGovernor.js';
 import { runtimeUrl } from '../runtimeUrl.js';
+import { isExplicitLayerStateOrigin } from './layerState.js';
 
 const WINDOW_DAYS = 30;
 const API_URL = runtimeUrl('/api/launches');
@@ -74,6 +75,7 @@ let _activeTlePromiseToken = 0;
 let _renderedTleText = null;
 let _satelliteStateBeforeMission = null;
 let _satelliteActivationPromise = null;
+let _satelliteVisibilityRemove = null;
 let _replayCameraRemover = null;
 let _replayCameraLaunchId = null;
 let _replayCameraToken = 0;
@@ -3272,10 +3274,29 @@ async function captureSatelliteDependency() {
       _dataManager.getLayerParams('satellites'),
     ),
   };
-  _dataManager.setLayerParams(
-    'satellites',
-    satelliteParamsForSpaceMissions(_satelliteStateBeforeMission.params),
-  );
+  _satelliteVisibilityRemove?.();
+  _satelliteVisibilityRemove = _dataManager.subscribe?.((change) => {
+    if (change.type !== 'visibility' || change.layerId !== 'satellites'
+        || !change.enabled || !isExplicitLayerStateOrigin(change.origin)
+        || !_satelliteStateBeforeMission || _satelliteStateBeforeMission.enabled) return;
+    // The mission's dependency may already be ON. An explicit ON request is
+    // still a new standalone Satellite intent; the manager publishes that
+    // settled intent even when its lifecycle operation is idempotent.
+    const snapshot = _satelliteStateBeforeMission;
+    _satelliteStateBeforeMission = { ...snapshot, enabled: true };
+    _dataManager.setLayerParams('satellites', satelliteParamsAfterSpaceMissions(snapshot.params));
+    _satelliteVisibilityRemove?.();
+    _satelliteVisibilityRemove = null;
+  }) || null;
+  // An independently enabled Satellite layer owns its visible fleet/options.
+  // Mission-only activation still borrows the catalog without showing that
+  // standalone fleet over the mission's selected trajectory.
+  if (!_satelliteStateBeforeMission.enabled) {
+    _dataManager.setLayerParams(
+      'satellites',
+      satelliteParamsForSpaceMissions(_satelliteStateBeforeMission.params),
+    );
+  }
   const token = _lifecycleToken;
   const activation = Promise.resolve(_dataManager.setEnabled('satellites', true));
   _satelliteActivationPromise = activation;
@@ -3299,14 +3320,18 @@ async function captureSatelliteDependency() {
 }
 
 async function restoreSatelliteDependency() {
+  _satelliteVisibilityRemove?.();
+  _satelliteVisibilityRemove = null;
   const snapshot = _satelliteStateBeforeMission;
   if (!snapshot || !_dataManager) return;
   _satelliteStateBeforeMission = null;
   _satelliteActivationPromise = null;
-  _dataManager.setLayerParams(
-    'satellites',
-    satelliteParamsAfterSpaceMissions(snapshot.params),
-  );
+  if (!snapshot.enabled) {
+    _dataManager.setLayerParams(
+      'satellites',
+      satelliteParamsAfterSpaceMissions(snapshot.params),
+    );
+  }
   const restored = await _dataManager.setEnabled('satellites', snapshot.enabled);
   if (
     restored === false
