@@ -193,6 +193,32 @@ test('direct layer command waits for source settlement and returns native readba
     assert.equal(result.requestId, requestId);
     assert.equal(result.ok, true);
     assert.deepEqual(result.state.enabledLayerIds, ['flights']);
+
+    h.bridge.setLayerVisibility('flights', false, { origin: 'restore' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls.at(-1), ['flights', false, { origin: 'restore' }]);
+    assert.equal(h.events.results.at(-1).ok, true);
+  } finally { h.close(); }
+});
+
+test('Card actions reuse the mounted God\'s Eye action with Card origin', async () => {
+  const calls = [];
+  const h = bridgeHarness({
+    runAction: async (name, args, options) => {
+      calls.push({ name, args, origin: options.origin });
+      return { ok: true, action: name, layerId: args.layerId, enabled: args.enabled };
+    },
+  });
+  try {
+    const result = await h.bridge.executeAction('set_layer_visibility', {
+      layerId: 'earthquakes', enabled: false,
+    });
+    assert.deepEqual(calls, [{
+      name: 'set_layer_visibility',
+      args: { layerId: 'earthquakes', enabled: false },
+      origin: 'worldview_card',
+    }]);
+    assert.equal(result.ok, true);
   } finally { h.close(); }
 });
 

@@ -6858,6 +6858,19 @@ export class StyleManager {
     const stack = this._rightPanelStack;
     if (!stack) return;
 
+    // LiquidAIty's existing Inspector owns the lane after the original panel
+    // elements are attached there. The globe HUD corridor must not auto-hide
+    // or resize controls that now scroll inside that Inspector.
+    if (this._supervisedEmbed && stack.closest('#worldview-inspector-controls')) {
+      stack.classList.remove('layout-focus', 'layout-exclusive');
+      for (const panel of stack.querySelectorAll(':scope > [data-panel-id]')) {
+        panel.classList.remove('layout-auto-collapsed');
+        panel.removeAttribute('aria-hidden');
+        panel.style.removeProperty('--right-panel-allocated-height');
+      }
+      return;
+    }
+
     const panels = [...stack.children].filter((panel) => panel.matches('[data-panel-id]'));
     if (!this.hud.visible || this.hud.getVariant() !== 'tactical') {
       for (const panel of panels.filter((item) => item.classList.contains('layout-auto-collapsed'))) {
@@ -7183,6 +7196,16 @@ export class StyleManager {
   _syncLeftPanelAdaptiveLayout() {
     const stack = this._leftPanelStack;
     if (!stack) return;
+
+    if (this._supervisedEmbed && stack.closest('#worldview-inspector-controls')) {
+      stack.classList.remove('layout-focus', 'layout-tail');
+      for (const panel of stack.querySelectorAll(':scope > [data-panel-id]')) {
+        panel.classList.remove('layout-auto-collapsed');
+        panel.removeAttribute('aria-hidden');
+        panel.style.removeProperty('--left-panel-allocated-height');
+      }
+      return;
+    }
 
     const panels = [...stack.querySelectorAll(':scope > [data-panel-id]')];
     if (!panels.length) return;

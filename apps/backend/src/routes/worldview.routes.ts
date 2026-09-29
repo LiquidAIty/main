@@ -16,6 +16,7 @@ export type ProjectWorldviewCapability = {
   capabilityId: string;
   enabled: boolean;
   controlledBy: 'user' | 'main';
+  lastOrigin: 'user' | 'main' | 'worldview_card';
   mainReason: string | null;
   updatedAt: string | null;
 };
@@ -195,6 +196,12 @@ function actionRequest(value: unknown): WorldviewAction | null {
   if (!body.arguments || typeof body.arguments !== 'object' || Array.isArray(body.arguments)) {
     return null;
   }
+  if (body.name === 'set_layer_visibility') {
+    const args = body.arguments as Record<string, unknown>;
+    if (Object.keys(args).sort().join('\0') !== 'enabled\0layerId'
+      || typeof args.layerId !== 'string' || !args.layerId.trim()
+      || args.layerId.length > 128 || typeof args.enabled !== 'boolean') return null;
+  }
   if (Buffer.byteLength(JSON.stringify(body.arguments)) > MAX_ACTION_BYTES) return null;
   return body as WorldviewAction;
 }
@@ -204,7 +211,7 @@ export type ProjectWorldviewCapabilityStore = {
   set(
     projectId: string,
     capabilityId: string,
-    actor: 'user' | 'main',
+    actor: 'user' | 'main' | 'worldview_card',
     enabled: boolean,
     reason?: string | null,
   ): Promise<ProjectWorldviewCapability>;
@@ -216,10 +223,14 @@ function projectCapability(row: any): ProjectWorldviewCapability {
   if (userEnabled === null && mainEnabled === null) {
     throw new Error('project_worldview_capability_state_invalid');
   }
+  if (!['user', 'main', 'worldview_card'].includes(row.last_origin)) {
+    throw new Error('project_worldview_capability_origin_invalid');
+  }
   return {
     capabilityId: String(row.capability_id),
     enabled: userEnabled ?? mainEnabled ?? true,
     controlledBy: userEnabled !== null ? 'user' : 'main',
+    lastOrigin: row.last_origin,
     mainReason: row.main_reason == null ? null : String(row.main_reason),
     updatedAt: row.updated_at instanceof Date
       ? row.updated_at.toISOString()
@@ -233,7 +244,7 @@ export function createProjectWorldviewCapabilityStore(
   return {
     async list(projectId) {
       const result = await query(
-        `SELECT capability_id, main_enabled, main_reason, user_enabled, updated_at
+        `SELECT capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at
          FROM ag_catalog.project_worldview_capabilities
          WHERE project_id=$1
          ORDER BY capability_id`,
@@ -242,13 +253,13 @@ export function createProjectWorldviewCapabilityStore(
       return result.rows.map(projectCapability);
     },
     async set(projectId, capabilityId, actor, enabled, reason = null) {
-      const userEnabled = actor === 'user' ? enabled : null;
+      const userEnabled = actor === 'user' || actor === 'worldview_card' ? enabled : null;
       const mainEnabled = actor === 'main' ? enabled : null;
       const mainReason = actor === 'main' && reason ? reason.slice(0, 1000) : null;
       const result = await query(
         `INSERT INTO ag_catalog.project_worldview_capabilities
-           (project_id, capability_id, main_enabled, main_reason, user_enabled, updated_at)
-         VALUES ($1,$2,$3,$4,$5,NOW())
+           (project_id, capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,NOW())
          ON CONFLICT (project_id, capability_id) DO UPDATE SET
            main_enabled=CASE
              WHEN $6='main' THEN EXCLUDED.main_enabled
@@ -259,11 +270,12 @@ export function createProjectWorldviewCapabilityStore(
              ELSE ag_catalog.project_worldview_capabilities.main_reason
            END,
            user_enabled=CASE
-             WHEN $6='user' THEN EXCLUDED.user_enabled
+             WHEN $6 IN ('user','worldview_card') THEN EXCLUDED.user_enabled
              ELSE ag_catalog.project_worldview_capabilities.user_enabled
            END,
+           last_origin=EXCLUDED.last_origin,
            updated_at=NOW()
-         RETURNING capability_id, main_enabled, main_reason, user_enabled, updated_at`,
+         RETURNING capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at`,
         [projectId, capabilityId, mainEnabled, mainReason, userEnabled, actor],
       );
       if (result.rows.length !== 1) {
@@ -364,7 +376,7 @@ export function createWorldviewRouter({
           return res.status(400).json({ ok: false, error: 'worldview_layer_readback_invalid' });
         }
         capability = await capabilityStore.set(
-          projectId, result.layerId, 'user', result.enabled,
+          projectId, result.layerId, 'worldview_card', result.enabled,
         );
       }
       const settled = capability ? { ...result, projectCapability: capability } : result;

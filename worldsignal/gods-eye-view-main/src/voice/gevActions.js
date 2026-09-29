@@ -333,7 +333,7 @@ export function createGevActionRunner({ viewer, styleManager, dataManager, scene
         throw new Error(`Unknown data layer: ${args.layerId || 'missing'}`);
       }
       const enabled = Boolean(args.enabled);
-      const changeOptions = { origin: 'voice' };
+      const changeOptions = { origin: runOptions.origin || 'voice' };
       if (runOptions.signal) changeOptions.signal = runOptions.signal;
       let changed = false;
       let changeError = null;
@@ -378,7 +378,7 @@ export function createGevActionRunner({ viewer, styleManager, dataManager, scene
           action: 'set_layer_visibility',
           layerId,
           cancelled: true,
-          error: 'Layer request was superseded by a newer voice turn',
+          error: 'Layer request was superseded by a newer request',
           ...lifecycleSummary,
         };
       }

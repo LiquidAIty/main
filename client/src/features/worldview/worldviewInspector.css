@@ -1,0 +1,176 @@
+/* These are the original God’s Eye controls, moved—not cloned—into the
+   existing LiquidAIty Inspector. The vendor stylesheet is scoped to this host
+   before these layout-only overrides are appended. */
+#worldview-inspector-controls {
+  all: initial;
+  position: relative !important;
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  contain: none !important;
+  isolation: auto !important;
+  container: worldview-native / inline-size !important;
+  transform: none !important;
+  color: #d9f7f2;
+  background: transparent !important;
+  font-family: Inter, sans-serif;
+  font-size: 12px;
+}
+
+#worldview-inspector-controls > :is(
+  #left-panel-stack, #right-context-rail, #command-dock,
+  #pp-toggles, #top-center-actions, #view-switcher
+) {
+  display: none !important;
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  box-shadow: none !important;
+}
+
+#worldview-inspector-controls[data-active-tab='data'] > #left-panel-stack,
+#worldview-inspector-controls[data-active-tab='scenes'] > #left-panel-stack,
+#worldview-inspector-controls[data-active-tab='cameras'] > #left-panel-stack,
+#worldview-inspector-controls[data-active-tab='explore'] > #right-context-rail,
+#worldview-inspector-controls[data-active-tab='cameras'] > #right-context-rail,
+#worldview-inspector-controls[data-active-tab='view'] > #right-context-rail,
+#worldview-inspector-controls[data-active-tab='explore'] > #command-dock,
+#worldview-inspector-controls[data-active-tab='view'] > #command-dock {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 10px !important;
+}
+
+#worldview-inspector-controls[data-active-tab='view'] > #pp-toggles {
+  display: block !important;
+}
+
+#worldview-inspector-controls[data-active-tab='explore'] > #top-center-actions,
+#worldview-inspector-controls[data-active-tab='explore'] > #view-switcher {
+  display: flex !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
+  margin-bottom: 10px !important;
+}
+
+#worldview-inspector-controls > #left-panel-stack > [data-panel-id],
+#worldview-inspector-controls > #right-context-rail > [data-panel-id],
+#worldview-inspector-controls > #command-dock > :is(#control-panel, #location-bar) {
+  display: none !important;
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  flex: 0 0 auto !important;
+  order: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transition: none !important;
+}
+
+#worldview-inspector-controls[data-active-tab='data'] #data-panel,
+#worldview-inspector-controls[data-active-tab='scenes'] #scene-panel,
+#worldview-inspector-controls[data-active-tab='explore'] #global-context-panel,
+#worldview-inspector-controls[data-active-tab='explore'] #location-bar,
+#worldview-inspector-controls[data-active-tab='view'] #pp-toggles,
+#worldview-inspector-controls[data-active-tab='view'] #control-panel,
+#worldview-inspector-controls[data-active-tab='cameras'] #cctv-panel {
+  display: block !important;
+}
+
+#worldview-inspector-controls :is(
+  .data-panel-inner, .scene-panel-inner, .cctv-panel-inner,
+  .global-context-panel-inner, .location-inner, .panel-inner,
+  #pp-toggles
+) {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 8px 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+#worldview-inspector-controls :is(.panel-glow, .dock-pin-btn,
+  .pp-collapse-btn, .panel-header > .panel-collapse-btn,
+  .location-toolbar > .panel-collapse-btn) {
+  display: none !important;
+}
+
+#worldview-inspector-controls #command-dock .dock-popover-content,
+#worldview-inspector-controls #command-dock #location-bar .dock-popover-content,
+#worldview-inspector-controls #command-dock #control-panel .dock-popover-content {
+  display: flex !important;
+  position: static !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 6px 0 !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+#worldview-inspector-controls #command-dock :is(#control-panel, #location-bar),
+#worldview-inspector-controls #command-dock :is(.panel-inner, .location-inner) {
+  flex-basis: auto !important;
+  min-width: 0 !important;
+}
+
+#worldview-inspector-controls #command-dock :is(.button-grid, .location-city-row,
+  .poi-row-container, .location-pills) {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  overflow: visible !important;
+}
+
+#worldview-inspector-controls #data-panel .data-toggle-list {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#worldview-inspector-controls #right-context-rail :is(
+  .context-mode-view, #radio-panel, #space-mission-panel-host,
+  .space-mission-roster, .space-mission-roster-list
+) {
+  max-height: none !important;
+}
+
+#worldview-inspector-controls #view-switcher:has(> button:not([hidden])) {
+  min-height: 32px;
+}

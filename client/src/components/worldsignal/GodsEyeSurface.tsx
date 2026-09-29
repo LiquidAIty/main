@@ -43,10 +43,12 @@ export type GodsEyeLayerState = {
 };
 
 export type GodsEyeBridge = {
+  attachInspectorControls: (host: HTMLElement) => { detach: () => void } | null;
+  selectInspectorTab: (tab: string) => boolean;
   setLayerVisibility: (
     layerId: string,
     enabled: boolean,
-    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'programmatic' },
+    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'restore' },
   ) => string | null;
   focusSelection: (selection: GodsEyeSelectionRef) => string | null;
   executeAction: (
@@ -120,6 +122,12 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   });
 
   useImperativeHandle(bridgeRef, () => ({
+    attachInspectorControls(host) {
+      return mountRef.current?.attachInspectorControls(host) ?? null;
+    },
+    selectInspectorTab(tab) {
+      return mountRef.current?.selectInspectorTab(tab) ?? false;
+    },
     setLayerVisibility(layerId, enabled, options) {
       return mountRef.current?.setLayerVisibility(layerId, enabled, options) ?? null;
     },

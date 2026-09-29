@@ -441,6 +441,7 @@ body.cockpit-mode #cockpit-cloud-effects.active {
 /* LiquidAIty supplies the surrounding product identity. Keep upstream controls
    and operational feedback, but remove duplicate or decorative chrome. */
 html.supervised-embed #title-bar,
+html.supervised-embed #intel-hud,
 html.supervised-embed .loader-content,
 html.supervised-embed #style-indicator,
 html.supervised-embed .cockpit-visor-status,

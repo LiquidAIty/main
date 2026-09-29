@@ -2,6 +2,7 @@ export type ProjectWorldviewCapability = {
   capabilityId: string;
   enabled: boolean;
   controlledBy: 'user' | 'main';
+  lastOrigin: 'user' | 'main' | 'worldview_card';
   mainReason: string | null;
   updatedAt: string | null;
 };
@@ -18,6 +19,8 @@ export function isCapability(value: unknown): value is ProjectWorldviewCapabilit
   return typeof row.capabilityId === 'string'
     && typeof row.enabled === 'boolean'
     && (row.controlledBy === 'user' || row.controlledBy === 'main')
+    && (row.lastOrigin === 'user' || row.lastOrigin === 'main'
+      || row.lastOrigin === 'worldview_card')
     && (row.mainReason === null || typeof row.mainReason === 'string')
     && (row.updatedAt === null || typeof row.updatedAt === 'string');
 }

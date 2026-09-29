@@ -2278,7 +2278,9 @@ def _application_tools() -> list[Tool]:
             description=(
                 "Main only: set Main's ON/OFF choice for one exact capability in the "
                 "current authenticated Project WorldView. The server supplies Project "
-                "identity. An explicit user choice remains authoritative over this value."
+                "identity. Call only when the current user turn explicitly asks to "
+                "change that shared spatial layer. An explicit user choice remains "
+                "authoritative over this value."
             ),
             inputSchema={
                 "type": "object",
@@ -2306,7 +2308,10 @@ def _application_tools() -> list[Tool]:
                 "get_current_view_state, get_entity_context, track_entity, "
                 "set_layer_visibility, zoom_to_globe. The current Project source "
                 "OFF ceiling is enforced; an absent or ambiguous mount fails closed. "
-                "Returns the real action readback, not an inferred success."
+                "set_layer_visibility changes the shared Project choice and is only "
+                "for an explicit request in the current user turn to change that layer; "
+                "never enable a layer for passive scene questions or analysis. Returns "
+                "the real action readback, not an inferred success."
             ),
             inputSchema={
                 "type": "object",

@@ -6,8 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GodsEyeSourceDescriptor } from '../../components/worldsignal/GodsEyeSurface';
 import WorldViewSurface from './WorldViewSurface';
 
+// jsdom cannot parse the vendor's container-query stylesheet; visual layout
+// belongs to the loaded preview, while these tests verify the control bridge.
+vi.mock('virtual:worldview-native-css', () => ({ default: '' }));
+
 const directHost = vi.hoisted(() => ({
   props: null as Record<string, any> | null,
+  attachInspectorControls: vi.fn(),
+  selectInspectorTab: vi.fn(),
+  detachInspectorControls: vi.fn(),
   setLayerVisibility: vi.fn(),
   focusSelection: vi.fn(),
   executeAction: vi.fn(),
@@ -20,6 +27,8 @@ vi.mock('../../components/worldsignal/GodsEyeSurface', async () => {
     default: React.forwardRef((props: Record<string, any>, ref) => {
       directHost.props = props;
       React.useImperativeHandle(ref, () => ({
+        attachInspectorControls: directHost.attachInspectorControls,
+        selectInspectorTab: directHost.selectInspectorTab,
         setLayerVisibility: directHost.setLayerVisibility,
         focusSelection: directHost.focusSelection,
         executeAction: directHost.executeAction,
@@ -84,6 +93,10 @@ function openDataSources() {
   fireEvent.click(screen.getByRole('button', { name: 'Open inspector' }));
 }
 
+function openSelection() {
+  fireEvent.click(screen.getByRole('tab', { name: 'Selection' }));
+}
+
 function nativeReady(state = layerState) {
   act(() => {
     callbacks().onReady?.('0.1.0');
@@ -95,6 +108,11 @@ beforeEach(() => {
   actionStreams.length = 0;
   vi.stubGlobal('EventSource', TestActionStream);
   directHost.props = null;
+  directHost.attachInspectorControls.mockReset().mockImplementation(() => ({
+    detach: directHost.detachInspectorControls,
+  }));
+  directHost.selectInspectorTab.mockReset().mockReturnValue(true);
+  directHost.detachInspectorControls.mockReset();
   directHost.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
   directHost.focusSelection.mockReset().mockReturnValue('focus-request-1');
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -111,6 +129,7 @@ beforeEach(() => {
         capabilityId,
         enabled,
         controlledBy: 'user',
+        lastOrigin: 'user',
         mainReason: null,
         updatedAt: '2026-09-27T00:00:00.000Z',
       },
@@ -133,7 +152,7 @@ describe('WorldView direct source presentation', () => {
     expect(document.querySelector('iframe')).toBeNull();
   });
 
-  it('keeps God’s Eye controls on the globe without a duplicate React layer switch', async () => {
+  it('attaches the original controls to the existing Inspector without a duplicate layer switch', async () => {
     render(<WorldViewSurface {...scope} />);
     await waitFor(() => expect(directHost.props).toBeTruthy());
 
@@ -144,8 +163,16 @@ describe('WorldView direct source presentation', () => {
     expect(directHost.focusSelection).not.toHaveBeenCalled();
 
     openDataSources();
-    expect(screen.getByText('No selection.')).toBeTruthy();
     nativeReady();
+    const inspector = screen.getByTestId('worldview-data-sources');
+    const host = document.getElementById('worldview-inspector-controls');
+    expect(screen.getByLabelText('WorldView globe').parentElement?.contains(inspector)).toBe(true);
+    expect(inspector.contains(host)).toBe(true);
+    expect(directHost.attachInspectorControls).toHaveBeenCalledExactlyOnceWith(host);
+    expect(directHost.selectInspectorTab).toHaveBeenCalledWith('data');
+    openSelection();
+    expect(screen.getByText('No selection.')).toBeTruthy();
+    expect(directHost.selectInspectorTab).toHaveBeenCalledWith('selection');
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.queryByText('Data Sources')).toBeNull();
     expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
@@ -176,6 +203,35 @@ describe('WorldView direct source presentation', () => {
     await waitFor(() => expect(directHost.setLayerVisibility).not.toHaveBeenCalled());
   });
 
+  it('restores the last confirmed Project choice when the native toggle cannot be saved', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if ((init?.method || 'GET') === 'GET') {
+        return projectResponse('project-1', [{
+          capabilityId: 'earthquakes', enabled: true, controlledBy: 'user',
+          lastOrigin: 'user', mainReason: null, updatedAt: '2026-09-27T00:00:00.000Z',
+        }]);
+      }
+      return new Response(JSON.stringify({ ok: false, error: 'write_failed' }), { status: 503 });
+    });
+    render(<WorldViewSurface {...scope} />);
+    await waitFor(() => expect(directHost.props).toBeTruthy());
+    nativeReady();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/worldview/projects/project-1/capabilities', { method: 'GET' },
+    ));
+    act(() => {
+      callbacks().onLayerVisibilityChange?.({ layerId: 'earthquakes', enabled: false });
+      callbacks().onLayerStateChange?.({
+        ...layerState, enabledLayerIds: [], sources: [{ ...source, enabled: false }],
+      });
+    });
+    await waitFor(() => expect(directHost.setLayerVisibility)
+      .toHaveBeenCalledWith('earthquakes', true, { origin: 'restore' }));
+    openDataSources();
+    expect(screen.getByText(/Could not save the layer choice/)).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1);
+  });
+
   it('keeps saved ON distinct from a failed native feed, then accepts the native OFF control', async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -184,6 +240,7 @@ describe('WorldView direct source presentation', () => {
           capabilityId: 'earthquakes',
           enabled: true,
           controlledBy: 'user',
+          lastOrigin: 'user',
           mainReason: null,
           updatedAt: '2026-09-27T00:00:00.000Z',
         }]);
@@ -196,6 +253,7 @@ describe('WorldView direct source presentation', () => {
           capabilityId: 'earthquakes',
           enabled,
           controlledBy: 'user',
+          lastOrigin: 'user',
           mainReason: null,
           updatedAt: '2026-09-27T00:00:01.000Z',
         },
@@ -217,7 +275,7 @@ describe('WorldView direct source presentation', () => {
     });
     openDataSources();
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledWith('earthquakes', true, { origin: 'programmatic' }));
+      .toHaveBeenCalledWith('earthquakes', true, { origin: 'restore' }));
     act(() => callbacks().onCommandResult?.({
       schemaVersion: 'gev.direct.layer-visibility.result.v1',
       ...scope,
@@ -257,6 +315,7 @@ describe('WorldView direct source presentation', () => {
       position: { longitude: -97, latitude: 30 },
     }));
     openDataSources();
+    openSelection();
 
     expect(screen.getByText('Flight 1 · flight')).toBeTruthy();
     expect(directHost.focusSelection).not.toHaveBeenCalled();
@@ -285,6 +344,7 @@ describe('WorldView direct source presentation', () => {
       }],
     });
     openDataSources();
+    openSelection();
     expect(screen.queryByRole('checkbox')).toBeNull();
     act(() => callbacks().onSelectionChange?.({
       id: 'selected-1', type: 'satellite', label: 'Satellite 1',
@@ -308,18 +368,21 @@ describe('WorldView direct source presentation', () => {
         capabilityId: 'earthquakes',
         enabled: false,
         controlledBy: 'user',
+        lastOrigin: 'user',
         mainReason: null,
         updatedAt: '2026-09-27T00:00:00.000Z',
       }, {
         capabilityId: 'Earthquakes',
         enabled: false,
         controlledBy: 'main',
+        lastOrigin: 'main',
         mainReason: 'Label-shaped ID must not match.',
         updatedAt: '2026-09-27T00:00:00.000Z',
       }] : [{
         capabilityId: 'earthquakes',
         enabled: true,
         controlledBy: 'user',
+        lastOrigin: 'user',
         mainReason: null,
         updatedAt: '2026-09-27T00:00:01.000Z',
       }]);
@@ -328,7 +391,7 @@ describe('WorldView direct source presentation', () => {
     await waitFor(() => expect(directHost.props).toBeTruthy());
     nativeReady();
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', false, { origin: 'programmatic' }));
+      .toHaveBeenCalledExactlyOnceWith('earthquakes', false, { origin: 'restore' }));
 
     act(() => callbacks().onLayerStateChange?.({
       ...layerState,
@@ -363,7 +426,7 @@ describe('WorldView direct source presentation', () => {
       });
     });
     await waitFor(() => expect(directHost.setLayerVisibility)
-      .toHaveBeenCalledExactlyOnceWith('earthquakes', true, { origin: 'programmatic' }));
+      .toHaveBeenCalledExactlyOnceWith('earthquakes', true, { origin: 'restore' }));
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/worldview/projects/project-2/capabilities',
       { method: 'GET' },
@@ -427,5 +490,28 @@ describe('WorldView direct source presentation', () => {
         }),
       }),
     ));
+  });
+
+  it('restores the Project choice if a Card layer action settles locally but its save fails', async () => {
+    directHost.executeAction.mockResolvedValueOnce({
+      ok: true, action: 'set_layer_visibility', layerId: 'earthquakes', enabled: false,
+    });
+    fetchMock.mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === 'POST'
+        ? new Response(JSON.stringify({ ok: false, error: 'project_worldview_write_failed' }), { status: 503 })
+        : projectResponse('project-1')
+    ));
+    render(<WorldViewSurface {...scope} />);
+    await waitFor(() => expect(directHost.props).toBeTruthy());
+    nativeReady();
+    await waitFor(() => expect(actionStreams).toHaveLength(1));
+    act(() => actionStreams[0].emit('action', {
+      requestId: 'request-layer-1', name: 'set_layer_visibility',
+      arguments: { layerId: 'earthquakes', enabled: false }, disabledLayerIds: [],
+    }));
+    await waitFor(() => expect(directHost.setLayerVisibility)
+      .toHaveBeenCalledWith('earthquakes', true, { origin: 'restore' }));
+    openDataSources();
+    expect(screen.getByText(/Could not save the layer choice/)).toBeTruthy();
   });
 });

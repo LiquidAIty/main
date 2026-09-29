@@ -2,6 +2,22 @@ import { setApplicationRoot } from './viewport.js';
 import { configureRuntimeBaseUrl, runtimeUrl } from '../runtimeUrl.js';
 
 const ROOT_ID = 'worldview-native-root';
+const INSPECTOR_CONTROL_IDS = Object.freeze([
+  'left-panel-stack',
+  'right-context-rail',
+  'command-dock',
+  'pp-toggles',
+  'top-center-actions',
+  'view-switcher',
+]);
+const INSPECTOR_TABS = Object.freeze({
+  data: ['data-panel'],
+  explore: ['location-bar', 'global-context-panel'],
+  view: ['control-panel', 'pp-toggles'],
+  scenes: ['scene-panel'],
+  cameras: ['cctv-panel'],
+  selection: [],
+});
 const NATIVE_BODY_CLASSES = Object.freeze([
   'cockpit-mode',
   'ui-clean-view',
@@ -126,6 +142,7 @@ async function createMountedRuntime(root, config) {
       sourceVersion: config.sourceVersion || '0.1.1',
     });
     let destroyPromise = null;
+    let inspectorAttachment = null;
     const handle = {
       root,
       app,
@@ -152,7 +169,67 @@ async function createMountedRuntime(root, config) {
       },
       getState: app.getState,
       getComponents: app.getComponents,
+      attachInspectorControls(host) {
+        if (!(host instanceof HTMLElement) || !host.isConnected
+          || host.ownerDocument !== root.ownerDocument) {
+          throw new TypeError('A mounted WorldView Inspector control host is required');
+        }
+        inspectorAttachment?.detach();
+        const controls = INSPECTOR_CONTROL_IDS.map((id) => {
+          const element = root.querySelector(`#${id}`);
+          if (!element?.parentNode) throw new Error(`worldview_inspector_control_missing:${id}`);
+          return element;
+        });
+        const syncPresentation = () => {
+          host.classList.toggle('supervised-embed', root.classList.contains('supervised-embed'));
+          for (const name of NATIVE_BODY_CLASSES) {
+            host.classList.toggle(name, root.classList.contains(name));
+          }
+          if (root.dataset.gevStyle) host.dataset.gevStyle = root.dataset.gevStyle;
+          else delete host.dataset.gevStyle;
+        };
+        const presentationObserver = new MutationObserver(syncPresentation);
+        presentationObserver.observe(root, {
+          attributes: true, attributeFilter: ['class', 'data-gev-style'],
+        });
+        syncPresentation();
+        const records = controls.map((element) => {
+          const anchor = root.ownerDocument.createComment(`worldview-inspector:${element.id}`);
+          element.parentNode.insertBefore(anchor, element);
+          host.appendChild(element);
+          return { anchor, element };
+        });
+        const styleManager = app.getComponents().controls?.styleManager;
+        const attachment = {
+          select(tab) {
+            if (!Object.hasOwn(INSPECTOR_TABS, tab)) return false;
+            host.dataset.activeTab = tab;
+            for (const id of INSPECTOR_TABS[tab]) {
+              styleManager?.setPanelCollapsed(id, false, {
+                restore: true, persist: false, syncShare: false,
+              });
+            }
+            return true;
+          },
+          detach() {
+            for (const { anchor, element } of records) anchor.replaceWith(element);
+            presentationObserver.disconnect();
+            host.classList.remove('supervised-embed');
+            host.classList.remove(...NATIVE_BODY_CLASSES);
+            delete host.dataset.gevStyle;
+            delete host.dataset.activeTab;
+            if (inspectorAttachment === attachment) inspectorAttachment = null;
+          },
+        };
+        inspectorAttachment = attachment;
+        attachment.select('data');
+        return attachment;
+      },
+      selectInspectorTab(tab) {
+        return inspectorAttachment?.select(tab) ?? false;
+      },
       destroy() {
+        inspectorAttachment?.detach();
         destroyPromise ||= Promise.resolve(app.destroy()).finally(() => {
           while (cleanups.length) cleanups.pop()?.();
           if (activeMount === handle) activeMount = null;

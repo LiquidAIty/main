@@ -11,10 +11,12 @@ export type NativeWorldViewCallbacks = {
 };
 
 export type NativeWorldViewMount = {
+  attachInspectorControls: (host: HTMLElement) => { detach: () => void };
+  selectInspectorTab: (tab: string) => boolean;
   setLayerVisibility: (
     layerId: string,
     enabled: boolean,
-    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'programmatic' },
+    options?: { exitIncompatibleContext?: boolean; origin?: 'user' | 'restore' },
   ) => string | null;
   focusSelection: (selection: unknown) => string | null;
   executeAction: (

@@ -25,6 +25,7 @@ const REQUIRED_MIGRATIONS = [
   '047_retire_saved_card_kanban_mode.sql',
   '048_project_worldview_capabilities.sql',
   '049_grant_main_project_worldview_control.sql',
+  '050_worldview_layer_origin.sql',
 ] as const;
 const MIGRATION_LOCK = 'liquidaity-backend-migrations';
 const POSTGRES_RECOVERY_RETRY_DELAY_MS = 5_000;

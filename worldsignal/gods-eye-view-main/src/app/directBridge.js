@@ -264,7 +264,7 @@ export function createDirectHostBridge({
           }
         }
         return dataManager.setEnabled(normalizedLayerId, enabled, {
-          origin: options.origin === 'programmatic' ? 'programmatic' : 'user',
+          origin: options.origin === 'restore' ? 'restore' : 'user',
         });
       }).then((operationResult) => {
         if (destroyed) return;
@@ -333,6 +333,7 @@ export function createDirectHostBridge({
       try {
         return await runAction(normalizedName, plainArguments(args), {
           signal: controller.signal,
+          origin: 'worldview_card',
           isCurrent: () => !destroyed && !controller.signal.aborted,
         });
       } finally {

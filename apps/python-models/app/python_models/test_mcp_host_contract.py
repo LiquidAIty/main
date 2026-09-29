@@ -421,6 +421,12 @@ def test_worldview_action_catalog_offers_only_spatial_actions():
         "stop_tracking",
         "set_layer_visibility",
     ]
+    assert "explicit request in the current user turn" in action.description
+    main_choice = next(
+        tool for tool in mcp_host._application_tools()
+        if tool.name == "worldview.set_capability"
+    )
+    assert "current user turn explicitly asks" in main_choice.description
 
 
 def test_worldsignals_package_dispatch_uses_authenticated_card_run_scope(monkeypatch):

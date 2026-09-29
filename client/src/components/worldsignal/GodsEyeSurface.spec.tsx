@@ -9,6 +9,9 @@ import GodsEyeSurface, { type GodsEyeBridge } from './GodsEyeSurface';
 const native = vi.hoisted(() => ({
   load: vi.fn(),
   destroy: vi.fn(),
+  attachInspectorControls: vi.fn(),
+  selectInspectorTab: vi.fn(),
+  detachInspectorControls: vi.fn(),
   setLayerVisibility: vi.fn(),
   focusSelection: vi.fn(),
 }));
@@ -22,6 +25,8 @@ const scope = { projectId: 'project-1', cardId: 'card-worldview' };
 function handle() {
   return {
     destroy: native.destroy,
+    attachInspectorControls: native.attachInspectorControls,
+    selectInspectorTab: native.selectInspectorTab,
     setLayerVisibility: native.setLayerVisibility,
     focusSelection: native.focusSelection,
   };
@@ -29,6 +34,11 @@ function handle() {
 
 beforeEach(() => {
   native.destroy.mockReset().mockResolvedValue(undefined);
+  native.detachInspectorControls.mockReset();
+  native.attachInspectorControls.mockReset().mockImplementation(() => ({
+    detach: native.detachInspectorControls,
+  }));
+  native.selectInspectorTab.mockReset().mockReturnValue(true);
   native.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
   native.focusSelection.mockReset().mockReturnValue('focus-request-1');
   native.load.mockReset().mockResolvedValue(handle());
@@ -58,8 +68,17 @@ describe('WorldView direct native mount', () => {
     render(<GodsEyeSurface ref={ref} {...scope} />);
     await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
     expect(ref.current?.setLayerVisibility('earthquakes', true)).toBeNull();
+    const host = document.createElement('div');
+    expect(ref.current?.attachInspectorControls(host)).toBeNull();
+    expect(ref.current?.selectInspectorTab('view')).toBe(false);
 
     await act(async () => resolveMount(handle()));
+    expect(ref.current?.attachInspectorControls(host)).toEqual({
+      detach: native.detachInspectorControls,
+    });
+    expect(ref.current?.selectInspectorTab('view')).toBe(true);
+    expect(native.attachInspectorControls).toHaveBeenCalledExactlyOnceWith(host);
+    expect(native.selectInspectorTab).toHaveBeenCalledExactlyOnceWith('view');
     expect(ref.current?.setLayerVisibility('earthquakes', true, {
       exitIncompatibleContext: true,
     })).toBe('layer-request-1');

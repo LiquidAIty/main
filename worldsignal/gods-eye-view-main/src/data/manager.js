@@ -43,7 +43,8 @@ function paramsRejectedError(layerId) {
 }
 
 function isExplicitLayerIntentOrigin(origin) {
-  return origin === 'user' || origin === 'voice' || origin === 'tool';
+  return origin === 'user' || origin === 'voice' || origin === 'tool'
+    || origin === 'worldview_card';
 }
 
 function cancelPendingLayerRestore(entry, origin, reason) {

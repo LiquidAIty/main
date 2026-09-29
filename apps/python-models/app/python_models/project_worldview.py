@@ -61,11 +61,15 @@ def _capability(row: dict[str, Any]) -> dict[str, Any]:
         raise ProjectWorldviewError("project_worldview_state_invalid")
     if user_enabled is None and main_enabled is None:
         raise ProjectWorldviewError("project_worldview_state_invalid")
+    last_origin = row.get("last_origin")
+    if last_origin not in {"user", "main", "worldview_card"}:
+        raise ProjectWorldviewError("project_worldview_origin_invalid")
     effective = user_enabled if user_enabled is not None else main_enabled
     return {
         "capabilityId": capability_id,
         "enabled": effective,
         "controlledBy": "user" if user_enabled is not None else "main",
+        "lastOrigin": last_origin,
         "mainReason": (
             str(row.get("main_reason"))[:_MAX_MAIN_REASON_LENGTH]
             if row.get("main_reason") is not None else None
@@ -100,13 +104,14 @@ def set_main_project_worldview_capability(
         cursor.execute(
             """
             INSERT INTO ag_catalog.project_worldview_capabilities
-              (project_id, capability_id, main_enabled, main_reason, user_enabled, updated_at)
-            VALUES (%s, %s, %s, %s, NULL, NOW())
+              (project_id, capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at)
+            VALUES (%s, %s, %s, %s, NULL, 'main', NOW())
             ON CONFLICT (project_id, capability_id) DO UPDATE SET
               main_enabled=EXCLUDED.main_enabled,
               main_reason=EXCLUDED.main_reason,
+              last_origin='main',
               updated_at=NOW()
-            RETURNING capability_id, main_enabled, main_reason, user_enabled, updated_at
+            RETURNING capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at
             """,
             (
                 canonical_project_id,
@@ -159,7 +164,7 @@ def resolve_project_worldview(
     with connector() as connection, connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(
             """
-            SELECT capability_id, main_enabled, main_reason, user_enabled, updated_at
+            SELECT capability_id, main_enabled, main_reason, user_enabled, last_origin, updated_at
             FROM ag_catalog.project_worldview_capabilities
             WHERE project_id=%s AND capability_id=ANY(%s::text[])
             ORDER BY capability_id

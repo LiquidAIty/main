@@ -83,6 +83,7 @@ def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
                 "main_enabled": True,
                 "main_reason": "Research task",
                 "user_enabled": False,
+                "last_origin": "user",
                 "updated_at": datetime(2026, 9, 27, tzinfo=timezone.utc),
             },
             {
@@ -90,6 +91,7 @@ def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
                 "main_enabled": False,
                 "main_reason": "Not relevant to this Project",
                 "user_enabled": None,
+                "last_origin": "main",
                 "updated_at": datetime(2026, 9, 27, tzinfo=timezone.utc),
             },
         ]),
@@ -101,6 +103,7 @@ def test_user_override_precedes_main_and_off_is_a_hard_candidate_ceiling():
         "capabilityId": "weather",
         "enabled": False,
         "controlledBy": "user",
+        "lastOrigin": "user",
         "mainReason": "Research task",
         "updatedAt": "2026-09-27T00:00:00+00:00",
     }
@@ -112,6 +115,7 @@ def test_main_write_changes_only_main_fields_and_user_choice_wins_readback():
         "main_enabled": True,
         "main_reason": "Current research needs weather context.",
         "user_enabled": False,
+        "last_origin": "main",
         "updated_at": datetime(2026, 9, 27, tzinfo=timezone.utc),
     }])
 
@@ -144,6 +148,7 @@ def test_main_write_changes_only_main_fields_and_user_choice_wins_readback():
             "capabilityId": "weather",
             "enabled": False,
             "controlledBy": "user",
+            "lastOrigin": "main",
             "mainReason": "Current research needs weather context.",
             "updatedAt": "2026-09-27T00:00:00+00:00",
         },

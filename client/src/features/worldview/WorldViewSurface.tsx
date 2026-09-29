@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import scopedWorldViewStyles from 'virtual:worldview-native-css';
+import inspectorOverrides from './worldviewInspector.css?raw';
 
 import GodsEyeSurface, {
   type GodsEyeBridge,
@@ -20,11 +22,28 @@ type WorldViewSurfaceProps = {
   onBridgeChange?: (bridge: GodsEyeBridge | null) => void;
 };
 
+const INSPECTOR_TABS = [
+  { id: 'data', label: 'Data' },
+  { id: 'explore', label: 'Explore' },
+  { id: 'view', label: 'View' },
+  { id: 'scenes', label: 'Scenes' },
+  { id: 'cameras', label: 'Cameras' },
+  { id: 'selection', label: 'Selection' },
+] as const;
+type InspectorTab = typeof INSPECTOR_TABS[number]['id'];
+const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-native-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
+
 export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: WorldViewSurfaceProps) {
   const bridgeRef = useRef<GodsEyeBridge | null>(null);
+  const inspectorControlsRef = useRef<HTMLDivElement | null>(null);
+  const inspectorAttachmentRef = useRef<{ detach: () => void } | null>(null);
   const currentProjectRef = useRef(projectId);
+  const confirmedProjectRef = useRef<ProjectWorldviewState | null>(null);
   const nextProjectWriteRef = useRef(0);
-  const ownedLayerWritesRef = useRef(new Set<string>());
+  const ownedLayerWritesRef = useRef(new Map<string, {
+    projectId: string;
+    queued: boolean | null;
+  }>());
   const [sourceVersion, setSourceVersion] = useState<string | null>(null);
   const [layerState, setLayerState] = useState<GodsEyeLayerState | null>(null);
   const [selection, setSelection] = useState<GodsEyeSelectionRef | null>(null);
@@ -33,7 +52,9 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   const [projectWorldviewLoading, setProjectWorldviewLoading] = useState(false);
   const [projectWorldviewError, setProjectWorldviewError] = useState<string | null>(null);
   const [layerApplyErrors, setLayerApplyErrors] = useState<Record<string, string>>({});
+  const [layerPersistenceErrors, setLayerPersistenceErrors] = useState<Record<string, string>>({});
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('data');
   const [remoteActionCount, setRemoteActionCount] = useState(0);
   const [pendingLayers, setPendingLayers] = useState<Record<string, {
     requestId: string;
@@ -44,15 +65,27 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   currentProjectRef.current = projectId;
 
   useEffect(() => {
+    bridgeRef.current?.selectInspectorTab(inspectorTab);
+  }, [inspectorTab]);
+
+  useEffect(() => {
     if (!projectId) return;
     let active = true;
+    confirmedProjectRef.current = null;
+    ownedLayerWritesRef.current.clear();
     setProjectWorldview(null);
     setProjectWorldviewLoading(true);
     setProjectWorldviewError(null);
     setLayerApplyErrors({});
+    setLayerPersistenceErrors({});
     setPendingLayers({});
     void loadProjectWorldview(projectId).then((state) => {
       if (!active || currentProjectRef.current !== projectId) return;
+      if (confirmedProjectRef.current?.projectId === projectId) {
+        setProjectWorldviewLoading(false);
+        return;
+      }
+      confirmedProjectRef.current = state;
       setProjectWorldview(state);
       setProjectWorldviewLoading(false);
     }).catch((error) => {
@@ -64,6 +97,54 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   }, [projectId]);
 
   const sourceReady = Boolean(sourceVersion && layerState?.sourceStateReady);
+  const acceptCapability = (savedProjectId: string, capability: ProjectWorldviewState['capabilities'][number]) => {
+    const current = confirmedProjectRef.current;
+    if (!current || current.projectId !== savedProjectId
+      || currentProjectRef.current !== savedProjectId) return;
+    const next = {
+      ...current,
+      capabilities: [
+        ...current.capabilities.filter((entry) => entry.capabilityId !== capability.capabilityId),
+        capability,
+      ],
+    };
+    confirmedProjectRef.current = next;
+    setProjectWorldview(next);
+    setLayerPersistenceErrors((current) => {
+      const nextErrors = { ...current };
+      delete nextErrors[capability.capabilityId];
+      return nextErrors;
+    });
+  };
+  const restoreConfirmedLayer = async (
+    savedProjectId: string, layerId: string, previousEnabled: boolean,
+  ) => {
+    let confirmed = confirmedProjectRef.current;
+    try {
+      const refreshed = await loadProjectWorldview(savedProjectId);
+      if (currentProjectRef.current !== savedProjectId) return;
+      confirmed = refreshed;
+      confirmedProjectRef.current = refreshed;
+      setProjectWorldview(refreshed);
+    } catch { /* Use the last confirmed read, never an optimistic local value. */ }
+    if (currentProjectRef.current !== savedProjectId) return;
+    const enabled = confirmed?.projectId === savedProjectId
+      ? confirmed.capabilities.find((entry) => entry.capabilityId === layerId)?.enabled
+        ?? confirmed.defaultEnabled
+      : previousEnabled;
+    const requestId = bridgeRef.current?.setLayerVisibility(layerId, enabled, {
+      origin: 'restore',
+    });
+    if (requestId) {
+      setPendingLayers((current) => ({
+        ...current, [layerId]: { requestId, enabled, phase: 'applying' },
+      }));
+    } else {
+      setLayerApplyErrors((current) => ({
+        ...current, [layerId]: 'Project choice could not be restored to the globe.',
+      }));
+    }
+  };
   const handleResult = (result: GodsEyeCommandResult) => {
     if (result.schemaVersion === 'gev.direct.layer-visibility.result.v1' && result.layerId) {
       setPendingLayers((current) => {
@@ -78,6 +159,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         else next[result.layerId!] = result.error || 'Layer update failed';
         return next;
       });
+      return;
     }
     if (!result.ok) setSurfaceError(result.error || 'WorldView command failed');
     else setSurfaceError(null);
@@ -102,7 +184,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
       }
       if (pendingLayers[source.id] || layerApplyErrors[source.id]) continue;
       const requestId = bridgeRef.current?.setLayerVisibility(source.id, capability.enabled, {
-        origin: 'programmatic',
+        origin: 'restore',
       });
       if (requestId) {
         requests[source.id] = { requestId, enabled: capability.enabled, phase: 'applying' };
@@ -177,21 +259,27 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
           );
           const body = await response.json() as Record<string, unknown>;
           if (active && response.ok && body.ok === true && isCapability(body.capability)) {
-            const capability = body.capability;
-            setProjectWorldview((current) => {
-              if (!current || current.projectId !== projectId) return current;
-              return {
-                ...current,
-                capabilities: [
-                  ...current.capabilities.filter(
-                    (entry) => entry.capabilityId !== capability.capabilityId,
-                  ),
-                  capability,
-                ],
-              };
-            });
+            acceptCapability(projectId, body.capability);
+          } else if (active && name === 'set_layer_visibility'
+            && typeof result.layerId === 'string' && typeof result.enabled === 'boolean'
+            && result.ok === true) {
+            await restoreConfirmedLayer(projectId, result.layerId, !result.enabled);
+            setLayerPersistenceErrors((current) => ({
+              ...current,
+              [result.layerId as string]: 'Could not save the layer choice. Project setting restored.',
+            }));
           }
-        } catch { /* The server times out this action without claiming success. */ }
+        } catch {
+          if (active && name === 'set_layer_visibility'
+            && typeof result.layerId === 'string' && typeof result.enabled === 'boolean'
+            && result.ok === true) {
+            await restoreConfirmedLayer(projectId, result.layerId, !result.enabled);
+            setLayerPersistenceErrors((current) => ({
+              ...current,
+              [result.layerId as string]: 'Could not save the layer choice. Project setting restored.',
+            }));
+          }
+        }
       })().finally(() => {
         controllers.delete(controller);
         if (active) setRemoteActionCount((count) => Math.max(0, count - 1));
@@ -208,46 +296,65 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
   }, [cardId, projectId, sourceVersion]);
 
   const handleNativeVisibility = (change: { layerId: string; enabled: boolean }) => {
-    if (!projectId || ownedLayerWritesRef.current.has(change.layerId)
-      || !sourceVersion) return;
+    if (!projectId || !sourceVersion) return;
+    const existing = ownedLayerWritesRef.current.get(change.layerId);
+    if (existing?.projectId === projectId) {
+      existing.queued = change.enabled;
+      return;
+    }
+    const job = { projectId, queued: null as boolean | null };
+    ownedLayerWritesRef.current.set(change.layerId, job);
     const saveRequestId = `project-worldview-native-${++nextProjectWriteRef.current}`;
-    ownedLayerWritesRef.current.add(change.layerId);
     setPendingLayers((current) => ({
       ...current,
       [change.layerId]: {
         requestId: saveRequestId, enabled: change.enabled, phase: 'saving',
       },
     }));
-    void setProjectWorldviewCapability(projectId, change.layerId, change.enabled)
-      .then((capability) => {
-        if (currentProjectRef.current !== projectId) return;
-        setProjectWorldview((current) => {
-          if (!current || current.projectId !== projectId) return current;
-          return {
-            ...current,
-            capabilities: [
-              ...current.capabilities.filter((entry) => entry.capabilityId !== capability.capabilityId),
-              capability,
-            ],
-          };
-        });
-      }).catch((error) => {
-        if (currentProjectRef.current === projectId) {
-          setProjectWorldviewError(
-            error instanceof Error ? error.message : 'project_worldview_write_failed',
-          );
-        }
-      }).finally(() => {
-        ownedLayerWritesRef.current.delete(change.layerId);
-        if (currentProjectRef.current === projectId) {
-          setPendingLayers((current) => {
-            if (current[change.layerId]?.requestId !== saveRequestId) return current;
+    void (async () => {
+      let enabled = change.enabled;
+      while (currentProjectRef.current === projectId) {
+        try {
+          if (confirmedProjectRef.current?.projectId !== projectId) {
+            const state = await loadProjectWorldview(projectId);
+            if (currentProjectRef.current !== projectId) break;
+            confirmedProjectRef.current = state;
+            setProjectWorldview(state);
+            setProjectWorldviewLoading(false);
+          }
+          const capability = await setProjectWorldviewCapability(projectId, change.layerId, enabled);
+          acceptCapability(projectId, capability);
+          setLayerApplyErrors((current) => {
             const next = { ...current };
             delete next[change.layerId];
             return next;
           });
+        } catch {
+          if (job.queued === null) {
+            await restoreConfirmedLayer(projectId, change.layerId, !enabled);
+            setLayerPersistenceErrors((current) => ({
+              ...current,
+              [change.layerId]: 'Could not save the layer choice. Project setting restored.',
+            }));
+          }
         }
-      });
+        const queued = job.queued;
+        if (queued === null) break;
+        enabled = queued;
+        job.queued = null;
+      }
+      if (ownedLayerWritesRef.current.get(change.layerId) === job) {
+        ownedLayerWritesRef.current.delete(change.layerId);
+      }
+      if (currentProjectRef.current === projectId) {
+        setPendingLayers((current) => {
+          if (current[change.layerId]?.requestId !== saveRequestId) return current;
+          const next = { ...current };
+          delete next[change.layerId];
+          return next;
+        });
+      }
+    })();
   };
 
   if (!projectId || !cardId) {
@@ -266,9 +373,20 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         onReady={(version) => {
           setSourceVersion(version);
           setSurfaceError(null);
+          try {
+            inspectorAttachmentRef.current?.detach();
+            inspectorAttachmentRef.current = inspectorControlsRef.current
+              ? bridgeRef.current?.attachInspectorControls(inspectorControlsRef.current) ?? null
+              : null;
+            bridgeRef.current?.selectInspectorTab(inspectorTab);
+          } catch (error) {
+            setSurfaceError(error instanceof Error ? error.message : 'WorldView controls unavailable');
+          }
           onBridgeChange?.(bridgeRef.current);
         }}
         onBridgeUnavailable={() => {
+          inspectorAttachmentRef.current?.detach();
+          inspectorAttachmentRef.current = null;
           setSourceVersion(null);
           setLayerState(null);
           setSelection(null);
@@ -281,7 +399,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         onCommandResult={handleResult}
         onError={(error) => setSurfaceError(`${error.code}: ${error.message}`)}
       />
-      {surfaceError ? <div role="alert" style={styles.errorNotice}>{surfaceError}</div> : null}
       <RightGlassDrawer
         isOpen={sourcesOpen}
         onOpen={() => setSourcesOpen(true)}
@@ -294,34 +411,47 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange }: 
         minWidth={300}
         maxWidth={560}
       >
+        <style data-worldview-inspector-styles>{inspectorStyles}</style>
         <div style={styles.drawerBody}>
+          <div role="tablist" aria-label="WorldView inspector" style={styles.tabs}>
+            {INSPECTOR_TABS.map((tab) => <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={inspectorTab === tab.id}
+              onClick={() => setInspectorTab(tab.id)}
+              style={{ ...styles.tab, ...(inspectorTab === tab.id ? styles.tabSelected : {}) }}
+            >{tab.label}</button>)}
+          </div>
+          <div ref={inspectorControlsRef} id="worldview-inspector-controls" />
           {projectWorldviewLoading ? <div>Loading Project sources…</div> : null}
           {surfaceError ? <div role="alert" style={styles.error}>{surfaceError}</div> : null}
           {projectWorldviewError
             ? <div role="alert" style={styles.error}>Project WorldView: {projectWorldviewError}</div>
             : null}
           {Object.entries(layerApplyErrors).map(([layerId, error]) => (
-            <small key={layerId} role="alert" style={styles.error}>
-              {layerId}: {error}
-            </small>
+            <small key={layerId} role="alert" style={styles.error}>{layerId}: {error}</small>
           ))}
-          <div style={styles.selection}>
-            <strong>Selected entity</strong>
-            {selection ? <>
-              <span>{selection.label || selection.id} · {selection.type}</span>
-              <button
-                type="button"
-                disabled={!selection.position || !sourceVersion}
-                onClick={() => {
-                  const requestId = bridgeRef.current?.focusSelection(selection);
-                  if (!requestId) setSurfaceError('WorldView focus is unavailable');
-                }}
-                style={styles.action}
-              >
-                Focus
-              </button>
-            </> : <span>No selection.</span>}
-          </div>
+          {Object.entries(layerPersistenceErrors).map(([layerId, error]) => (
+            <small key={layerId} role="alert" style={styles.error}>{layerId}: {error}</small>
+          ))}
+          {inspectorTab === 'selection' ? <>
+            <div style={styles.selection}>
+              <strong>Selected entity</strong>
+              {selection ? <>
+                <span>{selection.label || selection.id} · {selection.type}</span>
+                <button
+                  type="button"
+                  disabled={!selection.position || !sourceVersion}
+                  onClick={() => {
+                    const requestId = bridgeRef.current?.focusSelection(selection);
+                    if (!requestId) setSurfaceError('WorldView focus is unavailable');
+                  }}
+                  style={styles.action}
+                >Focus</button>
+              </> : <span>No selection.</span>}
+            </div>
+          </> : null}
         </div>
       </RightGlassDrawer>
     </div>
@@ -333,8 +463,10 @@ const styles: Record<string, React.CSSProperties> = {
   globePane: { position: 'relative', minWidth: 0, minHeight: 0 },
   action: { border: '1px solid rgba(114,215,199,.45)', borderRadius: 7, padding: '4px 9px', color: '#d9f7f2', background: 'rgba(5,11,16,.82)', cursor: 'pointer' },
   error: { color: '#f39b73' },
-  errorNotice: { position: 'absolute', left: 14, right: 44, bottom: 14, zIndex: 31, padding: '8px 10px', border: '1px solid rgba(243,155,115,.35)', borderRadius: 8, color: '#f39b73', background: 'rgba(5,11,16,.9)', fontSize: 11, pointerEvents: 'none' },
   drawerBody: { display: 'grid', gap: 12, fontSize: 12 },
+  tabs: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 5 },
+  tab: { border: '1px solid rgba(126,232,226,.16)', borderRadius: 8, padding: '7px 4px', color: '#9db9bd', background: 'rgba(8,20,26,.45)', cursor: 'pointer', fontSize: 11 },
+  tabSelected: { borderColor: 'rgba(126,232,226,.55)', color: '#e4fbf7', background: 'rgba(35,111,119,.28)' },
   selection: { display: 'grid', gap: 8, paddingTop: 12, borderTop: '1px solid rgba(114,215,199,.2)' },
   unavailable: { display: 'grid', placeContent: 'center', gap: 6, height: '100%', padding: 24, textAlign: 'center', color: '#78929c', background: '#050b10' },
 };
