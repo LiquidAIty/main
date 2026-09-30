@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import scopedWorldViewStyles from 'virtual:worldview-native-css';
 import inspectorOverrides from './worldviewInspector.css?raw';
@@ -9,6 +9,7 @@ import GodsEyeSurface, {
   type GodsEyeLayerState,
   type GodsEyeSelectionRef,
 } from '../../components/worldsignal/GodsEyeSurface';
+import { GraphNavigationControls } from '../../components/graph/GraphCanvasChrome';
 import {
   isCapability,
   loadProjectWorldview,
@@ -33,9 +34,43 @@ const INSPECTOR_TABS = [
 ] as const;
 type InspectorTab = typeof INSPECTOR_TABS[number]['id'];
 const inspectorStyles = `${scopedWorldViewStyles.replaceAll('#worldview-native-root', '#worldview-inspector-controls')}\n${inspectorOverrides}`;
+const NAVIGATION_INSET = 16;
+
+type ViewRect = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom' | 'width' | 'height'>;
+
+function visibleRect(pane: ViewRect, clip: ViewRect): ViewRect {
+  const left = Math.max(pane.left, clip.left);
+  const right = Math.min(pane.right, clip.right);
+  const top = Math.max(pane.top, clip.top);
+  const bottom = Math.min(pane.bottom, clip.bottom);
+  return { left, right, top, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+}
+
+function navigationPlacement(pane: ViewRect, clip: ViewRect, drawer: ViewRect | null,
+  control: ViewRect): { right: number; bottom: number } | null {
+  const exposed = visibleRect(pane, clip);
+  if (!exposed.width || !exposed.height || !control.width || !control.height) return null;
+  const overlap = drawer ? visibleRect(exposed, drawer) : null;
+  const areas = !overlap?.width || !overlap.height ? [exposed] : [
+    { left: exposed.left, right: overlap.left, top: exposed.top, bottom: exposed.bottom },
+    { left: overlap.right, right: exposed.right, top: exposed.top, bottom: exposed.bottom },
+    { left: exposed.left, right: exposed.right, top: exposed.top, bottom: overlap.top },
+    { left: exposed.left, right: exposed.right, top: overlap.bottom, bottom: exposed.bottom },
+  ];
+  const fits = areas.filter((area) => area.right - area.left >= control.width + NAVIGATION_INSET * 2
+    && area.bottom - area.top >= control.height + NAVIGATION_INSET * 2);
+  fits.sort((a, b) => (exposed.right - a.right) + (exposed.bottom - a.bottom)
+    - (exposed.right - b.right) - (exposed.bottom - b.bottom));
+  const target = fits[0];
+  return target ? {
+    right: pane.right - target.right + NAVIGATION_INSET,
+    bottom: pane.bottom - target.bottom + NAVIGATION_INSET,
+  } : null;
+}
 
 export default function WorldViewSurface({ projectId, cardId, onBridgeChange, inspectorContainer }: WorldViewSurfaceProps) {
   const bridgeRef = useRef<GodsEyeBridge | null>(null);
+  const globePaneRef = useRef<HTMLDivElement | null>(null);
   const inspectorControlsRef = useRef<HTMLDivElement | null>(null);
   const inspectorAttachmentRef = useRef<{ detach: () => void } | null>(null);
   const satelliteViewRequestRef = useRef<string | null>(null);
@@ -47,6 +82,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
     queued: boolean | null;
   }>());
   const [sourceVersion, setSourceVersion] = useState<string | null>(null);
+  const [navigationPosition, setNavigationPosition] = useState<{ right: number; bottom: number } | null>(null);
   const [layerState, setLayerState] = useState<GodsEyeLayerState | null>(null);
   const [selection, setSelection] = useState<GodsEyeSelectionRef | null>(null);
   const [surfaceError, setSurfaceError] = useState<string | null>(null);
@@ -68,6 +104,38 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   useEffect(() => {
     bridgeRef.current?.selectInspectorTab(inspectorTab);
   }, [inspectorTab]);
+
+  useLayoutEffect(() => {
+    const pane = globePaneRef.current;
+    const controls = pane?.querySelector<HTMLElement>('[data-testid="graph-navigation-controls"]');
+    if (!pane || !controls) return;
+    const clip = pane.closest<HTMLElement>('[data-companion-visible-viewport="true"]');
+    const drawer = inspectorContainer?.closest<HTMLElement>('[data-testid="workspace-inspector-drawer"]');
+    const update = () => {
+      const placement = navigationPlacement(
+        pane.getBoundingClientRect(),
+        clip?.getBoundingClientRect() ?? pane.getBoundingClientRect(),
+        drawer?.dataset.open === 'true' ? drawer.getBoundingClientRect() : null,
+        controls.getBoundingClientRect(),
+      );
+      setNavigationPosition((current) => current?.right === placement?.right
+        && current?.bottom === placement?.bottom ? current : placement);
+    };
+    update();
+    const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    for (const element of [pane, clip, drawer, controls]) if (element) resize?.observe(element);
+    const mutation = drawer && typeof MutationObserver === 'function'
+      ? new MutationObserver(update) : null;
+    if (drawer) mutation?.observe(drawer, { attributes: true, attributeFilter: ['data-open', 'style'] });
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      resize?.disconnect();
+      mutation?.disconnect();
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [inspectorContainer, sourceVersion]);
 
   useEffect(() => {
     inspectorAttachmentRef.current?.detach();
@@ -419,7 +487,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
   }
 
   return <section style={styles.root} aria-label="WorldView workspace">
-    <div style={styles.globePane}>
+    <div ref={globePaneRef} style={styles.globePane}>
       <GodsEyeSurface
         ref={bridgeRef}
         projectId={projectId}
@@ -445,6 +513,14 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
         onCommandResult={handleResult}
         onError={(error) => setSurfaceError(`${error.code}: ${error.message}`)}
       />
+      {sourceVersion ? <GraphNavigationControls
+        style={{ right: navigationPosition?.right, bottom: navigationPosition?.bottom,
+          visibility: navigationPosition ? 'visible' : 'hidden' }}
+        onZoomIn={() => navigate('adjust_camera_zoom', { direction: 'in', amount: 'little' })}
+        onZoomOut={() => navigate('adjust_camera_zoom', { direction: 'out', amount: 'little' })}
+        onFit={() => navigate(layerState?.enabledLayerIds.includes('satellites')
+          ? 'satellite_overview' : 'zoom_to_globe')}
+      /> : null}
       {inspectorContainer ? createPortal(<>
         <style data-worldview-inspector-styles>{inspectorStyles}</style>
         <div style={styles.drawerBody}>
@@ -458,17 +534,7 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
               style={{ ...styles.tab, ...(inspectorTab === tab.id ? styles.tabSelected : {}) }}
             >{tab.label}</button>)}
           </div>
-          <div role="group" aria-label="WorldView navigation" style={styles.navigation}>
-            <button type="button" style={styles.action} disabled={!sourceVersion}
-              onClick={() => navigate('adjust_camera_zoom', { direction: 'in', amount: 'little' })}
-            >Zoom in</button>
-            <button type="button" style={styles.action} disabled={!sourceVersion}
-              onClick={() => navigate('adjust_camera_zoom', { direction: 'out', amount: 'little' })}
-            >Zoom out</button>
-            <button type="button" style={styles.action} disabled={!sourceVersion}
-              onClick={() => navigate('zoom_to_globe')}
-            >Overview</button>
-            {inspectorTab === 'view' ? <button
+          {inspectorTab === 'view' ? <button
               type="button"
               style={styles.action}
               disabled={!sourceVersion}
@@ -478,7 +544,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
                 else setSurfaceError('Satellite view is unavailable');
               }}
             >Satellite view</button> : null}
-          </div>
           <div ref={inspectorControlsRef} id="worldview-inspector-controls" />
           {projectWorldviewLoading ? <div>Loading Project sources…</div> : null}
           {surfaceError ? <div role="alert" style={styles.error}>{surfaceError}</div> : null}
@@ -520,7 +585,6 @@ const styles: Record<string, React.CSSProperties> = {
   action: { border: '1px solid rgba(114,215,199,.45)', borderRadius: 7, padding: '4px 9px', color: '#d9f7f2', background: 'rgba(5,11,16,.82)', cursor: 'pointer' },
   error: { color: '#f39b73' },
   drawerBody: { display: 'grid', gap: 12, fontSize: 12 },
-  navigation: { display: 'flex', flexWrap: 'wrap', gap: 6 },
   tabs: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 5 },
   tab: { border: '1px solid rgba(126,232,226,.16)', borderRadius: 8, padding: '7px 4px', color: '#9db9bd', background: 'rgba(8,20,26,.45)', cursor: 'pointer', fontSize: 11 },
   tabSelected: { border: '1px solid rgba(126,232,226,.55)', color: '#e4fbf7', background: 'rgba(35,111,119,.28)' },

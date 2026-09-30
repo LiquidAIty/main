@@ -425,6 +425,9 @@ test('direct mount keeps native controls, starts calmly, and removes the iframe 
   assert.match(application, /dataManager\.buildTogglePanel\(requiredElement\(root, '#data-toggles'\)\)/);
   assert.match(application, /initGevVoiceCommands\(\{/);
   assert.match(application, /createDirectHostBridge\(\{/);
+  assert.match(application, /Cesium\.GoogleMaps\.defaultApiKey = googleApiKey \|\| undefined/);
+  assert.match(application, /const canAttemptPhotoreal = Boolean\(googleApiKey \|\| \(supervised && cesiumToken\)\)/);
+  assert.match(application, /if \(canAttemptPhotoreal\) \{[\s\S]*?createGooglePhotorealistic3DTileset/);
   assert.match(mount, /createWorldViewApplication\(\{/);
   assert.match(ui, /const hudVariant = this\._supervisedEmbed \? 'minimal' : defaults\.hudVariant/);
   assert.match(ui, /const hudVisible = this\._supervisedEmbed \? false : defaults\.hudVisible/);

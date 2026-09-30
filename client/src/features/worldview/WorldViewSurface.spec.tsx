@@ -111,6 +111,8 @@ function nativeReady(state = layerState) {
 
 beforeEach(() => {
   document.body.appendChild(inspectorHost);
+  inspectorHost.dataset.open = 'false';
+  inspectorHost.removeAttribute('style');
   actionStreams.length = 0;
   vi.stubGlobal('EventSource', TestActionStream);
   directHost.props = null;
@@ -186,18 +188,74 @@ describe('WorldView direct source presentation', () => {
     expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
   });
 
-  it('routes compact navigation through the native bridge', async () => {
+  it('places shared navigation on the globe and routes Earth fit through the native bridge', async () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
+    expect(screen.queryByRole('button', { name: 'Fit view' })).toBeNull();
     nativeReady();
-    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    const controls = screen.getByTestId('graph-navigation-controls');
+    expect(controls.parentElement).toBe(screen.getByLabelText('WorldView globe').parentElement);
+    expect(screen.getByTestId('workspace-inspector-drawer').contains(controls)).toBe(false);
+    expect(screen.queryByRole('group', { name: 'WorldView navigation' })).toBeNull();
+    fireEvent.click(controls.querySelector('[aria-label="Zoom in"]')!);
+    fireEvent.click(controls.querySelector('[aria-label="Zoom out"]')!);
+    fireEvent.click(controls.querySelector('[aria-label="Fit view"]')!);
     expect(directHost.executeAction).toHaveBeenNthCalledWith(1,
       'adjust_camera_zoom', { direction: 'in', amount: 'little' });
     expect(directHost.executeAction).toHaveBeenNthCalledWith(2,
       'adjust_camera_zoom', { direction: 'out', amount: 'little' });
     expect(directHost.executeAction).toHaveBeenNthCalledWith(3, 'zoom_to_globe', {});
+    expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
+    expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
+  });
+
+  it('fits the live satellite shell without changing layer or catalog settings', () => {
+    directHost.executeAction.mockResolvedValue({ ok: true });
+    render(<WorldViewSurface {...scope} />);
+    nativeReady({
+      ...layerState,
+      enabledLayerIds: ['satellites'],
+      sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
+    });
+    fireEvent.click(screen.getByTestId('graph-navigation-controls')
+      .querySelector('[aria-label="Fit view"]')!);
+    expect(directHost.executeAction).toHaveBeenCalledExactlyOnceWith('satellite_overview', {});
+    expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
+    expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
+  });
+
+  it('keeps navigation inside the exposed globe and clear of an open or moved Inspector', async () => {
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      left, top, right: left + width, bottom: top + height, width, height,
+    }) as DOMRect;
+    const { container } = render(<div data-companion-visible-viewport="true">
+      <WorldViewSurface {...scope} />
+    </div>);
+    nativeReady();
+    const pane = screen.getByLabelText('WorldView globe').parentElement as HTMLElement;
+    const clip = container.firstElementChild as HTMLElement;
+    const controls = screen.getByTestId('graph-navigation-controls');
+    let drawerRect = rect(680, 48, 308, 540);
+    vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 1000, 600));
+    vi.spyOn(clip, 'getBoundingClientRect').mockImplementation(() => rect(200, 0, 800, 600));
+    vi.spyOn(controls, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 36, 108));
+    vi.spyOn(inspectorHost, 'getBoundingClientRect').mockImplementation(() => drawerRect);
+
+    act(() => window.dispatchEvent(new Event('resize')));
+    expect(controls.style.right).toBe('16px');
+    expect(controls.style.bottom).toBe('16px');
+
+    act(() => { inspectorHost.dataset.open = 'true'; });
+    await waitFor(() => expect(controls.style.right).toBe('336px'));
+    expect(controls.style.bottom).toBe('16px');
+
+    drawerRect = rect(300, 100, 300, 300);
+    act(() => { inspectorHost.style.left = '300px'; });
+    await waitFor(() => expect(controls.style.right).toBe('16px'));
+    expect(controls.style.bottom).toBe('16px');
+
+    act(() => { inspectorHost.dataset.open = 'false'; });
+    await waitFor(() => expect(controls.style.right).toBe('16px'));
   });
 
   it('frames live satellites after the explicit ON and options requests settle', () => {

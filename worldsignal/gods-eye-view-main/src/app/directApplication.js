@@ -187,10 +187,15 @@ export function createWorldViewApplication({
       defer(() => resetContextStore());
       loaderStatus.textContent = 'Configuring viewer...';
       if (cesiumToken) Cesium.Ion.defaultAccessToken = cesiumToken;
-      if (googleApiKey) Cesium.GoogleMaps.defaultApiKey = googleApiKey;
+      // The mounted app may use Cesium ion's cached Google Photorealistic
+      // asset without a direct Google Maps key. Reset the module-global key
+      // when none was supplied so Cesium takes its native ion branch rather
+      // than a key left behind by an earlier mount.
+      Cesium.GoogleMaps.defaultApiKey = googleApiKey || undefined;
       if (!googleApiKey && !supervised) {
         throw new Error('GOOGLE_MAPS_API_KEY not found. Set it as an environment variable.');
       }
+      const canAttemptPhotoreal = Boolean(googleApiKey || (supervised && cesiumToken));
       const previousGoogleKey = window.__GOOGLE_MAPS_API_KEY__;
       window.__GOOGLE_MAPS_API_KEY__ = googleApiKey;
       defer(() => {
@@ -209,13 +214,13 @@ export function createWorldViewApplication({
       defer(installTrackpadPinchZoom(viewer));
       defer(installRootResize(root, viewer));
       registerDataCredits(viewer);
-      viewer.scene.globe.show = !googleApiKey;
+      viewer.scene.globe.show = !canAttemptPhotoreal;
 
-      loaderStatus.textContent = googleApiKey
+      loaderStatus.textContent = canAttemptPhotoreal
         ? 'Loading Google 3D Tiles...'
         : 'Using the keyless OSM globe stack...';
       let tileset = null;
-      if (googleApiKey) {
+      if (canAttemptPhotoreal) {
         try {
           tileset = await Cesium.createGooglePhotorealistic3DTileset({
             onlyUsingWithGoogleGeocoder: true,
