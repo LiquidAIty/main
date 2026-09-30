@@ -1,7 +1,9 @@
 import * as Cesium from 'cesium';
 import {
   applicationViewportAtMost,
+  getApplicationRoot,
   getApplicationViewport,
+  getSatelliteOverviewViewports,
   toApplicationPoint,
   toApplicationRect,
 } from './app/viewport.js';
@@ -18,7 +20,7 @@ import {
   clampBloomIntensity,
   decodeBloomIntensity,
 } from './bloom.js';
-import { LOCATIONS, CITY_POIS, GLOBE_VIEW, flyToGlobeView, flyToPresetLocation, flyToPOI, searchAndFlyTo } from './locations.js';
+import { LOCATIONS, CITY_POIS, GLOBE_VIEW, flyToGlobeView, flyToPresetLocation, flyToPOI, planEarthOverview, searchAndFlyTo } from './locations.js';
 import { locationMiniStatus } from './locationStatus.js';
 import { interruptCameraMotion } from './cameraVerbs.js';
 import {
@@ -9757,6 +9759,12 @@ export class StyleManager {
     this.viewer.trackedEntity = undefined;
     this.viewer.camera.cancelFlight();
     this.viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    const root = getApplicationRoot();
+    const fit = planEarthOverview(
+      this.viewer,
+      root?.getBoundingClientRect?.(),
+      getSatelliteOverviewViewports(root),
+    );
     this._beginWorldJumpTransition();
 
     let resolveReset;
@@ -9774,7 +9782,7 @@ export class StyleManager {
         ok: !cancelled,
         action: 'zoom_to_globe',
         cancelled,
-        heightKm: Math.round(GLOBE_VIEW.heightM / 1000),
+        heightKm: Math.round((fit?.cameraHeightM ?? GLOBE_VIEW.heightM) / 1000),
         centeredOn: {
           latitude: Number(Cesium.Math.toDegrees(carto.latitude).toFixed(2)),
           longitude: Number(Cesium.Math.toDegrees(carto.longitude).toFixed(2)),
@@ -9787,15 +9795,27 @@ export class StyleManager {
     };
     timer = window.setTimeout(() => {
       const height = this.viewer.camera.positionCartographic?.height;
-      finish(!Number.isFinite(height) || Math.abs(height - GLOBE_VIEW.heightM) > 1000);
+      const targetHeight = fit?.cameraHeightM ?? GLOBE_VIEW.heightM;
+      finish(!Number.isFinite(height) || Math.abs(height - targetHeight) > 1000);
     }, 4200);
     this._resetGlobeBtn?.setAttribute('aria-label', 'Resetting to full globe view');
     this._cockpitResetGlobeBtn?.setAttribute('aria-label', 'Resetting cockpit to full globe view');
-    const target = flyToGlobeView(this.viewer, {
-      onComplete: () => finish(false),
-      onCancel: () => finish(true),
-    });
-    if (!target) finish(true);
+    if (fit) {
+      this.viewer.camera.flyTo({
+        destination: fit.destination,
+        orientation: fit.orientation,
+        duration: GLOBE_VIEW.durationS,
+        endTransform: Cesium.Matrix4.IDENTITY,
+        complete: () => finish(false),
+        cancel: () => finish(true),
+      });
+    } else {
+      const target = flyToGlobeView(this.viewer, {
+        onComplete: () => finish(false),
+        onCancel: () => finish(true),
+      });
+      if (!target) finish(true);
+    }
     return resetPromise;
   }
 

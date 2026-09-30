@@ -304,6 +304,19 @@ test('newer navigation, reset, Cockpit, and teardown share one generation', () =
   ], 'dispose invalidation');
 });
 
+test('Reset Globe fits Earth against the exposed WorldView without changing layer configuration', () => {
+  const reset = body(ui, /resetToGlobeView\(\) \{([\s\S]*?)\n  \}/, 'reset');
+  ordered(reset, [
+    'this.viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);',
+    'const root = getApplicationRoot();',
+    'const fit = planEarthOverview(',
+    'getSatelliteOverviewViewports(root)',
+    'this.viewer.camera.flyTo({',
+  ], 'exposed Earth fit');
+  assert.doesNotMatch(reset, /setLayerParams|setEnabled|getAllPositions|setLabelFocus/,
+    'camera reset must not change satellite or provider configuration');
+});
+
 test('teardown synchronously closes immediate camera entry points', () => {
   const dispose = body(ui, /async dispose\(\) \{([\s\S]*?)\n  \}/, 'dispose');
   ordered(dispose, [

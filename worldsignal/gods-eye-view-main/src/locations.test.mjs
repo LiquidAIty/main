@@ -18,6 +18,7 @@ import {
   regionFramingPlan,
   REGION_SWATH_SPAN_KM,
   GLOBE_VIEW,
+  planEarthOverview,
   planSatelliteOverview,
   searchAndFlyTo,
 } from './locations.js';
@@ -552,6 +553,38 @@ test('satellite overview fits the real outer position into the exposed perspecti
     (Math.hypot(1, -1) * Math.hypot(1, screenSlopeX)));
   assert.ok(angularRadius < leftPlaneMargin,
     'the outer real shell leaves negative space before the limiting screen edge');
+});
+
+test('Fit Earth centers the complete globe inside the exposed viewport from a camera looking into space', () => {
+  const source = { left: 0, top: 0, width: 1200, height: 800 };
+  const exposed = { left: 300, right: 850, top: 40, bottom: 760, width: 550, height: 720 };
+  const radial = Cesium.Cartesian3.fromDegrees(-55, 50, 80_000_000);
+  const viewer = {
+    camera: {
+      positionWC: radial,
+      directionWC: Cesium.Cartesian3.normalize(radial, new Cesium.Cartesian3()),
+      frustum: { offCenterFrustum: { near: 1, left: -1, right: 1, bottom: -0.7, top: 0.7 } },
+    },
+  };
+  const plan = planEarthOverview(viewer, source, [exposed]);
+  assert.ok(plan);
+  assert.equal(plan.shellRadiusM, Cesium.Ellipsoid.WGS84.maximumRadius);
+  assert.equal(plan.satelliteCount, 0);
+  assert.deepEqual(plan.viewport, exposed);
+  assert.ok(Cesium.Cartesian3.dot(plan.orientation.direction, viewer.camera.directionWC) < -0.99,
+    'the new camera points back toward Earth even when the old camera looked away');
+  assert.ok(Math.abs(Cesium.Cartographic.fromCartesian(plan.destination).height - plan.cameraHeightM) < 1);
+
+  const right = Cesium.Cartesian3.cross(plan.orientation.direction, plan.orientation.up, new Cesium.Cartesian3());
+  const toEarth = Cesium.Cartesian3.negate(plan.destination, new Cesium.Cartesian3());
+  const depth = Cesium.Cartesian3.dot(toEarth, plan.orientation.direction);
+  const slopeX = Cesium.Cartesian3.dot(toEarth, right) / depth;
+  assert.ok(Math.abs(slopeX - ((exposed.left + exposed.right) / 1200 - 1)) < 1e-10,
+    'Earth aims at the exposed rectangle center');
+  const angularRadius = Math.asin(plan.shellRadiusM / plan.distanceM);
+  const margin = Math.asin(((exposed.right / 1200) * 2 - 1 - slopeX) /
+    (Math.hypot(1, (exposed.right / 1200) * 2 - 1) * Math.hypot(1, slopeX)));
+  assert.ok(angularRadius < margin, 'the whole globe has space before the exposed edge');
 });
 
 test('geocoded Location branches forward the resolved-navigation ownership hook', () => {

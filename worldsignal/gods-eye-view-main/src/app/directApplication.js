@@ -224,6 +224,8 @@ export function createWorldViewApplication({
         try {
           tileset = await Cesium.createGooglePhotorealistic3DTileset({
             onlyUsingWithGoogleGeocoder: true,
+          }, {
+            enableCollision: true,
           });
           signal.throwIfAborted();
           viewer.scene.primitives.add(tileset);

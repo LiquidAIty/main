@@ -518,8 +518,8 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
           visibility: navigationPosition ? 'visible' : 'hidden' }}
         onZoomIn={() => navigate('adjust_camera_zoom', { direction: 'in', amount: 'little' })}
         onZoomOut={() => navigate('adjust_camera_zoom', { direction: 'out', amount: 'little' })}
-        onFit={() => navigate(layerState?.enabledLayerIds.includes('satellites')
-          ? 'satellite_overview' : 'zoom_to_globe')}
+        onPan={(direction) => navigate('move_camera', { motion: 'pan', direction, mode: 'once' })}
+        onFit={() => navigate('zoom_to_globe')}
       /> : null}
       {inspectorContainer ? createPortal(<>
         <style data-worldview-inspector-styles>{inspectorStyles}</style>

@@ -188,7 +188,7 @@ describe('WorldView direct source presentation', () => {
     expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
   });
 
-  it('places shared navigation on the globe and routes Earth fit through the native bridge', async () => {
+  it('keeps compact pan, zoom, and fit controls on the globe when the Inspector is closed', async () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
     expect(screen.queryByRole('button', { name: 'Fit view' })).toBeNull();
@@ -197,19 +197,33 @@ describe('WorldView direct source presentation', () => {
     expect(controls.parentElement).toBe(screen.getByLabelText('WorldView globe').parentElement);
     expect(screen.getByTestId('workspace-inspector-drawer').contains(controls)).toBe(false);
     expect(screen.queryByRole('group', { name: 'WorldView navigation' })).toBeNull();
+    expect(controls.querySelectorAll('button')).toHaveLength(7);
+    expect(controls.textContent).not.toMatch(/fit|earth|home/i);
+    fireEvent.click(controls.querySelector('[aria-label="Pan left"]')!);
+    fireEvent.click(controls.querySelector('[aria-label="Pan up"]')!);
+    fireEvent.click(controls.querySelector('[aria-label="Pan down"]')!);
+    fireEvent.click(controls.querySelector('[aria-label="Pan right"]')!);
     fireEvent.click(controls.querySelector('[aria-label="Zoom in"]')!);
     fireEvent.click(controls.querySelector('[aria-label="Zoom out"]')!);
     fireEvent.click(controls.querySelector('[aria-label="Fit view"]')!);
     expect(directHost.executeAction).toHaveBeenNthCalledWith(1,
-      'adjust_camera_zoom', { direction: 'in', amount: 'little' });
+      'move_camera', { motion: 'pan', direction: 'left', mode: 'once' });
     expect(directHost.executeAction).toHaveBeenNthCalledWith(2,
+      'move_camera', { motion: 'pan', direction: 'up', mode: 'once' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(3,
+      'move_camera', { motion: 'pan', direction: 'down', mode: 'once' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(4,
+      'move_camera', { motion: 'pan', direction: 'right', mode: 'once' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(5,
+      'adjust_camera_zoom', { direction: 'in', amount: 'little' });
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(6,
       'adjust_camera_zoom', { direction: 'out', amount: 'little' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(3, 'zoom_to_globe', {});
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(7, 'zoom_to_globe', {});
     expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
     expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
   });
 
-  it('fits the live satellite shell without changing layer or catalog settings', () => {
+  it('fits Earth even with satellites on without changing layer or catalog settings', () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
     nativeReady({
@@ -217,9 +231,21 @@ describe('WorldView direct source presentation', () => {
       enabledLayerIds: ['satellites'],
       sources: [{ ...source, id: 'satellites', name: 'Satellites', enabled: true }],
     });
-    fireEvent.click(screen.getByTestId('graph-navigation-controls')
-      .querySelector('[aria-label="Fit view"]')!);
-    expect(directHost.executeAction).toHaveBeenCalledExactlyOnceWith('satellite_overview', {});
+    const controls = screen.getByTestId('graph-navigation-controls');
+    fireEvent.click(controls.querySelector('[aria-label="Fit view"]')!);
+    expect(directHost.executeAction).toHaveBeenCalledExactlyOnceWith('zoom_to_globe', {});
+    expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
+    expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
+  });
+
+  it('leaves the Inspector Satellite view unchanged without adding a labeled Earth mode', () => {
+    directHost.executeAction.mockResolvedValue({ ok: true });
+    render(<WorldViewSurface {...scope} />);
+    nativeReady();
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    expect(screen.getByRole('button', { name: 'Satellite view' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Earth view' })).toBeNull();
+    expect(directHost.executeAction).not.toHaveBeenCalled();
     expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
     expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
   });
@@ -238,7 +264,7 @@ describe('WorldView direct source presentation', () => {
     let drawerRect = rect(680, 48, 308, 540);
     vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 1000, 600));
     vi.spyOn(clip, 'getBoundingClientRect').mockImplementation(() => rect(200, 0, 800, 600));
-    vi.spyOn(controls, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 36, 108));
+    vi.spyOn(controls, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 128, 64));
     vi.spyOn(inspectorHost, 'getBoundingClientRect').mockImplementation(() => drawerRect);
 
     act(() => window.dispatchEvent(new Event('resize')));

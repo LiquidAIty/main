@@ -101,6 +101,12 @@ export function createApplicationViewer({ container, creditContainer }) {
   try {
     viewer.targetFrameRate = 60;
     applyModelAtmosphereWorkaround(viewer.scene);
+    const cameraController = viewer.scene.screenSpaceCameraController;
+    cameraController.enableCollisionDetection = true;
+    cameraController.minimumZoomDistance = 20;
+    cameraController.zoomFactor = 3;
+    cameraController.inertiaZoom = 0.4;
+    cameraController.maximumMovementRatio = 0.07;
     viewer.scene.globe.show = false;
     viewer.scene.skyAtmosphere.show = true;
     viewer.scene.skyAtmosphere.atmosphereLightIntensity = 18;

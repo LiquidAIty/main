@@ -163,6 +163,11 @@ export function flyToGlobeView(viewer, options = {}) {
   return { latitude, longitude, heightM: GLOBE_VIEW.heightM };
 }
 
+/** Fit Earth into the unobscured viewport using the active perspective frustum. */
+export function planEarthOverview(viewer, source, viewports) {
+  return planGlobeSphere(viewer, Cesium.Ellipsoid.WGS84.maximumRadius, source, viewports);
+}
+
 /**
  * Plan an explicit satellite overview from the currently rendered orbital positions.
  * The camera keeps its current side of Earth. Cesium's own perspective frustum and
@@ -170,6 +175,19 @@ export function flyToGlobeView(viewer, options = {}) {
  * No catalog position or ordinary globe preset is changed.
  */
 export function planSatelliteOverview(viewer, positions, source, viewports) {
+  let satelliteCount = 0;
+  let shellRadiusM = Cesium.Ellipsoid.WGS84.maximumRadius;
+  for (const entry of positions || []) {
+    const position = entry?.position;
+    if (![position?.x, position?.y, position?.z].every(Number.isFinite)) continue;
+    satelliteCount += 1;
+    shellRadiusM = Math.max(shellRadiusM, Cesium.Cartesian3.magnitude(position));
+  }
+  if (!satelliteCount) return null;
+  return planGlobeSphere(viewer, shellRadiusM, source, viewports, satelliteCount);
+}
+
+function planGlobeSphere(viewer, shellRadiusM, source, viewports, satelliteCount = 0) {
   const frustum = viewer?.camera?.frustum?.offCenterFrustum;
   const near = Number(frustum?.near);
   if (!(source?.width > 0) || !(source?.height > 0)
@@ -180,16 +198,6 @@ export function planSatelliteOverview(viewer, positions, source, viewports) {
   const top = frustum.top / near;
   if (![left, right, bottom, top].every(Number.isFinite)
     || !(right > left) || !(top > bottom)) return null;
-
-  let satelliteCount = 0;
-  let shellRadiusM = Cesium.Ellipsoid.WGS84.maximumRadius;
-  for (const entry of positions || []) {
-    const position = entry?.position;
-    if (![position?.x, position?.y, position?.z].every(Number.isFinite)) continue;
-    satelliteCount += 1;
-    shellRadiusM = Math.max(shellRadiusM, Cesium.Cartesian3.magnitude(position));
-  }
-  if (!satelliteCount) return null;
 
   let best = null;
   for (const viewport of viewports) {
