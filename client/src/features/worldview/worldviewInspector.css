@@ -93,9 +93,9 @@
 #worldview-inspector-controls[data-active-tab='data'] #data-panel,
 #worldview-inspector-controls[data-active-tab='scenes'] #scene-panel,
 #worldview-inspector-controls[data-active-tab='explore'] #global-context-panel,
-#worldview-inspector-controls[data-active-tab='explore'] #location-bar,
+#worldview-inspector-controls[data-active-tab='explore'] > #command-dock > #location-bar,
 #worldview-inspector-controls[data-active-tab='view'] #pp-toggles,
-#worldview-inspector-controls[data-active-tab='view'] #control-panel,
+#worldview-inspector-controls[data-active-tab='view'] > #command-dock > #control-panel,
 #worldview-inspector-controls[data-active-tab='cameras'] #cctv-panel {
   display: block !important;
 }

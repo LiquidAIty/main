@@ -2306,6 +2306,52 @@ function _onKeyDown(e) {
   }
 }
 
+function _handleSatelliteClick(viewer, click) {
+  if (!_enabled) return;
+  let picked = viewer.scene.pick(click.position);
+
+  if (_trackedEntity && picked?.id === _trackedEntity) {
+    // The larger tracked dot can cover another satellite. Look beneath only
+    // our own marker, retaining normal frontmost-pick ownership otherwise.
+    picked = viewer.scene.drillPick(click.position).find((candidate) => {
+      if (!candidate || candidate.id === _trackedEntity) return false;
+      const noradId = Number(candidate.primitive?.id);
+      if (_catalog.has(noradId) && _points.has(noradId)) return true;
+      const pickedId = resolvePickId(candidate);
+      return pickedId && isOwnedByOtherLayer('satellites', pickedId);
+    });
+    if (!picked) return; // Clicking only the current satellite remains a no-op.
+  }
+
+  if (picked) {
+    // Check if it's a satellite point (id is NORAD catalog number)
+    const prim = picked.primitive;
+    if (prim && prim.id != null) {
+      const noradId = Number(prim.id);
+      if (!isNaN(noradId) && _catalog.has(noradId)) {
+        _cancelPendingTrackingRestore();
+        _trackSatellite(noradId, { origin: 'user' });
+        return;
+      }
+    }
+  }
+
+  // A pick that belongs to a sibling layer is not empty space. Preserve its
+  // tracking ownership, including a target it may have just selected (H2).
+  if (picked) {
+    const pickedId = resolvePickId(picked);
+    if (pickedId && isOwnedByOtherLayer('satellites', pickedId)) return;
+  }
+
+  if (_trackedNorad) {
+    _cancelPendingTrackingRestore();
+    _clearTracking(false, { origin: 'user' });
+  }
+}
+
+/** Invoke the exact production click callback without constructing a WebGL viewer. */
+export { _handleSatelliteClick as _handleSatelliteClickForTest };
+
 function _installClickHandler(viewer) {
   if (_clickHandler) return; // already installed
 
@@ -2327,38 +2373,7 @@ function _installClickHandler(viewer) {
 
   _clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   _clickHandler.setInputAction((click) => {
-    if (!_enabled) return;
-    const picked = viewer.scene.pick(click.position);
-
-    if (picked) {
-      // Clicking tracked entity itself — ignore
-      if (picked.id === _trackedEntity) return;
-
-      // Check if it's a satellite point (id is NORAD catalog number)
-      const prim = picked.primitive;
-      if (prim && prim.id != null) {
-        const noradId = Number(prim.id);
-        if (!isNaN(noradId) && _catalog.has(noradId)) {
-          _cancelPendingTrackingRestore();
-          _trackSatellite(noradId, { origin: 'user' });
-          return;
-        }
-      }
-    }
-
-    // A pick that belongs to a sibling layer (plane, vessel, station, CCTV
-    // camera…) is not "empty space" — leave OUR tracking (and crucially
-    // viewer.trackedEntity, which that sibling may have JUST set) alone (H2).
-    if (picked) {
-      const pickedId = resolvePickId(picked);
-      if (pickedId && isOwnedByOtherLayer('satellites', pickedId)) return;
-    }
-
-    // Clicked empty space — deselect
-    if (_trackedNorad) {
-      _cancelPendingTrackingRestore();
-      _clearTracking(false, { origin: 'user' });
-    }
+    _handleSatelliteClick(viewer, click);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
   document.addEventListener('keydown', _onKeyDown);
