@@ -54,6 +54,7 @@ export type GodsEyeBridge = {
     catalog?: 'core' | 'dense';
     showPoints?: boolean;
     showOrbits?: boolean;
+    labelMode?: 'focus' | 'all';
   }) => string | null;
   focusSelection: (selection: GodsEyeSelectionRef) => string | null;
   executeAction: (
@@ -73,7 +74,7 @@ export type GodsEyeCommandResult = {
   error: string | null;
   layerId?: string;
   requestedEnabled?: boolean;
-  requestedParams?: { catalog?: 'core' | 'dense'; showPoints?: boolean; showOrbits?: boolean };
+  requestedParams?: { catalog?: 'core' | 'dense'; showPoints?: boolean; showOrbits?: boolean; labelMode?: 'focus' | 'all' };
   effectiveParams?: Record<string, unknown> | null;
   targetId?: string;
   state?: GodsEyeLayerState;

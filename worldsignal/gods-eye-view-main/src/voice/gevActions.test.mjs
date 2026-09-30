@@ -442,6 +442,53 @@ test('successful voice tracking stamps and releases the old owner before layer t
   assert.deepEqual(order, ['stamp:satellite', 'release', 'cancel', 'track:25544']);
 });
 
+test('focus_satellites replaces and clears only the transient native focus set', async () => {
+  const { viewer, styleManager } = createVoiceNavigationHarness();
+  let focus = [25544];
+  const rendered = new Set([25544, 20580, 48274, 33591, 43013]);
+  const satellitesLayer = {
+    getLabelFocus: () => [...focus],
+    setLabelFocus(ids) {
+      if (ids.some((id) => !rendered.has(id))) return false;
+      focus = [...ids];
+      return true;
+    },
+  };
+  const dataManager = {
+    layers: new Map([['satellites', { module: satellitesLayer }]]),
+    isEnabled: () => true,
+  };
+  const runner = createGevActionRunner({ viewer, styleManager, dataManager });
+  const five = [25544, 20580, 48274, 33591, 43013];
+  assert.deepEqual(await runner('focus_satellites', { noradIds: five }), {
+    ok: true, action: 'focus_satellites', focusedNoradIds: five,
+  });
+  assert.deepEqual(await runner('focus_satellites', { noradIds: [25544, 99999] }), {
+    ok: false, action: 'focus_satellites', error: 'satellite_focus_not_renderable',
+  });
+  assert.deepEqual(focus, five, 'an unknown ID must preserve the whole prior focus');
+  for (const noradIds of [[0], ['25544'], Array.from({ length: 51 }, (_, i) => i + 1)]) {
+    assert.equal((await runner('focus_satellites', { noradIds })).ok, false);
+    assert.deepEqual(focus, five);
+  }
+  assert.equal((await runner('focus_satellites', { noradIds: [] }, {
+    disabledLayerIds: ['satellites'],
+  })).error, 'project_satellite_layer_disabled');
+  assert.deepEqual(focus, five);
+  dataManager.isEnabled = () => false;
+  assert.equal((await runner('focus_satellites', { noradIds: [] })).error, 'satellite_layer_disabled');
+  assert.deepEqual(focus, five);
+  dataManager.isEnabled = () => true;
+  assert.equal((await runner('focus_satellites', { noradIds: [] }, {
+    isCurrent: () => false,
+  })).cancelled, true);
+  assert.deepEqual(focus, five);
+  assert.deepEqual(await runner('focus_satellites', { noradIds: [] }), {
+    ok: true, action: 'focus_satellites', focusedNoradIds: [],
+  });
+  assert.deepEqual(focus, []);
+});
+
 test('voice Stop Tracking clears all durable tracker IDs even without active trackers', async () => {
   const cleared = [];
   const dormant = { getTrackedInfo: () => null, stopTracking() { throw new Error('must not need active tracking'); } };

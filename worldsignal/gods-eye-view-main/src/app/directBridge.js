@@ -281,7 +281,7 @@ export function createDirectHostBridge({
 
     setSatelliteParams(params) {
       if (destroyed || !params || typeof params !== 'object' || Array.isArray(params)) return null;
-      const allowed = new Set(['catalog', 'showPoints', 'showOrbits']);
+      const allowed = new Set(['catalog', 'showPoints', 'showOrbits', 'labelMode']);
       const requestedParams = Object.fromEntries(Object.entries(params));
       const keys = Object.keys(requestedParams);
       if (!keys.length || keys.some((key) => !allowed.has(key))
@@ -290,7 +290,9 @@ export function createDirectHostBridge({
         || (Object.hasOwn(requestedParams, 'showPoints')
           && typeof requestedParams.showPoints !== 'boolean')
         || (Object.hasOwn(requestedParams, 'showOrbits')
-          && typeof requestedParams.showOrbits !== 'boolean')) return null;
+          && typeof requestedParams.showOrbits !== 'boolean')
+        || (Object.hasOwn(requestedParams, 'labelMode')
+          && !['focus', 'all'].includes(requestedParams.labelMode))) return null;
       const requestId = `worldview-${++nextRequestId}`;
       const respond = (ok, error = null) => {
         if (destroyed) return;
@@ -381,6 +383,7 @@ export function createDirectHostBridge({
         return await runAction(normalizedName, plainArguments(args), {
           signal: controller.signal,
           origin: 'worldview_card',
+          disabledLayerIds: Array.from(disabled),
           isCurrent: () => !destroyed && !controller.signal.aborted,
         });
       } finally {

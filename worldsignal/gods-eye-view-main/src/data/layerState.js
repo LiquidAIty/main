@@ -212,6 +212,7 @@ const OPTION_GROUPS = Object.freeze({
   ]),
   satellites: Object.freeze([
     enumOption('catalog', 'c', 'core', ['core', 'dense'], { core: 'c', dense: 'd' }),
+    enumOption('labelMode', 'b', 'focus', ['focus', 'all'], { focus: 'f', all: 'a' }),
     integerOption('selectedSatTrackingId', 't', null),
   ]),
   cctv: Object.freeze([

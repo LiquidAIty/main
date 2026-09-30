@@ -1186,6 +1186,7 @@ function _drawOverlay(frame) {
   const aircraftBracketSectors = { left: 0, front: 0, right: 0 };
   let protectedVisibleCount = 0;
   const candidateMap = new Map();
+  const suppressedSatelliteLabelKeys = new Set();
   const cohortBuilders = shouldSolve ? new Map() : null;
   const demandByLayer = shouldSolve ? new Map() : null;
   let placementBuildCount = 0;
@@ -1253,6 +1254,18 @@ function _drawOverlay(frame) {
 
     if (obj.skipLabel) {
       if (bracketAlpha > 0) protectedVisibleCount++;
+      continue;
+    }
+
+    // Satellite text policy is independent of observation/bracket visibility.
+    // Focused names use the native protected overlay lane; background names
+    // enter this existing allocator only when the layer permits them.
+    if (obj.type === 'SAT' && obj.labelHidden === true) {
+      const layerId = obj._layerId || 'unknown';
+      const sourceId = obj.sourceId ?? obj.id ?? i;
+      if (renderIdentities.get(layerId)?.has(sourceId)) {
+        suppressedSatelliteLabelKeys.add(_detectionKey(layerId, sourceId));
+      }
       continue;
     }
 
@@ -1391,7 +1404,10 @@ function _drawOverlay(frame) {
     }
   }
 
-  const renderEntries = _labelArbiter.renderEntries(candidateMap, now);
+  // A policy clear is immediate even when the arbiter retains an old placement
+  // for its normal fade-out tail. Other layers keep their existing fade.
+  const renderEntries = _labelArbiter.renderEntries(candidateMap, now)
+    .filter((entry) => !suppressedSatelliteLabelKeys.has(entry.candidate.key));
   const fadingCount = countFadingRenderEntries(renderEntries);
   // Demand counts fades in BOTH directions; `fadingCount` above stays the
   // fade-OUT tail because that is what the published diagnostics have always

@@ -11,6 +11,7 @@ import {
   getMode,
   initDetection,
   isDetectionSuspended,
+  markDetectionSourcesChanged,
   resumeDetection,
   setDetectionStyle,
   setDetectionTuning,
@@ -937,6 +938,68 @@ test('far orbital SAT label limit preserves the source count and collective dens
     assert.equal(diagnostics.demandByLayer.satellites, 81, 'diagnostics retain actual SAT demand');
     assert.ok(diagnostics.cohortByLayer.satellites <= 11);
     assert.ok((diagnostics.labelsByLayer.satellites || 0) <= 11);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('focus-only satellite text policy keeps DENSE observations and brackets while sibling labels still paint', () => {
+  const env = installEnvironment();
+  env.viewer.camera.positionCartographic.height = 97_000_000;
+  const objects = Array.from({ length: 81 }, (_, index) => ({
+    position: new Cesium.Cartesian3((index % 9 - 4) * 0.18, (Math.floor(index / 9) - 4) * 0.15, 6_356_752),
+    sourceId: index + 1,
+    id: `SAT-${index}`,
+    type: 'SAT',
+    labelHidden: true,
+  }));
+  try {
+    initWorldOverlay(env.viewer);
+    initDetection(env.viewer, [
+      { id: 'satellites', getDetectableObjects: () => objects },
+      { id: 'flights', getDetectableObjects: () => [{
+        position: new Cesium.Cartesian3(0, 0, 6_356_752),
+        sourceId: 'air', id: 'AIR-REMAINS', type: 'AIR',
+      }] },
+    ], () => {});
+    setMode('DENSE');
+    settleFrame(env);
+    settleFrame(env);
+    const diagnostics = getDetectionDiagnostics();
+    assert.equal(diagnostics.profile, 'DENSE');
+    assert.equal(diagnostics.observationCount, 82);
+    assert.equal(diagnostics.visibleCount, 82);
+    assert.equal(diagnostics.collectiveLabelBudget, 42);
+    assert.equal(diagnostics.labelsByLayer.satellites || 0, 0);
+    assert.ok(env.ctx.calls.some(([name, text]) => name === 'fillText' && text === 'AIR-REMAINS'));
+    assert.equal(env.ctx.calls.some(([name, text]) => name === 'fillText' && String(text).startsWith('SAT-')), false);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('switching All satellite text to Focus only removes prior allocator names without removing brackets', () => {
+  const env = installEnvironment();
+  const object = {
+    position: new Cesium.Cartesian3(0, 0, 6_356_752),
+    sourceId: 25544, id: 'SAT-NAME', type: 'SAT', labelHidden: false,
+  };
+  try {
+    initWorldOverlay(env.viewer);
+    initDetection(env.viewer, [{ id: 'satellites', getDetectableObjects: () => [object] }], () => {});
+    setMode('DENSE');
+    settleFrame(env);
+    settleFrame(env);
+    assert.ok(env.ctx.calls.some(([name, text]) => name === 'fillText' && text === 'SAT-NAME'));
+
+    object.labelHidden = true;
+    markDetectionSourcesChanged('satellite-label-mode');
+    env.ctx.calls.length = 0;
+    settleFrame(env);
+    assert.equal(env.ctx.calls.some(([name, text]) => name === 'fillText' && text === 'SAT-NAME'), false);
+    assert.equal(getDetectionDiagnostics().visibleCount, 1);
+    assert.equal(getDetectionDiagnostics().observationCount, 1);
+    assert.equal(getDetectionDiagnostics().labelsByLayer.satellites || 0, 0);
   } finally {
     env.cleanup();
   }

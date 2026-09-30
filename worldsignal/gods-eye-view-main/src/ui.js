@@ -2639,6 +2639,7 @@ export class StyleManager {
     this._initResetGlobeButton();
     this._initHUDToggle();
     this._initModels3dToggle();
+    this._initSatelliteLabelControl();
     this._applyGlobalPostDefaults();
     this._initOrbit();
     this._initRecordingOverlay();
@@ -4360,6 +4361,9 @@ export class StyleManager {
     }
     if (typeof this._dataManager?.subscribe === 'function') {
       this._dataManagerUnsubscribe = this._dataManager.subscribe((change) => {
+        if (change?.layerId === 'satellites' && ['params', 'params-failed'].includes(change?.type)) {
+          this._syncSatelliteLabelControl();
+        }
         if (String(change?.type || '').startsWith('visibility')) {
           this._handleContextLayerChange(change);
         }
@@ -4367,6 +4371,7 @@ export class StyleManager {
         this._updateGlobalLoadingFeedback(performance.now());
       });
     }
+    this._syncSatelliteLabelControl();
     this._updateGlobalLoadingFeedback(performance.now());
     if (typeof this._dataManager?.subscribeVisibilityRequests === 'function') {
       this._dataManagerVisibilityRequestUnsubscribe = this._dataManager.subscribeVisibilityRequests((change) => {
@@ -4531,6 +4536,7 @@ export class StyleManager {
       }
       void this._layerStateRestorePromise.then(() => {
         this._syncModels3dFromLayerState(this._layerStateCoordinator?.getDurableState());
+        this._syncSatelliteLabelControl();
       });
     }
   }
@@ -9910,6 +9916,47 @@ export class StyleManager {
     this._models3dBtn?.setAttribute('aria-pressed', String(this._models3dEnabled));
   }
 
+  _initSatelliteLabelControl() {
+    if (!this._ppToggles) return;
+    const group = document.createElement('div');
+    group.className = 'pp-toggle-group';
+    group.id = 'satellite-label-control';
+    const row = document.createElement('div');
+    row.className = 'pp-slider-row visible';
+    const label = document.createElement('label');
+    label.className = 'pp-slider-mini-label';
+    label.htmlFor = 'satellite-label-mode';
+    label.textContent = 'Labels';
+    const select = document.createElement('select');
+    select.id = 'satellite-label-mode';
+    select.className = 'pp-select';
+    select.setAttribute('aria-label', 'Satellite labels');
+    for (const [value, text] of [['focus', 'Focus only'], ['all', 'All']]) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = text;
+      select.append(option);
+    }
+    row.append(label, select);
+    group.append(row);
+    this._models3dBtn?.closest('.pp-toggle-group')?.after(group);
+    this._satelliteLabelControl = group;
+    this._satelliteLabelSelect = select;
+    select.addEventListener('change', () => {
+      if (select.value === 'focus' || select.value === 'all') {
+        this._dataManager?.setLayerParams('satellites', { labelMode: select.value }, { origin: 'user' });
+      }
+      this._syncSatelliteLabelControl();
+    });
+    this._syncSatelliteLabelControl();
+  }
+
+  _syncSatelliteLabelControl() {
+    if (!this._satelliteLabelSelect) return;
+    const mode = this._dataManager?.getLayerParams?.('satellites')?.labelMode;
+    this._satelliteLabelSelect.value = mode === 'all' ? 'all' : 'focus';
+  }
+
   _initHUDToggle() {
     this._hudBtn.addEventListener('click', () => {
       this.shareLinkManager?.claimRestoreLane?.('visual');
@@ -10237,6 +10284,9 @@ export class StyleManager {
     this._dataManagerVisibilityRequestUnsubscribe = null;
     this._dataManagerUnsubscribe?.();
     this._dataManagerUnsubscribe = null;
+    this._satelliteLabelControl?.remove();
+    this._satelliteLabelControl = null;
+    this._satelliteLabelSelect = null;
     if (this._globeResetHandler) {
       this._resetGlobeBtn?.removeEventListener('click', this._globeResetHandler);
       this._cockpitResetGlobeBtn?.removeEventListener('click', this._globeResetHandler);

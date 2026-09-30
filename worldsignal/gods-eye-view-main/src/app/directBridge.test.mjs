@@ -203,7 +203,7 @@ test('direct layer command waits for source settlement and returns native readba
 
 test('satellite options use the native layer parameter owner and report effective readback', async () => {
   let enabled = true;
-  let params = { catalog: 'core', showPoints: false, showOrbits: false };
+  let params = { catalog: 'core', showPoints: false, showOrbits: false, labelMode: 'focus' };
   const calls = [];
   const manager = {
     getAll: () => [{
@@ -221,7 +221,7 @@ test('satellite options use the native layer parameter owner and report effectiv
   };
   const h = bridgeHarness({ dataManager: manager });
   try {
-    const requested = { catalog: 'dense', showPoints: true, showOrbits: true };
+    const requested = { catalog: 'dense', showPoints: true, showOrbits: true, labelMode: 'all' };
     const requestId = h.bridge.setSatelliteParams(requested);
     assert.ok(requestId);
     await new Promise((resolve) => setImmediate(resolve));
@@ -233,6 +233,9 @@ test('satellite options use the native layer parameter owner and report effectiv
       ok: true, error: null, state: h.events.layers.at(-1),
     });
     assert.equal(h.bridge.setSatelliteParams({ selectedSatTrackingId: 25544 }), null);
+    assert.equal(h.bridge.setSatelliteParams({ labelMode: 'nearby' }), null);
+    assert.equal(h.bridge.setSatelliteParams({ labelMode: null }), null);
+    assert.equal(calls.length, 1, 'invalid label modes never reach the native owner');
     enabled = false;
     h.bridge.setSatelliteParams({ showPoints: true });
     await new Promise((resolve) => setImmediate(resolve));
@@ -259,6 +262,22 @@ test('Card actions reuse the mounted God\'s Eye action with Card origin', async 
       origin: 'worldview_card',
     }]);
     assert.equal(result.ok, true);
+  } finally { h.close(); }
+});
+
+test('Card action passes normalized Project OFF sources to the native action owner', async () => {
+  const calls = [];
+  const h = bridgeHarness({
+    runAction: async (_name, _args, options) => {
+      calls.push(options.disabledLayerIds);
+      return { ok: false, error: 'Project WorldView source is OFF' };
+    },
+  });
+  try {
+    await h.bridge.executeAction('focus_satellites', { satelliteIds: ['sat-1'] }, {
+      disabledLayerIds: ['satellites', '', 'satellites', 42],
+    });
+    assert.deepEqual(calls, [['satellites']]);
   } finally { h.close(); }
 });
 

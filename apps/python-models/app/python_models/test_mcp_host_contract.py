@@ -419,9 +419,12 @@ def test_worldview_action_catalog_offers_only_spatial_actions():
         "zoom_to_globe",
         "track_entity",
         "stop_tracking",
+        "focus_satellites",
         "set_layer_visibility",
     ]
     assert "explicit request in the current user turn" in action.description
+    assert "at most 50 exact NORAD IDs" in action.description
+    assert "[] clears transient agent focus" in action.description
     main_choice = next(
         tool for tool in mcp_host._application_tools()
         if tool.name == "worldview.set_capability"

@@ -48,9 +48,16 @@ import { isExplicitLayerStateOrigin } from './layerState.js';
 
 const ISS_NORAD = 25544;
 export const ISS_OVERLAY_SOURCE_ID = 'satellites-iss';
+export const FOCUS_OVERLAY_SOURCE_ID = 'satellites-focus';
 export const ISS_OVERLAY_SOURCE_OPTIONS = Object.freeze({
   cohortLimit: 1,
   collisionCapacity: 1,
+  moving: true,
+  solveIntervalMs: 125,
+});
+const FOCUS_OVERLAY_SOURCE_OPTIONS = Object.freeze({
+  cohortLimit: 50,
+  collisionCapacity: 50,
   moving: true,
   solveIntervalMs: 125,
 });
@@ -232,7 +239,8 @@ let _clickHandler = null;
 let _trackedEntityChangedRemove = null;
 
 // Runtime params (DataLayerManager.setLayerParams path)
-let _params = { catalog: 'core', showPoints: true, showOrbits: true }; // 'core' | 'dense'
+let _params = { catalog: 'core', showPoints: true, showOrbits: true, labelMode: 'focus' }; // 'core' | 'dense'
+let _labelFocus = [];
 let _denseIds = [];      // norad ids of dense extras, round-robin order
 let _denseCursor = 0;    // next dense id to re-propagate
 let _denseLoadToken = 0; // invalidates in-flight dense loads on mode flip/reload
@@ -402,7 +410,8 @@ function _syncIssOverlay() {
   // Hidden when ISS is the tracked subject, and equally when ISS is DOCKED to
   // whatever is tracked: its ambient label would otherwise sit underneath the
   // tracked card at the same position.
-  const visible = _enabled && _params.showOrbits && _trackedNorad !== ISS_NORAD
+  const visible = _enabled && _params.showOrbits && _params.labelMode === 'all'
+    && !_labelFocus.includes(ISS_NORAD) && _trackedNorad !== ISS_NORAD
     && !_dockedCompanions.has(ISS_NORAD)
     && _catalog.has(ISS_NORAD) && _issDisplayCached();
   if (!visible) {
@@ -416,6 +425,40 @@ function _syncIssOverlay() {
     ISS_OVERLAY_SOURCE_OPTIONS,
   );
   _overlayHost.setVisible(ISS_OVERLAY_SOURCE_ID, true);
+}
+
+/** Publish only the current bounded, renderable focus set on the shared overlay. */
+function _syncFocusOverlay() {
+  if (!_enabled || !_params.showPoints || _labelFocus.length === 0) {
+    _overlayHost.clearSource(FOCUS_OVERLAY_SOURCE_ID);
+    _overlayHost.setVisible(FOCUS_OVERLAY_SOURCE_ID, false);
+    return;
+  }
+  const entries = _labelFocus.filter((id) => id !== _trackedNorad
+    && _catalog.has(id) && _points.get(id)?.position).map((id) => ({
+    id: String(id),
+    position: () => _points.get(id)?.position || null,
+    variant: 'label',
+    title: _catalog.get(id).name.trim() || `SAT-${id}`,
+    priority: 500,
+    protected: true,
+    collisionGroup: 'ambient-label',
+    paintLane: 'ambient-label',
+    interactive: false,
+    gapPx: 14,
+    verticalOnly: true,
+    placement: 'above',
+    edgeFade: 'keyhole',
+    horizonCull: true,
+    terrainOcclusion: false,
+  }));
+  if (entries.length === 0) {
+    _overlayHost.clearSource(FOCUS_OVERLAY_SOURCE_ID);
+    _overlayHost.setVisible(FOCUS_OVERLAY_SOURCE_ID, false);
+    return;
+  }
+  _overlayHost.setEntries(FOCUS_OVERLAY_SOURCE_ID, entries, FOCUS_OVERLAY_SOURCE_OPTIONS);
+  _overlayHost.setVisible(FOCUS_OVERLAY_SOURCE_ID, true);
 }
 
 // Per-frame cache for the tracked satellite (WS-D2): dot, host readout, camera, and
@@ -683,6 +726,7 @@ function _clearTracking(skipViewerUntrack = false, { origin = 'programmatic' } =
   if (!_trackedNorad) {
     clearFocusTarget('satellites');
     _syncIssOverlay();
+    _syncFocusOverlay();
     return;
   }
   const clearedNorad = _trackedNorad;
@@ -717,6 +761,7 @@ function _clearTracking(skipViewerUntrack = false, { origin = 'programmatic' } =
   }
   _trackedNorad = null;
   _syncIssOverlay();
+  _syncFocusOverlay();
   clearTrackedSubjectContext('satellites');
   _contextRefreshedAtMs = 0;
   _emitAwarenessEvent('gev:awareness-subject-cleared', {
@@ -963,6 +1008,7 @@ function _trackSatellite(noradId, { origin = 'programmatic' } = {}) {
   _trackedFrameNumber = -1;
   _trackedFrameGeo = null;
   _syncIssOverlay();
+  _syncFocusOverlay();
 
   // Hide the primitive — the tracked ENTITY renders the dot below. The
   // entity must own a point graphic so the Viewer's tracking camera can
@@ -1158,6 +1204,7 @@ async function _loadDenseCatalog({ signal = null } = {}) {
     _count = _points.size;
     _catalogRevision++;
     _denseStatus = 'ready';
+    _syncFocusOverlay();
     console.log(`[Data:Satellites] Dense catalog: +${added} ${DENSE_GROUP_PATH} (points only)`);
     // The panel would otherwise keep the pre-load count and legend until the
     // next natural refresh — up to the 5-minute catalog interval.
@@ -1298,7 +1345,8 @@ export function _setTrackedSatelliteRefreshStateForTest({
   _trackedFrameNumber = -1;
   _trackedFrameGeo = null;
   _trackedFrameNowForTest = now;
-  _params = { catalog: 'core', showPoints: false, showOrbits: false };
+  _params = { catalog: 'core', showPoints: false, showOrbits: false, labelMode: 'focus' };
+  _labelFocus = [];
   _enabled = true;
 }
 
@@ -1356,7 +1404,8 @@ export function _setDenseCatalogStateForTest({ catalog = 'core', showPoints = tr
   _catalogRevision++;
   _trackedNorad = null;
   _cancelPendingTrackingRestore();
-  _params = { catalog, showPoints, showOrbits: false };
+  _params = { catalog, showPoints, showOrbits: false, labelMode: 'focus' };
+  _labelFocus = [];
   _enabled = true;
   return _points;
 }
@@ -1374,7 +1423,8 @@ export function _clearDenseCatalogStateForTest() {
   _denseLoadToken++;
   _denseStatus = 'idle';
   _denseError = null;
-  _params = { catalog: 'core', showPoints: true, showOrbits: true };
+  _params = { catalog: 'core', showPoints: true, showOrbits: true, labelMode: 'focus' };
+  _labelFocus = [];
   _cancelPendingTrackingRestore();
   _enabled = false;
 }
@@ -1390,11 +1440,21 @@ export function _setSatelliteLabelLifecycleStateForTest({
   satrec,
   point,
   overlayHost,
+  satellites = [],
   preservePending = false,
 }) {
   _viewer = viewer;
   _catalog = new Map([[ISS_NORAD, { name: 'ISS (ZARYA)', satrec, group: 'stations' }]]);
   _points = new Map([[ISS_NORAD, point]]);
+  _pointCollection = { show: true };
+  for (const satellite of satellites) {
+    _catalog.set(satellite.noradId, {
+      name: satellite.name,
+      satrec: satellite.satrec || satrec,
+      group: satellite.group || 'visual',
+    });
+    _points.set(satellite.noradId, satellite.point);
+  }
   _orbitPaths = new Map([[
     ISS_NORAD,
     { primitive: { show: true, modelMatrix: new Cesium.Matrix4() }, gmstAtBake: 0 },
@@ -1405,7 +1465,8 @@ export function _setSatelliteLabelLifecycleStateForTest({
   _trackedFrameNumber = -1;
   _trackedFrameGeo = null;
   _enabled = true;
-  _params = { catalog: 'core', showPoints: true, showOrbits: true };
+  _params = { catalog: 'core', showPoints: true, showOrbits: true, labelMode: 'focus' };
+  _labelFocus = [];
   _overlayHost = overlayHost || DEFAULT_OVERLAY_HOST;
   _syncIssOverlay();
 }
@@ -1437,8 +1498,12 @@ export function _removeSatelliteTrackingCandidateForTest(noradId) {
 export function _clearSatelliteLabelLifecycleForTest() {
   _clearTracking();
   _enabled = false;
+  _pointCollection = null;
   _overlayHost.clearSource(ISS_OVERLAY_SOURCE_ID);
   _overlayHost.setVisible(ISS_OVERLAY_SOURCE_ID, false);
+  _overlayHost.clearSource(FOCUS_OVERLAY_SOURCE_ID);
+  _overlayHost.setVisible(FOCUS_OVERLAY_SOURCE_ID, false);
+  _labelFocus = [];
   _overlayHost = DEFAULT_OVERLAY_HOST;
 }
 
@@ -1545,8 +1610,10 @@ const satellitesLayer = {
     _lastFocusUpdate = 0;
     _activeFocusCount = 0;
     _enabled = false;
+    _labelFocus = [];
     _overlayHost.clearSource(ISS_OVERLAY_SOURCE_ID);
     _overlayHost.setVisible(ISS_OVERLAY_SOURCE_ID, false);
+    _syncFocusOverlay();
     // Dense extras rebuild via update() when _params.catalog === 'dense'
     // (the catalog-mode preference itself is sticky across init/destroy).
     _denseIds = [];
@@ -1577,6 +1644,7 @@ const satellitesLayer = {
     // Orbit ring primitives + persistent ISS host label — show them
     for (const path of _orbitPaths.values()) path.primitive.show = satelliteVisualsVisible(_enabled, _params.showOrbits);
     _syncIssOverlay();
+    _syncFocusOverlay();
     // Re-attach input handlers and preRender propagation
     _installClickHandler(viewer);
     // Pick-ownership (H2): satellite dot ids are numeric NORAD catalog numbers;
@@ -1599,7 +1667,9 @@ const satellitesLayer = {
     if (_pointCollection) _pointCollection.show = false;
     for (const path of _orbitPaths.values()) path.primitive.show = false;
     _clearTracking();
+    _labelFocus = [];
     _syncIssOverlay();
+    _syncFocusOverlay();
     // Remove click handler + keydown listener + preRender propagation while disabled
     if (_clickHandler) {
       _clickHandler.destroy();
@@ -1688,6 +1758,7 @@ const satellitesLayer = {
       _denseLoadController = null;
       _denseLoadToken++; // cancel any in-flight dense load against the old catalog
       _syncIssOverlay();
+      _syncFocusOverlay();
 
       const now = new Date();
 
@@ -1746,6 +1817,8 @@ const satellitesLayer = {
       }
 
       _count = _points.size;
+      _syncFocusOverlay();
+      _syncIssOverlay();
       _catalogRevision++;
       _lastUpdate = Date.now();
       _lastPropagation = Date.now();
@@ -1800,6 +1873,8 @@ const satellitesLayer = {
     }
     _overlayHost.clearSource(ISS_OVERLAY_SOURCE_ID);
     _overlayHost.setVisible(ISS_OVERLAY_SOURCE_ID, false);
+    _labelFocus = [];
+    _syncFocusOverlay();
     if (_pointCollection) {
       viewer.scene.primitives.remove(_pointCollection);
       _pointCollection = null;
@@ -1874,6 +1949,7 @@ const satellitesLayer = {
       }
       object.position = point.position;
       object.skipLabel = isTracked;
+      object.labelHidden = _params.labelMode === 'focus' || _labelFocus.includes(noradId);
       result.push(object);
       if (result.length >= maxCount) break;
     }
@@ -2057,11 +2133,37 @@ const satellitesLayer = {
     };
   },
 
+  /** Replace the current transient label focus with exact renderable NORAD ids. */
+  setLabelFocus(noradIds) {
+    if (!Array.isArray(noradIds) || noradIds.length > 50
+        || noradIds.some((id) => !Number.isSafeInteger(id) || id <= 0
+          || !_catalog.has(id) || !_points.get(id)?.position)) return false;
+    const previous = _labelFocus;
+    _labelFocus = [...new Set(noradIds)];
+    try {
+      _syncFocusOverlay();
+      _syncIssOverlay();
+    } catch (error) {
+      _labelFocus = previous;
+      try {
+        _syncFocusOverlay();
+        _syncIssOverlay();
+      } catch { /* the overlay host is unavailable; keep authoritative focus unchanged */ }
+      console.warn('[Data:Satellites] Label focus presentation failed:', error);
+      return false;
+    }
+    return true;
+  },
+
+  getLabelFocus() {
+    return [..._labelFocus];
+  },
+
   /**
    * Runtime params (DataLayerManager.setLayerParams path).
    * catalog: 'core' (default, ~840 sats) | 'dense' (adds the Starlink shell
    * as points-only extras on a relaxed propagation budget).
-   * @param {{ catalog?: 'core'|'dense', showPoints?: boolean, showOrbits?: boolean, selectedSatTrackingId?: number|null }} [params]
+   * @param {{ catalog?: 'core'|'dense', showPoints?: boolean, showOrbits?: boolean, labelMode?: 'focus'|'all', selectedSatTrackingId?: number|null }} [params]
    */
   setParams(params = {}, { origin = 'programmatic' } = {}) {
     if (isExplicitLayerStateOrigin(origin)
@@ -2070,6 +2172,7 @@ const satellitesLayer = {
     }
     const catalog = params.catalog;
     if (catalog !== undefined && catalog !== 'core' && catalog !== 'dense') return false;
+    if (params.labelMode !== undefined && params.labelMode !== 'focus' && params.labelMode !== 'all') return false;
     const catalogChanged = satelliteCatalogModeChanged(_params.catalog, catalog);
     if (catalogChanged) {
       _params.catalog = catalog;
@@ -2077,10 +2180,15 @@ const satellitesLayer = {
     if (params.showPoints !== undefined) {
       _params.showPoints = params.showPoints !== false;
       if (_pointCollection) _pointCollection.show = satelliteVisualsVisible(_enabled, _params.showPoints);
+      _syncFocusOverlay();
     }
     if (params.showOrbits !== undefined) {
       _params.showOrbits = params.showOrbits !== false;
       for (const path of _orbitPaths.values()) path.primitive.show = satelliteVisualsVisible(_enabled, _params.showOrbits);
+      _syncIssOverlay();
+    }
+    if (params.labelMode !== undefined) {
+      _params.labelMode = params.labelMode;
       _syncIssOverlay();
     }
     if (catalogChanged && catalog === 'dense') {
@@ -2118,6 +2226,7 @@ const satellitesLayer = {
       catalog: _params.catalog,
       showPoints: _params.showPoints,
       showOrbits: _params.showOrbits,
+      labelMode: _params.labelMode,
       selectedSatTrackingId: _trackedNorad,
     };
   },

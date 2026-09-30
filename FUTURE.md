@@ -88,6 +88,65 @@ Engraphis work. A separate owner decision would be required to reconsider any su
 - WorldSignals remains parked unless a current saved edge and product test bring it into scope.
 - Do not connect trading execution to experimental graph or memory paths.
 
+### WorldView space-infrastructure research views — design, not shipped capability
+
+The September 29 space-infrastructure PromptSpec proposes testable research views, not a pro-SpaceX
+conclusion or permission to integrate more providers. One native God’s Eye WorldView remains the spatial
+surface. WorldSignals may later supply bounded history/dependency queries; WorldMonitor remains later
+macro context. Saved Cards retain agent authority and KnowGraph retains sourced-knowledge authority.
+
+**Attention contract:** Normal retains the relevant population with subdued, mostly unlabeled context.
+Focus retains that context and emphasizes only a bounded result set, its labels and relevant paths.
+Isolate explicitly hides unrelated context; it is never the default. Clear removes transient focus and
+returns to Normal without overriding an explicit selection/tracking target or saved display preference.
+Future context-strength control may continuously deemphasize the background; no such control, new glyph
+style, relationship paths or isolate action is implemented by the current label pass.
+
+**Evidence contract:** each future focused item references its native entity/layer ID and source identity,
+not a copied graph or a name-derived ownership claim. Each relation carries its source URL/reference,
+provider, observed/fetched times, validity/freshness and source-supported status. Derived relations also
+expose method, input references and time window; missing evidence remains unknown. The current exact-NORAD
+label focus is transient presentation state, not a durable research result or relationship store.
+
+Future sourced relationships include `OWNED_BY`, `OPERATED_BY`, `LAUNCHED_BY`,
+`DEPENDS_ON_LAUNCH_PROVIDER`, `COMMUNICATES_WITH`, `SERVES`, `USES_GATEWAY`, `USES_GROUND_STATION`,
+`USES_SPECTRUM`, `SHARES_ORBITAL_SHELL`, `COMPETES_WITH`, `ALTERNATIVE_TO` and `SUPPLIED_BY`.
+These are proposed research relations, not a deterministic ontology/router. Models and the existing
+sourced-knowledge owner establish meaning from evidence; proximity never establishes a relation.
+OWNED, DEPENDENT, CUSTOMER, COMPETITOR and ALTERNATIVE remain distinguishable classes without a
+legend-heavy globe. A customer is not automatically dependent. Launch-, network- and infrastructure-
+dependence each need an explicit measurable definition and supporting sources.
+
+| Future view | Spatial result and comparison | Evidence/derivation needed later |
+| --- | --- | --- |
+| SpaceX Infrastructure | Separate owned/operated assets, Starlink, pads/vehicles/missions, sourced gateways, customer payloads and dependents; retain competitors/alternatives as context. | Verified ownership/operator and service/dependency relations, including counterevidence. Names alone are insufficient. |
+| Launch Dependency / Provider Alternatives | Payload or constellation → provider → vehicle → site → mission date; compare alternative routes to orbit. | Historical and contracted launches, payload identity, mass where sourced, cadence, compatible capacity and regulatory limits. Expose historical/recent provider share and alternative availability on demand; no opaque permanent dependency score. |
+| Starlink / Constellation / Operator | Focus operator, constellation, country or mission class; compare active populations by altitude/inclination and analytical shell bands. | Authoritative classification, operational status and longitudinal deployment/deorbit records. A visible catalog count is not active fleet size. |
+| Orbital Shell Crowding | Show object distributions, operator share and time-windowed conjunction/debris pressure in specified useful regimes. | Validated orbital grouping, real close-approach/maneuver/debris data, spectrum coordination, coverage/latency and insertion constraints. Do not draw physical shell boundaries from analytical bins or equate raw count with collision risk or space itself being finite. |
+| LEO Broadband Competition / Ground Network | Compare LEO/GEO communications, gateways/ground stations, footprints, service regions, fiber, IXs, subsea routes/landing points, wireless and maritime/aviation utility. | Sourced service/communications links, capacity, coverage, ownership and substitutability. Satellite internet must not be assumed preferable everywhere. |
+| Global Data Centers — terrestrial counterview | Locations/industrial clusters plus sourced cloud regions, grid/generation, fiber/IX access and cooling/climate context. | Capacity and power/network connections where documented; location alone does not establish compute capacity or a grid/fiber dependency. |
+| Space Compute Feasibility / Terrestrial vs Orbital Compute | Globe: orbital/ground geometry, exposure, coverage and dependencies. Inspector: mass/cost, power/storage, thermal/radiators, radiation, maintenance/upgrades, latency/bandwidth, security/jurisdiction and disposal. | Explicit technical assumptions, sourced engineering/economic inputs and sensitivity/time windows; expose tradeoffs rather than one winner score. |
+| Launch + Communications Thesis / Substitutes | Compare cadence, deployment velocity, constellation/service scale, customers/dependents and alternative capacity. | Evidence supporting and weakening the thesis, including national launch systems, other constellations, GEO, fiber, subsea cables and terrestrial wireless. No BUY/SELL or “good investment” map fact. |
+| Temporal comparison | Deployment/retirement, provider share, launch cadence, gateway expansion and datacenter construction over a chosen interval. | Time-stamped history and coverage/completeness disclosures. Use timelines/sparklines when clearer than globe animation. |
+
+**Current source inventory and gaps:** `satellites.js` supplies CelesTrak core groups plus optional dense
+Starlink points and SGP4 positions, not verified ownership, dependence, spectrum or conjunction risk.
+`rocketLaunches.js` supplies the existing Launch Library 2 thirty-day mission/pad/provider/payload view,
+not complete launch history or alternative-provider capacity. Bundled OSM datacenters contain 4,351
+features and source-tagged geometry/name/operator/capacity metadata where present; their extraction date
+and query were not recorded. Native local layers also include USACE dams, not a complete power-grid dataset.
+The distribution currently omits TeleGeography’s cable dataset from `localLayers.js`; it is not an active
+network evidence source here. Future cable/fiber/IX, gateways, ground stations, cloud capacity, grid and
+orbital-risk inputs require separately approved providers/research and applicable data rights.
+
+**Current safe delta:** focus-only satellite names, an explicit saved Focus only/All preference, and a
+replaceable/clearable label focus of at most 50 exact renderable NORAD IDs through the existing action
+path. Points, brackets, propagation, DENSE, selection/tracking, Earth/providers and Space Missions remain
+unchanged. Semantic operator/shell/dependency queries, multi-layer typed focus, isolate, context-strength,
+new classifications, histories, provider integration and saved research presets are deferred. Future
+proof must show sourced OWNED/DEPENDENT/CUSTOMER/COMPETITOR/ALTERNATIVE sets, orbital context and terrestrial
+counterevidence on this same globe; design and visual acceptance remain pending owner review.
+
 ## Cleanup decisions intentionally deferred
 
 - Replace existing `liquidaity-*` technical identities only through one coordinated, branding-neutral

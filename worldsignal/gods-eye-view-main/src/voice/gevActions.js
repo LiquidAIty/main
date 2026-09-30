@@ -945,6 +945,37 @@ export function createGevActionRunner({ viewer, styleManager, dataManager, scene
       return controlRadio(viewer, dataManager, args, runOptions);
     }
 
+    if (name === 'focus_satellites') {
+      const action = 'focus_satellites';
+      if (Object.keys(args).length !== 1 || !Object.hasOwn(args, 'noradIds')
+        || !Array.isArray(args.noradIds) || args.noradIds.length > 50
+        || args.noradIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+        return { ok: false, action, error: 'invalid_satellite_focus_ids' };
+      }
+      if (runOptions.disabledLayerIds?.includes('satellites')) {
+        return { ok: false, action, error: 'project_satellite_layer_disabled' };
+      }
+      if (!dataManager.isEnabled('satellites')) {
+        return { ok: false, action, error: 'satellite_layer_disabled' };
+      }
+      const satellitesLayer = dataManager.layers.get('satellites')?.module;
+      if (typeof satellitesLayer?.setLabelFocus !== 'function'
+        || typeof satellitesLayer?.getLabelFocus !== 'function') {
+        return { ok: false, action, error: 'satellite_focus_unavailable' };
+      }
+      if (!current()) {
+        return { ok: false, action, error: 'worldview_action_cancelled', cancelled: true };
+      }
+      try {
+        if (satellitesLayer.setLabelFocus(args.noradIds) !== true) {
+          return { ok: false, action, error: 'satellite_focus_not_renderable' };
+        }
+        return { ok: true, action, focusedNoradIds: satellitesLayer.getLabelFocus() };
+      } catch {
+        return { ok: false, action, error: 'satellite_focus_unavailable' };
+      }
+    }
+
     if (name === 'track_entity') {
       return trackEntity(viewer, dataManager, styleManager, args);
     }

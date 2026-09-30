@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe('WorldView Card spatial action boundary', () => {
-  it('accepts only the six requested God\'s Eye actions', async () => {
+  it('accepts the bounded satellite focus action and existing God\'s Eye actions', async () => {
     const previousSecret = process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;
     const secret = 'test-only-worldview-action-boundary-secret';
     process.env.LIQUIDAITY_INTERNAL_MCP_SECRET = secret;
@@ -69,6 +69,21 @@ describe('WorldView Card spatial action boundary', () => {
         layerId: 'satellites', enabled: true,
       });
       expect(validLayer.status).toBe(200);
+      for (const noradIds of [[25544, 20580, 48274, 33591, 43013], []]) {
+        const focus = await call('focus_satellites', { noradIds });
+        expect(focus.status).toBe(200);
+        expect(await focus.json()).toMatchObject({
+          ok: true, result: { ok: false, error: 'worldview_mount_unavailable' },
+        });
+      }
+      for (const argumentsValue of [
+        {}, { noradIds: [0] }, { noradIds: ['25544'] },
+        { noradIds: [Number.MAX_SAFE_INTEGER + 1] },
+        { noradIds: Array.from({ length: 51 }, (_, index) => index + 1) },
+        { noradIds: [], other: true },
+      ]) {
+        expect((await call('focus_satellites', argumentsValue)).status).toBe(400);
+      }
       const coercedLayer = await call('set_layer_visibility', {
         layerId: 'satellites', enabled: 'false',
       });
@@ -80,7 +95,7 @@ describe('WorldView Card spatial action boundary', () => {
       expect(await outsideScope.json()).toMatchObject({
         ok: false, error: 'worldview_action_request_invalid',
       });
-      expect(runAuthorizer).toHaveBeenCalledTimes(6);
+      expect(runAuthorizer).toHaveBeenCalledTimes(8);
       expect(capabilityStore.set).not.toHaveBeenCalled();
     } finally {
       if (previousSecret === undefined) delete process.env.LIQUIDAITY_INTERNAL_MCP_SECRET;

@@ -282,6 +282,9 @@ test('ISS ambient and tracked lifecycle uses cached host entries with no native 
     overlayHost,
   });
   try {
+    assert.equal(satellitesLayer.getParams().labelMode, 'focus');
+    assert.equal(calls.some(([type, sourceId]) => type === 'entries' && sourceId === 'satellites-iss'), false);
+    assert.equal(satellitesLayer.setParams({ labelMode: 'all' }), true);
     const ambientPublication = calls.find(([type]) => type === 'entries');
     assert.ok(ambientPublication);
     assert.equal(ambientPublication[1], 'satellites-iss');
@@ -306,7 +309,7 @@ test('ISS ambient and tracked lifecycle uses cached host entries with no native 
       2,
       'tracking may refresh before ownership changes but must not publish a second ISS entry',
     );
-    assert.deepEqual(calls.slice(-2), [
+    assert.deepEqual(calls.filter(([, sourceId]) => sourceId === 'satellites-iss').slice(-2), [
       ['clear', 'satellites-iss'],
       ['visible', 'satellites-iss', false],
     ], 'tracked ISS suppresses ambient text so the tracked card is the only text surface');
@@ -337,4 +340,79 @@ test('ISS overlay entry retains the native distance scale and source text', () =
   });
   assert.equal(entry.edgeFade, 'keyhole');
   assert.equal(entry.horizonCull, true);
+});
+
+test('bounded satellite focus labels replace and clear without changing points or detection rows', () => {
+  const calls = [];
+  let rejectFocusPaint = false;
+  const overlayHost = {
+    setEntries: (...args) => {
+      if (rejectFocusPaint && args[0] === 'satellites-focus') throw new Error('overlay unavailable');
+      calls.push(['entries', ...args]);
+    },
+    setVisible: (...args) => calls.push(['visible', ...args]),
+    clearSource: (...args) => calls.push(['clear', ...args]),
+  };
+  const point = (longitude) => ({
+    position: Cesium.Cartesian3.fromDegrees(longitude, 30, 420_000),
+    show: true,
+  });
+  const iss = point(-97);
+  const core = point(-98);
+  const dense = point(-99);
+  const viewer = {
+    entities: new Cesium.EntityCollection(),
+    trackedEntity: undefined,
+    scene: { frameState: { frameNumber: 1 }, primitives: { remove() {} } },
+  };
+  _setSatelliteLabelLifecycleStateForTest({
+    viewer,
+    satrec: twoline2satrec(L1, L2),
+    point: iss,
+    overlayHost,
+    satellites: [
+      { noradId: 1234, name: 'CORE TEST', point: core },
+      { noradId: 5678, name: 'DENSE TEST', point: dense, group: 'dense' },
+    ],
+  });
+  try {
+    const before = satellitesLayer.getDetectableObjects();
+    assert.equal(before.length, 3);
+    assert.ok(before.every((row) => row.labelHidden === true));
+    assert.equal(satellitesLayer.setLabelFocus([25544, 1234, 5678]), true);
+    assert.deepEqual(satellitesLayer.getLabelFocus(), [25544, 1234, 5678]);
+    const focus = calls.filter(([kind, source]) => kind === 'entries' && source === 'satellites-focus').at(-1)[2];
+    assert.deepEqual(focus.map((entry) => entry.title), ['ISS (ZARYA)', 'CORE TEST', 'DENSE TEST']);
+    assert.ok(focus.every((entry) => entry.protected && entry.paintLane === 'ambient-label'));
+    assert.equal(focus[2].position(), dense.position);
+    assert.ok(_trackIssForTest());
+    const whileTracked = calls.filter(([kind, source]) => kind === 'entries' && source === 'satellites-focus').at(-1)[2];
+    assert.deepEqual(whileTracked.map((entry) => entry.title), ['CORE TEST', 'DENSE TEST']);
+    assert.equal(satellitesLayer.getDetectableObjects().find((row) => row.sourceId === 25544).skipLabel, true);
+    satellitesLayer.stopTracking();
+    const afterTracking = calls.filter(([kind, source]) => kind === 'entries' && source === 'satellites-focus').at(-1)[2];
+    assert.deepEqual(afterTracking.map((entry) => entry.title), ['ISS (ZARYA)', 'CORE TEST', 'DENSE TEST']);
+    assert.deepEqual(satellitesLayer.getDetectableObjects().map((row) => row.sourceId), before.map((row) => row.sourceId));
+    for (const invalid of [[1234, 9999], [0], [1.5], ['1234'], [Number.MAX_SAFE_INTEGER + 1], Array(51).fill(1234)]) {
+      assert.equal(satellitesLayer.setLabelFocus(invalid), false);
+      assert.deepEqual(satellitesLayer.getLabelFocus(), [25544, 1234, 5678]);
+    }
+    assert.equal(satellitesLayer.setParams({ labelMode: 'all' }), true);
+    const allRows = satellitesLayer.getDetectableObjects();
+    assert.equal(allRows.find((row) => row.sourceId === 1234).labelHidden, true);
+    assert.equal(satellitesLayer.setLabelFocus([5678]), true);
+    assert.deepEqual(satellitesLayer.getLabelFocus(), [5678]);
+    rejectFocusPaint = true;
+    assert.equal(satellitesLayer.setLabelFocus([1234]), false);
+    assert.deepEqual(satellitesLayer.getLabelFocus(), [5678]);
+    rejectFocusPaint = false;
+    assert.equal(satellitesLayer.getDetectableObjects().find((row) => row.sourceId === 1234).labelHidden, false);
+    assert.equal(satellitesLayer.setLabelFocus([]), true);
+    assert.deepEqual(satellitesLayer.getLabelFocus(), []);
+    assert.equal(satellitesLayer.getDetectableObjects().find((row) => row.sourceId === 1234).labelHidden, false);
+    assert.equal(satellitesLayer.setParams({ labelMode: 'nearby' }), false);
+    assert.equal(satellitesLayer.getParams().labelMode, 'all');
+  } finally {
+    _clearSatelliteLabelLifecycleForTest();
+  }
 });

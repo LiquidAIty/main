@@ -22,6 +22,7 @@ export type NativeWorldViewMount = {
     catalog?: 'core' | 'dense';
     showPoints?: boolean;
     showOrbits?: boolean;
+    labelMode?: 'focus' | 'all';
   }) => string | null;
   focusSelection: (selection: unknown) => string | null;
   executeAction: (

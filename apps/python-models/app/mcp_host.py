@@ -2306,12 +2306,16 @@ def _application_tools() -> list[Tool]:
                 "Saved WorldView Hermes Card only: execute one existing God's Eye action "
                 "against the currently mounted WorldView in this Project. Examples: "
                 "get_current_view_state, get_entity_context, track_entity, "
+                "focus_satellites, "
                 "set_layer_visibility, zoom_to_globe. The current Project source "
                 "OFF ceiling is enforced; an absent or ambiguous mount fails closed. "
                 "set_layer_visibility changes the shared Project choice and is only "
                 "for an explicit request in the current user turn to change that layer; "
                 "never enable a layer for passive scene questions or analysis. Returns "
-                "the real action readback, not an inferred success."
+                "the real action readback, not an inferred success. "
+                "focus_satellites takes exactly {noradIds: [positive safe integer]} "
+                "with at most 50 exact NORAD IDs; [] clears transient agent focus. "
+                "Establish bounded IDs from existing context before calling it."
             ),
             inputSchema={
                 "type": "object",
@@ -2324,6 +2328,7 @@ def _application_tools() -> list[Tool]:
                             "zoom_to_globe",
                             "track_entity",
                             "stop_tracking",
+                            "focus_satellites",
                             "set_layer_visibility",
                         ],
                     },

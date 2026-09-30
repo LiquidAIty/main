@@ -331,6 +331,21 @@ test('compact URL omits absent-meaning option state and still resolves to it', (
   assert.deepEqual(roundTrip.options.satellites.selectedSatTrackingId, null);
 });
 
+test('Satellite label mode defaults to focus and persists an explicit All preference', () => {
+  const defaultState = createDefaultLayerState();
+  assert.equal(defaultState.options.satellites.labelMode, 'focus');
+  const chosen = normalizeLayerState({
+    enabledLayerIds: ['satellites'],
+    options: { satellites: { labelMode: 'all' } },
+  });
+  assert.equal(chosen.options.satellites.labelMode, 'all');
+  const params = new URLSearchParams('v=2');
+  encodeLayerStateParams(params, chosen);
+  assert.equal(decodeLayerStateParams(params).options.satellites.labelMode, 'all');
+  assert.equal(parseStoredLayerState(serializeStoredLayerState(chosen)).options.satellites.labelMode, 'all');
+  assert.equal(normalizeLayerState({ options: { satellites: { labelMode: 'nearby' } } }).options.satellites.labelMode, 'focus');
+});
+
 test('a fresh boot starts 3D aircraft ON in proximity — codec, both layers, and the rail agree', async () => {
   // Product invariant 2026-08-22: the DISPLAY-rail 3D toggle defaults ON with mode
   // `proximity`, because proximity is itself the budget — models materialize only

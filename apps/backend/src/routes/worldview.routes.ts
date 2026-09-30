@@ -54,6 +54,7 @@ const SPATIAL_ACTIONS = new Set([
   'zoom_to_globe',
   'track_entity',
   'stop_tracking',
+  'focus_satellites',
   'set_layer_visibility',
 ]);
 const ACTION_TIMEOUT_MS = 30_000;
@@ -201,6 +202,12 @@ function actionRequest(value: unknown): WorldviewAction | null {
     if (Object.keys(args).sort().join('\0') !== 'enabled\0layerId'
       || typeof args.layerId !== 'string' || !args.layerId.trim()
       || args.layerId.length > 128 || typeof args.enabled !== 'boolean') return null;
+  }
+  if (body.name === 'focus_satellites') {
+    const args = body.arguments as Record<string, unknown>;
+    if (Object.keys(args).length !== 1 || !Object.hasOwn(args, 'noradIds')
+      || !Array.isArray(args.noradIds) || args.noradIds.length > 50
+      || args.noradIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
   }
   if (Buffer.byteLength(JSON.stringify(body.arguments)) > MAX_ACTION_BYTES) return null;
   return body as WorldviewAction;
