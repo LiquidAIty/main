@@ -41,7 +41,6 @@ import { resetContextStore } from '../data/contextStore.js';
 import { createDirectHostBridge } from './directBridge.js';
 import {
   getExposedApplicationViewport,
-  getExposedPerspectiveXOffset,
 } from './viewport.js';
 
 function describeError(error) {
@@ -70,31 +69,12 @@ function installRootResize(root, viewer) {
   let lastHeight = 0;
   let lastVisibleWidth = -1;
   let lastOccludedLeft = -1;
-  let managedFrustum = null;
-  let baseXOffset = 0;
-  let exposedViewport = null;
   const previousSafeInset = root.style.getPropertyValue('--worldview-occluded-left');
-  const syncProjection = () => {
-    const frustum = viewer.camera?.frustum;
-    if (frustum !== managedFrustum) {
-      managedFrustum = frustum;
-      baseXOffset = Number.isFinite(frustum?.xOffset) ? frustum.xOffset : 0;
-    }
-    const offset = getExposedPerspectiveXOffset(
-      frustum,
-      exposedViewport,
-      baseXOffset,
-    );
-    if (offset !== null && Math.abs(frustum.xOffset - offset) > 1e-9) {
-      frustum.xOffset = offset;
-    }
-  };
   const resize = () => {
     const rect = root.getBoundingClientRect();
     const width = Math.max(1, Math.round(rect.width));
     const height = Math.max(1, Math.round(rect.height));
     const exposed = getExposedApplicationViewport(root);
-    exposedViewport = exposed?.width > 0 ? exposed : null;
     const visibleWidth = Math.round(exposed?.width ?? width);
     const occludedLeft = exposed?.width > 0
       ? Math.round(exposed.occludedLeft) : 0;
@@ -107,7 +87,6 @@ function installRootResize(root, viewer) {
     lastOccludedLeft = occludedLeft;
     root.style.setProperty('--worldview-occluded-left', `${occludedLeft}px`);
     if (rootChanged) viewer.resize?.();
-    syncProjection();
     governorRequestRender('worldview-root-resize');
     window.dispatchEvent(new CustomEvent('gev:viewport-resize', {
       detail: { width, height, left: rect.left, top: rect.top,
@@ -118,14 +97,9 @@ function installRootResize(root, viewer) {
     // that native signal after the root-local dimensions have settled.
     window.dispatchEvent(new Event('resize'));
   };
-  const removePreRender = viewer.scene?.preRender?.addEventListener?.(syncProjection);
   const clip = root.closest?.('[data-companion-visible-viewport="true"]');
   const cleanup = (stopObserving) => () => {
     stopObserving();
-    removePreRender?.();
-    if (managedFrustum && Number.isFinite(managedFrustum.xOffset)) {
-      managedFrustum.xOffset = baseXOffset;
-    }
     if (previousSafeInset) root.style.setProperty('--worldview-occluded-left', previousSafeInset);
     else root.style.removeProperty('--worldview-occluded-left');
   };
@@ -187,6 +161,16 @@ export function createWorldViewApplication({
       defer(() => resetContextStore());
       loaderStatus.textContent = 'Configuring viewer...';
       if (cesiumToken) Cesium.Ion.defaultAccessToken = cesiumToken;
+      const previousIonServer = Cesium.Ion.defaultServer;
+      if (supervised) {
+        const mountedIonServer = new Cesium.Resource({ url: '/cesium-ion/' });
+        Cesium.Ion.defaultServer = mountedIonServer;
+        defer(() => {
+          if (Cesium.Ion.defaultServer === mountedIonServer) {
+            Cesium.Ion.defaultServer = previousIonServer;
+          }
+        });
+      }
       // The mounted app may use Cesium ion's cached Google Photorealistic
       // asset without a direct Google Maps key. Reset the module-global key
       // when none was supplied so Cesium takes its native ion branch rather
@@ -232,7 +216,10 @@ export function createWorldViewApplication({
           viewer.scene.globe.show = false;
         } catch (error) {
           if (signal.aborted) throw error;
-          console.warn('[WorldView] Google 3D Tiles unavailable; using Cesium globe:', error);
+          const statusCode = Number.isFinite(error?.statusCode) ? error.statusCode : null;
+          console.warn(
+            `[WorldView] Google 3D Tiles unavailable; using Cesium globe (status=${statusCode ?? 'network'})`,
+          );
           loaderStatus.textContent = `Google 3D Tiles unavailable (${describeError(error)}). Continuing in fallback mode...`;
           viewer.scene.globe.show = true;
         }

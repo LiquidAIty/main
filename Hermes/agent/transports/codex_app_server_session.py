@@ -102,7 +102,7 @@ def _notification_belongs_to_turn(note: dict, *, thread_id: Optional[str], turn_
 
 
 def _coerce_turn_input_text(user_input: Any) -> str:
-    """Collapse rich content parts into app-server text (``turn/start`` is text-only; images become a marker)."""
+    """Text projection for input-echo attribution; image pixels travel separately."""
     if isinstance(user_input, str):
         return user_input
     if not isinstance(user_input, list):
@@ -117,6 +117,30 @@ def _coerce_turn_input_text(user_input: Any) -> str:
         elif item.get("type") in {"image", "image_url", "input_image"}:
             parts.append("[image attached]")
     return "\n\n".join(p for p in parts if p).strip() or "What do you see in this image?"
+
+
+def _coerce_turn_input_items(user_input: Any) -> list[dict[str, Any]]:
+    """Project Hermes rich content into native app-server text and image items."""
+    items = [{"type": "text", "text": _coerce_turn_input_text(user_input)}]
+    if not isinstance(user_input, list):
+        return items
+    for part in user_input:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type")
+        if kind in {"image", "image_url", "input_image"}:
+            source = part.get("image_url", part.get("url"))
+            if isinstance(source, dict):
+                source = source.get("url")
+            if not isinstance(source, str) or not source:
+                raise ValueError("codex_turn_image_url_required")
+            items.append({"type": "image", "url": source})
+        elif kind == "localImage":
+            path = part.get("path")
+            if not isinstance(path, str) or not path:
+                raise ValueError("codex_turn_image_path_required")
+            items.append({"type": "localImage", "path": path})
+    return items
 
 
 # Substrings in codex stderr / JSON-RPC errors signalling expired OAuth creds.
@@ -398,7 +422,7 @@ class CodexAppServerSession:
                     result, "turn/start",
                     {
                         "threadId": self._thread_id,
-                        "input": [{"type": "text", "text": result.submitted_user_text}],
+                        "input": _coerce_turn_input_items(user_input),
                         **({"effort": self._effort} if self._effort is not None else {}),
                     },
                     "turn/start",

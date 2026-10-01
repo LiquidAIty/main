@@ -610,6 +610,11 @@ const orchestratorMocks = vi.hoisted(() => {
         deckRevision: 'deck-revision-one',
         cardRevisionId: body.cardRevisionId,
         runtimeOwner: 'hermes',
+        jevAutoTools: delegateCard ? {
+          enabled: true,
+          status: 'selected',
+          selectedTools: ['cbm.search_graph'],
+        } : undefined,
         resolvedNativeReads: graphConfigured
           ? [{ authority: 'ThinkGraph', nativeId: 'think-root-1' }]
           : delegateCard ? [{ authority: 'CodeGraph', nativeId: 'pkg.materialize_idf' }] : [],
@@ -2268,6 +2273,11 @@ describe('saved Card routes', () => {
           runtimeOwner: 'hermes',
           output: 'Real assistant reply.',
           invocation: {
+            jevAutoTools: {
+              enabled: true,
+              status: 'selected',
+              selectedTools: ['cbm.search_graph'],
+            },
             resolvedGraphProjection: {
               nodes: [{ id: 'pkg.materialize_idf' }],
               edges: [],

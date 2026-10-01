@@ -3868,8 +3868,11 @@ def _apply_card_jev_decisions(
     incomplete_context_reason = None
     if images:
         incomplete_context_reason = "card_jev_attachment_content_unavailable"
-    elif call_config.get("skills"):
-        incomplete_context_reason = "card_jev_skill_material_unavailable"
+    # Hermes owns skill loading and selection. A saved skill does not make the
+    # authorized tool contracts incomplete for Jev's tool-only decision.
+    model_context_reason = incomplete_context_reason
+    if model_context_reason is None and call_config.get("skills"):
+        model_context_reason = "card_jev_skill_material_unavailable"
     by_id = {
         str(definition.get("canonicalId") or ""): definition
         for definition in tool_definitions
@@ -3949,7 +3952,7 @@ def _apply_card_jev_decisions(
     prepared["jevAutoTools"] = tool_receipt
 
     saved_provider = dict(call_config["provider"])
-    if runtime_options.get("autoSelect") is True and incomplete_context_reason:
+    if runtime_options.get("autoSelect") is True and model_context_reason:
         router_receipt = {
             "schemaVersion": "card-model-router.v1",
             "enabled": True,
@@ -3958,7 +3961,7 @@ def _apply_card_jev_decisions(
             "questionCount": 0,
             "savedModel": saved_provider,
             "selectedModel": saved_provider,
-            "errorCode": incomplete_context_reason,
+            "errorCode": model_context_reason,
         }
     elif runtime_options.get("autoSelect") is True:
         estimated_tokens = max(

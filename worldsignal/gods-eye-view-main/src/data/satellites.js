@@ -43,7 +43,8 @@ import { isExplicitLayerStateOrigin } from './layerState.js';
  * Renders positions via PointPrimitiveCollection, orbital paths as polylines.
  * Click any satellite to track it with camera follow + orbital path.
  *
- * ISS gets special treatment: larger point, persistent host label, path shown by default.
+ * ISS gets special treatment: a larger point and persistent host label.
+ * Orbit paths are created only for the actively tracked satellite.
  */
 
 const ISS_NORAD = 25544;
@@ -750,10 +751,8 @@ function _clearTracking(skipViewerUntrack = false, { origin = 'programmatic' } =
   _trackedFrameNumber = -1;
   _trackedFrameGeo = null;
 
-  // Remove tracked entity and orbit path (unless ISS — keep its path)
-  if (_trackedNorad !== ISS_NORAD) {
-    _hideOrbitPath(_trackedNorad);
-  }
+  // Orbit paths exist only while their satellite is actively tracked.
+  _hideOrbitPath(_trackedNorad);
   if (_viewer && !skipViewerUntrack) _viewer.trackedEntity = undefined;
   if (_trackedEntity) {
     _viewer.entities.remove(_trackedEntity);
@@ -1807,12 +1806,7 @@ const satellitesLayer = {
         _points.set(noradId, point);
       }
 
-      // Show ISS orbital path by default
       if (_catalog.has(ISS_NORAD)) {
-        _showOrbitPath(ISS_NORAD, POINT_STYLES.iss.color);
-        const issPath = _orbitPaths.get(ISS_NORAD);
-        if (issPath) issPath.primitive.show = _params.showOrbits;
-
         _syncIssOverlay();
       }
 
@@ -1827,7 +1821,7 @@ const satellitesLayer = {
         status: failed.length ? 'partial' : 'accepted',
         failedGroups: [...failed],
       };
-      console.log(`[Data:Satellites] ${_count} satellites active, ISS path shown`);
+      console.log(`[Data:Satellites] ${_count} satellites active`);
 
       // Re-apply dense mode after a full catalog rebuild (fire-and-forget —
       // _loadDenseCatalog handles its own errors and token invalidation).

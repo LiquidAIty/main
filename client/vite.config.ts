@@ -132,8 +132,13 @@ ${WORLDVIEW_SELECTOR}, ${WORLDVIEW_SELECTOR} * { box-sizing: border-box; }
 
 export default defineConfig(({ mode }) => {
   const vendorEnv = loadEnv(mode, worldviewRoot, '');
-  const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY ?? vendorEnv.GOOGLE_MAPS_API_KEY;
-  const cesiumIonToken = process.env.CESIUM_ION_TOKEN ?? vendorEnv.CESIUM_ION_TOKEN;
+  const applicationProviderEnv = loadEnv(mode, path.resolve(repoRoot, 'apps/backend'), [
+    'GOOGLE_MAPS_API_KEY', 'CESIUM_ION_TOKEN',
+  ]);
+  const googleMapsApiKey = process.env.GOOGLE_MAPS_API_KEY
+    ?? vendorEnv.GOOGLE_MAPS_API_KEY ?? applicationProviderEnv.GOOGLE_MAPS_API_KEY;
+  const cesiumIonToken = process.env.CESIUM_ION_TOKEN
+    ?? vendorEnv.CESIUM_ION_TOKEN ?? applicationProviderEnv.CESIUM_ION_TOKEN;
   return {
     root: __dirname,
     envDir: path.resolve(__dirname, '..'),
@@ -240,6 +245,12 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: false,
       proxy: {
+        '/cesium-ion': {
+          target: 'https://api.cesium.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
+        },
         // Direct-mounted WorldView still uses the controlled fork's Vite
         // provider middleware for its native data APIs and static models. It
         // renders in this React document; this prefix is transport, not an
@@ -273,6 +284,12 @@ export default defineConfig(({ mode }) => {
     preview: {
       host: '127.0.0.1',
       proxy: {
+        '/cesium-ion': {
+          target: 'https://api.cesium.com',
+          changeOrigin: true,
+          secure: true,
+          rewrite: (p) => p.replace(/^\/cesium-ion/, ''),
+        },
         '/worldview-native': {
           target: 'http://127.0.0.1:4174',
           changeOrigin: true,

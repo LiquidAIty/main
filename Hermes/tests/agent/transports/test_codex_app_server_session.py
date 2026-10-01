@@ -20,6 +20,7 @@ from agent.transports.codex_app_server_session import (
     CodexAppServerSession,
     _ServerRequestRouting,
     _approval_choice_to_codex_decision,
+    _coerce_turn_input_items,
     _coerce_turn_input_text,
 )
 
@@ -307,6 +308,29 @@ class TestTurnInputCoercion:
         ])
         assert text == "caption\n\n[image attached]"
 
+    @pytest.mark.parametrize("image", [
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,YWJj"}},
+        {"type": "input_image", "image_url": "data:image/jpeg;base64,YWJj"},
+        {"type": "image", "url": "data:image/jpeg;base64,YWJj"},
+    ])
+    def test_image_pixels_survive_protocol_projection(self, image):
+        parts = _coerce_turn_input_items([{"type": "text", "text": "caption"}, image])
+        assert parts[1] == {"type": "image", "url": "data:image/jpeg;base64,YWJj"}
+
+    def test_local_image_and_plain_text_keep_native_contracts(self):
+        assert _coerce_turn_input_items("unchanged text") == [
+            {"type": "text", "text": "unchanged text"},
+        ]
+        parts = _coerce_turn_input_items([
+            {"type": "text", "text": "caption"},
+            {"type": "localImage", "path": "C:/session/viewport.jpg"},
+        ])
+        assert parts[1] == {"type": "localImage", "path": "C:/session/viewport.jpg"}
+
+    def test_missing_image_url_is_not_silently_replaced_by_text(self):
+        with pytest.raises(ValueError, match="codex_turn_image_url_required"):
+            _coerce_turn_input_items([{"type": "image_url", "image_url": {}}])
+
 
 # ---- lifecycle ----
 
@@ -384,6 +408,7 @@ class TestRunTurn:
         _, params = next(request for request in client.requests if request[0] == "turn/start")
         assert result.submitted_user_text == params["input"][0]["text"]
         assert result.submitted_user_text != rich_input
+        assert params["input"][1] == {"type": "image", "url": "data:image/png;base64,abc"}
 
     def test_foreign_completion_in_server_request_drain_is_ignored(self):
         """Approval draining must not project a child result into the parent."""

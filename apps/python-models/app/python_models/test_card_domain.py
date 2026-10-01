@@ -5187,6 +5187,51 @@ def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
     assert prepared["jevModelRouter"]["enabled"] is auto_select
 
 
+def test_card_auto_tools_selects_with_hermes_skill_without_selecting_the_skill(
+    monkeypatch,
+) -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=True,
+        auto_select=True,
+    )
+    call_config["skills"] = ["grounded-citations"]
+    calls = []
+
+    def decide_tools(context, candidates):
+        calls.append([item["canonicalId"] for item in candidates])
+        assert context["saved_card"]["skills"] == ["grounded-citations"]
+        return ["native.read"], {
+            "schemaVersion": "card-auto-tools.v1",
+            "enabled": True,
+            "status": "selected",
+            "requestCount": 1,
+            "questionCount": len(candidates),
+            "selectedTools": ["native.read"],
+        }
+
+    monkeypatch.setattr(card_domain, "_decide_card_auto_tools", decide_tools)
+    selected = card_domain._apply_card_jev_decisions(
+        payload={"configuredModels": models},
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the result.",
+        assignment="Inspect the native record.",
+        tool_definitions=definitions,
+        saved_script_value=None,
+        graph_text="",
+        references=[],
+        images=[],
+    )
+
+    assert calls == [["native.read", "native.write"]]
+    assert [item["canonicalId"] for item in selected] == ["native.read"]
+    assert call_config["skills"] == ["grounded-citations"]
+    assert prepared["jevAutoTools"]["status"] == "selected"
+    assert prepared["jevAutoTools"]["selectedTools"] == ["native.read"]
+    assert prepared["jevModelRouter"]["status"] == "unavailable"
+    assert prepared["jevModelRouter"]["errorCode"] == "card_jev_skill_material_unavailable"
+
+
 def test_card_auto_tools_failure_restores_complete_saved_authorized_set(
     monkeypatch,
 ) -> None:

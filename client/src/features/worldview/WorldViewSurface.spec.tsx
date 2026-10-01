@@ -188,7 +188,7 @@ describe('WorldView direct source presentation', () => {
     expect(callbacks().onLayerVisibilityChange).toBeTypeOf('function');
   });
 
-  it('keeps compact pan, zoom, and fit controls on the globe when the Inspector is closed', async () => {
+  it('keeps only shared zoom and fit controls on the globe when the Inspector is closed', async () => {
     directHost.executeAction.mockResolvedValue({ ok: true });
     render(<WorldViewSurface {...scope} />);
     expect(screen.queryByRole('button', { name: 'Fit view' })).toBeNull();
@@ -196,29 +196,17 @@ describe('WorldView direct source presentation', () => {
     const controls = screen.getByTestId('graph-navigation-controls');
     expect(controls.parentElement).toBe(screen.getByLabelText('WorldView globe').parentElement);
     expect(screen.getByTestId('workspace-inspector-drawer').contains(controls)).toBe(false);
-    expect(screen.queryByRole('group', { name: 'WorldView navigation' })).toBeNull();
-    expect(controls.querySelectorAll('button')).toHaveLength(7);
+    expect(controls.querySelectorAll('button')).toHaveLength(3);
     expect(controls.textContent).not.toMatch(/fit|earth|home/i);
-    fireEvent.click(controls.querySelector('[aria-label="Pan left"]')!);
-    fireEvent.click(controls.querySelector('[aria-label="Pan up"]')!);
-    fireEvent.click(controls.querySelector('[aria-label="Pan down"]')!);
-    fireEvent.click(controls.querySelector('[aria-label="Pan right"]')!);
+    expect(controls.querySelector('[aria-label^="Pan "]')).toBeNull();
     fireEvent.click(controls.querySelector('[aria-label="Zoom in"]')!);
     fireEvent.click(controls.querySelector('[aria-label="Zoom out"]')!);
     fireEvent.click(controls.querySelector('[aria-label="Fit view"]')!);
     expect(directHost.executeAction).toHaveBeenNthCalledWith(1,
-      'move_camera', { motion: 'pan', direction: 'left', mode: 'once' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(2,
-      'move_camera', { motion: 'pan', direction: 'up', mode: 'once' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(3,
-      'move_camera', { motion: 'pan', direction: 'down', mode: 'once' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(4,
-      'move_camera', { motion: 'pan', direction: 'right', mode: 'once' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(5,
       'adjust_camera_zoom', { direction: 'in', amount: 'little' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(6,
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(2,
       'adjust_camera_zoom', { direction: 'out', amount: 'little' });
-    expect(directHost.executeAction).toHaveBeenNthCalledWith(7, 'zoom_to_globe', {});
+    expect(directHost.executeAction).toHaveBeenNthCalledWith(3, 'zoom_to_globe', {});
     expect(directHost.setLayerVisibility).not.toHaveBeenCalled();
     expect(directHost.setSatelliteParams).not.toHaveBeenCalled();
   });
@@ -264,7 +252,7 @@ describe('WorldView direct source presentation', () => {
     let drawerRect = rect(680, 48, 308, 540);
     vi.spyOn(pane, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 1000, 600));
     vi.spyOn(clip, 'getBoundingClientRect').mockImplementation(() => rect(200, 0, 800, 600));
-    vi.spyOn(controls, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 128, 64));
+    vi.spyOn(controls, 'getBoundingClientRect').mockImplementation(() => rect(0, 0, 36, 108));
     vi.spyOn(inspectorHost, 'getBoundingClientRect').mockImplementation(() => drawerRect);
 
     act(() => window.dispatchEvent(new Event('resize')));

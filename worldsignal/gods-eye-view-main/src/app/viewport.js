@@ -81,17 +81,6 @@ export function getSatelliteOverviewViewports(root = applicationRoot) {
   })).filter((candidate) => candidate.width > 0 && candidate.height > 0);
 }
 
-/** Shift projection only: the geographic camera position and orientation stay put. */
-export function getExposedPerspectiveXOffset(frustum, exposed, baseOffset = 0) {
-  if (!frustum || !exposed || !(exposed.sourceWidth > 0)
-    || !Number.isFinite(frustum.xOffset)) return null;
-  const offCenter = frustum.offCenterFrustum;
-  const nearWidth = offCenter?.right - offCenter?.left;
-  if (!(nearWidth > 0) || !Number.isFinite(nearWidth)) return null;
-  return baseOffset - (exposed.occludedLeft * nearWidth)
-    / (2 * exposed.sourceWidth);
-}
-
 export function applicationViewportAtMost(maxWidth) {
   const limit = Number(maxWidth);
   return Number.isFinite(limit) && getApplicationViewport().width <= limit;

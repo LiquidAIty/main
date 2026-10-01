@@ -544,6 +544,21 @@ export function prepareAgentTerminal(
   }
   const env = cleanEnvironment(process.env);
   delete env.HERMES_EPHEMERAL_SYSTEM_PROMPT;
+  if (providerSelection.apiMode === 'codex_app_server' && process.platform === 'win32') {
+    const target = process.arch === 'x64'
+      ? { packageName: 'codex-win32-x64', triple: 'x86_64-pc-windows-msvc' }
+      : process.arch === 'arm64'
+        ? { packageName: 'codex-win32-arm64', triple: 'aarch64-pc-windows-msvc' }
+        : null;
+    if (target) {
+      const bin = path.join(root, 'node_modules', '@openai', target.packageName,
+        'vendor', target.triple, 'bin');
+      if (existsSync(path.join(bin, 'codex.exe'))) {
+        const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path';
+        env[pathKey] = `${bin}${path.delimiter}${env[pathKey] || ''}`;
+      }
+    }
+  }
   Object.assign(env, {
     HERMES_HOME: hermesHome,
     TERMINAL_CWD: cwd,

@@ -518,7 +518,6 @@ export default function WorldViewSurface({ projectId, cardId, onBridgeChange, in
           visibility: navigationPosition ? 'visible' : 'hidden' }}
         onZoomIn={() => navigate('adjust_camera_zoom', { direction: 'in', amount: 'little' })}
         onZoomOut={() => navigate('adjust_camera_zoom', { direction: 'out', amount: 'little' })}
-        onPan={(direction) => navigate('move_camera', { motion: 'pan', direction, mode: 'once' })}
         onFit={() => navigate('zoom_to_globe')}
       /> : null}
       {inspectorContainer ? createPortal(<>

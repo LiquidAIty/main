@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import {
   getExposedApplicationViewport,
-  getExposedPerspectiveXOffset,
   getSatelliteOverviewViewports,
 } from './viewport.js';
 
@@ -25,19 +24,6 @@ test('visible companion geometry follows Main overlap without changing mount dim
   assert.deepEqual(getExposedApplicationViewport(root), {
     ...rect(300, 20, 600, 600), sourceWidth: 800, occludedLeft: 200,
   });
-});
-
-test('projection centres the same camera target in the exposed pane', () => {
-  const frustum = {
-    xOffset: 0,
-    offCenterFrustum: { left: -2, right: 2 },
-  };
-  const full = { sourceWidth: 800, occludedLeft: 0 };
-  const covered = { sourceWidth: 800, occludedLeft: 200 };
-  assert.equal(getExposedPerspectiveXOffset(frustum, full), 0);
-  assert.equal(getExposedPerspectiveXOffset(frustum, covered), -0.5);
-  assert.equal(getExposedPerspectiveXOffset(frustum, covered, 0.25), -0.25);
-  assert.equal(getExposedPerspectiveXOffset({ xOffset: undefined }, covered), null);
 });
 
 test('orbital fit uses the actual open Inspector rectangle, including bottom-left placement', () => {

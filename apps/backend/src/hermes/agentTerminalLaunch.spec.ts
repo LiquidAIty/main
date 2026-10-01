@@ -202,6 +202,12 @@ describe('prepareAgentTerminal saved-card launch contract', () => {
       openaiRuntime: 'codex_app_server',
       profileOpenaiRuntime: 'codex_app_server',
     });
+    if (process.platform === 'win32') {
+      const pathKey = Object.keys(launch.env).find((key) => key.toLowerCase() === 'path') || 'Path';
+      expect(launch.env[pathKey]).toMatch(
+        /^C:\\repo\\node_modules\\@openai\\codex-win32-(x64|arm64)\\vendor\\[^\\]+\\bin;/,
+      );
+    }
   });
 
   it('defers Script capability materialization to the required canonical Run', () => {

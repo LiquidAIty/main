@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from tui_gateway.server import _active_image_routing_identity
+from tui_gateway.server import _active_image_routing_identity, _route_turn_images
 
 
 def test_live_agent_identity_wins_after_model_switch():
@@ -32,3 +32,24 @@ def test_missing_agent_identity_uses_runtime_fallback():
         identity = _active_image_routing_identity(agent)
 
     assert identity == ("openai-codex", "gpt-5.5-codex")
+
+
+def test_app_server_keeps_native_image_mode_for_vision_model():
+    agent = SimpleNamespace(provider="openai", model="saved-model", api_mode="codex_app_server")
+    parts = [
+        {"type": "text", "text": "describe the viewport"},
+        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,YWJj"}},
+    ]
+    with patch("hermes_cli.config.load_config", return_value={}), patch(
+        "agent.image_routing.decide_image_input_mode", return_value="native",
+    ), patch("agent.image_routing.build_native_content_parts", return_value=(parts, [])):
+        assert _route_turn_images(agent, "describe the viewport", ["viewport.jpg"]) == parts
+
+
+def test_app_server_preserves_explicit_text_image_routing():
+    agent = SimpleNamespace(provider="openai", model="saved-model", api_mode="codex_app_server")
+    with patch("hermes_cli.config.load_config", return_value={}), patch(
+        "agent.image_routing.decide_image_input_mode", return_value="text",
+    ), patch("agent.image_routing.build_native_content_parts") as build:
+        assert _route_turn_images(agent, "describe the viewport", []) == "describe the viewport"
+        build.assert_not_called()

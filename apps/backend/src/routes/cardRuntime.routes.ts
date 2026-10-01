@@ -2562,6 +2562,7 @@ router.post('/run', async (req, res) => {
             runtimeOwner: prepared.runtimeOwner,
             resolvedNativeReads: prepared.resolvedNativeReads,
             resolvedGraphProjection: prepared.resolvedGraphProjection,
+            jevAutoTools: prepared.jevAutoTools,
             idf: prepared.idf,
             inputSummary: prepared.inputSummary,
             inputFile: prepared.inputFile,

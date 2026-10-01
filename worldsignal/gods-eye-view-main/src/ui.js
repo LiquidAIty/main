@@ -2571,8 +2571,12 @@ export class StyleManager {
           const pinned = clampScopeTerminusPct(scopeTerminusPct);
           setScopeTerminusOverride(pinned == null ? null : pinned / 100);
         }
-        const mapStackRestore = mapStack
-          ? this._setMapStack(mapStack, { syncShare: false })
+        const restoredMapStack = supervisedEmbed && mapStack === 'osm'
+          && this.mapStackController?.isStackAvailable?.('photoreal')
+          ? 'photoreal'
+          : mapStack;
+        const mapStackRestore = restoredMapStack
+          ? this._setMapStack(restoredMapStack, { syncShare: false })
           : Promise.resolve();
         if (panelState) this._restorePanelState(panelState);
         await mapStackRestore;

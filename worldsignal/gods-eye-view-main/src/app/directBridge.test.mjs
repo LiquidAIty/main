@@ -452,6 +452,8 @@ test('direct mount keeps native controls, starts calmly, and removes the iframe 
   assert.match(ui, /const hudVisible = this\._supervisedEmbed \? false : defaults\.hudVisible/);
   assert.match(ui, /const celestialRing = this\._supervisedEmbed \? true : defaults\.celestialRing/);
   assert.match(ui, /explicitDisplayFieldsOnly: supervisedEmbed/);
+  assert.match(ui, /supervisedEmbed && mapStack === 'osm'/);
+  assert.match(ui, /isStackAvailable\?\.\('photoreal'\)/);
   assert.match(ui, /const initialHudVariant = this\._supervisedEmbed \? 'minimal' : 'tactical'/);
   assert.match(ui, /this\.hud\.setMode\(this\._supervisedEmbed \? 'off' : 'on'\)/);
   assert.doesNotMatch(mount, /iframe|postMessage/);

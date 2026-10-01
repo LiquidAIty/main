@@ -404,13 +404,19 @@ test('a real stations-feed outage keeps STATION in the legend, matching the card
   console.warn = () => {};
   try {
     _setDenseCatalogStateForTest({});
-    const viewer = { scene: { primitives: { add: (p) => p, remove() {} } } };
+    const addedPrimitives = [];
+    const viewer = { scene: { primitives: {
+      add: (primitive) => { addedPrimitives.push(primitive); return primitive; },
+      remove() {},
+    } } };
     globalThis.fetch = async (url) => ({
       ok: true,
       text: async () => (String(url).endsWith('/visual') ? ISS_TLE : ''),
     });
 
     await satellitesLayer.update(viewer);
+    assert.equal(addedPrimitives.length, 0,
+      'catalog refresh does not create an ambient ISS orbit path');
     assert.equal(_catalogGroupForTest(25544), 'visual',
       'the outage really did ingest the ISS from the visual group');
 
