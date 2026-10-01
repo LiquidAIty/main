@@ -24,6 +24,10 @@ export type AgentBuilderChatMessage = SharedChatMessage & { status?: 'pending' |
 
 export type MainChatVoicePhase = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
 
+export type MainChatRunInput = { images?: Array<Record<string, unknown>> };
+// Matches the native Hermes turn-image attachment count limit.
+export const MAX_MAIN_CHAT_IMAGES = 12;
+
 type UseAgentBuilderMainChatArgs = {
   canvasProjectId: string;
   deckId: string;
@@ -119,6 +123,7 @@ type PreparedChatSubmission = {
   text: string;
   targetCardId: string | null;
   participant: SharedChatParticipant;
+  runInput?: MainChatRunInput;
 };
 
 function participantForTarget(target: DirectChatTarget): SharedChatParticipant {
@@ -308,7 +313,7 @@ export default function useAgentBuilderMainChat({
     return true;
   }, [conversationKey, directChatTargets, mainCardId]);
 
-  const prepareSubmission = useCallback((text: string): PreparedChatSubmission => {
+  const prepareSubmission = useCallback((text: string, runInput?: MainChatRunInput): PreparedChatSubmission => {
     const prepared = prepareChatSubmission({
       conversationKey,
       text,
@@ -326,6 +331,7 @@ export default function useAgentBuilderMainChat({
       text: prepared.text,
       targetCardId: prepared.targetCardId,
       participant: prepared.participant,
+      ...(runInput?.images?.length ? { runInput: { images: structuredClone(runInput.images) } } : {}),
     };
   }, [conversationKey, directChatTargets, mainCardId, setCurrentResponderCardId]);
 
@@ -542,14 +548,14 @@ export default function useAgentBuilderMainChat({
       };
 
       try {
-        let images: Array<Record<string, unknown>> = [];
+        const images: Array<Record<string, unknown>> = [...(submission.runInput?.images || [])];
         if (prepareRunImages) {
           try {
-            images = await prepareRunImages(targetCardId);
+            const preparedImages = await prepareRunImages(targetCardId);
+            images.push(...preparedImages.slice(0, Math.max(0, MAX_MAIN_CHAT_IMAGES - images.length)));
           } catch {
             // Surface perception is additive. A stale/unmounted viewport must
             // never turn an otherwise valid shared-chat message into a failed turn.
-            images = [];
           }
         }
         const { finalText } = await streamSession({
@@ -744,14 +750,14 @@ export default function useAgentBuilderMainChat({
   );
 
   const requestMainText = useCallback(
-    (text: string): Promise<string> => requestPreparedText(prepareSubmission(text)),
+    (text: string, runInput?: MainChatRunInput): Promise<string> => requestPreparedText(prepareSubmission(text, runInput)),
     [prepareSubmission, requestPreparedText],
   );
 
   const handleNativeSend = useCallback(
-    (text: string) => {
+    (text: string, runInput?: MainChatRunInput) => {
       if (!text.trim()) return;
-      const submission = prepareSubmission(text);
+      const submission = prepareSubmission(text, runInput);
       if (nativeSessionPending || activeStreamRef.current?.key === conversationKey) {
         queuedInputsRef.current.push(submission);
         setQueuedInputCount(queuedInputsRef.current.length);

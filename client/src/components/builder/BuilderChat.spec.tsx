@@ -60,7 +60,7 @@ describe('BuilderChat', () => {
 
     expect(screen.getByTestId('builder-chat-active-indicator').textContent).toBe('');
     expect(screen.queryByText('Working…')).toBeNull();
-    expect((screen.getByPlaceholderText('Type a message…') as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByPlaceholderText('Type a message…') as HTMLTextAreaElement).disabled).toBe(false);
     const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(send);
@@ -137,7 +137,7 @@ describe('BuilderChat', () => {
 
     expect(screen.queryByText('Loading conversation…')).toBeNull();
     expect(screen.queryByTestId('builder-chat-active-indicator')).toBeNull();
-    expect((screen.getByPlaceholderText('Type a message…') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByPlaceholderText('Type a message…') as HTMLTextAreaElement).disabled).toBe(true);
     const send = screen.getByRole('button', { name: 'Send' });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(send);
@@ -175,7 +175,8 @@ describe('BuilderChat', () => {
     );
 
     expect(screen.queryByRole('combobox')).toBeNull();
-    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Attach images' })).not.toBeNull();
     expect(screen.getByPlaceholderText('Type a message…')).not.toBeNull();
     expect(screen.queryByTestId('builder-chat-current-responder')).toBeNull();
   });
@@ -196,10 +197,10 @@ describe('BuilderChat', () => {
       );
     }
     render(<ControlledChat />);
-    expect((screen.getByTestId('builder-chat-input') as HTMLInputElement).value).toBe('Imported Main task.');
+    expect((screen.getByTestId('builder-chat-input') as HTMLTextAreaElement).value).toBe('Imported Main task.');
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('Imported Main task.');
-    expect((screen.getByTestId('builder-chat-input') as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('builder-chat-input') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('sends the exact non-empty user text without trimming it', () => {
@@ -218,6 +219,92 @@ describe('BuilderChat', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(onSend).toHaveBeenCalledWith('  Exact user text.  ');
+  });
+
+  it('wraps multiline drafts, sends on Enter and preserves Shift+Enter and composing input', () => {
+    const onSend = vi.fn();
+    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
+    expect(input.tagName).toBe('TEXTAREA');
+    expect(input.style.whiteSpace).toBe('pre-wrap');
+    expect(input.style.overflowX).toBe('hidden');
+    fireEvent.change(input, { target: { value: '@Builder First line\nSecond line' } });
+    expect(fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(true);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false);
+    expect(onSend).toHaveBeenCalledWith('@Builder First line\nSecond line');
+    expect(input.value).toBe('');
+  });
+
+  it('grows and reflows the composer as its panel narrows, bounding tall drafts without visible scrollbars', () => {
+    let panelWidth = 600;
+    let neededHeight = 72;
+    const resizeCallbacks = new Map<Element, () => void>();
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => panelWidth);
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => neededHeight);
+    vi.stubGlobal('ResizeObserver', vi.fn((callback: ResizeObserverCallback) => ({
+      observe: (element: Element) => resizeCallbacks.set(element, () => callback([], {} as ResizeObserver)),
+      unobserve: vi.fn(), disconnect: vi.fn(),
+    })));
+    render(<BuilderChat messages={[]} onSend={vi.fn()} knowledgeProjectId="project-1" colors={colors} />);
+    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
+    expect(input.style.height).toBe('72px');
+    neededHeight = 120;
+    fireEvent.change(input, { target: { value: 'A wrapped draft with several lines.' } });
+    expect(input.style.height).toBe('120px');
+    panelWidth = 300;
+    neededHeight = 180;
+    act(() => resizeCallbacks.get(input.parentElement!)!());
+    expect(input.style.height).toBe('180px');
+    neededHeight = 900;
+    fireEvent.change(input, { target: { value: 'Long draft. '.repeat(100) } });
+    expect(Number.parseFloat(input.style.height)).toBeLessThanOrEqual(240);
+    expect(input.style.overflowY).toBe('auto');
+    expect(getComputedStyle(input).getPropertyValue('scrollbar-width')).toBe('none');
+    neededHeight = 40;
+    fireEvent.change(input, { target: { value: '' } });
+    expect(input.style.height).toBe('40px');
+  });
+
+  it('previews removable image files and sends the selected records through the existing composer while retaining PDF ingestion', async () => {
+    const onSend = vi.fn();
+    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    expect(screen.getByRole('button', { name: 'Attach knowledge PDF' })).not.toBeNull();
+    const files = screen.getByLabelText('Image files');
+    fireEvent.change(files, { target: { files: [new File(['pixels'], 'scene.png', { type: 'image/png' })] } });
+    expect(await screen.findByAltText('scene.png')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove scene.png' }));
+    expect(screen.queryByAltText('scene.png')).toBeNull();
+    fireEvent.change(files, { target: { files: [new File(['pixels'], 'scene.png', { type: 'image/png' })] } });
+    await screen.findByAltText('scene.png');
+    fireEvent.change(screen.getByTestId('builder-chat-input'), { target: { value: '@WorldView Inspect this image.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(onSend).toHaveBeenCalledWith('@WorldView Inspect this image.', {
+      images: [{ name: 'scene.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cGl4ZWxz', kind: 'user-upload' }],
+    });
+    expect(screen.queryByAltText('scene.png')).toBeNull();
+  });
+
+  it('accepts pasted images and rejects unsupported, oversized and over-count selections before sending', async () => {
+    const onSend = vi.fn();
+    render(<BuilderChat messages={[]} onSend={onSend} knowledgeProjectId="project-1" colors={colors} />);
+    const pasted = new File(['pixels'], 'pasted.png', { type: 'image/png' });
+    fireEvent.paste(screen.getByTestId('builder-chat-input'), {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => pasted }] },
+    });
+    await screen.findByAltText('pasted.png');
+    const files = screen.getByLabelText('Image files');
+    fireEvent.change(files, { target: { files: [new File(['svg'], 'vector.svg', { type: 'image/svg+xml' })] } });
+    await screen.findByText('Choose a PNG, JPEG, WebP or GIF image.');
+    const oversized = new File(['pixels'], 'large.png', { type: 'image/png' });
+    Object.defineProperty(oversized, 'size', { value: 10 * 1024 * 1024 + 1 });
+    fireEvent.change(files, { target: { files: [oversized] } });
+    await screen.findByText('Each image must be between 1 byte and 10 MB.');
+    fireEvent.change(files, { target: { files: Array.from({ length: 12 }, () => pasted) } });
+    await screen.findByText('A message can include at most 12 images.');
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it('filters the saved callable roster and completes the selected address with Tab', () => {
@@ -242,7 +329,7 @@ describe('BuilderChat', () => {
       />,
     );
 
-    const input = screen.getByTestId('builder-chat-input') as HTMLInputElement;
+    const input = screen.getByTestId('builder-chat-input') as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: '@b' } });
     expect(screen.getByTestId('builder-chat-address-Builder').textContent).toContain('@Builder');
     expect(screen.queryByTestId('builder-chat-address-Trading')).toBeNull();

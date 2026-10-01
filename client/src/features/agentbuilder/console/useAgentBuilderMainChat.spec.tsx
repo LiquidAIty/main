@@ -299,6 +299,139 @@ describe('Main chat live observation callbacks', () => {
     });
   });
 
+  it('passes user-uploaded images through a Main request without changing their content', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    mocks.streamSession.mockResolvedValue({ finalText: 'Image received.' });
+    const images = [{
+      name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
+      kind: 'user-upload',
+    }];
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.requestMainText('Read this chart.', { images });
+    });
+
+    expect(mocks.streamSession).toHaveBeenCalledOnce();
+    expect(mocks.streamSession.mock.calls[0][0]).toMatchObject({
+      message: 'Read this chart.', images,
+    });
+    expect(mocks.streamSession.mock.calls[0][0]).not.toHaveProperty('targetCardId');
+    expect(images).toEqual([{
+      name: 'chart.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
+      kind: 'user-upload',
+    }]);
+  });
+
+  it('combines user uploads with the viewport captured for the addressed Card', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    const uploadedImage = {
+      name: 'reference.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cmVmZXJlbmNl',
+      kind: 'user-upload',
+    };
+    const viewportRecord = {
+      schemaVersion: 'worldview.turn-context.v1', kind: 'worldview-viewport',
+      name: 'worldview-viewport.jpg',
+    };
+    const images = [uploadedImage];
+    const prepareRunImages = vi.fn().mockResolvedValue([viewportRecord]);
+    mocks.streamSession.mockResolvedValue({ finalText: 'Both images received.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets, prepareRunImages,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.requestMainText('@WorldView Compare these views.', { images });
+    });
+
+    expect(prepareRunImages).toHaveBeenCalledOnce();
+    expect(prepareRunImages).toHaveBeenCalledWith('card_worldview');
+    expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
+      message: '@WorldView Compare these views.', targetCardId: 'card_worldview',
+      images: [uploadedImage, viewportRecord],
+    }));
+    expect(images).toEqual([uploadedImage]);
+  });
+
+  it('keeps user uploads when the addressed Card viewport cannot be captured', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    const images = [{
+      name: 'reference.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,cmVmZXJlbmNl',
+      kind: 'user-upload',
+    }];
+    const prepareRunImages = vi.fn().mockRejectedValue(new Error('viewport unmounted'));
+    mocks.streamSession.mockResolvedValue({ finalText: 'Uploaded image received.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets, prepareRunImages,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    await act(async () => {
+      await expect(result.current.requestMainText('@WorldView Read this image.', { images }))
+        .resolves.toBe('Uploaded image received.');
+    });
+
+    expect(prepareRunImages).toHaveBeenCalledWith('card_worldview');
+    expect(mocks.streamSession).toHaveBeenCalledOnce();
+    expect(mocks.streamSession).toHaveBeenCalledWith(expect.objectContaining({
+      message: '@WorldView Read this image.', targetCardId: 'card_worldview', images,
+    }));
+    expect(result.current.technicalError).toBeNull();
+  });
+
+  it.each([11, 12])('uses only remaining viewport slots after %i user uploads', async (uploadCount) => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    const images = Array.from({ length: uploadCount }, (_, index) => ({
+      name: `upload-${index}.png`, mediaType: 'image/png',
+      dataUrl: 'data:image/png;base64,b3JpZ2luYWw=', kind: 'user-upload',
+    }));
+    const viewportRecords = [
+      { kind: 'worldview-viewport', name: 'first-viewport.jpg' },
+      { kind: 'worldview-viewport', name: 'second-viewport.jpg' },
+    ];
+    const prepareRunImages = vi.fn().mockResolvedValue(viewportRecords);
+    mocks.streamSession.mockResolvedValue({ finalText: 'Images received.' });
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets, prepareRunImages,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.requestMainText('@WorldView Compare the images.', { images });
+    });
+
+    const submittedImages = mocks.streamSession.mock.calls[0][0].images;
+    expect(submittedImages).toHaveLength(12);
+    expect(submittedImages.slice(0, uploadCount)).toEqual(images);
+    expect(submittedImages.slice(uploadCount)).toEqual(uploadCount === 11 ? [viewportRecords[0]] : []);
+    expect(images).toHaveLength(uploadCount);
+    expect(viewportRecords).toHaveLength(2);
+  });
+
   it('submits one WorldView voice transcript through the normal Card turn with current scene input', async () => {
     mocks.waitForBackendReady.mockResolvedValue(true);
     mocks.loadSessionHistory.mockResolvedValue({
@@ -467,6 +600,64 @@ describe('Main chat live observation callbacks', () => {
       message: 'Queued for Builder.',
       targetCardId: 'builder',
     });
+  });
+
+  it('snapshots queued images and the responder before the caller changes either', async () => {
+    mocks.waitForBackendReady.mockResolvedValue(true);
+    mocks.loadSessionHistory.mockResolvedValue({
+      runtimeSessionId: 'runtime-main', nativeSessionId: 'native-main',
+      mainCardId: 'card_main_chat', addressableAgents: [], messages: [], terminalEvents: [],
+    });
+    let finishFirst!: (value: { finalText: string }) => void;
+    mocks.streamSession
+      .mockImplementationOnce(({ onEvent }) => {
+        onEvent({ kind: 'session', runId: 'run-first', cardId: 'card_worldsignals_agent' });
+        return new Promise((resolve) => { finishFirst = resolve; });
+      })
+      .mockResolvedValueOnce({ finalText: 'Builder image reply.' });
+    const uploadedImage = {
+      name: 'original.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
+      kind: 'user-upload', metadata: { caption: 'Original caption' },
+    };
+    const images = [uploadedImage];
+    const { result } = renderHook(() => useAgentBuilderMainChat({
+      canvasProjectId: 'project-1', deckId: 'deck_builder', conversationId: 'main',
+      directChatTargets,
+    }));
+    await waitFor(() => expect(result.current.sessionHistoryLoading).toBe(false));
+
+    act(() => {
+      result.current.setCurrentResponderCardId('card_worldsignals_agent');
+      result.current.handleNativeSend('First turn.');
+    });
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(1));
+    act(() => {
+      result.current.setCurrentResponderCardId('builder');
+      result.current.handleNativeSend('Queued image for Builder.', { images });
+      uploadedImage.name = 'changed.png';
+      uploadedImage.dataUrl = 'data:image/png;base64,Y2hhbmdlZA==';
+      uploadedImage.metadata.caption = 'Changed caption';
+      images.splice(0, 1);
+      result.current.setCurrentResponderCardId('card_worldview');
+    });
+    expect(result.current.queuedInputCount).toBe(1);
+    expect(result.current.currentResponderCardId).toBe('card_worldview');
+
+    await act(async () => {
+      finishFirst({ finalText: 'WorldSignals first reply.' });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mocks.streamSession).toHaveBeenCalledTimes(2));
+
+    expect(mocks.streamSession.mock.calls[1][0]).toMatchObject({
+      message: 'Queued image for Builder.', targetCardId: 'builder',
+      images: [{
+        name: 'original.png', mediaType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=',
+        kind: 'user-upload', metadata: { caption: 'Original caption' },
+      }],
+    });
+    expect(result.current.queuedInputCount).toBe(0);
+    expect(result.current.currentResponderCardId).toBe('card_worldview');
   });
 
   it('keeps Main graph context and attention observers out of a direct Card turn', async () => {

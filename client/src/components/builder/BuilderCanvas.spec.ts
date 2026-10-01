@@ -916,12 +916,13 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
   });
 
-  it('maps existing orange edges to the ordinary visible target port', () => {
+  it.each([undefined, 'card-control-target'])('maps existing orange edges with target %s to the ordinary visible input', (targetHandle) => {
     const document = createBusTestDocument([{
       id: 'edge_first_second',
       source: 'card_worker_a',
       target: 'card_worker_b',
       edgeType: 'flow',
+      targetHandle,
     }]);
     document.nodes.find(card => card.id === 'card_worker_a')!.runtime = {
       kind: 'hermes', mode: 'main', profile: 'main',
@@ -937,6 +938,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
       sourceHandle: 'card-control',
     });
     expect(edge.targetHandle).toBeUndefined();
+    expect(document.edges[0].targetHandle).toBe(targetHandle);
   });
 
   it('captures handle ids when converting React Flow edges back to DeckEdge', () => {

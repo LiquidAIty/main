@@ -381,8 +381,8 @@ export function toFlowEdges(
       sourceHandle: edgeType === 'flow' && sourceCanOrchestrate
         ? 'card-control' : edge.sourceHandle ?? undefined,
       target: edge.target,
-      targetHandle: edgeType === 'flow' && sourceCanOrchestrate && targetIsMagnetic
-        ? MAGNETIC_DIRECT_HANDLE
+      targetHandle: edgeType === 'flow' && sourceCanOrchestrate
+        ? (targetIsMagnetic ? MAGNETIC_DIRECT_HANDLE : undefined)
         : edge.targetHandle ?? undefined,
       data: {
         edgeType,

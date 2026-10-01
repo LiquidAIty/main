@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import type { DirectChatTarget } from "../../features/agentbuilder/console/mainSessionClient";
-import type { MainChatVoicePhase } from "../../features/agentbuilder/console/useAgentBuilderMainChat";
+import {
+  MAX_MAIN_CHAT_IMAGES,
+  type MainChatRunInput,
+  type MainChatVoicePhase,
+} from "../../features/agentbuilder/console/useAgentBuilderMainChat";
 import UploadAttachment from "../knowledge/UploadAttachment";
 import {
   prepareChatBubbleText,
@@ -41,6 +45,38 @@ type BuilderChatMessage = {
 
 function shouldRenderMessage(message: BuilderChatMessage): boolean {
   return message.role !== "assistant" || Boolean(safeText(message.text).trim());
+}
+
+type ComposerImage = { name: string; mediaType: string; dataUrl: string; kind: "user-upload" };
+const COMPOSER_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+const MAX_COMPOSER_IMAGE_BYTES = 10 * 1024 * 1024;
+
+function readComposerImage(file: File): Promise<ComposerImage> {
+  if (!COMPOSER_IMAGE_TYPES.includes(file.type)) {
+    return Promise.reject(new Error("Choose a PNG, JPEG, WebP or GIF image."));
+  }
+  if (file.size < 1 || file.size > MAX_COMPOSER_IMAGE_BYTES) {
+    return Promise.reject(new Error("Each image must be between 1 byte and 10 MB."));
+  }
+  const name = (file.name || "image.png").trim();
+  if (name.length > 200 || /[\\/]/.test(name)) {
+    return Promise.reject(new Error("The image filename must be at most 200 characters without path separators."));
+  }
+  if (!/\.(png|jpe?g|webp|gif)$/i.test(name)) {
+    return Promise.reject(new Error("Use a PNG, JPEG, WebP or GIF filename."));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${name}.`));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error(`Could not read ${name}.`));
+        return;
+      }
+      resolve({ name, mediaType: file.type, dataUrl: reader.result, kind: "user-upload" });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 export function followLatestOutput(atBottom: boolean): "auto" | false {
@@ -176,7 +212,7 @@ export default function BuilderChat({
   /** Main is the ambient voice of this chat; only directly addressed non-Main Cards need a label. */
   mainCardId?: string;
   directChatTargets?: DirectChatTarget[];
-  onSend: (t: string) => void;
+  onSend: (t: string, runInput?: MainChatRunInput) => void;
   knowledgeProjectId: string;
   colors: BuilderChatColors;
   /** The real SSE turn is still open; the composer remains available and submissions queue. */
@@ -201,8 +237,76 @@ export default function BuilderChat({
   const [selectedAddressIndex, setSelectedAddressIndex] = useState(0);
   const [messageLaneWidth, setMessageLaneWidth] = useState<number | null>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [images, setImages] = useState<ComposerImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [readingImages, setReadingImages] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageReadRef = useRef(false);
+  const imageReadEpochRef = useRef(0);
   const interactionDisabled = historyLoading;
+  useEffect(() => {
+    imageReadEpochRef.current += 1;
+    imageReadRef.current = false;
+    setReadingImages(false);
+    setImages([]);
+    setImageError(null);
+  }, [knowledgeProjectId]);
+  const attachImages = async (files: File[]) => {
+    if (!files.length || interactionDisabled || imageReadRef.current) return;
+    if (files.length + images.length > MAX_MAIN_CHAT_IMAGES) {
+      setImageError(`A message can include at most ${MAX_MAIN_CHAT_IMAGES} images.`);
+      return;
+    }
+    const epoch = imageReadEpochRef.current;
+    imageReadRef.current = true;
+    setReadingImages(true);
+    setImageError(null);
+    try {
+      const loaded = await Promise.all(files.map(readComposerImage));
+      if (imageReadEpochRef.current === epoch) setImages((current) => [...current, ...loaded]);
+    } catch (reason) {
+      if (imageReadEpochRef.current === epoch) {
+        setImageError(reason instanceof Error ? reason.message : "Could not attach the images.");
+      }
+    } finally {
+      if (imageReadEpochRef.current === epoch) {
+        imageReadRef.current = false;
+        setReadingImages(false);
+      }
+    }
+  };
   const value = draft === undefined ? localDraft : draft;
+  const composerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const resizeComposer = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "0px";
+    const maximumHeight = Math.max(40, Math.min(240, window.innerHeight * 0.35));
+    const height = Math.min(maximumHeight, Math.max(40, input.scrollHeight));
+    input.style.height = `${height}px`;
+    input.style.overflowY = input.scrollHeight > height ? "auto" : "hidden";
+  }, []);
+  useLayoutEffect(resizeComposer, [resizeComposer, value]);
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    let previousWidth = composer.clientWidth;
+    const observer = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => {
+          const width = composer.clientWidth;
+          if (width === previousWidth) return;
+          previousWidth = width;
+          resizeComposer();
+        })
+      : null;
+    observer?.observe(composer);
+    window.addEventListener("resize", resizeComposer);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", resizeComposer);
+    };
+  }, [resizeComposer]);
   const setValue = (next: string) => {
     if (draft === undefined) setLocalDraft(next);
     onDraftChange?.(next);
@@ -279,8 +383,11 @@ export default function BuilderChat({
   }, []);
 
   const send = () => {
-    if (!value.trim() || interactionDisabled) return;
-    onSend(value);
+    if (!value.trim() || interactionDisabled || imageReadRef.current) return;
+    if (images.length) onSend(value, { images });
+    else onSend(value);
+    setImages([]);
+    setImageError(null);
     setValue("");
   };
   return (
@@ -301,6 +408,8 @@ export default function BuilderChat({
           .builder-chat-scroll::-webkit-scrollbar-thumb:hover {
             background: #616161;
           }
+          .builder-chat-composer { scrollbar-width: none; }
+          .builder-chat-composer::-webkit-scrollbar { display: none; }
           @keyframes builder-chat-active-pulse {
             0%, 100% { opacity: 0.3; transform: scale(0.82); }
             50% { opacity: 1; transform: scale(1); }
@@ -375,7 +484,7 @@ export default function BuilderChat({
         ) : null}
       </div>
       <div className="px-4 pb-4">
-        {error || voiceError ? (
+        {imageError || error || voiceError ? (
           <div
             data-testid="builder-chat-error"
             role="status"
@@ -387,11 +496,27 @@ export default function BuilderChat({
               overflowWrap: "anywhere",
             }}
           >
-            {safeText(error || voiceError)}
+            {safeText(imageError || error || voiceError)}
+          </div>
+        ) : null}
+        {images.length ? (
+          <div data-testid="builder-chat-images" className="builder-chat-composer"
+            style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "5px 5px 8px", maxHeight: 144, overflowY: "auto" }}>
+            {images.map((image, index) => (
+              <div key={`${image.name}:${index}`} style={{ position: "relative", width: 64, height: 64 }}>
+                <img src={image.dataUrl} alt={image.name} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 9 }} />
+                <button type="button" aria-label={`Remove ${image.name}`} disabled={interactionDisabled}
+                  onClick={() => { setImages((current) => current.filter((_, itemIndex) => itemIndex !== index)); setImageError(null); }}
+                  style={{ position: "absolute", top: -5, right: -5, width: 22, height: 22, borderRadius: "50%", background: colors.panel, border: `1px solid ${colors.border}`, color: colors.text }}>
+                  ×
+                </button>
+              </div>
+            ))}
           </div>
         ) : null}
         <div
-          className="flex items-center gap-2"
+          ref={composerRef}
+          className="flex items-end gap-2"
           style={{
             position: "relative",
             borderRadius: 15,
@@ -406,10 +531,38 @@ export default function BuilderChat({
             disabled={!knowledgeProjectId}
             appearance="chat-inline"
           />
-          <input
+          <input ref={imageInputRef} type="file" multiple accept={COMPOSER_IMAGE_TYPES.join(",")}
+            aria-label="Image files" style={{ display: "none" }}
+            onChange={(event) => {
+              const files = Array.from(event.target.files || []);
+              event.target.value = "";
+              void attachImages(files);
+            }} />
+          <button type="button" aria-label="Attach images" title="Attach images"
+            disabled={interactionDisabled || readingImages}
+            onClick={() => imageInputRef.current?.click()}
+            style={{ width: 30, height: 40, flex: "0 0 auto", border: 0, background: "transparent", color: colors.text, opacity: readingImages ? 0.5 : 1 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="8" cy="8" r="1.5" />
+              <path d="m3 16 5-5 4 4 4-5 5 6" />
+            </svg>
+          </button>
+          <textarea
+            ref={inputRef}
+            rows={1}
             data-testid="builder-chat-input"
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            onPaste={(event) => {
+              const pastedImages = Array.from(event.clipboardData.items || [])
+                .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+                .map((item) => item.getAsFile())
+                .filter((file): file is File => file !== null);
+              if (!pastedImages.length) return;
+              event.preventDefault();
+              void attachImages(pastedImages);
+            }}
             disabled={interactionDisabled}
             onKeyDown={(e) => {
               if (e.key === "Tab" && addressSuggestions.length > 0) {
@@ -429,11 +582,22 @@ export default function BuilderChat({
                 ));
                 return;
               }
-              if (e.key === "Enter") send();
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
             }}
             placeholder="Type a message…"
-            className="flex-1"
+            className="builder-chat-composer flex-1"
             style={{
+              boxSizing: "border-box",
+              minWidth: 0,
+              width: "100%",
+              minHeight: 40,
+              resize: "none",
+              overflowX: "hidden",
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
               background: "transparent",
               border: "none",
               outline: "none",
@@ -582,7 +746,7 @@ export default function BuilderChat({
           ) : null}
           <button
             onClick={send}
-            disabled={interactionDisabled}
+            disabled={interactionDisabled || readingImages}
             aria-label="Send"
             className="rounded-full flex items-center justify-center"
             style={{

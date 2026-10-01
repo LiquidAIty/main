@@ -227,7 +227,7 @@ describe('Python-owned backend startup', () => {
     ]);
     const desired = reconcile.mock.calls[0][0];
     expect(desired.map((entry: any) => entry.owner)).toEqual([
-      { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'main-card' },
+      { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'main-card', conversationId: 'main' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'worker' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'builder' },
       { userId: 'owner', projectId: 'project', deckId: 'deck', cardId: 'mag-one' },
@@ -239,6 +239,10 @@ describe('Python-owned backend startup', () => {
     expect(desired[3]).toMatchObject({ attachTui: false });
     expect(desired[3]).not.toHaveProperty('workingDirectory');
     expect(reconcile.mock.calls[0][2]).toHaveLength(4);
+    expect(reconcile.mock.calls[0][2].find((entry: any) => entry.card.id === 'main-card')?.owner)
+      .toEqual(desired[0].owner);
+    expect(reconcile.mock.calls[0][2].find((entry: any) => entry.card.id === 'builder')?.owner)
+      .not.toHaveProperty('conversationId');
   });
 
   it('keeps every Project binding authoritative but eagerly opens one session per stable profile', async () => {

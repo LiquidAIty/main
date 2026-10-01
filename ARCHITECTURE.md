@@ -437,6 +437,19 @@ LiquidAIty runtime boundary. No other Hermes customization is silently accepted 
 | --- | --- | --- | --- |
 | `NousResearch/hermes-agent` `0.21.3` at `73521a8e375a867fae14ec0579f2dfb47aa0017e` | `Hermes/hermes_cli/plugins.py::resolve_message_agent_target`; `Hermes/tools/bot_mode_probe.py::is_bot_chat_title`; `Hermes/tools/bot_mode_dm.py::_resolved_message_agent_roster`, `_start_delivery`; `Hermes/tools/bot_live_delivery.py::find_canonical_live_owner` | Replace the rejected profile-global Project roster with one signed source-session resolver at the native delivery boundary. It resolves only an existing saved Card/profile and pins live or cold delivery to that target's exact stored Project conversation. Orange `flow` is the only target authority; blue Magnetic membership is untouched. With no resolver hook, stock Hermes title, roster, relay, peer, Team, delivery, and receipt behavior remains unchanged. The existing Card-tools HMAC/session seam is the available extension boundary; profile config cannot represent concurrent Projects safely. | Focused Card-tools, native Bot delivery/live-owner, backend route, terminal, and TypeScript typecheck suites cover refusal, exact session selection, and stock fallback. Fork cost is four small generic Hermes seams plus focused tests. Roll back these symbols and the Card-tools resolver together; remove the divergence when upstream exposes an equivalent exact-session target resolver or when saved-Card direct messaging is retired. |
 
+The existing Hermes app-server adapter also preserves native vision input:
+`Hermes/tui_gateway/prompt_turn.py::_route_turn_images` respects the saved
+native/text image policy, and
+`Hermes/agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`
+projects attached pixels into the documented typed App Server input union. Text
+projection remains only for input-echo attribution. The pinned upstream base is
+the Hermes version above; the existing public `turn/start` protocol is the
+extension boundary. Focused Gateway-routing and app-server-session tests cover
+image-byte preservation and unchanged explicit text routing. Fork cost is one
+bounded protocol projection and removal of one forced-text branch; rollback
+restores those two hunks together without changing saved Cards or histories.
+The full contract is recorded under entry 4 of `Hermes/LIQUIDAITY_VENDOR_PATCHES.md`.
+
 The controlled upstream globe import has this bounded local divergence:
 
 | Upstream/version | Local file and symbols | Purpose and preserved behavior | Proof, fork cost, rollback |

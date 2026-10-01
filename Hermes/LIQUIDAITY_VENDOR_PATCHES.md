@@ -247,6 +247,10 @@ The worker process receives a complete process-local `hermes-tools` MCP transpor
 including the JSON-encoded allowed writable root for its native task tree. Global Codex
 configuration remains untouched.
 
+The same existing app-server route preserves user-attached image pixels: native
+vision policy is respected by the Gateway, and rich image parts are projected as
+typed `turn/start.input` image items rather than text-only attachment markers.
+
 EXTERNAL ALTERNATIVE CHECK: copying the already-signed-in Codex CLI refresh grant into
 multiple named profiles forks one single-use OAuth grant and is explicitly prohibited by
 Hermes credential hygiene. Requiring a separate interactive device login for every worker
@@ -262,10 +266,16 @@ FILES AND SYMBOLS:
 - `agent/transports/codex_app_server.py`: the existing worker-specific MCP override builder
   supplies the complete native `hermes-tools` command, arguments, base environment, startup
   and call timeouts before adding the exact task/profile environment.
+- `tui_gateway/prompt_turn.py::_route_turn_images`: keeps the existing native/text
+  image-policy result instead of forcing app-server turns into text references.
+- `agent/transports/codex_app_server_session.py::_coerce_turn_input_items,run_turn`:
+  mechanically forwards image URLs/bytes and local-image paths through the existing
+  app-server input union. The separate text projection retains input-echo attribution.
 
 UPSTREAM BEHAVIOR PRESERVED: profiles using `openai_runtime: auto`, every non-OpenAI
-provider, profile-local credential pools, refresh behavior, fallbacks, and the Codex
-app-server transport itself are unchanged.
+provider, profile-local credential pools, refresh behavior, fallbacks, text turns,
+tool dispatch, session history, and Codex authentication remain unchanged. Explicit
+text image policy is still respected.
 
 CONTRACTS:
 
@@ -277,21 +287,28 @@ CONTRACTS:
 - missing Codex installation/sign-in still fails through the existing native transport;
 - an initialize failure or timeout remains a visible native worker failure;
 - ordinary Hermes provider resolution is unchanged when the runtime is `auto`.
+- attached image bytes remain in native image inputs; an image record with no
+  source fails validation rather than silently becoming a text-only turn.
 
 TESTS:
 
 - `tests/agent/transports/test_codex_app_server_runtime.py`
 - `tests/agent/transports/test_codex_worker_mcp_overrides.py`
+- `tests/agent/transports/test_codex_app_server_session.py`
+- `tests/tui_gateway/test_image_routing_stale_model.py`
 - loaded Mag One proof through the native dispatcher.
 
 FORK COST: one bounded pre-credential resolution branch, one complete worker-local MCP
-entry, and focused tests. No new provider, credential store, task runner, scheduler, or
+entry, a bounded image-input projection and removal of one forced-text branch,
+and focused tests. No new provider, credential store, task runner, scheduler, or
 process owner is added.
 
 ROLLBACK: remove `_configured_codex_app_server_runtime`, its first ladder rung, the
 worker-local `hermes-tools` MCP entry, and their focused tests together. Profiles then again
 require profile-local OAuth before a detached app-server task process can start, and workers
 again depend on a separately complete global Codex MCP entry.
+The image repair is independently removable by restoring the forced-text branch
+and text-only app-server input projection together. No saved data changes are required.
 
 ## 5. Exact saved-profile toolset pin for native CLI execution
 

@@ -15,6 +15,7 @@ import {
 } from './agentTerminal';
 import type { AgentCardInstance, DeckDocument } from '../types';
 import type { HermesCardTools } from './cardToolsPlugin';
+import { reconcileConnectedAgentTerminals } from '../startup/pythonOwnedStartup';
 
 vi.mock('../services/mcp/pythonAgentMcpClient', () => ({
   listPythonAgentMcpCatalog: vi.fn(),
@@ -1823,6 +1824,74 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     await f.manager.reconcile([eager, lazy]);
     expect(f.manager.find(lazy.owner)?.sessionId).toBe(onDemand.sessionId);
     expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+  });
+
+  it('coalesces eager Main startup with ordinary chat and preserves other conversation owners', async () => {
+    const f = fixture();
+    const main: AgentCardInstance = {
+      ...f.cards[0],
+      kind: 'agent',
+      title: 'Main',
+      runtime: { kind: 'hermes', mode: 'main', profile: 'signal-analyst' },
+    };
+    f.cards[0] = main;
+    const owner = f.owners[0];
+    const deck = { ...f.deck, nodes: [main] };
+    const workingDirectory = process.cwd();
+    const dependencies = {
+      listProjects: async () => [{
+        id: owner.projectId, name: 'Project', code: null, status: 'active',
+        project_type: 'agent', ownerUserId: owner.userId,
+      }],
+      loadProject: async () => ({ decks: { [owner.deckId]: deck }, meta: { decks: {} } }),
+      listCanonicalBindings: async () => [{
+        runtimeProfile: 'signal-analyst', cardId: main.id,
+        cardRevisionId: main._cardRevisionId || '',
+        revisionSha256: main._cardRevisionSha256 || '',
+      }],
+      resolveBotProfiles: async () => [{
+        cardId: main.id, cardRevisionId: main._cardRevisionId || '',
+        profile: 'signal-analyst', title: 'Main', botEnabled: true, roster: [],
+      }],
+      reconcile: f.manager.reconcile.bind(f.manager),
+      mainWorkingDirectory: () => workingDirectory,
+    };
+    let releaseWarmup!: () => void;
+    const warmupGate = new Promise<void>((resolve) => { releaseWarmup = resolve; });
+    f.materializeCardToolsPlugin.mockImplementationOnce(async () => warmupGate);
+    const warming = reconcileConnectedAgentTerminals(dependencies);
+    await vi.waitFor(() => expect(f.materializeCardToolsPlugin).toHaveBeenCalledOnce());
+    const ordinaryOwner = { ...owner, conversationId: 'main' };
+    const ordinaryStart = f.manager.open(
+      ordinaryOwner, main, deck, 120, 36, { attachTui: false, workingDirectory },
+    );
+    await vi.waitFor(() => expect(f.resolveCardTools).toHaveBeenCalledTimes(2));
+    releaseWarmup();
+    const [[eager], ordinary] = await Promise.all([warming, ordinaryStart]);
+    expect(f.resolveBotRoster).not.toHaveBeenCalled();
+    expect(ordinary.sessionId).toBe(eager.sessionId);
+    expect(ordinary.nativeSessionId).toBe(eager.nativeSessionId);
+    expect(ordinary.storedSessionId).toBe(eager.storedSessionId);
+    expect(f.spawnGateway).toHaveBeenCalledOnce();
+    expect(f.spawnPty).not.toHaveBeenCalled();
+
+    const otherOwner = { ...owner, conversationId: 'separate-conversation' };
+    const other = await f.manager.open(
+      otherOwner, main, deck, 120, 36, { attachTui: false, workingDirectory },
+    );
+    expect(other.sessionId).not.toBe(ordinary.sessionId);
+    expect(other.nativeSessionId).not.toBe(ordinary.nativeSessionId);
+    expect(other.storedSessionId).not.toBe(ordinary.storedSessionId);
+    expect(f.spawnGateway).toHaveBeenCalledTimes(2);
+
+    await reconcileConnectedAgentTerminals(dependencies);
+    expect(f.manager.find(ordinaryOwner)?.sessionId).toBe(ordinary.sessionId);
+    expect(f.manager.find(otherOwner)?.sessionId).toBe(other.sessionId);
+    expect(f.gateways.every((gateway) => !gateway.kill.mock.calls.length)).toBe(true);
+    expect(f.clients.flatMap((client) => client.requests).some((request) => (
+      request.method === 'profiles.configure'
+      && (request.params.ui_meta as Record<string, unknown> | undefined)?.['hermes-bots'] === null
+    ))).toBe(false);
   });
 
   it('preserves an unrelated Project conversation during reconcile and stops an explicit detach', async () => {
