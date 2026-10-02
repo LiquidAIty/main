@@ -655,12 +655,17 @@ class TestUpsertWire:
         edges = fake_backend["deck"]["edges"]
         assert any(e["edgeType"] == "magentic_option" for e in edges)
 
-    def test_wire_upsert_refuses_two_masters_but_allows_exact_rewire(self, monkeypatch):
+    def test_wire_upsert_keeps_orange_and_blue_independent_but_refuses_two_orange_masters(self, monkeypatch):
         import copy
 
         main = {
             'id': 'main', 'kind': 'agent', 'title': 'Main',
             'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'main'},
+            'runtimeOptions': {},
+        }
+        main_two = {
+            'id': 'main-two', 'kind': 'agent', 'title': 'MainTwo',
+            'runtime': {'kind': 'hermes', 'mode': 'main', 'profile': 'main-two'},
             'runtimeOptions': {},
         }
         team = {
@@ -677,21 +682,33 @@ class TestUpsertWire:
             'id': 'team-master', 'source': 'card_team', 'target': 'magnetic',
             'edgeType': 'magentic_option',
         }
-        deck = {'nodes': [main, team, magnetic], 'edges': [blue]}
+        deck = {'nodes': [main, main_two, team, magnetic], 'edges': [blue]}
         saved = []
         monkeypatch.setattr(cp, '_load_deck', lambda *_: (copy.deepcopy(deck), 'rev1'))
         monkeypatch.setattr(cp, '_save_deck', lambda *_args: saved.append(copy.deepcopy(_args[2])))
 
+        result = asyncio.run(cp.canvas_upsert_wire({
+            'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
+            'wire': {
+                'id': 'orange-master', 'source': 'main', 'target': 'card_team',
+                'edgeType': 'flow',
+            },
+        }))
+        assert result['ok'] is True
+        assert {edge['edgeType'] for edge in saved[-1]['edges']} == {'flow', 'magentic_option'}
+
+        deck = copy.deepcopy(saved[-1])
         with pytest.raises(cp.ControlPlaneError, match='card_master_conflict:card_team'):
             asyncio.run(cp.canvas_upsert_wire({
                 'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
                 'wire': {
-                    'id': 'second-master', 'source': 'main', 'target': 'card_team',
+                    'id': 'second-orange-master', 'source': 'main-two', 'target': 'card_team',
                     'edgeType': 'flow',
                 },
             }))
-        assert saved == []
 
+        deck = {'nodes': [main, main_two, team, magnetic], 'edges': [blue]}
+        saved.clear()
         result = asyncio.run(cp.canvas_upsert_wire({
             'projectId': 'p', 'deckId': 'd', 'op': 'upsert',
             'wire': {

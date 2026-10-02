@@ -39,6 +39,7 @@ function dependencies() {
     },
     activeContext: vi.fn().mockReturnValue(null),
     execute: vi.fn().mockResolvedValue({ ok: true, output: '{"ok":true}' }),
+    observe: vi.fn().mockResolvedValue({ ok: true }),
     resolveProjectRosters: vi.fn().mockResolvedValue([]),
     openProjectRosterTarget: vi.fn().mockResolvedValue('stored-target-conversation'),
     isLoopbackSocketRequest: vi.fn().mockReturnValue(true),
@@ -104,6 +105,37 @@ describe('managed Hermes Card-tools host route', () => {
       conversationId: '',
       parentRunId: '',
     });
+  });
+
+  it('binds hook observations to the active Card Run without treating them as tools', async () => {
+    const deps = dependencies();
+    deps.activeContext.mockReturnValue({
+      runId: 'run-one', conversationId: 'conversation-one', authorizedCanonicalTools: [],
+    });
+    Object.assign(deps.authenticated, {
+      canonicalToolName: 'runtime.observe_attempt',
+      request: {
+        version: 1,
+        expiresAt: 1_000,
+        nonce: 'd'.repeat(32),
+        sourceStoredSessionId: 'stored-one',
+        tool: 'runtime.observe_attempt',
+        arguments: { attempt: {
+          eventId: 'llm:one:completed', attemptId: 'llm:one',
+          kind: 'llm', phase: 'completed', durationMs: 12,
+        } },
+      },
+    });
+
+    await expect(post(deps)).resolves.toEqual({
+      status: 200,
+      body: { ok: true, output: '{"observed":true}' },
+    });
+    expect(deps.observe).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-one', deckId: 'deck-one', cardId: 'builder', runId: 'run-one',
+      attempt: expect.objectContaining({ eventId: 'llm:one:completed', durationMs: 12 }),
+    });
+    expect(deps.execute).not.toHaveBeenCalled();
   });
 
   it('uses the verified outer Magnetic Run without fabricating a Bot Chat context', async () => {

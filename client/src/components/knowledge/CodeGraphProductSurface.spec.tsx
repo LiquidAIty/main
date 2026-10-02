@@ -129,6 +129,7 @@ describe('product Graphs tab CodeGraph preservation', () => {
     expect(scene.textContent).toContain('CALLS');
     expect(screen.getByRole('tab', { name: /^ThinkGraph$/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /^KnowGraph$/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^All$/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: /^CodeGraph$/ })).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   }, 45_000);

@@ -8,9 +8,9 @@ const NativeCodeGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
   return { default: mod.NativeCodeGraphSurface };
 });
-const NativeCombinedGraphSurface = lazy(async () => {
+const NativeJoinedGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
-  return { default: mod.NativeCombinedGraphSurface };
+  return { default: mod.NativeJoinedGraphSurface };
 });
 const NativeKnowGraphSurface = lazy(async () => {
   const mod = await import('./NativeAuthorityGraphSurface');
@@ -21,10 +21,11 @@ const NativeThinkGraphSurface = lazy(async () => {
   return { default: mod.NativeThinkGraphSurface };
 });
 
-export type KnowledgeSurfaceKind = KnowledgeGraphKind | 'combined';
+export type KnowledgeSurfaceKind = KnowledgeGraphKind | 'joined' | 'all';
 
 const GRAPH_VIEWS: ReadonlyArray<{ kind: KnowledgeSurfaceKind; label: string }> = [
-  { kind: 'combined', label: 'Combined' },
+  { kind: 'joined', label: 'Joined' },
+  { kind: 'all', label: 'All' },
   { kind: 'thinkgraph', label: 'ThinkGraph' },
   { kind: 'knowgraph', label: 'KnowGraph' },
   { kind: 'codegraph', label: 'CodeGraph' },
@@ -150,8 +151,9 @@ export default function KnowledgeGraphFramework({
               onUseAsContext={(node) => onUseAttentionNode('codegraph', node)}
             />
           )
-        ) : kind === 'combined' ? (
-          <NativeCombinedGraphSurface
+        ) : kind === 'joined' || kind === 'all' ? (
+          <NativeJoinedGraphSurface
+            mode={kind}
             projections={{
               thinkgraph: attentionProjections.thinkgraph,
               knowgraph: attentionProjections.knowgraph,

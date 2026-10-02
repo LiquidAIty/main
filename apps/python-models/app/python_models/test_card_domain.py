@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -65,6 +66,57 @@ def test_scoped_terminal_lineage_requires_both_runs_in_conversation(monkeypatch)
     assert "child.conversationId=$conversationId" in query
     assert params["conversationId"] == "selected"
     assert result["children"] == []
+
+
+def test_run_history_is_bounded_to_saved_card_roots(monkeypatch):
+    from unittest.mock import MagicMock
+
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [
+        {
+            "run_id": "run-new",
+            "project_id": "project-one",
+            "deck_id": "deck-one",
+            "card_id": "card-one",
+            "state": "failed",
+        },
+        {
+            "run_id": "run-old",
+            "project_id": "project-one",
+            "deck_id": "deck-one",
+            "card_id": "card-one",
+            "state": "completed",
+        },
+    ]
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: connection)
+    monkeypatch.setattr(card_domain, "_resolve_project", lambda *_args: {"id": "project-one"})
+    monkeypatch.setattr(card_domain, "_age_rows", lambda *_args: [{"run_id": "child-one"}])
+
+    result = card_domain.read_run_history({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "card-one",
+        "limit": 2,
+    })
+
+    assert [run["runId"] for run in result["runs"]] == ["run-new", "run-old"]
+    query, params = cursor.execute.call_args_list[-1].args
+    assert "revision.card_id=%s" in query
+    assert "NOT (run.run_id = ANY(%s::text[]))" in query
+    assert "ORDER BY run.created_at DESC" in query
+    assert params == ("project-one", "deck-one", "card-one", ["child-one"], 2)
+
+
+@pytest.mark.parametrize("limit", [0, 21, True, "8"])
+def test_run_history_rejects_unbounded_limits(monkeypatch, limit):
+    with pytest.raises(card_domain.CardDomainError, match="run_history_limit_invalid"):
+        card_domain.read_run_history({
+            "projectId": "project-one",
+            "deckId": "deck-one",
+            "cardId": "card-one",
+            "limit": limit,
+        })
 
 
 def _agent(card_id: str, **overrides):
@@ -274,7 +326,7 @@ def test_one_flow_connection_grants_only_outbound_main_bot_authority():
         }], edges)
 
 
-def test_one_card_cannot_have_both_main_and_magnetic_as_master():
+def test_one_card_can_be_an_independent_main_target_and_magnetic_worker():
     main = _main_bot(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
     )
@@ -293,10 +345,16 @@ def test_one_card_cannot_have_both_main_and_magnetic_as_master():
 
     card_domain._validate_changed_flow_edges([main, magnetic, team], [orange], [])
     card_domain._validate_changed_flow_edges([main, magnetic, team], [blue], [])
-    with pytest.raises(card_domain.CardDomainError, match="card_master_conflict:card_team"):
-        card_domain._validate_changed_flow_edges(
-            [main, magnetic, team], [orange, blue], [],
-        )
+    card_domain._validate_changed_flow_edges(
+        [main, magnetic, team], [orange, blue], [],
+    )
+    indexed = {card["id"]: card for card in (main, magnetic, team)}
+    assert [target["cardId"] for target in card_domain._direct_card_targets(
+        "main", indexed, [orange, blue],
+    )] == ["card_team"]
+    assert [target["cardId"] for target in card_domain._connected_hermes_card_targets(
+        "magnetic", indexed, [orange, blue], edge_type="magentic_option", strict=False,
+    )] == ["card_team"]
 
 
 def test_team_worker_projection_uses_stable_identity_and_saved_parent_model():
@@ -381,6 +439,30 @@ def test_saved_orchestrator_flag_grants_non_main_outbound_bot_authority():
     }
 
 
+def test_new_card_revision_validates_saved_orchestrator_authority():
+    delegate = _agent(
+        "delegate",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "delegate"},
+    )
+    delegate["runtimeOptions"]["orchestrator"] = True
+    card_domain._validate_new_card_revision(delegate)
+
+    delegate["runtimeOptions"]["orchestrator"] = "yes"
+    with pytest.raises(card_domain.CardDomainError, match="card_orchestrator_invalid"):
+        card_domain._validate_new_card_revision(delegate)
+
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    magnetic["runtimeOptions"]["orchestrator"] = True
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="card_orchestrator_requires_non_magnetic_hermes",
+    ):
+        card_domain._validate_new_card_revision(magnetic)
+
+
 def test_magnetic_cannot_gain_outbound_orange_bot_authority():
     magnetic = _agent(
         "magnetic",
@@ -436,6 +518,44 @@ def test_hermes_bot_roster_projection_includes_magnetic_and_is_blue_independent(
         "disconnected": [],
         "disabled": [],
         "mag": [],
+    }
+
+
+def test_delegate_orchestrator_can_remain_a_blue_worker_with_an_outbound_orange_roster():
+    main = _main_bot(
+        "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"},
+    )
+    worldview = _agent(
+        "worldview",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "worldview"},
+    )
+    worldview["runtimeOptions"]["orchestrator"] = True
+    worldsignals = _agent(
+        "worldsignals",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "worldsignals"},
+    )
+    magnetic = _agent(
+        "magnetic",
+        runtime={"kind": "hermes", "mode": "magentic_one", "profile": "magnetic"},
+    )
+    cards = [main, worldview, worldsignals, magnetic]
+    edges = [
+        {"id": "main-worldview", "source": "main", "target": "worldview", "edgeType": "flow"},
+        {"id": "worldview-signals", "source": "worldview", "target": "worldsignals", "edgeType": "flow"},
+        {"id": "worldview-magnetic", "source": "worldview", "target": "magnetic",
+         "edgeType": "magentic_option"},
+    ]
+
+    card_domain._validate_changed_flow_edges(cards, edges, [])
+    assert card_domain._is_callable_magentic_worker_card(worldview) is True
+    assert {
+        row["cardId"]: row["roster"]
+        for row in card_domain._project_hermes_bot_rosters({"nodes": cards, "edges": edges})
+    } == {
+        "main": ["worldview"],
+        "worldview": ["worldsignals"],
+        "worldsignals": [],
+        "magnetic": [],
     }
 
 
@@ -2731,6 +2851,12 @@ def test_enabled_callable_saved_cards_are_magentic_workers() -> None:
     assert card_domain._is_callable_magentic_worker_card(_agent(
         "main", runtime={"kind": "hermes", "mode": "main", "profile": "main"}
     )) is False
+    orchestrator = _agent(
+        "orchestrator",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "orchestrator"},
+    )
+    orchestrator["runtimeOptions"]["orchestrator"] = True
+    assert card_domain._is_callable_magentic_worker_card(orchestrator) is True
     assert card_domain._is_callable_magentic_worker_card(_agent(
         "mag-one",
         runtime={"kind": "hermes", "mode": "magentic_one", "profile": "mag-one"},
@@ -3302,6 +3428,41 @@ def test_saved_dynamic_knowgraph_hook_searches_the_assignment_once(
     assert kwargs["search_text"] == "Use every supplied declaration."
     assert invocation["idf"]["actualGraphData"]["modelText"] == "current KnowGraph result"
     assert invocation["resolvedNativeReads"][0]["nativeId"] == "entity-1"
+
+
+def test_saved_knowgraph_idf_receives_complete_cross_graph_subject_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.python_models.data_anchor import assemble_canonical_subject_directory
+
+    loaded = _destination_fixture(monkeypatch)
+    target = loaded["deck"]["nodes"][1]
+    target["id"] = "card_knowgraph"
+    target["runtime"]["profile"] = "knowgraph"
+    loaded["deck"]["edges"][0]["target"] = "card_knowgraph"
+    subjects = assemble_canonical_subject_directory(
+        loaded["projectId"],
+        {"complete": True, "count": 1, "revision": "think-r1", "subjects": [{
+            "authority": "ThinkGraph", "nativeId": "think-rocket",
+            "canonicalName": "Rocket Lab", "entityKind": "person_or_concept",
+        }]},
+        {"complete": True, "count": 1, "revision": "know-r1", "subjects": [{
+            "authority": "KnowGraph", "nativeId": "know-rocket",
+            "canonicalName": "Rocket Lab", "entityKind": "Entity",
+        }]},
+    )
+    monkeypatch.setattr(
+        card_domain, "build_canonical_subject_directory", lambda _project: subjects,
+    )
+    invocation = card_domain.materialize_invocation(
+        _destination_payload("card_knowgraph")
+    )
+
+    assert invocation["canonicalSubjectDirectory"] == subjects
+    graph_text = invocation["idf"]["actualGraphData"]["modelText"]
+    assert "Complete Cross-Graph Subject Directory" in graph_text
+    assert graph_text.count("Rocket Lab") == 2
+    assert invocation["inputSummary"]["estimatedGraphContextTokens"] > 0
 
 
 def test_card_graph_handoff_rereads_native_data_and_attributes_source_run(
@@ -4235,9 +4396,15 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
         }}},
     }
     assert card_domain._observe_run_start(
-        prepared,
+        {
+            **prepared,
+            "jevAttention": {"schemaVersion": "jev-attention.v1", "status": "success"},
+            "jevAutoTools": {"schemaVersion": "card-auto-tools.v1", "status": "disabled"},
+            "jevModelRouter": {"schemaVersion": "card-model-router.v1", "status": "disabled"},
+        },
         {
             "driverSource": "internal_chat",
+            "acceptedAt": "2026-10-01T20:00:00.000Z",
             "nativeReferences": [{
                 "authority": "KnowGraph",
                 "nativeId": "episode:stale-request",
@@ -4248,12 +4415,19 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
         },
         run_id="run-one",
         correlation_id="correlation-one",
+        input_file={"idfSha256": "a" * 64, "idfBytes": 321},
     ) is True
     assert any("EXECUTED_BY" in query for query, _params in statements)
     assert statements[0][1]["driverSource"] == "internal_chat"
     assert statements[0][1]["contextAuthorityMode"] == "main_native_honcho"
+    assert statements[0][1]["acceptedAt"] == "2026-10-01T20:00:00.000Z"
+    assert statements[0][1]["preparationElapsedMs"] is not None
+    assert statements[0][1]["idfSha256"] == "a" * 64
+    assert statements[0][1]["idfBytes"] == 321
+    assert statements[0][1]["jevAttention"]["status"] == "success"
     assert "run.driverSource=$driverSource" in statements[0][0]
     assert "run.contextAuthorityMode=$contextAuthorityMode" in statements[0][0]
+    assert "run.preparationState='completed'" in statements[0][0]
     assert all("USED_TOOL" not in query for query, _params in statements)
     assert all("[edge:USED]" not in query for query, _params in statements)
     assert all("[edge:VIEWED]" not in query for query, _params in statements)
@@ -4272,6 +4446,406 @@ def test_age_run_start_records_identity_but_never_invents_tool_or_reference_use(
     ) is True
     assert len(statements) == 1
     assert "PRODUCED_ARTIFACT" in statements[0][0]
+
+
+def test_accepted_run_request_is_pending_scoped_and_has_no_native_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, tuple | None]] = []
+    observed: list[dict] = []
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            statements.append((str(query), params))
+            self.rowcount = 1 if "INSERT INTO ag_catalog.agent_runs" in str(query) else 0
+
+        def fetchone(self):
+            return {
+                "run_id": "request-one",
+                "correlation_id": "request-one",
+                "project_id": "project-one",
+                "deck_id": "deck-one",
+                "target_card_revision_id": "revision-one",
+                "state": "pending",
+                "created_at": datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc),
+                "provider_turn_ref": None,
+            }
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    card = _agent(
+        "card-one",
+        runtime={"kind": "hermes", "mode": "delegate", "profile": "card-one"},
+    )
+    card["_cardRevisionId"] = "revision-one"
+    monkeypatch.setattr(card_domain, "_load_deck_internal", lambda *_args: {
+        "projectId": "project-one", "deck": {"nodes": [card], "edges": []},
+    })
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_acceptance",
+        lambda **kwargs: observed.append(kwargs) or True,
+    )
+
+    result = card_domain.accept_run_request({
+        "projectId": "project-one",
+        "deckId": "deck-one",
+        "cardId": "card-one",
+        "runId": "request-one",
+        "correlationId": "request-one",
+        "conversationId": "conversation-one",
+        "acceptedAt": "2026-10-01T20:00:00.000Z",
+    })
+
+    insert_params = next(params for query, params in statements if "INSERT INTO" in query)
+    assert insert_params[-1] == datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)
+    assert result["state"] == "pending"
+    assert result["nativeRunId"] is None
+    assert result["acceptedAt"] == "2026-10-01T20:00:00+00:00"
+    assert observed[0]["project_id"] == "project-one"
+    assert observed[0]["deck_id"] == "deck-one"
+    assert observed[0]["card_id"] == "card-one"
+
+
+def test_beginning_an_accepted_run_types_nullable_request_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, tuple | None]] = []
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            text = str(query)
+            statements.append((text, params))
+            if "INSERT INTO ag_catalog.agent_runs" in text:
+                self.rowcount = 0
+            elif "UPDATE ag_catalog.agent_runs SET" in text:
+                self.rowcount = 1
+            else:
+                self.rowcount = 0
+
+        def fetchone(self):
+            return {
+                "run_id": "request-one",
+                "correlation_id": "request-one",
+                "project_id": "project-one",
+                "deck_id": "deck-one",
+                "target_card_revision_id": "revision-one",
+                "request_fingerprint": None,
+                "state": "pending",
+                "execution_authority_sha256": None,
+            }
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    prepared = _prepared_grounded_runtime({
+        "kind": "hermes", "mode": "main", "profile": "liquidaity-main",
+    })
+
+    assert card_domain._insert_run(
+        prepared,
+        run_id="request-one",
+        correlation_id="request-one",
+        request_fingerprint=None,
+    ) == ("request-one", "request-one", True)
+    lookup_query = next(
+        query for query, _params in statements
+        if "SELECT run_id, correlation_id" in query
+    )
+    assert "%s::text IS NOT NULL" in lookup_query
+
+
+def test_failed_preparation_settles_same_request_with_exact_error_and_no_native_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updates: list[tuple[str, tuple | None]] = []
+    observed: list[dict] = []
+
+    class Cursor:
+        rowcount = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query, params=None):
+            updates.append((str(query), params))
+            self.rowcount = 1 if "UPDATE ag_catalog.agent_runs" in str(query) else 0
+
+        def fetchone(self):
+            return {
+                "run_id": "request-one", "state": "pending",
+                "provider_thread_ref": None, "provider_turn_ref": None,
+                "card_id": "card-one",
+            }
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    accepted = {
+        "runId": "request-one", "correlationId": "request-one",
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
+        "cardRevisionId": "revision-one", "acceptedAt": "2026-10-01T20:00:00+00:00",
+        "preparationStartedAt": "2026-10-01T20:00:00.001+00:00",
+    }
+    monkeypatch.setattr(card_domain, "accept_run_request", lambda _payload: accepted)
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_observe_run_preparation_failure",
+        lambda **kwargs: observed.append(kwargs) or True,
+    )
+
+    result = card_domain.fail_run_preparation({
+        "errorSummary": "configured_tool_unknown:provider.tool",
+    })
+
+    update_params = next(params for query, params in updates if "UPDATE ag_catalog.agent_runs" in query)
+    update_query = next(query for query, _params in updates if "UPDATE ag_catalog.agent_runs" in query)
+    assert update_params[2] == "configured_tool_unknown:provider.tool"
+    assert "provider=NULL" in update_query
+    assert "provider_input_tokens=NULL" in update_query
+    assert result["runId"] == "request-one"
+    assert result["state"] == "failed"
+    assert result["errorSummary"] == "configured_tool_unknown:provider.tool"
+    assert result["nativeRunId"] is None
+    assert observed[0]["run_id"] == "request-one"
+    assert observed[0]["error_summary"] == "configured_tool_unknown:provider.tool"
+
+
+def test_failed_preparation_rejects_wrong_card_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _query, _params=None):
+            return None
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "accept_run_request", lambda _payload: {
+        "runId": "request-one", "correlationId": "request-one",
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "wrong-card",
+        "cardRevisionId": "revision-one", "acceptedAt": "2026-10-01T20:00:00+00:00",
+        "preparationStartedAt": "2026-10-01T20:00:00.001+00:00",
+    })
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+
+    with pytest.raises(card_domain.CardDomainError, match="run_preparation_scope_mismatch"):
+        card_domain.fail_run_preparation({"errorSummary": "source_failure"})
+
+
+def test_begin_run_preserves_source_failure_after_settling_accepted_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settled: list[dict] = []
+    monkeypatch.setattr(card_domain, "accept_run_request", lambda payload: {
+        "runId": payload["runId"], "correlationId": payload["correlationId"],
+    })
+    monkeypatch.setattr(
+        card_domain,
+        "_begin_accepted_run",
+        lambda _payload: (_ for _ in ()).throw(
+            card_domain.CardDomainError("configured_tool_unknown:provider.tool")
+        ),
+    )
+    monkeypatch.setattr(
+        card_domain,
+        "fail_run_preparation",
+        lambda payload: settled.append(payload) or {"ok": True},
+    )
+    payload = {
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
+        "runId": "request-one", "correlationId": "request-one",
+        "acceptedAt": "2026-10-01T20:00:00.000Z",
+    }
+
+    with pytest.raises(
+        card_domain.CardDomainError,
+        match="configured_tool_unknown:provider.tool",
+    ):
+        card_domain.begin_run(payload)
+
+    assert settled == [{
+        **payload,
+        "errorCode": "configured_card_preparation_failed",
+        "errorSummary": "configured_tool_unknown:provider.tool",
+    }]
+
+
+def test_run_finish_links_native_identity_to_the_same_observed_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[tuple[str, dict]] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_age_rows",
+        lambda _cursor, query, params, _columns: statements.append((query, params)) or [],
+    )
+
+    assert card_domain._observe_run_finish("request-one", "failed", {
+        "providerThreadRef": "native-root-one",
+        "providerTurnRef": "native-run-one",
+        "errorCode": "native_failure",
+        "errorSummary": "native source failure",
+    }) is True
+    query, params = statements[0]
+    assert "MATCH (run:Run {runId: $runId})" in query
+    assert "run.nativeRunId=$nativeRunId" in query
+    assert params["runId"] == "request-one"
+    assert params["nativeRootId"] == "native-root-one"
+    assert params["nativeRunId"] == "native-run-one"
+    assert params["errorSummary"] == "native source failure"
+
+
+def test_run_attempt_observation_is_bounded_idempotent_and_identity_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[tuple[str, dict]] = []
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def cursor(self, **_kwargs):
+            return Cursor()
+
+    monkeypatch.setattr(card_domain, "connect_postgres", lambda **_kwargs: Connection())
+    monkeypatch.setattr(
+        card_domain,
+        "_age_rows",
+        lambda _cursor, query, params, _columns: (
+            observed.append((query, params)) or [{"run_id": "run-one"}]
+        ),
+    )
+    attempt = {
+        "eventId": "llm:turn-one:api:1:completed",
+        "attemptId": "turn-one:api:1",
+        "kind": "llm",
+        "phase": "completed",
+        "observedAt": "2026-10-01T20:00:01Z",
+        "provider": "openai-codex",
+        "model": "gpt-5.6-sol",
+        "durationMs": 950.5,
+        "firstTokenMs": 300.0,
+        "inputTokens": 120,
+        "outputTokens": 30,
+        "costUsd": 0,
+        "costStatus": "included",
+        "requestHash": "a" * 64,
+        "responseHash": "b" * 64,
+        "redaction": "hashes_and_metrics_only",
+    }
+    result = card_domain.observe_run_attempt({
+        "projectId": "project-one", "deckId": "deck-one", "cardId": "card-one",
+        "runId": "run-one", "attempt": attempt,
+    })
+
+    assert result == {"ok": True, "runId": "run-one", "eventId": attempt["eventId"]}
+    query, params = observed[0]
+    assert "prior.eventId <> $event.eventId" in query
+    assert "[-256..]" in query
+    assert params["event"]["schemaVersion"] == "hermes-run-attempt.v1"
+    assert params["event"]["inputTokens"] == 120
+    assert "request" not in params["event"]
+
+
+def test_run_attempt_observation_rejects_raw_or_unbounded_payloads() -> None:
+    with pytest.raises(card_domain.CardDomainError, match="run_attempt_invalid"):
+        card_domain.observe_run_attempt({
+            "projectId": "p", "deckId": "d", "cardId": "c", "runId": "r",
+            "attempt": {
+                "eventId": "event", "attemptId": "attempt", "kind": "tool",
+                "phase": "completed", "rawResult": "must not persist",
+            },
+        })
 
 
 def test_selected_agentgraph_root_includes_only_its_cards_native_team(monkeypatch):
@@ -4471,6 +5045,15 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         "rootRunId": "run-one",
         "nativeChildId": None,
         "startedAt": None,
+        "acceptedAt": None,
+        "finishedAt": None,
+        "preparationStartedAt": None,
+        "preparationEndedAt": None,
+        "preparationElapsedMs": None,
+        "preparationState": None,
+        "preparationError": None,
+        "nativeRootId": None,
+        "nativeRunId": None,
         "lastAttentionAt": None,
         "cardId": "card-one",
         "assignedFromCardIds": ["card-main"],
@@ -4504,6 +5087,9 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
             "artifactKind": "report",
             "locator": "artifact://one",
         }],
+        "idf": {"sha256": None, "bytes": None},
+        "jevDecisions": [],
+        "attemptEvents": [],
     }]
     assert result["legacyAssignment"] == {
         "assignmentId": "retired-assignment",
@@ -4516,6 +5102,10 @@ def test_agentgraph_inspection_is_bounded_read_only_and_project_scoped(
         keyword not in query.upper()
         for query, _params in age_calls
         for keyword in ("MERGE ", "CREATE ", "DELETE ", " SET ")
+    )
+    assert any(
+        "ORDER BY coalesce(" in query and "run.acceptedAt" in query
+        for query, _params in age_calls
     )
 
 
@@ -5185,6 +5775,205 @@ def test_card_jev_toggle_combinations_apply_tools_before_model_without_widening(
         assert calls[-1] == ("model", expected_tools)
     assert prepared["jevAutoTools"]["enabled"] is auto_tools
     assert prepared["jevModelRouter"]["enabled"] is auto_select
+
+
+def test_card_jev_context_policy_is_per_decision_bounded_and_receipted(monkeypatch) -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=True,
+        auto_select=True,
+    )
+    call_config["runtimeOptions"]["jevContext"] = {
+        "autoTools": "conversation_window",
+        "modelChoice": "selected_native_context",
+    }
+    captured: dict[str, dict] = {}
+
+    def decide_tools(context, _candidates):
+        captured["tools"] = context
+        return ["native.read"], {
+            "schemaVersion": "card-auto-tools.v1", "enabled": True,
+            "status": "selected", "requestCount": 1, "questionCount": 2,
+            "selectedTools": ["native.read"],
+        }
+
+    def decide_model(context, _candidates, saved):
+        captured["model"] = context
+        return saved, {
+            "schemaVersion": "card-model-router.v1", "enabled": True,
+            "status": "selected", "requestCount": 1, "questionCount": 1,
+            "savedModel": saved, "selectedModel": saved,
+        }
+
+    monkeypatch.setattr(card_domain, "_decide_card_auto_tools", decide_tools)
+    monkeypatch.setattr(card_domain, "_decide_card_model_router", decide_model)
+    card_domain._apply_card_jev_decisions(
+        payload={
+            "configuredModels": models,
+            "_currentJevRequest": "Current bounded request.",
+            "sharedConversation": [
+                {"role": "user", "speaker": "User", "content": "Earlier bounded context."},
+                {"role": "assistant", "speaker": "Main", "content": "Earlier answer."},
+            ],
+        },
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the result.",
+        assignment="LEGACY MERGED HISTORY\nCurrent bounded request.",
+        tool_definitions=definitions,
+        saved_script_value=None,
+        graph_text="Selected native graph context.",
+        references=[{
+            "authority": "ThinkGraph", "nativeId": "think-one",
+            "readOperation": "engraphis_get_memory", "contentSha256": "a" * 64,
+            "nativeKind": "node", "label": "Rocket Lab thesis",
+            "reason": "Investigate this selected hypothesis", "required": True,
+            "selectionScope": {"boundedExpansion": 0, "resultLimit": 1},
+            "materializedContentBytes": 512,
+            "sourcePath": "thinkgraph://think-one",
+        }],
+        images=[],
+    )
+
+    assert captured["tools"]["request_or_delegated_mission"] == "Current bounded request."
+    assert captured["tools"]["supplied_native_context"] == ""
+    assert [item["content"] for item in captured["tools"]["bounded_conversation_window"]] == [
+        "Earlier bounded context.", "Earlier answer.",
+    ]
+    assert captured["model"]["request_or_delegated_mission"] == "Current bounded request."
+    assert captured["model"]["supplied_native_context"] == "Selected native graph context."
+    assert "bounded_conversation_window" not in captured["model"]
+    assert prepared["jevAutoTools"]["context"]["policy"] == "conversation_window"
+    assert prepared["jevAutoTools"]["context"]["effectiveSources"] == [
+        "current_request", "saved_card", "conversation_window",
+    ]
+    assert prepared["jevModelRouter"]["context"]["policy"] == "selected_native_context"
+    assert prepared["jevModelRouter"]["context"]["effectiveSources"] == [
+        "current_request", "saved_card", "selected_native_context",
+    ]
+    assert len(prepared["jevAutoTools"]["context"]["inputSha256"]) == 64
+    assert len(prepared["jevAutoTools"]["context"]["requestSha256"]) == 64
+    assert prepared["jevAutoTools"]["context"]["savedCardRevisionId"] == "revision-one"
+    assert prepared["jevAutoTools"]["context"]["conversationWindow"]["messageCount"] == 2
+    assert prepared["jevAutoTools"]["context"]["nativeReferences"] == []
+    assert prepared["jevModelRouter"]["context"]["nativeReferences"] == [{
+        "authority": "ThinkGraph", "nativeId": "think-one",
+        "readOperation": "engraphis_get_memory", "contentSha256": "a" * 64,
+        "nativeKind": "node", "label": "Rocket Lab thesis",
+        "reason": "Investigate this selected hypothesis", "required": True,
+        "selectionScope": {"boundedExpansion": 0, "resultLimit": 1},
+        "materializedContentBytes": 512,
+        "sourcePath": "thinkgraph://think-one",
+    }]
+    assert prepared["jevModelRouter"]["context"]["conversationWindow"]["messageCount"] == 0
+    assert prepared["jevAutoTools"]["context"]["unavailableSources"] == []
+    assert prepared["jevModelRouter"]["context"]["unavailableSources"] == []
+
+
+def test_card_jev_context_receipts_name_missing_optional_sources_without_disabling_required_input() -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=False,
+        auto_select=False,
+    )
+    call_config["runtimeOptions"]["jevContext"] = {
+        "autoTools": "conversation_window",
+        "modelChoice": "selected_native_context",
+    }
+    card_domain._apply_card_jev_decisions(
+        payload={"configuredModels": models, "_currentJevRequest": "Required request."},
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the result.",
+        assignment="Required request.",
+        tool_definitions=definitions,
+        saved_script_value=None,
+        graph_text="",
+        references=[],
+        images=[],
+    )
+
+    auto_context = prepared["jevAutoTools"]["context"]
+    model_context = prepared["jevModelRouter"]["context"]
+    assert auto_context["requiredSources"] == ["current_request", "saved_card"]
+    assert model_context["requiredSources"] == ["current_request", "saved_card"]
+    assert auto_context["unavailableSources"] == ["conversation_window"]
+    assert model_context["unavailableSources"] == ["selected_native_context"]
+    assert auto_context["effectiveSources"] == ["current_request", "saved_card"]
+    assert model_context["effectiveSources"] == ["current_request", "saved_card"]
+    assert prepared["jevAutoTools"]["selectedTools"] == ["native.read", "native.write"]
+    assert prepared["jevModelRouter"]["selectedModel"] == call_config["provider"]
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_sources", "native_count", "conversation_count"),
+    [
+        ("inherited", ["current_request", "saved_card", "inherited_invocation_context",
+                       "selected_native_context", "attachment_metadata"], 1, 0),
+        ("request_card", ["current_request", "saved_card", "attachment_metadata"], 0, 0),
+        ("conversation_window", ["current_request", "saved_card", "conversation_window",
+                                 "attachment_metadata"], 0, 1),
+        ("selected_native_context", ["current_request", "saved_card", "selected_native_context",
+                                     "attachment_metadata"], 1, 0),
+    ],
+)
+def test_every_supported_card_jev_context_selector_has_an_exact_bounded_receipt(
+    mode, expected_sources, native_count, conversation_count,
+) -> None:
+    prepared, call_config, definitions, models = _card_jev_application_fixture(
+        auto_tools=False,
+        auto_select=False,
+    )
+    call_config["runtimeOptions"]["jevContext"] = {
+        "autoTools": mode, "modelChoice": mode,
+    }
+    card_domain._apply_card_jev_decisions(
+        payload={
+            "configuredModels": models,
+            "_currentJevRequest": "Current request.",
+            "sharedConversation": [{
+                "role": "user", "speaker": "User", "content": "Bounded prior turn.",
+            }],
+        },
+        prepared=prepared,
+        call_config=call_config,
+        output_requirements="Return the result.",
+        assignment="Inherited invocation context.",
+        tool_definitions=definitions,
+        saved_script_value=None,
+        graph_text="Selected graph context.",
+        references=[{
+            "authority": "KnowGraph", "nativeId": "know-one",
+            "readOperation": "graphiti.search_nodes", "sourceUrl": "https://source.test",
+        }],
+        images=[{
+            "name": "evidence.png", "mediaType": "image/png",
+            "sha256": "b" * 64, "sizeBytes": 123,
+        }],
+    )
+
+    for receipt in (
+        prepared["jevAutoTools"]["context"], prepared["jevModelRouter"]["context"],
+    ):
+        assert receipt["policy"] == mode
+        assert receipt["requiredSources"] == ["current_request", "saved_card"]
+        assert receipt["effectiveSources"] == expected_sources
+        assert len(receipt["nativeReferences"]) == native_count
+        assert receipt["conversationWindow"]["messageCount"] == conversation_count
+        assert receipt["attachmentReferences"] == [{
+            "name": "evidence.png", "mediaType": "image/png",
+            "sha256": "b" * 64, "sizeBytes": 123,
+        }]
+        assert receipt["unavailableSources"] == ["attachment_content"]
+        assert receipt["inputBytes"] <= card_domain._CARD_JEV_MAX_STATE_BYTES
+
+
+@pytest.mark.parametrize("value", [
+    {"autoTools": "everything"},
+    {"unknownBoundary": "request_card"},
+    ["conversation_window"],
+])
+def test_card_jev_context_policy_rejects_unsupported_or_everything(value) -> None:
+    with pytest.raises(card_domain.CardDomainError, match="card_jev_context_invalid"):
+        card_domain._validated_card_jev_context(value)
 
 
 def test_card_auto_tools_selects_with_hermes_skill_without_selecting_the_skill(

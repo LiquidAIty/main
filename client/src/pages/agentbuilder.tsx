@@ -241,7 +241,7 @@ function taskLedgerRunCardId(card: AgentCardInstance, deck: DeckDocument): strin
   return card.id;
 }
 // Hermes owns one project-intelligence canvas. ThinkGraph, KnowGraph, and
-// CodeGraph remain native authorities; Combined is a presentation-only view.
+// CodeGraph remain native authorities; Joined and All are presentation-only views.
 const PROJECTS_API = '/api/projects';
 
 /** Mean synodic month in days (NASA/USNO convention). */
@@ -408,6 +408,7 @@ export default function AgentBuilder(): React.ReactElement {
   const [worldSignalInspectorSection, setWorldSignalInspectorSection] = useState<
     'markets' | 'layers' | null
   >(null);
+  const [worldSignalInspectorOpen, setWorldSignalInspectorOpen] = useState(false);
   const [worldSignalLayerState, setWorldSignalLayerState] =
     useState<WorldSignalsLayerState | null>(null);
   const [worldSignalBridge, setWorldSignalBridge] =
@@ -418,6 +419,7 @@ export default function AgentBuilder(): React.ReactElement {
       // Only sections with a real canonical destination open today.
       if (section === 'markets' || section === 'layers') {
         setWorldSignalInspectorSection(section);
+        setWorldSignalInspectorOpen(true);
       }
     },
     [],
@@ -441,7 +443,7 @@ export default function AgentBuilder(): React.ReactElement {
     [deck.nodes],
   );
   const [knowledgeGraphKind, setKnowledgeGraphKind] =
-    useState<KnowledgeSurfaceKind>('combined');
+    useState<KnowledgeSurfaceKind>('joined');
   // Resolve existing conversation links once; continuity stays project-owned,
   // without conversation navigation controls or a URL-driven swap mid-turn.
   const [conversationId] = useState(() => (
@@ -1002,6 +1004,32 @@ export default function AgentBuilder(): React.ReactElement {
     prepareDeckForCardSave,
     onCardPersisted: handleCardPersisted,
   });
+  const selectedOrangeConnections = useMemo(() => {
+    if (!selectedCard) return [];
+    const nodeById = new Map(deck.nodes.map((node) => [node.id, node] as const));
+    const seen = new Set<string>();
+    return deck.edges.flatMap((edge) => {
+      if (
+        edge.edgeType !== 'flow'
+        || edge.enabled === false
+        || edge.source !== selectedCard.id
+      ) return [];
+      const direction = 'outgoing' as const;
+      const otherId = edge.target;
+      const other = nodeById.get(otherId);
+      const key = `${direction}:${otherId}`;
+      const otherRecord = other as (typeof other & { enabled?: boolean }) | undefined;
+      const otherOptions = other?.runtimeOptions as ({ enabled?: boolean } | null | undefined);
+      if (
+        !other
+        || otherRecord?.enabled === false
+        || otherOptions?.enabled === false
+        || seen.has(key)
+      ) return [];
+      seen.add(key);
+      return [{ cardId: otherId, title: safeText(other.title || otherId), direction }];
+    });
+  }, [deck.edges, deck.nodes, selectedCard]);
   const builderTabs = useMemo(() => {
     if (selectedCard) return [
       ...BUILDER_NODE_TABS,
@@ -1380,6 +1408,7 @@ export default function AgentBuilder(): React.ReactElement {
                     onChangeCardName={handleRenameSelectedCard}
                     localConfig={selectedCardConfig}
                     onSaveLocalConfig={handleSaveSelectedCardConfig}
+                    orangeConnections={selectedOrangeConnections}
                   />
                 </Suspense>
               </CardEditorErrorBoundary>
@@ -1456,7 +1485,7 @@ export default function AgentBuilder(): React.ReactElement {
   }, [canonicalDeckReady, selectedCard, tradingCard, worldViewCard, workspaceView, worldSignalInspectorSection]);
   const isInspectorDrawerVisible =
     inspectorDrawerRole === 'worldsignal'
-      ? true
+      ? worldSignalInspectorOpen
       : inspectorDrawerRole === 'worldview'
         ? worldViewInspectorOpen
       : inspectorDrawerOpen && inspectorDrawerRole !== null;
@@ -1476,8 +1505,14 @@ export default function AgentBuilder(): React.ReactElement {
     return true;
   }, []);
 
+  const dockInspectorDrawer = useCallback(() => {
+    setInspectorDrawerOpen(false);
+    if (cardLeaveRef.current) void cardLeaveRef.current();
+    return true;
+  }, []);
+
   const closeWorldSignalInspector = useCallback(() => {
-    setWorldSignalInspectorSection(null);
+    setWorldSignalInspectorOpen(false);
   }, []);
 
   const getSurfaceShellStyle = useCallback(
@@ -1694,7 +1729,7 @@ export default function AgentBuilder(): React.ReactElement {
     if (!(await closeInspectorDrawer())) return;
     setCurrentResponderCardId(null);
     setWorkspaceView('knowledge');
-    setKnowledgeGraphKind('combined');
+    setKnowledgeGraphKind('joined');
     const params = new URLSearchParams(window.location.search);
     params.set('workspace', 'knowledge');
     window.history.replaceState(
@@ -1823,13 +1858,21 @@ export default function AgentBuilder(): React.ReactElement {
               ? () => setWorldViewInspectorOpen(false)
             : inspectorDrawerRole === 'trading'
               ? () => setInspectorDrawerOpen(false)
-              : closeInspectorDrawer
+              : dockInspectorDrawer
         }
-        onOpen={inspectorDrawerRole === 'worldview'
-          ? () => setWorldViewInspectorOpen(true)
-          : inspectorDrawerRole === 'trading' ? () => setInspectorDrawerOpen(true) : undefined}
+        onOpen={inspectorDrawerRole === 'worldsignal'
+          ? () => setWorldSignalInspectorOpen(true)
+          : inspectorDrawerRole === 'worldview'
+            ? () => setWorldViewInspectorOpen(true)
+            : inspectorDrawerRole === 'trading' || inspectorDrawerRole === 'agent'
+              ? () => setInspectorDrawerOpen(true)
+              : undefined}
         collapsedLabel={null}
-        openAriaLabel={inspectorDrawerRole === 'worldview' ? 'Open WorldView controls' : 'Open Trading Inspector'}
+        openAriaLabel={inspectorDrawerRole === 'worldsignal'
+          ? 'Open WorldSignals Inspector'
+          : inspectorDrawerRole === 'worldview'
+            ? 'Open WorldView controls'
+            : 'Open Trading Inspector'}
         movable={inspectorDrawerRole !== 'trading'}
         defaultWidth={inspectorDrawerDefaultWidth}
         resetWidthOnOpen={false}

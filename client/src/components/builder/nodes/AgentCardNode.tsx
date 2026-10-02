@@ -25,7 +25,7 @@ export default function AgentCardNode({
 }) {
   const canReceiveConnection = true;
   const canStartConnection = true;
-  const orchestratorSource = hasMainBotAuthority(data);
+  const orchestratorConnector = hasMainBotAuthority(data);
   const busOnRight = data.busX === undefined || data.position.x < data.busX;
   const bluePosition = busOnRight ? Position.Right : Position.Left;
   const orangePosition = busOnRight ? Position.Left : Position.Right;
@@ -108,12 +108,13 @@ export default function AgentCardNode({
           opacity: canStartConnection ? 1 : 0.4,
         }}
       />
-      {orchestratorSource ? (
+      {orchestratorConnector ? (
         <Handle
           id="card-control"
           type="source"
           position={orangePosition}
-          aria-label={`${name} bot output`}
+          aria-label={`${name} orchestrator connector`}
+          isConnectable
           style={{
             width: 12,
             height: 12,

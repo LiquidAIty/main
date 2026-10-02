@@ -372,6 +372,7 @@ export function toFlowEdges(
     const targetNode = nodeById.get(edge.target) as AgentCardInstance | undefined;
     if (!sourceNode || !targetNode) return [];
     const sourceCanOrchestrate = hasMainBotAuthority(sourceNode);
+    const targetCanOrchestrate = hasMainBotAuthority(targetNode);
     const targetIsMagnetic = targetNode.runtime.kind === 'hermes'
       && targetNode.runtime.mode === 'magentic_one';
     return {
@@ -382,7 +383,13 @@ export function toFlowEdges(
         ? 'card-control' : edge.sourceHandle ?? undefined,
       target: edge.target,
       targetHandle: edgeType === 'flow' && sourceCanOrchestrate
-        ? (targetIsMagnetic ? MAGNETIC_DIRECT_HANDLE : undefined)
+        ? (
+            targetIsMagnetic
+              ? MAGNETIC_DIRECT_HANDLE
+              : targetCanOrchestrate && edge.targetHandle === 'card-control'
+                ? 'card-control'
+                : undefined
+          )
         : edge.targetHandle ?? undefined,
       data: {
         edgeType,
@@ -546,11 +553,10 @@ export function isPlainConnectionAllowedForDocument(
     const workerOptions = worker.runtimeOptions as { enabled?: boolean } | null;
     if (worker.kind !== 'agent'
       || worker.runtime.kind !== 'hermes'
-      || worker.runtime.mode === 'magentic_one'
+      || worker.runtime.mode !== 'delegate'
       || !worker.runtime.profile.trim()
       || workerRecord.enabled === false
-      || workerOptions?.enabled === false
-      || hasMainBotAuthority(worker)) return false;
+      || workerOptions?.enabled === false) return false;
     return {
       workerId: sourceIsMagnetic ? targetId : sourceId,
       masterId: sourceIsMagnetic ? sourceId : targetId,
@@ -564,6 +570,7 @@ export function isPlainConnectionAllowedForDocument(
     const existingType = (
       (edge.data as { edgeType?: DeckEdgeType | null } | undefined)?.edgeType ?? 'flow'
     ) as DeckEdgeType;
+    if (existingType !== edgeType) return false;
     const existingMaster = masterAssignment(edge.source, edge.target, existingType);
     return Boolean(
       existingMaster

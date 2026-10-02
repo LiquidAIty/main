@@ -8,10 +8,12 @@ copies a graph, or turns a reference into synthetic data.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError
@@ -32,10 +34,233 @@ _KNOWGRAPH_EPISODE_LIMIT = 50
 _KNOWGRAPH_EPISODE_PREVIEW_CHARS = 1_000
 _CONTEXTUAL_NODE_VISIBLE_PER_SIDE = 2
 _CODEGRAPH_PROJECT = "C-Projects-LiquidAIty-main"
+_MAIN_KNOWGRAPH_ATTENTION_DEADLINE_SECONDS = 2.0
+_SUBJECT_DIRECTORY_SCHEMA_VERSION = "cross-graph-subject-directory.v1"
 
 
 class DataAnchorError(ValueError):
     """Typed failure before a provider can receive an ungrounded request."""
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _subject_directory_source(
+    authority: str,
+    value: Any,
+) -> tuple[list[dict[str, str]], str]:
+    if not isinstance(value, dict) or value.get("complete") is not True:
+        raise DataAnchorError("subject_directory_authority_incomplete")
+    raw_subjects = value.get("subjects")
+    count = value.get("count")
+    revision = str(value.get("revision") or "").strip()
+    if (
+        not isinstance(raw_subjects, list)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        or count != len(raw_subjects)
+        or not revision
+    ):
+        raise DataAnchorError("subject_directory_authority_invalid")
+    subjects: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    seen_names: set[tuple[str, str]] = set()
+    for raw in raw_subjects:
+        if not isinstance(raw, dict) or set(raw) != {
+            "authority", "nativeId", "canonicalName", "entityKind",
+        }:
+            raise DataAnchorError("subject_directory_subject_invalid")
+        record = {
+            key: str(raw.get(key) or "").strip()
+            for key in ("authority", "nativeId", "canonicalName", "entityKind")
+        }
+        if (
+            record["authority"] != authority
+            or not record["nativeId"]
+            or len(record["nativeId"]) > 1_024
+            or not record["canonicalName"]
+            or len(record["canonicalName"]) > 256
+            or not record["entityKind"]
+            or len(record["entityKind"]) > 128
+        ):
+            raise DataAnchorError("subject_directory_subject_invalid")
+        identity = (authority, record["nativeId"])
+        if identity in seen:
+            raise DataAnchorError("subject_directory_subject_duplicate")
+        name_identity = (authority, record["canonicalName"])
+        if name_identity in seen_names:
+            raise DataAnchorError("subject_directory_subject_name_duplicate")
+        seen.add(identity)
+        seen_names.add(name_identity)
+        subjects.append(record)
+    return subjects, revision
+
+
+def assemble_canonical_subject_directory(
+    project_id: str,
+    think_source: Any,
+    know_source: Any,
+    *,
+    read_duration_ms: float = 0.0,
+) -> dict[str, Any]:
+    """Validate one complete compact directory without ranking or truncation."""
+
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        raise DataAnchorError("subject_directory_project_invalid")
+    think_subjects, think_revision = _subject_directory_source(
+        "ThinkGraph", think_source
+    )
+    know_subjects, know_revision = _subject_directory_source(
+        "KnowGraph", know_source
+    )
+    subjects = sorted(
+        [*think_subjects, *know_subjects],
+        key=lambda item: (
+            item["authority"], item["canonicalName"], item["nativeId"]
+        ),
+    )
+    counts = {
+        "ThinkGraph": len(think_subjects),
+        "KnowGraph": len(know_subjects),
+        "total": len(subjects),
+    }
+    identity = {
+        "schemaVersion": _SUBJECT_DIRECTORY_SCHEMA_VERSION,
+        "projectId": project_id,
+        "complete": True,
+        "counts": counts,
+        "revisions": {
+            "ThinkGraph": think_revision,
+            "KnowGraph": know_revision,
+        },
+        "subjects": subjects,
+    }
+    identity_bytes = _canonical_json(identity).encode("utf-8")
+    directory = {
+        **identity,
+        "sha256": hashlib.sha256(identity_bytes).hexdigest(),
+        "bytes": len(identity_bytes),
+        "estimatedTokens": math.ceil(len(identity_bytes) / 4),
+        "readDurationMs": round(max(0.0, float(read_duration_ms)), 3),
+    }
+    if len(_canonical_json(directory).encode("utf-8")) > _GRAPH_SEED_LIMIT:
+        raise DataAnchorError("subject_directory_input_limit_exceeded")
+    return directory
+
+
+def _read_knowgraph_subject_directory(
+    project_id: str,
+    *,
+    driver_factory: Callable[[], Any] | None = None,
+) -> dict[str, Any]:
+    driver, database = _knowgraph_driver(driver_factory)
+    scope_ids = [project_id, f"liquidaity-{project_id}"]
+    try:
+        with driver.session(database=database) as session:
+            count_rows = _neo4j_rows(session.run(
+                """
+                MATCH (subject:Entity)
+                WHERE toString(subject.group_id) IN $scopeIds
+                RETURN count(DISTINCT coalesce(toString(subject.uuid), elementId(subject))) AS count
+                """,
+                scopeIds=scope_ids,
+            ))
+            rows = _neo4j_rows(session.run(
+                """
+                MATCH (subject:Entity)
+                WHERE toString(subject.group_id) IN $scopeIds
+                RETURN DISTINCT
+                       coalesce(toString(subject.uuid), elementId(subject)) AS nativeId,
+                       coalesce(toString(subject.name), '') AS canonicalName,
+                       labels(subject) AS labels
+                ORDER BY nativeId
+                """,
+                scopeIds=scope_ids,
+            ))
+    except Exception as error:
+        if isinstance(error, DataAnchorError):
+            raise
+        raise DataAnchorError("subject_directory_knowgraph_unavailable") from error
+    finally:
+        close = getattr(driver, "close", None)
+        if callable(close):
+            close()
+    if len(count_rows) != 1:
+        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
+    raw_count = count_rows[0].get("count")
+    if hasattr(raw_count, "to_native"):
+        raw_count = raw_count.to_native()
+    if hasattr(raw_count, "toNumber"):
+        raw_count = raw_count.toNumber()
+    if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
+        raise DataAnchorError("subject_directory_knowgraph_count_invalid")
+    subjects: list[dict[str, str]] = []
+    for row in rows:
+        labels = row.get("labels")
+        entity_labels = [
+            str(label).strip() for label in labels
+            if str(label).strip() and str(label).strip() != "Entity"
+        ] if isinstance(labels, list) else []
+        subjects.append({
+            "authority": "KnowGraph",
+            "nativeId": str(row.get("nativeId") or "").strip(),
+            "canonicalName": str(row.get("canonicalName") or "").strip(),
+            "entityKind": entity_labels[0] if entity_labels else "Entity",
+        })
+    count = int(raw_count)
+    revision = hashlib.sha256(_canonical_json(subjects).encode("utf-8")).hexdigest()
+    return {
+        "complete": count == len(subjects),
+        "count": count,
+        "revision": revision,
+        "subjects": subjects,
+    }
+
+
+def build_canonical_subject_directory(
+    project_id: str,
+    *,
+    think_reader: Callable[[str], dict[str, Any]] | None = None,
+    know_reader: Callable[[str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Read every current subject header from both native graph authorities."""
+
+    started = time.perf_counter()
+    if think_reader is None:
+        from app.python_models.engraphis import read_subject_directory
+        think_reader = read_subject_directory
+    think_source = think_reader(project_id)
+    know_source = (know_reader or _read_knowgraph_subject_directory)(project_id)
+    return assemble_canonical_subject_directory(
+        project_id,
+        think_source,
+        know_source,
+        read_duration_ms=(time.perf_counter() - started) * 1000,
+    )
+
+
+def render_canonical_subject_directory(directory: dict[str, Any]) -> str:
+    return "\n".join((
+        "### Complete Cross-Graph Subject Directory",
+        "This is the complete write-time subject-name directory. It is identity choice context, not evidence or agreement.",
+        _canonical_json(directory),
+    ))
+
+
+def append_canonical_subject_directory(
+    graph_context: str,
+    directory: dict[str, Any],
+) -> str:
+    rendered = render_canonical_subject_directory(directory)
+    combined = "\n\n".join(value for value in (graph_context.strip(), rendered) if value)
+    if len(combined.encode("utf-8")) > _GRAPH_SEED_LIMIT:
+        raise DataAnchorError("data_anchor_seed_limit_exceeded")
+    return combined
 
 
 def read_codegraph_tool(payload: dict[str, Any]) -> dict[str, Any]:
@@ -238,7 +463,23 @@ def read_thinkgraph_exact(
                 item["metadata"]["structured_extraction"].get("think"), dict
             )
         ]
-        portable_context = thinks or evidence
+        think_memory_ids = {
+            str(item.get("memory_id") or "").strip()
+            for item in thinks
+            if str(item.get("memory_id") or "").strip()
+        }
+        residual_evidence = [
+            item for item in evidence
+            if (
+                str(item.get("memory_id") or "").strip() not in think_memory_ids
+                if str(item.get("memory_id") or "").strip()
+                else item not in thinks
+            )
+        ]
+        bounded_thinks = thinks[:result_limit]
+        remaining_evidence = max(0, result_limit - len(bounded_thinks))
+        bounded_evidence = residual_evidence[:remaining_evidence]
+        portable_context = bounded_thinks or bounded_evidence
         body = "\n\n".join(
             str(item.get("excerpt", "")) for item in portable_context
         )
@@ -248,13 +489,16 @@ def read_thinkgraph_exact(
             "portableKind": "think",
             "recordId": entity["canonical_id"], "type": entity["type"], "title": entity["label"],
             "content": body[:_ANCHOR_BODY_LIMIT],
-            "metadata": {"thinks": thinks, "evidence": evidence},
+            "metadata": {"thinks": bounded_thinks, "evidence": bounded_evidence},
             "provenance": {"engine": "engraphis", "memberIds": entity["member_ids"]},
             "asOf": "current", "readOperation": "graph_entity",
             "relationshipEvidence": [{"nodes": [{"nativeId": r["other_id"], "title": r["other_label"]} for r in relations],
                 "relationships": [{"nativeId": r["id"], "sourceNativeId": r["source"],
                     "targetNativeId": r["target"], "type": r["relation"]} for r in relations]}] if relations else [],
             "resultLimit": result_limit, "truncated": len(body) > _ANCHOR_BODY_LIMIT
+                or len(thinks) + len(residual_evidence) > (
+                    len(bounded_thinks) + len(bounded_evidence)
+                )
                 or any(entity.get("truncation", {}).values())
                 or bounded_expansion > 0 and len(entity.get("relations", [])) > len(relations),
         }
@@ -1097,6 +1341,7 @@ def search_knowgraph_attention_candidates(
                 ("graphiti.search_memory_facts", {"query": query, "max_facts": 8}),
             ],
             concurrent=True,
+            deadline_seconds=_MAIN_KNOWGRAPH_ATTENTION_DEADLINE_SECONDS,
         )
     except Exception as error:
         raise DataAnchorError("data_anchor_knowgraph_unavailable") from error

@@ -22,7 +22,7 @@ const CbmGraphTab = lazy(async () => {
 });
 
 type GraphAuthority = 'thinkgraph' | 'knowgraph';
-type GraphSurfaceAuthority = GraphAuthority | 'combined';
+type GraphSurfaceAuthority = GraphAuthority | 'joined';
 
 export type ReadNativeFocusNeighborhood = (
   authority: GraphAuthority,
@@ -130,7 +130,6 @@ export type GraphProjectionNode = {
   cardId?: string;
   correlationId?: string;
   codeGraphRef?: string;
-  knowGraphRef?: string;
   artifactRef?: string;
   trustState?: string;
   qualityState?: string;
@@ -167,6 +166,9 @@ export type GraphProjectionEdge = {
   rest_length?: number;
   visual_width?: number;
   layer?: string;
+  material_kind?: 'solarpunk';
+  material_authority?: GraphAuthority;
+  material_color?: string;
 };
 
 export type GraphProjectionV1 = {
@@ -187,21 +189,22 @@ export type GraphProjectionV1 = {
   edges: GraphProjectionEdge[];
 };
 
-export type CombinedGraphNodeVariant = {
+export type JoinedGraphNodeVariant = {
   authority: GraphAuthority;
   node: GraphProjectionNode;
 };
 
-export type CombinedGraphEdgeVariant = {
+export type JoinedGraphEdgeVariant = {
   authority: GraphAuthority;
   edge: GraphProjectionEdge;
 };
 
-export type CombinedGraphPresentation = {
+export type JoinedGraphPresentation = {
+  mode: 'joined' | 'all';
   projection: GraphProjectionV1;
   nativeProjections: Record<GraphAuthority, GraphProjectionV1>;
-  nodeVariants: Map<string, CombinedGraphNodeVariant[]>;
-  edgeVariants: Map<string, CombinedGraphEdgeVariant>;
+  nodeVariants: Map<string, JoinedGraphNodeVariant[]>;
+  edgeVariants: Map<string, JoinedGraphEdgeVariant>;
   visualNodeIdByNativeMember: Map<string, string>;
 };
 
@@ -279,7 +282,7 @@ export type ManualFocusEntry = {
   decision: JevFocusDecisionView | null;
   requestIdentity: number;
   projectionKey: string;
-  presentation: CombinedGraphPresentation;
+  presentation: JoinedGraphPresentation;
   readWarning: string | null;
 };
 
@@ -324,6 +327,7 @@ function solarpunkMaterialFields(
   source: 'think' | 'know' | 'paired',
   thinkActive = false,
   knowActive = false,
+  colors: SolarpunkColors = DEFAULT_SOLARPUNK_COLORS,
 ): Pick<GraphProjectionNode,
   | 'material_kind'
   | 'material_role'
@@ -335,9 +339,9 @@ function solarpunkMaterialFields(
   return {
     material_kind: 'solarpunk',
     material_role: materialRole(source),
-    material_blue: GRAPH_THEME.accent.primary,
-    material_orange: GRAPH_THEME.accent.solar,
-    material_surface: GRAPH_THEME.surface.base,
+    material_blue: colors.think,
+    material_orange: colors.know,
+    material_surface: colors.surface,
     material_think_active: thinkActive,
     material_know_active: knowActive,
   };
@@ -351,8 +355,8 @@ function nativeRenderId(authority: GraphAuthority, nativeId: string): string {
   return `${authority}:${encodeURIComponent(nativeId)}`;
 }
 
-function labelledRenderId(label: string): string {
-  return `entity-label:${encodeURIComponent(label)}`;
+function namedRenderId(name: string): string {
+  return `node-name:${encodeURIComponent(name)}`;
 }
 
 function isAttentionActive(node: GraphProjectionNode): boolean {
@@ -376,7 +380,7 @@ function attentionHeat(node: GraphProjectionNode): number {
 
 function presentationNode(
   visualId: string,
-  variants: CombinedGraphNodeVariant[],
+  variants: JoinedGraphNodeVariant[],
 ): GraphProjectionNode {
   const primary = variants.find(variant => variant.authority === 'thinkgraph') || variants[0];
   const active = variants.filter(variant => isAttentionActive(variant.node));
@@ -392,7 +396,7 @@ function presentationNode(
     ...primary.node,
     id: visualId,
     canonicalId: undefined,
-    authority: 'combined',
+    authority: 'joined',
     ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
     properties: {
       ...(primary.node.properties || {}),
@@ -408,21 +412,29 @@ function presentationNode(
 
 /**
  * Builds one non-authoritative renderer view over the two native projections.
- * Exact, non-empty node labels are the only visual join key. Native records and
- * relationships remain authority-qualified side-map entries and are never mutated.
+ * Exact, trimmed, non-empty node names are the only visual join key. The
+ * comparison is case-sensitive and performs no fuzzy, similarity, ID, or
+ * cross-graph-reference inference. Native records and relationships remain
+ * authority-qualified side-map entries and are never mutated.
  */
 export function composeThinkKnowPresentation(
   thinkProjection: GraphProjectionV1,
   knowProjection: GraphProjectionV1,
-): CombinedGraphPresentation {
+  mode: 'joined' | 'all' = 'all',
+): JoinedGraphPresentation {
   const nativeProjections = {
     thinkgraph: thinkProjection,
     knowgraph: knowProjection,
   };
-  const nodeVariants = new Map<string, CombinedGraphNodeVariant[]>();
+  const nodeVariants = new Map<string, JoinedGraphNodeVariant[]>();
   const visualNodeIdByNativeMember = new Map<string, string>();
   const addNode = (authority: GraphAuthority, node: GraphProjectionNode) => {
-    const visualId = node.label ? labelledRenderId(node.label) : nativeRenderId(authority, node.id);
+    const exactName = typeof node.label === 'string' && node.label.trim()
+      ? node.label.trim()
+      : '';
+    const visualId = exactName
+      ? namedRenderId(exactName)
+      : nativeRenderId(authority, node.id);
     const variants = nodeVariants.get(visualId) || [];
     variants.push({ authority, node });
     nodeVariants.set(visualId, variants);
@@ -431,10 +443,20 @@ export function composeThinkKnowPresentation(
   thinkProjection.nodes.forEach(node => addNode('thinkgraph', node));
   knowProjection.nodes.forEach(node => addNode('knowgraph', node));
 
-  const nodes = [...nodeVariants.entries()]
+  const visibleNodeVariants = new Map([...nodeVariants.entries()].filter(([, variants]) => (
+    mode === 'all'
+    || (
+      variants.some(variant => variant.authority === 'thinkgraph')
+      && variants.some(variant => variant.authority === 'knowgraph')
+    )
+  )));
+  const nodes = [...visibleNodeVariants.entries()]
     .map(([visualId, variants]) => presentationNode(visualId, variants));
   const visibleNodeIds = new Set(nodes.map(node => node.id));
-  const edgeVariants = new Map<string, CombinedGraphEdgeVariant>();
+  for (const [memberKey, visualId] of visualNodeIdByNativeMember) {
+    if (!visibleNodeIds.has(visualId)) visualNodeIdByNativeMember.delete(memberKey);
+  }
+  const edgeVariants = new Map<string, JoinedGraphEdgeVariant>();
   const edges: GraphProjectionEdge[] = [];
   const addEdges = (authority: GraphAuthority, projection: GraphProjectionV1) => {
     for (const edge of projection.edges) {
@@ -460,9 +482,10 @@ export function composeThinkKnowPresentation(
   addEdges('knowgraph', knowProjection);
 
   return {
+    mode,
     projection: {
       schemaVersion: 'think-know.presentation.v1',
-      authority: 'combined',
+      authority: 'joined',
       projectId: thinkProjection.projectId || knowProjection.projectId,
       revision: `${thinkProjection.revision || ''}:${knowProjection.revision || ''}`,
       counts: { nodes: nodes.length, edges: edges.length },
@@ -470,17 +493,17 @@ export function composeThinkKnowPresentation(
       edges,
     },
     nativeProjections,
-    nodeVariants,
+    nodeVariants: visibleNodeVariants,
     edgeVariants,
     visualNodeIdByNativeMember,
   };
 }
 
 export function composeFocusNeighborhoodPresentation(
-  base: CombinedGraphPresentation,
+  base: JoinedGraphPresentation,
   centerId: string,
   reads: Partial<Record<GraphAuthority, GraphProjectionV1[]>>,
-): CombinedGraphPresentation {
+): JoinedGraphPresentation {
   const centerVariants = base.nodeVariants.get(centerId) || [];
   const merged = (authority: GraphAuthority): GraphProjectionV1 => {
     const nodes = new Map<string, GraphProjectionNode>();
@@ -507,10 +530,10 @@ export function composeFocusNeighborhoodPresentation(
       edges: boundedEdges,
     };
   };
-  return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'));
+  return composeThinkKnowPresentation(merged('thinkgraph'), merged('knowgraph'), base.mode);
 }
 
-function visualSourceKind(variants: CombinedGraphNodeVariant[]): 'think' | 'know' | 'paired' {
+function visualSourceKind(variants: JoinedGraphNodeVariant[]): 'think' | 'know' | 'paired' {
   const authorities = new Set(variants.map(variant => variant.authority));
   return authorities.size > 1 ? 'paired'
     : authorities.has('knowgraph') ? 'know' : 'think';
@@ -581,7 +604,7 @@ function boundedNativeDescription(node: GraphProjectionNode): string | null {
  */
 export function buildJevFocusCandidates(
   projection: GraphProjectionV1,
-  presentation: CombinedGraphPresentation,
+  presentation: JoinedGraphPresentation,
   centerId: string,
 ): JevFocusCandidateView[] {
   const centerMembers = presentation.nodeVariants.get(centerId) || [];
@@ -659,7 +682,7 @@ function selectedFocusCandidates(entry: ManualFocusEntry): JevFocusDecisionCandi
 }
 
 function focusCenterMembers(
-  presentation: CombinedGraphPresentation,
+  presentation: JoinedGraphPresentation,
   centerId: string,
 ): JevFocusCenterMemberView[] {
   return (presentation.nodeVariants.get(centerId) || []).map(variant => ({
@@ -955,12 +978,12 @@ function composeFocusReleasePresentation(
 }
 
 /**
- * Derives one bounded turn-local renderer projection from the combined native
+ * Derives one bounded turn-local renderer projection from the joined native
  * view. It never mutates native graph records, invents relationship edges, or
  * persists this turn's JevAttention probability.
  */
 export function composeJevAttentionPresentation(
-  presentation: CombinedGraphPresentation,
+  presentation: JoinedGraphPresentation,
   visual: JevAttentionVisualDescriptorView | null | undefined,
 ): GraphProjectionV1 {
   if (!visual?.selectedSubjects.length) return presentation.projection;
@@ -1131,7 +1154,7 @@ export function NativeThinkGraphSurface({
   );
 }
 
-export function NativeCombinedGraphSurface({
+export function NativeJoinedGraphSurface({
   projections,
   statuses,
   errors,
@@ -1143,6 +1166,7 @@ export function NativeCombinedGraphSurface({
   onUseAsContext,
   onUseContextualNodeRead,
   onRemoveThinkGraphEvidence,
+  mode = 'all',
 }: {
   projections: Record<GraphAuthority, GraphProjectionV1>;
   statuses?: Partial<Record<GraphAuthority, 'idle' | 'loading' | 'ready' | 'error'>>;
@@ -1158,13 +1182,15 @@ export function NativeCombinedGraphSurface({
     node: GraphProjectionNode,
   ) => void;
   onRemoveThinkGraphEvidence?: (memoryId: string) => Promise<void>;
+  mode?: 'joined' | 'all';
 }) {
   const presentation = useMemo(
     () => composeThinkKnowPresentation(
       projections.thinkgraph,
       projections.knowgraph,
+      mode,
     ),
-    [projections.knowgraph, projections.thinkgraph],
+    [mode, projections.knowgraph, projections.thinkgraph],
   );
   const turnLocalProjection = useMemo(
     () => composeJevAttentionPresentation(presentation, jevAttentionVisual),
@@ -1192,9 +1218,9 @@ export function NativeCombinedGraphSurface({
     : null;
   return (
     <NativeGraphProjectionSurface
-      authority="combined"
+      authority="joined"
       projection={turnLocalProjection}
-      combinedPresentation={presentation}
+      joinedPresentation={presentation}
       attentionVisualPhase={jevAttentionVisual?.phase || null}
       onReadNativeFocusNeighborhood={onReadNativeFocusNeighborhood}
       onReadContextualNode={onReadContextualNode}
@@ -1277,10 +1303,128 @@ export function NativeCodeGraphSurface({
 }
 
 type NativeLayout = 'compact' | 'original' | 'communities' | 'radial' | 'galaxy';
-type NativeStyle = 'classic' | 'cyber' | 'galaxy' | 'solar';
+type NativeStyle = 'classic' | 'cyber' | 'galaxy' | 'solar' | 'solarpunk';
+type RendererNativeStyle = Exclude<NativeStyle, 'solarpunk'>;
+type SolarpunkColors = { think: string; know: string; surface: string };
+type GraphPresentationPreferences = {
+  layout: NativeLayout;
+  style: NativeStyle;
+  physicsProfile: JevGraphPhysicsProfile;
+  settings: Record<string, number | boolean | string>;
+  solarpunkColors: SolarpunkColors;
+};
+
+const DEFAULT_SOLARPUNK_COLORS: SolarpunkColors = {
+  think: GRAPH_THEME.accent.primary,
+  know: GRAPH_THEME.accent.solar,
+  surface: GRAPH_THEME.accent.memory,
+};
+const NATIVE_LAYOUTS = new Set<NativeLayout>([
+  'compact', 'original', 'communities', 'radial', 'galaxy',
+]);
+const NATIVE_STYLES = new Set<NativeStyle>([
+  'classic', 'cyber', 'galaxy', 'solar', 'solarpunk',
+]);
+const JEV_PHYSICS = new Set<JevGraphPhysicsProfile>(JEV_GRAPH_PHYSICS_PROFILES);
+const SOLARPUNK_HEX = /^#[0-9a-f]{6}$/i;
+const PRESENTATION_SETTING_BOUNDS = {
+  size: [1, 12],
+  font: [6, 24],
+  linkw: [0.1, 2],
+  labelDensity: [1, 100],
+  repel: [0, 400],
+  link: [4, 80],
+  gravity: [0, 400],
+} as const;
+
+function safePresentationSettings(value: unknown): Record<string, number | boolean | string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const settings: Record<string, number | boolean | string> = {};
+  if (typeof source.labels === 'boolean') settings.labels = source.labels;
+  for (const [key, [minimum, maximum]] of Object.entries(PRESENTATION_SETTING_BOUNDS)) {
+    const candidate = source[key];
+    if (typeof candidate === 'number' && Number.isFinite(candidate)
+      && candidate >= minimum && candidate <= maximum) {
+      settings[key] = candidate;
+    }
+  }
+  return settings;
+}
+
+function presentationStorageKey(authority: GraphSurfaceAuthority): string {
+  return `liquidaity.graph.${authority}.presentation.v1`;
+}
+
+function safePresentationPreferences(
+  authority: GraphSurfaceAuthority,
+): Partial<GraphPresentationPreferences> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(presentationStorageKey(authority)) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const settings = safePresentationSettings(parsed.settings);
+    const rawColors = parsed.solarpunkColors && typeof parsed.solarpunkColors === 'object'
+      ? parsed.solarpunkColors as Partial<SolarpunkColors>
+      : {};
+    return {
+      ...(NATIVE_LAYOUTS.has(parsed.layout) ? { layout: parsed.layout } : {}),
+      ...(NATIVE_STYLES.has(parsed.style) ? { style: parsed.style } : {}),
+      ...(JEV_PHYSICS.has(parsed.physicsProfile) ? { physicsProfile: parsed.physicsProfile } : {}),
+      ...(settings ? { settings } : {}),
+      solarpunkColors: {
+        think: SOLARPUNK_HEX.test(String(rawColors.think || ''))
+          ? String(rawColors.think) : DEFAULT_SOLARPUNK_COLORS.think,
+        know: SOLARPUNK_HEX.test(String(rawColors.know || ''))
+          ? String(rawColors.know) : DEFAULT_SOLARPUNK_COLORS.know,
+        surface: SOLARPUNK_HEX.test(String(rawColors.surface || ''))
+          ? String(rawColors.surface) : DEFAULT_SOLARPUNK_COLORS.surface,
+      },
+    };
+  } catch {
+    return {};
+  }
+}
+
+function rendererNativeStyle(style: NativeStyle): RendererNativeStyle {
+  return style === 'solarpunk' ? 'cyber' : style;
+}
+
+function withoutSolarpunkMaterial(node: GraphProjectionNode): GraphProjectionNode {
+  const next = { ...node };
+  delete next.material_kind;
+  delete next.material_role;
+  delete next.material_blue;
+  delete next.material_orange;
+  delete next.material_surface;
+  delete next.material_think_active;
+  delete next.material_know_active;
+  delete next.material_focus_active;
+  return next;
+}
+
+function solarpunkEdgeFields(
+  authority: GraphAuthority,
+  colors: SolarpunkColors,
+): Pick<GraphProjectionEdge, 'material_kind' | 'material_authority' | 'material_color'> {
+  return {
+    material_kind: 'solarpunk',
+    material_authority: authority,
+    material_color: authority === 'thinkgraph' ? colors.think : colors.know,
+  };
+}
+
+function withoutSolarpunkEdgeMaterial(edge: GraphProjectionEdge): GraphProjectionEdge {
+  const next = { ...edge };
+  delete next.material_kind;
+  delete next.material_authority;
+  delete next.material_color;
+  return next;
+}
+
 type EngraphisRenderer = {
   setPreset: (name: NativeLayout) => Record<string, number | boolean | string>;
-  setStyle: (name: NativeStyle) => void;
+  setStyle: (name: RendererNativeStyle) => void;
   setSettings: (settings: Record<string, number | boolean | string>) => void;
   setData: (data: { nodes: unknown[]; links?: unknown[]; edges?: unknown[] }) => void;
   setHighlight: (id: string | null) => void;
@@ -1451,7 +1595,7 @@ export function NativeGraphProjectionSurface({
   error,
   warning,
   authority = 'knowgraph',
-  combinedPresentation,
+  joinedPresentation,
   attentionVisualPhase,
   onReadNativeFocusNeighborhood,
   onReadContextualNode,
@@ -1468,7 +1612,7 @@ export function NativeGraphProjectionSurface({
   error: string | null;
   warning?: string | null;
   authority?: GraphSurfaceAuthority;
-  combinedPresentation?: CombinedGraphPresentation;
+  joinedPresentation?: JoinedGraphPresentation;
   attentionVisualPhase?: JevAttentionVisualDescriptorView['phase'] | null;
   onReadNativeFocusNeighborhood?: ReadNativeFocusNeighborhood;
   onReadContextualNode?: ReadContextualNode;
@@ -1483,6 +1627,8 @@ export function NativeGraphProjectionSurface({
   ) => void;
   onRemoveEvidence?: (memoryId: string) => Promise<void>;
 }) {
+  const savedPresentationRef = useRef(safePresentationPreferences(authority));
+  const savedPresentation = savedPresentationRef.current;
   const hostRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<EngraphisRenderer | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1491,10 +1637,17 @@ export function NativeGraphProjectionSurface({
   const [selectedMemberKey, setSelectedMemberKey] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
-  const [settings, setSettings] = useState<Record<string, number | boolean | string>>({});
-  const [layout, setLayout] = useState<NativeLayout>('compact');
-  const [style, setStyle] = useState<NativeStyle>('cyber');
-  const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>('galaxy');
+  const [settings, setSettings] = useState<Record<string, number | boolean | string>>(
+    savedPresentation.settings || {},
+  );
+  const [layout, setLayout] = useState<NativeLayout>(savedPresentation.layout || 'compact');
+  const [style, setStyle] = useState<NativeStyle>(savedPresentation.style || 'solarpunk');
+  const [physicsProfile, setPhysicsProfile] = useState<JevGraphPhysicsProfile>(
+    savedPresentation.physicsProfile || 'galaxy',
+  );
+  const [solarpunkColors, setSolarpunkColors] = useState<SolarpunkColors>(
+    savedPresentation.solarpunkColors || DEFAULT_SOLARPUNK_COLORS,
+  );
   const [focusTrail, setFocusTrail] = useState<ManualFocusEntry[]>([]);
   const [expandedFocusResult, setExpandedFocusResult] = useState<ManualFocusEntry | null>(null);
   const [focusRelease, setFocusRelease] = useState<FocusReleaseView | null>(null);
@@ -1542,21 +1695,21 @@ export function NativeGraphProjectionSurface({
     ? focusedEntry
     : null;
   const focusRequestPending = focusedEntry?.status === 'reading' || focusedEntry?.status === 'loading';
-  const activeCombinedPresentation = successfulFocusedEntry?.presentation
+  const activeJoinedPresentation = successfulFocusedEntry?.presentation
     || expandedFocusResult?.presentation
-    || combinedPresentation;
+    || joinedPresentation;
   const localDisplayProjection = useMemo(
     () => projection ? applyJevGraphPhysics(projection, physicsProfile) : null,
     [physicsProfile, projection],
   );
   const manualProjectionSource = useMemo(
-    () => authority === 'combined' && activeCombinedPresentation
-      ? applyJevGraphPhysics(activeCombinedPresentation.projection, physicsProfile)
+    () => authority === 'joined' && activeJoinedPresentation
+      ? applyJevGraphPhysics(activeJoinedPresentation.projection, physicsProfile)
       : localDisplayProjection,
-    [activeCombinedPresentation, authority, localDisplayProjection, physicsProfile],
+    [activeJoinedPresentation, authority, localDisplayProjection, physicsProfile],
   );
   const focusProjectionKey = useMemo(() => {
-    if (authority !== 'combined' || !combinedPresentation) return '';
+    if (authority !== 'joined' || !joinedPresentation) return '';
     const projectionIdentity = (value: GraphProjectionV1) => {
       const material = JSON.stringify({
         authority: value.authority,
@@ -1575,11 +1728,11 @@ export function NativeGraphProjectionSurface({
       return `${value.authority}:${value.nodes.length}:${value.edges.length}:${(fingerprint >>> 0).toString(16)}`;
     };
     return [
-      combinedPresentation.projection.projectId,
-      projectionIdentity(combinedPresentation.nativeProjections.thinkgraph),
-      projectionIdentity(combinedPresentation.nativeProjections.knowgraph),
+      joinedPresentation.projection.projectId,
+      projectionIdentity(joinedPresentation.nativeProjections.thinkgraph),
+      projectionIdentity(joinedPresentation.nativeProjections.knowgraph),
     ].join('|');
-  }, [authority, combinedPresentation]);
+  }, [authority, joinedPresentation]);
   focusProjectionKeyRef.current = focusProjectionKey;
   contextualSnapshotRef.current = {
     sourceRevision: focusProjectionKey,
@@ -1611,9 +1764,9 @@ export function NativeGraphProjectionSurface({
     [expandedFocusPresentation, focusRelease, localDisplayProjection, manualFocusPresentation],
   );
   const selectedVisual = displayProjection?.nodes.find(node => node.id === selectedId);
-  const selectedNodeVariants: CombinedGraphNodeVariant[] = selectedVisual
-    ? activeCombinedPresentation?.nodeVariants.get(selectedVisual.id)
-      || (authority !== 'combined' ? [{ authority, node: selectedVisual }] : [])
+  const selectedNodeVariants: JoinedGraphNodeVariant[] = selectedVisual
+    ? activeJoinedPresentation?.nodeVariants.get(selectedVisual.id)
+      || (authority !== 'joined' ? [{ authority, node: selectedVisual }] : [])
     : [];
   const defaultSelectedAuthority = selectedNodeVariants.some(variant => variant.authority === 'thinkgraph')
     ? 'thinkgraph'
@@ -1630,14 +1783,14 @@ export function NativeGraphProjectionSurface({
   ) || selectedAuthorityVariants[0];
   const selected = selectedNodeVariant?.node;
   const selectedEdgeVisual = displayProjection?.edges.find(edge => edge.id === selectedEdgeId);
-  const selectedEdgeVariant: CombinedGraphEdgeVariant | undefined = selectedEdgeVisual
-    ? activeCombinedPresentation?.edgeVariants.get(selectedEdgeVisual.id)
-      || (authority !== 'combined' ? { authority, edge: selectedEdgeVisual } : undefined)
+  const selectedEdgeVariant: JoinedGraphEdgeVariant | undefined = selectedEdgeVisual
+    ? activeJoinedPresentation?.edgeVariants.get(selectedEdgeVisual.id)
+      || (authority !== 'joined' ? { authority, edge: selectedEdgeVisual } : undefined)
     : undefined;
   const selectedEdge = selectedEdgeVariant?.edge;
   const inspectedAuthority = selectedEdgeVariant?.authority || selectedNodeVariant?.authority || null;
-  const inspectedProjection = authority === 'combined' && inspectedAuthority
-    ? activeCombinedPresentation?.nativeProjections[inspectedAuthority] || null
+  const inspectedProjection = authority === 'joined' && inspectedAuthority
+    ? activeJoinedPresentation?.nativeProjections[inspectedAuthority] || null
     : displayProjection;
   const selectedProperties = selected?.properties || {};
   const openNodeInspector = (visualNodeId: string) => {
@@ -1648,7 +1801,7 @@ export function NativeGraphProjectionSurface({
     setSelectedId(visualNodeId);
     setSelectedEdgeId(null);
     setInspectorOpen(true);
-    if (authority !== 'combined') return;
+    if (authority !== 'joined') return;
 
     contextualNodeRequestRef.current?.controller.abort();
     contextualNodeRequestRef.current = null;
@@ -1656,7 +1809,7 @@ export function NativeGraphProjectionSurface({
     contextualNodeRequestIdentityRef.current = requestIdentity;
     const sourceRevision = focusProjectionKey;
     const contextRevision = contextualReaderRevision;
-    const variants = activeCombinedPresentation?.nodeVariants.get(visualNodeId) || [];
+    const variants = activeJoinedPresentation?.nodeVariants.get(visualNodeId) || [];
     const nativeMembers = variants.map((variant): ContextualNodeNativeMember => ({
       authority: variant.authority === 'thinkgraph' ? 'ThinkGraph' : 'KnowGraph',
       nativeId: String(variant.node.canonicalId || variant.node.id),
@@ -1800,11 +1953,11 @@ export function NativeGraphProjectionSurface({
   };
 
   const enterManualFocus = (centerId: string) => {
-    if (authority !== 'combined' || !activeCombinedPresentation || !manualProjectionSource) return;
+    if (authority !== 'joined' || !activeJoinedPresentation || !manualProjectionSource) return;
     const center = manualProjectionSource.nodes.find(node => node.id === centerId);
     if (!center || (focusedEntry?.centerId === centerId
       && ['reading', 'loading', 'success'].includes(focusedEntry.status))) return;
-    const sourcePresentation = activeCombinedPresentation;
+    const sourcePresentation = activeJoinedPresentation;
     const centerNativeMembers = focusCenterMembers(sourcePresentation, centerId);
     if (!centerNativeMembers.length) return;
     if (focusReleaseTimeoutRef.current) {
@@ -1952,7 +2105,7 @@ export function NativeGraphProjectionSurface({
       };
       const graph = window.EngraphisGraph.create(hostRef.current, {
         onNodeClick: inspectNode,
-        ...(authority === 'combined' ? {
+        ...(authority === 'joined' ? {
           onNodeDoubleClick: (node: { id: string }) => {
             inspectNode(node);
             focusActionRef.current(node.id);
@@ -1985,18 +2138,20 @@ export function NativeGraphProjectionSurface({
           setControlsOpen(false);
         },
       });
-      const defaults = graph.setPreset('compact');
+      const restoredLayout = savedPresentation.layout || 'compact';
+      const restoredStyle = savedPresentation.style || 'solarpunk';
+      const restoredPhysics = savedPresentation.physicsProfile || 'galaxy';
+      const defaults = graph.setPreset(restoredLayout);
+      const restoredSettings = {
+        ...defaults,
+        labels: true,
+        ...(savedPresentation.settings || {}),
+      };
       graph.setCollapse(false);
-      setLayout('compact'); setStyle('cyber'); setPhysicsProfile('galaxy');
-      graph.setStyle('cyber');
-      graph.setThemeColors({
-        accent: GRAPH_THEME.accent.primary,
-        solar: GRAPH_THEME.accent.solar,
-        surface: GRAPH_THEME.surface.base,
-        label: GRAPH_THEME.surface.text,
-      });
-      graph.setSettings({ labels: true });
-      setSettings({ ...defaults, labels: true });
+      setLayout(restoredLayout); setStyle(restoredStyle); setPhysicsProfile(restoredPhysics);
+      graph.setStyle(rendererNativeStyle(restoredStyle));
+      graph.setSettings(restoredSettings);
+      setSettings(restoredSettings);
       graphRef.current = graph;
       return () => { graph.destroy(); graphRef.current = null; };
     } catch (failure) {
@@ -2004,6 +2159,34 @@ export function NativeGraphProjectionSurface({
       return undefined;
     }
   }, [authority]);
+
+  useEffect(() => {
+    graphRef.current?.setThemeColors(style === 'solarpunk' ? {
+      material_blue: solarpunkColors.think,
+      material_orange: solarpunkColors.know,
+      material_surface: solarpunkColors.surface,
+      accent: solarpunkColors.think,
+      solar: solarpunkColors.know,
+      surface: solarpunkColors.surface,
+      label: GRAPH_THEME.surface.text,
+    } : {});
+  }, [solarpunkColors, style]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(presentationStorageKey(authority), JSON.stringify({
+        layout, style, physicsProfile, settings, solarpunkColors,
+      } satisfies GraphPresentationPreferences));
+    } catch {
+      // Presentation preferences are optional; graph rendering remains authoritative.
+    }
+  }, [authority, layout, physicsProfile, settings, solarpunkColors, style]);
+
+  useEffect(() => {
+    if (!controlsOpen) return;
+    const scrollHost = panelBodyRef.current?.parentElement;
+    if (scrollHost) scrollHost.scrollTop = 0;
+  }, [controlsOpen]);
 
   useEffect(() => () => {
     for (const controller of focusRequestControllersRef.current.values()) controller.abort();
@@ -2054,13 +2237,9 @@ export function NativeGraphProjectionSurface({
         automaticPresentationRef.current = automatic;
       }
       if (automatic.renderer !== graph) {
-        const defaults = graph.setPreset('galaxy');
+        graph.setPreset('galaxy');
         graph.setStyle('cyber');
         graph.setSettings(CALM_FOCUS_GALAXY_SETTINGS);
-        setLayout('galaxy');
-        setStyle('cyber');
-        setPhysicsProfile('galaxy');
-        setSettings(current => ({ ...current, ...defaults, ...CALM_FOCUS_GALAXY_SETTINGS }));
         automatic.renderer = graph;
       }
       return;
@@ -2082,7 +2261,7 @@ export function NativeGraphProjectionSurface({
     graph.setSettings(restoredSettings);
     setSettings(restoredSettings);
     if (!automatic.manualStyle) {
-      graph.setStyle(automatic.snapshot.style);
+      graph.setStyle(rendererNativeStyle(automatic.snapshot.style));
       setStyle(automatic.snapshot.style);
     }
     if (!automatic.manualPhysics) setPhysicsProfile(automatic.snapshot.physicsProfile);
@@ -2117,10 +2296,11 @@ export function NativeGraphProjectionSurface({
       ...(scene || {}),
       nodes: sceneNodes.map((rawNode) => {
         const node = rawNode as GraphProjectionNode;
-        const variants = authority === 'combined'
-          ? activeCombinedPresentation?.nodeVariants.get(node.id) || []
-          : [{ authority, node }] as CombinedGraphNodeVariant[];
-        const sourceKind = authority === 'combined'
+        if (style !== 'solarpunk') return withoutSolarpunkMaterial(node);
+        const variants = authority === 'joined'
+          ? activeJoinedPresentation?.nodeVariants.get(node.id) || []
+          : [{ authority, node }] as JoinedGraphNodeVariant[];
+        const sourceKind = authority === 'joined'
           ? visualSourceKind(variants)
           : authority === 'knowgraph' ? 'know' : 'think';
         const thinkActive = typeof node.material_think_active === 'boolean'
@@ -2133,7 +2313,7 @@ export function NativeGraphProjectionSurface({
             && isAttentionActive(variant.node));
         return {
           ...node,
-          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive),
+          ...solarpunkMaterialFields(sourceKind, thinkActive, knowActive, solarpunkColors),
         };
       }),
       links: sceneLinks.map(rawEdge => {
@@ -2141,27 +2321,32 @@ export function NativeGraphProjectionSurface({
         const projected = projectionEdgesById.get(String(edge.id));
         const properties = { ...(edge.properties || {}), ...(projected?.properties || {}) };
         const semanticEdge = { ...edge, ...(projected || {}), properties };
-        const edgeAuthority = authority === 'combined'
-          ? activeCombinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
+        const edgeAuthority = authority === 'joined'
+          ? activeJoinedPresentation?.edgeVariants.get(String(semanticEdge.id))?.authority
           : authority;
-        if (edgeAuthority !== 'thinkgraph') return { ...semanticEdge, relation: semanticEdge.predicate };
-        const jev = semanticEdge.properties?.jev;
+        const materialEdge = style === 'solarpunk' && edgeAuthority
+          ? { ...semanticEdge, ...solarpunkEdgeFields(edgeAuthority, solarpunkColors) }
+          : withoutSolarpunkEdgeMaterial(semanticEdge);
+        if (edgeAuthority !== 'thinkgraph') {
+          return { ...materialEdge, relation: materialEdge.predicate };
+        }
+        const jev = materialEdge.properties?.jev;
         const distribution = jev && typeof jev === 'object' && !Array.isArray(jev)
           && (jev as Record<string, unknown>).distribution
           && typeof (jev as Record<string, unknown>).distribution === 'object'
           ? (jev as Record<string, any>).distribution as Record<string, unknown>
           : null;
         const winner = jev && typeof jev === 'object' && !Array.isArray(jev)
-          ? String((jev as Record<string, unknown>).winner || semanticEdge.predicate)
-          : semanticEdge.predicate;
+          ? String((jev as Record<string, unknown>).winner || materialEdge.predicate)
+          : materialEdge.predicate;
         const probability = compactProbability(
           distribution?.[winner]
-            ?? semanticEdge.properties?.relationship_strength
-            ?? semanticEdge.relationship_strength,
+            ?? materialEdge.properties?.relationship_strength
+            ?? materialEdge.relationship_strength,
         );
         return {
-          ...semanticEdge,
-          relation: semanticEdge.predicate,
+          ...materialEdge,
+          relation: materialEdge.predicate,
           label: probability,
           hover_label: `${winner}${probability ? ` · ${probability}` : ''}`,
           label_min_scale: 0.01,
@@ -2174,7 +2359,14 @@ export function NativeGraphProjectionSurface({
     graph?.setData(data);
     if (successfulFocusedEntry) graph?.focus(successfulFocusedEntry.centerId);
     else graph?.clearFocus();
-  }, [activeCombinedPresentation, authority, displayProjection, successfulFocusedEntry]);
+  }, [
+    activeJoinedPresentation,
+    authority,
+    displayProjection,
+    solarpunkColors,
+    style,
+    successfulFocusedEntry,
+  ]);
 
   useEffect(() => {
     graphRef.current?.setHighlight(selectedId || successfulFocusedEntry?.centerId || null);
@@ -2204,14 +2396,6 @@ export function NativeGraphProjectionSurface({
   }, [controlsOpen, inspectorOpen, selectedAuthority, selectedEdgeId, selectedId, selectedMemberKey]);
 
   const closePanel = () => {
-    contextualNodeRequestRef.current?.controller.abort();
-    contextualNodeRequestRef.current = null;
-    contextualNodeRequestIdentityRef.current += 1;
-    setContextualNodeReadState(null);
-    setSelectedAuthority(null);
-    setSelectedMemberKey(null);
-    setSelectedId(null);
-    setSelectedEdgeId(null);
     setInspectorOpen(false);
     setControlsOpen(false);
   };
@@ -2232,7 +2416,7 @@ export function NativeGraphProjectionSurface({
   const selectedEvidence = (selectedEdge?.properties || selectedProperties).evidence;
   const evidenceRecords = Array.isArray(selectedEvidence) ? selectedEvidence.filter((item): item is Record<string, any> =>
     item !== null && typeof item === 'object' && typeof item.id === 'string') : [];
-  const contextualRead = authority === 'combined'
+  const contextualRead = authority === 'joined'
     && selectedId
     && contextualNodeReadState?.visualNodeId === selectedId
     ? contextualNodeReadState
@@ -2256,7 +2440,7 @@ export function NativeGraphProjectionSurface({
         ingestedAt: item.block.properties?.ingestedAt,
       }))
     : [];
-  const thinks = authority === 'combined'
+  const thinks = authority === 'joined'
     ? contextualThinks
     : inspectedAuthority === 'thinkgraph' && selected && !selectedEdge
       ? evidenceRecords.filter(item => item.metadata !== null
@@ -2312,7 +2496,7 @@ export function NativeGraphProjectionSurface({
     variant => isAttentionActive(variant.node),
   );
   const visualNodeIdForNative = (nativeId: string) => inspectedAuthority
-    ? activeCombinedPresentation?.visualNodeIdByNativeMember.get(
+    ? activeJoinedPresentation?.visualNodeIdByNativeMember.get(
       nativeMemberKey(inspectedAuthority, nativeId),
     ) || nativeId
     : nativeId;
@@ -2401,7 +2585,11 @@ export function NativeGraphProjectionSurface({
           isOpen={controlsOpen || inspectorOpen}
           title={inspectorOpen ? (selectedEdge ? '' : entryTitle) : 'Graph settings'}
           onClose={closePanel}
-          onOpen={() => { setSelectedAuthority(null); setSelectedMemberKey(null); setSelectedId(null); setSelectedEdgeId(null); setControlsOpen(true); setInspectorOpen(false); }}
+          onOpen={() => {
+            const reopenInspector = Boolean(selectedId || selectedEdgeId);
+            setControlsOpen(!reopenInspector);
+            setInspectorOpen(reopenInspector);
+          }}
           collapsedLabel={null}
           openAriaLabel="Open graph settings"
           movable
@@ -2431,11 +2619,25 @@ export function NativeGraphProjectionSurface({
             <label>Style<select aria-label="Style" value={style} onChange={event => {
               recordManualPresentationChange('style');
               const next = event.target.value as NativeStyle;
-              graphRef.current?.setStyle(next); setStyle(next);
+              graphRef.current?.setStyle(rendererNativeStyle(next)); setStyle(next);
             }}>
               <option value="classic">Classic</option><option value="cyber">Cyberpunk</option>
-              <option value="galaxy">Galaxy</option><option value="solar">Solar</option>
+              <option value="solarpunk">Solarpunk</option><option value="galaxy">Galaxy</option>
+              <option value="solar">Solar</option>
             </select></label>
+            {style === 'solarpunk' ? <fieldset aria-label="Solarpunk colors" style={{ display: 'grid', gap: 6 }}>
+              <legend>Solarpunk colors</legend>
+              {([['Think color', 'think'], ['Know color', 'know'], ['Joined body color', 'surface']] as const)
+                .map(([label, key]) => <label key={key}>
+                  <span>{label}</span>
+                  <input type="color" aria-label={label} value={solarpunkColors[key]}
+                    onChange={event => {
+                      const value = event.target.value;
+                      if (!SOLARPUNK_HEX.test(value)) return;
+                      setSolarpunkColors(current => ({ ...current, [key]: value }));
+                    }} />
+                </label>)}
+            </fieldset> : null}
             <label><input type="checkbox" checked={settings.labels === true} onChange={event => {
               recordManualPresentationChange('setting', 'labels');
               const patch = { labels: event.target.checked };
@@ -2465,7 +2667,7 @@ export function NativeGraphProjectionSurface({
               setSettings({ ...defaults, labels: true });
             }}>Reset to preset defaults</button>
           </div> : (selected || selectedEdge) ? <div ref={panelBodyRef} className="native-authority-controls" role="region" aria-label={`${entryTitle} details`}>
-        {authority === 'combined' && selectedVisual ? (
+        {authority === 'joined' && selectedVisual ? (
           <div className="native-authority-actions">
             <button
               type="button"
@@ -2486,7 +2688,7 @@ export function NativeGraphProjectionSurface({
             </button>
           </div>
         ) : null}
-        {authority === 'combined' && selected && availableNodeAuthorities.length ? (
+        {authority === 'joined' && selected && availableNodeAuthorities.length ? (
           <div role="tablist" aria-label={`${selected.label} graph evidence`} style={{ display: 'flex', gap: 6 }}>
             {availableNodeAuthorities.map(candidate => (
               <button
@@ -2495,13 +2697,28 @@ export function NativeGraphProjectionSurface({
                 role="tab"
                 aria-selected={candidate === inspectedAuthority}
                 onClick={() => { setSelectedAuthority(candidate); setSelectedMemberKey(null); }}
+                style={{
+                  minWidth: 72,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${candidate === inspectedAuthority
+                    ? GRAPH_THEME.accent.primaryBorder
+                    : GRAPH_THEME.drawer.inputBorder}`,
+                  background: candidate === inspectedAuthority
+                    ? GRAPH_THEME.accent.primarySoft
+                    : GRAPH_THEME.drawer.inputBackground,
+                  color: candidate === inspectedAuthority
+                    ? GRAPH_THEME.surface.text
+                    : GRAPH_THEME.drawer.inputMuted,
+                  fontWeight: 700,
+                }}
               >
                 {candidate === 'thinkgraph' ? 'Think' : 'Know'}
               </button>
             ))}
           </div>
         ) : null}
-        {authority === 'combined' && selected && selectedAuthorityVariants.length > 1 ? (
+        {authority === 'joined' && selected && selectedAuthorityVariants.length > 1 ? (
           <label>
             {inspectedAuthority === 'thinkgraph' ? 'Think native member' : 'Know native member'}
             <select
@@ -2522,8 +2739,8 @@ export function NativeGraphProjectionSurface({
             </select>
           </label>
         ) : null}
-        {authority === 'combined' && selected && activeSelectedVariants.length ? (
-          <section data-testid="combined-attention-members">
+        {authority === 'joined' && selected && activeSelectedVariants.length ? (
+          <section data-testid="joined-attention-members">
             <h4>Attention</h4>
             <ul>
               {activeSelectedVariants.map(variant => (
@@ -2534,26 +2751,29 @@ export function NativeGraphProjectionSurface({
             </ul>
           </section>
         ) : null}
-        {authority === 'combined' && selected && contextualRead?.status === 'loading' ? (
+        {authority === 'joined' && selected && contextualRead?.status === 'loading' ? (
           <p role="status" data-testid="contextual-node-read-loading">
             Selecting the most useful native {inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'}…
           </p>
         ) : null}
-        {authority === 'combined' && selected && contextualRead?.status === 'error' ? (
+        {authority === 'joined' && selected && contextualRead?.status === 'error' ? (
           <p role="alert" data-testid="contextual-node-read-error">
             {contextualRead.error || 'Contextual node read unavailable.'}
           </p>
         ) : null}
-        {authority === 'combined' && selected && contextualResult?.contextLabel ? (
+        {authority === 'joined' && selected && contextualResult?.contextLabel ? (
           <p className="graph-note" data-testid="contextual-node-read-for">
             <strong>For:</strong> {contextualResult.contextLabel}
           </p>
         ) : null}
-        {authority === 'combined' && selected && contextualSide
+        {authority === 'joined' && selected && contextualSide
           && contextualSide.status !== 'selected' && contextualSide.status !== 'partial' ? (
             <p role="status" data-testid={`contextual-node-${inspectedAuthority}-status`}>
               {contextualSide.status === 'none_relevant'
-                ? `No supplied native ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} is relevant to this request.`
+                ? inspectedAuthority === 'knowgraph'
+                  && Number(contextualSide.candidateCount || 0) > 0
+                  ? `${contextualSide.candidateCount} native ${contextualSide.candidateCount === 1 ? 'Know is' : 'Knows are'} attached; none ${contextualSide.candidateCount === 1 ? 'was' : 'were'} selected for this request.`
+                  : `No supplied native ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} is relevant to this request.`
                 : contextualSide.status === 'empty' || contextualSide.status === 'missing'
                   ? `No native ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} is attached to this node.`
                   : contextualSide.status === 'context_unavailable'
@@ -2563,12 +2783,12 @@ export function NativeGraphProjectionSurface({
                       : `Contextual ${inspectedAuthority === 'thinkgraph' ? 'Think' : 'Know'} unavailable (${contextualSide.status}).`}
             </p>
           ) : null}
-        {authority === 'combined' && selected && contextualSide?.status === 'partial' ? (
+        {authority === 'joined' && selected && contextualSide?.status === 'partial' ? (
           <p role="status" data-testid={`contextual-node-${inspectedAuthority}-status`}>
             Some selected native content could not be hydrated; only the exact hydrated items below are usable.
           </p>
         ) : null}
-        {authority === 'combined' && selectedVisual && contextualResult
+        {authority === 'joined' && selectedVisual && contextualResult
           && contextualResult.dataAnchors.length && onUseContextualNodeRead ? (
             <div className="native-authority-actions">
               <button type="button" onClick={() => (
@@ -2578,12 +2798,12 @@ export function NativeGraphProjectionSurface({
           ) : null}
         {selected ? <article data-testid={`${inspectedAuthority}-node-inspector`} data-native-id={selected.id}>
           <h4 tabIndex={-1}>{selected.label}</h4>
-          {authority !== 'combined' && inspectedAuthority === 'knowgraph' ? (['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
+          {inspectedAuthority === 'knowgraph' ? (['statement', 'fact', 'content', 'summary', 'reason'] as const).map(key => selectedProperties[key])
             .filter((value, index, values): value is string => typeof value === 'string' && !!value && values.indexOf(value) === index)
             .map(value => <p key={value}>{value}</p>) : null}
-          {authority !== 'combined' && inspectedAuthority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
+          {inspectedAuthority === 'knowgraph' && selectedSource?.summary ? <p>{selectedSource.summary}</p> : null}
         </article> : null}
-        {authority === 'combined' ? thinks.map((item, index) => <ThinkGraphThink
+        {authority === 'joined' ? thinks.map((item, index) => <ThinkGraphThink
           key={item.id}
           item={item}
           heading={thinks.length > 1 ? `Selected Think ${index + 1}` : 'Selected Think'}
@@ -2598,7 +2818,7 @@ export function NativeGraphProjectionSurface({
             finally { setRemovingId(null); }
           } : undefined}
         /> : null}
-        {authority !== 'combined' && thinks.length > 1 ? <details className="graph-think-history">
+        {authority !== 'joined' && thinks.length > 1 ? <details className="graph-think-history">
           <summary>Earlier Thinks ({thinks.length - 1})</summary>
           <div>{thinks.slice(1).map((item, index) => <ThinkGraphThink
             key={item.id}
@@ -2717,16 +2937,15 @@ export function NativeGraphProjectionSurface({
             {links.map(link => <a key={link.url} href={link.url} target="_blank" rel="noreferrer">{link.label}</a>)}
             {typeof node.properties?.content === 'string' ? <pre>{node.properties.content}</pre> : null}
           </details>)}</section> : null}
-        {inspectedAuthority === 'knowgraph' && selected ? <div className="native-authority-actions">
+        {authority !== 'joined' && inspectedAuthority === 'knowgraph' && selected ? <div className="native-authority-actions">
           {onExpand || onExpandNative ? <button type="button" disabled={expanding} onClick={() => {
             setExpanding(true);
             const pending = onExpandNative
               ? onExpandNative('knowgraph', selected)
               : onExpand!(selected);
             void pending.finally(() => setExpanding(false));
-          }}>{expanding ? (authority === 'combined' ? 'Loading…' : 'Expanding…')
-            : authority === 'combined' ? 'Load' : 'Expand'}</button> : null}
-          {authority !== 'combined' && (onUseAsContext || onUseAsContextNative) ? <button type="button" onClick={() => {
+          }}>{expanding ? 'Expanding…' : 'Expand'}</button> : null}
+          {onUseAsContext || onUseAsContextNative ? <button type="button" onClick={() => {
             if (onUseAsContextNative) onUseAsContextNative('knowgraph', selected);
             else onUseAsContext?.(selected);
           }}>Use in chat</button> : null}

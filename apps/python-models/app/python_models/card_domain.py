@@ -50,6 +50,8 @@ from app.python_models.idf import (
 )
 from app.python_models.data_anchor import (
     DataAnchorError,
+    append_canonical_subject_directory,
+    build_canonical_subject_directory,
     empty_graph_projection,
     resolve_data_anchors,
     search_knowgraph_attention_candidates,
@@ -57,9 +59,11 @@ from app.python_models.data_anchor import (
 from app.python_models.engraphis import (
     JEV_ENDPOINT,
     JEV_MODEL,
+    MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
     JevAttentionError,
     _attention_choice_id,
     decide_main_graph_attention,
+    prepare_atomic_research_frame,
     recall_thinkgraph_attention_candidates,
 )
 from app.python_models.jev_validation import (
@@ -173,6 +177,20 @@ def _edge_labels() -> dict[str, str]:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _accepted_at(value: Any) -> datetime:
+    """Validate the transport-owned acceptance clock without replacing it."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise CardDomainError("accepted_at_required")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise CardDomainError("accepted_at_invalid") from error
+    if parsed.tzinfo is None:
+        raise CardDomainError("accepted_at_invalid")
+    return parsed.astimezone(timezone.utc)
 
 
 def _required_text(value: Any, field: str) -> str:
@@ -297,14 +315,45 @@ def _card_jev_context(
     graph_text: str,
     references: list[dict[str, Any]],
     images: list[dict[str, Any]],
+    context_mode: str = "inherited",
+    current_request: str | None = None,
+    shared_conversation: Any = None,
 ) -> dict[str, Any]:
     """Return only the bounded effective invocation state Jev is allowed to judge."""
 
     runtime = call_config["runtime"]
     provider = call_config["provider"]
     runtime_options = call_config["runtimeOptions"]
-    return {
-        "request_or_delegated_mission": assignment,
+    explicit_mode = context_mode != "inherited"
+    include_native = not explicit_mode or context_mode == "selected_native_context"
+    conversation_window: list[dict[str, str]] = []
+    if explicit_mode and context_mode == "conversation_window":
+        if not isinstance(shared_conversation, list):
+            shared_conversation = []
+        used_characters = 0
+        for raw in reversed(shared_conversation):
+            if not isinstance(raw, dict):
+                continue
+            content = str(raw.get("content") or "").strip()
+            if not content:
+                continue
+            remaining = 8_000 - used_characters
+            if remaining <= 0:
+                break
+            clipped = content[-remaining:]
+            conversation_window.insert(0, {
+                "role": str(raw.get("role") or "").strip() or "unknown",
+                "speaker": str(raw.get("speaker") or "").strip(),
+                "target": str(raw.get("target") or "").strip(),
+                "content": clipped,
+            })
+            used_characters += len(clipped)
+            if len(conversation_window) >= 6:
+                break
+    context = {
+        "request_or_delegated_mission": (
+            str(current_request or assignment) if explicit_mode else assignment
+        ),
         "saved_card": {
             "card_id": prepared["cardIdentity"]["cardId"],
             "card_title": prepared["cardIdentity"]["title"],
@@ -326,7 +375,7 @@ def _card_jev_context(
                 for key in (
                     "reasoningEffort", "temperature", "maxTokens", "maxTurns",
                     "autoTools", "autoSelect", "openaiRuntime", "subagentModel",
-                    "subagentType", "writeMode",
+                    "subagentType", "writeMode", "jevContext",
                 )
                 if runtime_options.get(key) is not None
             },
@@ -334,14 +383,14 @@ def _card_jev_context(
             "native_tools": list(call_config["nativeTools"]),
             "toolsets": list(call_config["toolsets"]),
         },
-        "supplied_native_context": graph_text,
+        "supplied_native_context": graph_text if include_native else "",
         "supplied_native_references": [
             {
                 key: reference.get(key)
                 for key in ("authority", "nativeId", "contentSha256", "provenance")
                 if reference.get(key) is not None
             }
-            for reference in references
+            for reference in (references if include_native else [])
         ],
         "attachments": [
             {
@@ -352,6 +401,34 @@ def _card_jev_context(
             for image in images
         ],
     }
+    if explicit_mode:
+        context["additional_context_policy"] = {
+            "mode": context_mode,
+            "conversation_message_limit": 6 if context_mode == "conversation_window" else 0,
+            "conversation_character_limit": 8_000 if context_mode == "conversation_window" else 0,
+        }
+        if context_mode == "conversation_window":
+            context["bounded_conversation_window"] = conversation_window
+    return context
+
+
+_CARD_JEV_CONTEXT_MODES = {
+    "inherited", "request_card", "conversation_window", "selected_native_context",
+}
+
+
+def _validated_card_jev_context(value: Any) -> dict[str, str]:
+    if value is None:
+        return {"autoTools": "inherited", "modelChoice": "inherited"}
+    if not isinstance(value, dict) or set(value) - {"autoTools", "modelChoice"}:
+        raise CardDomainError("card_jev_context_invalid")
+    selected: dict[str, str] = {}
+    for boundary in ("autoTools", "modelChoice"):
+        mode = str(value.get(boundary) or "inherited").strip()
+        if mode not in _CARD_JEV_CONTEXT_MODES:
+            raise CardDomainError("card_jev_context_invalid")
+        selected[boundary] = mode
+    return selected
 
 
 def _tool_jev_candidate(definition: dict[str, Any]) -> dict[str, Any]:
@@ -1246,11 +1323,34 @@ def _validate_new_card_revision(card: dict[str, Any]) -> None:
     subagent_type = _subagent_type_selection(options.get("subagentType"))
     if subagent_type is not None and not is_hermes:
         raise CardDomainError("card_subagent_type_requires_hermes")
-    for field in ("autoTools", "autoSelect"):
+    for field in ("autoTools", "autoSelect", "orchestrator"):
         if field in options and not isinstance(options[field], bool):
             raise CardDomainError(f"card_{field}_invalid")
         if options.get(field) is True and not is_hermes:
             raise CardDomainError(f"card_{field}_requires_hermes")
+    if options.get("orchestrator") is True and _is_magentic_runtime(runtime):
+        raise CardDomainError("card_orchestrator_requires_non_magnetic_hermes")
+    if options.get("jevContext") is not None:
+        if not is_hermes:
+            raise CardDomainError("card_jev_context_requires_hermes")
+        _validated_card_jev_context(options.get("jevContext"))
+    configuration = options.get("configuration")
+    if configuration is not None:
+        if not isinstance(configuration, dict):
+            raise CardDomainError("card_configuration_invalid")
+        data_control = configuration.get("dataControl")
+        if data_control is not None:
+            if not isinstance(data_control, dict):
+                raise CardDomainError("card_data_control_invalid")
+            automatic_research = data_control.get("automaticResearch")
+            if automatic_research is not None and not isinstance(
+                automatic_research, bool
+            ):
+                raise CardDomainError("card_automatic_research_invalid")
+            if automatic_research is True and (
+                not is_hermes or runtime.get("mode") != "main"
+            ):
+                raise CardDomainError("card_automatic_research_requires_main")
 
 
 def _insert_revision(
@@ -1713,6 +1813,103 @@ def observe_materialized_anchor_reads(
         return False
 
 
+def observe_run_attempt(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach one safe Hermes LLM/tool attempt event to its existing AGE Run."""
+
+    project_id = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    card_id = _required_text(payload.get("cardId"), "card_id")
+    run_id = _required_text(payload.get("runId"), "run_id")
+    raw = payload.get("attempt")
+    if not isinstance(raw, dict):
+        raise CardDomainError("run_attempt_invalid")
+    kind = str(raw.get("kind") or "").strip()
+    phase = str(raw.get("phase") or "").strip()
+    event_id = str(raw.get("eventId") or "").strip()
+    attempt_id = str(raw.get("attemptId") or "").strip()
+    if (
+        kind not in {"llm", "tool"}
+        or phase not in {"started", "completed", "failed", "cancelled"}
+        or not event_id or len(event_id) > 512
+        or not attempt_id or len(attempt_id) > 512
+    ):
+        raise CardDomainError("run_attempt_invalid")
+    allowed = {
+        "schemaVersion", "eventId", "attemptId", "kind", "phase", "observedAt",
+        "startedAt", "endedAt", "durationMs", "firstTokenMs", "provider", "model",
+        "apiMode", "apiCallCount", "retryCount", "retryOf", "turnId", "requestHash",
+        "requestBytes", "responseHash", "responseBytes", "estimatedInputTokens",
+        "inputTokens", "outputTokens", "cachedTokens", "cacheWriteTokens",
+        "reasoningTokens", "totalTokens", "costUsd", "costStatus", "costSource",
+        "pricingVersion", "toolName", "toolCallId", "argumentsHash", "argumentsBytes",
+        "resultHash", "resultBytes", "status", "errorType", "errorMessage",
+        "retryable", "redaction", "observationGap",
+    }
+    if set(raw) - allowed:
+        raise CardDomainError("run_attempt_invalid")
+    event = {key: value for key, value in raw.items() if key in allowed}
+    try:
+        encoded = _canonical_json(event).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise CardDomainError("run_attempt_invalid") from error
+    if len(encoded) > 32_000:
+        raise CardDomainError("run_attempt_too_large")
+    for name in ("requestHash", "responseHash", "argumentsHash", "resultHash"):
+        value = event.get(name)
+        if value is not None and not re.fullmatch(r"[a-f0-9]{64}", str(value)):
+            raise CardDomainError("run_attempt_invalid")
+    for name in (
+        "durationMs", "firstTokenMs", "requestBytes", "responseBytes",
+        "estimatedInputTokens", "inputTokens", "outputTokens", "cachedTokens",
+        "cacheWriteTokens", "reasoningTokens", "totalTokens", "argumentsBytes",
+        "resultBytes", "apiCallCount", "retryCount",
+        "observationGap", "costUsd",
+    ):
+        value = event.get(name)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(float(value)) or float(value) < 0
+        ):
+            raise CardDomainError("run_attempt_invalid")
+    if event.get("costStatus") is not None and event.get("costStatus") not in {
+        "actual", "estimated", "included", "unknown",
+    }:
+        raise CardDomainError("run_attempt_invalid")
+    event["schemaVersion"] = "hermes-run-attempt.v1"
+    event["eventId"] = event_id
+    event["attemptId"] = attempt_id
+    event["kind"] = kind
+    event["phase"] = phase
+    if event.get("errorMessage") is not None:
+        event["errorMessage"] = str(event["errorMessage"])[:512]
+
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        observed = _age_rows(
+            cursor,
+            """
+            MATCH (run:Run {projectId: $projectId, deckId: $deckId, runId: $runId})
+                  -[:EXECUTED_BY]->(card:Card {
+                    projectId: $projectId, deckId: $deckId, cardId: $cardId
+                  })
+            WITH run, [prior IN coalesce(run.attemptEvents, [])
+                       WHERE prior.eventId <> $event.eventId] AS prior
+            SET run.attemptEvents=(prior + [$event])[-256..]
+            RETURN run.runId
+            """,
+            {
+                "projectId": project_id,
+                "deckId": deck_id,
+                "cardId": card_id,
+                "runId": run_id,
+                "event": event,
+            },
+            "run_id agtype",
+        )
+    if len(observed) != 1 or str(observed[0].get("run_id") or "") != run_id:
+        raise CardDomainError("run_attempt_scope_mismatch")
+    return {"ok": True, "runId": run_id, "eventId": event_id}
+
+
 def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
     """Read bounded current Card authority and identity-only AGE telemetry."""
     project_ref = _required_text(payload.get("projectId"), "project_id")
@@ -1751,7 +1948,7 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                       (card:Card {{{owner_scope}}})
                 WHERE true {run_filter}
                 RETURN properties(run), card.cardId
-                ORDER BY {"run.startedAt DESC, run.lastAttentionAt DESC" if direct_only else "run.lastAttentionAt DESC, run.startedAt DESC"}, run.runId DESC
+                ORDER BY {"coalesce(run.acceptedAt, run.startedAt, run.lastAttentionAt) DESC" if direct_only else "coalesce(run.lastAttentionAt, run.acceptedAt, run.startedAt) DESC"}, run.runId DESC
                 LIMIT {limit}
                 """,
                 {"projectId": project_id, "deckId": deck_id, "runId": run_id,
@@ -1797,6 +1994,23 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "rootRunId": str(properties.get("rootRunId") or current_run_id),
                     "nativeChildId": str(properties.get("nativeChildId") or "") or None,
                     "startedAt": str(properties.get("startedAt") or "") or None,
+                    "acceptedAt": str(properties.get("acceptedAt") or "") or None,
+                    "finishedAt": str(properties.get("finishedAt") or "") or None,
+                    "preparationStartedAt": (
+                        str(properties.get("preparationStartedAt") or "") or None
+                    ),
+                    "preparationEndedAt": (
+                        str(properties.get("preparationEndedAt") or "") or None
+                    ),
+                    "preparationElapsedMs": properties.get("preparationElapsedMs"),
+                    "preparationState": (
+                        str(properties.get("preparationState") or "") or None
+                    ),
+                    "preparationError": (
+                        str(properties.get("preparationError") or "") or None
+                    ),
+                    "nativeRootId": str(properties.get("nativeRootId") or "") or None,
+                    "nativeRunId": str(properties.get("nativeRunId") or "") or None,
                     "lastAttentionAt": str(properties.get("lastAttentionAt") or "") or None,
                     "cardId": str(row.get("card_id") or ""),
                     "assignedFromCardIds": [],
@@ -1810,6 +2024,21 @@ def inspect_agentgraph(payload: dict[str, Any]) -> dict[str, Any]:
                     "viewedNativeReferences": [],
                     "materializedNativeReferences": [],
                     "artifacts": [],
+                    "idf": {
+                        "sha256": str(properties.get("idfSha256") or "") or None,
+                        "bytes": properties.get("idfBytes"),
+                    },
+                    "jevDecisions": [
+                        value for value in (
+                            properties.get("jevAttention"),
+                            properties.get("jevAutoTools"),
+                            properties.get("jevModelRouter"),
+                        ) if isinstance(value, dict)
+                    ],
+                    "attemptEvents": [
+                        value for value in (properties.get("attemptEvents") or [])
+                        if isinstance(value, dict)
+                    ][-256:],
                 }
 
             run_ids = list(runs)
@@ -2480,15 +2709,38 @@ def _card_has_orchestrator_authority(card: dict[str, Any]) -> bool:
     )
 
 
+def _card_automatic_research_enabled(card: dict[str, Any]) -> bool:
+    """Read the one explicit saved Main data-control flag; absence is false."""
+
+    options = card.get("runtimeOptions")
+    if not isinstance(options, dict):
+        return False
+    configuration = options.get("configuration")
+    if not isinstance(configuration, dict):
+        return False
+    data_control = configuration.get("dataControl")
+    return (
+        isinstance(data_control, dict)
+        and data_control.get("automaticResearch") is True
+    )
+
+
 def _is_callable_magentic_worker_card(card: dict[str, Any]) -> bool:
-    """Accept enabled saved Cards with a callable non-Magnetic runtime."""
+    """Accept enabled saved delegate Cards with a callable Hermes runtime.
+
+    Orange orchestration authority and blue Magnetic availability are
+    independent saved relationships.  A delegate may therefore remain a
+    Magnetic worker while its own outbound orange roster is enabled.  Main is
+    still the front door rather than a Magnetic worker, and Magnetic itself is
+    still the bus.
+    """
     try:
         runtime = _card_runtime(card)
     except CardDomainError:
         return False
     return (
-        not _is_magentic_runtime(runtime)
-        and not _card_has_orchestrator_authority(card)
+        runtime.get("kind") == "hermes"
+        and runtime.get("mode") == "delegate"
         and _card_enabled(card)
     )
 
@@ -2497,9 +2749,10 @@ def _validate_single_master_topology(
     cards: dict[str, dict[str, Any]],
     edges: list[dict[str, Any]],
 ) -> None:
-    """Keep each ordinary Card under Main (orange) or Magnetic (blue), never both."""
+    """Keep one controller per topology while orange and blue stay independent."""
 
-    masters: dict[str, set[str]] = {}
+    flow_masters: dict[str, set[str]] = {}
+    magnetic_masters: dict[str, set[str]] = {}
     for edge in edges:
         if edge.get("enabled") is False:
             continue
@@ -2515,7 +2768,7 @@ def _validate_single_master_topology(
                 and _card_has_orchestrator_authority(source)
                 and not _is_magentic_runtime(_card_runtime(target))
             ):
-                masters.setdefault(target_id, set()).add(source_id)
+                flow_masters.setdefault(target_id, set()).add(source_id)
         elif edge_type == "magentic_option":
             source = cards.get(source_id)
             target = cards.get(target_id)
@@ -2527,12 +2780,13 @@ def _validate_single_master_topology(
                 continue
             master_id = source_id if source_is_magnetic else target_id
             worker_id = target_id if source_is_magnetic else source_id
-            if _card_has_orchestrator_authority(cards[worker_id]):
+            if not _is_callable_magentic_worker_card(cards[worker_id]):
                 raise CardDomainError(f"card_master_conflict:{worker_id}")
-            masters.setdefault(worker_id, set()).add(master_id)
-    for card_id, master_ids in masters.items():
-        if len(master_ids) > 1:
-            raise CardDomainError(f"card_master_conflict:{card_id}")
+            magnetic_masters.setdefault(worker_id, set()).add(master_id)
+    for topology_masters in (flow_masters, magnetic_masters):
+        for card_id, master_ids in topology_masters.items():
+            if len(master_ids) > 1:
+                raise CardDomainError(f"card_master_conflict:{card_id}")
 
 
 def _validate_changed_flow_edges(nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
@@ -2883,6 +3137,509 @@ def _attention_retrieval(
                 if not candidates else {}
             ),
         }
+
+
+def register_atomic_research_candidate(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach one settled Think to its existing originating Main Run receipt."""
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    conversation_id = _required_text(payload.get("conversationId"), "conversation_id")
+    originating_run_id = _required_text(
+        payload.get("originatingRunId"), "originating_run_id"
+    )
+    think_memory_id = _required_text(payload.get("thinkMemoryId"), "think_memory_id")
+    main_card_id = _required_text(payload.get("mainCardId"), "main_card_id")
+    main_revision_id = _required_text(
+        payload.get("mainCardRevisionId"), "main_card_revision_id"
+    )
+    think_card_id = _required_text(payload.get("thinkGraphCardId"), "thinkgraph_card_id")
+    think_revision_id = _required_text(
+        payload.get("thinkGraphCardRevisionId"), "thinkgraph_card_revision_id"
+    )
+    know_card_id = _required_text(payload.get("knowGraphCardId"), "knowgraph_card_id")
+    know_revision_id = _required_text(
+        payload.get("knowGraphCardRevisionId"), "knowgraph_card_revision_id"
+    )
+    evidence_cutoff = _required_text(payload.get("evidenceCutoff"), "evidence_cutoff")
+    loaded = _load_deck_internal(project_ref, deck_id)
+    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
+    main = cards.get(main_card_id)
+    think = cards.get(think_card_id)
+    know = cards.get(know_card_id)
+    if any(card is None for card in (main, think, know)):
+        raise CardDomainError("atomic_research_card_authority_unavailable")
+    if (
+        str(main.get("_cardRevisionId") or "") != main_revision_id
+        or str(think.get("_cardRevisionId") or "") != think_revision_id
+        or str(know.get("_cardRevisionId") or "") != know_revision_id
+    ):
+        raise CardDomainError("atomic_research_card_revision_changed")
+    if _card_runtime(main).get("mode") != "main":
+        raise CardDomainError("atomic_research_main_authority_invalid")
+    if not _card_automatic_research_enabled(main):
+        return {
+            "ok": True,
+            "enabled": False,
+            "registered": False,
+            "projectId": loaded["projectId"],
+            "originatingRunId": originating_run_id,
+        }
+    direct = {
+        target["cardId"]
+        for target in _direct_card_targets(
+            main_card_id, cards, loaded["deck"]["edges"]
+        )
+    }
+    if know_card_id not in direct or think_card_id not in direct:
+        raise CardDomainError("atomic_research_flow_authority_required")
+    candidate = {
+        "schemaVersion": "atomic-research-candidate.v1",
+        "projectId": str(loaded["projectId"]),
+        "deckId": deck_id,
+        "conversationId": conversation_id,
+        "originatingRunId": originating_run_id,
+        "thinkMemoryId": think_memory_id,
+        "mainCardId": main_card_id,
+        "mainCardRevisionId": main_revision_id,
+        "thinkGraphCardId": think_card_id,
+        "thinkGraphCardRevisionId": think_revision_id,
+        "knowGraphCardId": know_card_id,
+        "knowGraphCardRevisionId": know_revision_id,
+        "evidenceCutoff": evidence_cutoff,
+    }
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        rows = _age_rows(
+            cursor,
+            """
+            MATCH (run:Run {
+              projectId: $projectId, deckId: $deckId, runId: $runId
+            })-[:EXECUTED_BY]->(main:Card {
+              projectId: $projectId, deckId: $deckId, cardId: $mainCardId
+            })
+            WHERE run.conversationId=$conversationId
+            SET run.atomicResearchCandidate=$candidate
+            RETURN run.runId AS runId
+            """,
+            {
+                "projectId": str(loaded["projectId"]),
+                "deckId": deck_id,
+                "runId": originating_run_id,
+                "mainCardId": main_card_id,
+                "conversationId": conversation_id,
+                "candidate": candidate,
+            },
+            "run_id agtype",
+        )
+    if len(rows) != 1:
+        raise CardDomainError("atomic_research_originating_run_unavailable")
+    return {
+        "ok": True,
+        "enabled": True,
+        "registered": True,
+        **candidate,
+    }
+
+
+def _pending_atomic_research_seed(
+    project_id: str,
+    deck_id: str,
+    conversation_id: str,
+    main_card_id: str,
+) -> dict[str, Any] | None:
+    loaded = _load_deck_internal(project_id, deck_id)
+    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
+    main = cards.get(main_card_id)
+    if main is None or not _card_automatic_research_enabled(main):
+        return None
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            rows = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId
+                })-[:EXECUTED_BY]->(main:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $mainCardId
+                })
+                WHERE run.conversationId=$conversationId
+                  AND run.atomicResearchCandidate IS NOT NULL
+                  AND run.atomicResearchAssessment IS NULL
+                RETURN run.atomicResearchCandidate AS candidate
+                ORDER BY run.finishedAt DESC, run.runId DESC
+                LIMIT 1
+                """,
+                {
+                    "projectId": str(loaded["projectId"]),
+                    "deckId": deck_id,
+                    "conversationId": conversation_id,
+                    "mainCardId": main_card_id,
+                },
+                "candidate agtype",
+            )
+    if not rows or not isinstance(rows[0].get("candidate"), dict):
+        return None
+    candidate = dict(rows[0]["candidate"])
+    current = {
+        "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
+    }
+    for key in ("thinkGraph", "knowGraph"):
+        card_id = str(candidate.get(f"{key}CardId") or "")
+        card = cards.get(card_id)
+        current[f"{key}CardRevisionId"] = str(
+            card.get("_cardRevisionId") or ""
+        ) if card is not None else ""
+    if any(
+        str(candidate.get(key) or "") != value
+        for key, value in current.items()
+    ):
+        return None
+    return candidate
+
+
+def record_atomic_research_assessment(
+    assessment: dict[str, Any],
+    *,
+    delivered_to_run_id: str,
+) -> dict[str, Any]:
+    """Persist the one shared-Jev assessment on existing AGE Run receipts."""
+
+    if (
+        not isinstance(assessment, dict)
+        or assessment.get("schemaVersion") != "atomic-research-assessment.v1"
+    ):
+        raise CardDomainError("atomic_research_assessment_invalid")
+    project_id = _required_text(assessment.get("projectId"), "project_id")
+    deck_id = _required_text(assessment.get("deckId"), "deck_id")
+    originating_run_id = _required_text(
+        assessment.get("originatingRunId"), "originating_run_id"
+    )
+    assessment_id = _required_text(
+        assessment.get("assessmentId"), "assessment_id"
+    )
+    delivered_to_run_id = _required_text(delivered_to_run_id, "delivered_to_run_id")
+    if len(json.dumps(assessment, ensure_ascii=False, default=str).encode()) > 100_000:
+        raise CardDomainError("atomic_research_assessment_too_large")
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        rows = _age_rows(
+            cursor,
+            """
+            MATCH (origin:Run {
+              projectId: $projectId, deckId: $deckId, runId: $originatingRunId
+            })
+            MATCH (current:Run {
+              projectId: $projectId, deckId: $deckId, runId: $currentRunId
+            })
+            WHERE origin.atomicResearchCandidate IS NOT NULL
+              AND (
+                origin.atomicResearchAssessment IS NULL
+                OR origin.atomicResearchAssessment.assessmentId=$assessmentId
+              )
+            SET origin.atomicResearchAssessment=$assessment,
+                origin.atomicResearchDeliveredToRunId=$currentRunId,
+                current.atomicResearchAssessmentId=$assessmentId,
+                current.atomicResearchOriginatingRunId=$originatingRunId
+            RETURN origin.runId AS runId
+            """,
+            {
+                "projectId": project_id,
+                "deckId": deck_id,
+                "originatingRunId": originating_run_id,
+                "currentRunId": delivered_to_run_id,
+                "assessmentId": assessment_id,
+                "assessment": assessment,
+            },
+            "run_id agtype",
+        )
+    if len(rows) != 1:
+        raise CardDomainError("atomic_research_assessment_receipt_conflict")
+    return {
+        "ok": True,
+        "assessmentId": assessment_id,
+        "originatingRunId": originating_run_id,
+        "deliveredToRunId": delivered_to_run_id,
+        "automaticMemoryIds": list(assessment.get("automaticMemoryIds") or []),
+    }
+
+
+def _atomic_research_assignment(
+    *,
+    assessment_id: str,
+    source_run_id: str,
+    memory_ids: list[str],
+    reason: str,
+) -> str:
+    result_schema = {
+        "schemaVersion": "atomic-research-result.v1",
+        "assessmentId": assessment_id,
+        "sourceRunId": source_run_id,
+        "results": [{
+            "thinkMemoryId": "one exact supplied Think memory ID",
+            "status": "supported|contradicted|source-unavailable",
+            "summary": "concise sourced result",
+            "citations": [{
+                "url": "exact primary-source URL",
+                "title": "source title",
+                "publishedAt": "source date or null",
+            }],
+            "episodeUuids": ["exact Graphiti episode UUID"],
+        }],
+    }
+    return "\n".join((
+        "Run one bounded atomic research assignment using your saved KnowGraph Card authority.",
+        "The supplied ThinkGraph Data Anchors are question framing, not factual evidence.",
+        "For each exact Think memory ID, inspect existing current project-scoped Knows and their",
+        "source dates first. Use at most four distinct current primary sources across this assignment.",
+        "Write useful source material through your existing Graphiti tools and saved grants only.",
+        "Do not exceed the saved Card's model, maxTokens, maxTurns, tools, profile, or grants.",
+        "Return only one JSON object matching RESULT_SCHEMA, with one result per supplied Think ID.",
+        "A supported or contradicted result requires at least one exact primary-source citation URL",
+        "and at least one exact persisted Graphiti episode UUID for that source material.",
+        "If those exact references are unavailable, return source-unavailable; do not infer success.",
+        f"ASSESSMENT_ID: {assessment_id}",
+        f"SOURCE_RUN_ID: {source_run_id}",
+        "THINK_MEMORY_IDS: " + json.dumps(memory_ids, separators=(",", ":")),
+        "MAIN_REASON: " + (reason or "No additional reason supplied."),
+        "RESULT_SCHEMA: " + json.dumps(result_schema, separators=(",", ":")),
+    ))
+
+
+def authorize_atomic_research_launch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate and claim the one auto/manual KnowGraph launch for a pair receipt."""
+
+    if not isinstance(payload, dict):
+        raise CardDomainError("atomic_research_command_invalid")
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    conversation_id = _required_text(payload.get("conversationId"), "conversation_id")
+    source_run_id = _required_text(payload.get("sourceRunId"), "source_run_id")
+    main_card_id = _required_text(payload.get("mainCardId"), "main_card_id")
+    mode = str(payload.get("mode") or "").strip()
+    if mode not in {"automatic", "main"}:
+        raise CardDomainError("atomic_research_command_mode_invalid")
+    reason = str(payload.get("reason") or "").strip()
+    if len(reason) > 500:
+        raise CardDomainError("atomic_research_reason_too_large")
+    raw_ids = payload.get("thinkMemoryIds")
+    if (
+        not isinstance(raw_ids, list)
+        or not 1 <= len(raw_ids) <= 2
+        or any(not isinstance(value, str) or not value.strip() or len(value) > 1024
+               for value in raw_ids)
+    ):
+        raise CardDomainError("atomic_research_think_ids_invalid")
+    memory_ids = sorted(value.strip() for value in raw_ids)
+    if len(set(memory_ids)) != len(memory_ids):
+        raise CardDomainError("atomic_research_think_ids_invalid")
+
+    loaded = _load_deck_internal(project_ref, deck_id)
+    cards = {str(card.get("id") or ""): card for card in loaded["deck"]["nodes"]}
+    main = cards.get(main_card_id)
+    if (
+        main is None
+        or _card_runtime(main).get("mode") != "main"
+        or not _card_automatic_research_enabled(main)
+    ):
+        raise CardDomainError("atomic_research_policy_disabled")
+
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"atomic-research:{loaded['projectId']}:{deck_id}:{source_run_id}",),
+        )
+        rows = _age_rows(
+            cursor,
+            """
+            MATCH (origin:Run {
+              projectId: $projectId, deckId: $deckId
+            })
+            MATCH (source:Run {
+              projectId: $projectId, deckId: $deckId, runId: $sourceRunId
+            })-[:EXECUTED_BY]->(main:Card {
+              projectId: $projectId, deckId: $deckId, cardId: $mainCardId
+            })
+            WHERE origin.atomicResearchDeliveredToRunId=$sourceRunId
+              AND origin.atomicResearchAssessment IS NOT NULL
+            RETURN origin.runId AS originatingRunId,
+                   origin.atomicResearchAssessment AS assessment,
+                   origin.atomicResearchLaunch AS launch
+            LIMIT 1
+            """,
+            {
+                "projectId": str(loaded["projectId"]),
+                "deckId": deck_id,
+                "sourceRunId": source_run_id,
+                "mainCardId": main_card_id,
+            },
+            "originating_run_id agtype, assessment agtype, launch agtype",
+        )
+        if len(rows) != 1 or not isinstance(rows[0].get("assessment"), dict):
+            raise CardDomainError("atomic_research_candidate_receipt_unavailable")
+        assessment = dict(rows[0]["assessment"])
+        assessment_id = _required_text(
+            assessment.get("assessmentId"), "assessment_id"
+        )
+        if assessment.get("status") != "success":
+            raise CardDomainError("atomic_research_candidate_receipt_unavailable")
+        if assessment.get("conversationId") != conversation_id:
+            raise CardDomainError("atomic_research_conversation_mismatch")
+        know_card_id = _required_text(
+            assessment.get("knowGraphCardId"), "knowgraph_card_id"
+        )
+        know = cards.get(know_card_id)
+        revisions = {
+            "mainCardRevisionId": str(main.get("_cardRevisionId") or ""),
+            "thinkGraphCardRevisionId": str(
+                cards.get(str(assessment.get("thinkGraphCardId") or ""), {}).get(
+                    "_cardRevisionId"
+                ) or ""
+            ),
+            "knowGraphCardRevisionId": str(
+                know.get("_cardRevisionId") or ""
+            ) if know is not None else "",
+        }
+        if any(str(assessment.get(key) or "") != value
+               for key, value in revisions.items()):
+            raise CardDomainError("atomic_research_card_revision_changed")
+        direct = {
+            target["cardId"] for target in _direct_card_targets(
+                main_card_id, cards, loaded["deck"]["edges"]
+            )
+        }
+        if know is None or know_card_id not in direct:
+            raise CardDomainError("atomic_research_flow_authority_required")
+        offered = set(assessment.get("recommendedMemoryIds") or [])
+        automatic = set(assessment.get("automaticMemoryIds") or [])
+        allowed = automatic if mode == "automatic" else offered
+        if not set(memory_ids) <= allowed:
+            raise CardDomainError("atomic_research_candidate_not_offered")
+        correlation_material = {
+            "projectId": str(loaded["projectId"]),
+            "revisions": revisions,
+            "thinkMemoryIds": memory_ids,
+            "researchFrameSha256": assessment.get("researchFrameSha256"),
+            "evidenceCutoff": assessment.get("evidenceCutoff"),
+        }
+        correlation_id = "atomic_research:" + sha256(
+            json.dumps(correlation_material, sort_keys=True,
+                       separators=(",", ":")).encode()
+        ).hexdigest()
+        existing_launch = rows[0].get("launch")
+        if isinstance(existing_launch, dict):
+            if str(existing_launch.get("correlationId") or "") != correlation_id:
+                raise CardDomainError("atomic_research_pair_already_launched")
+            claimed = False
+        else:
+            launch = {
+                "schemaVersion": "atomic-research-launch.v1",
+                "assessmentId": assessment_id,
+                "sourceRunId": source_run_id,
+                "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+                "correlationId": correlation_id,
+                "thinkMemoryIds": memory_ids,
+                "mode": mode,
+                "claimedAt": _now().isoformat(),
+            }
+            claimed_rows = _age_rows(
+                cursor,
+                """
+                MATCH (origin:Run {
+                  projectId: $projectId, deckId: $deckId,
+                  runId: $originatingRunId
+                })
+                WHERE origin.atomicResearchLaunch IS NULL
+                SET origin.atomicResearchLaunch=$launch
+                RETURN origin.runId AS runId
+                """,
+                {
+                    "projectId": str(loaded["projectId"]),
+                    "deckId": deck_id,
+                    "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+                    "launch": launch,
+                },
+                "run_id agtype",
+            )
+            if len(claimed_rows) != 1:
+                raise CardDomainError("atomic_research_launch_claim_conflict")
+            claimed = True
+    anchors = [{
+        "authority": "ThinkGraph",
+        "nativeId": memory_id,
+        "reason": "Exact Jev-offered atomic Think framing for bounded KnowGraph research.",
+        "priority": len(memory_ids) - index,
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": True,
+    } for index, memory_id in enumerate(memory_ids)]
+    return {
+        "ok": True,
+        "claimed": claimed,
+        "rejoined": not claimed,
+        "projectId": str(loaded["projectId"]),
+        "deckId": deck_id,
+        "conversationId": conversation_id,
+        "sourceRunId": source_run_id,
+        "originatingRunId": str(rows[0].get("originatingRunId") or ""),
+        "assessmentId": assessment_id,
+        "correlationId": correlation_id,
+        "mainCardId": main_card_id,
+        "mainCardRevisionId": revisions["mainCardRevisionId"],
+        "knowGraphCardId": know_card_id,
+        "knowGraphCardRevisionId": revisions["knowGraphCardRevisionId"],
+        "knowGraphProfile": _card_runtime(know)["profile"],
+        "knowGraphTitle": str(know.get("title") or "KnowGraph"),
+        "thinkMemoryIds": memory_ids,
+        "assignment": _atomic_research_assignment(
+            assessment_id=assessment_id,
+            source_run_id=source_run_id,
+            memory_ids=memory_ids,
+            reason=reason,
+        ),
+        "dataAnchors": anchors,
+    }
+
+
+def record_atomic_research_outcome(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach validated child/citation outcome to existing Run/AgentGraph receipts."""
+
+    project_id = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    originating_run_id = _required_text(
+        payload.get("originatingRunId"), "originating_run_id"
+    )
+    child_run_id = _required_text(payload.get("childRunId"), "child_run_id")
+    outcome = payload.get("outcome")
+    if not isinstance(outcome, dict):
+        raise CardDomainError("atomic_research_outcome_invalid")
+    if len(json.dumps(outcome, ensure_ascii=False).encode()) > 100_000:
+        raise CardDomainError("atomic_research_outcome_too_large")
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        rows = _age_rows(
+            cursor,
+            """
+            MATCH (origin:Run {
+              projectId: $projectId, deckId: $deckId, runId: $originatingRunId
+            })
+            MATCH (child:Run {
+              projectId: $projectId, deckId: $deckId, runId: $childRunId
+            })
+            SET origin.atomicResearchOutcome=$outcome,
+                child.atomicResearchOutcome=$outcome
+            RETURN child.runId AS runId
+            """,
+            {
+                "projectId": project_id,
+                "deckId": deck_id,
+                "originatingRunId": originating_run_id,
+                "childRunId": child_run_id,
+                "outcome": outcome,
+            },
+            "run_id agtype",
+        )
+    if len(rows) != 1:
+        raise CardDomainError("atomic_research_outcome_receipt_unavailable")
+    return {"ok": True, "childRunId": child_run_id}
     except Exception as error:
         status, error_code = _attention_error_status(error)
         return name, {
@@ -2902,6 +3659,7 @@ def _prepare_main_graph_attention(
     query: str,
     excluded_identities: set[tuple[str, str]],
     effective_assignment: str | None = None,
+    atomic_research_seed: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], float]:
     """Retrieve twin-graph candidates and make exactly one bounded Jev Choice."""
 
@@ -2951,6 +3709,39 @@ def _prepare_main_graph_attention(
                 break
         if len(candidates) >= 16:
             break
+    atomic_research_frame: dict[str, Any] | None = None
+    atomic_research_failure: dict[str, Any] | None = None
+    if atomic_research_seed is not None:
+        try:
+            atomic_research_frame = prepare_atomic_research_frame(
+                atomic_research_seed
+            )
+        except Exception as error:
+            status, error_code = _attention_error_status(error)
+            atomic_research_failure = {
+                "schemaVersion": "atomic-research-assessment.v1",
+                "status": status,
+                "failureReason": error_code,
+                **atomic_research_seed,
+                "recommendedMemoryIds": [],
+                "automaticMemoryIds": [],
+                "subjectBoundary": "uncertain",
+                "activeSubject": None,
+            }
+    if not candidates and atomic_research_frame is not None:
+        required = next(iter(
+            atomic_research_frame["opaqueThinkChoices"].values()
+        ))
+        candidates.append({
+            "authority": "ThinkGraph",
+            "nativeId": required["memoryId"],
+            "title": required["title"],
+            "nodeType": "Think",
+            "choiceId": _attention_choice_id(
+                "ThinkGraph", required["memoryId"]
+            ),
+            "recallEvidence": [],
+        })
     public_candidates = [{
         "choiceId": candidate["choiceId"],
         "authority": candidate["authority"],
@@ -3000,6 +3791,7 @@ def _prepare_main_graph_attention(
     try:
         decision = decide_main_graph_attention(
             query, candidates, effective_request=effective_assignment or query,
+            atomic_research_frame=atomic_research_frame,
         )
     except Exception as error:
         attention["timingMs"]["jev"] = round(
@@ -3016,8 +3808,9 @@ def _prepare_main_graph_attention(
         (time.perf_counter() - jev_started) * 1000, 3
     )
     distribution = decision.get("distribution")
+    candidate_choice_ids = {candidate["choiceId"] for candidate in candidates}
     if not isinstance(distribution, dict) or set(distribution) != {
-        candidate["choiceId"] for candidate in candidates
+        *candidate_choice_ids, MAIN_GRAPH_ATTENTION_NEW_SUBJECT,
     }:
         attention["status"] = "invalid"
         attention["errorCode"] = "jev_attention_response_invalid"
@@ -3028,12 +3821,15 @@ def _prepare_main_graph_attention(
         attention["errorCode"] = "jev_attention_response_invalid"
         return attention, [], total_started
     ordered = sorted(
-        ((choice_id, float(probability)) for choice_id, probability in distribution.items()),
+        ((choice_id, float(probability)) for choice_id, probability in distribution.items()
+         if choice_id != MAIN_GRAPH_ATTENTION_NEW_SUBJECT),
         key=lambda item: (-item[1], 0 if item[0] == winner else 1, item[0]),
     )
     selected_choice_ids: list[str] = []
     selected_mass = 0.0
     for choice_id, probability in ordered:
+        if winner == MAIN_GRAPH_ATTENTION_NEW_SUBJECT:
+            break
         if len(selected_choice_ids) >= _JEV_ATTENTION_MAXIMUM_SELECTED:
             break
         selected_choice_ids.append(choice_id)
@@ -3049,11 +3845,20 @@ def _prepare_main_graph_attention(
         "decisionId": str(decision.get("decisionId") or attention["decisionId"]),
         "distribution": dict(distribution),
         "winner": winner,
+        "contextSelection": (
+            "new_subject_abstention"
+            if winner == MAIN_GRAPH_ATTENTION_NEW_SUBJECT
+            else "reused_existing_context"
+        ),
         "confidence": float(decision["confidence"]),
         "provider": str(decision.get("provider") or ""),
         "resolvedModel": str(decision.get("resolvedModel") or ""),
         "usage": decision.get("usage") if isinstance(decision.get("usage"), dict) else {},
     })
+    if isinstance(decision.get("atomicResearch"), dict):
+        attention["atomicResearch"] = decision["atomicResearch"]
+    elif atomic_research_failure is not None:
+        attention["atomicResearch"] = atomic_research_failure
     attention["policy"]["selectedMass"] = selected_mass
     for candidate in attention["candidates"]:
         candidate["probability"] = float(distribution[candidate["choiceId"]])
@@ -3417,6 +4222,10 @@ def _prepare_invocation(
         "autoTools": options.get("autoTools") is True,
         "autoSelect": options.get("autoSelect") is True,
     }
+    if options.get("jevContext") is not None:
+        runtime_options["jevContext"] = _validated_card_jev_context(
+            options.get("jevContext")
+        )
     if openai_runtime is not None:
         runtime_options["openaiRuntime"] = openai_runtime
     configuration = options.get("configuration")
@@ -3856,15 +4665,92 @@ def _apply_card_jev_decisions(
     if runtime.get("kind") != "hermes":
         return tool_definitions
 
-    effective_context = _card_jev_context(
-        prepared=prepared,
-        call_config=call_config,
-        assignment=assignment,
-        output_requirements=output_requirements,
-        graph_text=graph_text,
-        references=references,
-        images=images,
-    )
+    context_policy = _validated_card_jev_context(runtime_options.get("jevContext"))
+
+    def decision_context(boundary: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        mode = context_policy[boundary]
+        context = _card_jev_context(
+            prepared=prepared,
+            call_config=call_config,
+            assignment=assignment,
+            output_requirements=output_requirements,
+            graph_text=graph_text,
+            references=references,
+            images=images,
+            context_mode=mode,
+            current_request=str(payload.get("_currentJevRequest") or assignment),
+            shared_conversation=payload.get("sharedConversation"),
+        )
+        context_bytes = _canonical_json(context).encode("utf-8")
+        effective_sources = ["current_request", "saved_card"]
+        unavailable_sources: list[str] = []
+        if mode == "inherited":
+            effective_sources.append("inherited_invocation_context")
+            if graph_text or references:
+                effective_sources.append("selected_native_context")
+        elif mode == "conversation_window" and context.get("bounded_conversation_window"):
+            effective_sources.append("conversation_window")
+        elif mode == "conversation_window":
+            unavailable_sources.append("conversation_window")
+        elif mode == "selected_native_context" and (graph_text or references):
+            effective_sources.append("selected_native_context")
+        elif mode == "selected_native_context":
+            unavailable_sources.append("selected_native_context")
+        if images:
+            effective_sources.append("attachment_metadata")
+            unavailable_sources.append("attachment_content")
+        native_references = [
+            {
+                key: reference.get(key)
+                for key in (
+                    "authority", "nativeId", "nativeKind", "label", "reason",
+                    "asOf", "required", "readOperation", "contentSha256",
+                    "selectionScope", "materializedContentBytes", "sourcePath",
+                    "sourceUrl", "truncated", "provenance",
+                )
+                if reference.get(key) is not None
+            }
+            for reference in (
+                references
+                if mode in {"inherited", "selected_native_context"}
+                else []
+            )
+        ]
+        attachment_references = [
+            {
+                key: image.get(key)
+                for key in ("name", "mediaType", "sha256", "sizeBytes")
+                if image.get(key) is not None
+            }
+            for image in images
+        ]
+        conversation = context.get("bounded_conversation_window")
+        conversation_items = conversation if isinstance(conversation, list) else []
+        conversation_bytes = _canonical_json(conversation_items).encode("utf-8")
+        return context, {
+            "schemaVersion": "card-jev-context.v1",
+            "policy": mode,
+            "requiredSources": ["current_request", "saved_card"],
+            "effectiveSources": effective_sources,
+            "unavailableSources": unavailable_sources,
+            "requestSha256": sha256(
+                str(context["request_or_delegated_mission"]).encode("utf-8")
+            ).hexdigest(),
+            "savedCardRevisionId": prepared["cardRevisionId"],
+            "nativeReferences": native_references,
+            "attachmentReferences": attachment_references,
+            "conversationWindow": {
+                "messageCount": len(conversation_items),
+                "bytes": len(conversation_bytes),
+                "sha256": sha256(conversation_bytes).hexdigest(),
+            },
+            "inputSha256": sha256(context_bytes).hexdigest(),
+            "inputBytes": len(context_bytes),
+            "redaction": "safe_projection_only",
+        }
+
+    tool_context, tool_context_receipt = decision_context("autoTools")
+    model_context, model_context_receipt = decision_context("modelChoice")
     incomplete_context_reason = None
     if images:
         incomplete_context_reason = "card_jev_attachment_content_unavailable"
@@ -3908,7 +4794,7 @@ def _apply_card_jev_decisions(
         }
     elif runtime_options.get("autoTools") is True:
         selected_optional, tool_receipt = _decide_card_auto_tools(
-            effective_context, optional_definitions
+            tool_context, optional_definitions
         )
         selected_set = set(selected_optional) | mandatory_set
         selected_tools = [name for name in baseline_tools if name in selected_set]
@@ -3949,6 +4835,7 @@ def _apply_card_jev_decisions(
     selected_definitions = [
         by_id[name] for name in call_config["presentedTools"] if name in by_id
     ]
+    tool_receipt["context"] = tool_context_receipt
     prepared["jevAutoTools"] = tool_receipt
 
     saved_provider = dict(call_config["provider"])
@@ -3967,7 +4854,7 @@ def _apply_card_jev_decisions(
         estimated_tokens = max(
             1,
             len(_canonical_json({
-                "context": effective_context,
+                "context": model_context,
                 "tools": [_tool_jev_candidate(item) for item in selected_definitions],
             }).encode("utf-8")) // 4,
         )
@@ -3978,7 +4865,7 @@ def _apply_card_jev_decisions(
             reasoning_effort=str(runtime_options.get("reasoningEffort") or ""),
         )
         router_context = {
-            **effective_context,
+            **model_context,
             "actual_initial_tools": [
                 _tool_jev_candidate(definition)
                 for definition in selected_definitions
@@ -3999,6 +4886,7 @@ def _apply_card_jev_decisions(
             "savedModel": saved_provider,
             "selectedModel": saved_provider,
         }
+    router_receipt["context"] = model_context_receipt
     prepared["jevModelRouter"] = router_receipt
     return selected_definitions
 
@@ -4047,6 +4935,12 @@ def _resolve_invocation_components(
         and runtime.get("kind") == "hermes"
         and runtime.get("mode") == "main"
     ):
+        atomic_research_seed = _pending_atomic_research_seed(
+            prepared["projectId"],
+            prepared["deckId"],
+            str(payload.get("conversationId") or ""),
+            prepared["cardIdentity"]["cardId"],
+        )
         attention, attention_anchors, attention_started = _prepare_main_graph_attention(
             project_id=prepared["projectId"],
             deck_id=prepared["deckId"],
@@ -4054,7 +4948,25 @@ def _resolve_invocation_components(
             query=attention_query,
             effective_assignment=assignment,
             excluded_identities=set(anchor_identities),
+            atomic_research_seed=atomic_research_seed,
         )
+        atomic_assessment = attention.get("atomicResearch")
+        if isinstance(atomic_assessment, dict):
+            prepared["atomicResearchAssessment"] = atomic_assessment
+            if (
+                atomic_assessment.get("subjectBoundary") == "shifted"
+                and attention.get("winner") == MAIN_GRAPH_ATTENTION_NEW_SUBJECT
+            ):
+                assignment = "\n\n".join((
+                    "## Dynamic new-subject opening guidance\n"
+                    "Treat this turn as a new-subject opening. Give one brief interesting or "
+                    "falsifiable angle sentence, then ask 2-4 concise high-information "
+                    "questions before any long answer. Distinguish assumptions and current "
+                    "KnowGraph gaps. Do not assert unsourced current facts, give a long thesis "
+                    "or data dump, or make a recommendation on this opening turn. This is "
+                    "transient guidance for this turn only.",
+                    assignment,
+                ))
     for anchor in anchors:
         anchor.pop("_inputOrder", None)
         anchor.pop("priority", None)
@@ -4203,6 +5115,17 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
     anchor_references = resolved["resolvedNativeReads"]
     graph_projection = resolved["resolvedGraphProjection"]
     images = resolved["images"]
+    subject_directory: dict[str, Any] | None = None
+    if prepared["cardIdentity"]["cardId"] == "card_knowgraph":
+        try:
+            subject_directory = build_canonical_subject_directory(
+                prepared["projectId"]
+            )
+            graph_seed = append_canonical_subject_directory(
+                graph_seed, subject_directory
+            )
+        except DataAnchorError as error:
+            raise CardDomainError(str(error)) from error
     try:
         materialized = materialize_idf(
             stable={
@@ -4245,6 +5168,8 @@ def materialize_invocation(payload: dict[str, Any]) -> dict[str, Any]:
         **prepared,
         "resolvedNativeReads": anchor_references,
         "resolvedGraphProjection": graph_projection,
+        **({"canonicalSubjectDirectory": subject_directory}
+           if subject_directory is not None else {}),
         **idf_public(materialized),
         "_materializedIdf": materialized,
     }
@@ -4438,6 +5363,295 @@ def assert_selected_graph_data_resolved(
         raise CardDomainError("selected_graph_data_projection_empty")
 
 
+def _observe_run_acceptance(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    run_id: str,
+    correlation_id: str,
+    accepted_at: datetime,
+    preparation_started_at: datetime,
+    conversation_id: str | None,
+) -> bool:
+    """Observe one real accepted outer request before native preparation."""
+
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            observed = _age_rows(
+                cursor,
+                """
+                MATCH (card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                MERGE (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })
+                SET run.correlationId=$correlationId,
+                    run.state=coalesce(run.state, 'pending'),
+                    run.acceptedAt=coalesce(run.acceptedAt, $acceptedAt),
+                    run.preparationStartedAt=coalesce(
+                      run.preparationStartedAt, $preparationStartedAt
+                    ),
+                    run.preparationState=coalesce(run.preparationState, 'preparing'),
+                    run.conversationId=coalesce(run.conversationId, $conversationId),
+                    run.rootRunId=coalesce(run.rootRunId, $runId)
+                MERGE (run)-[:EXECUTED_BY]->(card)
+                RETURN run.runId
+                """,
+                {
+                    "projectId": project_id,
+                    "deckId": deck_id,
+                    "cardId": card_id,
+                    "runId": run_id,
+                    "correlationId": correlation_id,
+                    "acceptedAt": accepted_at.isoformat(),
+                    "preparationStartedAt": preparation_started_at.isoformat(),
+                    "conversationId": conversation_id,
+                },
+                "run_id agtype",
+            )
+        return len(observed) == 1 and str(observed[0].get("run_id") or "") == run_id
+    except Exception:
+        return False
+
+
+def accept_run_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist one accepted outer Card request before fallible preparation.
+
+    The row is the existing product Run authority in ``pending`` state.  It is
+    not evidence that a native Hermes Run, provider call, or tool call exists.
+    """
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    card_id = _required_text(payload.get("cardId"), "card_id")
+    run_id = _required_text(payload.get("runId"), "run_id")
+    correlation_id = _required_text(payload.get("correlationId"), "correlation_id")
+    accepted_at = _accepted_at(payload.get("acceptedAt"))
+    preparation_started_at = _now()
+    loaded = _load_deck_internal(project_ref, deck_id)
+    card = next(
+        (item for item in loaded["deck"]["nodes"] if item.get("id") == card_id),
+        None,
+    )
+    if card is None:
+        raise CardDomainError("card_not_found")
+    revision_id = _required_text(card.get("_cardRevisionId"), "card_revision_id")
+    runtime = _card_runtime(card)
+    runtime_kind = "hermes"
+    runtime_mode = runtime["mode"]
+    project_id = str(loaded["projectId"])
+
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            INSERT INTO ag_catalog.agent_runs (
+              run_id, project_id, deck_id, target_card_revision_id,
+              runtime_kind, runtime_mode, correlation_id, state, created_at
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                run_id, project_id, deck_id, revision_id,
+                runtime_kind, runtime_mode, correlation_id, accepted_at,
+            ),
+        )
+        created = cursor.rowcount == 1
+        cursor.execute(
+            """
+            SELECT run_id, project_id, deck_id, target_card_revision_id,
+                   correlation_id, state, created_at, provider_turn_ref
+            FROM ag_catalog.agent_runs
+            WHERE run_id=%s OR correlation_id=%s
+            ORDER BY CASE WHEN run_id=%s THEN 0 ELSE 1 END, created_at ASC
+            LIMIT 1
+            """,
+            (run_id, correlation_id, run_id),
+        )
+        row = cursor.fetchone()
+    if row is None:
+        raise CardDomainError("run_identity_conflict")
+    existing = dict(row)
+    if (
+        str(existing.get("run_id")) != run_id
+        or str(existing.get("correlation_id")) != correlation_id
+        or str(existing.get("project_id")) != project_id
+        or str(existing.get("deck_id")) != deck_id
+        or str(existing.get("target_card_revision_id")) != revision_id
+    ):
+        raise CardDomainError("run_identity_conflict")
+    observed = _observe_run_acceptance(
+        project_id=project_id,
+        deck_id=deck_id,
+        card_id=card_id,
+        run_id=run_id,
+        correlation_id=correlation_id,
+        accepted_at=accepted_at,
+        preparation_started_at=preparation_started_at,
+        conversation_id=str(payload.get("conversationId") or "").strip() or None,
+    )
+    return {
+        "ok": True,
+        "runId": run_id,
+        "correlationId": correlation_id,
+        "projectId": project_id,
+        "deckId": deck_id,
+        "cardId": card_id,
+        "cardRevisionId": revision_id,
+        "acceptedAt": accepted_at.isoformat(),
+        "preparationStartedAt": preparation_started_at.isoformat(),
+        "state": str(existing.get("state") or "pending"),
+        "nativeRunId": str(existing.get("provider_turn_ref") or "") or None,
+        "created": created,
+        "telemetryWritten": observed,
+    }
+
+
+def _observe_run_preparation_failure(
+    *,
+    project_id: str,
+    deck_id: str,
+    card_id: str,
+    run_id: str,
+    ended_at: datetime,
+    elapsed_ms: float,
+    error_summary: str,
+) -> bool:
+    try:
+        with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+            observed = _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })-[:EXECUTED_BY]->(card:Card {
+                  projectId: $projectId, deckId: $deckId, cardId: $cardId
+                })
+                SET run.state='failed',
+                    run.finishedAt=$endedAt,
+                    run.preparationState='failed',
+                    run.preparationEndedAt=$endedAt,
+                    run.preparationElapsedMs=$elapsedMs,
+                    run.preparationError=$errorSummary,
+                    run.nativeRunId=null,
+                    run.nativeRootId=null
+                RETURN run.runId
+                """,
+                {
+                    "projectId": project_id,
+                    "deckId": deck_id,
+                    "cardId": card_id,
+                    "runId": run_id,
+                    "endedAt": ended_at.isoformat(),
+                    "elapsedMs": elapsed_ms,
+                    "errorSummary": error_summary,
+                },
+                "run_id agtype",
+            )
+        return len(observed) == 1 and str(observed[0].get("run_id") or "") == run_id
+    except Exception:
+        return False
+
+
+def fail_run_preparation(payload: dict[str, Any]) -> dict[str, Any]:
+    """Settle an accepted request that failed before any native Run existed."""
+
+    accepted = accept_run_request(payload)
+    error_summary = _required_text(payload.get("errorSummary"), "error_summary")
+    error_code = str(payload.get("errorCode") or "configured_card_preparation_failed").strip()
+    if not error_code:
+        error_code = "configured_card_preparation_failed"
+    ended_at = _now()
+    accepted_at = _accepted_at(accepted["acceptedAt"])
+    elapsed_ms = max(0.0, (ended_at - accepted_at).total_seconds() * 1000)
+    with connect_postgres() as connection, connection.cursor(row_factory=dict_row) as cursor:
+        cursor.execute(
+            """
+            SELECT run.run_id, run.state, run.error_code,
+                   run.provider_thread_ref, run.provider_turn_ref,
+                   revision.card_id
+            FROM ag_catalog.agent_runs AS run
+            JOIN ag_catalog.agent_card_revisions AS revision
+              ON revision.revision_id=run.target_card_revision_id
+            WHERE run.run_id=%s AND run.project_id=%s AND run.deck_id=%s
+              AND revision.card_id=%s
+            FOR UPDATE
+            """,
+            (
+                accepted["runId"], accepted["projectId"], accepted["deckId"],
+                accepted["cardId"],
+            ),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            raise CardDomainError("run_preparation_scope_mismatch")
+        if row.get("provider_thread_ref") is not None or row.get("provider_turn_ref") is not None:
+            raise CardDomainError("run_preparation_native_run_already_created")
+        preparation_terminal = (
+            row.get("state") in {"pending", "running"}
+            or (
+                row.get("state") == "failed"
+                and row.get("error_code") == "input_files_materialization_failed"
+            )
+        )
+        if preparation_terminal:
+            cursor.execute(
+                """
+                UPDATE ag_catalog.agent_runs
+                SET state='failed', finished_at=%s,
+                    error_code=%s, error_summary=%s,
+                    provider=NULL, model_key=NULL, provider_model_id=NULL,
+                    access_mode=NULL, saved_openai_runtime=NULL,
+                    effective_provider=NULL, provider_api_mode=NULL,
+                    provider_input_tokens=NULL, provider_output_tokens=NULL,
+                    provider_cached_tokens=NULL, provider_reasoning_tokens=NULL,
+                    tool_call_count=NULL, total_cost_usd=NULL
+                WHERE run_id=%s
+                  AND (
+                    state IN ('pending','running')
+                    OR (
+                      state='failed'
+                      AND error_code='input_files_materialization_failed'
+                    )
+                  )
+                  AND provider_thread_ref IS NULL AND provider_turn_ref IS NULL
+                """,
+                (ended_at, error_code, error_summary, accepted["runId"]),
+            )
+            updated = cursor.rowcount == 1
+        else:
+            updated = False
+    observed = _observe_run_preparation_failure(
+        project_id=accepted["projectId"],
+        deck_id=accepted["deckId"],
+        card_id=accepted["cardId"],
+        run_id=accepted["runId"],
+        ended_at=ended_at,
+        elapsed_ms=elapsed_ms,
+        error_summary=error_summary,
+    )
+    return {
+        "ok": True,
+        "runId": accepted["runId"],
+        "correlationId": accepted["correlationId"],
+        "projectId": accepted["projectId"],
+        "deckId": accepted["deckId"],
+        "cardId": accepted["cardId"],
+        "cardRevisionId": accepted["cardRevisionId"],
+        "acceptedAt": accepted["acceptedAt"],
+        "preparationStartedAt": accepted["preparationStartedAt"],
+        "preparationEndedAt": ended_at.isoformat(),
+        "preparationElapsedMs": elapsed_ms,
+        "state": "failed",
+        "errorCode": error_code,
+        "errorSummary": error_summary,
+        "nativeRunId": None,
+        "updated": updated,
+        "telemetryWritten": observed,
+    }
+
+
 def _insert_run(
     prepared: dict[str, Any],
     *,
@@ -4487,11 +5701,12 @@ def _insert_run(
         cursor.execute(
             """
             SELECT run_id, correlation_id, project_id, deck_id,
-                   target_card_revision_id, request_fingerprint
+                   target_card_revision_id, request_fingerprint, state,
+                   execution_authority_sha256
             FROM ag_catalog.agent_runs
-            WHERE (%s IS NOT NULL AND request_fingerprint=%s)
+            WHERE (%s::text IS NOT NULL AND request_fingerprint=%s::text)
                OR run_id=%s OR correlation_id=%s
-            ORDER BY CASE WHEN request_fingerprint=%s THEN 0 ELSE 1 END, created_at ASC
+            ORDER BY CASE WHEN request_fingerprint=%s::text THEN 0 ELSE 1 END, created_at ASC
             LIMIT 1
             """,
             (
@@ -4504,6 +5719,9 @@ def _insert_run(
             raise CardDomainError("run_identity_conflict")
         existing = dict(existing)
         if (
+            str(existing.get("run_id")) != run_id
+            or str(existing.get("correlation_id")) != correlation_id
+            or
             str(existing.get("project_id")) != str(prepared["projectId"])
             or str(existing.get("deck_id")) != str(prepared["deckId"])
             or str(existing.get("target_card_revision_id")) != str(prepared["cardRevisionId"])
@@ -4513,6 +5731,32 @@ def _insert_run(
             )
         ):
             raise CardDomainError("run_identity_conflict")
+        if (
+            existing.get("state") == "pending"
+            and not str(existing.get("execution_authority_sha256") or "")
+        ):
+            cursor.execute(
+                """
+                UPDATE ag_catalog.agent_runs SET
+                  runtime_kind=%s, runtime_mode=%s,
+                  provider=%s, model_key=%s, provider_model_id=%s,
+                  access_mode=%s, request_fingerprint=%s,
+                  execution_authority_sha256=%s, saved_openai_runtime=%s,
+                  state='running', started_at=NOW()
+                WHERE run_id=%s AND state='pending'
+                  AND execution_authority_sha256 IS NULL
+                  AND provider_thread_ref IS NULL AND provider_turn_ref IS NULL
+                """,
+                (
+                    execution_kind, runtime["mode"], provider.get("provider"),
+                    provider.get("modelKey"), provider.get("providerModelId"),
+                    provider.get("accessMode"), request_fingerprint,
+                    prepared.get("executionAuthorityFingerprint"),
+                    saved_openai_runtime, run_id,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return run_id, correlation_id, True
         return str(existing["run_id"]), str(existing["correlation_id"]), False
 
 
@@ -4754,6 +5998,29 @@ def begin_main_chat_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept one outer request, then prepare its existing Run identity."""
+
+    accepted: dict[str, Any] | None = None
+    if str(payload.get("acceptedAt") or "").strip():
+        accepted = accept_run_request(payload)
+    try:
+        return _begin_accepted_run(payload)
+    except Exception as error:
+        if accepted is not None:
+            try:
+                fail_run_preparation({
+                    **payload,
+                    "errorCode": "configured_card_preparation_failed",
+                    "errorSummary": str(error),
+                })
+            except Exception:
+                # Preparation settlement must never replace the exact source
+                # failure returned to the accepted caller.
+                pass
+        raise
+
+
+def _begin_accepted_run(payload: dict[str, Any]) -> dict[str, Any]:
     """Create one Run, retain its one IDF, then expose one native request."""
 
     effective_payload = payload
@@ -4765,6 +6032,9 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         )
         effective_payload = {
             **payload,
+            "_currentJevRequest": _required_content(
+                payload.get("assignment"), "assignment"
+            ),
             "assignment": _shared_conversation_task(
                 _required_content(payload.get("assignment"), "assignment"),
                 payload.get("sharedConversation"),
@@ -4814,6 +6084,12 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         created=created,
     )
     prepared.update(public)
+    atomic_research_receipt = None
+    if isinstance(prepared.get("atomicResearchAssessment"), dict):
+        atomic_research_receipt = record_atomic_research_assessment(
+            prepared["atomicResearchAssessment"],
+            delivered_to_run_id=resolved_run_id,
+        )
     magentic_execution = None
     if owner == "mag_one":
         options = _json_object(
@@ -4849,6 +6125,7 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
             effective_payload,
             run_id=resolved_run_id,
             correlation_id=resolved_correlation_id,
+            input_file=input_files,
         )
         anchor_telemetry_written = observe_materialized_anchor_reads(
             prepared,
@@ -4862,6 +6139,8 @@ def begin_run(payload: dict[str, Any]) -> dict[str, Any]:
         "requestFingerprint": request_fingerprint,
         "telemetryWritten": telemetry_written,
         "anchorTelemetryWritten": anchor_telemetry_written,
+        "atomicResearchReceipt": atomic_research_receipt,
+        "atomicResearchAssessment": prepared.get("atomicResearchAssessment"),
         "inputFile": input_files,
         "magenticExecution": magentic_execution,
         "hermesTransport": {
@@ -4916,8 +6195,10 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
         "costUsd": float(cost) if cost is not None else None,
         "modelFallbackOccurred": row.get("model_fallback_occurred") is True,
         "modelFallbackReason": str(row.get("model_fallback_reason") or "") or None,
+        "acceptedAt": timestamp("created_at"),
         "startedAt": timestamp("started_at"),
         "finishedAt": timestamp("finished_at"),
+        "createdAt": timestamp("created_at"),
         "result": str(row.get("final_result") or "") or None,
         "errorCode": str(row.get("error_code") or "") or None,
         "errorSummary": str(row.get("error_summary") or "") or None,
@@ -4931,6 +6212,59 @@ def _run_projection(row: dict[str, Any]) -> dict[str, Any]:
             if isinstance(row.get("request_fulfillment"), dict)
             else None
         ),
+    }
+
+
+def read_run_history(payload: dict[str, Any]) -> dict[str, Any]:
+    """Read bounded newest-first root Run history for one saved Card."""
+
+    project_ref = _required_text(payload.get("projectId"), "project_id")
+    deck_id = _required_text(payload.get("deckId"), "deck_id")
+    card_id = _required_text(payload.get("cardId"), "card_id")
+    raw_limit = payload.get("limit", 8)
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or not 1 <= raw_limit <= 20:
+        raise CardDomainError("run_history_limit_invalid")
+
+    with connect_postgres(autocommit=False) as connection:
+        with connection.cursor(row_factory=dict_row) as cursor:
+            cursor.execute("SET TRANSACTION READ ONLY")
+            project = _resolve_project(cursor, project_ref)
+            project_id = str(project["id"])
+            child_ids = [str(item["run_id"]) for item in _age_rows(
+                cursor,
+                """
+                MATCH (run:Run {projectId: $projectId, deckId: $deckId})
+                      -[:EXECUTED_BY]->(card:Card {
+                        projectId: $projectId, deckId: $deckId, cardId: $cardId
+                      })
+                WHERE run.nativeChildId IS NOT NULL AND run.nativeChildId <> ''
+                RETURN run.runId
+                """,
+                {"projectId": project_id, "deckId": deck_id, "cardId": card_id},
+                "run_id agtype",
+            )]
+            cursor.execute(
+                """
+                SELECT run.*, revision.card_id, revision.runtime_profile, revision.title,
+                       revision.runtime_extension_config
+                FROM ag_catalog.agent_runs AS run
+                JOIN ag_catalog.agent_card_revisions AS revision
+                  ON revision.revision_id=run.target_card_revision_id
+                WHERE run.project_id=%s AND run.deck_id=%s AND revision.card_id=%s
+                  AND NOT (run.run_id = ANY(%s::text[]))
+                ORDER BY run.created_at DESC, run.run_id DESC
+                LIMIT %s
+                """,
+                (project_id, deck_id, card_id, child_ids, raw_limit),
+            )
+            rows = [dict(row) for row in cursor.fetchall()]
+    return {
+        "ok": True,
+        "projectId": project_id,
+        "deckId": deck_id,
+        "cardId": card_id,
+        "runs": [_run_projection(row) for row in rows],
+        "limit": raw_limit,
     }
 
 
@@ -5219,9 +6553,18 @@ def _observe_run_start(
     *,
     run_id: str,
     correlation_id: str,
+    input_file: dict[str, Any] | None = None,
 ) -> bool:
     """Write identity-only AGE telemetry without affecting durable Run state."""
     try:
+        started_at = _now()
+        accepted_text = str(payload.get("acceptedAt") or "").strip()
+        preparation_elapsed_ms = None
+        if accepted_text:
+            preparation_elapsed_ms = max(
+                0.0,
+                (started_at - _accepted_at(accepted_text)).total_seconds() * 1000,
+            )
         driver_source = str(payload.get("driverSource") or "").strip()
         if driver_source and driver_source not in {
             "internal_chat", "external_plugin", "native_cli"
@@ -5241,16 +6584,30 @@ def _observe_run_start(
             _age_rows(
                 cursor,
                 """
-                MERGE (run:Run {runId: $runId})
-                SET run.projectId=$projectId, run.deckId=$deckId,
-                    run.correlationId=$correlationId, run.state='running',
+                MERGE (run:Run {
+                  projectId: $projectId, deckId: $deckId, runId: $runId
+                })
+                SET run.correlationId=$correlationId, run.state='running',
                     run.startedAt=$startedAt,
                     run.nativeChildId=$nativeChildId,
                     run.nativeProfileId=$nativeProfileId,
                     run.driverSource=$driverSource,
                     run.contextAuthorityMode=$contextAuthorityMode,
                     run.conversationId=$conversationId,
-                    run.rootRunId=$rootRunId
+                    run.rootRunId=$rootRunId,
+                    run.acceptedAt=coalesce(run.acceptedAt, $acceptedAt),
+                    run.preparationState='completed',
+                    run.preparationStartedAt=coalesce(
+                      run.preparationStartedAt, $acceptedAt
+                    ),
+                    run.preparationEndedAt=$startedAt,
+                    run.preparationElapsedMs=$preparationElapsedMs,
+                    run.preparationError=null,
+                    run.idfSha256=$idfSha256,
+                    run.idfBytes=$idfBytes,
+                    run.jevAttention=$jevAttention,
+                    run.jevAutoTools=$jevAutoTools,
+                    run.jevModelRouter=$jevModelRouter
                 WITH run
                 MATCH (card:Card {projectId: $projectId, deckId: $deckId, cardId: $cardId})
                 MERGE (run)-[:EXECUTED_BY]->(card)
@@ -5261,7 +6618,7 @@ def _observe_run_start(
                     "projectId": prepared["projectId"],
                     "deckId": prepared["deckId"],
                     "correlationId": correlation_id,
-                    "startedAt": datetime.now(timezone.utc).isoformat(),
+                    "startedAt": started_at.isoformat(),
                     "cardId": identity["cardId"],
                     "nativeChildId": str(payload.get("nativeChildId") or "").strip() or None,
                     "nativeProfileId": (
@@ -5272,6 +6629,22 @@ def _observe_run_start(
                     "contextAuthorityMode": context_authority_mode,
                     "conversationId": str(payload.get("conversationId") or "").strip() or None,
                     "rootRunId": str(payload.get("rootRunId") or run_id).strip(),
+                    "acceptedAt": str(payload.get("acceptedAt") or "").strip() or None,
+                    "preparationElapsedMs": preparation_elapsed_ms,
+                    "idfSha256": str((input_file or {}).get("idfSha256") or "").strip() or None,
+                    "idfBytes": (input_file or {}).get("idfBytes"),
+                    "jevAttention": (
+                        prepared.get("jevAttention")
+                        if isinstance(prepared.get("jevAttention"), dict) else None
+                    ),
+                    "jevAutoTools": (
+                        prepared.get("jevAutoTools")
+                        if isinstance(prepared.get("jevAutoTools"), dict) else None
+                    ),
+                    "jevModelRouter": (
+                        prepared.get("jevModelRouter")
+                        if isinstance(prepared.get("jevModelRouter"), dict) else None
+                    ),
                 },
                 "value agtype",
             )
@@ -5937,11 +7310,18 @@ def _observe_run_finish(
                     run.model=$model,
                     run.modelFallbackOccurred=$modelFallbackOccurred,
                     run.modelFallbackReason=$modelFallbackReason,
+                    run.nativeRootId=$nativeRootId,
+                    run.nativeRunId=$nativeRunId,
+                    run.hermesSessionId=$hermesSessionId,
+                    run.effectiveProvider=$effectiveProvider,
+                    run.providerApiMode=$providerApiMode,
                     run.nativeStatus=$nativeStatus,
                     run.nativeTaskCompletedCount=$tasksCompleted,
                     run.nativeTaskTotalCount=$tasksTotal,
                     run.nativeActiveWorkerCount=$activeWorkers,
-                    run.resultReady=$resultReady
+                    run.resultReady=$resultReady,
+                    run.errorCode=$errorCode,
+                    run.errorSummary=$errorSummary
                 RETURN properties(run)
                 """,
                 {
@@ -5959,11 +7339,18 @@ def _observe_run_finish(
                     "model": (payload or {}).get("model"),
                     "modelFallbackOccurred": (payload or {}).get("modelFallbackOccurred", False),
                     "modelFallbackReason": (payload or {}).get("modelFallbackReason"),
+                    "nativeRootId": (payload or {}).get("providerThreadRef"),
+                    "nativeRunId": (payload or {}).get("providerTurnRef"),
+                    "hermesSessionId": (payload or {}).get("hermesSessionRef"),
+                    "effectiveProvider": (payload or {}).get("effectiveProvider"),
+                    "providerApiMode": (payload or {}).get("providerApiMode"),
                     "nativeStatus": (payload or {}).get("nativeStatus"),
                     "tasksCompleted": (payload or {}).get("tasksCompleted"),
                     "tasksTotal": (payload or {}).get("tasksTotal"),
                     "activeWorkers": (payload or {}).get("activeWorkers"),
                     "resultReady": bool((payload or {}).get("finalResult")),
+                    "errorCode": (payload or {}).get("errorCode"),
+                    "errorSummary": (payload or {}).get("errorSummary"),
                 },
                 "value agtype",
             )

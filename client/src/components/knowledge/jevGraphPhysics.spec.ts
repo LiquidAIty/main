@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { GraphProjectionV1 } from './NativeAuthorityGraphSurface';
 import {
   applyJevGraphPhysics,
+  DURABLE_NODE_RADIUS_MAX,
+  DURABLE_NODE_RADIUS_MIN,
   JEV_GRAPH_PHYSICS_PROFILES,
   mapJevGraphPhysics,
 } from './jevGraphPhysics';
@@ -146,4 +148,14 @@ describe('Jev graph physics transfer profiles', () => {
     ]));
     expect(source.edges[0].relationship_strength).toBe(0.01);
   });
+
+  it.each([1, 10, 100, 1000])(
+    'bounds durable semantic mass %s without changing the retained mass',
+    semanticMass => {
+      const mapped = mapJevGraphPhysics('galaxy', 0, semanticMass);
+      expect(mapped.nodeRadius).toBeGreaterThanOrEqual(DURABLE_NODE_RADIUS_MIN);
+      expect(mapped.nodeRadius).toBeLessThanOrEqual(DURABLE_NODE_RADIUS_MAX);
+      if (semanticMass === 1000) expect(mapped.nodeRadius).toBe(DURABLE_NODE_RADIUS_MAX);
+    },
+  );
 });

@@ -132,11 +132,9 @@ describe('Gateway Card Run receipt binding', () => {
           executionEvidence: [{ kind: 'tool_result', content: 'done' }],
           executionEvidenceComplete: true,
           usage: {
-            input_tokens: 17,
-            output_tokens: 9,
-            cached_tokens: 3,
-            reasoning_tokens: 2,
-            total_cost_usd: 0.004,
+            input: 17,
+            output: 9,
+            reasoning: 2,
           },
         },
       },
@@ -153,9 +151,9 @@ describe('Gateway Card Run receipt binding', () => {
       providerApiMode: 'codex_app_server',
       inputTokens: 17,
       outputTokens: 9,
-      cachedTokens: 3,
+      cachedTokens: null,
       reasoningTokens: 2,
-      costUsd: 0.004,
+      costUsd: null,
     });
 
     expect(request).toHaveBeenCalledOnce();
@@ -170,9 +168,10 @@ describe('Gateway Card Run receipt binding', () => {
       providerApiMode: 'codex_app_server',
       providerInputTokens: 17,
       providerOutputTokens: 9,
-      providerCachedTokens: 3,
+      providerCachedTokens: null,
       providerReasoningTokens: 2,
-      totalCostUsd: 0.004,
+      toolCallCount: 0,
+      totalCostUsd: null,
     }));
     expect(execution.activeRunId('terminal-signal')).toBeNull();
   });

@@ -17,6 +17,7 @@ operations = [
   { id = "agentgraph.inspect", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "mag_one.describe_connected_agents", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "run_mag_one", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool", callerKind = "hermes", callerMode = "main" },
+  { id = "research_atomic_thinks", access = "write", publication = "private-runtime", sourceIds = ["python_runtime"], namespace = "main", kind = "tool", callerKind = "hermes", callerMode = "main" },
   { id = "write_mag_one_instructions", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "card.load_graph_references", access = "write", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
   { id = "canvas.inspect", access = "read", publication = "external-mcp", sourceIds = ["main_mcp"], namespace = "main", kind = "tool" },
@@ -214,10 +215,14 @@ extends = "template_assist"
 tabs = ["Results", "Prompt", "Runtime", "Memory", "Tools"]
 fields = [
   { name = "provider", label = "Provider", section = "Runtime", path = "runtimeOptions.provider", source = "CardConfiguration.provider", catalog = "configured-models", catalogProperty = "provider" },
+  { name = "orchestrator", label = "Orchestrator", section = "Prompt", path = "runtimeOptions.orchestrator", source = "CardConfiguration.orchestrator", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "subagentType", label = "Subagents", section = "Runtime", path = "runtimeOptions.subagentType", source = "CardConfiguration.subagentType", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "accessMode", label = "Access", section = "Runtime", path = "runtimeOptions.accessMode", source = "CardConfiguration.accessMode", allowUnset = false },
   { name = "modelKey", label = "Model", section = "Runtime", path = "runtimeOptions.modelKey", source = "CardConfiguration.modelKey", catalog = "configured-models", control = "catalog-select", filteredBy = "provider" },
   { name = "autoSelect", label = "Auto-select model", section = "Runtime", path = "runtimeOptions.autoSelect", source = "CardConfiguration.autoSelect", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
+  { name = "automaticResearch", label = "Automatic research", section = "Runtime", path = "runtimeOptions.configuration.dataControl.automaticResearch", source = "CardConfiguration.automaticResearch", control = "checkbox", allowUnset = false, visibleWhen = { runtimeKind = "hermes", runtimeMode = "main" } },
+  { name = "jevModelChoiceContext", label = "Model-choice context", section = "Runtime", path = "runtimeOptions.jevContext.modelChoice", source = "CardConfiguration.jevModelChoiceContext", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
+  { name = "jevAutoToolsContext", label = "Auto-tools context", section = "Runtime", path = "runtimeOptions.jevContext.autoTools", source = "CardConfiguration.jevAutoToolsContext", allowUnset = false, visibleWhen = { runtimeKind = "hermes" } },
   { name = "reasoningEffort", label = "Reasoning", section = "Runtime", path = "runtimeOptions.reasoningEffort", source = "CardConfiguration.reasoningEffort" },
   { name = "temperature", label = "Temperature", section = "Runtime", path = "runtimeOptions.temperature", source = "CardConfiguration.temperature", step = 0.1 },
   { name = "maxTokens", label = "Max tokens", section = "Runtime", path = "runtimeOptions.maxTokens", source = "CardConfiguration.maxTokens", step = 1 },

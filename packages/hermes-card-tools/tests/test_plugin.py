@@ -4,6 +4,10 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import queue
+import statistics
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -54,6 +58,42 @@ class RegistrationContext:
 
     def register_system_prompt_section(self, name, content, **kwargs):
         self.prompt_sections.append((name, content, kwargs))
+
+
+class AliveThread:
+    def is_alive(self):
+        return True
+
+
+def _configure_observer(plugin, monkeypatch, *, capacity=4):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "secret-token")
+    monkeypatch.setattr(plugin, "_OBSERVATION_QUEUE", queue.Queue(maxsize=capacity))
+    monkeypatch.setattr(plugin, "_OBSERVATION_THREAD", AliveThread())
+
+
+def _llm_context(**overrides):
+    context = {
+        "session_id": "stored-project-conversation",
+        "turn_id": "turn-one",
+        "api_request_id": "turn-one:api:1",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "response_model": "gpt-5.6-sol",
+        "api_mode": "codex_responses",
+        "api_call_count": 1,
+        "retry_count": 0,
+        "started_at": 1_000.0,
+        "ended_at": 1_001.25,
+        "first_chunk_at": 1_000.3,
+        "api_duration": 1.25,
+        "request": {"body": {"messages": [{"content": "private input"}]}},
+        "response": {"assistant_message": {"content": "private output"}},
+        "usage": {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150},
+    }
+    context.update(overrides)
+    return context
 
 
 def _configure_roster(plugin, monkeypatch, entries):
@@ -110,7 +150,9 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         },
         "description": "Create a saved Card.",
     }
-    assert [name for name, _callback in context.hooks] == ["resolve_message_agent_target"]
+    assert [name for name, _callback in context.hooks] == [
+        "resolve_message_agent_target", "post_api_request", "api_request_error", "post_tool_call",
+    ]
     assert context.hooks[0][1](
         target="@builder",
         session_id=stored_session_id,
@@ -127,6 +169,356 @@ def test_registers_exact_materialized_tools(plugin, monkeypatch):
         "Use `message_agent` with one of these exact visible saved-Card addresses:\n"
         "- `@Builder`"
     )
+
+
+def test_runtime_observer_queues_only_bounded_metadata_and_background_enriches(
+    plugin, monkeypatch,
+):
+    _configure_observer(plugin, monkeypatch)
+    monkeypatch.setattr(
+        plugin,
+        "_ensure_observation_worker",
+        lambda: pytest.fail("first event must not start the worker"),
+    )
+    monkeypatch.setattr(plugin, "_usage_cost", lambda _context: {
+        "costUsd": 0.0015, "costStatus": "estimated",
+        "costSource": "official_docs_snapshot", "pricingVersion": "test-rates-v1",
+    })
+    posted = {}
+    monkeypatch.setattr(
+        plugin,
+        "_post_observation_once",
+        lambda host_url, envelope: posted.update(host_url=host_url, envelope=envelope) or True,
+    )
+
+    assert plugin._observe_post_api_request(**_llm_context()) is None
+
+    host_url, token, session_id, _captured_ns, queued_attempt = plugin._OBSERVATION_QUEUE.get_nowait()
+    assert host_url == "http://127.0.0.1:4000/api/hermes-card-tools"
+    assert "costUsd" not in queued_attempt
+    assert "requestHash" not in queued_attempt
+    assert "responseHash" not in queued_attempt
+    assert queued_attempt["redaction"] == "metadata_only_references_unavailable"
+    assert len(json.dumps(plugin._prepare_delivery_attempt(queued_attempt)).encode("utf-8")) <= (
+        plugin.OBSERVATION_RECORD_LIMIT_BYTES
+    )
+    assert plugin._deliver_observation(host_url, token, session_id, queued_attempt) is True
+    envelope = posted["envelope"]
+    decoded = json.loads(envelope["payload"])
+    assert decoded["tool"] == "runtime.observe_attempt"
+    attempt = decoded["arguments"]["attempt"]
+    assert attempt["attemptId"] == "turn-one:api:1"
+    assert attempt["durationMs"] == 1250.0
+    assert attempt["firstTokenMs"] == pytest.approx(300.0)
+    assert attempt["inputTokens"] == 120
+    assert attempt["costStatus"] == "estimated"
+    serialized = json.dumps(attempt)
+    assert "private input" not in serialized
+    assert "private output" not in serialized
+    assert "requestHash" not in attempt
+    assert "responseHash" not in attempt
+    assert attempt["redaction"] == "metadata_only_references_unavailable"
+
+
+def test_runtime_observer_never_reads_or_serializes_large_bodies(plugin, monkeypatch):
+    _configure_observer(plugin, monkeypatch)
+    huge = "x" * 8_000_000
+    body = {"huge": huge}
+    result = {"huge": huge}
+    monkeypatch.setattr(
+        plugin.json,
+        "dumps",
+        lambda *_args, **_kwargs: pytest.fail("capture path must not serialize"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_usage_cost",
+        lambda *_args: pytest.fail("capture path must not price usage"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_post_observation_once",
+        lambda *_args: pytest.fail("capture path must not perform HTTP"),
+    )
+
+    plugin._observe_post_api_request(**_llm_context(request=body, response=result))
+    llm_item = plugin._OBSERVATION_QUEUE.get_nowait()
+    plugin._observe_post_tool_call(
+        session_id="stored-project-conversation",
+        turn_id="turn-one",
+        tool_call_id="tool-one",
+        tool_name="large_tool",
+        args=body,
+        result=result,
+        duration_ms=10,
+        status="ok",
+    )
+    tool_item = plugin._OBSERVATION_QUEUE.get_nowait()
+
+    assert llm_item[4]["attemptId"] == "turn-one:api:1"
+    assert tool_item[4]["attemptId"] == "tool-one"
+    assert not ({"requestHash", "responseHash", "requestBytes", "responseBytes"} & llm_item[4].keys())
+    assert not ({"argumentsHash", "resultHash", "argumentsBytes", "resultBytes"} & tool_item[4].keys())
+
+
+@pytest.mark.parametrize(
+    "status,phase",
+    [("ok", "completed"), ("error", "failed"), ("cancelled", "cancelled")],
+)
+def test_runtime_observer_captures_native_message_agent_terminal_attempt(
+    plugin, monkeypatch, status, phase,
+):
+    _configure_observer(plugin, monkeypatch)
+
+    plugin._observe_post_tool_call(
+        session_id="stored-project-conversation",
+        turn_id="turn-one",
+        tool_call_id=f"message-agent-{status}",
+        tool_name="message_agent",
+        args={"target": "Builder", "message": "private body"},
+        result={"private": "result"},
+        duration_ms=12,
+        status=status,
+        error_type="delivery_error" if status == "error" else None,
+        error_message="bounded failure" if status == "error" else None,
+    )
+
+    attempt = plugin._OBSERVATION_QUEUE.get_nowait()[4]
+    assert attempt == {
+        "eventId": f"tool:message-agent-{status}:{phase}",
+        "attemptId": f"message-agent-{status}",
+        "kind": "tool",
+        "phase": phase,
+        "turnId": "turn-one",
+        "toolName": "message_agent",
+        "toolCallId": f"message-agent-{status}",
+        "durationMs": 12.0,
+        "status": status,
+        **({
+            "errorType": "delivery_error",
+            "errorMessage": "bounded failure",
+        } if status == "error" else {}),
+        "redaction": "metadata_only_references_unavailable",
+        "_observedAtSeconds": attempt["_observedAtSeconds"],
+    }
+    assert "args" not in attempt
+    assert "result" not in attempt
+
+
+def test_runtime_observer_bounds_maximum_error_metadata(plugin, monkeypatch):
+    _configure_observer(plugin, monkeypatch)
+    huge = "e" * 100_000
+    plugin._observe_api_request_error(**_llm_context(
+        session_id="s" * 100_000,
+        turn_id="t" * 100_000,
+        api_request_id="a" * 100_000,
+        provider="p" * 100_000,
+        model="m" * 100_000,
+        response_model="r" * 100_000,
+        error={"type": huge, "message": huge},
+        retryable=True,
+    ))
+
+    attempt = plugin._OBSERVATION_QUEUE.get_nowait()[4]
+    assert attempt["phase"] == "failed"
+    assert len(attempt["eventId"]) == 512
+    assert len(attempt["attemptId"]) == 512
+    assert len(attempt["turnId"]) == 512
+    assert len(attempt["provider"]) == 256
+    assert len(attempt["model"]) == 256
+    assert len(attempt["errorType"]) == 128
+    assert len(attempt["errorMessage"]) == 512
+    assert attempt["retryable"] is True
+
+
+def test_runtime_observer_queue_saturation_records_gap_and_never_changes_prompt_result(
+    plugin, monkeypatch,
+):
+    def complete_prompt(observer):
+        result = {"answer": "unchanged", "usage": {"total_tokens": 3}}
+        observer()
+        return result
+
+    disabled_result = complete_prompt(
+        lambda: plugin._observe_post_api_request(**_llm_context())
+    )
+    _configure_observer(plugin, monkeypatch, capacity=1)
+    filler = ("host", "token", "session", time.perf_counter_ns(), {"attemptId": "filler"})
+    plugin._OBSERVATION_QUEUE.put_nowait(filler)
+    enabled_result = complete_prompt(
+        lambda: plugin._observe_post_api_request(**_llm_context())
+    )
+    assert enabled_result == disabled_result
+    assert plugin._observation_stats()["queueDropped"] == 1
+
+    assert plugin._OBSERVATION_QUEUE.get_nowait() is filler
+    plugin._observe_post_api_request(**_llm_context(api_request_id="turn-one:api:2"))
+    next_attempt = plugin._OBSERVATION_QUEUE.get_nowait()[4]
+    assert plugin._prepare_delivery_attempt(next_attempt)["observationGap"] == 1
+
+
+def test_runtime_observer_delivery_failure_has_no_retry_or_recursive_logging(
+    plugin, monkeypatch,
+):
+    _configure_observer(plugin, monkeypatch)
+    posts = []
+    monkeypatch.setattr(
+        plugin,
+        "_post_observation_once",
+        lambda host_url, envelope: posts.append((host_url, envelope)) or False,
+    )
+    plugin._observe_post_api_request(**_llm_context())
+    item = plugin._OBSERVATION_QUEUE.get_nowait()
+
+    assert plugin._process_observation_item(item) is False
+    assert len(posts) == 1
+    stats = plugin._observation_stats()
+    assert stats["deliveryFailures"] == 1
+    assert stats["retryLimit"] == 0
+    followup = plugin._llm_attempt(_llm_context(api_request_id="turn-one:api:2"), failed=False)
+    assert followup is not None
+    assert plugin._prepare_delivery_attempt(followup)["observationGap"] == 1
+
+
+def test_runtime_observer_records_queue_lag_and_delivery_without_waiting_in_capture(
+    plugin, monkeypatch,
+):
+    _configure_observer(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_post_observation_once", lambda *_args: True)
+    plugin._observe_post_api_request(**_llm_context())
+    item = plugin._OBSERVATION_QUEUE.get_nowait()
+    time.sleep(0.01)
+
+    assert plugin._process_observation_item(item) is True
+    stats = plugin._observation_stats()
+    assert stats["delivered"] == 1
+    assert stats["queueLagSamples"] == 1
+    assert stats["queueLagCumulativeNs"] >= 10_000_000
+    assert stats["queueLagMaxNs"] >= 10_000_000
+    print(json.dumps({
+        "queueLagSamples": stats["queueLagSamples"],
+        "queueLagCumulativeMs": stats["queueLagCumulativeNs"] / 1_000_000,
+        "queueLagMaxMs": stats["queueLagMaxNs"] / 1_000_000,
+        "delivered": stats["delivered"],
+    }))
+
+
+def test_runtime_observer_worker_startup_is_measured_outside_first_event(
+    plugin, monkeypatch,
+):
+    monkeypatch.setenv("CARD_TOOLS_MANAGED", "1")
+    monkeypatch.setenv("CARD_TOOLS_HOST_URL", "http://127.0.0.1:4000/api/hermes-card-tools")
+    monkeypatch.setenv("HERMES_DASHBOARD_SESSION_TOKEN", "secret-token")
+
+    plugin._ensure_observation_worker()
+
+    stats = plugin._observation_stats()
+    assert plugin._OBSERVATION_THREAD is not None
+    assert plugin._OBSERVATION_THREAD.is_alive()
+    assert isinstance(stats["workerStartupNs"], int)
+    assert stats["workerStartFailures"] == 0
+    print(json.dumps({"workerStartupMs": stats["workerStartupNs"] / 1_000_000}))
+
+
+def test_runtime_observer_capture_benchmark_under_declared_limits(plugin, monkeypatch):
+    huge = "z" * 8_000_000
+    huge_context = _llm_context(request={"huge": huge}, response={"huge": huge})
+    maximum_context = _llm_context(
+        session_id="s" * 100_000,
+        turn_id="t" * 100_000,
+        api_request_id="a" * 100_000,
+        provider="p" * 100_000,
+        model="m" * 100_000,
+        response_model="r" * 100_000,
+        api_mode="x" * 100_000,
+    )
+
+    def summarize(samples):
+        ordered = sorted(samples)
+        return {
+            "samples": len(samples),
+            "p50Ms": statistics.median(ordered) / 1_000_000,
+            "p95Ms": ordered[int((len(ordered) - 1) * 0.95)] / 1_000_000,
+            "maxMs": ordered[-1] / 1_000_000,
+            "cumulativeMs": sum(ordered) / 1_000_000,
+        }
+
+    def measure(name, context, *, samples=1_000, capacity=1, drain=False, prefill=False):
+        _configure_observer(plugin, monkeypatch, capacity=capacity)
+        dropped_before = plugin._observation_stats()["queueDropped"]
+        if prefill:
+            plugin._OBSERVATION_QUEUE.put_nowait(
+                ("host", "token", "session", time.perf_counter_ns(), {"attemptId": "filler"})
+            )
+        timings = []
+        for _index in range(samples):
+            started = time.perf_counter_ns()
+            plugin._observe_post_api_request(**context)
+            timings.append(time.perf_counter_ns() - started)
+            if drain:
+                plugin._OBSERVATION_QUEUE.get_nowait()
+        result = summarize(timings)
+        stats = plugin._observation_stats()
+        result["queueDepth"] = stats["queueDepth"]
+        result["queueDropped"] = stats["queueDropped"] - dropped_before
+        assert result["p95Ms"] <= 1.0, (name, result)
+        return result
+
+    def measure_contention():
+        _configure_observer(plugin, monkeypatch, capacity=1)
+        plugin._OBSERVATION_QUEUE.put_nowait(
+            ("host", "token", "session", time.perf_counter_ns(), {"attemptId": "filler"})
+        )
+        dropped_before = plugin._observation_stats()["queueDropped"]
+
+        def capture_many():
+            timings = []
+            for _index in range(500):
+                started = time.perf_counter_ns()
+                plugin._observe_post_api_request(**_llm_context())
+                timings.append(time.perf_counter_ns() - started)
+            return timings
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            timings = [sample for batch in executor.map(lambda _index: capture_many(), range(4)) for sample in batch]
+        result = summarize(timings)
+        stats = plugin._observation_stats()
+        result["queueDepth"] = stats["queueDepth"]
+        result["queueDropped"] = stats["queueDropped"] - dropped_before
+        assert result["p95Ms"] <= 1.0, result
+        return result
+
+    def measure_disabled():
+        monkeypatch.delenv("CARD_TOOLS_MANAGED", raising=False)
+        timings = []
+        context = _llm_context()
+        for _index in range(1_000):
+            started = time.perf_counter_ns()
+            plugin._observe_post_api_request(**context)
+            timings.append(time.perf_counter_ns() - started)
+        result = summarize(timings)
+        assert result["p95Ms"] <= 1.0, result
+        return result
+
+    _configure_observer(plugin, monkeypatch, capacity=1)
+    cold_started = time.perf_counter_ns()
+    plugin._observe_post_api_request(**_llm_context())
+    cold = summarize([time.perf_counter_ns() - cold_started])
+    assert cold["maxMs"] <= 1.0
+
+    results = {
+        "coldCapture": cold,
+        "disabledCapture": measure_disabled(),
+        "warmEmptyQueue": measure("warmEmptyQueue", _llm_context(), drain=True),
+        "maximumMetadata": measure("maximumMetadata", maximum_context, drain=True),
+        "hugeIrrelevantBodies": measure("hugeIrrelevantBodies", huge_context, drain=True),
+        "fullQueue": measure("fullQueue", _llm_context(), prefill=True),
+        "slowUndrainedQueue": measure(
+            "slowUndrainedQueue", _llm_context(), capacity=8, samples=1_000,
+        ),
+        "contendedFullQueue": measure_contention(),
+    }
+    print(json.dumps({"runtimeObserverBenchmark": results}, sort_keys=True))
 
 
 def test_visible_titles_translate_case_insensitively_with_optional_at(plugin, monkeypatch):

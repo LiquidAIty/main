@@ -58,6 +58,9 @@ class CardSubagentModel(BaseModel):
 
 
 CardSubagentType = Literal["none", "leaf", "recursive"]
+CardJevContextMode = Literal[
+    "inherited", "request_card", "conversation_window", "selected_native_context",
+]
 
 
 class CardConfiguration(BaseModel):
@@ -69,6 +72,7 @@ class CardConfiguration(BaseModel):
     provider: str = ""
     accessMode: Literal["chatgpt-account", "openai-api", "openrouter-api"]
     modelKey: str = ""
+    orchestrator: bool = False
     autoSelect: bool = False
     openaiRuntime: Literal["codex_app_server"] | None = None
     reasoningEffort: Literal["low", "medium", "high", "xhigh"] | None = None
@@ -77,6 +81,9 @@ class CardConfiguration(BaseModel):
     maxTurns: int | None = Field(default=None, ge=1)
     tools: list[str] = Field(default_factory=list)
     autoTools: bool = False
+    automaticResearch: bool = False
+    jevAutoToolsContext: CardJevContextMode = "inherited"
+    jevModelChoiceContext: CardJevContextMode = "inherited"
     subagentModel: CardSubagentModel | None = None
 
 

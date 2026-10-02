@@ -1986,16 +1986,17 @@ _BACKEND_ROUTES = {
     "external_main_chat": "/api/main/chat",
     "describe_connected_agents": "/api/cards/connected",
     "run_configured_card": "/api/cards/run",
+    "atomic_research": "/api/main/research/atomic",
     "worldview_action": "/api/worldview/internal/actions",
 }
 
 
 def _bridge_sync(path: str, payload: dict[str, Any]) -> str:
     headers = {"Content-Type": "application/json"}
-    if path in {"run_configured_card", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
+    if path in {"run_configured_card", "atomic_research", "worldview_action"} and len(INTERNAL_MCP_SECRET) < 32:
         raise RuntimeError("internal_mcp_secret_missing")
     if path in {
-        "external_main_context", "external_main_chat", "run_configured_card",
+        "external_main_context", "external_main_chat", "run_configured_card", "atomic_research",
         "worldview_action",
     } and INTERNAL_MCP_SECRET:
         headers["X-LiquidAIty-Internal-MCP-Secret"] = INTERNAL_MCP_SECRET
@@ -2409,6 +2410,27 @@ def _application_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="research_atomic_thinks",
+            description=(
+                "Main only: start one bounded saved KnowGraph research Run for one or two "
+                "exact atomic Think memory IDs offered by the current Jev assessment. "
+                "Accepts no query, topic, source list, Card identity, or runtime override."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "thinkMemoryIds": {
+                        "type": "array", "minItems": 1, "maxItems": 2,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 1024},
+                    },
+                    "reason": {"type": "string", "maxLength": 500},
+                },
+                "required": ["thinkMemoryIds"],
+                "additionalProperties": False,
+            },
+        ),
+        Tool(
             name="write_mag_one_instructions",
             description=(
                 "Optional review only: place one exact mission and its resolved native graph projection "
@@ -2515,6 +2537,7 @@ _APPLICATION_OPERATION_ACCESS = {
     "agentgraph.inspect": "read",
     "mag_one.describe_connected_agents": "read",
     "run_mag_one": "write",
+    "research_atomic_thinks": "write",
     "write_mag_one_instructions": "write",
     "card.load_graph_references": "write",
     "canvas.inspect": "read",
@@ -2544,7 +2567,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
             available=True,
             publishers=(
                 frozenset({"internal-plugin"})
-                if tool.name == "worldview.action"
+                if tool.name in {"worldview.action", "research_atomic_thinks"}
                 else frozenset({"internal-plugin", "external-mcp"})
             ),
             access=access,
@@ -2552,7 +2575,7 @@ def application_operation_definitions() -> list[OperationDefinition]:
             external_source_id="main_mcp",
             required_caller_runtime=(
                 ("hermes", "main")
-                if tool.name in {"run_mag_one", "worldview.set_capability"}
+                if tool.name in {"run_mag_one", "worldview.set_capability", "research_atomic_thinks"}
                 else ("hermes", "delegate") if tool.name == "worldview.action"
                 else None
             ),
@@ -3008,6 +3031,11 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
     "run_mag_one": {
         "projectId", "deckId", "input", "conversationId", "dataAnchors",
     },
+    "research_atomic_thinks": {
+        "projectId", "deckId", "conversationId", "parentRunId",
+        "thinkMemoryIds", "reason", "_callerCardId", "_callerRuntimeKind",
+        "_callerRuntimeMode",
+    },
     "write_mag_one_instructions": {
         "projectId", "deckId", "conversationId", "targetCardId", "mission",
         "dataAnchors", "_sourceCardId",
@@ -3158,6 +3186,8 @@ async def _dispatch_tool(
                     args[field] = str(context[field])
             if name == "worldview.action":
                 args["parentRunId"] = str(context.get("parentRunId") or "")
+            if name == "research_atomic_thinks":
+                args["parentRunId"] = str(context.get("parentRunId") or "")
             if name in {"write_mag_one_instructions", "card.load_graph_references", "worldsignals.package"}:
                 args["_sourceCardId"] = str(context["mainCardId"])
             if name in {"card.load_graph_references", "worldsignals.package"}:
@@ -3270,6 +3300,19 @@ async def _dispatch_tool(
                     if isinstance(data_anchors, list)
                     else {}
                 ),
+            },
+        )
+    if name == "research_atomic_thinks":
+        return await _bridge(
+            "atomic_research",
+            {
+                "projectId": str(args.get("projectId") or ""),
+                "deckId": str(args.get("deckId") or ""),
+                "conversationId": str(args.get("conversationId") or ""),
+                "sourceRunId": str(args.get("parentRunId") or ""),
+                "mainCardId": caller_card_id,
+                "thinkMemoryIds": args.get("thinkMemoryIds"),
+                "reason": str(args.get("reason") or ""),
             },
         )
     if name == "main.context":

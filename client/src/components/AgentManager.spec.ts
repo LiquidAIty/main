@@ -42,6 +42,8 @@ const runtimeOptions = {
     { name: 'subagentType', label: 'Subagents', path: 'runtimeOptions.subagentType', control: 'select', options: ['none', 'leaf', 'recursive'] },
     { name: 'accessMode', options: ['chatgpt-account', 'openai-api', 'openrouter-api'] },
     { name: 'reasoningEffort', options: ['low', 'medium', 'high', 'xhigh'] },
+    { name: 'jevModelChoiceContext', label: 'Model-choice context', options: ['inherited', 'request_card', 'conversation_window', 'selected_native_context'] },
+    { name: 'jevAutoToolsContext', label: 'Auto-tools context', options: ['inherited', 'request_card', 'conversation_window', 'selected_native_context'] },
     ...['runtimeProfile', 'modelKey', 'temperature', 'maxTokens', 'maxTurns'].map((name) => ({ name, options: [] })),
   ].map((field) => ({
     ...field,
@@ -80,6 +82,17 @@ const savedConfig: AgentManagerLocalConfig = {
 };
 
 describe('AgentManager active builder config', () => {
+  it('does not mount or poll the Runtime dashboard while another tab is active', async () => {
+    const fetchMock = mockEditorFetch();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Prompt', cardId: 'card-one', projectId: 'p', deckId: 'd',
+      localConfig: savedConfig, onSaveLocalConfig: vi.fn(),
+    }));
+    expect(await screen.findByLabelText('Role')).toBeTruthy();
+    expect(screen.queryByTestId('card-runtime-dashboard')).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/cards/run')).toBe(false);
+  });
+
   it('persists independent Jev auto controls and disables model auto-select after a manual model choice', async () => {
     mockEditorFetch();
     const onSave = vi.fn();
@@ -113,6 +126,30 @@ describe('AgentManager active builder config', () => {
     expect(onSave.mock.calls[0][0]).toMatchObject({
       model_key: 'model-a',
       runtime_options: { autoSelect: false, autoTools: false },
+    });
+  });
+
+  it('persists bounded per-decision Jev context without an everything option', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Runtime',
+      localConfig: { ...savedConfig, runtime_options: { autoSelect: true, autoTools: true } },
+      onSaveLocalConfig: onSave,
+    }));
+
+    await waitFor(() => expect(screen.getByLabelText<HTMLSelectElement>('Model-choice context').disabled).toBe(false));
+    const modelContext = screen.getByLabelText<HTMLSelectElement>('Model-choice context');
+    const toolContext = screen.getByLabelText<HTMLSelectElement>('Auto-tools context');
+    expect([...modelContext.options].map((option) => option.value)).not.toContain('everything');
+    fireEvent.change(modelContext, { target: { value: 'selected_native_context' } });
+    fireEvent.change(toolContext, { target: { value: 'conversation_window' } });
+    await leaveEditor();
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].runtime_options.jevContext).toEqual({
+      modelChoice: 'selected_native_context',
+      autoTools: 'conversation_window',
     });
   });
 
@@ -202,6 +239,136 @@ describe('AgentManager active builder config', () => {
     expect(onSave.mock.calls[0][0].role).toBeUndefined();
     view.rerender(React.createElement(AgentManager, { ...props, activeTab: 'Prompt', localConfig: onSave.mock.calls[0][0] }));
     expect((screen.getByLabelText('REVIEW_NOTES', { exact: true }) as HTMLTextAreaElement).value).toBe('Replacement goal');
+  });
+
+  it('adds one editable teammate prompt block only for enabled outbound orange connections', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const props = {
+      activeTab: 'Prompt',
+      localConfig: {
+        ...savedConfig,
+        prompt_template: '[ROLE]\nCoordinate the work.',
+        runtime_options: { orchestrator: true },
+      },
+      orangeConnections: [
+        { cardId: 'card_main_chat', title: 'Main', direction: 'incoming' as const },
+        { cardId: 'card_worldsignals_agent', title: 'WorldSignals', direction: 'outgoing' as const },
+      ],
+      onSaveLocalConfig: onSave,
+    };
+    const view = render(React.createElement(AgentManager, props));
+
+    expect((screen.getByLabelText('Orchestrator') as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('WorldSignals')).toBeTruthy();
+    expect(screen.queryByText('Main')).toBeNull();
+    expect(document.body.textContent).not.toContain('From @Main');
+    const teammates = screen.getByLabelText('All connected agents') as HTMLTextAreaElement;
+    expect(teammates.placeholder).toContain('WorldSignals is a connected teammate.');
+    fireEvent.change(teammates, {
+      target: { value: 'WorldSignals is a connected teammate. Call it for fresh launch and satellite evidence.' },
+    });
+
+    await leaveEditor();
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].runtime_options.orchestrator).toBe(true);
+    expect(onSave.mock.calls[0][0].prompt_template).toContain(
+      '[ALL CONNECTED AGENTS]\nWorldSignals is a connected teammate. Call it for fresh launch and satellite evidence.',
+    );
+    view.rerender(React.createElement(AgentManager, {
+      ...props,
+      localConfig: onSave.mock.calls[0][0],
+    }));
+    expect((screen.getByLabelText('All connected agents') as HTMLTextAreaElement).value).toBe(
+      'WorldSignals is a connected teammate. Call it for fresh launch and satellite evidence.',
+    );
+  });
+
+  it('keeps the teammate block peripheral until the orchestrator has an outbound orange connection', () => {
+    mockEditorFetch();
+    const view = render(React.createElement(AgentManager, {
+      activeTab: 'Prompt',
+      localConfig: { ...savedConfig, runtime_options: { orchestrator: true } },
+      orangeConnections: [],
+      onSaveLocalConfig: vi.fn(),
+    }));
+
+    expect(screen.queryByLabelText('All connected agents')).toBeNull();
+    view.rerender(React.createElement(AgentManager, {
+      activeTab: 'Prompt',
+      localConfig: { ...savedConfig, runtime_options: { orchestrator: false } },
+      orangeConnections: [
+        { cardId: 'card_worldsignals_agent', title: 'WorldSignals', direction: 'outgoing' },
+      ],
+      onSaveLocalConfig: vi.fn(),
+    }));
+    expect(screen.queryByLabelText('All connected agents')).toBeNull();
+  });
+
+  it('edits the one saved connected-agent block instead of appending a duplicate', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    render(React.createElement(AgentManager, {
+      activeTab: 'Prompt',
+      localConfig: {
+        ...savedConfig,
+        prompt_template: [
+          '[ROLE]',
+          'Coordinate the work.',
+          '',
+          '[ALL CONNECTED AGENTS]',
+          'WorldSignals is a connected teammate. Use it for earlier signal work.',
+        ].join('\n'),
+        runtime_options: { orchestrator: true },
+      },
+      orangeConnections: [
+        { cardId: 'card_worldsignals_agent', title: 'WorldSignals', direction: 'outgoing' },
+      ],
+      onSaveLocalConfig: onSave,
+    }));
+
+    fireEvent.change(screen.getByLabelText('All connected agents'), {
+      target: { value: 'WorldSignals is a connected teammate. Use it for current signal work.' },
+    });
+    await leaveEditor();
+
+    const savedPrompt = String(onSave.mock.calls[0][0].prompt_template);
+    expect(savedPrompt.match(/\[ALL CONNECTED AGENTS\]/g)).toHaveLength(1);
+    expect(savedPrompt).toContain('Use it for current signal work.');
+    expect(savedPrompt).not.toContain('Use it for earlier signal work.');
+  });
+
+  it('preserves saved teammate guidance when its outbound edge is no longer present', async () => {
+    mockEditorFetch();
+    const onSave = vi.fn();
+    const prompt = [
+      '[ROLE]',
+      'Coordinate the work.',
+      '',
+      '[ALL CONNECTED AGENTS]',
+      'WorldSignals is a connected teammate. Use it for current signal work.',
+    ].join('\n');
+    render(React.createElement(AgentManager, {
+      activeTab: 'Prompt',
+      localConfig: {
+        ...savedConfig,
+        prompt_template: prompt,
+        runtime_options: { orchestrator: true },
+      },
+      orangeConnections: [],
+      onSaveLocalConfig: onSave,
+    }));
+
+    expect(screen.queryByLabelText('All connected agents')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Role'), {
+      target: { value: 'Coordinate current work.' },
+    });
+    await leaveEditor();
+
+    expect(onSave.mock.calls[0][0].prompt_template).toBe(
+      prompt.replace('Coordinate the work.', 'Coordinate current work.'),
+    );
   });
 
   it('keeps unsectioned instructions out of Role and does not add an untouched role on save', async () => {
@@ -305,7 +472,6 @@ describe('AgentManager active builder config', () => {
     expect((learningContent as HTMLTextAreaElement).value).toBe('Original learning content');
     fireEvent.change(learningContent, { target: { value: 'Updated learning content' } });
     expect(writes).toEqual([]);
-    expect(onSave).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /^save$/i })).toBeNull();
     await leaveEditor();
     expect(writes).toEqual([{

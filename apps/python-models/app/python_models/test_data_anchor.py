@@ -37,6 +37,8 @@ def test_codegraph_ui_reads_saved_scope_and_rejects_effects(monkeypatch):
         data_anchor.read_codegraph_tool({**scope, "name": "list_projects"})
 
 from app.python_models.data_anchor import (
+    append_canonical_subject_directory,
+    assemble_canonical_subject_directory,
     contextual_node_read,
     DataAnchorError,
     empty_graph_projection,
@@ -618,6 +620,7 @@ def test_knowgraph_attention_search_maps_nodes_and_fact_endpoints_without_hydrat
             ),
         ],
         "concurrent": True,
+        "deadline_seconds": data_anchor._MAIN_KNOWGRAPH_ATTENTION_DEADLINE_SECONDS,
     }
     assert [candidate["nativeId"] for candidate in candidates] == [
         "entity-a", "entity-b", "entity-c",
@@ -785,8 +788,92 @@ def test_think_handoff_prefers_self_contained_thinks_and_keeps_native_evidence(
         "mem_think"
     ]
     assert [item["memory_id"] for item in record["metadata"]["evidence"]] == [
-        "mem_think", "mem_other"
+        "mem_other"
     ]
+
+
+def test_jev_attention_hydrates_rocket_lab_twin_anchors_with_explicit_record_bound(
+    monkeypatch,
+) -> None:
+    import io
+    import json
+
+    evidence = [{
+        "memory_id": f"mem_rocket_{index}",
+        "excerpt": f"Rocket Lab Think {index}",
+        "metadata": {"structured_extraction": {"think": {
+            "kind": "DECISION",
+            "summary": f"Rocket Lab Think {index}",
+            "native_payload": "x" * 7_000,
+        }}},
+    } for index in range(5)]
+    native = {"entity": {
+        "canonical_id": "think-rocket-lab",
+        "type": "person_or_concept",
+        "label": "Rocket Lab",
+        "member_ids": ["think-rocket-lab"],
+        "relations": [],
+        "truncation": {"relations": False, "evidence": False, "history": False},
+        "evidence": evidence,
+    }}
+    monkeypatch.setattr(
+        data_anchor,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(json.dumps(native).encode()),
+    )
+    know_properties = {"name": "Rocket Lab", "native_evidence": "y" * 8_000}
+    monkeypatch.setattr(
+        data_anchor,
+        "read_knowgraph_exact",
+        lambda *_args, **_kwargs: {
+            "authority": "KnowGraph",
+            "nativeId": "know-rocket-lab",
+            "nativeKind": "node",
+            "type": "Entity",
+            "title": "Rocket Lab",
+            "content": json.dumps(know_properties, separators=(",", ":")),
+            "properties": know_properties,
+            "relationshipEvidence": [],
+            "provenance": {"engine": "graphiti"},
+            "asOf": "current",
+            "readOperation": "neo4j.project_scoped_exact",
+            "resultLimit": 1,
+            "truncated": False,
+        },
+    )
+    # This is the live failure shape: five structured Think records duplicated
+    # under both metadata keys exceeded the whole seed cap before KnowGraph was
+    # added, even though Jev requested one record from each selected anchor.
+    assert len(json.dumps({
+        "thinks": evidence, "evidence": evidence,
+    }, separators=(",", ":")).encode()) > data_anchor._GRAPH_SEED_LIMIT
+
+    seed, references = resolve_data_anchors("project-1", [{
+        "authority": "ThinkGraph",
+        "nativeId": "think-rocket-lab",
+        "reason": "JevAttention selected this canonical native entity.",
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": False,
+    }, {
+        "authority": "KnowGraph",
+        "nativeId": "know-rocket-lab",
+        "reason": "JevAttention selected this canonical native entity.",
+        "boundedExpansion": 0,
+        "resultLimit": 1,
+        "required": False,
+    }])
+
+    assert len(seed.encode()) < data_anchor._GRAPH_SEED_LIMIT
+    assert "Rocket Lab Think 0" in seed
+    assert "Rocket Lab Think 1" not in seed
+    assert seed.count("mem_rocket_0") == 1
+    assert [reference["nativeId"] for reference in references] == [
+        "think-rocket-lab", "know-rocket-lab",
+    ]
+    assert references[0]["selectionScope"]["resultLimit"] == 1
+    assert references[0]["truncated"] is True
+    assert references[1]["truncated"] is False
 
 
 def test_required_anchor_materializes_real_data_and_stable_reference(native_graph) -> None:
@@ -869,6 +956,92 @@ class _FakeNeo4jDriver:
 
     def close(self):
         self.closed = True
+
+
+def _subject(authority: str, index: int) -> dict[str, str]:
+    return {
+        "authority": authority,
+        "nativeId": f"{authority.lower()}-{index:03d}",
+        "canonicalName": f"Subject {authority} {index:03d}",
+        "entityKind": "person_or_concept" if authority == "ThinkGraph" else "Entity",
+    }
+
+
+def test_complete_subject_directory_keeps_all_37_plus_11_headers_without_truncation() -> None:
+    directory = assemble_canonical_subject_directory(
+        "project-1",
+        {"complete": True, "count": 37, "revision": "think-r1",
+         "subjects": [_subject("ThinkGraph", index) for index in range(37)]},
+        {"complete": True, "count": 11, "revision": "know-r1",
+         "subjects": [_subject("KnowGraph", index) for index in range(11)]},
+        read_duration_ms=12.3456,
+    )
+
+    assert directory["complete"] is True
+    assert directory["counts"] == {"ThinkGraph": 37, "KnowGraph": 11, "total": 48}
+    assert len(directory["subjects"]) == 48
+    assert directory["bytes"] > 0
+    assert directory["estimatedTokens"] == (directory["bytes"] + 3) // 4
+    assert directory["bytes"] < data_anchor._GRAPH_SEED_LIMIT
+    assert directory["readDurationMs"] == 12.346
+    model_context = append_canonical_subject_directory("", directory)
+    assert "Complete Cross-Graph Subject Directory" in model_context
+    assert "Subject ThinkGraph 036" in model_context
+    assert "Subject KnowGraph 010" in model_context
+
+
+@pytest.mark.parametrize(
+    "mutate,error",
+    [
+        (lambda source: source.update(complete=False), "authority_incomplete"),
+        (lambda source: source.update(count=2), "authority_invalid"),
+    ],
+)
+def test_subject_directory_rejects_incomplete_count_mismatch_and_duplicate(
+    mutate,
+    error: str,
+) -> None:
+    think = {"complete": True, "count": 1, "revision": "think-r1",
+             "subjects": [_subject("ThinkGraph", 1)]}
+    mutate(think)
+    with pytest.raises(DataAnchorError, match=error):
+        assemble_canonical_subject_directory(
+            "project-1", think,
+            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+        )
+
+
+def test_subject_directory_rejects_duplicate_authority_native_identity() -> None:
+    duplicate = _subject("ThinkGraph", 1)
+    with pytest.raises(DataAnchorError, match="subject_duplicate"):
+        assemble_canonical_subject_directory(
+            "project-1",
+            {"complete": True, "count": 2, "revision": "think-r1",
+             "subjects": [duplicate, dict(duplicate)]},
+            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+        )
+
+
+def test_subject_directory_rejects_ambiguous_same_authority_canonical_name() -> None:
+    first = _subject("ThinkGraph", 1)
+    second = {**_subject("ThinkGraph", 2), "canonicalName": first["canonicalName"]}
+    with pytest.raises(DataAnchorError, match="subject_name_duplicate"):
+        assemble_canonical_subject_directory(
+            "project-1",
+            {"complete": True, "count": 2, "revision": "think-r1",
+             "subjects": [first, second]},
+            {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+        )
+
+
+def test_subject_directory_rejects_combined_context_over_existing_limit() -> None:
+    directory = assemble_canonical_subject_directory(
+        "project-1",
+        {"complete": True, "count": 0, "revision": "think-empty", "subjects": []},
+        {"complete": True, "count": 0, "revision": "know-empty", "subjects": []},
+    )
+    with pytest.raises(DataAnchorError, match="data_anchor_seed_limit_exceeded"):
+        append_canonical_subject_directory("x" * data_anchor._GRAPH_SEED_LIMIT, directory)
 
 
 def test_contextual_know_candidates_read_complete_direct_facts_and_sources() -> None:

@@ -526,6 +526,23 @@ const orchestratorMocks = vi.hoisted(() => {
         },
       };
     }
+    if (endpoint === '/domain/runs/preparation/fail') {
+      return {
+        ok: true,
+        runId: body.runId,
+        correlationId: body.correlationId,
+        projectId: body.projectId,
+        deckId: body.deckId,
+        cardId: body.cardId,
+        state: 'failed',
+        acceptedAt: body.acceptedAt,
+        preparationEndedAt: new Date().toISOString(),
+        preparationElapsedMs: 1,
+        errorCode: body.errorCode,
+        errorSummary: body.errorSummary,
+        nativeRunId: null,
+      };
+    }
     if (endpoint === '/domain/main/prepare') {
       const cardId = 'card_main_chat';
       const runtime = { kind: 'hermes', mode: 'main', profile: 'default' };
@@ -1844,6 +1861,51 @@ describe('saved Card routes', () => {
     });
   });
 
+  it('reports the native-versus-observed tool receipt deficit as an observation gap', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.runRecords.clear();
+    orchestratorMocks.runRecords.set('tool-gap', {
+      runId: 'tool-gap', correlationId: 'tool-gap', projectId: 'p', deckId: 'd',
+      cardId: 'builder', runtimeKind: 'hermes', runtimeMode: 'delegate',
+      runtimeProfile: 'builder', state: 'completed', finalResult: 'Done.',
+      startedAt: '2026-10-01T20:00:00Z', finishedAt: '2026-10-01T20:00:01Z',
+      toolCallCount: 2,
+    });
+    orchestratorMocks.requestPythonRailsJson.mockImplementationOnce(async (endpoint) => {
+      expect(endpoint).toBe('/domain/runs/read');
+      return { ok: true, run: orchestratorMocks.runRecords.get('tool-gap') };
+    }).mockImplementationOnce(async (endpoint) => {
+      expect(endpoint).toBe('/domain/agentgraph/inspect');
+      return { ok: true, runs: [{
+        runId: 'tool-gap', cardId: 'builder',
+        attemptEvents: [{
+          eventId: 'tool-call-one', attemptId: 'tool-call-one', kind: 'tool',
+          phase: 'completed', toolName: 'engraphis_get_memory', status: 'ok',
+        }],
+        attentionEvents: [{
+          eventId: 'graph-attention-one', operation: 'read',
+          toolName: 'engraphis_get_memory',
+        }],
+      }] };
+    });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'status', inspectOnly: true,
+          projectId: 'p', deckId: 'd', runId: 'tool-gap' }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          runId: 'tool-gap', toolCallCount: 2, observationGap: 1,
+          toolEvents: [{ toolName: 'engraphis_get_memory', status: 'ok' }],
+        },
+      });
+    } finally { await closeServer(server); }
+  });
+
   it.each([
     ['cbm', 'builder'],
     ['graphiti', 'card_knowgraph'],
@@ -2209,6 +2271,8 @@ describe('saved Card routes', () => {
       finishedAt: '2026-09-10T12:00:01Z',
       toolCallCount: raw,
       totalCostUsd: raw,
+      providerInputTokens: raw,
+      providerOutputTokens: raw,
     });
     const { server, baseUrl } = await createApiServer();
     try {
@@ -2221,7 +2285,159 @@ describe('saved Card routes', () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({
         ok: true,
-        result: { runId, toolCallCount: expected, costUsd: expected },
+        result: {
+          runId,
+          toolCallCount: expected,
+          costUsd: expected,
+          inputTokens: expected,
+          outputTokens: expected,
+        },
+      });
+    } finally { await closeServer(server); }
+  });
+
+  it('returns bounded newest-first Card history with truthful latest details', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.requestPythonRailsJson
+      .mockImplementationOnce(async (endpoint, init) => {
+        expect(endpoint).toBe('/domain/runs/history');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          projectId: 'p', deckId: 'd', cardId: 'builder', limit: 3,
+        });
+        return { ok: true, runs: [
+          { runId: 'failed-new', state: 'failed', startedAt: '2026-10-01T20:00:04Z',
+            finishedAt: '2026-10-01T20:00:09Z', inputTokens: null },
+          { runId: 'completed-old', state: 'completed', startedAt: '2026-10-01T19:00:00Z',
+            finishedAt: '2026-10-01T19:00:02Z', inputTokens: 12 },
+        ] };
+      })
+      .mockImplementationOnce(async (endpoint) => {
+        expect(endpoint).toBe('/domain/runs/read');
+        return { ok: true, run: {
+          runId: 'failed-new', correlationId: 'failed-new', projectId: 'p', deckId: 'd',
+          cardId: 'builder', runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder',
+          provider: 'openai', model: 'gpt-5.6-sol', accessMode: 'chatgpt-account',
+          state: 'failed', startedAt: '2026-10-01T20:00:04Z', finishedAt: '2026-10-01T20:00:09Z',
+          errorCode: 'provider_unavailable', errorSummary: 'Provider unavailable.',
+          inputTokens: null, outputTokens: null,
+        } };
+      })
+      .mockImplementationOnce(async (endpoint) => {
+        expect(endpoint).toBe('/domain/agentgraph/inspect');
+        return { ok: true, runs: [{
+          runId: 'failed-new', cardId: 'builder', conversationId: 'main',
+          acceptedAt: '2026-10-01T20:00:00Z',
+           idf: { sha256: 'a'.repeat(64), bytes: 400 },
+           jevDecisions: [{ schemaVersion: 'card-auto-tools.v1', status: 'unavailable' }],
+           attemptEvents: [{ eventId: 'attempt-one', kind: 'llm',
+             provider: 'actual-provider', model: 'actual-model', observationGap: 3 },
+           { eventId: 'tool-attempt-one', attemptId: 'native-tool-call-one', kind: 'tool',
+             phase: 'completed', toolName: 'message_agent', status: 'ok' }],
+           attentionEvents: [{ eventId: 'tool-1', operation: 'read', toolName: 'graphiti.search_nodes' }],
+          nativeReferences: [], materializedNativeReferences: [], artifacts: [],
+        }] };
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'history', projectId: 'p', deckId: 'd',
+          cardId: 'builder', limit: 3 }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          limit: 3,
+          runs: [{ runId: 'failed-new' }, { runId: 'completed-old' }],
+          latest: {
+            runId: 'failed-new', state: 'failed', acceptedAt: '2026-10-01T20:00:00Z',
+            preparationMs: 4000, totalElapsedMs: 9000, elapsedMs: 5000,
+             inputTokens: null, outputTokens: null,
+             provider: 'actual-provider', model: 'actual-model',
+            idf: { sha256: 'a'.repeat(64), bytes: 400 },
+             jevDecisions: [{ status: 'unavailable' }],
+             observationGap: 3,
+             toolEvents: [{ toolName: 'message_agent', status: 'ok' }],
+          },
+        },
+      });
+    } finally { await closeServer(server); }
+  });
+
+  it('reads back a failed preparation attempt without inventing native usage', async () => {
+    orchestratorMocks.requestPythonRailsJson.mockClear();
+    orchestratorMocks.requestPythonRailsJson
+      .mockImplementationOnce(async (endpoint, init) => {
+        expect(endpoint).toBe('/domain/runs/history');
+        expect(JSON.parse(String(init?.body))).toEqual({
+          projectId: 'project-prep', deckId: 'deck-prep', cardId: 'builder', limit: 2,
+        });
+        return { ok: true, runs: [{
+          runId: 'prep-failed', state: 'failed',
+          acceptedAt: '2026-10-02T12:00:00.000Z',
+          createdAt: '2026-10-02T12:00:00.000Z',
+          startedAt: null, finishedAt: '2026-10-02T12:00:01.250Z',
+          nativeRunId: null, inputTokens: null, outputTokens: null,
+        }] };
+      })
+      .mockImplementationOnce(async (endpoint, init) => {
+        expect(endpoint).toBe('/domain/runs/read');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          projectId: 'project-prep', deckId: 'deck-prep', runId: 'prep-failed',
+        });
+        return { ok: true, run: {
+          runId: 'prep-failed', correlationId: 'prep-failed',
+          projectId: 'project-prep', deckId: 'deck-prep', cardId: 'builder',
+          runtimeKind: 'hermes', runtimeMode: 'delegate', runtimeProfile: 'builder',
+          state: 'failed', acceptedAt: '2026-10-02T12:00:00.000Z',
+          createdAt: '2026-10-02T12:00:00.000Z', startedAt: null,
+          finishedAt: '2026-10-02T12:00:01.250Z', nativeRunId: null,
+          provider: null, model: null, inputTokens: null, outputTokens: null,
+          errorCode: 'configured_card_preparation_failed',
+          errorSummary: 'configured_tool_unknown:provider.tool',
+        } };
+      })
+      .mockImplementationOnce(async (endpoint, init) => {
+        expect(endpoint).toBe('/domain/agentgraph/inspect');
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          projectId: 'project-prep', deckId: 'deck-prep', runId: 'prep-failed',
+        });
+        return { ok: true, runs: [{
+          runId: 'prep-failed', cardId: 'builder', conversationId: 'main',
+          acceptedAt: '2026-10-02T12:00:00.000Z',
+          preparationStartedAt: '2026-10-02T12:00:00.005Z',
+          preparationEndedAt: '2026-10-02T12:00:01.250Z',
+          preparationElapsedMs: 1250,
+          preparationState: 'failed',
+          preparationError: 'configured_tool_unknown:provider.tool',
+          nativeRunId: null, attentionEvents: [], attemptEvents: [],
+        }] };
+      });
+    const { server, baseUrl } = await createApiServer();
+    try {
+      const response = await fetch(`${baseUrl}/cards/run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'history', projectId: 'project-prep',
+          deckId: 'deck-prep', cardId: 'builder', limit: 2 }),
+      });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: true,
+        result: {
+          latest: {
+            runId: 'prep-failed', state: 'failed', nativeRunId: null,
+            acceptedAt: '2026-10-02T12:00:00.000Z',
+            preparationStartedAt: '2026-10-02T12:00:00.005Z',
+            preparationEndedAt: '2026-10-02T12:00:01.250Z',
+            preparationMs: 1250, totalElapsedMs: 1250,
+             preparationState: 'failed',
+             preparationError: 'configured_tool_unknown:provider.tool',
+             elapsedMs: null,
+             provider: null, model: null, inputTokens: null, outputTokens: null,
+            errorSummary: 'configured_tool_unknown:provider.tool',
+          },
+        },
       });
     } finally { await closeServer(server); }
   });
@@ -4336,6 +4552,21 @@ describe('saved Card routes', () => {
     it('supplies the completed direct exchange to Main only on the later unaddressed turn', async () => {
       chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
         {
+          role: 'user', status: 'complete', content: 'Earlier Main question',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+            { kind: 'shared_chat_target', status: 'card', label: 'Main',
+              cardId: 'card_main_chat', profile: 'default', address: 'Main' },
+          ],
+        },
+        {
+          role: 'assistant', status: 'complete', content: 'Earlier Main answer',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'card', label: 'Main',
+              cardId: 'card_main_chat', profile: 'default', address: 'Main' },
+          ],
+        },
+        {
           role: 'user', status: 'complete', content: '@builder Reply exactly BUILDER_DIRECT_OK',
           visibleActivities: [
             { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
@@ -4378,6 +4609,49 @@ describe('saved Card routes', () => {
               content: 'BUILDER_DIRECT_OK',
             },
           ],
+        });
+      } finally {
+        await closeServer(server);
+      }
+    });
+
+    it('does not duplicate the preceding completed Main exchange into its resumed native session', async () => {
+      chatSessionMocks.getConversationMessages.mockResolvedValueOnce([
+        {
+          role: 'user', status: 'complete', content: 'State one falsifiable claim.',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'user', label: 'You' },
+            { kind: 'shared_chat_target', status: 'card', label: 'Main',
+              cardId: 'card_main_chat', profile: 'default', address: 'Main' },
+          ],
+        },
+        {
+          role: 'assistant', status: 'complete', content: 'The prior falsifiable claim.',
+          visibleActivities: [
+            { kind: 'shared_chat_speaker', status: 'card', label: 'Main',
+              cardId: 'card_main_chat', profile: 'default', address: 'Main' },
+          ],
+        },
+      ] as any);
+      orchestratorMocks.requestPythonRailsJson.mockClear();
+      const { server, baseUrl } = await createApiServer();
+      try {
+        const response = await fetch(`${baseUrl}/main/session/chat`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId: 'project-1', conversationId: 'main-continuity',
+            message: 'What would disprove that claim?',
+          }),
+        });
+        expect(response.status).toBe(200);
+        await response.text();
+        const begin = orchestratorMocks.requestPythonRailsJson.mock.calls.find(
+          ([endpoint]) => endpoint === '/domain/main/runs/begin',
+        );
+        expect(begin).toBeDefined();
+        expect(JSON.parse(String(begin?.[1]?.body))).toMatchObject({
+          message: 'What would disprove that claim?',
+          sharedConversation: [],
         });
       } finally {
         await closeServer(server);
@@ -4501,7 +4775,10 @@ describe('saved Card routes', () => {
           enrichmentInput: {
             exact_user_message: 'complete with hybrid ThinkGraph intake',
             exact_main_response: 'Real assistant reply.',
-            current_graph_shape: { nodes: [], edges: [] },
+            canonical_subject_directory: {
+              complete: true, counts: { ThinkGraph: 0, KnowGraph: 0, total: 0 },
+              subjects: [], sha256: 'a'.repeat(64), bytes: 256,
+            },
             current_project_relationship_vocabulary: [
               'IS_A', 'PART_OF', 'HAS_PART', 'CAUSES', 'AFFECTS',
               'DEPENDS_ON', 'ENABLES', 'CONSTRAINS', 'REQUIRES', 'SUPPORTS',
@@ -4517,6 +4794,7 @@ describe('saved Card routes', () => {
           },
           enrichmentPrompt: [
             'Native Engraphis llm_structured prompt.',
+            'canonical_subject_directory: complete compact subject headers',
             'current_project_relationship_vocabulary:',
             '["IS_A","PART_OF","HAS_PART","CAUSES","AFFECTS","DEPENDS_ON","ENABLES","CONSTRAINS","REQUIRES","SUPPORTS","CONTRADICTS","QUALIFIES","EXPLAINS","ASSOCIATED_WITH","ALTERNATIVE_TO","COMPETES_WITH","PROVIDES","USES","PRECEDES","FOLLOWS"]',
           ].join('\n'),
@@ -4613,15 +4891,15 @@ describe('saved Card routes', () => {
         expect(cardBeginBody.assignment).toContain(
           'Main does not author or initiate this automatic Think',
         );
-        expect(cardBeginBody.assignment).toContain('current_graph_shape');
+        expect(cardBeginBody.assignment).toContain('canonical_subject_directory');
         expect(cardBeginBody.assignment).toContain(
-          'with light canonical node/edge context',
+          'with the complete compact cross-graph subject',
         );
         expect(cardBeginBody.assignment).toContain(
           'Do not read historical Think bodies',
         );
         expect(cardBeginBody.assignment).toContain(
-          'No earlier Think bodies are supplied or may be inferred',
+          'Never derive Think content or agreement from the directory',
         );
         expect(cardBeginBody.assignment).toContain(
           'Do not compare, merge, rewrite, or suppress the current Think against earlier Thinks',

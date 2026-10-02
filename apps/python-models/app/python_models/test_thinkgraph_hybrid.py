@@ -17,10 +17,27 @@ from app.python_models.jev_edge_ontology import (
 
 
 @pytest.fixture()
-def hybrid(tmp_path: Path):
+def hybrid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from app.python_models.data_anchor import assemble_canonical_subject_directory
+
     original = adapter.DATABASE
     adapter.close_engine()
     adapter.DATABASE = tmp_path / "thinkgraph.sqlite"
+    def directory(project: str) -> dict[str, Any]:
+        return assemble_canonical_subject_directory(
+            project,
+            adapter.read_subject_directory(project),
+            {
+                "complete": True,
+                "count": 1,
+                "revision": "know-test-revision",
+                "subjects": [
+                    {"authority": "KnowGraph", "nativeId": "know-jev",
+                     "canonicalName": "Jev", "entityKind": "Entity"},
+                ],
+            },
+        )
+    monkeypatch.setattr(adapter, "_subject_directory_for_project", directory)
     try:
         yield adapter
     finally:
@@ -493,7 +510,7 @@ def test_prepare_is_nonpersistent_without_regex_jev_or_graph_mutation(hybrid):
         "status": "completed_without_graph_mutation",
     }
     assert set(prepared["enrichmentInput"]) == {
-        "exact_user_message", "exact_main_response", "current_graph_shape",
+        "exact_user_message", "exact_main_response", "canonical_subject_directory",
         "current_project_relationship_vocabulary", "source_response_fit",
     }
     assert prepared["enrichmentInput"]["source_response_fit"] == (
@@ -1085,27 +1102,21 @@ def test_structured_proposal_reuses_canonical_node_and_freezes_prior_think(
     assert set(enrichment) == {
         "exact_user_message",
         "exact_main_response",
-        "current_graph_shape",
+        "canonical_subject_directory",
         "current_project_relationship_vocabulary",
         "source_response_fit",
     }
     assert "Alpha already has durable project context." not in prepared["enrichmentPrompt"]
-    graph_shape = enrichment["current_graph_shape"]
-    assert graph_shape["scope"] == "bounded_current_canonical_shape"
-    assert {node["canonicalName"] for node in graph_shape["nodes"]} == {
-        "Alpha", "Prior Context",
+    directory = enrichment["canonical_subject_directory"]
+    assert directory["complete"] is True
+    assert {node["canonicalName"] for node in directory["subjects"]} == {
+        "Alpha", "Prior Context", "Jev",
     }
     assert all(set(node) == {
-        "nativeId", "canonicalName", "nodeType",
-    } for node in graph_shape["nodes"])
-    assert any(
-        edge["source"]["nativeId"] == prior["source"]
-        and edge["target"]["nativeId"] == prior["target"]
-        and edge["canonicalRelationship"] == "QUALIFIES"
-        for edge in graph_shape["edges"]
-    )
-    assert all("distribution" not in edge for edge in graph_shape["edges"])
-    assert "current_graph_shape" in prepared["enrichmentPrompt"]
+        "authority", "nativeId", "canonicalName", "entityKind",
+    } for node in directory["subjects"])
+    assert directory["counts"] == {"ThinkGraph": 2, "KnowGraph": 1, "total": 3}
+    assert "canonical_subject_directory" in prepared["enrichmentPrompt"]
     assert "existingNotes" not in prepared["enrichmentPrompt"]
     assert prior_think_id not in prepared["enrichmentPrompt"]
 
@@ -1574,7 +1585,7 @@ def test_jev_edge_update_supersession_and_closure_use_native_temporal_history(hy
     ) == []
 
 
-def test_structured_writer_gets_shape_not_prior_think_bodies_or_edge_reclassification(
+def test_structured_writer_gets_complete_subject_directory_not_prior_think_bodies(
     hybrid,
 ):
     def seed_classifier(*args, **_kwargs):
@@ -1607,22 +1618,16 @@ def test_structured_writer_gets_shape_not_prior_think_bodies_or_edge_reclassific
     assert set(prepared["enrichmentInput"]) == {
         "exact_user_message",
         "exact_main_response",
-        "current_graph_shape",
+        "canonical_subject_directory",
         "current_project_relationship_vocabulary",
         "source_response_fit",
     }
     assert "Jev normalizes expressive graph relations." not in prepared["enrichmentPrompt"]
-    shape = prepared["enrichmentInput"]["current_graph_shape"]
-    assert {item["nativeId"] for item in shape["nodes"]} == {
-        jev.id, thinkgraph.id,
+    directory = prepared["enrichmentInput"]["canonical_subject_directory"]
+    assert {item["nativeId"] for item in directory["subjects"]} == {
+        jev.id, thinkgraph.id, "know-jev",
     }
-    assert any(
-        edge["source"]["nativeId"] == jev.id
-        and edge["target"]["nativeId"] == thinkgraph.id
-        and edge["canonicalRelationship"] == "QUALIFIES"
-        for edge in shape["edges"]
-    )
-    assert "current_graph_shape" in prepared["enrichmentPrompt"]
+    assert "canonical_subject_directory" in prepared["enrichmentPrompt"]
     assert "existingNotes" not in prepared["enrichmentPrompt"]
     live_before = {
         edge.id: (edge.relation, edge.weight, edge.provenance)

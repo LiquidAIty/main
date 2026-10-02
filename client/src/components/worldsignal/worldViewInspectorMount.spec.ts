@@ -13,7 +13,6 @@ vi.mock('../../../../worldsignal/gods-eye-view-main/src/app/directApplication.js
   createWorldViewApplication: application.create,
 }));
 
-// @ts-expect-error The controlled upstream module is JavaScript without a TS declaration.
 import { getActiveWorldViewMountCount, mountWorldView } from '../../../../worldsignal/gods-eye-view-main/src/app/mount.js';
 
 const controlIds = [

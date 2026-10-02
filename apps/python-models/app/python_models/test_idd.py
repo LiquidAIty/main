@@ -342,7 +342,10 @@ def test_card_editor_projects_current_models_and_executable_bounds() -> None:
     assert fields["temperature"]["minimum"] == 0.0
     assert fields["maxTokens"]["minimum"] == 1
     assert fields["maxTurns"]["minimum"] == 1
-    assert "orchestrator" not in fields
+    assert fields["orchestrator"]["section"] == "Prompt"
+    assert fields["orchestrator"]["path"] == "runtimeOptions.orchestrator"
+    assert fields["orchestrator"]["control"] == "checkbox"
+    assert fields["orchestrator"]["valueSchema"]["default"] is False
     assert fields["subagentType"]["path"] == "runtimeOptions.subagentType"
     assert fields["subagentType"]["options"] == [
         {"value": "none", "label": "none"},

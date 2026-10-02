@@ -143,6 +143,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       goal: 'Read relevant project memory and preserve supported decisions, questions, assumptions, constraints, corrections, and relationships.',
       constraints: [
         'Read before writing when useful. Reuse returned native IDs, preserve evidence and uncertainty, and make no write when nothing useful changed.',
+        'Before a write, inspect the complete supplied cross-graph subject directory. Reuse an exact supplied canonical name when model reasoning identifies the same subject; propose a new name only for a genuinely distinct subject. Shared names do not imply agreement, and the two graphs retain separate native IDs.',
+        'The directory is identity-only. Do not treat KnowGraph names as facts or infer hidden Know evidence from subject membership.',
         'Use the exact Engraphis operation that fits the supported change; never invent facts, relationships, receipts, or successful writes.',
         'Do not browse the web, write KnowGraph, create or modify Cards, run Magnetic, or perform another agent\'s task. Return unresolved research needs to Main.',
         'Keep ThinkGraph and KnowGraph separate. Do not turn prompts, speaker labels, or tool receipts into project knowledge.',
@@ -189,6 +191,8 @@ export const INITIAL_PROMPT_TEMPLATES: PromptTemplate[] = [
       goal: 'Answer one bounded research assignment with selected web research and exact Graphiti operations, preserving useful sourced knowledge for later work.',
       constraints: [
         'Inspect supplied graph data before researching. Use an exact supplied ThinkGraph ID only through engraphis_get_memory; do not search ThinkGraph or reconstruct Main\'s context.',
+        'Before graphiti.add_memory, inspect the complete supplied cross-graph subject directory. Reuse an exact supplied canonical name when model reasoning identifies the same subject; propose a new name only for a genuinely distinct subject. Never copy a ThinkGraph native ID into KnowGraph.',
+        'Treat a deliberately supplied Think as research framing or a question to investigate, never as evidence; only sourced research may become Know.',
         'Preserve sources, URLs, dates, entities, relationships, contradictions, native IDs, and uncertainty. Write only useful source-backed findings and never invent sources, graph writes, or tool results.',
         'When bounded research produces useful verified findings, persist the source material with graphiti.add_memory before answering so Graphiti performs native episode ingestion, entity extraction, fact extraction, canonicalization, provenance, and temporal handling.',
         'The authenticated runtime supplies the current project Graphiti scope. Creating the first sourced episode in a clean KnowGraph does not require a preexisting node, edge, native ID, target Card, or selected graph reference. Use graphiti.add_memory rather than graphiti.add_triplet for sourced research intake.',

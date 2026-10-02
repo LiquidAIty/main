@@ -177,6 +177,35 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(JSON.stringify(INITIAL_DECK.edges)).not.toContain('autoRun');
   });
 
+  it('collapses and reopens the mounted WorldSignals inspector without clearing its section', () => {
+    const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
+    const stateOwner = source.slice(
+      source.indexOf('const [worldSignalInspectorSection'),
+      source.indexOf('const worldSignalsCardId = useMemo'),
+    );
+    const visibilityOwner = source.slice(
+      source.indexOf('const inspectorDrawerRole = useMemo'),
+      source.indexOf('const getSurfaceShellStyle'),
+    );
+    const drawerStart = source.indexOf('const workspaceDrawer =');
+    const drawerOwner = source.slice(drawerStart, source.indexOf('<FrontendCrashBoundary', drawerStart));
+
+    expect(stateOwner).toContain('const [worldSignalInspectorOpen, setWorldSignalInspectorOpen] = useState(false);');
+    expect(stateOwner).toContain('setWorldSignalInspectorSection(section);');
+    expect(stateOwner).toContain('setWorldSignalInspectorOpen(true);');
+    expect(visibilityOwner).toContain("if (workspaceView === 'worldsignal' && worldSignalInspectorSection) return 'worldsignal';");
+    expect(visibilityOwner).toContain("inspectorDrawerRole === 'worldsignal'");
+    expect(visibilityOwner).toContain('? worldSignalInspectorOpen');
+    expect(visibilityOwner).toContain('const closeWorldSignalInspector = useCallback(() => {\n    setWorldSignalInspectorOpen(false);');
+    expect(visibilityOwner).not.toContain('setWorldSignalInspectorSection(null);');
+    expect(drawerOwner).toContain("onOpen={inspectorDrawerRole === 'worldsignal'");
+    expect(drawerOwner).toContain('setWorldSignalInspectorOpen(true)');
+    expect(drawerOwner).toContain("inspectorDrawerRole === 'worldsignal' && worldSignalInspectorSection");
+    expect(drawerOwner).toContain('<WorldSignalsInspectorPanel');
+    expect(drawerOwner).toContain('section={worldSignalInspectorSection}');
+    expect(drawerOwner).toContain("'Open WorldSignals Inspector'");
+  });
+
   it('selects direct chat responders from exact Card-owned companion surfaces without topology mutation', () => {
     const source = readFileSync(new URL('./agentbuilder.tsx', import.meta.url), 'utf8');
     expect(source).toContain('projectCardChatTargets(deck.nodes)');
@@ -188,7 +217,8 @@ describe('Main / Hermes / graph authority topology', () => {
     expect(source).toContain('saved Card is unavailable for direct chat.');
     expect(source).toContain("setWorkspaceView(canvasProjectId ? 'canvas' : 'chat')");
     expect(source).toContain('setCurrentResponderCardId(null)');
-    expect(source).toContain('currentResponder={currentResponder}');
+    expect(source).toContain('directChatTargets={directChatTargets}');
+    expect(source).not.toContain('currentResponder={currentResponder}');
     expect(INITIAL_DECK.edges).not.toContainEqual(expect.objectContaining({
       source: 'card_main_chat', target: 'card_worldsignals_agent', edgeType: 'flow',
     }));
@@ -268,11 +298,12 @@ describe('Main / Hermes / graph authority topology', () => {
     const expectedHeadings = ['ROLE', 'GOAL', 'CONSTRAINTS', 'IO_SCHEMA', 'MEMORY_POLICY'];
     for (const [cardId, promptTemplateId] of systemCards) {
       const card = INITIAL_DECK.nodes.find((node) => node.id === cardId)!;
-      const headings = [...card.prompt.matchAll(/^\[([A-Z_]+)\]$/gm)].map((match) => match[1]);
+      const prompt = card.prompt ?? '';
+      const headings = [...prompt.matchAll(/^\[([A-Z_]+)\]$/gm)].map((match) => match[1]);
       expect(headings, cardId).toEqual(expectedHeadings);
-      expect(card.prompt.match(/# LIQUIDAITY_PROMPT_V1/g), cardId).toHaveLength(1);
+      expect(prompt.match(/# LIQUIDAITY_PROMPT_V1/g), cardId).toHaveLength(1);
       const template = INITIAL_DECK.promptTemplates.find((entry) => entry.id === promptTemplateId);
-      expect(template?.content, cardId).toBe(card.prompt);
+      expect(template?.content, cardId).toBe(prompt);
     }
   });
 
@@ -428,8 +459,8 @@ describe('Main / Hermes / graph authority topology', () => {
     const effect = source.slice(source.lastIndexOf('useEffect(() => {', call), call);
     expect(effect).toContain("workspaceView !== 'knowledge'");
     expect(effect).toContain("knowledgeGraphKind !== 'codegraph'");
-    expect(source).toContain("useState<KnowledgeSurfaceKind>('knowgraph')");
-    expect(source).toContain("setKnowledgeGraphKind('knowgraph')");
+    expect(source).toContain("useState<KnowledgeSurfaceKind>('joined')");
+    expect(source).toContain("setKnowledgeGraphKind('joined')");
   });
 
 });

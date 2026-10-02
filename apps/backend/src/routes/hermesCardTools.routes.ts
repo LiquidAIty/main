@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import {
   agentTerminalManager,
   PROJECT_ROSTER_AUTHORITY_TOOL,
+  RUNTIME_OBSERVATION_AUTHORITY_TOOL,
   resolveHermesBotRosterProjections,
   type AuthenticatedCardToolRequest,
   type HermesBotRosterProjection,
@@ -9,6 +10,7 @@ import {
 import { agentTerminalExecution } from '../hermes/agentTerminalExecution';
 import { isLoopbackSocketRequest } from '../security/requestAccess';
 import { resolveInternalMcpUrl } from '../services/mcp/internalMcpAuth';
+import { requestPythonRailsJson } from '../services/pythonRailsClient';
 import { getDeckDocument } from '../decks/store';
 
 const MAX_AUTH_FIELD_BYTES = 768 * 1024;
@@ -43,6 +45,7 @@ type Dependencies = {
     authorizedCanonicalTools: string[];
   } | null;
   execute(request: InternalCardToolRequest): Promise<{ ok: true; output: string }>;
+  observe(request: Record<string, unknown>): Promise<unknown>;
   resolveProjectRosters(projectId: string, deckId: string): Promise<HermesBotRosterProjection[]>;
   openProjectRosterTarget(
     authenticated: AuthenticatedCardToolRequest,
@@ -167,6 +170,10 @@ export function createHermesCardToolsRouter(
     agentTerminalManager,
     activeContext: (sessionId) => agentTerminalExecution.activeContext(sessionId),
     execute: executeInternalCardTool,
+    observe: (request) => requestPythonRailsJson('/domain/runs/attempt', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }),
     resolveProjectRosters: resolveHermesBotRosterProjections,
     openProjectRosterTarget,
     isLoopbackSocketRequest,
@@ -190,6 +197,22 @@ export function createHermesCardToolsRouter(
         routeError(401, 'hermes_card_tool_authentication_failed');
       }
       const executionContext = authenticated!.executionContext;
+      if (authenticated!.canonicalToolName === RUNTIME_OBSERVATION_AUTHORITY_TOOL) {
+        const active = dependencies.activeContext(authenticated!.state.sessionId);
+        if (!active?.runId) routeError(409, 'hermes_runtime_observation_run_unavailable');
+        const attempt = authenticated!.request.arguments.attempt;
+        if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) {
+          routeError(400, 'hermes_runtime_observation_invalid');
+        }
+        await dependencies.observe({
+          projectId: authenticated!.owner.projectId,
+          deckId: authenticated!.owner.deckId,
+          cardId: authenticated!.owner.cardId,
+          runId: active.runId,
+          attempt,
+        });
+        return res.json({ ok: true, output: JSON.stringify({ observed: true }) });
+      }
       if (authenticated!.canonicalToolName === PROJECT_ROSTER_AUTHORITY_TOOL) {
         const projections = await dependencies.resolveProjectRosters(
           authenticated!.owner.projectId,

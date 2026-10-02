@@ -82,7 +82,7 @@ describe('ThinkGraph Jev semantic physics', () => {
       material_role: materialRole,
       material_blue: '#37ADAA',
       material_orange: '#F2A64A',
-      material_surface: '#0B0E12',
+      material_surface: '#6E5FAE',
     }, {}, '#ffffff');
 
     expect(recipe).toMatchObject({
@@ -91,7 +91,7 @@ describe('ThinkGraph Jev semantic physics', () => {
       modality,
       materialBlue: 'rgb(55,173,170)',
       materialOrange: 'rgb(242,166,74)',
-      materialSurface: 'rgb(11,14,18)',
+      materialSurface: 'rgb(110,95,174)',
       dominant,
       splitSurface: false,
     });
@@ -104,7 +104,7 @@ describe('ThinkGraph Jev semantic physics', () => {
       material_role: 'PAIRED_SOLARPUNK_MATERIAL',
       material_blue: '#37ADAA',
       material_orange: '#F2A64A',
-      material_surface: '#0B0E12',
+      material_surface: '#6E5FAE',
     };
     const resting = internals.solarpunkMaterialRecipe(base, {}, '#ffffff');
     const activated = internals.solarpunkMaterialRecipe({

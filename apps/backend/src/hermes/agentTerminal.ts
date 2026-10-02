@@ -54,6 +54,7 @@ const PRIOR_SESSION_LIMIT = 8;
 const CARD_TOOL_NONCE_LIMIT = 512;
 const TEAM_CARD_ID = 'card_team';
 export const PROJECT_ROSTER_AUTHORITY_TOOL = 'project_roster.resolve';
+export const RUNTIME_OBSERVATION_AUTHORITY_TOOL = 'runtime.observe_attempt';
 
 export type AgentTerminalOwner = {
   userId: string;
@@ -162,6 +163,25 @@ export type AgentTerminalTurnResult = {
   status: string;
   event: AgentTerminalGatewayEvent;
 };
+
+export type AgentTerminalCompactionReceipt = {
+  status: 'compressed' | 'aborted' | 'unavailable' | 'failed';
+  terminalSessionId: string;
+  nativeSessionId: string;
+  storedSessionId: string;
+  profile: string;
+  focusApplied: false;
+  beforeMessages: number | null;
+  afterMessages: number | null;
+  beforeTokens: number | null;
+  afterTokens: number | null;
+  errorCode: string | null;
+};
+
+export type AgentTerminalCompactionIdentity = Pick<
+  AgentTerminalState,
+  'sessionId' | 'nativeSessionId' | 'storedSessionId' | 'profile'
+>;
 
 export type AgentTerminalVoiceState = {
   enabled: boolean;
@@ -1650,6 +1670,8 @@ export class AgentTerminalManager {
       )
     );
     const active = this.resolveActiveContext(session.state.sessionId);
+    const runtimeObservationRequest = tool === RUNTIME_OBSERVATION_AUTHORITY_TOOL
+      && Object.keys(args).sort().join('\0') === 'attempt';
     if (
       value.version !== 1
       || !Number.isSafeInteger(expiresAt)
@@ -1657,7 +1679,8 @@ export class AgentTerminalManager {
       || Number(expiresAt) > now + AUTH_MAX_FUTURE_SECONDS
       || !/^[a-f0-9]{32,128}$/i.test(nonce)
       || !sourceSessionKnown
-      || (!registered && !projectRosterRequest)
+      || (!registered && !projectRosterRequest && !runtimeObservationRequest)
+      || (runtimeObservationRequest && active === null)
       || (registered !== undefined
         && active !== null
         && !active.authorizedCanonicalTools.includes(registered.canonicalName))
@@ -1677,7 +1700,9 @@ export class AgentTerminalManager {
       state: { ...session.state },
       canonicalToolName: projectRosterRequest
         ? PROJECT_ROSTER_AUTHORITY_TOOL
-        : registered!.canonicalName,
+        : runtimeObservationRequest
+          ? RUNTIME_OBSERVATION_AUTHORITY_TOOL
+          : registered!.canonicalName,
       cardTools: {
         cardRevisionId: session.cardTools.cardRevisionId,
         configurationFingerprint: session.cardTools.configurationFingerprint,
@@ -1953,6 +1978,160 @@ export class AgentTerminalManager {
     const result = session.turnTail.then(execute, execute);
     session.turnTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  /**
+   * Queue one native, post-turn context compaction on the exact running Card
+   * session. The receipt deliberately excludes Hermes' generated summary: the
+   * shared conversation and graph owners remain the durable/auditable record.
+   *
+   * Callers may ignore the returned Promise and use onReceipt. This method
+   * always resolves an honest bounded receipt; native compaction failure never
+   * rejects or stops a later Card turn. A later submit observes the updated
+   * turnTail and therefore starts only after this maintenance attempt settles.
+   */
+  queueNativeContextCompaction(
+    owner: AgentTerminalOwner,
+    expected: AgentTerminalCompactionIdentity,
+    onReceipt?: (receipt: AgentTerminalCompactionReceipt) => void,
+  ): Promise<AgentTerminalCompactionReceipt> {
+    const base = (): Omit<AgentTerminalCompactionReceipt, 'status' | 'errorCode'> => ({
+      terminalSessionId: String(expected?.sessionId || ''),
+      nativeSessionId: String(expected?.nativeSessionId || ''),
+      storedSessionId: String(expected?.storedSessionId || ''),
+      profile: String(expected?.profile || ''),
+      focusApplied: false,
+      beforeMessages: null,
+      afterMessages: null,
+      beforeTokens: null,
+      afterTokens: null,
+    });
+    const deliver = (receipt: AgentTerminalCompactionReceipt) => {
+      try { onReceipt?.({ ...receipt }); } catch {}
+      return receipt;
+    };
+    const resolved = (
+      status: AgentTerminalCompactionReceipt['status'],
+      errorCode: string | null,
+    ) => Promise.resolve(deliver({ ...base(), status, errorCode }));
+    if (
+      !expected
+      || !expected.sessionId?.trim()
+      || !expected.nativeSessionId?.trim()
+      || !expected.storedSessionId?.trim()
+      || !expected.profile?.trim()
+    ) {
+      return resolved('failed', 'agent_terminal_context_compaction_identity_invalid');
+    }
+
+    let session: Session;
+    try {
+      session = this.running(owner, expected.sessionId);
+    } catch {
+      return resolved('unavailable', 'agent_terminal_context_compaction_session_unavailable');
+    }
+    const identityMatches = () => (
+      session.state.status === 'running'
+      && session.state.sessionId === expected.sessionId
+      && session.state.nativeSessionId === expected.nativeSessionId
+      && session.state.storedSessionId === expected.storedSessionId
+      && session.state.profile === expected.profile
+    );
+    if (!identityMatches()) {
+      return resolved('unavailable', 'agent_terminal_context_compaction_identity_changed');
+    }
+    try {
+      if (this.resolveActiveContext(session.state.sessionId) !== null) {
+        return resolved('unavailable', 'agent_terminal_context_compaction_run_active');
+      }
+    } catch {
+      return resolved('unavailable', 'agent_terminal_context_compaction_run_state_unavailable');
+    }
+
+    const count = (value: unknown): number | null => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+        ? value
+        : null
+    );
+    const execute = async (): Promise<AgentTerminalCompactionReceipt> => {
+      if (!identityMatches()) {
+        return { ...base(), status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_identity_changed' };
+      }
+      try {
+        if (this.resolveActiveContext(session.state.sessionId) !== null) {
+          return { ...base(), status: 'unavailable',
+            errorCode: 'agent_terminal_context_compaction_run_active' };
+        }
+      } catch {
+        return { ...base(), status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_run_state_unavailable' };
+      }
+
+      let result: unknown;
+      try {
+        result = await session.client.request('session.compress', {
+          session_id: expected.nativeSessionId,
+          profile: expected.profile,
+        });
+      } catch {
+        return { ...base(), status: 'failed',
+          errorCode: 'agent_terminal_context_compaction_request_failed' };
+      }
+      if (!identityMatches() || !result || typeof result !== 'object' || Array.isArray(result)) {
+        return { ...base(), status: 'failed', errorCode: identityMatches()
+          ? 'agent_terminal_context_compaction_result_invalid'
+          : 'agent_terminal_context_compaction_identity_changed' };
+      }
+      const value = result as Record<string, unknown>;
+      const info = value.info && typeof value.info === 'object' && !Array.isArray(value.info)
+        ? value.info as Record<string, unknown>
+        : {};
+      const reportedNative = String(info.session_id || '').trim();
+      const reportedStored = String(info.stored_session_id || '').trim();
+      if (
+        (reportedNative && reportedNative !== expected.nativeSessionId)
+        || (reportedStored && reportedStored !== expected.storedSessionId)
+      ) {
+        return { ...base(), status: 'failed',
+          errorCode: 'agent_terminal_context_compaction_identity_changed' };
+      }
+      const measurements = {
+        beforeMessages: count(value.before_messages),
+        afterMessages: count(value.after_messages),
+        beforeTokens: count(value.before_tokens),
+        afterTokens: count(value.after_tokens),
+      };
+      const status = String(value.status || '').trim();
+      if (status === 'compressed') {
+        return { ...base(), ...measurements, status: 'compressed', errorCode: null };
+      }
+      if (status === 'aborted') {
+        return { ...base(), ...measurements, status: 'aborted',
+          errorCode: 'agent_terminal_context_compaction_aborted' };
+      }
+      if (value.lock_held === true) {
+        return { ...base(), ...measurements, status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_lock_held' };
+      }
+      if (status === 'pending') {
+        return { ...base(), ...measurements, status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_pending' };
+      }
+      if (value.compressed === false) {
+        return { ...base(), ...measurements, status: 'unavailable',
+          errorCode: 'agent_terminal_context_compaction_unavailable' };
+      }
+      return { ...base(), ...measurements, status: 'failed',
+        errorCode: 'agent_terminal_context_compaction_result_invalid' };
+    };
+
+    const attempt = session.turnTail
+      .then(execute, execute)
+      .then(deliver, () => deliver({ ...base(), status: 'failed',
+        errorCode: 'agent_terminal_context_compaction_request_failed' }));
+    session.turnTail = attempt.then(() => undefined, () => undefined);
+    return attempt;
   }
 
   private async attachTurnImages(
@@ -2336,21 +2515,28 @@ export class AgentTerminalManager {
       }
       projectedByOwner.set(key, target);
     }
+    const openingTargets = desired.filter((target) => target.openAtReconcile !== false);
+    const openingProfiles = new Set(openingTargets.map((target) => (
+      requireAgentTerminalCard(target.card, target.deck).toLowerCase()
+    )));
+    const existingGateway = [...this.sessions.values()].find((session) => (
+      session.state.status === 'running'
+    ));
     // Saving a new Card and wiring it into a Bot roster is one application
     // operation. Materialize each enabled saved profile before roster
     // publication so the existing Gateway never observes a roster target
     // whose profile identity has not been created yet. Disabled Cards are
-    // deliberately excluded so a retired profile cannot be resurrected.
+    // deliberately excluded so a retired profile cannot be resurrected. A
+    // profile opened below performs this same write in start(); do not spawn a
+    // duplicate configuration process for it during the same reconcile.
     for (const target of botProfiles ?? []) {
-      if (!target.projection.botEnabled) continue;
+      if (!target.projection.botEnabled
+        || (!existingGateway && openingProfiles.has(target.projection.profile.toLowerCase()))) continue;
       await this.configureCardInstructions(
         target.projection.profile,
         String(target.card.prompt || ''),
       );
     }
-    const existingGateway = [...this.sessions.values()].find((session) => (
-      session.state.status === 'running'
-    ));
     if (existingGateway && botProfiles !== undefined) {
       const revocations: DesiredHermesBotProfile[] = [];
       for (const session of this.sessions.values()) {
@@ -2435,7 +2621,6 @@ export class AgentTerminalManager {
         this.stopSession(session);
       }
     }
-    const openingTargets = desired.filter((target) => target.openAtReconcile !== false);
     const opened = await Promise.all(openingTargets.map((target) => this.open(
       target.owner,
       target.card,

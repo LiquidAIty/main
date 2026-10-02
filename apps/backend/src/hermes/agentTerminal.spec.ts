@@ -85,6 +85,9 @@ class FakeGatewayClient {
   private mcpReloaded = false;
   private voiceEnabled = false;
   private voiceTts = false;
+  compressBarrier: Promise<void> | null = null;
+  compressError: Error | null = null;
+  compressResult: unknown = null;
   private readonly botMeta = new Map<string, { value: Record<string, unknown>; revision: number }>();
   private readonly botRosters = new Map<string, string[]>();
 
@@ -253,6 +256,22 @@ class FakeGatewayClient {
         attached: true,
         path: `/session/${String(params.filename || 'attachment.png')}`,
       } as T;
+    }
+    if (method === 'session.compress') {
+      if (this.compressBarrier) await this.compressBarrier;
+      if (this.compressError) throw this.compressError;
+      return (this.compressResult || {
+        status: 'compressed',
+        before_messages: 18,
+        after_messages: 4,
+        before_tokens: 1200,
+        after_tokens: 240,
+        info: {
+          session_id: this.activeNative,
+          stored_session_id: this.activeStored,
+        },
+        summary: { headline: 'must never leave the terminal boundary' },
+      }) as T;
     }
     if (method === 'prompt.submit') {
       const sessionId = String(params.session_id || '');
@@ -437,7 +456,11 @@ function fixture(extraProfileNames: string[] = []) {
     profileNames.add(profile);
   });
   const configureCardModelRuntime = vi.fn(async () => undefined);
-  const resolveActiveContext = vi.fn(() => ({
+  const resolveActiveContext = vi.fn<() => {
+    runId: string;
+    conversationId: string;
+    authorizedCanonicalTools: string[];
+  } | null>(() => ({
     runId: 'run-one',
     conversationId: 'conversation-one',
     authorizedCanonicalTools: ['canvas.inspect'],
@@ -885,6 +908,154 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
       .toEqual({ session_id: state.nativeSessionId });
     expect(f.clients[0].requests.findIndex((request) => request.method === 'plugins.list'))
       .toBeLessThan(f.clients[0].requests.findIndex((request) => request.method === 'prompt.submit'));
+  });
+
+  it('queues one exact native compaction and returns only a bounded same-session receipt', async () => {
+    const f = fixture();
+    f.resolveActiveContext.mockReturnValue(null);
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    const onReceipt = vi.fn();
+
+    const receipt = await f.manager.queueNativeContextCompaction(
+      f.owners[0],
+      state,
+      onReceipt,
+    );
+
+    expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([{
+      method: 'session.compress',
+      params: { session_id: state.nativeSessionId, profile: state.profile },
+    }]);
+    expect(receipt).toEqual({
+      status: 'compressed',
+      terminalSessionId: state.sessionId,
+      nativeSessionId: state.nativeSessionId,
+      storedSessionId: state.storedSessionId,
+      profile: state.profile,
+      focusApplied: false,
+      beforeMessages: 18,
+      afterMessages: 4,
+      beforeTokens: 1200,
+      afterTokens: 240,
+      errorCode: null,
+    });
+    expect(onReceipt).toHaveBeenCalledExactlyOnceWith(receipt);
+    expect(JSON.stringify(receipt)).not.toContain('must never leave the terminal boundary');
+    expect(f.manager.state(f.owners[0], state.sessionId)).toMatchObject({
+      sessionId: state.sessionId,
+      nativeSessionId: state.nativeSessionId,
+      storedSessionId: state.storedSessionId,
+      profile: state.profile,
+    });
+  });
+
+  it('makes a later prompt wait behind fire-and-forget native compaction', async () => {
+    const f = fixture();
+    f.resolveActiveContext.mockReturnValue(null);
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    let release!: () => void;
+    f.clients[0].compressBarrier = new Promise<void>((resolve) => { release = resolve; });
+
+    const compaction = f.manager.queueNativeContextCompaction(f.owners[0], state);
+    const laterTurn = f.manager.submit(f.owners[0], state.sessionId, 'after compaction');
+    await vi.waitFor(() => {
+      expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress'))
+        .toHaveLength(1);
+    });
+    expect(f.clients[0].requests.filter(({ method }) => method === 'prompt.submit')).toEqual([]);
+
+    release();
+    await expect(compaction).resolves.toMatchObject({ status: 'compressed' });
+    await expect(laterTurn).resolves.toMatchObject({ text: 'reply:after compaction' });
+    const methods = f.clients[0].requests.map(({ method }) => method);
+    expect(methods.indexOf('session.compress')).toBeLessThan(methods.indexOf('prompt.submit'));
+  });
+
+  it('refuses native compaction non-fatally while an application Run is active', async () => {
+    const f = fixture();
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+
+    await expect(f.manager.queueNativeContextCompaction(f.owners[0], state)).resolves.toMatchObject({
+      status: 'unavailable',
+      errorCode: 'agent_terminal_context_compaction_run_active',
+      nativeSessionId: state.nativeSessionId,
+      storedSessionId: state.storedSessionId,
+      focusApplied: false,
+    });
+    expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([]);
+  });
+
+  it('refuses a stale native compaction identity without touching the live session', async () => {
+    const f = fixture();
+    f.resolveActiveContext.mockReturnValue(null);
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+
+    await expect(f.manager.queueNativeContextCompaction(f.owners[0], {
+      ...state,
+      storedSessionId: 'stale-stored-session',
+    })).resolves.toMatchObject({
+      status: 'unavailable',
+      errorCode: 'agent_terminal_context_compaction_identity_changed',
+    });
+    expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toEqual([]);
+    expect(f.manager.state(f.owners[0], state.sessionId).storedSessionId).toBe(state.storedSessionId);
+  });
+
+  it.each([
+    {
+      label: 'native abort',
+      result: { status: 'aborted', summary: { note: 'private abort summary' } },
+      error: null,
+      status: 'aborted',
+      errorCode: 'agent_terminal_context_compaction_aborted',
+    },
+    {
+      label: 'compression lock',
+      result: { compressed: false, lock_held: true, message: 'private lock holder' },
+      error: null,
+      status: 'unavailable',
+      errorCode: 'agent_terminal_context_compaction_lock_held',
+    },
+    {
+      label: 'invalid result',
+      result: { status: 'unexpected', summary: { headline: 'private invalid summary' } },
+      error: null,
+      status: 'failed',
+      errorCode: 'agent_terminal_context_compaction_result_invalid',
+    },
+    {
+      label: 'transport failure',
+      result: null,
+      error: new Error('private transport detail'),
+      status: 'failed',
+      errorCode: 'agent_terminal_context_compaction_request_failed',
+    },
+  ])('keeps $label nonfatal and excludes native summary/error prose', async ({
+    result, error, status, errorCode,
+  }) => {
+    const f = fixture();
+    f.resolveActiveContext.mockReturnValue(null);
+    const state = await f.manager.open(
+      f.owners[0], f.cards[0], f.deck, 80, 24, { attachTui: false },
+    );
+    f.clients[0].compressResult = result;
+    f.clients[0].compressError = error;
+
+    const receipt = await f.manager.queueNativeContextCompaction(f.owners[0], state);
+
+    expect(receipt).toMatchObject({ status, errorCode, focusApplied: false });
+    expect(JSON.stringify(receipt)).not.toMatch(/private|summary|transport detail|lock holder/i);
+    await expect(f.manager.submit(f.owners[0], state.sessionId, 'still available'))
+      .resolves.toMatchObject({ text: 'reply:still available' });
+    expect(f.clients[0].requests.filter(({ method }) => method === 'session.compress')).toHaveLength(1);
   });
 
   it('attaches exact turn images before the same Card prompt and degrades an invalid image', async () => {
@@ -1445,6 +1616,31 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
         arguments: { target: '@KnowGraph' },
       }),
     }));
+
+    const observationPayload = JSON.stringify({
+      version: 1,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+      nonce: '9'.repeat(32),
+      sourceStoredSessionId: state.storedSessionId,
+      tool: 'runtime.observe_attempt',
+      arguments: { attempt: {
+        eventId: 'llm:one:completed', attemptId: 'llm:one',
+        kind: 'llm', phase: 'completed', durationMs: 12,
+      } },
+    });
+    await expect(f.manager.authenticateCardToolRequest(
+      keyId,
+      observationPayload,
+      createHmac('sha256', token).update(observationPayload).digest('hex'),
+    )).resolves.toEqual(expect.objectContaining({
+      owner: f.owners[0],
+      state,
+      canonicalToolName: 'runtime.observe_attempt',
+      request: expect.objectContaining({
+        tool: 'runtime.observe_attempt',
+        arguments: { attempt: expect.objectContaining({ eventId: 'llm:one:completed' }) },
+      }),
+    }));
   });
 
   it('resolves a verified native Magnetic worker claim to one existing saved Card authority', async () => {
@@ -1691,6 +1887,34 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     expect(f.manager.find(f.owners[1])).toBeNull();
   });
 
+  it('does not write cold-opening Card instructions twice before Bot roster publication', async () => {
+    const f = fixture();
+    const desired = f.cards.map((selected, index) => ({
+      owner: f.owners[index], card: selected, deck: f.deck,
+    }));
+    const projected = f.cards.map((selected, index) => ({
+      owner: f.owners[index],
+      card: selected,
+      projection: {
+        cardId: selected.id,
+        cardRevisionId: selected._cardRevisionId || '',
+        profile: selected.runtime.kind === 'hermes' ? selected.runtime.profile : '',
+        title: selected.title,
+        botEnabled: true,
+        roster: [],
+      },
+    }));
+
+    await f.manager.reconcile(desired, { cols: 120, rows: 36 }, projected);
+
+    expect(f.configureCardInstructions).toHaveBeenCalledTimes(f.cards.length);
+    for (const selected of f.cards) {
+      const profile = selected.runtime.kind === 'hermes' ? selected.runtime.profile : '';
+      expect(f.configureCardInstructions.mock.calls.filter(([name]) => name === profile))
+        .toHaveLength(1);
+    }
+  });
+
   it('materializes a newly added saved profile without publishing Project roster to it', async () => {
     const f = fixture();
     const main = f.cards[0];
@@ -1841,7 +2065,7 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     const dependencies = {
       listProjects: async () => [{
         id: owner.projectId, name: 'Project', code: null, status: 'active',
-        project_type: 'agent', ownerUserId: owner.userId,
+        project_type: 'agent' as const, ownerUserId: owner.userId,
       }],
       loadProject: async () => ({ decks: { [owner.deckId]: deck }, meta: { decks: {} } }),
       listCanonicalBindings: async () => [{
@@ -1858,7 +2082,9 @@ describe('one Gateway-owned runtime and native TUI per saved Card', () => {
     };
     let releaseWarmup!: () => void;
     const warmupGate = new Promise<void>((resolve) => { releaseWarmup = resolve; });
-    f.materializeCardToolsPlugin.mockImplementationOnce(async () => warmupGate);
+    f.materializeCardToolsPlugin.mockImplementationOnce(() => (
+      warmupGate.then(() => undefined)
+    ));
     const warming = reconcileConnectedAgentTerminals(dependencies);
     await vi.waitFor(() => expect(f.materializeCardToolsPlugin).toHaveBeenCalledOnce());
     const ordinaryOwner = { ...owner, conversationId: 'main' };

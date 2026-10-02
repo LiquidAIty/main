@@ -15,6 +15,7 @@ const native = vi.hoisted(() => ({
   setLayerVisibility: vi.fn(),
   setSatelliteParams: vi.fn(),
   focusSelection: vi.fn(),
+  getVisualReadiness: vi.fn(),
 }));
 
 vi.mock('./loadWorldViewNative', () => ({
@@ -31,6 +32,7 @@ function handle() {
     setLayerVisibility: native.setLayerVisibility,
     setSatelliteParams: native.setSatelliteParams,
     focusSelection: native.focusSelection,
+    getVisualReadiness: native.getVisualReadiness,
   };
 }
 
@@ -44,6 +46,7 @@ beforeEach(() => {
   native.setLayerVisibility.mockReset().mockReturnValue('layer-request-1');
   native.setSatelliteParams.mockReset().mockReturnValue('satellite-params-1');
   native.focusSelection.mockReset().mockReturnValue('focus-request-1');
+  native.getVisualReadiness.mockReset().mockReturnValue(null);
   native.load.mockReset().mockResolvedValue(handle());
 });
 
@@ -61,6 +64,7 @@ describe('WorldView direct native mount', () => {
     expect(config).toEqual(expect.objectContaining(scope));
     expect(document.querySelector('iframe')).toBeNull();
     expect(screen.queryByText('Starting WorldView…')).toBeNull();
+    expect(screen.getByText('Loading WorldView map…')).toBeTruthy();
     expect(screen.getByLabelText('WorldView globe').contains(root)).toBe(true);
   });
 
@@ -136,5 +140,41 @@ describe('WorldView direct native mount', () => {
       message: 'webgl unavailable',
     });
     expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('shows visual fallback progress and fails honestly when no fallback frame arrives', async () => {
+    render(<GodsEyeSurface {...scope} />);
+    await waitFor(() => expect(native.load).toHaveBeenCalledTimes(1));
+    const callbacks = native.load.mock.calls[0][1].callbacks;
+
+    act(() => callbacks.onVisualReadinessChange({
+      phase: 'waiting-for-fallback-frame',
+      canvas: { cssWidth: 800, cssHeight: 600, backingWidth: 1600, backingHeight: 1200, valid: true },
+      firstPostRender: true,
+      activeMapStackId: 'osm',
+      photorealTilesetExists: true,
+      firstVisibleContent: false,
+      tileFailure: 'tile failed',
+      fallback: { attempted: true, reason: 'tile_failed', applied: true, postFallbackFrame: false },
+      error: null,
+    }));
+    expect(screen.getByText('Photoreal map unavailable. Loading the standard map…')).toBeTruthy();
+
+    act(() => callbacks.onVisualReadinessChange({
+      phase: 'unavailable',
+      canvas: { cssWidth: 800, cssHeight: 600, backingWidth: 1600, backingHeight: 1200, valid: true },
+      firstPostRender: true,
+      activeMapStackId: 'osm',
+      photorealTilesetExists: true,
+      firstVisibleContent: false,
+      tileFailure: 'tile failed',
+      fallback: { attempted: true, reason: 'tile_failed', applied: true, postFallbackFrame: false },
+      error: {
+        code: 'worldview_osm_render_unavailable',
+        message: 'The standard map loaded but did not produce a rendered frame.',
+      },
+    }));
+    expect(screen.getByText('WorldView could not start')).toBeTruthy();
+    expect(screen.getByText(/worldview_osm_render_unavailable/)).toBeTruthy();
   });
 });

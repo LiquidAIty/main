@@ -115,7 +115,7 @@ describe('canvas connection validation', () => {
     expect(allowed(connect)).toBe(false);
   });
 
-  it('allows one master per Card and lets one reconnected wire change that master', () => {
+  it('allows independent orange and blue masters while preserving one master per topology', () => {
     const deck = structuredClone(INITIAL_DECK);
     const orange = {
       id: 'team-master',
@@ -136,14 +136,54 @@ describe('canvas connection validation', () => {
       ...blue,
       id: 'existing-blue',
       data: { edgeType: 'magentic_option' },
-    }])).toBe(false);
-    expect(isPlainConnectionAllowedForDocument(deck, blue, [orange as Edge])).toBe(false);
+    }])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(deck, blue, [orange as Edge])).toBe(true);
     expect(isPlainConnectionAllowedForDocument(
       deck,
       blue,
-      [{ ...orange, id: 'same-wire' } as Edge],
+      [{ ...blue, id: 'same-wire', data: { edgeType: 'magentic_option' } } as Edge],
       'same-wire',
     )).toBe(true);
+
+    const team = deck.nodes.find(card => card.id === 'card_team')!;
+    team.runtimeOptions = { ...(team.runtimeOptions || {}), orchestrator: true };
+    expect(isPlainConnectionAllowedForDocument(deck, blue, [orange as Edge])).toBe(true);
+    expect(isPlainConnectionAllowedForDocument(
+      deck,
+      {
+        source: team.id,
+        sourceHandle: 'card-control',
+        target: 'card_worldsignals_agent',
+        targetHandle: null,
+      },
+      [
+        orange as Edge,
+        { ...blue, id: 'existing-blue', data: { edgeType: 'magentic_option' } } as Edge,
+        {
+          id: 'existing-blue-target',
+          source: 'card_worldsignals_agent',
+          target: 'card_magentic',
+          data: { edgeType: 'magentic_option' },
+        } as Edge,
+      ],
+    )).toBe(true);
+
+    const secondMain = structuredClone(deck.nodes.find(card => card.id === 'builder')!);
+    secondMain.id = 'card_second_main';
+    secondMain.title = 'SecondMain';
+    secondMain.runtime = { kind: 'hermes', mode: 'delegate', profile: 'second-main' };
+    secondMain.runtimeOptions = { ...(secondMain.runtimeOptions || {}), orchestrator: true };
+    deck.nodes.push(secondMain);
+    expect(isPlainConnectionAllowedForDocument(
+      deck,
+      {
+        source: secondMain.id,
+        sourceHandle: 'card-control',
+        target: 'card_team',
+        targetHandle: null,
+      },
+      [orange as Edge],
+    )).toBe(false);
   });
 });
 
@@ -890,7 +930,7 @@ describe('BuilderCanvas runtime-truth helpers', () => {
         },
         currentEdges,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('passes handle ids through React Flow edge mapping', () => {
@@ -939,6 +979,31 @@ describe('BuilderCanvas runtime-truth helpers', () => {
     });
     expect(edge.targetHandle).toBeUndefined();
     expect(document.edges[0].targetHandle).toBe(targetHandle);
+  });
+
+  it('restores an incoming orange wire to the target Card orchestrator connector', () => {
+    const document = createBusTestDocument([{
+      id: 'edge_first_second',
+      source: 'card_worker_a',
+      target: 'card_worker_b',
+      edgeType: 'flow',
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    }]);
+    const source = document.nodes.find(card => card.id === 'card_worker_a')!;
+    const target = document.nodes.find(card => card.id === 'card_worker_b')!;
+    source.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-a' };
+    source.runtimeOptions = { orchestrator: true };
+    target.runtime = { kind: 'hermes', mode: 'delegate', profile: 'worker-b' };
+    target.runtimeOptions = { orchestrator: true };
+
+    const [edge] = toFlowEdges(document, null, null, new Set());
+
+    expect(edge).toMatchObject({
+      hidden: false,
+      sourceHandle: 'card-control',
+      targetHandle: 'card-control',
+    });
   });
 
   it('captures handle ids when converting React Flow edges back to DeckEdge', () => {

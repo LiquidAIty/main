@@ -5,6 +5,7 @@ import type {
   CardRuntime,
 } from '../types/agentgraph';
 import { CardScriptEditor } from '../features/agentbuilder/CardScriptEditor';
+import { CardRuntimeDashboard } from './CardRuntimeDashboard';
 import {
   applyNativeHermesOperation,
   loadNativeHermesCard,
@@ -17,6 +18,12 @@ type ModelOption = { key: string; label: string; providerModelId: string };
 type SavedSubagentModel = NonNullable<AgentCardRuntimeOptions['subagentModel']>;
 type SavedSubagentType = NonNullable<AgentCardRuntimeOptions['subagentType']>;
 type SavedCardScript = NonNullable<AgentCardRuntimeOptions['script']>;
+type SavedJevContext = NonNullable<AgentCardRuntimeOptions['jevContext']>;
+type JevContextMode = NonNullable<SavedJevContext['autoTools']>;
+const DEFAULT_JEV_CONTEXT: Required<SavedJevContext> = {
+  autoTools: 'inherited',
+  modelChoice: 'inherited',
+};
 const DEFAULT_SUBAGENT_MODEL: SavedSubagentModel = {
   provider: 'openai',
   accessMode: 'chatgpt-account',
@@ -206,6 +213,11 @@ interface AgentManagerProps {
   localConfig?: AgentManagerLocalConfig | null;
   onSaveLocalConfig?: (config: AgentManagerLocalConfig) => void | Promise<void>;
   registerCardLeave?: (save: (() => Promise<boolean>) | null) => void;
+  orangeConnections?: Array<{
+    cardId: string;
+    title: string;
+    direction: 'incoming' | 'outgoing';
+  }>;
 }
 
 export type AgentManagerLocalConfig = {
@@ -239,6 +251,7 @@ type PromptFields = {
   ioSchema: string;
   memoryPolicy: string;
   outputExpectations: string;
+  connectedAgents: string;
 };
 
 const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
@@ -246,7 +259,12 @@ const PROMPT_HEADINGS: Record<string, keyof PromptFields> = {
   IO_SCHEMA: 'ioSchema', INPUT_SCHEMA: 'ioSchema', MEMORY_POLICY: 'memoryPolicy',
   OUTPUT_EXPECTATIONS: 'outputExpectations', OUTPUT_CONTRACT: 'outputExpectations',
   OUTPUT_REQUIREMENTS: 'outputExpectations',
+  ALL_CONNECTED_AGENTS: 'connectedAgents', ALL_AGENTS_CONNECTED: 'connectedAgents',
 };
+
+function promptHeadingKey(label: string): string {
+  return label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
 
 const CANONICAL_PROMPT_HEADING: Record<keyof PromptFields, string> = {
   role: 'ROLE',
@@ -255,6 +273,7 @@ const CANONICAL_PROMPT_HEADING: Record<keyof PromptFields, string> = {
   ioSchema: 'IO_SCHEMA',
   memoryPolicy: 'MEMORY_POLICY',
   outputExpectations: 'OUTPUT_EXPECTATIONS',
+  connectedAgents: 'ALL CONNECTED AGENTS',
 };
 
 function promptHeadings(template: string) {
@@ -277,7 +296,7 @@ function promptHeadings(template: string) {
 function assertUniqueCanonicalPromptSections(template: string): void {
   const seen = new Set<keyof PromptFields>();
   for (const heading of promptHeadings(template)) {
-    const field = PROMPT_HEADINGS[heading.label.toUpperCase()];
+    const field = PROMPT_HEADINGS[promptHeadingKey(heading.label)];
     if (!field) continue;
     if (seen.has(field)) {
       const canonical = CANONICAL_PROMPT_HEADING[field];
@@ -293,7 +312,7 @@ function promptFieldRanges(template: string) {
   const ranges: Array<{ key: string; label: string; start: number; end: number }> = [];
   const seen = new Set<keyof PromptFields>();
   headings.forEach((heading, index) => {
-    const field = PROMPT_HEADINGS[heading.label.toUpperCase()];
+    const field = PROMPT_HEADINGS[promptHeadingKey(heading.label)];
     const key = field && !seen.has(field) ? field : `section:${heading.index}`;
     if (field) seen.add(field);
     const start = heading.end;
@@ -313,6 +332,7 @@ function promptFieldRanges(template: string) {
 function parsePromptTemplate(template: string): PromptFields & Record<string, string> {
   const fields: PromptFields & Record<string, string> = {
     role: '', goal: '', constraints: '', ioSchema: '', memoryPolicy: '', outputExpectations: '',
+    connectedAgents: '',
   };
   for (const range of promptFieldRanges(template)) fields[range.key] = template.slice(range.start, range.end);
   return fields;
@@ -408,8 +428,12 @@ export function AgentManager({
   localConfig,
   onSaveLocalConfig,
   registerCardLeave,
+  orangeConnections = [],
 }: AgentManagerProps) {
   const isLocalConfigMode = Boolean(localConfig && onSaveLocalConfig);
+  const outboundOrangeConnections = orangeConnections.filter(
+    (connection) => connection.direction === 'outgoing',
+  );
   const [saveCardStatus, setSaveCardStatus] = useState<SaveCardStatus>('idle');
   const [saveCardErrorMessage, setSaveCardErrorMessage] = useState<string | null>(null);
   const cardSaveInFlightRef = useRef<Promise<boolean> | null>(null);
@@ -430,6 +454,10 @@ export function AgentManager({
   }>({ key: '' });
   const [autoSelect, setAutoSelect] = useState(false);
   const [autoTools, setAutoTools] = useState(false);
+  const [orchestratorEnabled, setOrchestratorEnabled] = useState(false);
+  const [orchestratorTouched, setOrchestratorTouched] = useState(false);
+  const [jevContext, setJevContext] = useState<Required<SavedJevContext>>(DEFAULT_JEV_CONTEXT);
+  const [jevContextTouched, setJevContextTouched] = useState(false);
   const [subagentModel, setSubagentModel] = useState<SavedSubagentModel>(DEFAULT_SUBAGENT_MODEL);
   const [subagentType, setSubagentType] = useState<SavedSubagentType>('none');
   const [subagentTouched, setSubagentTouched] = useState(false);
@@ -471,6 +499,7 @@ export function AgentManager({
     ioSchema: '',
     memoryPolicy: '',
     outputExpectations: '',
+    connectedAgents: '',
   });
   const [promptPartsTouched, setPromptPartsTouched] = useState<Record<string, boolean>>({});
   const [toolsText, setToolsText] = useState('');
@@ -537,6 +566,8 @@ export function AgentManager({
     draftDirtyRef.current = false;
     setSubagentTouched(false);
     setSubagentTypeTouched(false);
+    setJevContextTouched(false);
+    setOrchestratorTouched(false);
     setProvider(localConfig.provider || '');
     setAccessMode(
       localConfig.access_mode === 'chatgpt-account'
@@ -549,6 +580,14 @@ export function AgentManager({
       providerModelId: localConfig.runtime_options?.providerModelId });
     setAutoSelect(localConfig.runtime_options?.autoSelect === true);
     setAutoTools(localConfig.runtime_options?.autoTools === true);
+    setOrchestratorEnabled(
+      localConfig.runtime.mode === 'main'
+      || localConfig.runtime_options?.orchestrator === true,
+    );
+    setJevContext({
+      autoTools: localConfig.runtime_options?.jevContext?.autoTools || 'inherited',
+      modelChoice: localConfig.runtime_options?.jevContext?.modelChoice || 'inherited',
+    });
     const savedSubagentModel = localConfig.runtime_options?.subagentModel;
     const savedSubagentType = localConfig.runtime_options?.subagentType;
     setSubagentType(
@@ -769,7 +808,20 @@ export function AgentManager({
           ? { autoTools }
           : {}
       ),
+      ...(
+        runtimeKind === 'hermes'
+        && runtimeMode === 'delegate'
+        && (orchestratorTouched || localConfig.runtime_options?.orchestrator !== undefined)
+          ? { orchestrator: orchestratorEnabled }
+          : {}
+      ),
       ...(subagentTouched ? { subagentModel } : {}),
+      ...(
+        runtimeKind === 'hermes'
+        && (jevContextTouched || localConfig.runtime_options?.jevContext !== undefined)
+          ? { jevContext }
+          : {}
+      ),
       ...(
         localConfig.runtime_options?.script || scriptDraft.source.trim() || scriptDraft.enabled
           ? { script: scriptDraft }
@@ -798,6 +850,10 @@ export function AgentManager({
     providerModelId,
     autoSelect,
     autoTools,
+    orchestratorEnabled,
+    orchestratorTouched,
+    jevContext,
+    jevContextTouched,
     subagentModel,
     subagentTouched,
     subagentType,
@@ -952,6 +1008,8 @@ export function AgentManager({
   const subagentTypeField = editorField('subagentType');
   const accessModeField = editorField('accessMode');
   const modelKeyField = editorField('modelKey');
+  const jevModelChoiceContextField = editorField('jevModelChoiceContext');
+  const jevAutoToolsContextField = editorField('jevAutoToolsContext');
   const reasoningEffortField = editorField('reasoningEffort');
   const temperatureField = editorField('temperature');
   const maxTokensField = editorField('maxTokens');
@@ -966,6 +1024,20 @@ export function AgentManager({
     && localConfig?.runtime_options?.subagentType === undefined
     && legacyTeam?.mode === 'auto';
   const accessModeOptions = accessModeField?.options || [];
+  const jevContextLabel = (mode: JevContextMode) => ({
+    inherited: 'Inherited / current behavior',
+    request_card: 'Current request + saved Card',
+    conversation_window: 'Add bounded conversation window',
+    selected_native_context: 'Add selected native context',
+  })[mode];
+  const supportedJevContextOptions = (field: InputDictionaryEditorField | undefined) => (
+    (field?.options || []).filter((option): option is InputDictionaryEditorOption & { value: JevContextMode } => (
+      option.value === 'inherited'
+      || option.value === 'request_card'
+      || option.value === 'conversation_window'
+      || option.value === 'selected_native_context'
+    ))
+  );
   const runtimeDictionaryReady = Boolean(
     runtimeOptionsStatus === 'ready'
     && providerField
@@ -1057,8 +1129,77 @@ export function AgentManager({
 
   const renderSectionBody = (sectionTab: string) => {
     if (sectionTab === 'Prompt') {
+      const orchestratorOn = runtimeKind === 'hermes'
+        && runtimeMode !== 'magentic_one'
+        && (runtimeMode === 'main' || orchestratorEnabled);
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {runtimeKind === 'hermes' && runtimeMode !== 'magentic_one' ? (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#E0DED5', fontSize: 12 }}>
+              <input
+                type="checkbox"
+                aria-label="Orchestrator"
+                checked={orchestratorOn}
+                disabled={runtimeMode === 'main'}
+                onChange={(event) => {
+                  setOrchestratorEnabled(event.target.checked);
+                  setOrchestratorTouched(true);
+                  markDraftDirty();
+                }}
+              />
+              Orchestrator
+            </label>
+          ) : null}
+
+          {orchestratorOn && outboundOrangeConnections.length > 0 ? (
+            <label style={{ display: 'grid', gap: 7, color: '#E0DED5', fontSize: 12 }}>
+              <span style={{ fontWeight: 700 }}>All connected agents</span>
+              <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {outboundOrangeConnections.map((connection) => (
+                  <span
+                    key={`${connection.direction}:${connection.cardId}`}
+                    style={{
+                      padding: '3px 7px',
+                      borderRadius: 999,
+                      border: '1px solid rgba(242,166,74,.28)',
+                      background: 'rgba(242,166,74,.08)',
+                      color: '#F0D2A9',
+                      fontSize: 10,
+                    }}
+                  >
+                    {connection.title}
+                  </span>
+                ))}
+              </span>
+              <textarea
+                aria-label="All connected agents"
+                value={promptParts.connectedAgents}
+                placeholder={outboundOrangeConnections
+                  .map((connection) => (
+                    `${connection.title} is a connected teammate. Describe when and why this Card should call it.`
+                  ))
+                  .join('\n')}
+                onChange={(event) => {
+                  setPromptParts((current) => ({ ...current, connectedAgents: event.target.value }));
+                  setPromptPartsTouched((current) => ({ ...current, connectedAgents: true }));
+                  markDraftDirty();
+                }}
+                rows={Math.max(5, Math.min(10, outboundOrangeConnections.length + 3))}
+                style={{
+                  width: '100%',
+                  padding: 10,
+                  background: '#2B2B2B',
+                  color: '#FFF',
+                  border: '1px solid rgba(242,166,74,.26)',
+                  borderRadius: 8,
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+          ) : null}
+
           {onChangeCardName ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {onChangeCardName ? (
@@ -1225,7 +1366,7 @@ export function AgentManager({
           </div>
 
           {promptFieldRanges(promptText).filter((block) => (
-            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations'].includes(block.key)
+            !['role', 'goal', 'constraints', 'ioSchema', 'outputExpectations', 'connectedAgents'].includes(block.key)
             && (block.start !== block.end || promptPartsTouched[block.key])
           )).map((block) => (
             <label key={block.key} style={{ display: 'grid', gap: 6, color: '#E0DED5', fontSize: 12 }}>
@@ -1553,6 +1694,68 @@ export function AgentManager({
               </select>
             </div> : null}
           </div>
+          {runtimeKind === 'hermes' ? (
+            <details style={{ padding: 9, border: '1px solid #3A4A4F', borderRadius: 7,
+              background: '#1A2221' }}>
+              <summary style={{ cursor: 'pointer', color: '#D5E4E8', fontSize: 12, fontWeight: 600 }}>
+                Jev context
+              </summary>
+              <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+                <div style={{ color: '#80969F', fontSize: 10.5 }}>
+                  These choices add bounded semantic evidence to this Card&apos;s model-choice and Auto-tools decisions.
+                  The current request, saved Card contract, candidates, and grants always remain required. No choice grants data or tools.
+                </div>
+                {[{
+                  key: 'modelChoice' as const,
+                  label: jevModelChoiceContextField?.label || 'Model-choice context',
+                  field: jevModelChoiceContextField,
+                }, {
+                  key: 'autoTools' as const,
+                  label: jevAutoToolsContextField?.label || 'Auto-tools context',
+                  field: jevAutoToolsContextField,
+                }].map(({ key, label, field }) => {
+                  const options = supportedJevContextOptions(field);
+                  const current = jevContext[key];
+                  return (
+                    <label key={key} style={{ display: 'grid', gap: 5, color: '#B9CDD2', fontSize: 11 }}>
+                      {label}
+                      <select
+                        aria-label={label}
+                        disabled={!runtimeDictionaryReady || !options.length}
+                        value={current}
+                        onChange={(event) => {
+                          const selected = event.target.value as JevContextMode;
+                          if (!options.some((option) => option.value === selected)) return;
+                          setJevContext((value) => ({ ...value, [key]: selected }));
+                          setJevContextTouched(true);
+                          markDraftDirty();
+                        }}
+                      >
+                        {current && !options.some((option) => option.value === current) ? (
+                          <option value={current}>{jevContextLabel(current)} (saved)</option>
+                        ) : null}
+                        {options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {jevContextLabel(option.value)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+                {!supportedJevContextOptions(jevModelChoiceContextField).length
+                || !supportedJevContextOptions(jevAutoToolsContextField).length ? (
+                  <div role="status" style={{ color: '#D2A86B', fontSize: 10.5 }}>
+                    Jev context choices are unavailable from the current Input Data Dictionary; saved policy is unchanged.
+                  </div>
+                ) : null}
+                <div style={{ color: '#71878D', fontSize: 10 }}>
+                  Graph Focus, Think/Know relationship classification, and fulfillment scoring keep their purpose-specific native inputs;
+                  they are not silently reconfigured by these Card-level choices.
+                </div>
+              </div>
+            </details>
+          ) : null}
           {runtimeKind !== 'hermes' ? <>
             <div style={{ color: '#E0DED5', fontSize: 12, fontWeight: 600 }}>
               Advanced runtime
@@ -1984,6 +2187,9 @@ export function AgentManager({
                   ))}
                 </select>
               </label>
+            ) : null}
+            {projectId && deckId && cardId ? (
+              <CardRuntimeDashboard projectId={projectId} deckId={deckId} cardId={cardId} />
             ) : null}
           </div>
         )

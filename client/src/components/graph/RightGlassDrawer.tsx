@@ -24,6 +24,27 @@ type RightGlassDrawerProps = {
   movable?: boolean;
 };
 
+type DrawerLayout = "docked" | "floating";
+
+type MoveStart = {
+  x: number;
+  y: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  detached: boolean;
+};
+
+const FLOATING_MAX_INITIAL_WIDTH = 380;
+const FLOATING_MAX_INITIAL_HEIGHT = 420;
+const FLOATING_MIN_HEIGHT = 260;
+const DEFAULT_FLOAT_POSITION = { left: 24, top: 72 };
+const DEFAULT_FLOAT_HEIGHT = 360;
+const MOVE_THRESHOLD_PX = 8;
+const DOCK_SNAP_PX = 36;
+const KEYBOARD_STEP_PX = 16;
+
 export default function RightGlassDrawer({
   isOpen,
   title,
@@ -45,40 +66,93 @@ export default function RightGlassDrawer({
   openAriaLabel,
   movable = false,
 }: RightGlassDrawerProps): React.ReactElement {
-  const [width, setWidth] = useState(defaultWidth);
+  const defaultDockWidth = Math.max(minWidth, Math.min(maxWidth, defaultWidth));
+  const dockedMinWidth = movable ? defaultDockWidth : minWidth;
+  const [width, setWidth] = useState(defaultDockWidth);
   const [edgeAffordanceActive, setEdgeAffordanceActive] = useState(false);
   const widthRef = useRef(defaultWidth);
   const dragStartRef = useRef<{ x: number; width: number } | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
-  const moveStartRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-  const [docked, setDocked] = useState(true);
-  const [floatPosition, setFloatPosition] = useState({ left: 24, top: 72 });
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const moveStartRef = useRef<MoveStart | null>(null);
+  const floatPositionRef = useRef(DEFAULT_FLOAT_POSITION);
+  const cornerResizeStartRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const interactionCleanupRef = useRef<(() => void) | null>(null);
+  const wasOpenRef = useRef(false);
+  const [layout, setLayout] = useState<DrawerLayout>("docked");
+  const [floatPosition, setFloatPosition] = useState(DEFAULT_FLOAT_POSITION);
+  const [floatHeight, setFloatHeight] = useState(DEFAULT_FLOAT_HEIGHT);
   const clampedWidth = useMemo(() => Math.max(minWidth, Math.min(maxWidth, width)), [maxWidth, minWidth, width]);
 
   useEffect(() => {
-    setWidth(defaultWidth);
-  }, [defaultWidth]);
+    setWidth(defaultDockWidth);
+    widthRef.current = defaultDockWidth;
+  }, [defaultDockWidth]);
 
   useEffect(() => {
-    if (isOpen && resetWidthOnOpen) setWidth(defaultWidth);
-  }, [defaultWidth, isOpen, resetWidthOnOpen]);
+    if (isOpen && resetWidthOnOpen) {
+      setWidth(defaultDockWidth);
+      widthRef.current = defaultDockWidth;
+    }
+  }, [defaultDockWidth, isOpen, resetWidthOnOpen]);
 
   useEffect(() => {
     widthRef.current = clampedWidth;
   }, [clampedWidth]);
 
   useEffect(() => {
-    if (!storageKey || resetWidthOnOpen) return;
+    floatPositionRef.current = floatPosition;
+  }, [floatPosition]);
+
+  useEffect(() => {
+    if (isOpen && bodyScrollRef.current) bodyScrollRef.current.scrollTop = 0;
+  }, [isOpen, title]);
+
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      setLayout("docked");
+      if (movable) {
+        setWidth(defaultDockWidth);
+        widthRef.current = defaultDockWidth;
+        floatPositionRef.current = DEFAULT_FLOAT_POSITION;
+        setFloatPosition(DEFAULT_FLOAT_POSITION);
+        setFloatHeight(DEFAULT_FLOAT_HEIGHT);
+      }
+    }
+    wasOpenRef.current = isOpen;
+  }, [defaultDockWidth, isOpen, movable]);
+
+  useEffect(() => {
+    if (!storageKey || resetWidthOnOpen || movable) return;
     try {
       const raw = window.localStorage.getItem(storageKey);
       if (!raw) return;
       const parsed = Number(raw);
       if (!Number.isFinite(parsed)) return;
-      setWidth(Math.max(minWidth, Math.min(maxWidth, parsed)));
+      const next = Math.max(minWidth, Math.min(maxWidth, parsed));
+      setWidth(next);
+      widthRef.current = next;
     } catch {
       // no-op
     }
-  }, [maxWidth, minWidth, resetWidthOnOpen, storageKey]);
+  }, [maxWidth, minWidth, movable, resetWidthOnOpen, storageKey]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      interactionCleanupRef.current?.();
+      dragStartRef.current = null;
+      moveStartRef.current = null;
+      cornerResizeStartRef.current = null;
+      setEdgeAffordanceActive(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => () => interactionCleanupRef.current?.(), []);
 
   const persistWidth = (next: number) => {
     if (!storageKey) return;
@@ -89,6 +163,34 @@ export default function RightGlassDrawer({
     }
   };
 
+  const updateWidth = (next: number, lowerBound = minWidth) => {
+    const clamped = Math.max(lowerBound, Math.min(maxWidth, next));
+    widthRef.current = clamped;
+    setWidth(clamped);
+    return clamped;
+  };
+
+  const installMouseInteraction = (
+    onMove: (event: MouseEvent) => void,
+    onUp: (event: MouseEvent) => void,
+  ) => {
+    interactionCleanupRef.current?.();
+    const cleanup = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (interactionCleanupRef.current === cleanup) interactionCleanupRef.current = null;
+    };
+    interactionCleanupRef.current = cleanup;
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return cleanup;
+  };
+
+  const dock = () => {
+    setLayout("docked");
+    if (movable) updateWidth(defaultDockWidth, defaultDockWidth);
+  };
+
   const startResize = (clientX: number) => {
     setEdgeAffordanceActive(true);
     dragStartRef.current = { x: clientX, width: widthRef.current };
@@ -96,48 +198,177 @@ export default function RightGlassDrawer({
       const drag = dragStartRef.current;
       if (!drag) return;
       const delta = drag.x - event.clientX;
-      const next = Math.max(minWidth, Math.min(maxWidth, drag.width + delta));
-      setWidth(next);
+      const next = Math.max(dockedMinWidth, Math.min(maxWidth, drag.width + delta));
+      updateWidth(next, dockedMinWidth);
     };
+    let cleanup: () => void = () => {};
     const onUp = () => {
       setEdgeAffordanceActive(false);
       const next = widthRef.current;
-      persistWidth(next);
+      if (!movable) persistWidth(next);
       dragStartRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      cleanup();
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    cleanup = installMouseInteraction(onMove, onUp);
   };
 
   const startMove = (clientX: number, clientY: number) => {
-    if (!movable || docked) return;
-    moveStartRef.current = { x: clientX, y: clientY, left: floatPosition.left, top: floatPosition.top };
+    if (!movable) return;
+    const panel = panelRef.current;
+    const parent = panel?.parentElement?.getBoundingClientRect();
+    const panelRect = panel?.getBoundingClientRect();
+    if (!parent || !panelRect) return;
+    moveStartRef.current = {
+      x: clientX,
+      y: clientY,
+      left: layout === "docked" ? panelRect.left - parent.left : floatPositionRef.current.left,
+      top: layout === "docked" ? panelRect.top - parent.top : floatPositionRef.current.top,
+      width: panelRect.width || clampedWidth,
+      height: panelRect.height || Math.max(FLOATING_MIN_HEIGHT, parent.height - top - bottom),
+      detached: layout === "floating",
+    };
     const onMove = (event: MouseEvent) => {
       const drag = moveStartRef.current;
       const parent = panelRef.current?.parentElement?.getBoundingClientRect();
       if (!drag || !parent) return;
-      const nextLeft = Math.max(8, Math.min(parent.width - clampedWidth - 8, drag.left + event.clientX - drag.x));
-      const nextTop = Math.max(8, Math.min(parent.height - 96, drag.top + event.clientY - drag.y));
-      setFloatPosition({ left: nextLeft, top: nextTop });
+
+      if (!drag.detached) {
+        const distance = Math.hypot(event.clientX - drag.x, event.clientY - drag.y);
+        if (distance < MOVE_THRESHOLD_PX) return;
+
+        const compactWidth = Math.max(
+          minWidth,
+          Math.min(maxWidth, drag.width, FLOATING_MAX_INITIAL_WIDTH, parent.width - 16),
+        );
+        const compactHeight = Math.max(
+          FLOATING_MIN_HEIGHT,
+          Math.min(FLOATING_MAX_INITIAL_HEIGHT, drag.height, parent.height - 16),
+        );
+        const pointerOffsetX = Math.max(32, Math.min(compactWidth - 32, drag.x - (parent.left + drag.left)));
+        const pointerOffsetY = Math.max(16, Math.min(48, drag.y - (parent.top + drag.top)));
+        drag.left = event.clientX - parent.left - pointerOffsetX;
+        drag.top = event.clientY - parent.top - pointerOffsetY;
+        drag.x = event.clientX;
+        drag.y = event.clientY;
+        drag.width = compactWidth;
+        drag.height = compactHeight;
+        drag.detached = true;
+        updateWidth(compactWidth);
+        setFloatHeight(compactHeight);
+        setLayout("floating");
+      }
+
+      const nextLeft = Math.max(8, Math.min(parent.width - drag.width - 8, drag.left + event.clientX - drag.x));
+      const nextTop = Math.max(8, Math.min(parent.height - drag.height - 8, drag.top + event.clientY - drag.y));
+      floatPositionRef.current = { left: nextLeft, top: nextTop };
+      setFloatPosition(floatPositionRef.current);
     };
-    const onUp = () => {
+    const onUp = (event: MouseEvent) => {
+      const drag = moveStartRef.current;
+      const parent = panelRef.current?.parentElement?.getBoundingClientRect();
+      if (drag?.detached && parent) {
+        const panelRight = floatPositionRef.current.left + drag.width;
+        const pointerNearWall = event.clientX - parent.left >= parent.width - DOCK_SNAP_PX;
+        if (pointerNearWall || parent.width - panelRight <= DOCK_SNAP_PX) {
+          dock();
+        }
+      }
       moveStartRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      cleanup();
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    let cleanup: () => void = () => {};
+    cleanup = installMouseInteraction(onMove, onUp);
   };
 
-  const detach = () => {
+  const startCornerResize = (clientX: number, clientY: number) => {
+    if (!movable || layout !== "floating") return;
+    cornerResizeStartRef.current = {
+      x: clientX,
+      y: clientY,
+      width: widthRef.current,
+      height: floatHeight,
+    };
+    const onMove = (event: MouseEvent) => {
+      const drag = cornerResizeStartRef.current;
+      const parent = panelRef.current?.parentElement?.getBoundingClientRect();
+      if (!drag || !parent) return;
+      const widthLimit = Math.min(maxWidth, Math.max(minWidth, parent.width - floatPositionRef.current.left - 8));
+      const heightLimit = Math.max(FLOATING_MIN_HEIGHT, parent.height - floatPositionRef.current.top - 8);
+      updateWidth(Math.max(minWidth, Math.min(widthLimit, drag.width + event.clientX - drag.x)));
+      setFloatHeight(Math.max(FLOATING_MIN_HEIGHT, Math.min(heightLimit, drag.height + event.clientY - drag.y)));
+    };
+    let cleanup: () => void = () => {};
+    const onUp = () => {
+      cornerResizeStartRef.current = null;
+      cleanup();
+    };
+    cleanup = installMouseInteraction(onMove, onUp);
+  };
+
+  const detachForKeyboard = () => {
+    if (!movable || layout !== "docked") return;
+    const panel = panelRef.current;
+    const parent = panel?.parentElement?.getBoundingClientRect();
+    const panelRect = panel?.getBoundingClientRect();
+    if (!parent || !panelRect) return;
+    const compactWidth = Math.max(
+      minWidth,
+      Math.min(maxWidth, panelRect.width || widthRef.current, FLOATING_MAX_INITIAL_WIDTH, parent.width - 16),
+    );
+    const compactHeight = Math.max(
+      FLOATING_MIN_HEIGHT,
+      Math.min(FLOATING_MAX_INITIAL_HEIGHT, panelRect.height || FLOATING_MAX_INITIAL_HEIGHT, parent.height - 16),
+    );
+    const nextPosition = {
+      left: Math.max(8, parent.width - compactWidth - DOCK_SNAP_PX - 12),
+      top: Math.max(8, Math.min(parent.height - compactHeight - 8, panelRect.top - parent.top)),
+    };
+    floatPositionRef.current = nextPosition;
+    setFloatPosition(nextPosition);
+    updateWidth(compactWidth);
+    setFloatHeight(compactHeight);
+    setLayout("floating");
+  };
+
+  const moveFloatingByKeyboard = (deltaX: number, deltaY: number) => {
     const parent = panelRef.current?.parentElement?.getBoundingClientRect();
-    setFloatPosition({
-      left: Math.max(12, (parent?.width || window.innerWidth) - clampedWidth - 36),
-      top: Math.max(12, top + 20),
-    });
-    setDocked(false);
+    if (!parent || layout !== "floating") return;
+    const nextLeft = Math.max(8, Math.min(parent.width - widthRef.current - 8, floatPositionRef.current.left + deltaX));
+    const nextTop = Math.max(8, Math.min(parent.height - floatHeight - 8, floatPositionRef.current.top + deltaY));
+    if (deltaX > 0 && parent.width - (nextLeft + widthRef.current) <= DOCK_SNAP_PX) {
+      dock();
+      return;
+    }
+    const nextPosition = { left: nextLeft, top: nextTop };
+    floatPositionRef.current = nextPosition;
+    setFloatPosition(nextPosition);
+  };
+
+  const resizeDockedByKeyboard = (delta: number) => {
+    const next = updateWidth(widthRef.current + delta, dockedMinWidth);
+    if (!movable) persistWidth(next);
+  };
+
+  const resizeFloatingByKeyboard = (deltaWidth: number, deltaHeight: number) => {
+    const parent = panelRef.current?.parentElement?.getBoundingClientRect();
+    if (!parent || layout !== "floating") return;
+    const widthLimit = Math.min(maxWidth, Math.max(minWidth, parent.width - floatPositionRef.current.left - 8));
+    const heightLimit = Math.max(FLOATING_MIN_HEIGHT, parent.height - floatPositionRef.current.top - 8);
+    updateWidth(Math.max(minWidth, Math.min(widthLimit, widthRef.current + deltaWidth)));
+    setFloatHeight(Math.max(FLOATING_MIN_HEIGHT, Math.min(heightLimit, floatHeight + deltaHeight)));
+  };
+
+  const closeIntoDock = () => {
+    interactionCleanupRef.current?.();
+    dragStartRef.current = null;
+    moveStartRef.current = null;
+    cornerResizeStartRef.current = null;
+    setEdgeAffordanceActive(false);
+    dock();
+    floatPositionRef.current = DEFAULT_FLOAT_POSITION;
+    setFloatPosition(DEFAULT_FLOAT_POSITION);
+    setFloatHeight(DEFAULT_FLOAT_HEIGHT);
+    onClose();
   };
 
   return (
@@ -147,7 +378,7 @@ export default function RightGlassDrawer({
           type="button"
           aria-label={openAriaLabel || `Open ${title}`}
           onClick={onOpen}
-          className="absolute transition-all duration-150 ease-out hover:opacity-100"
+          className="absolute transition-[opacity,background-color,border-color] duration-150 ease-out hover:opacity-100"
           style={{
             top: "50%",
             right: 0,
@@ -196,66 +427,111 @@ export default function RightGlassDrawer({
 
       <aside
         ref={panelRef}
+        aria-label={title || openAriaLabel || "Drawer"}
+        aria-hidden={!isOpen}
         data-testid={dataTestId}
         data-open={isOpen ? "true" : "false"}
+        data-layout={layout}
         className="absolute transition-[width,opacity,transform] duration-180 ease-out"
         style={graphInspectorPanelStyle({
-          top: docked ? (dockedHeight ? "auto" : top) : floatPosition.top,
-          right: docked ? right : "auto",
-          bottom: docked ? bottom : "auto",
-          left: docked ? "auto" : floatPosition.left,
-          height: docked ? (dockedHeight ?? "auto") : "min(68vh, 620px)",
+          top: layout === "floating" ? floatPosition.top : (dockedHeight ? "auto" : top),
+          right: layout === "floating" ? "auto" : (movable ? 0 : right),
+          bottom: layout === "floating" ? "auto" : bottom,
+          left: layout === "floating" ? floatPosition.left : "auto",
+          height: layout === "floating" ? floatHeight : (dockedHeight ?? "auto"),
           width: isOpen ? clampedWidth : 0,
           minWidth: 0,
           zIndex,
           position: "absolute",
           pointerEvents: isOpen ? "auto" : "none",
+          visibility: isOpen ? "visible" : "hidden",
           opacity: isOpen ? 1 : 0,
           transform: isOpen ? "translateX(0)" : "translateX(12px)",
-          borderRadius: 18,
+          borderRadius: layout === "docked" && movable ? "18px 0 0 18px" : 18,
           overflow: "hidden",
         })}
         >
-        <div
-          aria-label="Resize drawer"
-          title="Drag to resize drawer"
-          onMouseEnter={() => setEdgeAffordanceActive(true)}
-          onMouseLeave={() => setEdgeAffordanceActive(false)}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            startResize(event.clientX);
-          }}
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 8,
-            cursor: "col-resize",
-            zIndex: 3,
-            borderRight: `1px solid ${edgeAffordanceActive ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
-            boxShadow: edgeAffordanceActive
-              ? "inset 0 0 0 1px rgba(55,173,170,0.14), 0 0 8px rgba(55,173,170,0.1)"
-              : "none",
-            background: edgeAffordanceActive
-              ? "linear-gradient(90deg, rgba(55,173,170,0.2), rgba(55,173,170,0.02))"
-              : "linear-gradient(90deg, rgba(167,176,186,0.14), rgba(167,176,186,0.01))",
-            transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
-          }}
-        />
+        {layout === "docked" ? (
+          <div
+            aria-label="Resize drawer"
+            aria-orientation="vertical"
+            aria-valuemin={dockedMinWidth}
+            aria-valuemax={maxWidth}
+            aria-valuenow={clampedWidth}
+            role="separator"
+            tabIndex={isOpen ? 0 : -1}
+            title="Drag to resize drawer"
+            onMouseEnter={() => setEdgeAffordanceActive(true)}
+            onMouseLeave={() => setEdgeAffordanceActive(false)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              startResize(event.clientX);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              resizeDockedByKeyboard(event.key === "ArrowLeft" ? KEYBOARD_STEP_PX : -KEYBOARD_STEP_PX);
+            }}
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 8,
+              cursor: "col-resize",
+              zIndex: 3,
+              borderRight: `1px solid ${edgeAffordanceActive ? GRAPH_THEME.accent.primaryBorder : GRAPH_THEME.drawer.sectionBorder}`,
+              boxShadow: edgeAffordanceActive
+                ? "inset 0 0 0 1px rgba(55,173,170,0.14), 0 0 8px rgba(55,173,170,0.1)"
+                : "none",
+              background: edgeAffordanceActive
+                ? "linear-gradient(90deg, rgba(55,173,170,0.2), rgba(55,173,170,0.02))"
+                : "linear-gradient(90deg, rgba(167,176,186,0.14), rgba(167,176,186,0.01))",
+              transition: "border-color 120ms ease, box-shadow 120ms ease, background 120ms ease",
+            }}
+          />
+        ) : null}
         <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <div aria-hidden="true" style={{ height: 1, flex: '0 0 auto', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.42), rgba(255,255,255,.12), transparent)', boxShadow: '0 0 14px rgba(255,255,255,.08)' }} />
           <div
+            aria-label={movable ? "Move panel" : undefined}
+            aria-roledescription={movable ? "movable panel header" : undefined}
+            role={movable ? "button" : undefined}
+            tabIndex={movable && isOpen ? 0 : undefined}
             className="flex items-center justify-between gap-2"
             onMouseDown={(event) => {
               if ((event.target as HTMLElement).closest("button")) return;
               startMove(event.clientX, event.clientY);
             }}
+            onKeyDown={(event) => {
+              if (event.target !== event.currentTarget && (event.target as HTMLElement).closest("button")) return;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                closeIntoDock();
+                return;
+              }
+              if (layout === "docked") {
+                if (event.key !== "ArrowLeft") return;
+                event.preventDefault();
+                detachForKeyboard();
+                return;
+              }
+              const step = event.shiftKey ? KEYBOARD_STEP_PX * 2 : KEYBOARD_STEP_PX;
+              const direction = ({
+                ArrowLeft: [-step, 0],
+                ArrowRight: [step, 0],
+                ArrowUp: [0, -step],
+                ArrowDown: [0, step],
+              } as Record<string, [number, number]>)[event.key];
+              if (!direction) return;
+              event.preventDefault();
+              moveFloatingByKeyboard(direction[0], direction[1]);
+            }}
             style={{
               padding: "10px 12px 10px 16px",
               borderBottom: '1px solid rgba(126,232,226,.12)',
               background: 'linear-gradient(110deg, rgba(255,255,255,.055), rgba(255,255,255,.018), transparent 68%)',
-              cursor: movable && !docked ? 'move' : 'default',
+              cursor: movable ? (layout === "docked" ? 'grab' : 'move') : 'default',
             }}
           >
             <div
@@ -270,21 +546,11 @@ export default function RightGlassDrawer({
               {title}
             </div>
             <div style={{ display: 'flex', gap: 5 }}>
-              {movable ? (
-                <button
-                  type="button"
-                  aria-label={docked ? "Detach panel" : "Dock panel"}
-                  title={docked ? "Detach" : "Dock"}
-                  onClick={docked ? detach : () => setDocked(true)}
-                  style={graphDrawerButtonStyle({ padding: "6px", minWidth: 30, color: GRAPH_THEME.drawer.inputText })}
-                >
-                  <span aria-hidden="true" style={{ display: 'block', width: 11, height: 11, border: '1px solid currentColor', borderRadius: 3, boxShadow: docked ? '3px 0 0 -1px rgba(126,232,226,.5)' : 'none' }} />
-                </button>
-              ) : null}
               <button
                 type="button"
                 aria-label="Close drawer"
-                onClick={onClose}
+                title="Close"
+                onClick={closeIntoDock}
                 style={graphDrawerButtonStyle({ padding: "6px 8px", minWidth: 32, color: GRAPH_THEME.drawer.inputText })}
               >
                 ×
@@ -292,6 +558,7 @@ export default function RightGlassDrawer({
             </div>
           </div>
           <div
+            ref={bodyScrollRef}
             className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
             style={{
               padding: "12px",
@@ -304,6 +571,42 @@ export default function RightGlassDrawer({
             {children}
           </div>
         </div>
+        {movable && layout === "floating" ? (
+          <div
+            aria-label="Resize floating panel"
+            aria-roledescription="resize handle"
+            role="button"
+            tabIndex={isOpen ? 0 : -1}
+            title="Drag to expand panel"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              startCornerResize(event.clientX, event.clientY);
+            }}
+            onKeyDown={(event) => {
+              const step = event.shiftKey ? KEYBOARD_STEP_PX * 2 : KEYBOARD_STEP_PX;
+              const direction = ({
+                ArrowLeft: [-step, 0],
+                ArrowRight: [step, 0],
+                ArrowUp: [0, -step],
+                ArrowDown: [0, step],
+              } as Record<string, [number, number]>)[event.key];
+              if (!direction) return;
+              event.preventDefault();
+              resizeFloatingByKeyboard(direction[0], direction[1]);
+            }}
+            style={{
+              position: 'absolute',
+              right: 0,
+              bottom: 0,
+              width: 18,
+              height: 18,
+              zIndex: 4,
+              cursor: 'nwse-resize',
+              background: 'linear-gradient(135deg, transparent 48%, rgba(126,232,226,.35) 50%, rgba(126,232,226,.08) 72%, transparent 74%)',
+            }}
+          />
+        ) : null}
       </aside>
     </>
   );

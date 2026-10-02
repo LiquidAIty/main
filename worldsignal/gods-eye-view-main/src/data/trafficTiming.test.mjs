@@ -315,6 +315,13 @@ test('traffic timing pairs real ordering to the scheduling change and guards re-
     assert.ok(performance.getEntriesByType('measure').every((entry) => (
       entry.detail?.interactionId !== anchorB.interactionId
     )), 'the canceled/stale B load must never emit a correlated trace');
+
+    trafficLayer.destroy(viewer);
+    assert.doesNotThrow(
+      () => trafficLayer.destroy(viewer),
+      'traffic teardown must stay idempotent after its point collection is removed',
+    );
+    trafficLayer = null;
   } finally {
     trafficLayer?.disable(viewer);
     await server?.close();

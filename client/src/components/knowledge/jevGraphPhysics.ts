@@ -14,6 +14,9 @@ export const JEV_GRAPH_PHYSICS_PROFILES = [
 
 export type JevGraphPhysicsProfile = typeof JEV_GRAPH_PHYSICS_PROFILES[number];
 
+export const DURABLE_NODE_RADIUS_MIN = 2.5;
+export const DURABLE_NODE_RADIUS_MAX = 12;
+
 export const JEV_GRAPH_PHYSICS_PROFILE_LABELS: Record<JevGraphPhysicsProfile, string> = {
   balanced: 'Balanced',
   open: 'Open',
@@ -127,7 +130,11 @@ export function mapJevGraphPhysics(
       10,
       40,
     ),
-    nodeRadius: curve.nodeRadiusBase + curve.nodeRadiusScale * Math.log1p(m),
+    nodeRadius: clamp(
+      curve.nodeRadiusBase + curve.nodeRadiusScale * Math.log1p(m),
+      DURABLE_NODE_RADIUS_MIN,
+      DURABLE_NODE_RADIUS_MAX,
+    ),
   };
 }
 

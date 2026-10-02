@@ -9,6 +9,7 @@ import React, {
 import {
   loadWorldViewNative,
   type NativeWorldViewMount,
+  type NativeWorldViewVisualReadiness,
 } from './loadWorldViewNative';
 
 export type GodsEyeSelectionRef = {
@@ -63,6 +64,7 @@ export type GodsEyeBridge = {
     options?: { disabledLayerIds?: string[]; signal?: AbortSignal },
   ) => Promise<unknown>;
   prepareRunImages: () => Promise<Array<Record<string, unknown>>>;
+  getVisualReadiness: () => NativeWorldViewVisualReadiness | null;
 };
 
 export type GodsEyeCommandResult = {
@@ -108,6 +110,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   const mountRef = useRef<NativeWorldViewMount | null>(null);
   const [status, setStatus] = useState<'starting' | 'ready' | 'failed'>('starting');
   const [failure, setFailure] = useState<string | null>(null);
+  const [visualReadiness, setVisualReadiness] = useState<NativeWorldViewVisualReadiness | null>(null);
   const callbacksRef = useRef({
     onReady,
     onBridgeUnavailable,
@@ -153,6 +156,9 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
       return mountRef.current?.prepareRunImages()
         ?? Promise.reject(new Error('worldview_turn_context_unavailable'));
     },
+    getVisualReadiness() {
+      return mountRef.current?.getVisualReadiness() ?? null;
+    },
   }), []);
 
   useEffect(() => {
@@ -162,6 +168,7 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
     let pendingReadyVersion: string | null = null;
     setStatus('starting');
     setFailure(null);
+    setVisualReadiness(null);
     mountRef.current = null;
     callbacksRef.current.onBridgeUnavailable?.();
 
@@ -177,6 +184,13 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
           }
           setStatus('ready');
           callbacksRef.current.onReady?.(sourceVersion);
+        },
+        onVisualReadinessChange(next) {
+          if (cancelled) return;
+          setVisualReadiness(next);
+          if (next.phase === 'unavailable' && next.error) {
+            callbacksRef.current.onError?.(next.error);
+          }
         },
         onSelectionChange(selection) {
           if (!cancelled) callbacksRef.current.onSelectionChange?.(
@@ -236,12 +250,24 @@ const GodsEyeSurface = forwardRef<GodsEyeBridge, GodsEyeSurfaceProps>(function G
   return (
     <section style={styles.root} aria-label="WorldView globe">
       <div ref={rootRef} id="worldview-native-root" style={styles.mount} />
-      {status === 'failed' ? (
+      {status === 'failed' || visualReadiness?.phase === 'unavailable' ? (
         <div style={styles.failed} role="alert">
           <strong>WorldView could not start</strong>
-          <code style={styles.error}>{failure}</code>
+          <code style={styles.error}>{failure || (
+            visualReadiness?.error
+              ? `${visualReadiness.error.code}: ${visualReadiness.error.message}`
+              : 'worldview_visual_unavailable'
+          )}</code>
         </div>
       ) : null}
+      {status !== 'failed' && visualReadiness?.phase !== 'unavailable'
+        && visualReadiness?.phase !== 'ready' ? (
+          <div style={styles.loading} role="status">
+            {visualReadiness?.fallback.attempted
+              ? 'Photoreal map unavailable. Loading the standard map…'
+              : 'Loading WorldView map…'}
+          </div>
+        ) : null}
     </section>
   );
 });
@@ -273,4 +299,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#050b10',
   },
   error: { maxWidth: 640, color: '#e5a069', whiteSpace: 'pre-wrap' },
+  loading: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    zIndex: 1000,
+    padding: '6px 9px',
+    borderRadius: 7,
+    color: '#9db9bd',
+    background: 'rgba(5,11,16,.76)',
+    fontSize: 12,
+    pointerEvents: 'none',
+  },
 };

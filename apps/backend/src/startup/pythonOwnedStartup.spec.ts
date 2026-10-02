@@ -238,10 +238,14 @@ describe('Python-owned backend startup', () => {
     expect(desired[2]).toMatchObject({ workingDirectory: 'C:\\repository', attachTui: true });
     expect(desired[3]).toMatchObject({ attachTui: false });
     expect(desired[3]).not.toHaveProperty('workingDirectory');
-    expect(reconcile.mock.calls[0][2]).toHaveLength(4);
-    expect(reconcile.mock.calls[0][2].find((entry: any) => entry.card.id === 'main-card')?.owner)
+    const canonicalBindings = reconcile.mock.calls[0][2] as Array<{
+      card: { id: string };
+      owner: Record<string, unknown>;
+    }>;
+    expect(canonicalBindings).toHaveLength(4);
+    expect(canonicalBindings.find((entry) => entry.card.id === 'main-card')?.owner)
       .toEqual(desired[0].owner);
-    expect(reconcile.mock.calls[0][2].find((entry: any) => entry.card.id === 'builder')?.owner)
+    expect(canonicalBindings.find((entry) => entry.card.id === 'builder')?.owner)
       .not.toHaveProperty('conversationId');
   });
 

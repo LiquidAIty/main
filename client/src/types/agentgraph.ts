@@ -88,6 +88,12 @@ export type AgentCardRuntimeOptions = {
   /** Let one Run-scoped Jev request narrow this Card's own authorized tools.
    * It never grants tools or changes the saved selection. */
   autoTools?: boolean;
+  /** Optional extra evidence for Card-scoped Jev decisions. Required request
+   * and saved-Card inputs remain present for every mode. */
+  jevContext?: {
+    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+  } | null;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded native Hermes delegated children and
    * background skill review. Native profile/readback remains effective truth. */

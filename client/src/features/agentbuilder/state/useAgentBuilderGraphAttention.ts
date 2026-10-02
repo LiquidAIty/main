@@ -424,7 +424,7 @@ export default function useAgentBuilderGraphAttention({
   const authoritativeThinkGraphRef = useRef<GraphProjectionV1>(projection('thinkgraph', projectId));
   const thinkGraphRequestRef = useRef(0);
   const seenThinkGraphRevisionsRef = useRef(new Set<string>());
-  const authoritativeKnowGraphRef = useRef<GraphProjectionV1>(projection('knowgraph', projectId));
+  const authoritativeKnowGraphProjectionRef = useRef<GraphProjectionV1>(projection('knowgraph', projectId));
   const knowGraphRequestRef = useRef(0);
   const codeGraphScopeRef = useRef(0);
   const graphScopeGenerationRef = useRef(0);
@@ -531,7 +531,7 @@ export default function useAgentBuilderGraphAttention({
     setErrors({});
     setProjections(emptyAttention(projectId));
     authoritativeThinkGraphRef.current = projection('thinkgraph', projectId);
-    authoritativeKnowGraphRef.current = projection('knowgraph', projectId);
+    authoritativeKnowGraphProjectionRef.current = projection('knowgraph', projectId);
     setStatuses({ thinkgraph: 'loading', knowgraph: 'loading', codegraph: 'ready' });
   }, [deckId, projectId]);
 
@@ -542,7 +542,7 @@ export default function useAgentBuilderGraphAttention({
     setProjections({
       ...emptyAttention(projectId),
       thinkgraph: authoritativeThinkGraphRef.current,
-      knowgraph: authoritativeKnowGraphRef.current,
+      knowgraph: authoritativeKnowGraphProjectionRef.current,
     });
   }, [selectedCardId, deckId, projectId]);
 
@@ -550,7 +550,10 @@ export default function useAgentBuilderGraphAttention({
 
   const merge = useCallback((authority: GraphAttentionAuthority, incoming: GraphProjectionV1) => {
     if (authority === 'knowgraph') {
-      authoritativeKnowGraphRef.current = mergeAttentionProjection(authoritativeKnowGraphRef.current, incoming);
+      authoritativeKnowGraphProjectionRef.current = mergeAttentionProjection(
+        authoritativeKnowGraphProjectionRef.current,
+        incoming,
+      );
     }
     if (authority === 'thinkgraph') {
       authoritativeThinkGraphRef.current = mergeAttentionProjection(
@@ -666,7 +669,7 @@ export default function useAgentBuilderGraphAttention({
       // Native records supply topology and labels. Activity decorates matching
       // IDs only; receipts and stale references never create knowledge nodes.
       const native = knowGraphProjection(payload, projectId);
-      authoritativeKnowGraphRef.current = native;
+      authoritativeKnowGraphProjectionRef.current = native;
       setProjections((current) => {
         const retained = attention
           ? overlayAuthoritativeGraphAttention(overlayAuthoritativeGraphAttention(native, current.knowgraph), attention)
@@ -753,8 +756,8 @@ export default function useAgentBuilderGraphAttention({
           incoming,
         );
       } else {
-        authoritativeKnowGraphRef.current = mergeAttentionProjection(
-          authoritativeKnowGraphRef.current,
+        authoritativeKnowGraphProjectionRef.current = mergeAttentionProjection(
+          authoritativeKnowGraphProjectionRef.current,
           incoming,
         );
       }
@@ -893,7 +896,7 @@ export default function useAgentBuilderGraphAttention({
         setProjections({
           ...emptyAttention(projectId),
           thinkgraph: authoritativeThinkGraphRef.current,
-          knowgraph: authoritativeKnowGraphRef.current,
+          knowgraph: authoritativeKnowGraphProjectionRef.current,
         });
       }
     } else if (!selectedCardId && !active) {
@@ -957,7 +960,7 @@ export default function useAgentBuilderGraphAttention({
     if (actor && (!selectedCardId || actor === selectedCardId)) {
       setProjections((current) => Object.fromEntries(Object.entries(current).map(([authority, value]) => {
         if (authority === 'thinkgraph') return [authority, authoritativeThinkGraphRef.current];
-        if (authority === 'knowgraph') return [authority, authoritativeKnowGraphRef.current];
+        if (authority === 'knowgraph') return [authority, authoritativeKnowGraphProjectionRef.current];
         const nodes = value.nodes.filter((node) => node.properties?.attentionActorCardId !== actor);
         const ids = new Set(nodes.map((node) => node.id));
         return [authority, projection(authority as GraphAttentionAuthority, projectId, nodes,
@@ -1008,7 +1011,7 @@ export default function useAgentBuilderGraphAttention({
       const candidates = event.candidates.map((candidate) => ({ ...candidate }));
       const availableNodeIds = {
         thinkgraph: new Set(authoritativeThinkGraphRef.current.nodes.map((node) => node.id)),
-        knowgraph: new Set(authoritativeKnowGraphRef.current.nodes.map((node) => node.id)),
+        knowgraph: new Set(authoritativeKnowGraphProjectionRef.current.nodes.map((node) => node.id)),
       };
       const selectedSubjects = candidates
         .filter((candidate) => candidate.selected)

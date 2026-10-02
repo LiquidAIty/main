@@ -36,10 +36,10 @@ const baseCard = {
 };
 
 describe('AgentCardNode shared Card geometry', () => {
-  it('shows an orange source only on saved orchestrators and keeps ordinary Card inputs on the normal port', () => {
+  it('shows one orange connector only on saved orchestrators and keeps ordinary Card inputs on the normal port', () => {
     const card = { ...baseCard, runtime: { kind: 'hermes' as const, mode: 'delegate' as const, profile: 'receiver' } };
     const { rerender } = render(<AgentCardNode data={card} />);
-    expect(screen.queryByLabelText('Test Agent bot output')).toBeNull();
+    expect(screen.queryByLabelText('Test Agent orchestrator connector')).toBeNull();
     expect(screen.getByLabelText('Test Agent Magnetic worker output')).not.toBeNull();
     expect(screen.queryByLabelText('Test Agent bot input')).toBeNull();
     expect(screen.getByLabelText('Test Agent input').getAttribute('data-handle-type')).toBe('target');
@@ -48,21 +48,21 @@ describe('AgentCardNode shared Card geometry', () => {
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
     }} />);
-    const directHandle = screen.getByLabelText('Main bot output');
+    const directHandle = screen.getByLabelText('Main orchestrator connector');
     expect(directHandle.getAttribute('data-handle-id')).toBe('card-control');
     expect(directHandle.getAttribute('data-handle-type')).toBe('source');
     rerender(<AgentCardNode data={{
       ...card,
       runtimeOptions: { orchestrator: true },
     }} />);
-    expect(screen.getByLabelText('Test Agent bot output').getAttribute('data-handle-id')).toBe('card-control');
+    expect(screen.getByLabelText('Test Agent orchestrator connector').getAttribute('data-handle-id')).toBe('card-control');
     rerender(<AgentCardNode data={{
       ...card,
       title: 'Main',
       runtime: { kind: 'hermes', mode: 'main', profile: 'main' },
       runtimeOptions: { enabled: false } as any,
     }} />);
-    expect(screen.queryByLabelText('Main bot output')).toBeNull();
+    expect(screen.queryByLabelText('Main orchestrator connector')).toBeNull();
   });
 
   it('keeps Main and ordinary agents on the same compact rounded Card geometry', () => {
@@ -86,7 +86,7 @@ describe('AgentCardNode shared Card geometry', () => {
     expect(card.style.minHeight).toBe('90px');
     expect(card.dataset.cardShape).toBe('rounded');
     expect(screen.queryByTestId('main-card-hexagon')).toBeNull();
-    expect(screen.getByLabelText('Main bot output')).not.toBeNull();
+    expect(screen.getByLabelText('Main orchestrator connector')).not.toBeNull();
   });
 
   it('keeps ordinary Cards rounded and never enables Magnetic orange output', () => {
@@ -95,14 +95,14 @@ describe('AgentCardNode shared Card geometry', () => {
       runtime: { kind: 'hermes', mode: 'delegate', profile: 'signal' },
     }} />);
     expect((container.firstElementChild as HTMLElement).dataset.cardShape).toBe('rounded');
-    expect(screen.queryByLabelText('Test Agent bot output')).toBeNull();
+    expect(screen.queryByLabelText('Test Agent orchestrator connector')).toBeNull();
 
     rerender(<AgentCardNode data={{
       ...baseCard,
       title: 'Magnetic',
       runtime: { kind: 'hermes', mode: 'magentic_one', profile: 'card_magentic' },
     }} />);
-    expect(screen.queryByLabelText('Magnetic bot output')).toBeNull();
+    expect(screen.queryByLabelText('Magnetic orchestrator connector')).toBeNull();
   });
 
   it('shows only the live numeric agent count beside the Card name', () => {

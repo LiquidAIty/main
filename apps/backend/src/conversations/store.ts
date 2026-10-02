@@ -249,6 +249,83 @@ export async function appendSharedConversationTurn(input: {
   });
 }
 
+/**
+ * Append one completed native Card reply exactly once by provider message id.
+ * The existing conversation-row lock is the serialization owner, so concurrent
+ * completion observers cannot allocate duplicate sequence numbers or messages.
+ */
+export async function appendSharedConversationReplyOnce(input: {
+  projectId: string;
+  conversationId: string;
+  message: SharedChatMessageWrite & { role: 'assistant'; providerMessageId: string };
+}): Promise<{ inserted: boolean; message: ConversationMessage }> {
+  const providerMessageId = input.message.providerMessageId.trim();
+  if (!input.conversationId.trim() || !providerMessageId || !input.message.content.trim()) {
+    throw new Error('shared_conversation_reply_invalid');
+  }
+  return withTransaction(async (client) => {
+    const canonicalProjectId = await resolveProjectId(client, input.projectId);
+    await client.query(
+      `INSERT INTO ${CONVERSATIONS_TABLE} (project_id, conversation_id)
+       VALUES ($1::uuid, $2)
+       ON CONFLICT (project_id, conversation_id) DO NOTHING`,
+      [canonicalProjectId, input.conversationId],
+    );
+    const locked = await client.query(
+      `SELECT next_seq FROM ${CONVERSATIONS_TABLE}
+       WHERE project_id = $1::uuid AND conversation_id = $2
+       FOR UPDATE`,
+      [canonicalProjectId, input.conversationId],
+    );
+    if (!locked.rows.length) throw new Error('conversation_not_found');
+    const existing = await client.query(
+      `SELECT * FROM ${MESSAGES_TABLE}
+       WHERE project_id = $1::uuid AND conversation_id = $2
+         AND provider_message_id = $3
+       ORDER BY seq ASC
+       LIMIT 1`,
+      [canonicalProjectId, input.conversationId, providerMessageId],
+    );
+    if (existing.rows.length) {
+      return { inserted: false, message: mapMessage(existing.rows[0]) };
+    }
+    const sequence = await client.query(
+      `UPDATE ${CONVERSATIONS_TABLE}
+       SET next_seq = next_seq + 1, updated_at = NOW()
+       WHERE project_id = $1::uuid AND conversation_id = $2
+       RETURNING next_seq`,
+      [canonicalProjectId, input.conversationId],
+    );
+    if (!sequence.rows.length) throw new Error('conversation_not_found');
+    const activities = [
+      participantActivity('shared_chat_speaker', input.message.speaker),
+      ...(input.message.target
+        ? [participantActivity('shared_chat_target', input.message.target)]
+        : []),
+    ];
+    const result = await client.query(
+      `INSERT INTO ${MESSAGES_TABLE} (
+         project_id, conversation_id, message_id, role, content, status, seq,
+         completed_at, provider_continuation_ref, provider_message_id,
+         visible_activities
+       )
+       VALUES ($1::uuid, $2, $3, 'assistant', $4, 'complete', $5, NOW(), $6, $7, $8::jsonb)
+       RETURNING *`,
+      [
+        canonicalProjectId,
+        input.conversationId,
+        `msg_${randomUUID()}`,
+        input.message.content,
+        Number(sequence.rows[0].next_seq),
+        input.message.providerContinuationRef ?? null,
+        providerMessageId,
+        JSON.stringify(activities),
+      ],
+    );
+    return { inserted: true, message: mapMessage(result.rows[0]) };
+  });
+}
+
 export async function listConversations(projectId: string): Promise<ProjectConversation[]> {
   const lookup = projectLookup(projectId);
   const result = await pool.query(

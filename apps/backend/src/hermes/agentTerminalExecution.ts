@@ -312,12 +312,16 @@ export class AgentTerminalExecution {
         nativeUsage.inputTokens,
         nativeUsage.input_tokens,
         nativeUsage.prompt_tokens,
+        nativeUsage.input,
+        nativeUsage.prompt,
       ),
       outputTokens: optionalNonNegativeInteger(
         nativeUsage.providerOutputTokens,
         nativeUsage.outputTokens,
         nativeUsage.output_tokens,
         nativeUsage.completion_tokens,
+        nativeUsage.output,
+        nativeUsage.completion,
       ),
       cachedTokens: optionalNonNegativeInteger(
         nativeUsage.providerCachedTokens,
@@ -328,6 +332,7 @@ export class AgentTerminalExecution {
         nativeUsage.providerReasoningTokens,
         nativeUsage.reasoningTokens,
         nativeUsage.reasoning_tokens,
+        nativeUsage.reasoning,
       ),
       costUsd: optionalNonNegativeNumber(
         nativeUsage.totalCostUsd,
@@ -352,6 +357,11 @@ export class AgentTerminalExecution {
         providerOutputTokens: completion.outputTokens,
         providerCachedTokens: completion.cachedTokens,
         providerReasoningTokens: completion.reasoningTokens,
+        toolCallCount: completion.executionEvidence.filter((entry) => (
+          entry && typeof entry === 'object'
+          && !Array.isArray(entry)
+          && (entry as Record<string, unknown>).kind === 'tool_call'
+        )).length,
         totalCostUsd: completion.costUsd,
         durationMs: Date.now() - staged.started,
       }),

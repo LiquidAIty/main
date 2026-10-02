@@ -81,6 +81,10 @@ export type AgentCardRuntimeOptions = {
   providerModelId?: string | null;
   autoSelect?: boolean;
   autoTools?: boolean;
+  jevContext?: {
+    autoTools?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+    modelChoice?: 'inherited' | 'request_card' | 'conversation_window' | 'selected_native_context';
+  } | null;
   openaiRuntime?: 'codex_app_server' | null;
   /** Saved desired model for bounded native Hermes delegated children and
    * background skill review. Native profile/readback remains effective truth. */
